@@ -420,6 +420,16 @@ export class PianolaSupervisor {
 			if (target.idleHours !== undefined) args.push('--idle-hours', String(target.idleHours));
 			return args;
 		}
+		if (target.kind === 'program') {
+			if (!target.programId) return null;
+			return [
+				'pianola',
+				'program-loop',
+				target.programId,
+				'--interval',
+				String(target.intervalSeconds ?? 120),
+			];
+		}
 		if (!target.planId) return null;
 		return [
 			'pianola',
