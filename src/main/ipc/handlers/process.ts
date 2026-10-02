@@ -486,6 +486,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						return processManager.spawn({
 							sessionId: config.sessionId,
+							reuseTerminal: true,
 							toolType: 'terminal',
 							cwd: os.homedir(),
 							command: await resolveSshPath(),

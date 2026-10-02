@@ -302,6 +302,66 @@ of taking a second round trip or trusting a value the caller guessed.
 | MaestroRun tile (macOS): setup status, Check again                                                     | `maestro-run status [--check-latest]`                                                                                                                                  |
 | MaestroRun tile (macOS): Install MaestroRun / Update to <version>                                      | `maestro-run install`, read with `maestro-run status`                                                                                                                  |
 | MaestroRun tile (macOS): Open Full Disk Access / Reveal in Finder                                      | `maestro-run grant [--reveal]`, read with `maestro-run status`                                                                                                         |
+| Lite: list / edit / save / delete connection profiles | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes` |
+| Lite: forget validated host identity                  | `lite profile reset-identity <id> --yes`                                                                           |
+| Lite: connect / reconnect / disconnect / status       | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                            |
+| Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
+
+### Isolated Lite connection controls
+
+`maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
+server. It calls the same native dispatcher used by Lite's trusted connection UI
+and menu. Profile persistence, URL/SSH validation, TLS, host authentication,
+validated identity, and tunnel ownership remain native; the CLI implements none
+of those policies. The endpoint imports no full-mode process manager, stores,
+agent detector, or web server.
+
+Discovery lives in `lite-control.json` inside Lite's isolated user-data directory.
+The transport is a per-boot authenticated Windows named pipe or Unix socket,
+not a network listener: remote host web content cannot access it. The shared
+platform path resolver uses the application's normal `maestro` data path plus
+`Lite`, or `$MAESTRO_USER_DATA/Lite` when a base-path override is supplied. Dev
+and packaged Lite use the same default policy. To select an isolated instance
+explicitly, launch `Maestro --lite --lite-user-data <directory>` and run
+`maestro-cli lite --user-data <directory> ...`. These flags name the **final**
+Lite directory, without appending another `Lite`. Relative CLI paths and `~`
+use the existing CLI path resolver.
+
+Startup checks ownership by probing the discovered OS-local endpoint, not by
+trusting a PID that may have been reused. Missing/refused endpoints permit stale
+discovery recovery; accepting endpoints retain ownership regardless of recorded
+PID. Only Lite's generated local named-pipe/temporary Unix socket shapes are
+eligible for a probe; incomplete or nonlocal discovery is replaced without
+connecting to it. Permission errors and inconclusive probe timeouts fail closed.
+Native Lite also holds its isolated user-data single-instance lock during startup.
+
+All commands return readable JSON, including current native state after writes;
+`profile read` and `profile save` also return the individual `profile`. State
+includes connection `status`, optional `error`/`selected`, `picker`,
+`commandsVisible`, `profiles`, and SSH config `aliases`. Profiles expose connection URLs (including Remote
+Control path tokens) to the authorized local caller; never publish this output
+or the local discovery secret. Save takes a complete JSON file with the same
+fields as read: `id`, `name`, `transport` (`ssh` or `https`), `url`, and `ssh`
+for SSH. A minimal direct profile is:
+
+```json
+{
+	"id": "my-host",
+	"name": "My host",
+	"transport": "https",
+	"url": "https://host.example/remote-control-token"
+}
+```
+
+Deletion, validated-identity reset, and close require `--yes`, never native
+dialogs. Dismiss returns to the remote view, or stays on setup when disconnected;
+it never closes Lite. Save and connect uses `lite profile save` followed by
+`lite connect <id>` only after a successful save. A connection's asynchronous progress is readable through `lite
+status`; connection success never bypasses host-side login or identity checks.
+Closing/disconnecting Lite never stops host workloads. Errors return
+`success: false` with a nonzero exit status. A missing acknowledgement reports
+uncertainty and never retries a potentially mutating command; read status before
+acting again.
 
 ## Open gaps
 

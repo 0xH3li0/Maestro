@@ -10,26 +10,26 @@ import {
 	currentComputerHistoryFlag,
 	settingsWriteChangesComputerHistory,
 } from '../bridgePathGuard';
+import { isRemoteSettingWritable } from '../bridgeDenyList';
 
 /**
  * Allowlist of setting keys modifiable from the web interface.
  */
-const ALLOWED_SETTING_KEYS = new Set([
-	'activeThemeId',
-	'customThemeColors',
-	'customThemeBaseId',
-	'themeGloss',
-	'fontSize',
-	'enterToSendAI',
-	'defaultSaveToHistory',
-	'defaultShowThinking',
-	'notificationsEnabled',
-	'audioFeedbackEnabled',
-	'colorBlindMode',
-	'conductorProfile',
-	'maxOutputLines',
-	'encoreFeatures',
-]);
+const ALLOWED_SETTING_KEYS: Record<string, true> = {
+	activeThemeId: true,
+	customThemeColors: true,
+	customThemeBaseId: true,
+	themeGloss: true,
+	fontSize: true,
+	enterToSendAI: true,
+	defaultSaveToHistory: true,
+	defaultShowThinking: true,
+	notificationsEnabled: true,
+	audioFeedbackEnabled: true,
+	colorBlindMode: true,
+	conductorProfile: true,
+	maxOutputLines: true,
+};
 
 /**
  * Handle get_settings message - return current settings
@@ -68,7 +68,10 @@ export function handleSetSetting(
 		return;
 	}
 
-	if (!ALLOWED_SETTING_KEYS.has(key)) {
+	if (
+		!Object.prototype.hasOwnProperty.call(ALLOWED_SETTING_KEYS, key) ||
+		!isRemoteSettingWritable(key)
+	) {
 		ctx.sendError(client, `Setting key '${key}' is not modifiable from the web interface`);
 		return;
 	}

@@ -172,6 +172,15 @@ export class WsRoute {
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 				// Same moment, same reason: only the upgrade carries the CLI secret.
 				...(auth.cli ? { cli: true } : {}),
+				isAuthorized: () => {
+					const currentAuth = resolveWebRequestAuth(request);
+					if (!isWebRequestAuthorized(currentAuth)) {
+						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+						return false;
+					}
+					client.user = currentAuth.user;
+					return true;
+				},
 			};
 
 			// Notify parent about connection
@@ -285,6 +294,7 @@ export class WsRoute {
 
 			// Handle incoming messages
 			socket.on('message', (message) => {
+				if (!client.isAuthorized?.()) return;
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
 					this.callbacks.handleMessage?.(clientId, data);
