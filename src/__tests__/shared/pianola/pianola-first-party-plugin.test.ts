@@ -149,6 +149,7 @@ describe('first-party plugin registry', () => {
 			['groupsPlus', 'com.maestro.groups-plus'],
 			['webLogin', 'com.maestro.web-login'],
 			['computerHistory', 'com.maestro.computer-history'],
+			['quickChat', 'com.maestro.quick-chat'],
 		]);
 	});
 

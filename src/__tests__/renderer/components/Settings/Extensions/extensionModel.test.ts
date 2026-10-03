@@ -107,6 +107,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'groupsPlus',
 			'webLogin',
 			'computerHistory',
+			'quickChat',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
