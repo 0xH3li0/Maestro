@@ -1447,6 +1447,12 @@ app
 					}
 				}
 
+				// The same Maestro system prompt a tab spawn gets, built from the
+				// stored agent (an SSH agent gets it without localOnly sections).
+				const { buildMaestroSystemPromptForSession } =
+					await import('./utils/maestro-system-prompt');
+				const appendSystemPrompt = await buildMaestroSystemPromptForSession(storedSession.id);
+
 				const result = await executeCuePrompt({
 					runId,
 					session: {
@@ -1494,6 +1500,7 @@ app
 					},
 					sshStore: createSshRemoteStoreAdapter(store),
 					agentConfigValues,
+					appendSystemPrompt,
 				});
 
 				// Cue spawns agents outside the ProcessManager, so a failed run is the
