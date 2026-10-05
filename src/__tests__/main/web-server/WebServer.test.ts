@@ -5,6 +5,16 @@ import path from 'path';
 import { WebServer } from '../../../main/web-server/WebServer';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from '../../../main/web-server/routes/mediaRoutes';
 
+const isolated = vi.hoisted(() => ({ directory: '' }));
+vi.mock('electron', () => ({ app: { getPath: () => isolated.directory } }));
+beforeEach(() => {
+	isolated.directory = mkdtempSync(path.join(os.tmpdir(), 'maestro-web-server-'));
+});
+afterEach(() => {
+	vi.restoreAllMocks();
+	rmSync(isolated.directory, { recursive: true, force: true });
+});
+
 // Keep Sentry inert; constructing a WebServer should never reach it.
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -126,12 +136,7 @@ describe('WebServer Fastify configuration', () => {
 		expect(MEDIA_PATH_PARAM_MAX_LENGTH).toBeGreaterThan(100);
 	});
 });
-
-describe('WebServer Web Login revocation', () => {
-	// The gate checks the cookie at the upgrade and never again, so a store
-	// mutation is the only moment a live socket can learn its session is gone.
-	// Keyed on the SESSION, not the account: a password reset and a logout keep
-	// the account and remove the session, and both must close the socket.
+describe('independent browser-account and paired-device revocation', () => {
 	it('closes sockets whose session no longer resolves and leaves the rest alone', async () => {
 		const listeners: Array<() => void> = [];
 		const live = new Set(['sid-live']);
@@ -162,10 +167,15 @@ describe('WebServer Web Login revocation', () => {
 		const revoked = make('c-revoked', 'sid-reset');
 		const kept = make('c-kept', 'sid-live');
 		const cli = make('c-cli');
+		const device = {
+			...make('c-device'),
+			user: { id: 'paired-device:abc', username: 'paired-device', displayName: 'Laptop' },
+		};
 		const clients = (server as any).webClients as Map<string, unknown>;
 		clients.set(revoked.id, revoked);
 		clients.set(kept.id, kept);
 		clients.set(cli.id, cli);
+		clients.set(device.id, device);
 
 		(server as any).watchWebUserStore();
 		expect(listeners).toHaveLength(1);
@@ -174,6 +184,7 @@ describe('WebServer Web Login revocation', () => {
 		expect(revoked.socket.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 		expect(kept.socket.close).not.toHaveBeenCalled();
 		expect(cli.socket.close).not.toHaveBeenCalled();
+		expect(device.socket.close).not.toHaveBeenCalled();
 
 		vi.doUnmock('../../../main/web-server/auth/web-user-store');
 		vi.resetModules();
