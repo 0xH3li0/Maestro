@@ -159,7 +159,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			const { url } = tunnelManager.getStatus();
 			return url ? [url] : [];
 		});
-		server.setRemoteHostStatusProvider(createRemoteHostStatusProvider(deps));
+		server.setRemoteHostStatusProvider(createRemoteHostStatusProvider(deps), deps.getMainWindow);
 
 		// Roaming to a different network changes the LAN IP the URL and QR code
 		// are built from. A LAN server keeps serving (it binds 0.0.0.0), so all

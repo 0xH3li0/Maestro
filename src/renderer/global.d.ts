@@ -1752,6 +1752,7 @@ interface MaestroAPI {
 		getPathForFile: (file: File) => string;
 	};
 	webserver: {
+		openLitePairing: () => Promise<void>;
 		getUrl: () => Promise<string>;
 		getConnectedClients: () => Promise<number>;
 	};
