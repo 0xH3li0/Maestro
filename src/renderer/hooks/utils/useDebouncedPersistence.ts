@@ -44,6 +44,7 @@ import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
 import { persistClientSessionView } from '../../utils/activeSessionPersistence';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Thrown by `persistInternal` when the session registry was never read back
@@ -638,10 +639,11 @@ export function useDebouncedPersistence(
 			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
 			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
-			if (initialLoadComplete.current) {
+			if (initialLoadComplete.current && isWebDesktop()) {
+				const previous = new Map(prevState.sessions.map((session) => [session.id, session]));
 				for (const session of state.sessions) {
-					if (session !== prevState.sessions.find((item) => item.id === session.id))
-						persistClientSessionView(session);
+					const before = previous.get(session.id);
+					if (session !== before) persistClientSessionView(session, before);
 				}
 			}
 			if (
