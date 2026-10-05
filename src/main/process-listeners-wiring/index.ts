@@ -28,25 +28,14 @@ import { getCotWriter } from '../cot-export/runtime';
 import { getCrossAgentConsultParties } from '../cross-agent/cross-agent-router';
 import { getSessionsStore } from '../stores/getters';
 import { powerManager } from '../power-manager';
-import { groupChatEmitters } from '../ipc/handlers/groupChat';
-import {
-	routeModeratorResponse,
-	routeAgentResponse,
-	markParticipantResponded,
-	settleGroupChatToIdle,
-	spawnModeratorSynthesis,
-	getGroupChatReadOnlyState,
-	respawnParticipantWithRecovery,
-	clearActiveParticipantTaskSession,
-	clearModeratorResponseTimeout,
-} from '../group-chat/group-chat-router';
+import { groupChatEmitters } from '../group-chat/emitters';
+import { desktopGroupChatEngine, desktopLauncherFor } from '../group-chat/desktop-engine';
 import {
 	updateParticipant,
 	loadGroupChat,
 	updateGroupChat,
 	getParticipant,
 } from '../group-chat/group-chat-storage';
-import { needsSessionRecovery, initiateSessionRecovery } from '../group-chat/session-recovery';
 import {
 	appendToGroupChatBuffer,
 	getGroupChatBufferedOutput,
@@ -93,25 +82,12 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 		powerManager,
 		groupChatEmitters,
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
-		groupChatRouter: {
-			routeModeratorResponse,
-			routeAgentResponse,
-			markParticipantResponded,
-			settleGroupChatToIdle,
-			spawnModeratorSynthesis,
-			getGroupChatReadOnlyState,
-			respawnParticipantWithRecovery,
-			clearActiveParticipantTaskSession,
-			clearModeratorResponseTimeout,
-		},
+		groupChatEngine: desktopGroupChatEngine,
+		groupChatLauncherFor: desktopLauncherFor,
 		groupChatStorage: {
 			loadGroupChat,
 			updateGroupChat,
 			updateParticipant,
-		},
-		sessionRecovery: {
-			needsSessionRecovery,
-			initiateSessionRecovery,
 		},
 		outputBuffer: {
 			appendToGroupChatBuffer,
