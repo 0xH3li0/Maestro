@@ -649,6 +649,11 @@ export class ChildProcessSpawner {
 			// reported once, as an error, rather than as an error and then a close.
 			void turn.done.then((exit) => {
 				if (isSuperseded()) {
+					// Release only this generation's files, never the current map entry's.
+					if (managedProcess.tempImageFiles) {
+						cleanupTempFiles(managedProcess.tempImageFiles);
+						managedProcess.tempImageFiles = undefined;
+					}
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
 						pid: childProcess.pid,
@@ -730,6 +735,7 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
+			cleanupTempFiles(tempImageFiles);
 			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
