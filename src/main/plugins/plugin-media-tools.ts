@@ -308,6 +308,38 @@ export class PluginMediaTools {
 						aliases.set(next, decoded.audioId);
 						return { audioId: next, durationSeconds: decoded.durationSeconds };
 					}
+					if (method === 'run') {
+						// Native Whisper metadata can include host model/input paths. Expose only
+						// the fields the closed provider contract needs, never arbitrary metadata.
+						const parsed = JSON.parse((value as { json: string }).json);
+						if (
+							typeof parsed?.model?.multilingual !== 'boolean' ||
+							typeof parsed?.params?.translate !== 'boolean' ||
+							typeof parsed?.params?.language !== 'string' ||
+							!/^[a-z]{2,3}$/.test(parsed.params.language) ||
+							typeof parsed?.result?.language !== 'string' ||
+							!/^[a-z]{2,3}$/.test(parsed.result.language) ||
+							!Array.isArray(parsed.transcription) ||
+							parsed.transcription.length > 1000 ||
+							parsed.transcription.some(
+								(segment: unknown) =>
+									!segment ||
+									typeof segment !== 'object' ||
+									typeof (segment as { text?: unknown }).text !== 'string'
+							)
+						)
+							throw new MediaError('MediaInvalid');
+						return {
+							json: JSON.stringify({
+								model: { multilingual: parsed.model.multilingual },
+								params: { language: parsed.params.language, translate: parsed.params.translate },
+								result: { language: parsed.result.language },
+								transcription: parsed.transcription.map((segment: { text: string }) => ({
+									text: segment.text,
+								})),
+							}),
+						};
+					}
 					return value;
 				} catch (error) {
 					job.operation = undefined;
