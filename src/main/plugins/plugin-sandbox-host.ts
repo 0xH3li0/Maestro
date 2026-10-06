@@ -12,6 +12,7 @@
  * children down (graceful shutdown message, then hard kill after a grace).
  */
 
+import { SERVICE_ERROR_CODES } from '../../shared/plugins/services';
 import { MEDIA_ERROR_CODES, MEDIA_LIMITS } from '../../shared/plugins/media-tools';
 import { utilityProcess, type UtilityProcess } from 'electron';
 import * as fs from 'fs';
@@ -101,12 +102,14 @@ const MAX_PENDING_TOOLS = 64;
 
 /** One outstanding `invokeTool` round-trip awaiting the child's `toolResult`. */
 interface PendingTool {
+	service?: boolean;
 	resolve: (value: unknown) => void;
 	reject: (err: Error) => void;
 	timer: NodeJS.Timeout;
 }
 
 interface RunningPlugin {
+	stopping?: boolean;
 	/** Separate bounded release slots so saturated ordinary calls cannot block cancellation. */
 	mediaClosesInFlight: number;
 	/** Do not spend both release slots awaiting duplicate cleanup of one job. */
@@ -156,6 +159,11 @@ export class PluginSandboxHost {
 
 	isRunning(pluginId: string): boolean {
 		return this.running.has(pluginId);
+	}
+
+	isAcceptingServiceCalls(pluginId: string): boolean {
+		const record = this.running.get(pluginId);
+		return !!record && !record.stopping;
 	}
 
 	runningIds(): string[] {
@@ -304,9 +312,16 @@ export class PluginSandboxHost {
 	 * too many tool calls are already in flight, the round-trip exceeds
 	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
 	 */
-	invokeTool(pluginId: string, commandId: string, args?: unknown): Promise<unknown> {
+	invokeTool(
+		pluginId: string,
+		commandId: string,
+		args?: unknown,
+		options?: { signal?: AbortSignal; timeoutMs?: number }
+	): Promise<unknown> {
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
+		if (commandId.startsWith('service:') && record.stopping)
+			return Promise.reject(new Error('ServiceUnavailable'));
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
 		let serialized: string;
 		try {
@@ -320,20 +335,49 @@ export class PluginSandboxHost {
 		if (record.pendingTools.size >= MAX_PENDING_TOOLS) {
 			return Promise.reject(new Error('too many concurrent tool invocations'));
 		}
+		if (options?.signal?.aborted) return Promise.reject(new Error('ServiceCancelled'));
+		const timeoutMs = Math.min(
+			options?.timeoutMs ?? TOOL_INVOKE_TIMEOUT_MS,
+			MEDIA_LIMITS.jobTimeoutMs
+		);
 		const id = record.nextToolId++;
 		return new Promise<unknown>((resolve, reject) => {
 			const timer = setTimeout(() => {
+				const error = new Error(
+					options?.signal ? 'ServiceTimeout' : `tool "${commandId}" timed out after ${timeoutMs}ms`
+				);
+				record.pendingTools.get(id)?.reject(error);
 				record.pendingTools.delete(id);
-				reject(new Error(`tool "${commandId}" timed out after ${TOOL_INVOKE_TIMEOUT_MS}ms`));
-			}, TOOL_INVOKE_TIMEOUT_MS);
+			}, timeoutMs);
 			// Never let a pending tool timer keep the process alive on shutdown.
 			if (typeof timer.unref === 'function') timer.unref();
-			record.pendingTools.set(id, { resolve, reject, timer });
+			const signal = options?.signal;
+			const detach = () => signal?.removeEventListener('abort', abort);
+			const abort = () => {
+				record.pendingTools.delete(id);
+				clearTimeout(timer);
+				detach();
+				reject(signal?.reason instanceof Error ? signal.reason : new Error('ServiceCancelled'));
+			};
+			signal?.addEventListener('abort', abort, { once: true });
+			record.pendingTools.set(id, {
+				service: commandId.startsWith('service:'),
+				resolve: (value) => {
+					detach();
+					resolve(value);
+				},
+				reject: (error) => {
+					detach();
+					reject(error);
+				},
+				timer,
+			});
 			try {
 				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args });
 			} catch (err) {
 				record.pendingTools.delete(id);
 				clearTimeout(timer);
+				detach();
 				reject(
 					new Error(
 						`failed to post tool invocation: ${err instanceof Error ? err.message : String(err)}`
@@ -382,6 +426,7 @@ export class PluginSandboxHost {
 	stop(pluginId: string): void {
 		const record = this.running.get(pluginId);
 		if (!record) return;
+		record.stopping = true;
 		this.deps.onStop?.(pluginId);
 		try {
 			record.proc.postMessage({ kind: 'shutdown' });
@@ -445,6 +490,18 @@ export class PluginSandboxHost {
 									: 'MediaProcessFailed';
 				res = { ok: false, error: code, errorCode: code };
 			}
+			if (request.method.startsWith('services.') && !res.ok) {
+				const code = (SERVICE_ERROR_CODES as readonly string[]).includes(res.error ?? '')
+					? res.error!
+					: /permission denied/.test(res.error ?? '')
+						? 'ServiceDenied'
+						: /rate limit|concurrent|concurrency limit/.test(res.error ?? '')
+							? 'ServiceBusy'
+							: /not implemented/.test(res.error ?? '')
+								? 'ServiceUnavailable'
+								: 'ServiceFailed';
+				res = { ok: false, error: code, errorCode: code };
+			}
 			try {
 				proc.postMessage({ id: request.id, ...res });
 			} catch {
@@ -456,10 +513,10 @@ export class PluginSandboxHost {
 		const record = this.running.get(pluginId);
 		if (record) {
 			if (
-				request.method === 'media.close' &&
+				(request.method === 'media.close' || request.method === 'services.cancel') &&
 				record.mediaClosesInFlight >= MEDIA_LIMITS.maxJobsPerPlugin
 			) {
-				respond({ ok: false, error: 'MediaBusy' });
+				respond({ ok: false, error: 'release concurrency limit exceeded' });
 				return;
 			}
 			const now = Date.now();
@@ -469,11 +526,19 @@ export class PluginSandboxHost {
 				record.mediaCloseWindowCount = 0;
 			}
 			record.windowCount += 1;
-			if (record.inFlight >= MAX_IN_FLIGHT && request.method !== 'media.close') {
+			if (
+				record.inFlight >= MAX_IN_FLIGHT &&
+				request.method !== 'media.close' &&
+				request.method !== 'services.cancel'
+			) {
 				respond({ ok: false, error: 'too many concurrent host calls' });
 				return;
 			}
-			if (record.windowCount > RATE_MAX_PER_WINDOW && request.method !== 'media.close') {
+			if (
+				record.windowCount > RATE_MAX_PER_WINDOW &&
+				request.method !== 'media.close' &&
+				request.method !== 'services.cancel'
+			) {
 				respond({ ok: false, error: 'host call rate limit exceeded' });
 				return;
 			}
@@ -505,31 +570,32 @@ export class PluginSandboxHost {
 			return;
 		}
 
-		const closeParams = request.params as { jobId?: unknown } | null | undefined;
+		const closeParams = request.params as { jobId?: unknown; callId?: unknown } | null | undefined;
+		const releaseId = method === 'media.close' ? closeParams?.jobId : closeParams?.callId;
 		const closeJobId =
-			method === 'media.close' &&
+			(method === 'media.close' || method === 'services.cancel') &&
 			closeParams &&
 			typeof closeParams === 'object' &&
 			!Array.isArray(closeParams) &&
 			Object.keys(closeParams).length === 1 &&
-			typeof closeParams.jobId === 'string' &&
-			closeParams.jobId.length <= 64
-				? closeParams.jobId
+			typeof releaseId === 'string' &&
+			releaseId.length <= 64
+				? `${method}:${releaseId}`
 				: undefined;
-		if (record && method === 'media.close') {
+		if (record && (method === 'media.close' || method === 'services.cancel')) {
 			const duplicate = closeJobId !== undefined && record.mediaClosingJobs.has(closeJobId);
 			if (
 				record.mediaCloseWindowCount >= RATE_MAX_PER_WINDOW &&
 				(duplicate || !handler.ownsReleaseResource?.(pluginId, request.params))
 			) {
-				respond({ ok: false, error: 'MediaBusy' });
+				respond({ ok: false, error: 'release concurrency limit exceeded' });
 				return;
 			}
 			record.mediaCloseWindowCount += 1;
 			// Reject duplicates instead of accumulating waiters on the same promise.
 			// Their request IDs still get a bounded, code-only backpressure response.
 			if (duplicate) {
-				respond({ ok: false, error: 'MediaBusy' });
+				respond({ ok: false, error: method === 'services.cancel' ? 'ServiceBusy' : 'MediaBusy' });
 				return;
 			}
 			if (closeJobId !== undefined) record.mediaClosingJobs.add(closeJobId);
@@ -537,7 +603,7 @@ export class PluginSandboxHost {
 
 		if (record) {
 			record.inFlight += 1;
-			if (method === 'media.close') record.mediaClosesInFlight += 1;
+			if (method === 'media.close' || method === 'services.cancel') record.mediaClosesInFlight += 1;
 		}
 		const act = this.activityFor(pluginId);
 		act.totalCalls += 1;
@@ -552,7 +618,7 @@ export class PluginSandboxHost {
 		} finally {
 			if (record) {
 				record.inFlight = Math.max(0, record.inFlight - 1);
-				if (method === 'media.close')
+				if (method === 'media.close' || method === 'services.cancel')
 					record.mediaClosesInFlight = Math.max(0, record.mediaClosesInFlight - 1);
 				if (closeJobId !== undefined) record.mediaClosingJobs.delete(closeJobId);
 			}
@@ -573,6 +639,14 @@ export class PluginSandboxHost {
 		if (res.ok === true) {
 			pending.resolve(res.result);
 		} else {
+			if (pending.service) {
+				const candidate = res.errorCode ?? res.error;
+				const code = (SERVICE_ERROR_CODES as readonly unknown[]).includes(candidate)
+					? (candidate as string)
+					: 'ServiceFailed';
+				pending.reject(Object.assign(new Error(code), { code }));
+				return;
+			}
 			pending.reject(
 				new Error(typeof res.error === 'string' ? res.error : 'tool invocation failed')
 			);
