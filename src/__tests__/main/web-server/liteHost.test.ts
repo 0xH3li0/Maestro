@@ -1,5 +1,6 @@
 // @vitest-environment node
 import type { EventEmitter } from 'node:events';
+import { hostname } from 'node:os';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
@@ -66,7 +67,8 @@ function windowWithReply(reply: boolean): BrowserWindow {
 		isDestroyed: () => false,
 		isLoadingMainFrame: () => false,
 		isCrashed: () => false,
-		send: (_channel: string, responseChannel: string) => {
+		send: (channel: string, responseChannel: string) => {
+			if (channel !== 'remote:liteReady') return;
 			// A foreign renderer must not consume the listener or fake readiness.
 			ipc.emit(responseChannel, { sender: {} }, true);
 			ipc.emit(responseChannel, { sender: webContents }, reply);
@@ -119,8 +121,17 @@ describe('Lite host handshake and readiness', () => {
 		state.sessions.set('live', { id: 'operator', username: 'ada', displayName: 'Ada' });
 		const response = await server.inject({ url, headers: { cookie: 'maestro_web_session=live' } });
 		expect(response.statusCode).toBe(200);
-		expect(response.json().authentication).toEqual({ loginEnabled: true, authenticated: true });
-		expect(response.body).not.toContain('maestro_web_session');
+		expect(response.json()).toEqual({
+			protocolVersion: 1,
+			instanceId: expect.any(String),
+			hostName: hostname(),
+			appVersion: '1.2.3',
+			platform: process.platform,
+			ready: false,
+			unavailableReason: 'Owning desktop renderer is unavailable',
+			authentication: { loginEnabled: true, authenticated: true },
+			capabilities: emptyCapabilities,
+		});
 		state.sessions.delete('live');
 		expect(
 			(await server.inject({ url, headers: { cookie: 'maestro_web_session=live' } })).statusCode
@@ -166,8 +177,8 @@ describe('Lite host handshake and readiness', () => {
 	it('uses the local bootstrap identity without adopting synced installation identity', () => {
 		state.settings.set('installationId', 'synced-other-machine');
 		const firstStore = {
-			get: () => state.bootstrap.get('maestroRemoteInstanceId'),
-			set: (_key: string, value: string) => state.bootstrap.set('maestroRemoteInstanceId', value),
+			get: (key: string) => state.bootstrap.get(key) ?? state.settings.get(key),
+			set: (key: string, value: string) => state.bootstrap.set(key, value),
 		};
 		const id = getOrCreateHostInstanceId(firstStore);
 		expect(getOrCreateHostInstanceId(firstStore)).toBe(id);
