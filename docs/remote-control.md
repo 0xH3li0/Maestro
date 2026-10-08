@@ -155,6 +155,22 @@ A session whose owning window cannot answer bootstrap falls back to its saved
 metadata without hiding other sessions. Agent errors remain visible on remote
 clients; retries, History writes and other execution effects remain host-owned.
 
+New-agent creation flushes session changes immediately rather than waiting for
+other agents to stop streaming. If a save is already running, the creation flush
+runs immediately after it rather than being discarded. The owning host window
+constructs thinking and output rows; Lite mirrors those rows with the same
+identities instead of parsing process output a second time.
+
+OMP answer text is separate from reasoning: only reasoning deltas enter the
+thinking panel. History loading removes Maestro's OMP prompt-file transport
+wrapper before matching imported messages to live rows, so backfilling a live
+conversation does not prepend its existing greeting again. These changes prevent
+new duplicates; they do not rewrite copies already saved in a transcript.
+
+Tool activity is recorded independently of thinking mode. To display recorded
+tool badges and their input/output, enable **Settings → General → Show tool calls
+in responses**. Turning it off hides the rows without deleting them.
+
 Accepted agents, queues, terminals and automation stay on the host when a client
 disconnects. Keep the host window alive, including when backgrounded or minimized.
 Quitting the host or closing its owning windows ends availability. A host restart

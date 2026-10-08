@@ -689,6 +689,31 @@ describe('StdoutHandler', () => {
 			expect(toolSpy.mock.calls[0][1].parentToolUseId).toBeUndefined();
 		});
 
+		it('keeps OMP answer deltas out of thinking while preserving reasoning and the final answer', () => {
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'omp',
+				outputParser: new OmpOutputParser(),
+			});
+			const thinking = vi.fn();
+			emitter.on('thinking-chunk', thinking);
+			sendJsonLine(handler, sessionId, {
+				type: 'message_update',
+				assistantMessageEvent: { type: 'thinking_delta', delta: 'Checking the project.' },
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'message_update',
+				assistantMessageEvent: { type: 'text_delta', delta: 'Hello!' },
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'agent_end',
+				messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Hello!' }] }],
+			});
+			expect(thinking.mock.calls).toEqual([[sessionId, 'Checking the project.']]);
+			expect(proc.streamedText).toBe('Hello!');
+			expect(bufferManager.emitDataBuffered.mock.calls).toEqual([[sessionId, 'Hello!']]);
+		});
+
 		it('should not emit Copilot reasoning summaries as thinking chunks or final text', () => {
 			const parser = new CopilotOutputParser();
 			const { handler, emitter, sessionId, proc } = createTestContext({

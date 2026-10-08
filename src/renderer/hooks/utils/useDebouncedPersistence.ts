@@ -396,6 +396,8 @@ export function useDebouncedPersistence(
 
 	// Track if flush is in progress to prevent double-flushing
 	const flushingRef = useRef(false);
+	// A forced membership save must not disappear behind an older in-flight write.
+	const flushRequestedRef = useRef(false);
 
 	// Snapshot of the sessions array as it existed at the previous flush.
 	// Captured from the successful initial load. If this hook did not observe
@@ -519,14 +521,20 @@ export function useDebouncedPersistence(
 	 * timer callback - there's no caller above that could meaningfully
 	 * handle it, and an unhandled rejection here would just produce noise.
 	 */
-	const persistSessions = useCallback(async () => {
-		if (flushingRef.current) return;
+	const persistSessions = useCallback(async (): Promise<void> => {
+		if (flushingRef.current) {
+			flushRequestedRef.current = true;
+			return;
+		}
 
 		flushingRef.current = true;
+		const snapshot = sessionsRef.current;
 		try {
 			await persistInternal();
-			isPendingRef.current = false;
-			setIsPending(false);
+			if (sessionsRef.current === snapshot && !flushRequestedRef.current) {
+				isPendingRef.current = false;
+				setIsPending(false);
+			}
 		} catch (err) {
 			logger.warn(
 				'[Persistence] flush failed; isPending preserved for next-mutation/beforeunload retry',
@@ -549,6 +557,10 @@ export function useDebouncedPersistence(
 			// still pending. Next mutation OR beforeunload will retry.
 		} finally {
 			flushingRef.current = false;
+			if (flushRequestedRef.current) {
+				flushRequestedRef.current = false;
+				void persistSessions();
+			}
 		}
 	}, [persistInternal]);
 

@@ -327,6 +327,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				// secondary window surfaces it immediately and the primary's catch-all
 				// never flashes it. No-op in the primary window / outside a WindowProvider.
 				void registerNewSession?.(newId);
+				// Publish membership immediately: output from another agent can keep
+				// resetting the debounce, leaving this agent without a host owner.
+				flushSessionPersistence();
 				(window as any).maestro.stats.recordSessionCreated({
 					sessionId: newId,
 					agentType: agentId,
@@ -342,7 +345,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				logger.error('Failed to create session:', undefined, error);
 			}
 		},
-		[setSessions, setActiveSessionId, setActiveFocus, inputRef, registerNewSession]
+		[
+			setSessions,
+			setActiveSessionId,
+			setActiveFocus,
+			inputRef,
+			registerNewSession,
+			flushSessionPersistence,
+		]
 	);
 
 	// ========================================================================
