@@ -12,6 +12,8 @@ import { createMockAITab } from '../../../helpers/mockTab';
 import type { LogEntry, TerminalTab } from '../../../../renderer/types';
 import type { BrowserTab } from '../../../../shared/browserPage';
 import type { SessionTranscriptPatch } from '../../../../shared/sessionTranscript';
+import { useAgentThinkingListener } from '../../../../renderer/hooks/agent/internal/useAgentThinkingListener';
+import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 
 let web = false;
 vi.mock('../../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => web }));
@@ -19,6 +21,7 @@ const ready = async () => {};
 let receive: (patch: SessionTranscriptPatch<LogEntry>) => void;
 let data: (sessionId: string, data: string) => void;
 let stderr: (sessionId: string, data: string) => void;
+let thinking: (sessionId: string, data: string) => void;
 let tool: Parameters<NonNullable<typeof window.maestro.process.onToolExecution>>[0];
 let user: Parameters<typeof window.maestro.process.onUserInput>[0];
 let request: (payload: { sessionId: string; tabId: string; requestId: string }) => void;
@@ -51,6 +54,10 @@ beforeEach(() => {
 				data = handler;
 				return () => {};
 			},
+			onThinkingChunk: (handler) => {
+				thinking = handler;
+				return () => {};
+			},
 			onStderr: (handler) => {
 				stderr = handler;
 				return () => {};
@@ -68,9 +75,14 @@ beforeEach(() => {
 });
 
 describe('owning host transcript identities', () => {
-	it('keeps two mirrors on the exact host stdout, stderr, tool and user rows without generating their own output IDs', async () => {
+	it('keeps two mirrors on the exact host OMP thinking, stdout, stderr, tool and user rows without generating their own output IDs', async () => {
 		const tab = createMockAITab({ id: 'tab', logs: [], showThinking: 'sticky' });
-		const session = createMockSession({ id: 'session', aiTabs: [tab], activeTabId: 'tab' });
+		const session = createMockSession({
+			id: 'session',
+			toolType: 'omp',
+			aiTabs: [tab],
+			activeTabId: 'tab',
+		});
 		useSessionStore.setState({ sessions: [session] });
 		const mount = () =>
 			renderHook(() => {
@@ -80,6 +92,7 @@ describe('owning host transcript identities', () => {
 					batchedUpdater: batched,
 					activeHiddenToolRef: { current: new Map() },
 				});
+				useAgentThinkingListener();
 				useAgentStderrListener({ batchedUpdater: batched });
 				useAgentToolExecutionListener();
 				useAgentUserInputListener();
@@ -94,7 +107,29 @@ describe('owning host transcript identities', () => {
 				inputMode: 'ai',
 				entry: { id: 'user-one', timestamp: 1, source: 'user', text: 'same text' },
 			});
-			data('session-ai-tab', 'same text');
+			const parser = new OmpOutputParser();
+			const reasoning = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'message_update',
+					assistantMessageEvent: { type: 'thinking_delta', delta: 'Checking the remote project.' },
+				})
+			);
+			expect(reasoning?.isReasoning).toBe(true);
+			thinking('session-ai-tab', reasoning!.text!);
+			await vi.waitFor(() =>
+				expect(
+					useSessionStore
+						.getState()
+						.sessions[0].aiTabs[0].logs.some((row) => row.source === 'thinking')
+				).toBe(true)
+			);
+			const output = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'message_update',
+					assistantMessageEvent: { type: 'text_delta', delta: 'same text' },
+				})
+			);
+			data('session-ai-tab', output!.text!);
 			host.result.current.flushNow();
 			tool('session-ai-tab', { toolName: 'Read', timestamp: 2, state: { status: 'completed' } });
 			user({
@@ -124,6 +159,7 @@ describe('owning host transcript identities', () => {
 		]);
 		expect(canonical.map((row) => row.source)).toEqual([
 			'user',
+			'thinking',
 			'stdout',
 			'tool',
 			'user',
@@ -142,6 +178,7 @@ describe('owning host transcript identities', () => {
 			useSessionStore.setState({ sessions: [structuredClone(session)] });
 			const mirror = mount();
 			await act(async () => {
+				thinking('session-ai-tab', 'Checking the remote project.');
 				data('session-ai-tab', 'same text');
 				stderr('session-ai-tab', 'error output');
 				tool('session-ai-tab', { toolName: 'Read', timestamp: 2, state: { status: 'completed' } });
