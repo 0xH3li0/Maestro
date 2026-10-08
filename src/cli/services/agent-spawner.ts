@@ -166,6 +166,9 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'globalEnvVars'
+	| 'agentConfigValues'
+	| 'agentCommand'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -314,7 +317,7 @@ function resolveAgentOverrides(
 	userCustomEnvVars?: Record<string, string>;
 	agentCustomEnvVars?: Record<string, string>;
 } {
-	const agentConfigValues = readAgentConfig(toolType);
+	const agentConfigValues = overrides.agentConfigValues ?? readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
 		agentConfigValues,
 		sessionCustomModel: overrides.customModel,
@@ -346,6 +349,7 @@ function planCliLaunch(
 		prompt: string;
 		readOnlyMode?: boolean;
 		agentCustomEnvVars?: Record<string, string>;
+		globalEnvVars?: Record<string, string>;
 		sessionCustomEnvVars?: Record<string, string>;
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
@@ -360,6 +364,7 @@ function planCliLaunch(
 		cwd: input.cwd,
 		prompt: input.prompt,
 		agentCustomEnvVars: input.agentCustomEnvVars,
+		globalEnvVars: input.globalEnvVars,
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
 		readOnlyMode: input.readOnlyMode,
 		batchMode: true,
@@ -729,7 +734,7 @@ async function spawnClaudeAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const claudeCommand = sshRemoteConfig?.enabled
 		? getAgentCommand('claude-code')
-		: await resolveLocalAgentCommand('claude-code');
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
 	// Target, environment and prompt delivery come from the shared launch plan,
@@ -742,6 +747,7 @@ async function spawnClaudeAgent(
 		prompt,
 		readOnlyMode,
 		agentCustomEnvVars,
+		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
@@ -1213,7 +1219,7 @@ async function spawnJsonLineAgent(
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType);
+		: (overrides.agentCommand ?? (await resolveLocalAgentCommand(toolType)));
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
@@ -1227,6 +1233,7 @@ async function spawnJsonLineAgent(
 		prompt: effectivePrompt,
 		readOnlyMode,
 		agentCustomEnvVars,
+		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: isResume,
 		querySource: overrides.querySource,
@@ -1485,6 +1492,10 @@ export interface SpawnAgentOptions {
 	customArgs?: string;
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
+	/** Live desktop values; omitted by standalone CLI callers. */
+	globalEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
+	agentCommand?: string;
 	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
@@ -1558,6 +1569,9 @@ export async function spawnAgent(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		globalEnvVars: options?.globalEnvVars,
+		agentConfigValues: options?.agentConfigValues,
+		agentCommand: options?.agentCommand,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

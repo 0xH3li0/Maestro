@@ -116,7 +116,7 @@ import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { beginCueRunCapture, recordCommandLineRuns } from './cot-export/runtime';
 import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
-import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
+import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
@@ -2567,7 +2567,12 @@ app
 				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
 					(session) => session.id === agentId
 				),
-			detectAgent,
+			detectAgent: async (type) => {
+				const detected = await agentDetector?.getAgent(type);
+				return { available: detected?.available === true, path: detected?.path };
+			},
+			getAgentConfig: getAgentConfigForAgent,
+			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
 			prepareSystemPrompt: prepareMaestroSystemPromptCli,
