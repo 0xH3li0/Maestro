@@ -76,6 +76,7 @@ import {
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -92,6 +93,9 @@ export interface CueEngineDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		/** The subscription's `tier` / `model` / `effort`; the host resolves it
+		 *  against the target agent (see `resolveCueTurnSettings`). */
+		turnSettings?: CueTurnSettings;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -395,7 +399,8 @@ export class CueEngine {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				turnSettings
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -411,7 +416,8 @@ export class CueEngine {
 					pipelineName,
 					chainRootId,
 					parentEventId,
-					notify
+					notify,
+					turnSettings
 				);
 			},
 			onLog: meteredOnLog,
@@ -640,7 +646,9 @@ export class CueEngine {
 					// chain root in stats. Roots and rows persisted before
 					// usageStats was enabled come back as undefined.
 					entry.chainRootId,
-					entry.parentEventId
+					entry.parentEventId,
+					undefined, // notify - not persisted
+					entry.turnSettings
 				);
 			}
 		}

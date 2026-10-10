@@ -30,6 +30,7 @@ import {
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
+import { cueTurnSettingsOf } from '../../shared/cue/turn-settings';
 import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
 import { removeSubscriptionFromYaml } from './cue-self-destruct';
@@ -201,6 +202,7 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		graceMinutes: sub.grace_minutes,
 		notifyMessage: sub.notify?.message,
 		notifySticky: sub.notify?.sticky,
+		...cueTurnSettingsOf(sub),
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -258,6 +260,13 @@ export function buildScheduledTaskSubscriptions(
 	if (!hasPrompt && !hasNotify) {
 		throw new Error('a scheduled task needs a prompt, a notification, or both');
 	}
+	const turnSettings = cueTurnSettingsOf(input);
+	if (turnSettings?.tier && turnSettings.model) {
+		throw new Error('set a model tier or an exact model, not both');
+	}
+	if (turnSettings && !hasPrompt) {
+		throw new Error('a model tier, model, or effort needs a prompt to run');
+	}
 
 	const timing: Record<string, unknown> = {};
 	let baseName: string;
@@ -312,6 +321,7 @@ export function buildScheduledTaskSubscriptions(
 			enabled: true,
 			action: 'prompt',
 			prompt: promptText,
+			...turnSettings,
 			...timing,
 			agent_id: agent.id,
 			pipeline_name: pipelineName,

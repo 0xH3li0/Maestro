@@ -68,6 +68,67 @@ describe('cue-scheduled-tasks', () => {
 			).toThrow(/prompt, a notification, or both/);
 		});
 
+		it('puts the model choice on the prompt sub only, never on the notify sub', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 30,
+				prompt: 'review',
+				notify: { message: 'reviewed' },
+				name: 'nightly',
+				tier: 'high',
+				effort: 'low',
+			});
+
+			expect(subs[0]).toMatchObject({ action: 'prompt', tier: 'high', effort: 'low' });
+			expect(subs[1].action).toBe('notify');
+			expect(subs[1]).not.toHaveProperty('tier');
+			expect(subs[1]).not.toHaveProperty('effort');
+		});
+
+		it('rejects a tier and an exact model together', () => {
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, {
+					agentId: agent.id,
+					kind: 'interval',
+					intervalMinutes: 30,
+					prompt: 'review',
+					tier: 'high',
+					model: 'opus',
+				})
+			).toThrow(/not both/);
+		});
+
+		it('rejects a model choice on a notify-only task', () => {
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, {
+					agentId: agent.id,
+					kind: 'interval',
+					intervalMinutes: 30,
+					notify: { message: 'ping' },
+					effort: 'high',
+				})
+			).toThrow(/needs a prompt/);
+		});
+
+		it('round-trips the model choice through cue.yaml into the task list', () => {
+			createScheduledTask(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 30,
+				prompt: 'review',
+				name: 'pinned',
+				model: 'gpt-5.5-codex',
+				effort: 'medium',
+			});
+
+			expect(readSubs(projectRoot)[0]).toMatchObject({ model: 'gpt-5.5-codex', effort: 'medium' });
+			const [task] = collectScheduledTasks([agent]).tasks;
+			expect(task.model).toBe('gpt-5.5-codex');
+			expect(task.effort).toBe('medium');
+			expect(task.tier).toBeUndefined();
+		});
+
 		it('rejects an out-of-range interval', () => {
 			expect(() =>
 				buildScheduledTaskSubscriptions(agent, {

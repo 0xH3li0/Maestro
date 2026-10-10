@@ -1063,6 +1063,12 @@ cue
 	.option('--pipeline <name>', 'Pipeline name (default: Tasks)')
 	.option('--grace-minutes <n>', 'Override the default 360-minute grace window')
 	.option(
+		'--tier <level>',
+		'Model tier for the prompt run: low, medium, high (mapped per provider)'
+	)
+	.option('--model <id>', 'Exact model id for the prompt run (instead of --tier)')
+	.option('--effort <level>', 'Effort for the prompt run: low, medium, high (mapped per provider)')
+	.option(
 		'--keep-on-failure',
 		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
 	)

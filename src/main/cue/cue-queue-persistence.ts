@@ -14,6 +14,7 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { CueCommand, CueEvent, CueSubscription } from './cue-types';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import {
 	getQueuedEvents,
 	clearPersistedQueue,
@@ -40,6 +41,8 @@ export interface PersistableQueueEntry {
 	 *  for root events (and for any entry queued while usageStats is off). */
 	chainRootId?: string;
 	parentEventId?: string;
+	/** The subscription's model choice, so a restored run keeps it. */
+	turnSettings?: CueTurnSettings;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
@@ -90,6 +93,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			queuedAt: entry.queuedAt,
 			chainRootId: entry.chainRootId ?? null,
 			parentEventId: entry.parentEventId ?? null,
+			turnSettingsJson: entry.turnSettings ? JSON.stringify(entry.turnSettings) : null,
 		};
 		safePersistQueuedEvent(record);
 	}
@@ -214,10 +218,12 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			let event: CueEvent;
 			let cliOutput: { target: string } | undefined;
 			let command: CueCommand | undefined;
+			let turnSettings: CueTurnSettings | undefined;
 			try {
 				event = JSON.parse(row.eventJson);
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
+				turnSettings = row.turnSettingsJson ? JSON.parse(row.turnSettingsJson) : undefined;
 			} catch (err) {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 				deps.onLog(
@@ -245,6 +251,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				queuedAt: row.queuedAt,
 				chainRootId: row.chainRootId ?? undefined,
 				parentEventId: row.parentEventId ?? undefined,
+				turnSettings,
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);

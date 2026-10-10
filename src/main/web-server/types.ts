@@ -9,6 +9,7 @@ import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/sno
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
@@ -1384,6 +1385,10 @@ export interface CueSubscriptionInfo {
 	enabled: boolean;
 	lastTriggered?: number;
 	triggerCount: number;
+	/** The run's model choice, when the subscription sets one. */
+	tier?: CueTurnSettings['tier'];
+	model?: string;
+	effort?: CueTurnSettings['effort'];
 }
 
 /** Web-specific Cue activity log entry (simplified from engine types) */
