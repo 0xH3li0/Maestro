@@ -77,6 +77,41 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
+## Scheduling a Run
+
+By default an Auto Run starts as soon as you press **Go**. The **Start** control
+in the Auto Run window switches that to a specific date and time:
+
+| Option            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| **Now**           | The default. Press Go and the run starts immediately.                       |
+| **At a set time** | Pick a date and time; the run fires once, and a run that starts is removed. |
+
+When a time is set the **Go** button becomes **Schedule**. The most common use
+is starting a run after your provider's token limit resets, so you wake up to
+finished work rather than a run that stalled at 2am.
+
+A few things worth knowing:
+
+- The time is your local time, and the schedule survives quitting and reopening
+  Maestro.
+- The documents are pinned when you schedule, not when the run fires. Repointing
+  the agent's Auto Run folder afterwards will not swap out what runs.
+- You can schedule while the agent is busy. Readiness is checked when the run
+  actually fires, not when you schedule it.
+- Scheduling is one-shot. For a run that repeats, use a recurring
+  [Maestro Cue](./maestro-cue) task instead.
+- A run that fails to start is kept, not removed. It stays under Scheduled Tasks
+  in the Cue window so you can see why it did not start and trigger it again.
+- A scheduled run starts in the agent's own checkout. It cannot dispatch to a
+  worktree, so the Schedule button is unavailable while a worktree target is set.
+- A script or another agent can schedule the same run with
+  `maestro-cli cue schedule --at <time> --agent <id> --auto-run <documents...>`.
+
+Scheduled runs are stored as Maestro Cue tasks, so **Start** requires the
+Maestro Cue Encore Feature. Pending runs appear under **Scheduled Tasks** in the
+Cue window, which is also where you cancel one.
+
 ## Model Override
 
 The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.

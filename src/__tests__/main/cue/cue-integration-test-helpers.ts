@@ -90,6 +90,8 @@ export interface InMemoryCueQueueRow {
 	 *  before usageStats was enabled. */
 	chainRootId: string | null;
 	parentEventId: string | null;
+	/** Serialized Auto Run payload for `action: autorun` rows. */
+	autoRunJson?: string | null;
 }
 
 export interface InMemoryCueDbState {

@@ -13,7 +13,7 @@
 
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
-import type { CueCommand, CueEvent, CueSubscription } from './cue-types';
+import type { CueAutoRunConfig, CueCommand, CueEvent, CueSubscription } from './cue-types';
 import {
 	getQueuedEvents,
 	clearPersistedQueue,
@@ -40,6 +40,10 @@ export interface PersistableQueueEntry {
 	 *  for root events (and for any entry queued while usageStats is off). */
 	chainRootId?: string;
 	parentEventId?: string;
+	/** Captured Auto Run payload for `action: autorun`. The run launches from
+	 *  THIS, not from the subscription, so it has to survive a restart with the
+	 *  row or the restored run has no documents. */
+	autoRun?: CueAutoRunConfig;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
@@ -90,6 +94,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			queuedAt: entry.queuedAt,
 			chainRootId: entry.chainRootId ?? null,
 			parentEventId: entry.parentEventId ?? null,
+			autoRunJson: entry.autoRun ? JSON.stringify(entry.autoRun) : null,
 		};
 		safePersistQueuedEvent(record);
 	}
@@ -214,10 +219,12 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			let event: CueEvent;
 			let cliOutput: { target: string } | undefined;
 			let command: CueCommand | undefined;
+			let autoRun: CueAutoRunConfig | undefined;
 			try {
 				event = JSON.parse(row.eventJson);
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
+				autoRun = row.autoRunJson ? JSON.parse(row.autoRunJson) : undefined;
 			} catch (err) {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 				deps.onLog(
@@ -245,6 +252,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				queuedAt: row.queuedAt,
 				chainRootId: row.chainRootId ?? undefined,
 				parentEventId: row.parentEventId ?? undefined,
+				autoRun,
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);

@@ -19,7 +19,9 @@
  * and one created by clicking are the same object on disk. Writes do not need
  * the desktop app running - the engine's YAML watcher picks them up.
  */
+import * as fs from 'fs';
 import { readSessions } from '../services/storage';
+import { resolveCliPath } from '../utils/parse';
 import { humanizeDuration, DURATION_LADDER_DAYS } from '../../shared/duration';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import {
@@ -42,7 +44,7 @@ import {
 	type ScheduledTaskKind,
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
-import type { CueScheduleDay } from '../../shared/cue/contracts';
+import type { CueAutoRunConfig, CueScheduleDay } from '../../shared/cue/contracts';
 import type { SessionInfo } from '../../shared/types';
 
 export interface CueScheduleOptions {
@@ -67,6 +69,14 @@ export interface CueScheduleOptions {
 	pipeline?: string;
 	graceMinutes?: string;
 	keepOnFailure?: boolean;
+	autoRun?: string[];
+	resetOnCompletion?: boolean;
+	loop?: boolean;
+	maxLoops?: string;
+	model?: string;
+	effort?: string;
+	perDocument?: boolean;
+	ignoreModelHints?: boolean;
 	json?: boolean;
 }
 
@@ -529,6 +539,78 @@ function parseTiming(options: CueScheduleOptions): ParsedTiming {
 // create
 // ────────────────────────────────────────────────────────────────────────────
 
+/** The flags that only describe an Auto Run, by the name the user typed. */
+const AUTO_RUN_ONLY_FLAGS: ReadonlyArray<[keyof CueScheduleOptions, string]> = [
+	['resetOnCompletion', '--reset-on-completion'],
+	['loop', '--loop'],
+	['maxLoops', '--max-loops'],
+	['model', '--model'],
+	['effort', '--effort'],
+	['perDocument', '--per-document'],
+	['ignoreModelHints', '--ignore-model-hints'],
+];
+
+/**
+ * Build the Auto Run payload for `--auto-run`, or `undefined` when the flag was
+ * not passed. This is the CLI half of the Auto Run window's Schedule button:
+ * both hand the same `CueAutoRunConfig` to `createScheduledTask`.
+ *
+ * Documents are resolved to absolute paths and must exist NOW. They are pinned
+ * when the task is written, so a typo would otherwise surface hours later as a
+ * launch that failed with nobody watching.
+ */
+function buildAutoRunConfig(
+	options: CueScheduleOptions,
+	promptText: string
+): CueAutoRunConfig | undefined {
+	const requested = options.autoRun ?? [];
+	if (requested.length === 0) {
+		const stray = AUTO_RUN_ONLY_FLAGS.find(([key]) => options[key] !== undefined);
+		if (stray)
+			errorOut(`${stray[1]} requires --auto-run`, options, 'AUTO_RUN_FLAG_WITHOUT_AUTO_RUN');
+		return undefined;
+	}
+	if (options.notify) {
+		errorOut('--auto-run cannot be combined with --notify', options, 'AUTO_RUN_WITH_NOTIFY');
+	}
+
+	const documents = requested.map((doc) => resolveCliPath(doc));
+	for (const doc of documents) {
+		if (!/\.md$/i.test(doc)) {
+			errorOut(`--auto-run: "${doc}" is not a .md document`, options, 'BAD_AUTO_RUN_DOCUMENT');
+		}
+		if (!fs.existsSync(doc)) {
+			errorOut(`--auto-run: "${doc}" does not exist`, options, 'BAD_AUTO_RUN_DOCUMENT');
+		}
+	}
+
+	let maxLoops: number | undefined;
+	if (options.maxLoops !== undefined) {
+		const n = Number(options.maxLoops);
+		if (!Number.isInteger(n) || n < 1) {
+			errorOut(
+				`--max-loops: must be a positive integer, got "${options.maxLoops}"`,
+				options,
+				'BAD_MAX_LOOPS'
+			);
+		}
+		maxLoops = n;
+	}
+
+	return {
+		documents,
+		...(options.resetOnCompletion ? { reset_on_completion: documents.map(() => true) } : {}),
+		...(promptText ? { prompt: promptText } : {}),
+		// A loop ceiling without --loop still means "loop", as on `auto-run`.
+		...(options.loop || maxLoops !== undefined ? { loop_enabled: true } : {}),
+		...(maxLoops !== undefined ? { max_loops: maxLoops } : {}),
+		...(options.model ? { model: options.model } : {}),
+		...(options.effort ? { effort: options.effort } : {}),
+		...(options.perDocument ? { task_selection_mode: 'document' as const } : {}),
+		...(options.ignoreModelHints ? { ignore_model_hints: true } : {}),
+	};
+}
+
 async function runCreate(options: CueScheduleOptions): Promise<void> {
 	const timing = parseTiming(options);
 
@@ -543,10 +625,17 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	if (!agent) errorOut(`agent "${options.agent}" not found`, options, 'AGENT_NOT_FOUND');
 
 	const promptText = options.prompt ?? '';
-	const hasPrompt = promptText.length > 0;
+	const autoRun = buildAutoRunConfig(options, promptText);
+	// With --auto-run the prompt is the run's own instructions, not a message
+	// to send, so it travels inside the Auto Run payload instead.
+	const hasPrompt = promptText.length > 0 && !autoRun;
 	const hasNotify = options.notify === true;
-	if (!hasPrompt && !hasNotify) {
-		errorOut('one of --prompt or --notify (or both) is required', options, 'MISSING_ACTION');
+	if (!hasPrompt && !hasNotify && !autoRun) {
+		errorOut(
+			'one of --prompt or --notify (or both) is required, or --auto-run <documents...>',
+			options,
+			'MISSING_ACTION'
+		);
 	}
 	if (options.sticky && !hasNotify) {
 		errorOut('--sticky requires --notify', options, 'STICKY_WITHOUT_NOTIFY');
@@ -583,11 +672,15 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		intervalMinutes: timing.intervalMinutes,
 		prompt: hasPrompt ? promptText : undefined,
 		notify: hasNotify ? { message: notifyMessage, sticky: options.sticky === true } : undefined,
+		autoRun,
 		name: options.name,
 		label: options.label,
 		pipelineName: options.pipeline,
 		graceMinutes,
-		keepOnFailure: options.keepOnFailure === true,
+		// A scheduled Auto Run is always kept on a failed launch, as it is from
+		// the Auto Run window: the alternative is a run that never happened and
+		// left nothing behind to say why.
+		keepOnFailure: options.keepOnFailure === true || autoRun !== undefined,
 	};
 
 	let names: string[];

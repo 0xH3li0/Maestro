@@ -426,3 +426,52 @@ describe('normalizer - github.label field passthrough', () => {
 		).toBeUndefined();
 	});
 });
+
+describe('normalizer - action: autorun option passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'nightly',
+		event: 'time.once',
+		action: 'autorun',
+		agent_id: 'agent-xyz',
+		fire_at: '2030-01-01T10:00:00.000Z',
+		enabled: true,
+	};
+
+	it('carries task_selection_mode and ignore_model_hints to the engine', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: {
+				documents: ['/proj/a.md'],
+				task_selection_mode: 'document',
+				ignore_model_hints: true,
+			},
+		});
+
+		expect(sub.auto_run).toMatchObject({
+			task_selection_mode: 'document',
+			ignore_model_hints: true,
+		});
+	});
+
+	it('leaves both absent when the document does not set them', () => {
+		const sub = normalizeSub({ ...base, auto_run: { documents: ['/proj/a.md'] } });
+
+		expect(sub.auto_run).not.toHaveProperty('task_selection_mode');
+		expect(sub.auto_run).not.toHaveProperty('ignore_model_hints');
+	});
+
+	it('drops an unknown task_selection_mode rather than handing it to the launch', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: { documents: ['/proj/a.md'], task_selection_mode: 'file' },
+		});
+
+		expect(sub.auto_run).not.toHaveProperty('task_selection_mode');
+	});
+});

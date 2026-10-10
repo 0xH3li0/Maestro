@@ -155,6 +155,50 @@ describe('cue-queue-persistence', () => {
 			expect(child.parentEventId).toBe('run-root');
 		});
 
+		// A queued `action: autorun` run launches from the payload captured when
+		// it was scheduled. Losing it across a restart leaves a run with no
+		// documents, which fails to launch a schedule nobody is watching.
+		it('round-trips the Auto Run payload through the queue table', () => {
+			const p = makePersistence();
+			const autoRun = {
+				documents: ['/repo/.maestro/playbooks/ship-it.md'],
+				reset_on_completion: [true],
+				prompt: 'work the list',
+				loop_enabled: true,
+				max_loops: 3,
+				model: 'opus',
+			};
+			p.persist('s-1', 'pid-autorun', makeEntry({ action: 'autorun', autoRun }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'autorun')!.autoRun).toEqual(autoRun);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.autoRun).toBeUndefined();
+		});
+
+		it('drops a row whose Auto Run payload is not valid JSON', () => {
+			const p = makePersistence();
+			getSharedDb().persistQueuedEvent({
+				id: 'bad-autorun',
+				sessionId: 's-1',
+				subscriptionName: 'scheduled',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: '',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: 'autorun',
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+				autoRunJson: '{not json',
+			});
+
+			expect(p.restoreAll().size).toBe(0);
+			expect(getSharedDb().getQueuedEvents()).toHaveLength(0);
+		});
+
 		it('groups by session and preserves queuedAt ordering', () => {
 			const p = makePersistence({ known: ['s-1', 's-2'] });
 			p.persist('s-1', 'a', makeEntry({ subscriptionName: 'A', queuedAt: NOW - 100 }));

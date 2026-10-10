@@ -101,6 +101,8 @@ describe('web handlers', () => {
 			broadcastAutoRunState: vi.fn(),
 			broadcastTabsChange: vi.fn(),
 			requestNewTab: vi.fn().mockResolvedValue({ tabId: 'tab-2' }),
+			requestCloseTab: vi.fn().mockResolvedValue(true),
+			requestReopenTab: vi.fn().mockResolvedValue({ tabId: 'restored' }),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
@@ -201,6 +203,71 @@ describe('web handlers', () => {
 		});
 	});
 
+	describe('web:takeOrphanedAutoRuns (#1470)', () => {
+		const owner = {
+			instanceId: 'tab-1',
+			config: { documents: [{ filename: 'a.md' }], prompt: 'go', loopEnabled: false },
+			folderPath: '/docs',
+		};
+
+		it('hands a run back only to the client that started it', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const broadcast = registeredHandlers.get('web:broadcastAutoRunState');
+			const take = registeredHandlers.get('web:takeOrphanedAutoRuns');
+
+			expect(await claim!({}, 'session-123', owner)).toBe(true);
+			await broadcast!({}, 'session-123', {
+				isRunning: true,
+				totalTasks: 3,
+				completedTasks: 1,
+				currentTaskIndex: 1,
+			});
+
+			expect(await take!({}, 'tab-2')).toEqual([]);
+			expect(await take!({}, '')).toEqual([]);
+			expect(await take!({}, 'tab-1')).toEqual([
+				expect.objectContaining({
+					agentId: 'session-123',
+					config: owner.config,
+					folderPath: '/docs',
+				}),
+			]);
+
+			// Another client still cannot start over the reclaimed run.
+			expect(await claim!({}, 'session-123')).toBe(false);
+			// Its owner can restart it.
+			expect(await claim!({}, 'session-123', owner)).toBe(true);
+		});
+
+		it('drops a malformed owner instead of refusing the start', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const take = registeredHandlers.get('web:takeOrphanedAutoRuns');
+
+			expect(await claim!({}, 'session-123', { instanceId: 'tab-1' })).toBe(true);
+			expect(await take!({}, 'tab-1')).toEqual([]);
+		});
+
+		it('ends a reclaimed run its owner gives up on', async () => {
+			const claim = registeredHandlers.get('web:claimAutoRunStart');
+			const broadcast = registeredHandlers.get('web:broadcastAutoRunState');
+			const take = registeredHandlers.get('web:takeOrphanedAutoRuns');
+			const abandon = registeredHandlers.get('web:abandonAutoRunReclaim');
+
+			await claim!({}, 'session-123', owner);
+			await broadcast!({}, 'session-123', {
+				isRunning: true,
+				totalTasks: 3,
+				completedTasks: 1,
+				currentTaskIndex: 1,
+			});
+			await take!({}, 'tab-1');
+
+			expect(await abandon!({}, 'session-123', 'tab-2')).toBe(false);
+			expect(await abandon!({}, 'session-123', 'tab-1')).toBe(true);
+			expect(await claim!({}, 'session-123')).toBe(true);
+		});
+	});
+
 	describe('web:requestNewTab', () => {
 		it('creates the tab through the desktop callback registry', async () => {
 			const handler = registeredHandlers.get('web:requestNewTab');
@@ -216,6 +283,40 @@ describe('web handlers', () => {
 
 			expect(await handler!({}, 'session-123', false)).toBeNull();
 		});
+	});
+
+	describe('web:requestCloseTab', () => {
+		it('routes the close through the desktop callback registry', async () => {
+			const handler = registeredHandlers.get('web:requestCloseTab');
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(true);
+			expect(mockWebServer.requestCloseTab).toHaveBeenCalledWith('session-123', 'tab-1');
+		});
+
+		it('returns false when the desktop is unavailable', async () => {
+			const handler = registeredHandlers.get('web:requestCloseTab');
+			mockWebServer.requestCloseTab.mockResolvedValue(false);
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
+			webServerRef.current = null;
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
+		});
+	});
+
+	it.each([undefined, '', 42, {}])(
+		'rejects invalid conversation ids %j before dispatch',
+		async (id) => {
+			expect(await registeredHandlers.get('web:requestCloseTab')!({}, 'session-1', id)).toBe(false);
+			expect(await registeredHandlers.get('web:requestReopenTab')!({}, id, 'tab-1')).toBeNull();
+			expect(mockWebServer.requestCloseTab).not.toHaveBeenCalled();
+			expect(mockWebServer.requestReopenTab).not.toHaveBeenCalled();
+		}
+	);
+
+	it('restores a specific history entry through its desktop owner', async () => {
+		const handler = registeredHandlers.get('web:requestReopenTab')!;
+		expect(await handler({}, 'session-1', 'closed-tab')).toEqual({ tabId: 'restored' });
+		expect(mockWebServer.requestReopenTab).toHaveBeenCalledWith('session-1', 'closed-tab');
+		webServerRef.current = null;
+		expect(await handler({}, 'session-1', 'closed-tab')).toBeNull();
 	});
 
 	describe('web:broadcastUserInput', () => {

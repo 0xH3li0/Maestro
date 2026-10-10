@@ -31,6 +31,7 @@ import {
 	type AgentCompletionData,
 	type CueCommand,
 	type CueConfig,
+	type CueAutoRunConfig,
 	type CueNotifyConfig,
 	type CueEventType,
 	type CueRunResult,
@@ -99,6 +100,7 @@ export interface CueEngineDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		autoRun?: CueAutoRunConfig;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -413,7 +415,8 @@ export class CueEngine {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				autoRun
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -429,7 +432,8 @@ export class CueEngine {
 					pipelineName,
 					chainRootId,
 					parentEventId,
-					notify
+					notify,
+					autoRun
 				);
 			},
 			onLog: meteredOnLog,
@@ -677,7 +681,12 @@ export class CueEngine {
 					// chain root in stats. Roots and rows persisted before
 					// usageStats was enabled come back as undefined.
 					entry.chainRootId,
-					entry.parentEventId
+					entry.parentEventId,
+					// The queue table has no column for a notify payload, so a
+					// restored notify run still comes back without one.
+					undefined,
+					// The documents an `action: autorun` run was scheduled with.
+					entry.autoRun
 				);
 			}
 		}

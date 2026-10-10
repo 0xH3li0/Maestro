@@ -20,6 +20,7 @@ import { CUE_CONFIG_PATH, LEGACY_CUE_CONFIG_PATH, MAESTRO_DIR } from '../../shar
 import {
 	DEFAULT_SCHEDULED_TASK_PIPELINE,
 	MAX_SCHEDULE_MINUTES,
+	autoRunTaskLabel,
 	eventForKind,
 	isScheduledTaskEvent,
 	kindForEvent,
@@ -201,6 +202,7 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		graceMinutes: sub.grace_minutes,
 		notifyMessage: sub.notify?.message,
 		notifySticky: sub.notify?.sticky,
+		autoRun: sub.auto_run,
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -255,8 +257,15 @@ export function buildScheduledTaskSubscriptions(
 	const promptText = input.prompt ?? '';
 	const hasPrompt = promptText.length > 0;
 	const hasNotify = input.notify !== undefined && input.notify.message.length > 0;
-	if (!hasPrompt && !hasNotify) {
-		throw new Error('a scheduled task needs a prompt, a notification, or both');
+	const hasAutoRun = (input.autoRun?.documents.length ?? 0) > 0;
+	if (!hasPrompt && !hasNotify && !hasAutoRun) {
+		throw new Error('a scheduled task needs a prompt, a notification, or an Auto Run');
+	}
+	// An Auto Run already carries its own prompt box and drives the agent for
+	// the whole run, so pairing it with a sibling prompt/notify sub would fire
+	// two competing jobs at the same instant in the same agent.
+	if (hasAutoRun && (hasPrompt || hasNotify)) {
+		throw new Error('an Auto Run task cannot also carry a prompt or a notification');
 	}
 
 	const timing: Record<string, unknown> = {};
@@ -299,6 +308,7 @@ export function buildScheduledTaskSubscriptions(
 		input.label ??
 		(hasPrompt ? promptText : undefined) ??
 		input.notify?.message ??
+		(hasAutoRun ? autoRunTaskLabel(input.autoRun!.documents) : undefined) ??
 		`Task ${baseName}`;
 	const label = truncateTaskLabel(labelSource);
 
@@ -332,6 +342,33 @@ export function buildScheduledTaskSubscriptions(
 			pipeline_name: pipelineName,
 			label,
 			notify: notifyConfig,
+		});
+	}
+
+	if (hasAutoRun) {
+		const autoRunConfig: Record<string, unknown> = { documents: input.autoRun!.documents };
+		const resets = input.autoRun!.reset_on_completion;
+		if (resets && resets.some(Boolean)) autoRunConfig.reset_on_completion = resets;
+		if (input.autoRun!.prompt) autoRunConfig.prompt = input.autoRun!.prompt;
+		if (input.autoRun!.loop_enabled) autoRunConfig.loop_enabled = true;
+		if (input.autoRun!.max_loops !== undefined) autoRunConfig.max_loops = input.autoRun!.max_loops;
+		if (input.autoRun!.model) autoRunConfig.model = input.autoRun!.model;
+		if (input.autoRun!.effort) autoRunConfig.effort = input.autoRun!.effort;
+		// `task` is what an absent field means, so only the non-default is written.
+		if (input.autoRun!.task_selection_mode === 'document') {
+			autoRunConfig.task_selection_mode = 'document';
+		}
+		if (input.autoRun!.ignore_model_hints) autoRunConfig.ignore_model_hints = true;
+		subs.push({
+			name: baseName,
+			event,
+			enabled: true,
+			action: 'autorun',
+			...timing,
+			agent_id: agent.id,
+			pipeline_name: pipelineName,
+			label,
+			auto_run: autoRunConfig,
 		});
 	}
 

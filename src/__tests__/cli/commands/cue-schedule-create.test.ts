@@ -234,6 +234,131 @@ describe('cue schedule (create)', () => {
 		expect(subs).toHaveLength(0);
 	});
 
+	// The CLI half of the Auto Run window's Schedule button: same payload, same
+	// writer, so a run an agent schedules reads back like one a person did.
+	describe('--auto-run', () => {
+		function writeDoc(name: string): string {
+			const dir = path.join(projectRoot, '.maestro', 'playbooks');
+			fs.mkdirSync(dir, { recursive: true });
+			const file = path.join(dir, name);
+			fs.writeFileSync(file, '- [ ] ship it\n');
+			return file;
+		}
+
+		it('writes an autorun sub pinned to the absolute document paths', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc] });
+
+			expect(processExitSpy).not.toHaveBeenCalled();
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect(subs).toHaveLength(1);
+			expect(subs[0]).toMatchObject({
+				event: 'time.once',
+				action: 'autorun',
+				agent_id: 'agent-alpha',
+				// Kept on a failed launch without --keep-on-failure being passed.
+				self_destruct_on_failure: false,
+				auto_run: { documents: [doc] },
+			});
+			expect(subs[0].label).toBe('Auto Run: ship-it.md');
+		});
+
+		it('carries every run option the Auto Run window can schedule', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('nightly.md');
+
+			await cueSchedule({
+				in: '2h',
+				agent: 'Alpha',
+				autoRun: [doc],
+				prompt: 'Work the list',
+				resetOnCompletion: true,
+				maxLoops: '3',
+				model: 'opus',
+				effort: 'high',
+				perDocument: true,
+				ignoreModelHints: true,
+			});
+
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			// One sub: with --auto-run the prompt is the run's instructions, not a
+			// second prompt subscription.
+			expect(subs).toHaveLength(1);
+			expect(subs[0].auto_run).toEqual({
+				documents: [doc],
+				reset_on_completion: [true],
+				prompt: 'Work the list',
+				// --max-loops implies --loop.
+				loop_enabled: true,
+				max_loops: 3,
+				model: 'opus',
+				effort: 'high',
+				task_selection_mode: 'document',
+				ignore_model_hints: true,
+			});
+		});
+
+		it('refuses a document that does not exist, writing nothing', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+
+			await expect(
+				cueSchedule({
+					in: '2h',
+					agent: 'Alpha',
+					autoRun: [path.join(projectRoot, 'missing.md')],
+				})
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(/does not exist/);
+			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
+		});
+
+		it('refuses --notify alongside --auto-run', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], notify: true })
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(
+				/--auto-run cannot be combined with --notify/
+			);
+			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
+		});
+
+		it('refuses an Auto Run option passed without --auto-run', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', prompt: 'hello', loop: true })
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(/--loop requires --auto-run/);
+		});
+	});
+
 	it('missing --agent exits 1 with a useful error', async () => {
 		processExitSpy.mockImplementation(() => {
 			throw new Error('process.exit');

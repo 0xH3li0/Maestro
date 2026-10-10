@@ -58,14 +58,113 @@ describe('cue-scheduled-tasks', () => {
 			expect(subs[1].notify).toEqual({ message: 'done', sticky: true });
 		});
 
-		it('rejects a task with neither a prompt nor a notification', () => {
+		it('rejects a task with no prompt, notification, or Auto Run', () => {
 			expect(() =>
 				buildScheduledTaskSubscriptions(agent, {
 					agentId: agent.id,
 					kind: 'once',
 					fireAt: '2030-01-01T10:00:00.000Z',
 				})
-			).toThrow(/prompt, a notification, or both/);
+			).toThrow(/prompt, a notification, or an Auto Run/);
+		});
+
+		it('builds an autorun subscription carrying the captured document list', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-01-01T10:00:00.000Z',
+				keepOnFailure: true,
+				autoRun: {
+					documents: ['/proj/Auto Run Docs/ship-it.md'],
+					reset_on_completion: [true],
+					prompt: 'Work the tasks',
+					loop_enabled: true,
+					max_loops: 3,
+				},
+			});
+
+			expect(subs).toHaveLength(1);
+			expect(subs[0]).toMatchObject({
+				event: 'time.once',
+				action: 'autorun',
+				agent_id: 'agent-alpha',
+				fire_at: '2030-01-01T10:00:00.000Z',
+				// keepOnFailure must survive: a one-shot sub is consumed on any
+				// terminal status, so without this a failed launch deletes the
+				// schedule and leaves nothing to inspect.
+				self_destruct_on_failure: false,
+				auto_run: {
+					documents: ['/proj/Auto Run Docs/ship-it.md'],
+					reset_on_completion: [true],
+					prompt: 'Work the tasks',
+					loop_enabled: true,
+					max_loops: 3,
+				},
+			});
+			expect(subs[0].label).toBe('Auto Run: ship-it.md');
+		});
+
+		// The schedule has to fire with what the Auto Run window was set to, not
+		// with the engine's defaults.
+		it('writes the per-document mode and the model-hint opt-out', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-01-01T10:00:00.000Z',
+				autoRun: {
+					documents: ['/proj/a.md'],
+					task_selection_mode: 'document',
+					ignore_model_hints: true,
+				},
+			});
+
+			expect(subs[0].auto_run).toMatchObject({
+				task_selection_mode: 'document',
+				ignore_model_hints: true,
+			});
+		});
+
+		// `task` is what an absent field means, so it is not written.
+		it('writes neither option at its default', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-01-01T10:00:00.000Z',
+				autoRun: { documents: ['/proj/a.md'], task_selection_mode: 'task' },
+			});
+
+			expect(subs[0].auto_run).toEqual({ documents: ['/proj/a.md'] });
+		});
+
+		it('refuses to pair an Auto Run with a prompt or a notification', () => {
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, {
+					agentId: agent.id,
+					kind: 'once',
+					fireAt: '2030-01-01T10:00:00.000Z',
+					prompt: 'do a thing',
+					autoRun: { documents: ['/proj/a.md'] },
+				})
+			).toThrow(/cannot also carry a prompt or a notification/);
+		});
+
+		it('round-trips an autorun task through cue.yaml', () => {
+			createScheduledTask(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-06-01T09:30:00.000Z',
+				keepOnFailure: true,
+				autoRun: { documents: ['/proj/Auto Run Docs/nightly.md'] },
+			});
+
+			const written = readSubs(projectRoot);
+			expect(written).toHaveLength(1);
+			expect(written[0]).toMatchObject({ action: 'autorun' });
+
+			const { tasks } = collectScheduledTasks([agent]);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].action).toBe('autorun');
+			expect(tasks[0].autoRun?.documents).toEqual(['/proj/Auto Run Docs/nightly.md']);
 		});
 
 		it('rejects an out-of-range interval', () => {

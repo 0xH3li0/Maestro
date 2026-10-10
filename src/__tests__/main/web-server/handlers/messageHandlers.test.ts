@@ -1595,6 +1595,31 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Open Terminal Tab (Web → Desktop)', () => {
+		it('forwards an explicit human-input request to the terminal opener', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				inputRequired: true,
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ inputRequired: true }),
+					{ background: false }
+				);
+			});
+		});
+
+		it('rejects a malformed human-input signal', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				inputRequired: 'yes',
+			});
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+			expect((client.socket.send as any).mock.calls[0][0]).toContain('Invalid inputRequired');
+		});
+
 		it('should forward open terminal tab with sessionId', async () => {
 			handler.handleMessage(client, {
 				type: 'open_terminal_tab',
@@ -4736,6 +4761,28 @@ describe('WebSocketMessageHandler', () => {
 				groupId: 'group-1',
 				clear: ['collapsed'],
 			});
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+		});
+
+		it('forwards a hide request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', hidden: true });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { hidden: true });
+			});
+		});
+
+		it('forwards a show request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', hidden: false });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { hidden: false });
+			});
+		});
+
+		it('rejects an update_group whose hidden is not a boolean', () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', hidden: 'true' });
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
 		});

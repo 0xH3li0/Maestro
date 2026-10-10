@@ -67,6 +67,8 @@ export interface GroupDisplay {
 	name: string;
 	emoji?: string;
 	collapsed?: boolean;
+	/** Parked out of the Left Bar. */
+	hidden?: boolean;
 }
 
 export function formatGroups(groups: GroupDisplay[]): string {
@@ -82,7 +84,7 @@ export function formatGroups(groups: GroupDisplay[]): string {
 		const emoji = group.emoji || '📁';
 		const name = c('white', group.name);
 		const id = dim(group.id);
-		lines.push(`  ${emoji}  ${name}`);
+		lines.push(`  ${emoji}  ${name}${group.hidden ? dim(' (hidden)') : ''}`);
 		lines.push(`      ${id}`);
 	}
 

@@ -1492,6 +1492,47 @@ describe('createCueRunManager', () => {
 			);
 		});
 
+		// A scheduled Auto Run that fires behind a busy slot waits in the queue.
+		// Its documents ride the run rather than being re-read from the
+		// subscription, so they have to be written with the row.
+		it('persists the Auto Run payload of a queued autorun run', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			const autoRun = { documents: ['/repo/.maestro/playbooks/ship-it.md'] };
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute(
+				'session-1',
+				'',
+				createEvent(),
+				'scheduled',
+				undefined,
+				undefined,
+				undefined,
+				'autorun',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				autoRun
+			); // queued
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ action: 'autorun', autoRun })
+			);
+		});
+
 		it('calls queuePersistence.remove when a queued event drains', async () => {
 			const persistence = makeMockPersistence();
 			let resolveFirst: ((r: CueRunResult) => void) | null = null;
