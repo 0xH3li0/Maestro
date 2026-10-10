@@ -44,6 +44,7 @@ import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
 import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
+import { killAgentAiProcesses } from '../../services/process';
 import {
 	canCreateGroupInside,
 	canSetGroupParent,
@@ -1611,7 +1612,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// Kill processes
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await killAgentAiProcesses(sessionId);
 		} catch {
 			/* ignore */
 		}
@@ -1804,8 +1805,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				executionQueue: [],
 			};
 
-			// Kill the existing AI process for the old provider (no-op if none).
-			window.maestro.process.kill(`${sessionId}-ai`).catch(() => {});
+			// Kill the old provider's AI processes (no-op if none). Every tab is
+			// replaced below, so a turn left running would write into nothing.
+			killAgentAiProcesses(sessionId).catch(() => {});
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => (s.id === sessionId ? { ...s, ...providerSwitch } : s))

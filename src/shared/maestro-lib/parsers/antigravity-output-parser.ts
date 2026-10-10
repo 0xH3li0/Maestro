@@ -94,6 +94,13 @@ interface AntigravityStreamMessage {
 const STREAM_EVENTS = ['init', 'step_update', 'result'];
 
 /**
+ * agy's stderr line for an expired `--print-timeout`:
+ * `[agy] print timeout after 30m0s with turn in progress; returning partial output`.
+ * Multiline because stderr arrives in chunks that can hold several lines.
+ */
+const PRINT_TIMEOUT_WARNING = /^\[agy\] print timeout after \S+ with turn in progress/m;
+
+/**
  * Map a step's lifecycle word onto the status vocabulary the tool badge reads.
  *
  * The raw `state` string used to be handed to `toolState` directly, which meant
@@ -363,6 +370,26 @@ export class AntigravityOutputParser implements AgentOutputParser {
 	detectErrorFromLine(line: string): AgentError | null {
 		if (!line.trim()) {
 			return null;
+		}
+
+		// agy's own stderr warning when `--print-timeout` expires mid-turn. Since
+		// agy 1.2.x the run then returns the PARTIAL answer and exits 0, so neither
+		// the result event nor the exit code says the turn was cut off, and the
+		// bank's `print timeout` pattern - reachable only through a non-zero exit -
+		// never fired: a truncated answer read as a finished one. Anchored to agy's
+		// prefix so text that merely mentions the flag is never classified. Typed
+		// `unknown`, not `network_error`, because resending the same prompt under
+		// the same timeout repeats the partial work and is cut off again.
+		if (PRINT_TIMEOUT_WARNING.test(line)) {
+			return {
+				type: 'unknown',
+				message:
+					'The headless run hit its timeout and returned a partial answer. Raise the "Headless Timeout" option in the agent settings.',
+				recoverable: true,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+				raw: { errorLine: line },
+			};
 		}
 
 		try {

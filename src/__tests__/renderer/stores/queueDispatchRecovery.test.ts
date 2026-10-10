@@ -165,8 +165,11 @@ describe('a queue drain that races a dying process', () => {
 		// not claim it was sent.
 		expect(session().executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
 		expect(cardsFor('q1')).toBe(0);
-		expect(session().aiTabs[0].state).toBe('idle');
-		expect(session().state).toBe('idle');
+		// The interrupted child still owns this tab, so it stays busy: releasing it
+		// painted a live process "Ready" and told every drain the tab was free. The
+		// child's exit is what settles it - and what drains q1 below.
+		expect(session().aiTabs[0].state).toBe('busy');
+		expect(session().state).toBe('busy');
 
 		// A collision is transient, so the item comes back RUNNABLE - the exit
 		// listener drains it for real a moment later, once the child is gone.
@@ -293,7 +296,8 @@ describe('recovery on a multi-tab agent', () => {
 			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
 			executionQueue: [queued('q1', 'hello')],
 		});
-		mockSpawn.mockRejectedValueOnce(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+		// A real failure, so something IS released (a collision releases nothing).
+		mockSpawn.mockRejectedValueOnce(new Error('spawn claude ENOENT'));
 
 		await drainOnce();
 
@@ -316,6 +320,60 @@ describe('recovery on a multi-tab agent', () => {
 
 		// Matching by text would have deleted the user's real history here.
 		expect(session().aiTabs[0].logs.map((l) => l.id)).toEqual(['earlier']);
+	});
+
+	it('leaves the agent busy when the colliding tab is not the only one running', async () => {
+		setSession({
+			...session(),
+			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
+			executionQueue: [queued('q1', 'hello')],
+		});
+		mockSpawn.mockRejectedValueOnce(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+
+		await drainOnce();
+
+		expect(session().aiTabs.find((t) => t.id === TAB)!.state).toBe('busy');
+		expect(session().aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+		expect(session().state).toBe('busy');
+		expect(session().executionQueue[0].paused).toBeFalsy();
+	});
+});
+
+// ============================================================================
+// An item whose own tab is gone
+// ============================================================================
+
+describe('a queued item whose tab was closed', () => {
+	// The queue resolves a dead tabId onto the ACTIVE tab and marks that tab
+	// running, card included; `processQueuedItem` then refuses to run there.
+	it('takes back the busy state and the card it never sent, and keeps other turns busy', async () => {
+		setSession({
+			...session(),
+			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
+			activeTabId: TAB,
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+
+		await drainOnce();
+
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(cardsFor('q1')).toBe(0);
+		expect(session().aiTabs.find((t) => t.id === TAB)!.state).toBe('idle');
+		// Forcing the agent idle read "Ready" while tab-2 was still mid-turn.
+		expect(session().aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+		expect(session().state).toBe('busy');
+	});
+
+	it('goes idle when nothing else is running', async () => {
+		setSession({
+			...session(),
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+
+		await drainOnce();
+
+		expect(session().aiTabs[0].state).toBe('idle');
+		expect(session().state).toBe('idle');
 	});
 });
 

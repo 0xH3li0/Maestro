@@ -51,7 +51,11 @@ import {
 	type CrossAgentMentionDispatch,
 } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
-import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
+import {
+	applyQueuedItemAbort,
+	applyQueuedItemDispatchFailure,
+	applyQueuedItemRelease,
+} from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -335,12 +339,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
+		// Turns run per tab (`{id}-ai-{tabId}`), so the bare `{id}-ai` this used to
+		// kill matched nothing and a hung turn survived the restart. Restart the
+		// tab that failed; another tab's healthy turn is left alone. Read before
+		// clearing the error, which drops `agentErrorTabId`.
+		const errorTabId = session.agentErrorTabId;
+
 		// Clear the error state
 		get().clearAgentError(sessionId);
 
 		// Kill any existing AI process
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await window.maestro.process.kill(
+				errorTabId ? `${sessionId}-ai-${errorTabId}` : `${sessionId}-ai`
+			);
 		} catch {
 			// Process may not exist
 		}
@@ -380,18 +392,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
-			// Reset session to idle since we're aborting this queued item
-			useSessionStore.getState().setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					return {
-						...s,
-						state: 'idle' as SessionState,
-						busySource: undefined,
-						thinkingStartTime: undefined,
-					};
-				})
-			);
+			useSessionStore
+				.getState()
+				.setSessions((prev) =>
+					prev.map((s) => (s.id === sessionId ? applyQueuedItemAbort(s, item) : s))
+				);
 			return false;
 		}
 
@@ -652,29 +657,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						},
 						item.tabId
 					);
-					useSessionStore.getState().setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const updatedAiTabs = s.aiTabs?.map((tab) =>
-								tab.id === item.tabId
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-										}
-									: tab
-							);
-							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						})
-					);
 					// Nothing spawned and nothing will: the command does not exist, so
-					// no exit is coming to settle this turn.
+					// no exit is coming to settle this turn. Release the tab it was
+					// marked on and keep the agent busy if another tab is mid-turn.
+					useSessionStore
+						.getState()
+						.setSessions((prev) =>
+							prev.map((s) => (s.id === sessionId ? applyQueuedItemRelease(s, targetTab.id) : s))
+						);
 					return false;
 				}
 			}
@@ -711,7 +701,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const recovered = applyQueuedItemDispatchFailure(s, item, { hold: !isSpawnCollision });
+					const recovered = applyQueuedItemDispatchFailure(s, item, {
+						collision: isSpawnCollision,
+					});
 					if (isSpawnCollision) return recovered;
 
 					const resolvedTabId = item.tabId ?? s.activeTabId;
