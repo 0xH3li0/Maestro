@@ -1842,19 +1842,19 @@ describe('CodexOutputParser', () => {
 					item: {
 						id: 'item_2',
 						type: 'mcp_tool_call',
-						server: 'gitnexus',
-						tool: 'query',
-						arguments: { search_query: 'auth' },
-						result: { content: [{ type: 'text', text: 'found 3 flows' }] },
+						server: 'docs',
+						tool: 'search',
+						arguments: { query: 'auth' },
+						result: { content: [{ type: 'text', text: 'found 3 pages' }] },
 						status: 'completed',
 					},
 				})
 			);
-			expect(event?.toolName).toBe('mcp__gitnexus__query');
+			expect(event?.toolName).toBe('mcp__docs__search');
 			expect(event?.toolState).toEqual({
 				status: 'completed',
-				input: { search_query: 'auth' },
-				output: 'found 3 flows',
+				input: { query: 'auth' },
+				output: 'found 3 pages',
 			});
 
 			const failed = parser.parseJsonLine(
@@ -1863,8 +1863,8 @@ describe('CodexOutputParser', () => {
 					item: {
 						id: 'item_3',
 						type: 'mcp_tool_call',
-						server: 'gitnexus',
-						tool: 'query',
+						server: 'docs',
+						tool: 'search',
 						arguments: {},
 						error: { message: 'server not running' },
 						status: 'failed',
