@@ -22,6 +22,7 @@ import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
 import { flushPendingSessionWritesSync } from '../stores';
+import { flushCotConfigStoreSync } from '../cot-export/config-store';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -349,6 +350,15 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			flushPendingSessionWritesSync();
 		} catch (err) {
 			logger.error(`Error flushing sessions on quit: ${err}`, 'Shutdown');
+		}
+
+		// The per-device state store saves behind a short timer for the same
+		// reason, so its last write is landed here too, before anything further
+		// down can throw.
+		try {
+			flushCotConfigStoreSync();
+		} catch (err) {
+			logger.error(`Error flushing device state on quit: ${err}`, 'Shutdown');
 		}
 
 		// Snapshot the multi-window layout while every window is still open and its

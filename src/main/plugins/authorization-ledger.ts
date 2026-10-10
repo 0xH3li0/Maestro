@@ -36,6 +36,8 @@ import { randomBytes } from 'crypto';
 import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
+import { safeStorageSeal } from '../utils/safe-storage-seal';
+import type { SafeStorageLike, SealProvider } from '../utils/safe-storage-seal';
 
 /** Schema version of the sealed ledger payload. */
 export const LEDGER_VERSION = 1 as const;
@@ -87,18 +89,10 @@ export interface Anchor {
 	epoch: number;
 }
 
-/** Seals/unseals bytes via an OS-key-backed primitive (safeStorage). */
-export interface SealProvider {
-	available(): boolean;
-	seal(plaintext: string): Buffer;
-	unseal(blob: Buffer): string;
-}
-
-export interface SafeStorageLike {
-	isEncryptionAvailable(): boolean;
-	encryptString(s: string): Buffer;
-	decryptString(b: Buffer): string;
-}
+// The seal primitive lives in `utils/safe-storage-seal.ts` so every sealed
+// store shares one copy. Re-exported so this module's importers are unchanged.
+export { safeStorageSeal };
+export type { SafeStorageLike, SealProvider };
 
 /** Named credential-store slot for the anchor, OUTSIDE the data-dir file tree. */
 export interface AnchorStore {
@@ -474,21 +468,6 @@ export class AuthorizationStore {
 		}
 		return { authorized: true, reason: 'ok', caps: kept.map((c) => ({ ...c })) };
 	}
-}
-
-/** Production `SealProvider` over Electron `safeStorage`. */
-export function safeStorageSeal(safeStorage: SafeStorageLike): SealProvider {
-	return {
-		available: () => {
-			try {
-				return safeStorage.isEncryptionAvailable();
-			} catch {
-				return false;
-			}
-		},
-		seal: (plaintext) => safeStorage.encryptString(plaintext),
-		unseal: (blob) => safeStorage.decryptString(blob),
-	};
 }
 
 /**

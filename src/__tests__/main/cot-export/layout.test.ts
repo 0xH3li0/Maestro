@@ -11,6 +11,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+	countTurnFilesOnDay,
+	isSameFolder,
 	listTurnFiles,
 	turnFileFolder,
 	turnFilePath,
@@ -129,6 +131,85 @@ describe('listTurnFiles', () => {
 	it('finds nothing in a folder that is empty or does not exist', async () => {
 		expect(await listTurnFiles(folder)).toEqual([]);
 		expect(await listTurnFiles(path.join(folder, 'missing'))).toEqual([]);
+	});
+});
+
+describe('countTurnFilesOnDay', () => {
+	let folder: string;
+
+	const touch = (start: Date, turnId: string): string => {
+		const file = turnFilePath(folder, start, 'tab', turnId);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, '');
+		return file;
+	};
+
+	beforeEach(() => {
+		folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cot-count-')));
+	});
+
+	afterEach(() => {
+		fs.rmSync(folder, { recursive: true, force: true });
+	});
+
+	it('counts the turns filed under that LOCAL date, across its hour folders', async () => {
+		touch(new Date(2026, 9, 10, 0, 0, 1), 'turn-a');
+		touch(new Date(2026, 9, 10, 9, 0, 0), 'turn-b');
+		touch(new Date(2026, 9, 10, 9, 30, 0), 'turn-c');
+		touch(new Date(2026, 9, 10, 23, 59, 59), 'turn-d');
+		// The day before and the day after are other days.
+		touch(new Date(2026, 9, 9, 23, 59, 59), 'turn-e');
+		touch(new Date(2026, 9, 11, 0, 0, 0), 'turn-f');
+		expect(await countTurnFilesOnDay(folder, new Date(2026, 9, 10, 15, 0, 0))).toBe(4);
+		expect(await countTurnFilesOnDay(folder, new Date(2026, 9, 9, 1, 0, 0))).toBe(1);
+	});
+
+	it('counts only turn files', async () => {
+		const turn = touch(new Date(2026, 9, 10, 9, 0, 0), 'turn-a');
+		const hourDir = path.dirname(turn);
+		fs.writeFileSync(path.join(hourDir, '.maestro-write-probe-1-abc'), '');
+		fs.writeFileSync(path.join(hourDir, 'notes.txt'), '');
+		fs.mkdirSync(path.join(path.dirname(hourDir), 'not-an-hour'));
+		fs.writeFileSync(path.join(path.dirname(hourDir), 'not-an-hour', 'stray.jsonl'), '');
+		expect(await countTurnFilesOnDay(folder, new Date(2026, 9, 10))).toBe(1);
+	});
+
+	it('counts none for a day, or a folder, that does not exist', async () => {
+		expect(await countTurnFilesOnDay(folder, new Date(2026, 9, 10))).toBe(0);
+		expect(await countTurnFilesOnDay(path.join(folder, 'missing'), new Date(2026, 9, 10))).toBe(0);
+	});
+});
+
+describe('isSameFolder', () => {
+	const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+	const setPlatform = (value: string): void => {
+		Object.defineProperty(process, 'platform', { value, configurable: true });
+	};
+	const base = path.join(os.tmpdir(), 'Cot-Same');
+
+	afterEach(() => {
+		if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
+	});
+
+	it('takes the same path, and another spelling of it, as one folder', () => {
+		expect(isSameFolder(base, base)).toBe(true);
+		expect(isSameFolder(base, path.join(base, 'logs', '..'))).toBe(true);
+		expect(isSameFolder(base, `${base}${path.sep}`)).toBe(true);
+	});
+
+	it('keeps a folder apart from one inside it and from one that shares its start', () => {
+		expect(isSameFolder(base, path.join(base, 'logs'))).toBe(false);
+		expect(isSameFolder(base, `${base}-other`)).toBe(false);
+	});
+
+	it('ignores case on macOS and Windows, and not on Linux', () => {
+		const shouted = path.join(path.dirname(base), path.basename(base).toUpperCase());
+		setPlatform('darwin');
+		expect(isSameFolder(base, shouted)).toBe(true);
+		setPlatform('win32');
+		expect(isSameFolder(base, shouted)).toBe(true);
+		setPlatform('linux');
+		expect(isSameFolder(base, shouted)).toBe(false);
 	});
 });
 

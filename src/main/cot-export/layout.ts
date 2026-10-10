@@ -10,8 +10,9 @@
  * person who reads these folders reads them on their own clock, so a UTC
  * name would read as the wrong hour to everyone outside UTC.
  *
- * `turnFileFolder` and `listTurnFiles` read that same layout back, so the
- * writer and the verifier do not each hold a copy of it.
+ * `turnFileFolder`, `listTurnFiles` and `countTurnFilesOnDay` read that same
+ * layout back, so the writer, the verifier and the store do not each hold a
+ * copy of it.
  *
  * `validateAgentFolder` is the barrier that keeps a log out of any agent's
  * workspace and out of Maestro's own data directory. An agent searches its
@@ -153,6 +154,26 @@ export async function listTurnFiles(
 	return files;
 }
 
+/**
+ * How many turns are filed under the date of `day`, on the LOCAL clock: the
+ * turn files in that day's hour folders. A day with no folder has none.
+ *
+ * It throws when a folder exists and cannot be read.
+ */
+export async function countTurnFilesOnDay(agentFolder: string, day: Date): Promise<number> {
+	const dayDir = path.join(
+		agentFolder,
+		pad(day.getFullYear(), 4),
+		pad(day.getMonth() + 1, 2),
+		pad(day.getDate(), 2)
+	);
+	let count = 0;
+	for (const hour of await namesNewestFirst(dayDir, TWO_DIGIT_FOLDER, 'folder')) {
+		count += (await namesNewestFirst(path.join(dayDir, hour), TURN_FILE, 'file')).length;
+	}
+	return count;
+}
+
 /** What `validateAgentFolder` needs to know about the machine. */
 export interface AgentFolderContext {
 	/** Every local agent's `cwd` and `projectRoot`, not only the agent being set up. */
@@ -197,6 +218,17 @@ function resolveRealPath(target: string): string {
  */
 function foldCase(p: string): string {
 	return isMacOS() || isWindows() ? p.toLowerCase() : p;
+}
+
+/**
+ * True when two paths name one folder, by the case rule of this machine's file
+ * system. It compares the paths as written and follows no symlink, so give it
+ * real paths (`validateAgentFolder` returns one).
+ *
+ * One folder holds one chain, so this is the test for "the same chain".
+ */
+export function isSameFolder(a: string, b: string): boolean {
+	return a === b || foldCase(path.resolve(a)) === foldCase(path.resolve(b));
 }
 
 /**
