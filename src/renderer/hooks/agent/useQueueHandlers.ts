@@ -18,6 +18,7 @@ import {
 	applyQueuedItemDispatch,
 	applyQueuedItemEdit,
 	getQueueBusyContext,
+	getSteerEligibility,
 } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
@@ -223,10 +224,13 @@ export function useQueueHandlers({
 			return;
 		}
 
-		// Guarded by getSteerEligibility before the button renders; re-checked because
-		// this hook is also reachable from a surface that has not asked.
+		// Guarded by getSteerEligibility before the button renders; re-checked against
+		// the LIVE item because the card can be stale by the click (a consult hold
+		// landed, the turn ended), and this hook is reachable from surfaces that never
+		// asked. Re-checking with the same predicate keeps the two from disagreeing.
+		if (!getSteerEligibility(session, item).canSteer) return;
 		const text = item.text?.trim();
-		if (!text || item.images?.length) return;
+		if (!text) return;
 
 		const result = await steer(processKey, text);
 

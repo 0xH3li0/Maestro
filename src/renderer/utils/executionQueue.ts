@@ -504,7 +504,10 @@ export type SteerBlockedReason =
 	| 'not-claude'
 	| 'api-token-source'
 	| 'nothing-to-type'
-	| 'has-images';
+	| 'has-images'
+	| 'awaiting-consult'
+	| 'cross-agent-mention'
+	| 'has-agent-context';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -544,7 +547,10 @@ export interface SteerEligibility {
  */
 export function getSteerEligibility(
 	session: Session,
-	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'>
+	item: Pick<
+		QueuedItem,
+		'tabId' | 'text' | 'images' | 'awaitingConsult' | 'crossAgentMention' | 'agentContext'
+	>
 ): SteerEligibility {
 	if (!resolveQueuedItemTarget(session, item)) {
 		return { canSteer: false, blockedReason: 'no-target-tab' };
@@ -569,6 +575,17 @@ export function getSteerEligibility(
 	// the text alone would silently discard what the user attached, so the item stays
 	// queued and sends intact when the turn ends.
 	if (item.images?.length) return { canSteer: false, blockedReason: 'has-images' };
+	// The three below are items whose dispatch does MORE than send their text, so
+	// typing the text into the running turn would quietly drop the rest. A consult
+	// hold has nothing to type yet: its text is a placeholder until the reply lands.
+	if (item.awaitingConsult) return { canSteer: false, blockedReason: 'awaiting-consult' };
+	// A queued `@mention` fires its consult when processQueuedItem dispatches it.
+	// Steering bypasses that path, so the mention would reach claude as plain text
+	// and the mentioned agent would never be asked.
+	if (item.crossAgentMention) return { canSteer: false, blockedReason: 'cross-agent-mention' };
+	// A released hold carries the consult's replies in agentContext, which only the
+	// spawn prepends. Typing the visible text alone would lose the replies.
+	if (item.agentContext) return { canSteer: false, blockedReason: 'has-agent-context' };
 	return { canSteer: true };
 }
 

@@ -747,6 +747,42 @@ describe('getSteerEligibility', () => {
 		).toEqual({ canSteer: false, blockedReason: 'has-images' });
 	});
 
+	it('refuses a consult hold: its text is a placeholder until the reply lands', () => {
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'Waiting',
+				awaitingConsult: {
+					pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+					replies: [],
+				},
+			})
+		).toEqual({ canSteer: false, blockedReason: 'awaiting-consult' });
+	});
+
+	it('refuses an @mention whose consult has not fired yet', () => {
+		// The consult fires when processQueuedItem dispatches the item. Steering
+		// bypasses that, so the mentioned agent would never be asked.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'ask @Backend about the schema',
+				crossAgentMention: true,
+			})
+		).toEqual({ canSteer: false, blockedReason: 'cross-agent-mention' });
+	});
+
+	it('refuses an item carrying agent-only context rather than dropping it', () => {
+		// agentContext holds a consult's replies and is prepended only at spawn.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'continue',
+				agentContext: 'Backend replied: use v2',
+			})
+		).toEqual({ canSteer: false, blockedReason: 'has-agent-context' });
+	});
+
 	it('is mutually exclusive with Force Send', () => {
 		// Force Send needs the target tab IDLE, steering needs it BUSY, so a queued
 		// card offers exactly one of them and never both.
@@ -773,6 +809,11 @@ describe('shouldOfferSteer', () => {
 			'tab-not-working',
 			'not-claude',
 			'api-token-source',
+			'nothing-to-type',
+			'has-images',
+			'awaiting-consult',
+			'cross-agent-mention',
+			'has-agent-context',
 		] as const) {
 			expect(shouldOfferSteer({ canSteer: false, blockedReason })).toBe(false);
 		}

@@ -12,7 +12,7 @@ import * as path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { SteeringResultFrame } from '../../maestro-p/steering';
+import type { SteeringResultFrame } from '../../shared/chatSteering';
 import { MAX_PENDING_LINE_BYTES, startSteeringServer } from '../../maestro-p/steering-server';
 
 const opened: Array<{ close: () => void }> = [];
