@@ -23,6 +23,7 @@ import {
 	snoozeTabCommand,
 	snoozeWake,
 } from './commands/snooze';
+import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -544,6 +545,33 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+// Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
+// agent and on a group) and the matching Cmd+K commands. Answered by the primary
+// window through the same code path as a click.
+const windowCmd = program
+	.command('window')
+	.description('List Maestro windows, and move agents or whole groups between them');
+
+windowCmd
+	.command('list')
+	.description('List open windows and the agents each one holds')
+	.option('--json', 'Output as JSON')
+	.action(windowList);
+
+windowCmd
+	.command('move-agent <agent-id>')
+	.description('Move an agent (with its worktrees) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveAgent);
+
+windowCmd
+	.command('move-group <group-id>')
+	.description('Move every agent in a group (with subgroups when nesting is on) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveGroup);
 
 // Snooze commands - the CLI half of the Snooze dialog (Opt+Cmd+S), the Snoozed
 // Tabs list, and its history log. `<when>` takes the same expressions the dialog

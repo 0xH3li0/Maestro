@@ -214,6 +214,7 @@ import type { AgentRunApi } from '../main/preload/agentRun';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 
 interface MaestroAPI {
@@ -4905,6 +4906,11 @@ interface MaestroAPI {
 		onHighlightDropZone: (
 			callback: (payload: { windowId: string; active: boolean }) => void
 		) => () => void;
+		// Subscribe to `maestro-cli window` requests (primary window only); returns unsubscribe.
+		onRemoteCommand: (
+			callback: (request: WindowCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCommandResponse: (responseChannel: string, result: WindowCommandResult) => void;
 	};
 	/**
 	 * Session Images API. Pasted transcript images are stored content-addressed

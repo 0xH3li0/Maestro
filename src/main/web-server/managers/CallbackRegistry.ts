@@ -21,6 +21,7 @@ import type {
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -152,6 +153,7 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -178,6 +180,7 @@ export interface WebServerCallbacks {
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
@@ -282,6 +285,7 @@ export class CallbackRegistry {
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
@@ -467,6 +471,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Snooze is not configured' };
 		}
 		return this.callbacks.snoozeCommand(request);
+	}
+
+	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
+		if (!this.callbacks.windowCommand) {
+			return { success: false, error: 'Window commands are not configured' };
+		}
+		return this.callbacks.windowCommand(request);
 	}
 
 	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
@@ -1142,6 +1153,10 @@ export class CallbackRegistry {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbacks.snoozeCommand = callback;
+	}
+
+	setWindowCommandCallback(callback: WindowCommandCallback): void {
+		this.callbacks.windowCommand = callback;
 	}
 
 	setReorderTabCallback(callback: ReorderTabCallback): void {

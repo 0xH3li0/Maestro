@@ -304,6 +304,36 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli window`
+
+List Maestro windows, and move agents or whole groups between them
+
+## `maestro-cli window list`
+
+List open windows and the agents each one holds
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli window move-agent <agent-id>`
+
+Move an agent (with its worktrees) to another window
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--to <window>` | "new", "main", a window number, a window id, or a window name | -       |
+| `--json`        | Output as JSON                                                | -       |
+
+## `maestro-cli window move-group <group-id>`
+
+Move every agent in a group (with subgroups when nesting is on) to another window
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--to <window>` | "new", "main", a window number, a window id, or a window name | -       |
+| `--json`        | Output as JSON                                                | -       |
+
 ## `maestro-cli snooze`
 
 Park a tab until later, and manage what is parked

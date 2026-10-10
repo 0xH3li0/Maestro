@@ -238,6 +238,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Focus an agent, switch AI/Shell mode               | `focus-agent`, `switch-mode`                                                                     |
 | Create / rename / remove a group                   | `create-group`, `rename-group`, `remove-group`                                                   |
 | Group icon, color, and nesting                     | `create-group --icon/--color/--parent`, `update-group`                                           |
+| Move an agent or a whole group to another window   | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`            |
 | Create a worktree agent                            | `create-worktree`                                                                                |
 | New / close / rename a tab                         | `tab new`, `tab close`, `tab rename`                                                             |
 | Star a tab (Cmd+Shift+S)                           | `tab star` / `tab unstar`                                                                        |

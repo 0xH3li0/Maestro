@@ -6,6 +6,7 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -387,6 +388,12 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * `maestro-cli window` - list windows, or move an agent or a whole group
+ * between them. Answered by the primary window through the same WindowContext
+ * methods the Left Bar menus call. Resolves rather than rejects on a miss.
+ */
+export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
