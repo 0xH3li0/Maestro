@@ -39,15 +39,19 @@ import Database from 'better-sqlite3';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { cleanToolOutputText } from '../../shared/toolOutput';
+import {
+	setMaestroLibAntigravityStepStore,
+	type AntigravityStepStore,
+} from '../../shared/maestro-lib/host';
 
-/** What the parser asks the store for. Injected so tests need no disk. */
-export interface AntigravityStepStore {
-	/** Thinking summary agy recorded for a model step, or ''. */
-	readThinking(conversationId: string, stepIndex: number): string;
-	/** Result text agy fed back to the model for a tool step, or ''. */
-	readToolResult(conversationId: string, stepIndex: number): string;
-}
+// The parser moved into maestro-lib, which may not import this file (it opens a
+// native SQLite store), so it reads the store through the host seam registered
+// at the bottom of this module. Its pure result helpers moved with it.
+export type { AntigravityStepStore };
+export {
+	commandExitCode,
+	storedResultSummary,
+} from '../../shared/maestro-lib/parsers/antigravity-output-parser';
 
 /** agy conversation ids are UUIDs; anything else must not become a path. */
 export const ANTIGRAVITY_CONVERSATION_ID =
@@ -150,44 +154,6 @@ export function toolResultFromStepPayload(payload: Uint8Array): string {
 	return utf8(fieldAt(payload, [140, 2, 1]));
 }
 
-/**
- * agy's status line, which opens every run_command result (all 5,203 in one
- * real store set, after a leading newline). Anchored, because a file that
- * merely contains this sentence must not read as a failed command.
- */
-const COMMAND_STATUS = /^\s*The command exited with code (-?\d+)\./;
-
-/** Exit code from a run_command result agy fed back to the model; other tools have none. */
-export function commandExitCode(toolName: string | undefined, result: string): number | undefined {
-	if (toolName !== 'run_command') return undefined;
-	const match = COMMAND_STATUS.exec(result);
-	return match ? Number(match[1]) : undefined;
-}
-
-/**
- * Badge text from a stored tool result: the diff an edit applied, else what a
- * command printed, else the result's first line ("Created file ...", "The
- * command exited with code 1."). The rest of a result is instructions to the
- * model ("Don't ask for permission"), not output.
- */
-export function storedResultSummary(result: string): string {
-	// CRLF separators would miss the LF-only patterns below and fall through to the status line.
-	result = result.replace(/\r\n/g, '\n');
-	const diffs = [...result.matchAll(/\[diff_block_start\]\n?([\s\S]*?)\n?\[diff_block_end\]/g)].map(
-		(match) => match[1].trimEnd()
-	);
-	if (diffs.length > 0) return cleanToolOutputText(diffs.join('\n'));
-	// run_command: "...exited with code N.\nOutput:\n<out>" or "...\nStdout:\n<out>\nStderr:\n<err>".
-	// Anchored to the status line so a file that contains "Output:" is not mistaken for it.
-	const printed =
-		/^\s*The command exited with code -?\d+\.\n(?:Output|Stdout):\n([\s\S]*?)(?:\nStderr:\n([\s\S]*))?$/.exec(
-			result
-		);
-	const body = printed ? [printed[1], printed[2]].map((part) => part?.trim()).filter(Boolean) : [];
-	if (body.length > 0) return cleanToolOutputText(body.join('\n'));
-	return cleanToolOutputText(result.split('\n').find((line) => line.trim()) ?? '');
-}
-
 /** agy's local data directory. */
 export function antigravityHome(): string {
 	// ponytail: default agy home only; follow an override env var if agy ever documents one.
@@ -264,3 +230,5 @@ export const antigravityStepStore: AntigravityStepStore = {
 		return payload ? toolResultFromStepPayload(payload) : '';
 	},
 };
+
+setMaestroLibAntigravityStepStore(antigravityStepStore);
