@@ -24,7 +24,12 @@
 import * as fs from 'fs';
 import * as net from 'net';
 
-import { parseSteeringRequest, type SteeringResultFrame } from '../shared/chatSteering';
+import {
+	oversizeSteeringRequestId,
+	parseSteeringRequest,
+	STEERING_TOO_LONG_DETAIL,
+	type SteeringResultFrame,
+} from '../shared/chatSteering';
 
 export interface SteeringServerOptions {
 	socketPath: string;
@@ -103,6 +108,25 @@ export function startSteeringServer(options: SteeringServerOptions): SteeringSer
 		const handleLine = async (line: string): Promise<void> => {
 			const request = parseSteeringRequest(line);
 			if (!request) {
+				// An oversize steer is still a request with an id, so it gets an answer:
+				// silence leaves the caller on its timeout, reporting `unknown` for text
+				// that was never typed.
+				const oversizeId = oversizeSteeringRequestId(line);
+				if (oversizeId) {
+					const refused: SteeringResultFrame = {
+						type: 'steering',
+						id: oversizeId,
+						verdict: 'refused',
+						refusal: 'too-long',
+						detail: STEERING_TOO_LONG_DETAIL,
+					};
+					try {
+						socket.write(`${JSON.stringify(refused)}\n`);
+					} catch {
+						// Peer gone.
+					}
+					return;
+				}
 				if (line.trim()) warn('maestro-p: ignoring an unrecognized steering frame.');
 				return;
 			}

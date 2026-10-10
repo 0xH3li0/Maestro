@@ -125,7 +125,8 @@ export type SteeringRefusal =
 	| 'blocking-dialog' // a permission/plan/trust dialog owns the keyboard
 	| 'editor-unavailable' // editor not drawn and no dialog named it; unknown screen
 	| 'echo-missing' // typed, but the text never appeared; NOT submitted
-	| 'tui-exited'; // the PTY went away mid-injection
+	| 'tui-exited' // the PTY went away mid-injection
+	| 'too-long'; // over STEERING_MAX_TEXT_BYTES; never typed
 
 /** Control frame in: a request to steer the running turn. */
 export interface SteeringRequestFrame {
@@ -166,6 +167,36 @@ export function steeringTextBytes(text: string): number {
 	return new TextEncoder().encode(text).length;
 }
 
+/** Whether `text` is over the per-frame cap and so can never be typed as a steer. */
+export function steeringTextTooLong(text: string): boolean {
+	return steeringTextBytes(text) > STEERING_MAX_TEXT_BYTES;
+}
+
+/** The detail every layer reports for an over-cap steer, so the wording cannot drift. */
+export const STEERING_TOO_LONG_DETAIL = `the message is over the ${STEERING_MAX_TEXT_BYTES / 1024} KB steering limit`;
+
+/**
+ * The id of a well-formed steer frame whose ONLY fault is its size, else null.
+ *
+ * Exists so the server can answer an oversize frame with `refused` instead of
+ * ignoring it. Silence left the caller waiting out its own timeout and then
+ * reporting `unknown`, which the UI treats as "maybe typed" and pauses - for text
+ * that provably never reached the PTY.
+ */
+export function oversizeSteeringRequestId(line: string): string | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line.trim());
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object') return null;
+	const frame = parsed as Partial<SteeringRequestFrame>;
+	if (frame.type !== 'steer' || typeof frame.id !== 'string' || frame.id.length === 0) return null;
+	if (typeof frame.text !== 'string' || !steeringTextTooLong(frame.text)) return null;
+	return frame.id;
+}
+
 /** Parse one NDJSON control line. Returns null for anything unrecognized. */
 export function parseSteeringRequest(line: string): SteeringRequestFrame | null {
 	const trimmed = line.trim();
@@ -181,8 +212,19 @@ export function parseSteeringRequest(line: string): SteeringRequestFrame | null 
 	if (frame.type !== 'steer') return null;
 	if (typeof frame.id !== 'string' || frame.id.length === 0) return null;
 	if (typeof frame.text !== 'string' || frame.text.length === 0) return null;
-	if (steeringTextBytes(frame.text) > STEERING_MAX_TEXT_BYTES) return null;
+	if (steeringTextTooLong(frame.text)) return null;
 	return { type: 'steer', id: frame.id, text: frame.text };
+}
+
+/**
+ * Whether text claude recorded is the text we injected. Whitespace-insensitive,
+ * like the echo check (screenShowsTypedText): claude rewrites whitespace on the
+ * way in (a tab is recorded as four spaces), and a strict compare misses the row,
+ * which reports an absorbed steer as `dropped`.
+ */
+export function steeringTextMatches(recorded: string, injected: string): boolean {
+	const squash = (s: string) => s.replace(/\s+/g, '');
+	return squash(recorded) === squash(injected);
 }
 
 /**
@@ -202,7 +244,7 @@ export function classifyQueueOperation(
 	if (!row || typeof row !== 'object') return null;
 	const r = row as { type?: unknown; operation?: unknown; content?: unknown; reason?: unknown };
 	if (r.type !== 'queue-operation') return null;
-	const sameText = typeof r.content === 'string' && r.content.trim() === injectedText.trim();
+	const sameText = typeof r.content === 'string' && steeringTextMatches(r.content, injectedText);
 	if (r.operation === 'remove') {
 		if (!sameText) return null;
 		return {

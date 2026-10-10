@@ -41,6 +41,7 @@ import { installStopSignalHandlers, STOP_EXIT_CODES } from './stop-signals';
 import {
 	classifyQueueOperation,
 	STEERING_SOCKET_ENV_VAR,
+	steeringTextMatches,
 	type SteeringResultFrame,
 } from '../shared/chatSteering';
 import { startSteeringServer, type SteeringServer } from './steering-server';
@@ -63,6 +64,11 @@ const WATCHDOG_INTERVAL_MS = 1000;
 const RESUBMIT_INTERVAL_MS = 8000;
 // Grace window after an `end_turn` to let trailing tool-result rows flush.
 const END_TURN_GRACE_MS = 600;
+// How long a finished turn is held open for a steer that was delivered but not yet
+// answered. A steer typed just as the turn ends becomes a fresh prompt, and claude
+// can take longer than END_TURN_GRACE_MS to log it: measured, the grace fired
+// 0.5s after delivery and quit the TUI with the user's message unanswered.
+const STEER_VERDICT_HOLD_MS = 5000;
 // `/usage` panel paints synchronously but trickles bytes for several hundred ms.
 const STATUS_INITIAL_WAIT_MS = 1500;
 // Then debounce on no-new-lines for this long before declaring the panel done.
@@ -460,6 +466,36 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		return false;
 	};
 
+	// Resolve a delivered injection from an ordinary `user` entry. A steer that
+	// lands after `end_turn` finds the editor idle, so claude takes it as a fresh
+	// prompt: no queue-operation rows at all, just the message and a follow-up turn
+	// (measured on claude 2.1.296). That is `queued`, not `dropped`.
+	const settleSteeringFromUserText = (text: string): void => {
+		const i = awaitingVerdict.findIndex((pending) => steeringTextMatches(text, pending.text));
+		if (i < 0) return;
+		const [pending] = awaitingVerdict.splice(i, 1);
+		reportSteering({ type: 'steering', id: pending.id, verdict: 'queued' });
+	};
+
+	// Delivery time of the newest steer still awaiting a verdict; see
+	// STEER_VERDICT_HOLD_MS.
+	let lastSteerDeliveredAt = 0;
+
+	// The end_turn grace, held open (bounded) while a delivered steer is still
+	// unanswered. The steer's own `user` entry clears the timer and its follow-up
+	// turn re-arms it, by which point nothing is outstanding.
+	const armEndTurnGrace = (): void => {
+		const onGrace = (): void => {
+			if (finalized) return;
+			if (awaitingVerdict.length > 0 && Date.now() - lastSteerDeliveredAt < STEER_VERDICT_HOLD_MS) {
+				graceTimer = setTimeout(onGrace, END_TURN_GRACE_MS);
+				return;
+			}
+			finalize({ isError: false, exitCode: 0 });
+		};
+		graceTimer = setTimeout(onGrace, END_TURN_GRACE_MS);
+	};
+
 	const cleanupTimers = (): void => {
 		if (watchdogTimer) {
 			clearInterval(watchdogTimer);
@@ -734,13 +770,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				return;
 			}
 
-			if (message.stop_reason === 'end_turn') {
-				graceTimer = setTimeout(() => {
-					if (!finalized) {
-						finalize({ isError: false, exitCode: 0 });
-					}
-				}, END_TURN_GRACE_MS);
-			}
+			if (message.stop_reason === 'end_turn') armEndTurnGrace();
 			return;
 		}
 
@@ -766,7 +796,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// re-emitted, but the first one is proof of what claude actually
 			// received: if the PTY lost part of the prompt on the way in (see
 			// prompt-echo.ts), stop the turn before it acts on a damaged prompt.
-			if (!promptEchoChecked) {
+			if (promptEchoChecked) {
+				const later = promptEchoText(e);
+				if (later !== null) settleSteeringFromUserText(later);
+			} else {
 				const echo = promptEchoText(e);
 				if (echo !== null) {
 					promptEchoChecked = true;
@@ -902,7 +935,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				// transcript, on a clock this reply cannot wait for (see
 				// SteeringVerdict), so the refinement is emitted on stdout later by
 				// settleSteeringFromRow.
-				awaitingVerdict.push({ id, text });
+				// Match on what was TYPED: claude records the normalized text (tabs as
+				// spaces), so the raw request text never matches its own row.
+				awaitingVerdict.push({ id, text: outcome.typed ?? text });
+				lastSteerDeliveredAt = Date.now();
 				const frame: SteeringResultFrame = { type: 'steering', id, verdict: 'delivered' };
 				reportSteering(frame);
 				return frame;

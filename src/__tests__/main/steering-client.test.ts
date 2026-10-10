@@ -14,6 +14,7 @@ import {
 	sendSteeringRequest,
 	steeringSocketPathFor,
 } from '../../main/process-manager/steering-client';
+import { STEERING_MAX_TEXT_BYTES, STEERING_TOO_LONG_DETAIL } from '../../shared/chatSteering';
 
 vi.mock('../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() },
@@ -122,6 +123,23 @@ describe('sendSteeringRequest', () => {
 			verdict: 'refused',
 			refusal: 'blocking-dialog',
 			detail: 'a permission prompt',
+		});
+	});
+
+	it('refuses an over-cap steer without opening the socket', async () => {
+		// processKey names no listener: reaching the socket would answer not-running.
+		const result = await sendSteeringRequest({
+			processKey: `never-listened-${Date.now()}-ai-tab`,
+			text: 'x'.repeat(STEERING_MAX_TEXT_BYTES + 1),
+			id: 'req-big',
+		});
+
+		expect(result).toEqual({
+			type: 'steering',
+			id: 'req-big',
+			verdict: 'refused',
+			refusal: 'too-long',
+			detail: STEERING_TOO_LONG_DETAIL,
 		});
 	});
 

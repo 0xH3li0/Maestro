@@ -73,6 +73,7 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 import {
 	chunkPromptForPty,
 	expandPromptTabs,
+	normalizeInjectedText,
 	MACOS_PTY_INPUT_QUEUE_BYTES,
 	PROMPT_CHUNK_DRAIN_TIMEOUT_MS,
 	PROMPT_CHUNK_INTERVAL_MS,
@@ -824,6 +825,16 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe('normalizeInjectedText()', () => {
+		it('turns CRLF and lone CR into LF, then expands tabs', () => {
+			expect(normalizeInjectedText('a\r\nb\rc\td')).toBe('a\nb\nc    d');
+		});
+
+		it('leaves plain text untouched', () => {
+			expect(normalizeInjectedText('go left\nthen right')).toBe('go left\nthen right');
+		});
+	});
+
 	describe('expandPromptTabs()', () => {
 		it('replaces every tab with PROMPT_TAB_SPACES spaces, matching what claude does on paste', () => {
 			expect(PROMPT_TAB_SPACES).toBe(4);
@@ -1309,10 +1320,54 @@ describe('TuiDriver', () => {
 
 			const outcome = await driver.inject('go left');
 
-			expect(outcome).toEqual({ submitted: true });
+			expect(outcome).toEqual({ submitted: true, typed: 'go left' });
 			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
 			expect(writes.filter((w) => w === '\r')).toHaveLength(1);
 			expect(writes.join('')).toContain('go left');
+		});
+
+		it('serializes concurrent injections so two steers never share one editor', async () => {
+			// Measured live: two steers sent together were typed back to back before
+			// either Enter, and claude received ONE merged message.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const [first, second] = await Promise.all([
+				driver.inject('first steer'),
+				driver.inject('second steer'),
+			]);
+
+			expect(first.submitted).toBe(true);
+			expect(second.submitted).toBe(true);
+			// Ordering, not an exact list: earlier send() tests leave retry-Enter timers
+			// that can still tap the shared mock PTY.
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes.filter((w) => w !== '\r')).toEqual(['first steer', 'second steer']);
+			const firstAt = writes.indexOf('first steer');
+			const secondAt = writes.indexOf('second steer');
+			const firstEnterAt = writes.indexOf('\r', firstAt);
+			expect(firstEnterAt).toBeGreaterThan(firstAt);
+			expect(firstEnterAt).toBeLessThan(secondAt);
+		});
+
+		it('types normalized text: CR/CRLF become LF and tabs become spaces', async () => {
+			// A `\r` in the body is the Enter key and would submit half the message;
+			// a `\t` is the Tab key. Measured live: claude records a tab as four
+			// spaces, so `typed` is also what the verdict has to be matched against.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const outcome = await driver.inject('line one\r\nline two\rcol1\tcol2');
+
+			expect(outcome).toEqual({ submitted: true, typed: 'line one\nline two\ncol1    col2' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			// The only CR written is the single submitting Enter.
+			expect(writes.filter((w) => w.includes('\r'))).toEqual(['\r']);
+			expect(writes.join('')).not.toContain('\t');
 		});
 
 		it('refuses without typing anything when a dialog owns the keyboard', async () => {

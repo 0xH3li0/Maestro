@@ -14,6 +14,7 @@
 
 import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
 import { generateId } from './ids';
+import { steeringTextTooLong } from '../../shared/chatSteering';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -507,7 +508,8 @@ export type SteerBlockedReason =
 	| 'has-images'
 	| 'awaiting-consult'
 	| 'cross-agent-mention'
-	| 'has-agent-context';
+	| 'has-agent-context'
+	| 'too-long';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -586,6 +588,9 @@ export function getSteerEligibility(
 	// A released hold carries the consult's replies in agentContext, which only the
 	// spawn prepends. Typing the visible text alone would lose the replies.
 	if (item.agentContext) return { canSteer: false, blockedReason: 'has-agent-context' };
+	// Over the per-frame cap maestro-p accepts; it would be refused, so it waits and
+	// sends normally instead. Same predicate as the client and server.
+	if (steeringTextTooLong(item.text)) return { canSteer: false, blockedReason: 'too-long' };
 	return { canSteer: true };
 }
 

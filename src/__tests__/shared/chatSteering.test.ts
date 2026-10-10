@@ -9,9 +9,43 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	classifyQueueOperation,
+	oversizeSteeringRequestId,
 	parseSteeringRequest,
 	STEERING_MAX_TEXT_BYTES,
+	steeringTextMatches,
 } from '../../shared/chatSteering';
+
+describe('steeringTextMatches', () => {
+	it('ignores whitespace claude rewrites on the way in', () => {
+		expect(steeringTextMatches('a    b\nc', 'a\tb\r\nc')).toBe(true);
+		expect(steeringTextMatches('  go left  ', 'go left')).toBe(true);
+	});
+
+	it('still tells different text apart', () => {
+		expect(steeringTextMatches('go left', 'go right')).toBe(false);
+	});
+});
+
+describe('oversizeSteeringRequestId', () => {
+	it('returns the id of a steer whose only fault is size', () => {
+		const tooBig = 'x'.repeat(STEERING_MAX_TEXT_BYTES + 1);
+		expect(
+			oversizeSteeringRequestId(JSON.stringify({ type: 'steer', id: 'a', text: tooBig }))
+		).toBe('a');
+	});
+
+	it('returns null for a frame that fits, is malformed, or is not a steer', () => {
+		expect(
+			oversizeSteeringRequestId(JSON.stringify({ type: 'steer', id: 'a', text: 'ok' }))
+		).toBeNull();
+		expect(oversizeSteeringRequestId('not json')).toBeNull();
+		const tooBig = 'x'.repeat(STEERING_MAX_TEXT_BYTES + 1);
+		expect(
+			oversizeSteeringRequestId(JSON.stringify({ type: 'other', id: 'a', text: tooBig }))
+		).toBeNull();
+		expect(oversizeSteeringRequestId(JSON.stringify({ type: 'steer', text: tooBig }))).toBeNull();
+	});
+});
 
 describe('parseSteeringRequest', () => {
 	it('parses a well-formed frame', () => {
@@ -79,6 +113,23 @@ describe('classifyQueueOperation', () => {
 					reason: 'absorbed_mid_turn',
 				},
 				TEXT
+			)
+		).toEqual({ verdict: 'absorbed', matchedContent: true });
+	});
+
+	it('matches a row whose whitespace claude rewrote', () => {
+		// Measured on claude 2.1.296: a steer containing a tab is recorded with the
+		// tab as four spaces. A strict compare missed the row and reported an
+		// absorbed steer as `dropped`.
+		expect(
+			classifyQueueOperation(
+				{
+					type: 'queue-operation',
+					operation: 'remove',
+					content: 'two lines:\nline B: col1    col2',
+					reason: 'absorbed_mid_turn',
+				},
+				'two lines:\nline B: col1\tcol2'
 			)
 		).toEqual({ verdict: 'absorbed', matchedContent: true });
 	});

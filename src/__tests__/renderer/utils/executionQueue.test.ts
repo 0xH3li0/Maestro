@@ -783,6 +783,13 @@ describe('getSteerEligibility', () => {
 		).toEqual({ canSteer: false, blockedReason: 'has-agent-context' });
 	});
 
+	it('refuses an item over the steering byte cap', () => {
+		// maestro-p would refuse it; it waits and sends normally instead.
+		expect(
+			getSteerEligibility(steerableSession(), { tabId: 'tab-1', text: 'x'.repeat(8193) })
+		).toEqual({ canSteer: false, blockedReason: 'too-long' });
+	});
+
 	it('is mutually exclusive with Force Send', () => {
 		// Force Send needs the target tab IDLE, steering needs it BUSY, so a queued
 		// card offers exactly one of them and never both.
@@ -814,6 +821,7 @@ describe('shouldOfferSteer', () => {
 			'awaiting-consult',
 			'cross-agent-mention',
 			'has-agent-context',
+			'too-long',
 		] as const) {
 			expect(shouldOfferSteer({ canSteer: false, blockedReason })).toBe(false);
 		}

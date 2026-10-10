@@ -168,6 +168,23 @@ export function expandPromptTabs(text: string): string {
 	return text.replace(/\t/g, ' '.repeat(PROMPT_TAB_SPACES));
 }
 
+/** What became of one inject() call. */
+export interface InjectOutcome {
+	submitted: boolean;
+	/** The text as typed (see normalizeInjectedText); what claude's transcript records. */
+	typed?: string;
+	refusal?: SteeringRefusal;
+	detail?: string;
+}
+
+// What inject() actually types for a steer. A `\r` is the Enter key in a PTY, so
+// a CR or CRLF left in the text submits the first half of the message mid-type
+// and leaves the rest in the editor; LF is claude's in-editor newline. Tabs are
+// expanded for the same reason send() expands them (see PROMPT_TAB_SPACES).
+export function normalizeInjectedText(text: string): string {
+	return expandPromptTabs(text.replace(/\r\n?/g, '\n'));
+}
+
 // After a steering injection is typed, how long to let the composer repaint
 // before reading it back (see inject()). A turn in flight repaints constantly for
 // its own reasons, so a paint wait can resolve on the spinner instead of on our
@@ -373,6 +390,8 @@ export class TuiDriver extends EventEmitter {
 	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
 	private trustSelection: TrustSelection | null = null;
 	private exited = false;
+	/** Tail of the inject() chain; see inject(). */
+	private injectQueue: Promise<void> = Promise.resolve();
 	private tapsSent = 0;
 	private tapTimer: ReturnType<typeof setInterval> | null = null;
 	private readyTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -736,10 +755,27 @@ export class TuiDriver extends EventEmitter {
 	 *
 	 * Requires `captureScreen` - without the raw stream there is no grid to check
 	 * and the honest answer is to refuse rather than type blind.
+	 *
+	 * Injections are SERIALIZED. Two steers arriving together (two quick Steer
+	 * clicks) were otherwise typed into the same editor before either Enter, and
+	 * claude received one merged message - measured live, and longer texts are
+	 * typed in paced chunks, so they could interleave mid-sentence. Each one waits
+	 * for the previous to submit and the composer to repaint empty.
 	 */
-	async inject(
-		text: string
-	): Promise<{ submitted: boolean; refusal?: SteeringRefusal; detail?: string }> {
+	inject(text: string): Promise<InjectOutcome> {
+		const run = this.injectQueue.then(() => this.injectNow(text));
+		this.injectQueue = run.then(
+			async (outcome) => {
+				if (!outcome.submitted || this.exited) return;
+				await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+				await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
+			},
+			() => undefined
+		);
+		return run;
+	}
+
+	private async injectNow(text: string): Promise<InjectOutcome> {
 		if (!this.ptyProcess) {
 			throw new Error('TuiDriver.inject() called before start()');
 		}
@@ -764,7 +800,8 @@ export class TuiDriver extends EventEmitter {
 					};
 		}
 
-		const chunks = chunkPromptForPty(text);
+		const typed = normalizeInjectedText(text);
+		const chunks = chunkPromptForPty(typed);
 		for (let i = 0; i < chunks.length; i += 1) {
 			try {
 				this.ptyProcess.write(chunks[i]);
@@ -786,7 +823,7 @@ export class TuiDriver extends EventEmitter {
 		await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
 		if (this.exited) return { submitted: false, refusal: 'tui-exited' };
 
-		if (!screenShowsTypedText(this.readScreen(), text)) {
+		if (!screenShowsTypedText(this.readScreen(), typed)) {
 			// Deliberately no cleanup keystroke. Ctrl+U / Escape would be a guess at
 			// this point, and Escape mid-turn INTERRUPTS the turn - the one outcome
 			// worse than a stray draft. The caller still owns the message.
@@ -802,7 +839,7 @@ export class TuiDriver extends EventEmitter {
 		} catch {
 			return { submitted: false, refusal: 'tui-exited' };
 		}
-		return { submitted: true };
+		return { submitted: true, typed };
 	}
 
 	/**

@@ -12,7 +12,11 @@ import * as path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { SteeringResultFrame } from '../../shared/chatSteering';
+import {
+	STEERING_MAX_TEXT_BYTES,
+	STEERING_TOO_LONG_DETAIL,
+	type SteeringResultFrame,
+} from '../../shared/chatSteering';
 import { MAX_PENDING_LINE_BYTES, startSteeringServer } from '../../maestro-p/steering-server';
 
 const opened: Array<{ close: () => void }> = [];
@@ -92,6 +96,33 @@ describe('startSteeringServer', () => {
 		expect(seen).toEqual([{ id: 'x1', text: 'go left' }]);
 		expect(lines.map((l) => JSON.parse(l))).toEqual([
 			{ type: 'steering', id: 'x1', verdict: 'delivered' },
+		]);
+	});
+
+	it('refuses an over-cap steer with an answer instead of ignoring it', async () => {
+		// Silence left the caller on its 20s timeout, reporting `unknown` - which
+		// the UI treats as "maybe typed" and pauses - for text never typed.
+		const seen: string[] = [];
+		const socketPath = serve(async (id) => {
+			seen.push(id);
+			return { type: 'steering', id, verdict: 'delivered' };
+		});
+		await waitForListening(socketPath);
+
+		const lines = await exchange(
+			socketPath,
+			`${JSON.stringify({ type: 'steer', id: 'big', text: 'x'.repeat(STEERING_MAX_TEXT_BYTES + 1) })}\n`
+		);
+
+		expect(seen).toEqual([]);
+		expect(lines.map((l) => JSON.parse(l))).toEqual([
+			{
+				type: 'steering',
+				id: 'big',
+				verdict: 'refused',
+				refusal: 'too-long',
+				detail: STEERING_TOO_LONG_DETAIL,
+			},
 		]);
 	});
 

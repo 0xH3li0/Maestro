@@ -16,6 +16,8 @@ import * as path from 'path';
 
 import {
 	parseSteeringResult,
+	STEERING_TOO_LONG_DETAIL,
+	steeringTextTooLong,
 	type SteeringResultFrame,
 	type SteeringRequestFrame,
 } from '../../shared/chatSteering';
@@ -67,6 +69,17 @@ export async function sendSteeringRequest(options: {
 	id: string;
 	timeoutMs?: number;
 }): Promise<SteeringResultFrame> {
+	// Never sent: the server would refuse it anyway, and the round trip costs a
+	// connection for an answer known here.
+	if (steeringTextTooLong(options.text)) {
+		return {
+			type: 'steering',
+			id: options.id,
+			verdict: 'refused',
+			refusal: 'too-long',
+			detail: STEERING_TOO_LONG_DETAIL,
+		};
+	}
 	const socketPath = steeringSocketPathFor(options.processKey);
 	const timeoutMs = options.timeoutMs ?? STEERING_REPLY_TIMEOUT_MS;
 	const frame: SteeringRequestFrame = { type: 'steer', id: options.id, text: options.text };
