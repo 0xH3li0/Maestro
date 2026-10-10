@@ -10,6 +10,7 @@ import {
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { DURATION_MS } from '../shared/duration';
 import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
@@ -34,7 +35,7 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
-import { PianolaSupervisor } from './pianola/pianola-supervisor';
+import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
 import { execFile } from 'child_process';
@@ -98,9 +99,11 @@ import {
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
-import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
-import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
+import { executeCueShell } from './cue/cue-shell-executor';
+import { executeCueCli } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { executeCueAutoRun } from './cue/cue-autorun-executor';
+import { launchCueAutoRun } from './cue-autorun-launcher';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
@@ -126,12 +129,11 @@ import {
 	getAgentSessionOriginsStore,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
+import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
 	ensureCliServer,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
 } from './ipc/handlers';
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
@@ -161,6 +163,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
 	setupGlobalErrorHandlers,
@@ -641,11 +644,25 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	pluginHostViews.sync();
 });
 
+// Collectors for a support (debug) package. One object shared by the debug and
+// feedback IPC handlers and the CLI bridge, so every path builds the same zip.
+// Getters resolve the live instances at package time, not whatever existed here.
+const debugPackageDeps: DebugPackageDependencies = {
+	getAgentDetector: () => agentDetector,
+	getProcessManager: () => processManager,
+	getWebServer: () => webServer,
+	settingsStore: store,
+	sessionsStore,
+	groupsStore,
+	bootstrapStore,
+};
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
+	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
 	getWindowForSession: (sessionId: string) => {
 		const ownerId = windowRegistry.getWindowForSession(sessionId);
@@ -1206,6 +1223,7 @@ app
 		});
 
 		// Initialize Cue Engine for event-driven automation
+		const cueHealthToastAt = new Map<string, number>();
 		cueEngine = new CueEngine({
 			getSessions: () => {
 				const stored = sessionsStore.get('sessions', []);
@@ -1227,6 +1245,7 @@ app
 				action,
 				command,
 				notify,
+				autoRun,
 			}) => {
 				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
 				const storedSession = storedSessions.find((s) => s.id === sessionId);
@@ -1249,14 +1268,85 @@ app
 					conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
 				};
 
+				// `action: autorun` launches an Auto Run in the owning agent. Handled
+				// before notify/command/prompt for the same reason they are: it never
+				// spawns an agent process here, so the agent-path resolution, SSH
+				// wrapping, and prompt plumbing below do not apply. The document list
+				// travels on the subscription rather than being re-read from the
+				// agent's Auto Run folder, so repointing that folder between
+				// scheduling and firing cannot swap the run out from under the user.
+				if (action === 'autorun') {
+					const sessionInfo = {
+						id: storedSession.id,
+						name: storedSession.name,
+						toolType: storedSession.toolType,
+						cwd: projectRoot,
+						projectRoot,
+						autoRunFolderPath: storedSession.autoRunFolderPath,
+					};
+					const subscription = {
+						name: subscriptionName,
+						event: event.type,
+						enabled: true,
+						prompt,
+						action,
+						auto_run: autoRun,
+						agent_id: storedSession.id,
+					};
+					const autoRunLog = (level: string, message: string) => {
+						if (level === 'error') logger.error(message, 'Cue');
+						else if (level === 'warn') logger.warn(message, 'Cue');
+						else if (level === 'debug') logger.debug(message, 'Cue');
+						else logger.cue(message, 'Cue');
+					};
+					if (!autoRun || autoRun.documents.length === 0) {
+						// Reachable for a queued run restored from a row that was
+						// persisted before the queue table carried the payload
+						// (`auto_run_json`), which comes back undefined. Report a failure
+						// rather than throwing - a `time.once` autorun task is written
+						// with `self_destruct_on_failure: false`, so failing here keeps
+						// the subscription on disk instead of consuming it silently.
+						const reason =
+							'no documents on the run - the captured Auto Run payload did not survive the queue';
+						autoRunLog('error', `[CUE] Auto Run "${subscriptionName}" did not start: ${reason}`);
+						const startedAt = new Date().toISOString();
+						const failed = {
+							runId,
+							sessionId: storedSession.id,
+							sessionName: storedSession.name,
+							subscriptionName,
+							event,
+							status: 'failed' as const,
+							stdout: '',
+							stderr: `Auto Run launch failed: ${reason}`,
+							exitCode: 1,
+							durationMs: 0,
+							startedAt,
+							endedAt: startedAt,
+						};
+						return failed;
+					}
+					const autoRunResult = await executeCueAutoRun({
+						runId,
+						session: sessionInfo,
+						subscription,
+						event,
+						autoRun,
+						launch: (params) => launchCueAutoRun(mainWindow, params),
+						onLog: autoRunLog,
+					});
+					return autoRunResult;
+				}
+
 				// `action: notify` surfaces a toast through the owning agent instead of
 				// spawning anything - handled before command/prompt so the spawn config,
 				// SSH wrap, and history-recording paths below stay agent-only. The
 				// notify message is pre-resolved by the dispatch service via the
 				// fallback chain (notify.message → label → prompt → name); falling
 				// back here to `prompt` (which the dispatcher uses as the carrier)
-				// covers the queue-restored corner where the in-memory `notify` was
-				// lost but the message survived in the persisted `prompt` slot.
+				// covers a queue row restored from before the queue table carried
+				// the notify config (`notify_json`), where only the message survived,
+				// in the persisted `prompt` slot.
 				if (action === 'notify') {
 					const sessionInfo = {
 						id: storedSession.id,
@@ -1449,9 +1539,28 @@ app
 				// see the note on the notify path above.
 				return result;
 			},
-			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
+			onStopCueRun: (runId) => stopCueRun(runId),
 			onLog: (_level, message, data) => {
 				logger.cue(message, 'Cue', data);
+				const payload = data as import('../shared/cue-log-types').CueLogPayload | undefined;
+				if (payload?.type === 'triggerHealthWarning') {
+					const now = Date.now();
+					for (const [id, at] of cueHealthToastAt) {
+						if (now - at >= 5 * DURATION_MS.minute) cueHealthToastAt.delete(id);
+					}
+					// Reach the always-mounted toast channel, even with Cue closed.
+					// Log every warning, but coalesce sticky notices per agent for 5m.
+					if (!cueHealthToastAt.has(payload.sessionId)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							title: 'Cue trigger health',
+							message: payload.message,
+							sticky: true,
+							color: 'orange',
+						});
+						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
+					}
+				}
 				// Push activity updates to renderer (and web-desktop bridge clients)
 				if (data) {
 					safeSend('cue:activityUpdate', data);
@@ -2118,7 +2227,20 @@ app
 				unifiedTabOrder: [{ type: 'ai', id: tabId }],
 				unifiedClosedTabHistory: [],
 			};
-			setPluginSessionsRaw([...pluginSessionsRaw(), session]);
+			const previousSessions = pluginSessionsRaw();
+			setPluginSessionsRaw([...previousSessions, session]);
+			if (!previousSessions.some((existing) => existing.id === sessionId)) {
+				try {
+					pianolaSupervisor?.autoWatchNewSessions(
+						[session],
+						[...previousSessions, session] as AutoWatchSession[],
+						store.get('pianolaAutoWatchNewAgents', false) === true
+					);
+				} catch (error) {
+					logger.error('Could not register new Pianola watch', '[Pianola]', error);
+					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
+				}
+			}
 			sessionsStore.set('activeSessionId', sessionId);
 			return {
 				id: sessionId,
@@ -2153,7 +2275,19 @@ app
 		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
 			if (!sessions.some((s) => s.id === sessionId)) return false;
-			setPluginSessionsRaw(sessions.filter((s) => s.id !== sessionId));
+			const remaining = sessions.filter((s) => s.id !== sessionId);
+			setPluginSessionsRaw(remaining);
+			try {
+				pianolaSupervisor?.autoWatchNewSessions(
+					[],
+					remaining as unknown as AutoWatchSession[],
+					store.get('pianolaAutoWatchNewAgents', false) === true,
+					[sessionId]
+				);
+			} catch (error) {
+				logger.error('Could not retire Pianola watch', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:retireAutoWatch' });
+			}
 			if (sessionsStore.get('activeSessionId', '') === sessionId) {
 				const nextActive = pluginSessionsRaw()[0]?.id;
 				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');
@@ -2810,6 +2944,15 @@ app
 			logger.warn('Continuing without history - history features will be unavailable', 'Startup');
 		}
 
+		// Restore Claude tab names the origins store lost; history is the source.
+		// Not awaited: it reads every history file and nothing at startup needs it.
+		migrateClaudeSessionNamesFromHistory(store, claudeSessionOriginsStore, historyManager).catch(
+			(error) => {
+				void captureException(error);
+				logger.error(`Claude session names backfill failed: ${error}`, 'Migration');
+			}
+		);
+
 		// Initialize stats database for usage tracking
 		logger.info('Initializing stats database', 'Startup');
 		try {
@@ -2826,7 +2969,11 @@ app
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers({
+			debugPackageDeps,
 			getMainWindow: () => mainWindow,
+			ensureMainWindow: () => {
+				if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+			},
 			getProcessManager: () => processManager,
 			getWebServer: () => webServer,
 			setWebServer: (server) => {
@@ -3115,8 +3262,6 @@ quitHandler = createQuitHandler({
 	getWebServer: () => webServer,
 	getHistoryManager,
 	tunnelManager,
-	getActiveGroomingSessionCount,
-	cleanupAllGroomingSessions,
 	closeStatsDB,
 	stopCliWatcher: () => {
 		cliWatcher.stop();

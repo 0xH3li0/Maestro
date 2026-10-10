@@ -84,6 +84,8 @@ export interface MaestroSettings {
 	 * renderer (`PersistedMediaQueue`); the main process only stores it.
 	 */
 	mediaPlayerQueue: unknown;
+	/** Provider profile key of the account that last carried a Send Feedback chat. */
+	feedbackAccountKey: string | null;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
 	// Web interface authentication
@@ -122,6 +124,8 @@ export interface MaestroSettings {
 	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
 	// the main-process background scheduler (usage-refresh-scheduler.ts).
 	usageRefreshIntervals: Record<string, number>;
+	/** Add a supervised Pianola watch for each newly created top-level agent. */
+	pianolaAutoWatchNewAgents: boolean;
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.

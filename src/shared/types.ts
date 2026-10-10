@@ -222,6 +222,14 @@ export interface Group {
 	color?: string;
 	parentGroupId?: string;
 	collapsed: boolean;
+	/**
+	 * Parked out of the Left Bar. A middle ground between keeping a group on
+	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
+	 * never restricts access, so the agents inside stay reachable through
+	 * search, the Cmd+O switcher, and every other surface. Optional because
+	 * every group written before this field existed reads back as visible.
+	 */
+	hidden?: boolean;
 }
 
 export function isWorktreeGroup(group: Group): boolean {
@@ -253,6 +261,8 @@ export interface SessionInfo {
 	toolType: ToolType;
 	cwd: string;
 	projectRoot: string;
+	/** The agent's original working directory, persisted by the desktop app. Older records may lack it. */
+	fullPath?: string;
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];

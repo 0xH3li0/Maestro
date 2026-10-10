@@ -21,6 +21,7 @@ import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
 import { useBatchSelectors } from './internal/useBatchSelectors';
 import { useBatchBroadcast } from './internal/useBatchBroadcast';
+import { useAutoRunReclaim } from './useAutoRunReclaim';
 import { useAutoRunStateMirror } from './useAutoRunStateMirror';
 import {
 	useBatchControlActions,
@@ -29,6 +30,7 @@ import {
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
+import type { AutoRunKind } from '../../../shared/stats-types';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -45,6 +47,8 @@ export interface BatchCompleteInfo {
 	totalCostUsd: number;
 	/** Number of documents processed */
 	documentsProcessed: number;
+	/** Which engine ran it. Undefined is treated as spec-driven downstream. */
+	kind?: AutoRunKind;
 }
 
 export interface PRResultInfo {
@@ -216,21 +220,6 @@ export function useBatchProcessor({
 	// client (web-desktop watching the desktop app). No-op in the Electron build.
 	useAutoRunStateMirror();
 
-	// External lifecycle controls (stop + pause/skip/resume/abort)
-	const {
-		stopBatchRun,
-		pauseBatchOnError,
-		skipCurrentDocument,
-		resumeAfterError,
-		abortBatchOnError,
-	} = useBatchControlActions({
-		broadcastAutoRunState,
-		dispatch,
-		errorResolutionRefs,
-		stopRequestedRefs,
-		isMountedRef,
-	});
-
 	// Use extracted time tracking hook (replaces manual visibility-based time tracking)
 	const timeTracking = useTimeTracking({
 		getActiveSessionIds: useCallback(() => {
@@ -246,12 +235,29 @@ export function useBatchProcessor({
 					sessionId,
 					payload: {
 						accumulatedElapsedMs: accumulatedMs,
-						lastActiveTimestamp: activeTimestamp ?? undefined,
+						lastActiveTimestamp: activeTimestamp,
 					},
 				});
 			},
 			[]
 		),
+	});
+
+	// External lifecycle controls (stop + pause/skip/resume/abort). Follows
+	// `useTimeTracking` because a pause stops the run's clock.
+	const {
+		stopBatchRun,
+		pauseBatchOnError,
+		skipCurrentDocument,
+		resumeAfterError,
+		abortBatchOnError,
+	} = useBatchControlActions({
+		broadcastAutoRunState,
+		dispatch,
+		errorResolutionRefs,
+		stopRequestedRefs,
+		isMountedRef,
+		timeTracking,
 	});
 
 	// Force-kill action with kill-vs-natural-completion arbitration.
@@ -343,6 +349,10 @@ export function useBatchProcessor({
 		},
 		[startGoalRun, startDocumentBatchRun]
 	);
+
+	// A reload kills the run loop while main keeps its task running; this hands
+	// the run back to the reloaded page and restarts it (#1470).
+	useAutoRunReclaim(startBatchRun);
 
 	return {
 		batchRunStates,

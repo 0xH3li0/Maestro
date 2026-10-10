@@ -110,6 +110,7 @@ The response is always JSON:
 	"sessionId": "abc123def456",
 	"response": "The authentication flow works by...",
 	"success": true,
+	"outcome": "completed",
 	"usage": {
 		"inputTokens": 1000,
 		"outputTokens": 500,
@@ -121,6 +122,19 @@ The response is always JSON:
 	}
 }
 ```
+
+`outcome` says how the turn ended:
+
+| `outcome`                | `success` | Meaning                                                                                                 |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
+| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                    |
+| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                    |
+| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr. |
+| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.  |
+
+For providers that stream JSON lines (everything except Claude Code), a captured answer outranks a bare non-zero exit, but not a specific provider error: a turn whose stderr says the login expired fails even if some text was produced. Claude Code keeps requiring a clean exit. A process killed by a signal nobody requested is always `crashed`.
+
+The first Ctrl+C stops the agent gracefully (SIGTERM, then SIGKILL after 5 seconds if it ignores it) and exits with code `130`; a second Ctrl+C exits immediately. Other failures exit with `1`. Over an SSH remote this stops the local `ssh` client, and the remote process is not guaranteed to receive the hangup.
 
 On failure, `success` is `false` and an `error` field is included:
 
@@ -1190,14 +1204,15 @@ maestro-cli settings agent reset codex model
 
 **Common agent config keys:**
 
-| Key               | Type   | Description                                      |
-| ----------------- | ------ | ------------------------------------------------ |
-| `customPath`      | string | Custom path to the agent CLI binary              |
-| `customArgs`      | string | Additional CLI arguments                         |
-| `customEnvVars`   | object | Extra environment variables                      |
-| `model`           | string | Model override (e.g., `gpt-5.3-codex`, `o3`)     |
-| `contextWindow`   | number | Context window size in tokens                    |
-| `reasoningEffort` | string | Reasoning effort level (`low`, `medium`, `high`) |
+| Key                | Type   | Description                                                                                                       |
+| ------------------ | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `customPath`       | string | Custom path to the agent CLI binary                                                                               |
+| `customArgs`       | string | Additional CLI arguments                                                                                          |
+| `customEnvVars`    | object | Extra environment variables                                                                                       |
+| `model`            | string | Model override (e.g., `gpt-5.3-codex`, `o3`)                                                                      |
+| `contextWindow`    | number | Context window size in tokens                                                                                     |
+| `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
+| `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.
@@ -1274,7 +1289,7 @@ replace the set outright. Passing an empty string to `-u` or `-k` clears it.
 
 A command-line `-o` outranks `~/.ssh/config`, so `--ssh-option` is the only way
 to change one of Maestro's connection defaults (`ConnectTimeout`, `BatchMode`,
-and friends). `list-ssh-remotes --json` and `update-ssh-remote --json` both
+and friends). `list ssh-remotes --json` and `update-ssh-remote --json` both
 report `resolvedSshOptions`, the full merged set `ssh` actually receives, which
 is what answers "did my `ConnectTimeout` take effect?". See
 [SSH Remote Execution](/ssh-remote-execution) for the reserved keys and the
@@ -1330,6 +1345,12 @@ maestro-cli playbook <playbook-id> --json
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
 ```
 
+If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
+
+```json
+{"type":"complete","timestamp":...,"success":false,"totalTasksCompleted":2,"totalElapsedMs":31000,"stopped":true}
+```
+
 The `send` command always outputs JSON (no `--json` flag needed).
 
 ### Desktop Integration
@@ -1377,19 +1398,28 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself, which is also how you open a file that lives nowhere near a project.
 
 ```bash
-maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch]
+maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queue]
 ```
 
-| Flag               | Description                                                                     |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent |
-| `--focus`          | Switch to the file after opening it (default)                                   |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              |
+| Flag               | Description                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               |
+| `--focus`          | Switch to the file after opening it (default)                                                 |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
 
 This is also the verb that plays media. A local audio or video file does not become a tab at all: it goes to the [floating media player](/media-player), so `open-file ~/Music/track.mp3 --agent <id>` is how you or an agent starts playback without handing the file to your system's default player. There is no separate `play` command. `--background` has nothing to suppress in that case, since playback is audible either way, and a file on an SSH remote has no stream to play, so it falls back to the ordinary binary-file path.
 
 `--no-switch` and `--background` are different asks, and this is the one command that offers both. `--no-switch` keeps the Left Bar selection where it is but still activates the new tab inside the target agent - so if you were already on that agent, your view still changes. `--background` changes nothing rendered anywhere. Passing both is fine; `--background` is strictly stronger and wins. If `--no-switch` is what you reached for, `--background` is probably what you meant.
+
+Audio and video never open as a tab: they go to the [floating media player](/media-player), and a plain `open-file` starts playing. `--queue` puts the file in the player without pressing play. If nothing is loaded, the file loads paused and the player appears; if something is already loaded, the file lines up behind it and nothing is interrupted. A minimized player comes back either way. It never switches agents, since the player is app-wide. To hand someone a playlist to start themselves, queue each file in order:
+
+```bash
+for f in episodes/*.mp3; do maestro-cli open-file "$f" --queue; done
+```
+
+`--queue` on a file that is not audio or video is an error.
 
 #### Open a Browser Tab
 

@@ -58,6 +58,8 @@ const GitLogViewer = lazy(() =>
 export interface AppUtilityModalsProps {
 	theme: Theme;
 	sessions: Session[];
+	/** Left Bar draw order; the first ten own the Opt+Cmd+# slots */
+	visibleSessions?: Session[];
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	activeSessionId: string;
 	activeSession: Session | null;
@@ -329,6 +331,7 @@ export interface AppUtilityModalsProps {
 export const AppUtilityModals = memo(function AppUtilityModals({
 	theme,
 	sessions,
+	visibleSessions,
 	setSessions,
 	activeSessionId,
 	activeSession,
@@ -586,6 +589,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<QuickActionsModal
 					theme={theme}
 					sessions={sessions}
+					visibleSessions={visibleSessions}
 					setSessions={setSessions}
 					activeSessionId={activeSessionId}
 					groups={groups}

@@ -50,15 +50,21 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 	modelSource: 'default' as const,
 }));
 
-vi.mock('../../../main/utils/agent-args', () => ({
+vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
 	applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
 }));
 
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
-	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
-}));
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../shared/maestro-lib/launch/ssh-spawn-wrapper')
+	>('../../../shared/maestro-lib/launch/ssh-spawn-wrapper');
+	return {
+		...actual,
+		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	};
+});
 
 // Mock the Claude token-source resolver's leaf dependencies so the maestro-p
 // binary reads as present and config-dir resolution is deterministic. The
@@ -68,6 +74,10 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 vi.mock('../../../main/agents/claude-usage-startup', () => ({
 	getMaestroPBinPath: () => '/bundled/maestro-p.js',
 	isMaestroPBinaryPath: (p: string | null | undefined) => !!p && p.includes('maestro-p'),
+}));
+// A resolved remote is probed for maestro-p before the token mode is chosen.
+vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn(async () => true),
 }));
 vi.mock('../../../main/stores/claudeUsageStore', () => ({
 	getSnapshot: () => null,
@@ -84,6 +94,23 @@ vi.mock('fs', async (importOriginal) => {
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * An SSH store holding the remotes these tests point at. The launch plan
+ * resolves the remote before wrapping, so an empty list is now an error.
+ */
+function sshStoreWithRemotes() {
+	const remote = (id: string) => ({
+		id,
+		name: `Remote ${id}`,
+		host: `${id}.example.com`,
+		port: 22,
+		username: 'dev',
+		privateKeyPath: '',
+		enabled: true,
+	});
+	return { getSshRemotes: vi.fn(() => [remote('remote-1'), remote('r1')]) };
+}
 
 const defaultAgentDef = {
 	id: 'claude-code',
@@ -309,7 +336,7 @@ describe('cue-spawn-builder', () => {
 
 		describe('SSH execution', () => {
 			it('calls wrapSpawnWithSsh when SSH is enabled', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -350,7 +377,7 @@ describe('cue-spawn-builder', () => {
 			});
 
 			it('does not append prompt to args for SSH mode (wrapper handles it)', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -380,7 +407,7 @@ describe('cue-spawn-builder', () => {
 			});
 
 			it('passes sshStdinScript through when SSH returns it', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -407,7 +434,7 @@ describe('cue-spawn-builder', () => {
 			});
 
 			it('passes stdinPrompt through when SSH returns prompt for stdin delivery', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -432,9 +459,37 @@ describe('cue-spawn-builder', () => {
 				}
 			});
 
-			it('still appends prompt when SSH is enabled but sshStore is missing', async () => {
-				// SSH enabled in config, but no sshStore → SSH wrapping skipped
-				// Prompt should still be appended for local fallback
+			it('fails instead of spawning locally when the wrapper loses the planned remote', async () => {
+				// The plan resolved the remote, but the wrapper handed back the local
+				// config (remote deleted or disabled in between). That must fail.
+				mockWrapSpawnWithSsh.mockResolvedValue({
+					command: 'claude',
+					args: ['--print', '--verbose'],
+					cwd: '/projects/test',
+					customEnvVars: undefined,
+					prompt: 'Hello world',
+					sshRemoteUsed: null,
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: sshStoreWithRemotes(),
+					}),
+					'Hello world'
+				);
+
+				expect(result).toEqual({
+					ok: false,
+					message: expect.stringContaining('configured remote "r1" could not be resolved'),
+				});
+			});
+
+			it('fails instead of running locally when SSH is enabled but there is no remote list', async () => {
+				// SSH enabled in config, but no sshStore to resolve the remote in.
+				// The run used to fall back to a local spawn with the prompt
+				// appended; the user asked for a remote, so it now fails with a
+				// message saying why.
 				const result = await buildSpawnSpec(
 					createConfig({
 						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
@@ -443,12 +498,27 @@ describe('cue-spawn-builder', () => {
 					'Hello world'
 				);
 
-				expect(result.ok).toBe(true);
-				if (result.ok) {
-					const args = result.spec.args;
-					expect(args[args.length - 1]).toBe('Hello world');
-					expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('"r1" cannot be looked up');
 				}
+				expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			});
+
+			it('fails instead of running locally when the configured remote no longer exists', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+						sshStore: sshStoreWithRemotes(),
+					}),
+					'Hello world'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('"deleted-remote" no longer exists');
+				}
+				expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
 			});
 		});
 
@@ -505,7 +575,7 @@ describe('cue-spawn-builder', () => {
 
 			it('routes interactive token mode through maestro-p on the remote when SSH is enabled', async () => {
 				mockGetAgentDefinition.mockReturnValue(claudeInteractiveAgentDef);
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
 					args: ['user@host', 'maestro-p', '--dangerously-skip-permissions', '--', 'Hello world'],

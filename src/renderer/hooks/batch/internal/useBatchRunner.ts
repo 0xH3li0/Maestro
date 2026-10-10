@@ -17,6 +17,7 @@ import { useSessionStore, selectSessionById } from '../../../stores/sessionStore
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { countUnfinishedTasks, findPendingHitlGate, uncheckAllTasks } from '../batchUtils';
 import {
+	acknowledgeHitlGate,
 	describeUnresolvedHaltMarker,
 	detectHaltMarker,
 	findHaltMarker,
@@ -39,6 +40,7 @@ import {
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { beginSleepAwareSpan } from '../../../services/systemSleep';
+import { getClientInstanceId } from '../../../utils/clientInstance';
 import {
 	clearSteeringNotes,
 	takeSteeringNotesForDispatch,
@@ -242,7 +244,13 @@ export function useBatchRunner({
 			// and browser clients, but every renderer shares this main-process claim.
 			let claimedStart = false;
 			try {
-				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+				// The owner record is what lets this tab pick the run back up if the
+				// page reloads mid-run (#1470).
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId, {
+					instanceId: getClientInstanceId(),
+					config,
+					folderPath,
+				});
 			} catch (error) {
 				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'BatchProcessor', {
 					sessionId,
@@ -571,6 +579,7 @@ export function useBatchRunner({
 					startTime: batchStartTime,
 					tasksTotal: initialTotalTasks,
 					projectPath: session.cwd,
+					kind: 'spec-driven',
 				});
 			} catch (statsError) {
 				// Don't fail the batch if stats tracking fails
@@ -595,6 +604,7 @@ export function useBatchRunner({
 				getOutputTokens: () => totalOutputTokens,
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => documents.length,
+				kind: 'spec-driven',
 			};
 
 			// Per-loop tracking for loop summary. The span is sleep-aware so a
@@ -820,14 +830,31 @@ export function useBatchRunner({
 							// dropped) is logged but doesn't crash the run.
 							if (activeHitlGateLine !== null) {
 								try {
-									const {
-										taskCount: resumedRemaining,
-										checkedCount: resumedChecked,
-										content: resumedContent,
-									} = await readDocAndCountTasks(folderPath, effectiveFilename, sshRemoteId);
-									remainingTasks = resumedRemaining;
-									docCheckedCount = resumedChecked;
-									docContent = resumedContent;
+									let resumed = await readDocAndCountTasks(
+										folderPath,
+										effectiveFilename,
+										sshRemoteId
+									);
+									// Resume on a gate means the person did the step. If they did
+									// not tick a box themselves, write one, or the gate check below
+									// finds the same gate and pauses again.
+									const acknowledged = acknowledgeHitlGate(resumed.content);
+									if (acknowledged !== null) {
+										await window.maestro.autorun.writeDoc(
+											folderPath,
+											effectiveFilename + '.md',
+											acknowledged,
+											sshRemoteId
+										);
+										resumed = await readDocAndCountTasks(
+											folderPath,
+											effectiveFilename,
+											sshRemoteId
+										);
+									}
+									remainingTasks = resumed.taskCount;
+									docCheckedCount = resumed.checkedCount;
+									docContent = resumed.content;
 								} catch (rereadErr) {
 									logger.warn(
 										`[BatchProcessor] HITL resume re-read failed for ${effectiveFilename}; continuing with in-memory content:`,
@@ -1722,6 +1749,7 @@ export function useBatchRunner({
 					outputTokens: finalTotals.totalOutputTokens,
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
+					kind: 'spec-driven',
 				});
 			}
 

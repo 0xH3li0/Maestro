@@ -1409,8 +1409,10 @@ export function closeTab(
 	//   1. It was busy (an agent turn is mid-flight).
 	//   2. It has queued items waiting (a message the user already sent that should
 	//      still fire in the background - fire-and-forget).
-	// The pill picks orphans up alongside busy aiTabs. The agent exit/error
-	// listeners drop the orphan once its process is gone and its queue is drained.
+	// The pill picks up BUSY orphans alongside busy aiTabs (see buildThinkingItems
+	// in utils/thinkingItems.ts); a case-2 orphan idles until dispatch. The agent
+	// exit/error listeners drop the orphan once its process is gone and its queue
+	// is drained.
 	const closedTabWasBusy = tabToClose.state === 'busy';
 	const closedTabHasQueuedItems = (session.executionQueue ?? []).some(
 		(item) => item.tabId === tabId
@@ -1926,15 +1928,17 @@ export interface ReopenUnifiedClosedTabResult {
 function restoreClosedAiTab(
 	session: Session,
 	tabToRestore: AITab,
-	unifiedIndex: number
+	unifiedIndex: number,
+	restoredTabId?: string
 ): ReopenUnifiedClosedTabResult {
 	// If this closed tab is still tracked as an orphan, restore the orphan
 	// (preserving its original ID so the still-running agent re-attaches)
 	// instead of creating a duplicate tab with a fresh ID.
 	const matchingOrphan = session.orphanedThinkingTabs?.find(
 		(t) =>
-			t.id === tabToRestore.id ||
-			(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
+			(!restoredTabId || t.id === restoredTabId) &&
+			(t.id === tabToRestore.id ||
+				(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId))
 	);
 	if (matchingOrphan) {
 		const restored = restoreOrphanedTab(session, matchingOrphan.id);
@@ -1949,9 +1953,9 @@ function restoreClosedAiTab(
 	}
 
 	// Check for duplicate: does a tab with the same agentSessionId already exist?
-	if (tabToRestore.agentSessionId !== null) {
-		const existingTab = session.aiTabs.find(
-			(tab) => tab.agentSessionId === tabToRestore.agentSessionId
+	if (restoredTabId || tabToRestore.agentSessionId !== null) {
+		const existingTab = session.aiTabs.find((tab) =>
+			restoredTabId ? tab.id === restoredTabId : tab.agentSessionId === tabToRestore.agentSessionId
 		);
 
 		if (existingTab) {
@@ -1973,7 +1977,7 @@ function restoreClosedAiTab(
 	// No duplicate - restore the tab
 	const restoredTab: AITab = {
 		...tabToRestore,
-		id: generateId(),
+		id: restoredTabId ?? generateId(),
 	};
 
 	// Calculate insert position in aiTabs based on unified index
@@ -2029,10 +2033,12 @@ function restoreClosedAiTab(
  *
  * @param session - The Maestro session that owned the tab
  * @param tabId - The original AITab.id recorded on the toast
+ * @param restoredTabId - Desktop-minted id when adopting a confirmed browser reopen.
  */
 export function reopenClosedAiTabById(
 	session: Session,
-	tabId: string
+	tabId: string,
+	restoredTabId?: string
 ): ReopenUnifiedClosedTabResult | null {
 	// Prefer the unified history (the current closed-tab store).
 	const unifiedHistory = session.unifiedClosedTabHistory || [];
@@ -2043,7 +2049,7 @@ export function reopenClosedAiTabById(
 			...unifiedHistory.slice(0, unifiedIdx),
 			...unifiedHistory.slice(unifiedIdx + 1),
 		];
-		const result = restoreClosedAiTab(session, entry.tab, entry.unifiedIndex);
+		const result = restoreClosedAiTab(session, entry.tab, entry.unifiedIndex, restoredTabId);
 		return {
 			...result,
 			session: { ...result.session, unifiedClosedTabHistory: remainingHistory },
@@ -2060,7 +2066,12 @@ export function reopenClosedAiTabById(
 			...legacyHistory.slice(0, legacyIdx),
 			...legacyHistory.slice(legacyIdx + 1),
 		];
-		const result = restoreClosedAiTab(session, entry.tab, session.unifiedTabOrder.length);
+		const result = restoreClosedAiTab(
+			session,
+			entry.tab,
+			session.unifiedTabOrder.length,
+			restoredTabId
+		);
 		return {
 			...result,
 			session: { ...result.session, closedTabHistory: remainingLegacy },

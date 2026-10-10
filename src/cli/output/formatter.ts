@@ -67,6 +67,8 @@ export interface GroupDisplay {
 	name: string;
 	emoji?: string;
 	collapsed?: boolean;
+	/** Parked out of the Left Bar. */
+	hidden?: boolean;
 }
 
 export function formatGroups(groups: GroupDisplay[]): string {
@@ -82,7 +84,7 @@ export function formatGroups(groups: GroupDisplay[]): string {
 		const emoji = group.emoji || '📁';
 		const name = c('white', group.name);
 		const id = dim(group.id);
-		lines.push(`  ${emoji}  ${name}`);
+		lines.push(`  ${emoji}  ${name}${group.hidden ? dim(' (hidden)') : ''}`);
 		lines.push(`      ${id}`);
 	}
 
@@ -430,6 +432,9 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			}
 			const total = event.totalTasksCompleted as number;
 			const elapsed = ((event.totalElapsedMs as number) / 1000).toFixed(1);
+			if (event.stopped) {
+				return `\n${timeStr} ${c('yellow', '■')} ${bold('Playbook stopped')} ${dim(`(${total} tasks in ${elapsed}s)`)}`;
+			}
 			return `\n${timeStr} ${c('green', '✓')} ${bold('Playbook complete')} ${dim(`(${total} tasks in ${elapsed}s)`)}`;
 		}
 

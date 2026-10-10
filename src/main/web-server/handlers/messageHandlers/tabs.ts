@@ -9,6 +9,7 @@
 
 import path from 'path';
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
+import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -336,8 +337,11 @@ export function handleOpenFileTab(
 	//                          anywhere. Strictly stronger, so it wins.
 	const background = readBackgroundField(message);
 	const switchToAgent = readSwitchToAgentField(message);
+	// Opt-in like `background`: only a literal 'queue' counts, so an absent
+	// field keeps today's open-and-play behaviour for every existing caller.
+	const mediaMode: MediaOpenMode = message.mediaMode === 'queue' ? 'queue' : 'play';
 	logger.info(
-		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}`,
+		`[Web] Received open_file_tab message: session=${sessionId}, filePath=${filePath}, background=${background}, switchToAgent=${switchToAgent}, mediaMode=${mediaMode}`,
 		LOG_CONTEXT
 	);
 
@@ -377,7 +381,7 @@ export function handleOpenFileTab(
 	}
 
 	ctx.callbacks
-		.openFileTab(sessionId, resolved, { background, switchToAgent })
+		.openFileTab(sessionId, resolved, { background, switchToAgent, mediaMode })
 		.then((success) => {
 			ctx.send(client, {
 				type: 'open_file_tab_result',
@@ -386,6 +390,7 @@ export function handleOpenFileTab(
 				filePath,
 				background,
 				switchToAgent,
+				mediaMode,
 				requestId: message.requestId,
 			});
 		})
@@ -545,6 +550,7 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	const rawInputRequired = message.inputRequired;
 	const background = readBackgroundField(message);
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
@@ -588,6 +594,10 @@ export async function handleOpenTerminalTab(
 	}
 	if (rawCommand !== undefined && typeof rawCommand !== 'string') {
 		sendErrorResult('Invalid command: must be a string');
+		return;
+	}
+	if (rawInputRequired !== undefined && typeof rawInputRequired !== 'boolean') {
+		sendErrorResult('Invalid inputRequired: must be a boolean');
 		return;
 	}
 	const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
@@ -636,7 +646,17 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
+		.openTerminalTab(
+			sessionId,
+			{
+				cwd: resolvedCwd,
+				shell,
+				name,
+				command,
+				...(rawInputRequired === true && { inputRequired: true }),
+			},
+			{ background }
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',

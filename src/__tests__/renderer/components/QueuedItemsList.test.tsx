@@ -5,6 +5,8 @@ import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -63,6 +65,48 @@ describe('QueuedItemsList pause/hold', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();
 		expect(screen.queryByText('HELD')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList held-for-retry badge', () => {
+	afterEach(() => {
+		act(() => useRetryStore.setState({ retries: {} }));
+	});
+
+	function holdForRetry(heldItemId: string) {
+		const entry = {
+			sessionId: 's1',
+			tabId: 'tab-1',
+			key: 's1:tab-1',
+			outageId: 'o1',
+			strategy: 'token-exhaustion',
+			mode: 'resend',
+			status: 'scheduled',
+			attempt: 0,
+			startedAt: 0,
+			nextRetryAt: 1,
+			lastMessage: 'limit',
+			heldItemId,
+		} as RetryEntry;
+		act(() => useRetryStore.setState({ retries: { [entry.key]: entry } }));
+	}
+
+	it('labels the parked failed turn, and only that item', () => {
+		setup({ executionQueue: [item({ id: 'failed' }), item({ id: 'next', text: 'follow-up' })] });
+		expect(screen.queryByTestId('held-for-retry-badge')).toBeNull();
+
+		holdForRetry('failed');
+		const badges = screen.getAllByTestId('held-for-retry-badge');
+		expect(badges).toHaveLength(1);
+		expect(badges[0]).toHaveAttribute('title', expect.stringMatching(/not a second copy/));
+	});
+
+	it('drops the label once the outage entry is gone', () => {
+		setup({ executionQueue: [item({ id: 'failed' })] });
+		holdForRetry('failed');
+		expect(screen.getByTestId('held-for-retry-badge')).toBeTruthy();
+		act(() => useRetryStore.setState({ retries: {} }));
+		expect(screen.queryByTestId('held-for-retry-badge')).toBeNull();
 	});
 });
 
@@ -408,7 +452,7 @@ describe('QueuedItemsList force send', () => {
 		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
 	});
 
-	it('shows Force Send disabled when another tab is busy and forced parallel is off', () => {
+	it('shows Force Send dimmed when another tab is busy and forced parallel is off', () => {
 		withForceSend(
 			eligibility({
 				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
@@ -418,8 +462,35 @@ describe('QueuedItemsList force send', () => {
 			})
 		);
 		const button = screen.getByRole('button', { name: /Force Send/i });
-		expect(button).toBeDisabled();
+		expect(button).toHaveAttribute('aria-disabled', 'true');
 		expect(button.getAttribute('title')).toMatch(/Forced Parallel Execution/i);
+	});
+
+	it('clicking the dimmed Force Send explains the block and links to the setting', () => {
+		const onForceSendQueuedItem = vi.fn();
+		withForceSend(
+			eligibility({
+				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+				requiresParallel: true,
+				canForce: false,
+				blockedReason: 'needs-forced-parallel',
+			}),
+			{ onForceSendQueuedItem }
+		);
+		fireEvent.click(screen.getByRole('button', { name: /Force Send/i }));
+		expect(screen.getByText('Force Send Is Off')).toBeInTheDocument();
+		// No send confirmation, and nothing dispatched.
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
+		expect(onForceSendQueuedItem).not.toHaveBeenCalled();
+
+		fireEvent.click(
+			screen.getByRole('button', { name: /Settings > General > Forced Parallel Execution/ })
+		);
+		const settings = useModalStore.getState().modals.get('settings');
+		expect(settings?.open).toBe(true);
+		expect(settings?.data).toEqual({ tab: 'general', settingId: 'general-forced-parallel' });
+		expect(screen.queryByText('Force Send Is Off')).toBeNull();
+		useModalStore.getState().closeModal('settings');
 	});
 
 	it('hides Force Send entirely when the item has no tab left to run on', () => {

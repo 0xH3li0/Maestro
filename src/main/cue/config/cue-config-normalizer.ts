@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import {
 	type CueAction,
+	type CueAutoRunConfig,
 	type CueCommand,
 	type CueConfig,
 	type CueGitHubLabelTarget,
@@ -17,6 +18,7 @@ import {
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
 } from '../../../shared/cue';
+import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 
 export interface PromptSpec {
 	inline?: string;
@@ -53,14 +55,28 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	// path for POSIX escapes, and an absolute path on Windows when `realPath`
 	// lives on a different drive or UNC share (no common base) - so we reject
 	// any absolute rel too.
+	//
+	// The project's own `.maestro` directory is a second trusted root. Two
+	// agents can share one Cue config by symlinking `.maestro` to another
+	// checkout; the YAML is read through that link, so its prompt files must be
+	// too. Without this, every prompt_file resolved outside the root, the
+	// subscriptions loaded with empty prompts, and the pipeline editor refused
+	// to save ("agent X is missing a prompt").
 	let canonicalPath: string;
 	try {
-		const realRoot = fs.realpathSync.native(normalizedRoot);
 		const realPath = fs.realpathSync.native(absPath);
-		const rel = path.relative(realRoot, realPath);
-		if (rel !== '' && (path.isAbsolute(rel) || rel.split(path.sep)[0] === '..')) {
-			return undefined;
-		}
+		const trustedRoots = [normalizedRoot, path.join(normalizedRoot, '.maestro')];
+		const contained = trustedRoots.some((root) => {
+			let realRoot: string;
+			try {
+				realRoot = fs.realpathSync.native(root);
+			} catch {
+				return false;
+			}
+			const rel = path.relative(realRoot, realPath);
+			return rel === '' || (!path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..');
+		});
+		if (!contained) return undefined;
 		canonicalPath = realPath;
 	} catch {
 		return undefined;
@@ -200,6 +216,66 @@ function normalizeNotify(rawNotify: unknown): CueNotifyConfig | undefined {
 	return result;
 }
 
+function normalizeAutoRun(rawAutoRun: unknown): CueAutoRunConfig | undefined {
+	if (!rawAutoRun || typeof rawAutoRun !== 'object' || Array.isArray(rawAutoRun)) {
+		return undefined;
+	}
+	const raw = rawAutoRun as Record<string, unknown>;
+	const documents =
+		Array.isArray(raw.documents) &&
+		raw.documents.every((value: unknown) => typeof value === 'string')
+			? (raw.documents as string[])
+			: undefined;
+	if (!documents || documents.length === 0) {
+		// A document-less autorun has nothing to launch. Returning undefined lets
+		// the validator report it as a config error rather than the engine firing
+		// a no-op run that looks successful in the activity log.
+		return undefined;
+	}
+
+	const result: CueAutoRunConfig = { documents };
+	if (
+		Array.isArray(raw.reset_on_completion) &&
+		raw.reset_on_completion.every((value: unknown) => typeof value === 'boolean') &&
+		raw.reset_on_completion.length === documents.length
+	) {
+		result.reset_on_completion = raw.reset_on_completion as boolean[];
+	}
+	if (typeof raw.prompt === 'string') result.prompt = raw.prompt;
+	if (typeof raw.loop_enabled === 'boolean') result.loop_enabled = raw.loop_enabled;
+	if (typeof raw.max_loops === 'number' && Number.isInteger(raw.max_loops) && raw.max_loops >= 1) {
+		result.max_loops = raw.max_loops;
+	}
+	if (typeof raw.model === 'string') result.model = raw.model;
+	if (typeof raw.effort === 'string') result.effort = raw.effort;
+	if (raw.task_selection_mode === 'task' || raw.task_selection_mode === 'document') {
+		result.task_selection_mode = raw.task_selection_mode;
+	}
+	if (typeof raw.ignore_model_hints === 'boolean') {
+		result.ignore_model_hints = raw.ignore_model_hints;
+	}
+	if (typeof raw.auto_resume_on_error === 'boolean') {
+		result.auto_resume_on_error = raw.auto_resume_on_error;
+	}
+	// Bounds are applied where the policy is resolved (`resolveAutoResumePolicy`),
+	// the same place every other door into a run is clamped.
+	if (typeof raw.auto_resume_after_min === 'number' && Number.isFinite(raw.auto_resume_after_min)) {
+		result.auto_resume_after_min = raw.auto_resume_after_min;
+	}
+	if (typeof raw.max_auto_resumes === 'number' && Number.isFinite(raw.max_auto_resumes)) {
+		result.max_auto_resumes = raw.max_auto_resumes;
+	}
+	if (raw.worktree !== undefined) {
+		const worktree = parseCueAutoRunWorktree(raw.worktree);
+		// An unusable block makes the whole payload unusable: carrying on without
+		// it would run the documents in the owning agent's own checkout. The
+		// validator reports why.
+		if (!worktree.ok) return undefined;
+		result.worktree = worktree.value;
+	}
+	return result;
+}
+
 function normalizeSubscription(
 	sub: Record<string, unknown>,
 	projectRoot: string
@@ -218,11 +294,15 @@ function normalizeSubscription(
 			: undefined;
 
 	const action: CueAction | undefined =
-		sub.action === 'command' || sub.action === 'prompt' || sub.action === 'notify'
+		sub.action === 'command' ||
+		sub.action === 'prompt' ||
+		sub.action === 'notify' ||
+		sub.action === 'autorun'
 			? (sub.action as CueAction)
 			: undefined;
 	const command = normalizeCommand(sub.command);
 	const notify = normalizeNotify(sub.notify);
+	const autoRun = normalizeAutoRun(sub.auto_run);
 
 	const resolvedPrompt =
 		promptSpec.inline ??
@@ -235,7 +315,17 @@ function normalizeSubscription(
 			? command.shell
 			: command.cli.target
 		: '';
-	const prompt = action === 'command' && !resolvedPrompt ? commandSentinel : resolvedPrompt;
+	// Autorun carries its work in `auto_run`, not in `prompt`. Back-fill the
+	// same way `command` does so the dispatcher's "no prompt -> skip" gate
+	// can't silently drop a scheduled run, and so the activity log shows what
+	// was launched instead of a blank row.
+	const autoRunSentinel = autoRun ? autoRun.documents.join(', ') : '';
+	const prompt =
+		action === 'command' && !resolvedPrompt
+			? commandSentinel
+			: action === 'autorun' && !resolvedPrompt
+				? autoRunSentinel
+				: resolvedPrompt;
 	const outputPrompt =
 		outputPromptSpec?.inline ??
 		(outputPromptSpec?.file ? readPromptFile(projectRoot, outputPromptSpec.file) : undefined);
@@ -278,6 +368,7 @@ function normalizeSubscription(
 		output_prompt: outputPrompt,
 		action,
 		command,
+		auto_run: autoRun,
 		interval_minutes: typeof sub.interval_minutes === 'number' ? sub.interval_minutes : undefined,
 		schedule_times:
 			Array.isArray(sub.schedule_times) &&
@@ -334,6 +425,17 @@ function normalizeSubscription(
 				? (sub.gh_label_target as CueGitHubLabelTarget)
 				: undefined,
 		gh_labels: normalizeGhLabels(sub.gh_labels),
+		// The GitHub trigger source reads both off the normalized subscription.
+		// Leaving them out here silently turned every YAML re-trigger sub into
+		// fire-once-per-item, so follow-up comments never reached the agent.
+		retrigger_on_comments:
+			typeof sub.retrigger_on_comments === 'boolean' ? sub.retrigger_on_comments : undefined,
+		max_notifications:
+			typeof sub.max_notifications === 'number' &&
+			Number.isInteger(sub.max_notifications) &&
+			sub.max_notifications >= 0
+				? sub.max_notifications
+				: undefined,
 		agent_id:
 			typeof sub.agent_id === 'string' && sub.agent_id.trim().length > 0
 				? sub.agent_id.trim()

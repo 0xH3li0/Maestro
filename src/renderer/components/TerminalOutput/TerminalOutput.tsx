@@ -5,8 +5,10 @@ import React, {
 	useLayoutEffect,
 	forwardRef,
 	useCallback,
+	useState,
 	memo,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
 import type { LogEntry } from '../../types';
 import type { TerminalOutputProps } from './types';
@@ -17,6 +19,15 @@ import { useDebouncedValue, useProgressiveRenderWindow } from '../../hooks';
 import { jumpToMessageEdge, isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { QueuedItemsList } from '../QueuedItemsList';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
+import { Spinner } from '../ui/Spinner';
+import {
+	TerminalSelectionContextMenu,
+	type TerminalSelectionContextMenuState,
+} from '../TerminalSelectionContextMenu';
+import { resolveImageFromEvent } from '../ImageContextMenuHost';
+import { isEditingTextTarget } from '../../utils/editableTarget';
+import { appendQuoteToDraft } from '../../utils/quoteSelection';
+import { useComposerInputStore } from '../../stores/composerInputStore';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -35,6 +46,7 @@ import { ScrollToBottomButton } from './components/ScrollToBottomButton';
 import { useLogItemUiState } from './hooks/useLogItemUiState';
 import { useTerminalOutputSearch } from './hooks/useTerminalOutputSearch';
 import { useTerminalOutputScroll } from './hooks/useTerminalOutputScroll';
+import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 
 /**
  * Frames a cross-tab search jump keeps re-asserting its scroll position.
@@ -127,11 +139,72 @@ export const TerminalOutput = memo(
 			}
 		}, []);
 
+		// Right-click on selected transcript text: Quote in Message / Copy (issue #1663).
+		const [selectionMenu, setSelectionMenu] = useState<TerminalSelectionContextMenuState | null>(
+			null
+		);
+		const closeSelectionMenu = useCallback(() => setSelectionMenu(null), []);
+
+		const handleTranscriptContextMenu = useCallback((e: React.MouseEvent) => {
+			// A link or image menu already claimed this right-click, or it landed in a
+			// text field (the native cut/copy/paste + spellcheck menu owns those).
+			if (e.defaultPrevented || isEditingTextTarget(e.target)) return;
+			if (resolveImageFromEvent(e.nativeEvent)) return;
+			const selection = window.getSelection();
+			const text = selection?.toString() ?? '';
+			if (!selection || selection.isCollapsed || !text.trim()) return;
+			const container = scrollContainerRef.current;
+			if (
+				!container ||
+				!selection.anchorNode ||
+				!selection.focusNode ||
+				!container.contains(selection.anchorNode) ||
+				!container.contains(selection.focusNode)
+			) {
+				return;
+			}
+			// Only when the click lands on the highlighted text itself, so a stale
+			// selection elsewhere in the transcript is not what gets quoted.
+			const target = e.target as Node;
+			let onSelection = false;
+			for (let i = 0; i < selection.rangeCount && !onSelection; i++) {
+				onSelection = selection.getRangeAt(i).intersectsNode(target);
+			}
+			if (!onSelection) return;
+			e.preventDefault();
+			setSelectionMenu({ x: e.clientX, y: e.clientY, selection: text });
+		}, []);
+
+		// Append the passage to the composer as a Markdown quote and park the caret
+		// on the blank line below it, ready for the comment about that passage.
+		// Repeating it stacks quotes, so one message can answer several passages.
+		const handleQuoteSelection = useCallback(
+			(text: string) => {
+				const composer = useComposerInputStore.getState();
+				// A quote is prose for the agent, never a shell command line.
+				if (composer.aiCommandMode !== 'off') composer.setAiCommandMode('off');
+				composer.setAiValue((prev) => appendQuoteToDraft(prev, text));
+				window.getSelection()?.removeAllRanges();
+				// Wait a frame so the controlled textarea has rendered the new value.
+				requestAnimationFrame(() => {
+					const input = inputRef.current;
+					if (!input) return;
+					input.focus();
+					const end = input.value.length;
+					input.setSelectionRange(end, end);
+					input.scrollTop = input.scrollHeight;
+				});
+			},
+			[inputRef]
+		);
+
 		// Theme-aware ANSI palette, shared with every other raw-output surface.
 		const ansiConverter = useAnsiConverter(theme);
 
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
+		const transcriptDeferred =
+			!!activeTab && !!session.deferredContent?.tabIds.includes(activeTab.id);
 		// Collapse FIRST so tool logs still act as response boundaries
 		// (collapseAiResponseLogs treats source:'tool' as a boundary between
 		// assistant segments); only THEN hide them. Tool visibility is a pure render
@@ -490,6 +563,23 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
+				{transcriptDeferred && (
+					<div
+						className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-4 text-sm"
+						style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
+					>
+						<Spinner size={24} ariaLabel="Loading conversation" />
+						<span>Loading conversation...</span>
+						<button
+							type="button"
+							className="rounded-lg px-3 py-2"
+							style={{ color: theme.colors.accent }}
+							onClick={requestWebBridgeReconcile}
+						>
+							Retry
+						</button>
+					</div>
+				)}
 				{/* CSS for Custom Highlight API - paints matches without mutating DOM */}
 				<style>{`
 					::highlight(terminal-search-all) {
@@ -536,6 +626,7 @@ export const TerminalOutput = memo(
 						fontSize: 'var(--maestro-size-chat, inherit)',
 					}}
 					onScroll={handleScroll}
+					onContextMenu={handleTranscriptContextMenu}
 					// The input events that prove a scroll is the user's. `scroll` itself
 					// cannot: this component writes `scrollTop` on every frame of a restore
 					// and on every mutation while following the tail, and each of those
@@ -654,6 +745,15 @@ export const TerminalOutput = memo(
 									bionifyAlgorithm={globalBionifyAlgorithm}
 									userMessageAlignment={userMessageAlignment}
 									responseDurationMs={responseDurationByLogId.get(log.id)}
+									// Codex's assistant directives are Codex's own emitting
+									// convention, so the same string from another provider is a
+									// message about the format. The tab comes from the resolved
+									// `activeTab` rather than `session.activeTabId`, which can
+									// still name a hidden consult tab - the transcript below is
+									// drawing `activeTab`'s logs, so that is the conversation a
+									// chip in them belongs to.
+									codexDirectives={session.toolType === 'codex'}
+									codexFollowupTabId={activeTab?.id}
 									isClaudeCode={session.toolType === 'claude-code'}
 									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
 									showProviderModePill={showProviderModePill}
@@ -707,6 +807,18 @@ export const TerminalOutput = memo(
 				)}
 
 				{/* Copy flash now rendered globally by <CenterFlash /> */}
+
+				{selectionMenu &&
+					createPortal(
+						<TerminalSelectionContextMenu
+							menu={selectionMenu}
+							theme={theme}
+							onDismiss={closeSelectionMenu}
+							onQuote={handleQuoteSelection}
+							onCopy={copyToClipboard}
+						/>,
+						document.body
+					)}
 
 				{/* Save Markdown Modal */}
 				{saveModalContent !== null && (

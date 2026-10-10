@@ -176,7 +176,7 @@ type GroupChatData = {
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
-import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
+import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
@@ -227,7 +227,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			sessionId: string
 		) => Promise<SessionMessagesResult | null>;
-		// NEW: Single-call grooming (recommended) - spawns batch process and returns response
+		// Single-call grooming: spawns a batch process and returns its response
 		groomContext: (
 			projectRoot: string,
 			agentType: string,
@@ -252,10 +252,6 @@ interface MaestroAPI {
 		) => Promise<string>;
 		// Cancel all active grooming sessions
 		cancelGrooming: () => Promise<void>;
-		// DEPRECATED: Use groomContext instead
-		createGroomingSession: (projectRoot: string, agentType: string) => Promise<string>;
-		sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
-		cleanupGroomingSession: (sessionId: string) => Promise<void>;
 	};
 	settings: {
 		get: (key: string) => Promise<unknown>;
@@ -265,6 +261,17 @@ interface MaestroAPI {
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
+		getBootstrap: () => Promise<any[]>;
+		getDeferredContent: (
+			sessionId: string,
+			tabId: string | null,
+			includeCommands: boolean
+		) => Promise<{
+			logs?: import('./types').LogEntry[];
+			shellLogs?: import('./types').LogEntry[];
+			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
+			aiCommandHistory?: string[];
+		}>;
 		setAll: (sessions: any[]) => Promise<boolean>;
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
@@ -481,7 +488,17 @@ interface MaestroAPI {
 				reason?: string;
 			}
 		) => void;
-		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteCloseTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCloseTabResponse: (responseChannel: string, closed: boolean) => void;
+		onRemoteReopenTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteReopenTabResponse: (
+			responseChannel: string,
+			result: { tabId: string } | null
+		) => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		) => () => void;
@@ -504,7 +521,11 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				filePath: string,
-				options: { background: boolean; switchToAgent: boolean }
+				options: {
+					background: boolean;
+					switchToAgent: boolean;
+					mediaMode: import('../shared/mediaTypes').MediaOpenMode;
+				}
 			) => void
 		) => () => void;
 		onRemoteOpenModal: (
@@ -644,7 +665,13 @@ interface MaestroAPI {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					inputRequired?: boolean;
+				},
 				responseChannel: string,
 				options: { background?: boolean }
 			) => void
@@ -690,6 +717,38 @@ interface MaestroAPI {
 				totalLines?: number;
 			}
 		) => void;
+		onRemoteGetGroupChats: (callback: (responseChannel: string) => void) => () => void;
+		sendRemoteGetGroupChatsResponse: (
+			responseChannel: string,
+			result: import('../shared/groupChatRemote').RemoteGroupChatState[]
+		) => void;
+		onRemoteStartGroupChat: (
+			callback: (
+				topic: string,
+				participantIds: string[],
+				responseChannel: string,
+				options?: { moderatorAgentId?: string; message?: string }
+			) => void
+		) => () => void;
+		sendRemoteStartGroupChatResponse: (
+			responseChannel: string,
+			result: { chatId?: string; error?: string } | null
+		) => void;
+		onRemoteGetGroupChatState: (
+			callback: (chatId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteGetGroupChatStateResponse: (
+			responseChannel: string,
+			result: import('../shared/groupChatRemote').RemoteGroupChatState | null
+		) => void;
+		onRemoteStopGroupChat: (
+			callback: (chatId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteStopGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSendGroupChatMessage: (
+			callback: (chatId: string, message: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSendGroupChatMessageResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteNewAITabWithPrompt: (
 			callback: (
 				sessionId: string,
@@ -1035,7 +1094,10 @@ interface MaestroAPI {
 		) => () => void;
 	};
 	feedback: {
-		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		checkGhAuth: (options?: {
+			fresh?: boolean;
+		}) => Promise<import('../shared/feedback').FeedbackAuthResponse>;
+		getGhLoginCommand: () => Promise<import('../shared/feedback').FeedbackGhLoginCommand>;
 		submit: (payload: {
 			sessionId: string;
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
@@ -1065,7 +1127,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
-		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
 				number: number;
@@ -1081,7 +1143,9 @@ interface MaestroAPI {
 		subscribeIssue: (
 			issueNumber: number,
 			comment?: string
-		) => Promise<{ success: boolean; error?: string }>;
+		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
+		rememberAccount: (key: string | null) => Promise<void>;
 		drafts: {
 			list: () => Promise<{
 				drafts: Array<{
@@ -1227,9 +1291,23 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
-		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
+		claimAutoRunStart: (
+			sessionId: string,
+			owner?: import('../shared/autoRunBroadcast').AutoRunOwner<import('./types').BatchRunConfig>
+		) => Promise<boolean>;
 		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
+		takeOrphanedAutoRuns: (
+			instanceId: string
+		) => Promise<
+			import('../shared/autoRunBroadcast').OrphanedAutoRun<
+				Partial<import('../shared/autoRunBroadcast').AutoRunBroadcastState>,
+				import('./types').BatchRunConfig
+			>[]
+		>;
+		abandonAutoRunReclaim: (sessionId: string, instanceId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+		requestCloseTab: (sessionId: string, tabId: string) => Promise<boolean>;
+		requestReopenTab: (sessionId: string, tabId: string) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
@@ -1479,10 +1557,23 @@ interface MaestroAPI {
 		// Supports SSH remote execution via optional sshRemoteId parameter
 		listWorktrees: (
 			cwd: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			basePath?: string,
+			sessionPaths?: string[]
 		) => Promise<{
+			resolvedCwd?: string;
+			resolvedBasePath?: string;
+			resolvedSessionPaths?: Record<string, string>;
+			// Missing candidates are safe to reconcile only after a successful registry read.
+			missingSessionPaths?: string[];
+			/** Individual aliases that could not be resolved; keep their existing sessions. */
+			unresolvedSessionPaths?: string[];
 			worktrees: Array<{
 				path: string;
+				resolvedPath?: string;
+				pathUnresolved?: boolean;
+				pathMissing?: boolean;
+				isPrunable?: boolean;
 				head: string;
 				branch: string | null;
 				isBare: boolean;
@@ -1500,6 +1591,8 @@ interface MaestroAPI {
 				repoRoot: string | null;
 			}>;
 			scanFailed?: boolean;
+			/** Uncertain candidate or group roots whose existing sessions must be preserved. */
+			unresolvedPaths?: string[];
 		}>;
 		// File watching is not available for SSH remote sessions.
 		// For remote sessions, returns isRemote: true indicating polling should be used instead.
@@ -2549,8 +2642,12 @@ interface MaestroAPI {
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: import('../shared/toastClickAction').ToastClickAction
 		) => Promise<{ success: boolean; error?: string }>;
+		onClickAction: (
+			handler: (action: import('../shared/toastClickAction').ToastClickAction) => void
+		) => () => void;
 		speak: (
 			text: string,
 			command?: string,
@@ -3342,6 +3439,7 @@ interface MaestroAPI {
 			longestRunMs?: number;
 			longestRunDate?: string;
 			currentRunMs?: number;
+			currentRunKind?: AutoRunKind;
 			theme?: string;
 			clientToken?: string;
 			authToken?: string;
@@ -3638,6 +3736,7 @@ interface MaestroAPI {
 			startTime: number;
 			tasksTotal?: number;
 			projectPath?: string;
+			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
 		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
@@ -3789,6 +3888,7 @@ interface MaestroAPI {
 			exchanges: number;
 			documents: number;
 			tasks: number;
+			activeMs?: number;
 			projectPath?: string;
 		}) => Promise<string | null>;
 		getWizardRuns: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => Promise<
@@ -3804,6 +3904,7 @@ interface MaestroAPI {
 				exchanges: number;
 				documents: number;
 				tasks: number;
+				activeMs?: number;
 				projectPath?: string;
 			}>
 		>;

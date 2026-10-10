@@ -22,17 +22,20 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 const mockGetShellPath = vi.fn(async () => '/login/shell/bin:/usr/bin:/bin');
-vi.mock('../../../main/runtime/getShellPath', () => ({
+vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 	getShellPath: () => mockGetShellPath(),
 	peekShellPath: () => null,
 }));
 
-// Keep the ssh-spawn-wrapper inert in this suite; the tests exercise the local
-// code path only (no SSH config provided). Mocking here avoids pulling in the
+// Mock the ssh-spawn-wrapper's spawn builder. Mocking avoids pulling in the
 // transitive ssh-command-builder → execFile chain, which would try to wrap
-// the mocked `child_process` and break at module load.
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
-	wrapSpawnWithSsh: vi.fn(),
+// the mocked `child_process` and break at module load. The failure message is
+// a stand-in; its real wording is covered by the ssh-spawn-wrapper suite.
+const mockWrapSpawnWithSsh = vi.fn();
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
+	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	sshUnresolvedRemoteMessage: (cfg: { remoteId: string | null }) =>
+		`remote "${cfg.remoteId}" could not be resolved`,
 }));
 
 // Platform is mockable per-test; default is the POSIX kill path
@@ -93,7 +96,8 @@ vi.mock('child_process', async (importOriginal) => {
 	};
 });
 
-import { executeCueShell, stopCueShellRun } from '../../../main/cue/cue-shell-executor';
+import { executeCueShell } from '../../../main/cue/cue-shell-executor';
+import { getProcessList, stopProcess } from '../../../main/cue/cue-process-lifecycle';
 
 function createSession(): SessionInfo {
 	return {
@@ -286,12 +290,28 @@ describe('cue-shell-executor', () => {
 		expect(result.status).toBe('timeout');
 	});
 
-	it('stopCueShellRun signals an active process and returns true', async () => {
+	it('lists a running shell command in the shared Cue registry until it settles', async () => {
 		const config = createConfig();
 		const promise = executeCueShell(config as any);
 		await vi.advanceTimersByTimeAsync(0);
 
-		const stopped = stopCueShellRun('run-1');
+		// The Process Monitor reads this list - a shell run missing from it is
+		// invisible there and cannot be stopped from the UI.
+		expect(getProcessList()).toContainEqual(
+			expect.objectContaining({ runId: 'run-1', pid: 54321, toolType: 'terminal' })
+		);
+
+		mockChild.emit('close', 0);
+		await promise;
+		expect(getProcessList()).not.toContainEqual(expect.objectContaining({ runId: 'run-1' }));
+	});
+
+	it('stopProcess signals an active shell run and returns true', async () => {
+		const config = createConfig();
+		const promise = executeCueShell(config as any);
+		await vi.advanceTimersByTimeAsync(0);
+
+		const stopped = stopProcess('run-1');
 		expect(stopped).toBe(true);
 		expect(mockChild.killed).toBe(true);
 
@@ -299,13 +319,13 @@ describe('cue-shell-executor', () => {
 		await promise;
 	});
 
-	it('stopCueShellRun uses taskkill /t /f on Windows instead of POSIX signals', async () => {
+	it('stopProcess uses taskkill /t /f on Windows instead of POSIX signals', async () => {
 		mockIsWindows.mockReturnValue(true);
 		const config = createConfig();
 		const promise = executeCueShell(config as any);
 		await vi.advanceTimersByTimeAsync(0);
 
-		const stopped = stopCueShellRun('run-1');
+		const stopped = stopProcess('run-1');
 		expect(stopped).toBe(true);
 		expect(mockExecFile).toHaveBeenCalledWith(
 			'taskkill',
@@ -319,8 +339,8 @@ describe('cue-shell-executor', () => {
 		await promise;
 	});
 
-	it('stopCueShellRun returns false for unknown runId', () => {
-		expect(stopCueShellRun('does-not-exist')).toBe(false);
+	it('stopProcess returns false for unknown runId', () => {
+		expect(stopProcess('does-not-exist')).toBe(false);
 	});
 
 	it('reports failed status when spawn throws synchronously', async () => {
@@ -332,5 +352,80 @@ describe('cue-shell-executor', () => {
 		expect(result.status).toBe('failed');
 		expect(result.stderr).toContain('command not found');
 		expect(mockCaptureException).toHaveBeenCalled();
+	});
+
+	describe('SSH remote execution', () => {
+		const sshStore = { getSshRemotes: vi.fn(() => []) };
+		const sshRemoteConfig = { enabled: true, remoteId: 'remote-1' };
+
+		it('spawns ssh (no local shell) when the remote resolves', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@host', 'bash -c "echo hello"'],
+				cwd: '/Users/local',
+				customEnvVars: undefined,
+				sshRemoteUsed: { id: 'remote-1', name: 'Server', host: 'host' },
+			});
+
+			const promise = executeCueShell(createConfig({ sshRemoteConfig, sshStore }) as any);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				{ command: 'bash', args: ['-c', 'echo hello'], cwd: '/projects/test' },
+				sshRemoteConfig,
+				sshStore
+			);
+			const [cmd, args, opts] = mockSpawn.mock.calls[0] as [string, string[], any];
+			expect(cmd).toBe('ssh');
+			expect(args).toEqual(['user@host', 'bash -c "echo hello"']);
+			expect(opts.shell).toBe(false);
+			expect(opts.cwd).toBe('/Users/local');
+
+			mockChild.emit('close', 0);
+			expect((await promise).status).toBe('completed');
+		});
+
+		it('fails the run without spawning locally when the remote is missing or disabled', async () => {
+			// The real wrapper returns the unmodified local config in this case.
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'bash',
+				args: ['-c', 'echo hello'],
+				cwd: '/projects/test',
+				sshRemoteUsed: null,
+			});
+			const onLog = vi.fn();
+
+			const result = await executeCueShell(
+				createConfig({
+					sshRemoteConfig: { enabled: true, remoteId: 'deleted-remote' },
+					sshStore,
+					onLog,
+				}) as any
+			);
+
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(mockGetShellPath).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+			expect(result.exitCode).toBeNull();
+			expect(result.stderr).toBe('remote "deleted-remote" could not be resolved');
+			expect(onLog).toHaveBeenCalledWith(
+				'error',
+				expect.stringContaining('remote "deleted-remote" could not be resolved')
+			);
+		});
+
+		it('fails the run and reports to Sentry when the wrapper throws', async () => {
+			mockWrapSpawnWithSsh.mockRejectedValue(new Error('ssh binary missing'));
+
+			const result = await executeCueShell(createConfig({ sshRemoteConfig, sshStore }) as any);
+
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toBe('SSH wrap error: ssh binary missing');
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				expect.any(Error),
+				expect.objectContaining({ operation: 'cue:shell:sshWrap' })
+			);
+		});
 	});
 });

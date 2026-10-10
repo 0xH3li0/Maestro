@@ -70,6 +70,29 @@ describe('cue-queue-persistence', () => {
 		});
 	}
 
+	describe('restoring only what a previous run left behind', () => {
+		// The engine snapshots persistedIds() before sessions initialize. A row
+		// persisted after that (this boot's own app.startup queued behind a
+		// busy slot) is still live in memory, so restoring it would run it twice.
+		it('restores only the ids in the snapshot and leaves later rows alone', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'from-last-run', makeEntry({ subscriptionName: 'old' }));
+			const before = p.persistedIds();
+			p.persist('s-1', 'queued-this-boot', makeEntry({ subscriptionName: 'startup' }));
+
+			const restored = p.restoreAll(before).get('s-1')!;
+			expect(restored.map((e) => e.persistId)).toEqual(['from-last-run']);
+			expect(p.persistedIds()).toEqual(new Set(['from-last-run', 'queued-this-boot']));
+		});
+
+		it('restores every row when no snapshot is given', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'a', makeEntry());
+			p.persist('s-1', 'b', makeEntry());
+			expect(p.restoreAll().get('s-1')).toHaveLength(2);
+		});
+	});
+
 	describe('persist + restore round-trip', () => {
 		it('round-trips all scalar + nested fields', () => {
 			const p = makePersistence();
@@ -130,6 +153,64 @@ describe('cue-queue-persistence', () => {
 			// to their chain root after a crash.
 			expect(child.chainRootId).toBe('run-root');
 			expect(child.parentEventId).toBe('run-root');
+		});
+
+		// A queued `action: autorun` run launches from the payload captured when
+		// it was scheduled. Losing it across a restart leaves a run with no
+		// documents, which fails to launch a schedule nobody is watching.
+		it('round-trips the Auto Run payload through the queue table', () => {
+			const p = makePersistence();
+			const autoRun = {
+				documents: ['/repo/.maestro/playbooks/ship-it.md'],
+				reset_on_completion: [true],
+				prompt: 'work the list',
+				loop_enabled: true,
+				max_loops: 3,
+				model: 'opus',
+			};
+			p.persist('s-1', 'pid-autorun', makeEntry({ action: 'autorun', autoRun }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'autorun')!.autoRun).toEqual(autoRun);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.autoRun).toBeUndefined();
+		});
+
+		// The message of a queued notify also rides the `prompt` slot, but
+		// `sticky` lives only here. Losing it turned a toast the user asked to
+		// stay on screen into one that dismissed itself after a restart.
+		it('round-trips the notify config through the queue table', () => {
+			const p = makePersistence();
+			const notify = { message: 'Deploy finished', sticky: true };
+			p.persist('s-1', 'pid-notify', makeEntry({ action: 'notify', notify }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'notify')!.notify).toEqual(notify);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.notify).toBeUndefined();
+		});
+
+		it('drops a row whose Auto Run payload is not valid JSON', () => {
+			const p = makePersistence();
+			getSharedDb().persistQueuedEvent({
+				id: 'bad-autorun',
+				sessionId: 's-1',
+				subscriptionName: 'scheduled',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: '',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: 'autorun',
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+				autoRunJson: '{not json',
+			});
+
+			expect(p.restoreAll().size).toBe(0);
+			expect(getSharedDb().getQueuedEvents()).toHaveLength(0);
 		});
 
 		it('groups by session and preserves queuedAt ordering', () => {

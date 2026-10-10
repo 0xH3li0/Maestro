@@ -114,6 +114,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		getProcessManager: deps.getProcessManager,
+		getAgentName: (agentId) => {
+			const sessions = deps.sessionsStore.get('sessions', []) as Array<{
+				id?: string;
+				name?: string;
+			}>;
+			return sessions.find((s) => s.id === agentId)?.name;
+		},
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -230,6 +238,21 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
+		onSessionsPersisted: (added, current, removedIds) => {
+			try {
+				deps
+					.getPianolaSupervisor()
+					?.autoWatchNewSessions(
+						added,
+						current,
+						deps.settingsStore.get('pianolaAutoWatchNewAgents', false) === true,
+						removedIds
+					);
+			} catch (error) {
+				logger.error('Could not register new Pianola watches', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
+			}
+		},
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.
@@ -276,13 +299,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Debug Package handlers
 	registerDebugHandlers({
 		getMainWindow: deps.getMainWindow,
-		getAgentDetector: deps.getAgentDetector,
-		getProcessManager: deps.getProcessManager,
-		getWebServer: deps.getWebServer,
-		settingsStore: deps.settingsStore,
-		sessionsStore: deps.sessionsStore,
-		groupsStore: deps.groupsStore,
-		bootstrapStore: deps.bootstrapStore,
+		...deps.debugPackageDeps,
 	});
 
 	// Register Spec Kit handlers (no dependencies needed)
@@ -558,7 +575,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		ensureMainWindow: deps.ensureMainWindow,
+		getWindowRegistry: () => deps.windowRegistry,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app: deps.app });
@@ -603,14 +624,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
-		debugPackageDeps: {
-			getAgentDetector: deps.getAgentDetector,
-			getProcessManager: deps.getProcessManager,
-			getWebServer: deps.getWebServer,
-			settingsStore: deps.settingsStore,
-			sessionsStore: deps.sessionsStore,
-			groupsStore: deps.groupsStore,
-			bootstrapStore: deps.bootstrapStore,
-		},
+		debugPackageDeps: deps.debugPackageDeps,
 	});
 }

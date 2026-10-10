@@ -4,6 +4,10 @@
 
 All utilities in Maestro organized by category. Each entry lists the file path, function name, signature, purpose, and which process it runs in (Main, Renderer, or Both via `src/shared/`).
 
+Worktree paths: `normalizeWorktreePath(path, posix?)` and `isPathAtOrUnderRoot(path, root)` in `src/shared/worktreePaths.ts` provide shared comparison rules. The renderer's `worktreeDedup.ts` re-exports the normalizer. SSH callers use POSIX normalization, preserving case, literal backslashes, and the root directory while collapsing duplicate and trailing slashes for comparison.
+
+Remote worktree aliases: `resolveWorktreeAliasesRemote(paths, sshRemote)` in `src/main/utils/remote-git.ts` provides the shared main-process probe for saved children and Git registry paths. It reports physical paths, missing candidates, and unresolved aliases independently; `resolveWorktreePathsRemote()` also uses it for configured scans.
+
 ---
 
 ## IDs & UUIDs
@@ -351,7 +355,9 @@ Both expose the same shape:
 | `sleepAwareElapsedSince(start)` | (Renderer) For a display that only has a stored `startTime` and can't hold a span.            |
 
 Prefer a span. `sleepAwareElapsedSince()` reads a bounded log of recent wakes and exists
-for UI that reads a start timestamp out of state (the Auto Run pill, the thinking timer).
+for UI that reads a start timestamp out of state (the thinking timer). Auto Run displays
+read the tracker's mirrored fields with `autoRunActiveElapsedMs()` (`useTimeTracking.ts`),
+which also stops the clock while the run is paused on an error or HITL gate.
 
 Live trackers that pause and resume their own clock (`useTimeTracking`) subscribe with
 `onSystemSleep()` and walk their stored timestamps forward by the gap, clamped to the live

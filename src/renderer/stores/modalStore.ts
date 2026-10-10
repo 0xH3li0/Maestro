@@ -74,6 +74,9 @@ export interface SettingsModalData {
 	 *  back to 'general' on first open. Set to a specific tab to deep-link. */
 	tab?: SettingsTab;
 	promptId?: string;
+	/** A `data-setting-id` (see searchableSettings.ts) to scroll to and flash on
+	 *  open, the same jump a Settings search result makes. Belongs to `tab`. */
+	settingId?: string;
 }
 
 /** New instance modal data */
@@ -188,7 +191,34 @@ export interface AgentErrorModalData {
  */
 export interface ReauthModalData {
 	providerKey: string;
+	/**
+	 * Where the login runs, when it must not be the outage's first blocked
+	 * agent. Set by an ACCOUNT login (Usage Dashboard quota panels): the
+	 * outage is keyed by provider, but a provider can hold several accounts,
+	 * and the blocked agent may be on a different one - or the account may
+	 * have no agent at all.
+	 */
+	host?: ReauthHost;
 }
+
+/**
+ * The fields of an agent the re-auth login reads to decide where it runs and
+ * which account it writes to. A real `Session` satisfies it; an account with
+ * no agent is described by a synthesized one (see `quotaAccountLogin.ts`).
+ */
+export type ReauthHost = Pick<
+	Session,
+	| 'id'
+	| 'name'
+	| 'toolType'
+	| 'cwd'
+	| 'projectRoot'
+	| 'customEnvVars'
+	| 'customPath'
+	| 'sessionSshRemoteConfig'
+	| 'sshRemoteId'
+	| 'remoteCwd'
+>;
 
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
@@ -819,7 +849,8 @@ export function getModalActions() {
 		setSettingsModalOpen: (open: boolean) =>
 			open ? openModal('settings', { tab: undefined }) : closeModal('settings'),
 		setSettingsTab: (tab: SettingsTab) => updateModalData('settings', { tab }),
-		openSettings: (tab?: SettingsTab) => openModal('settings', { tab }),
+		openSettings: (tab?: SettingsTab, settingId?: string) =>
+			openModal('settings', { tab, settingId }),
 		closeSettings: () => closeModal('settings'),
 
 		// New Instance Modal
@@ -1342,6 +1373,7 @@ export function useModalActions() {
 		// the last in-session tab, falling back to 'general' on first open.
 		settingsTab: settingsData?.tab,
 		settingsPromptId: settingsData?.promptId,
+		settingsSettingId: settingsData?.settingId,
 		...actions,
 
 		// New Instance Modal

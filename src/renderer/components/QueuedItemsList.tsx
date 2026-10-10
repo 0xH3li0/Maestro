@@ -21,8 +21,11 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MiniBadge } from './ui/MiniBadge';
+import { HeldForRetryBadge } from './HeldForRetryBadge';
+import { useIsHeldRetryItem } from '../stores/retryStore';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useUIStore } from '../stores/uiStore';
@@ -124,6 +127,8 @@ export const QueuedItemsList = memo(
 
 		// Force Send confirmation state
 		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
+		// Explainer for a dimmed Force Send that only Forced Parallel Execution unlocks
+		const [showForcedParallelRequired, setShowForcedParallelRequired] = useState(false);
 
 		// Edit-message modal state (holds the id of the item being edited). Kept in
 		// uiStore rather than local state so the "Edit Last Queued Message"
@@ -330,7 +335,11 @@ export const QueuedItemsList = memo(
 									showForceSendButton={showForceSendButton}
 									canForceSend={canForceSend}
 									forceSendTitle={forceSendTitle}
-									onForceSend={() => setForceSendConfirmId(item.id)}
+									onForceSend={() =>
+										canForceSend
+											? setForceSendConfirmId(item.id)
+											: setShowForcedParallelRequired(true)
+									}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
 										onTogglePauseQueuedItem ? () => onTogglePauseQueuedItem(item.id) : undefined
@@ -429,6 +438,13 @@ export const QueuedItemsList = memo(
 					</Modal>
 				)}
 
+				{showForcedParallelRequired && (
+					<ForcedParallelRequiredModal
+						theme={theme}
+						onClose={() => setShowForcedParallelRequired(false)}
+					/>
+				)}
+
 				{/* Edit queued message modal */}
 				{editItemId &&
 					onEditQueuedItem &&
@@ -476,7 +492,8 @@ interface QueuedItemRowProps {
 	renderMarkdown: boolean;
 	onEdit?: () => void;
 	showForceSendButton: boolean;
-	/** False when the item cannot be forced right now - button renders disabled. */
+	/** False when the item cannot be forced right now - button renders dimmed but
+	 *  stays clickable, so onForceSend can explain what unlocks it. */
 	canForceSend: boolean;
 	/** Why it can or cannot be forced. Shown as the button's tooltip. */
 	forceSendTitle?: string;
@@ -529,6 +546,8 @@ function QueuedItemRow({
 	const isCommand = item.type === 'command';
 	const isPaused = !!item.paused;
 	const isWaitingForConnection = !!item.waitingForConnection;
+	const isAwaitingConsult = !!item.awaitingConsult;
+	const isHeldForRetry = useIsHeldRetryItem(item.id);
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
 	const hiddenChars = Math.max(0, displayText.length - QUEUE_PREVIEW_CHARS);
 	// Only collapse when collapsing actually buys back screen: a message that is a
@@ -562,7 +581,7 @@ function QueuedItemRow({
 					// recede the rest while a drag is in progress.
 					opacity: isDragging
 						? 0.95
-						: isPaused || isWaitingForConnection
+						: isPaused || isWaitingForConnection || isAwaitingConsult
 							? 0.35
 							: isDimmed
 								? 0.3
@@ -573,8 +592,9 @@ function QueuedItemRow({
 				{/* Drag handle - only show when draggable */}
 				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
 
-				{(isPaused || isWaitingForConnection) && (
+				{(isPaused || isWaitingForConnection || isAwaitingConsult || isHeldForRetry) && (
 					<div className={`flex items-center gap-1.5 ${canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}`}>
+						{isHeldForRetry && <HeldForRetryBadge theme={theme} />}
 						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
 						{isWaitingForConnection && (
 							<MiniBadge
@@ -582,6 +602,14 @@ function QueuedItemRow({
 								theme={theme}
 								color={theme.colors.warning}
 								title="This message will run after Maestro reconnects"
+							/>
+						)}
+						{isAwaitingConsult && (
+							<MiniBadge
+								label="WAITING FOR CONSULT"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This turn finishes once the agent it consulted replies"
 							/>
 						)}
 					</div>
@@ -719,8 +747,8 @@ function QueuedItemRow({
 						{showForceSendButton && (
 							<button
 								onClick={onForceSend}
-								disabled={!canForceSend}
-								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80 disabled:cursor-default"
+								aria-disabled={!canForceSend}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80"
 								style={{
 									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
 									color: theme.colors.warning,

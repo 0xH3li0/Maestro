@@ -42,9 +42,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
-
-// Maximum persisted logs per AI tab (matches session persistence limit)
-const MAX_PERSISTED_LOGS_PER_TAB = 100;
+import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
 
 /**
  * Thrown by `persistInternal` when the session registry was never read back
@@ -69,7 +67,7 @@ const MAX_PERSISTED_PREVIEW_CONTENT = 256 * 1024;
 /**
  * Prepare a session for persistence by:
  * 1. Filtering out tabs with active wizard state (incomplete wizards should not persist)
- * 2. Truncating logs in each AI tab to MAX_PERSISTED_LOGS_PER_TAB entries
+ * 2. Truncating logs in each AI tab to MAX_PERSISTED_SESSION_LOGS entries
  * 3. Resetting runtime-only state (busy state, thinking time, etc.)
  * 4. Excluding runtime-only fields (closedTabHistory, agentError, etc.)
  *
@@ -141,8 +139,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const truncatedTabs = tabsToProcess.map((tab) => ({
 		...tab,
 		logs:
-			tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-				? tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+			tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+				? tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 				: tab.logs,
 		// Reset runtime-only tab state - processes don't survive app restart
 		state: 'idle' as const,
@@ -230,8 +228,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 					tab: {
 						...entry.tab,
 						logs:
-							entry.tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-								? entry.tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
+							entry.tab.logs.length > MAX_PERSISTED_SESSION_LOGS
+								? entry.tab.logs.slice(-MAX_PERSISTED_SESSION_LOGS)
 								: entry.tab.logs,
 						state: 'idle' as const,
 						thinkingStartTime: undefined,
@@ -584,7 +582,13 @@ export function useDebouncedPersistence(
 		};
 
 		const unsubscribe = useSessionStore.subscribe((state, prevState) => {
-			if (state.sessions === prevState.sessions) return;
+			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
+			// the read succeeding is the moment that tree becomes the baseline.
+			// Missing it left the first flush on setAll, which keeps every id the
+			// client omits, so an agent removed during startup (a worktree child
+			// the startup scan found gone) came back on the next launch.
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
 			if (
 				!initialLoadComplete.current &&
@@ -595,6 +599,7 @@ export function useDebouncedPersistence(
 				startupBaselineNeedsFullFlushRef.current = true;
 				return;
 			}
+			if (state.sessions === prevState.sessions) return;
 			schedulePersist();
 		});
 

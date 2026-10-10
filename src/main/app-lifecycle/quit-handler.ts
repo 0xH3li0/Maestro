@@ -16,8 +16,6 @@ import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
-import { stopAllCueShellRuns } from '../cue/cue-shell-executor';
-import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
 import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
@@ -98,10 +96,6 @@ export interface QuitHandlerDependencies {
 	getHistoryManager: () => HistoryManager;
 	/** Tunnel manager instance */
 	tunnelManager: typeof tunnelManagerInstance;
-	/** Function to get active grooming session count */
-	getActiveGroomingSessionCount: () => number;
-	/** Function to cleanup all grooming sessions */
-	cleanupAllGroomingSessions: (pm: ProcessManager) => Promise<void>;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
@@ -178,8 +172,6 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getWebServer,
 		getHistoryManager,
 		tunnelManager,
-		getActiveGroomingSessionCount,
-		cleanupAllGroomingSessions,
 		closeStatsDB,
 		stopCliWatcher,
 		stopSettingsWatcher,
@@ -399,22 +391,9 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			stopSessionCleanup();
 		}
 
-		// Clean up active grooming sessions (context merge/transfer operations)
-		const processManager = getProcessManager();
-		const groomingSessionCount = getActiveGroomingSessionCount();
-		if (groomingSessionCount > 0 && processManager) {
-			logger.info(`Cleaning up ${groomingSessionCount} active grooming session(s)`, 'Shutdown');
-			// Fire and forget - don't await
-			cleanupAllGroomingSessions(processManager).catch((err) => {
-				logger.error(`Error cleaning up grooming sessions: ${err}`, 'Shutdown');
-			});
-		}
-
 		// Kill all active Cue processes (tracked separately from ProcessManager)
 		logger.info('Killing active Cue processes', 'Shutdown');
 		stopAllCueRuns();
-		stopAllCueShellRuns();
-		stopAllCueCliRuns();
 
 		// Flush Cue telemetry outbox before quit so events captured between the
 		// last autorun and shutdown aren't deferred to the next launch (or lost
@@ -438,7 +417,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// underlying mutex is already gone, aborting the main process
 		// (Sentry MAESTRO-3B).
 		logger.info('Killing all running processes', 'Shutdown');
-		processManager?.killAll({ shutdown: true });
+		getProcessManager()?.killAll({ shutdown: true });
 
 		// Clear power save blocker AFTER killAll() to prevent late process output
 		// from re-arming the blocker via addBlockReason()

@@ -108,7 +108,9 @@ import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/s
 import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
-
+import { getAgentDefinition } from '../../../../main/agents/definitions';
+import { getAgentCapabilities as getRealAgentCapabilities } from '../../../../main/agents/capabilities';
+import { logger } from '../../../../main/utils/logger';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function createTestContext() {
@@ -693,7 +695,12 @@ describe('ChildProcessSpawner', () => {
 			// handleExit is async (post-exit reconciliation) - let it settle.
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 
-			expect(onExit).toHaveBeenCalledWith(baseConfig.sessionId, 0);
+			expect(onExit).toHaveBeenCalledWith(
+				baseConfig.sessionId,
+				0,
+				undefined,
+				expect.objectContaining({ outcome: 'completed' })
+			);
 			expect(processes.has(baseConfig.sessionId)).toBe(false);
 		});
 	});
@@ -921,6 +928,49 @@ describe('ChildProcessSpawner', () => {
 			vi.mocked(isWindows).mockReturnValue(false);
 		});
 
+		it('delivers a long Hermes query through stdin with explicit one-shot query selection', () => {
+			const { spawner } = createTestContext();
+			const hermes = getAgentDefinition('hermes')!;
+			const capabilities = getRealAgentCapabilities('hermes');
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(capabilities);
+			const prompt = 'Private playbook text "quoted" & %PATH% 日本語\n'.repeat(1000);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'hermes',
+					command: 'hermes.cmd',
+					args: [...hermes.batchModePrefix!, ...hermes.batchModeArgs!],
+					promptArgs: hermes.promptArgs,
+					prompt,
+					sendPromptViaStdinRaw: capabilities.supportsPromptViaStdin,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual(['chat', '-Q', '--yolo', '--query-file', '-']);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				prompt,
+				expect.any(Function)
+			);
+			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
+		});
+
+		it.each([false, true])('keeps prompt content out of spawn diagnostics (stdin=%s)', (stdin) => {
+			const { spawner } = createTestContext();
+			const secret = 'PRIVATE_HERMES_PROMPT_CONTENT';
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'hermes',
+					command: 'hermes.cmd',
+					args: ['chat', '-Q', '--yolo'],
+					promptArgs: getAgentDefinition('hermes')!.promptArgs,
+					prompt: secret,
+					sendPromptViaStdinRaw: stdin,
+				})
+			);
+			expect(mockSpawn).toHaveBeenCalledOnce();
+			for (const level of ['info', 'debug', 'warn', 'error'] as const) {
+				expect(JSON.stringify(vi.mocked(logger[level]).mock.calls)).not.toContain(secret);
+			}
+		});
 		it('auto-enables shell for a .cmd command on Windows', () => {
 			const { spawner } = createTestContext();
 

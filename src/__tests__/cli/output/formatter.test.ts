@@ -111,6 +111,16 @@ describe('formatter', () => {
 			expect(result).toContain('group-123');
 		});
 
+		it('should mark a group parked out of the Left Bar', () => {
+			const result = formatGroups([
+				{ id: 'group-1', name: 'Shown' },
+				{ id: 'group-2', name: 'Parked', hidden: true },
+			]);
+
+			expect(result).toMatch(/Parked.*\(hidden\)/);
+			expect(result).not.toMatch(/Shown.*\(hidden\)/);
+		});
+
 		it('should format multiple groups', () => {
 			const groups: GroupDisplay[] = [
 				{ id: 'group-1', name: 'Frontend', emoji: '🎨' },

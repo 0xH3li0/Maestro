@@ -78,8 +78,9 @@ store. Nothing reconciled those trees, so an agent created in the browser never
 appeared on the desktop, and one closed in the browser was resurrected the moment
 the desktop's stale copy was written again (issues #1398 / #1492).
 
-Two rules follow, and both are load-bearing:
+These rules keep the clients in sync:
 
+- **Browser bootstrap is thin.** `sessions:getBootstrap` returns agent metadata and tab structure without AI tab logs, legacy session logs, or command history. The selected conversation and legacy shell output load through `sessions:getDeferredContent`; later selected tabs and every visible pane in an active tiled group load when opened. A failed pane read does not block the other visible panes. The `deferredContent` marker tells both `sessions:setMany` and `sessions:setAll` to merge any unloaded fields from the main store before saving, including snoozed tabs. A tab closed by another client is dropped from a stale browser write, and a projected agent absent from main cannot be restored by an old browser copy. A failed initial read shows Retry and keeps persistence disabled; a bridge reconnect retries it. Desktop `sessions:getAll` still reads the full tree.
 - **Agent lifecycle is pushed, not polled.** `sessions:setMany` / `sessions:setAll`
   (`src/main/ipc/handlers/persistence.ts`) report what entered and left the store
   on the `sessions:lifecycleSync` channel, and every other client applies the
@@ -140,6 +141,24 @@ Two rules follow, and both are load-bearing:
   client already has. The broadcast can also win the race, so the adopt path
   checks for the id first and then only selects it - an inventory snapshot never
   moves a browser client's tab by itself.
+- **Closing a browser conversation also goes through the desktop.** Single-tab
+  and bulk AI-tab closes call `web.requestCloseTab`, which uses the existing
+  window-owner-aware `closeTab` callback. The browser waits for the desktop's
+  inventory snapshot instead of removing the tab locally: a local-only close
+  leaves the desktop free to save the conversation again, and closing the last
+  tab in both clients would mint two different replacement ids. The callback
+  uses `requestFromRenderer` to wait for the owning renderer to confirm the
+  actual mutation; delivery alone is NOT success. Missing tabs, a reloading
+  renderer, or a timeout leave browser drafts and wizard progress intact.
+  Confirmed closes record browser-local reopen history before cleanup and
+  starred-transcript mirroring. Bulk actions report one combined error.
+- **Browser reopen also belongs to the desktop.** `web.requestReopenTab` restores
+  the browser's selected history entry by its original tab id, so another
+  client's most recent close cannot be reopened by mistake. The browser adopts
+  the returned id through `reopenClosedAiTabById` and retains cached/deferred
+  transcript data. Its history entry is consumed only on success; an inventory
+  snapshot arriving before the reply must not create a duplicate. Close and
+  reopen requests share a per-agent queue in `desktopTabClose.ts`.
 - **Focus the composer INSIDE the tap, never when the round trip answers.** iOS
   raises the on-screen keyboard only for a `focus()` that runs in the user
   gesture's own call stack. Deferred into a `.then()`, the caret moves and the

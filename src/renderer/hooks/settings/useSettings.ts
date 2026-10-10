@@ -31,6 +31,7 @@ import type {
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
+import type { ToastPosition } from '../../../shared/toastPosition';
 import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
@@ -77,6 +78,10 @@ export interface UseSettingsReturn {
 	/** Variables switched off in the editor: kept for later, never spawned with. */
 	shellEnvVarsDisabled: Record<string, string>;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+
+	// Pianola auto-watch
+	pianolaAutoWatchNewAgents: boolean;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -164,8 +169,12 @@ export interface UseSettingsReturn {
 	setShowHiddenFiles: (value: boolean) => void;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	fileTreeBranchConnectors: boolean;
+	setFileTreeBranchConnectors: (value: boolean) => void;
 	toastWidth: ToastWidth;
 	setToastWidth: (value: ToastWidth) => void;
+	toastPosition: ToastPosition;
+	setToastPosition: (value: ToastPosition) => void;
 
 	// Logging settings
 	logLevel: string;
@@ -518,6 +527,14 @@ export interface UseSettingsReturn {
 	setShowGroupLabelInBookmarks: (value: boolean) => void;
 	showFullGroupLabelInBookmarks: boolean;
 	setShowFullGroupLabelInBookmarks: (value: boolean) => void;
+
+	/** Show the agent's current checklist docked above the composer. */
+	showAgentTaskListBar: boolean;
+	setShowAgentTaskListBar: (value: boolean) => void;
+
+	/** Open that docked checklist in full whenever the agent writes a new one. */
+	autoExpandAgentTaskListBar: boolean;
+	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 
 	// File Edit & Preview
 	fileEditWordWrap: boolean;

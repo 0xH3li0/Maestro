@@ -4,6 +4,8 @@
  * This module handles IPC calls for web interface and live session operations:
  * - web:broadcastUserInput: Broadcast user input to web clients
  * - web:broadcastAutoRunState: Broadcast AutoRun state to web clients
+ * - web:claimAutoRunStart / web:releaseAutoRunStartClaim: Serialize Auto Run starts across clients
+ * - web:takeOrphanedAutoRuns / web:abandonAutoRunReclaim: Hand a reloaded client back its runs
  * - web:broadcastTabsChange: Broadcast tab changes to web clients
  * - web:broadcastSessionState: Broadcast session state changes to web clients
  * - live:toggle: Toggle live mode for a session
@@ -26,8 +28,9 @@ import { ipcMain, app, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { WebServer } from '../../web-server';
+import type { WebServerOptions } from '../../web-server/WebServer';
 import type { AITabData } from '../../web-server/services/broadcastService';
-import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
+import { getAutoRunStateTracker, type AutoRunOwner } from '../../autorun/autorun-state-tracker';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 import type { SettingsStoreInterface } from '../../stores/types';
 import {
@@ -53,7 +56,7 @@ const SERVER_STARTUP_POLL_INTERVAL_MS = 100;
 export interface WebHandlerDependencies {
 	getWebServer: () => WebServer | null;
 	setWebServer: (server: WebServer | null) => void;
-	createWebServer: () => WebServer;
+	createWebServer: (options?: WebServerOptions) => WebServer;
 	settingsStore: SettingsStoreInterface;
 }
 
@@ -94,8 +97,10 @@ const ENSURE_CLI_MAX_ATTEMPTS = 3;
  * Ensure the CLI server is running and the discovery file is published.
  *
  * Called during app initialization to make the web server always available
- * for CLI IPC connections. The server binds to 0.0.0.0 - this is intentional
- * for LAN accessibility; the UUID security token prevents unauthorized access.
+ * for CLI IPC connections. The server it creates binds 127.0.0.1 only: the URL
+ * token is a capability anyone who sees it can use, so it must not be on the
+ * network unless the user turned on Live Mode (`live:startServer`). An
+ * already-running Live Mode server is left as it is.
  *
  * Retries on any failure (port collision, transient fs error, etc.) and
  * verifies the discovery file is actually present on disk after each attempt.
@@ -303,6 +308,19 @@ function forwardAutoRunStateToDesktopWindows(
 }
 
 /**
+ * Accept a run owner only when it has the shape a reload needs to hand the run
+ * back. A malformed one is dropped rather than refused: the run still starts,
+ * it just cannot be resumed after a reload, which is today's behaviour.
+ */
+function asAutoRunOwner(owner: unknown): AutoRunOwner | undefined {
+	if (!owner || typeof owner !== 'object') return undefined;
+	const { instanceId, config, folderPath } = owner as Partial<AutoRunOwner>;
+	if (typeof instanceId !== 'string' || instanceId === '') return undefined;
+	if (typeof folderPath !== 'string' || !config || typeof config !== 'object') return undefined;
+	return { instanceId, config, folderPath };
+}
+
+/**
  * Register all web/live-related IPC handlers.
  */
 export function registerWebHandlers(deps: WebHandlerDependencies): void {
@@ -328,11 +346,20 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 	// Broadcast AutoRun state to web clients (called when batch processing state changes)
 	// Always store state even if no clients are connected, so new clients get initial state
-	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string) => {
-		return getAutoRunStateTracker().tryClaimStart(sessionId);
+	ipcMain.handle('web:claimAutoRunStart', async (_, sessionId: string, owner?: AutoRunOwner) => {
+		return getAutoRunStateTracker().tryClaimStart(sessionId, asAutoRunOwner(owner));
 	});
 	ipcMain.handle('web:releaseAutoRunStartClaim', async (_, sessionId: string) => {
 		return getAutoRunStateTracker().releaseStartClaim(sessionId);
+	});
+	// A reloaded client asking for the runs its previous page left running
+	// (#1470). Main answers only with runs that same client started.
+	ipcMain.handle('web:takeOrphanedAutoRuns', async (_, instanceId: string) => {
+		if (typeof instanceId !== 'string' || instanceId === '') return [];
+		return getAutoRunStateTracker().takeOrphanedRuns(instanceId);
+	});
+	ipcMain.handle('web:abandonAutoRunReclaim', async (_, sessionId: string, instanceId: string) => {
+		return getAutoRunStateTracker().abandonReclaim(sessionId, instanceId);
 	});
 
 	ipcMain.handle(
@@ -368,6 +395,17 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('web:requestNewTab', async (_, sessionId: string, background = false) => {
 		const webServer = getWebServer();
 		return webServer?.requestNewTab(sessionId, background) ?? null;
+	});
+	ipcMain.handle('web:requestCloseTab', async (_, sessionId: string, tabId: string) => {
+		if (typeof sessionId !== 'string' || !sessionId || typeof tabId !== 'string' || !tabId)
+			return false;
+		return getWebServer()?.requestCloseTab(sessionId, tabId) ?? false;
+	});
+
+	ipcMain.handle('web:requestReopenTab', async (_, sessionId: string, tabId: string) => {
+		if (typeof sessionId !== 'string' || !sessionId || typeof tabId !== 'string' || !tabId)
+			return null;
+		return getWebServer()?.requestReopenTab(sessionId, tabId) ?? null;
 	});
 
 	ipcMain.handle(
@@ -465,9 +503,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		};
 	});
 
+	// Only a Live Mode (LAN) server has a dashboard. The loopback CLI server's
+	// URL is not one: auto-start reads a non-null answer as "Live is already
+	// on" and would never open the server to the LAN.
 	ipcMain.handle('live:getDashboardUrl', async () => {
 		const webServer = getWebServer();
-		if (!webServer) {
+		if (!webServer || !webServer.isActive() || !webServer.isLanAccessible()) {
 			return null;
 		}
 		return webServer.getSecureUrl();
@@ -498,8 +539,11 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// server (spun up by ensureCliServer) keeps the previous token -
 			// reusing it on the next Live ON would silently leak the prior URL.
 			// Tear it down so createWebServer() mints a fresh ephemeral token.
+			// The CLI-only server is also bound to loopback, so it has to be
+			// replaced by a LAN server either way; a persistent token survives
+			// the swap because the factory reads it from settings.
 			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
-			if (webServer && !persistentWebLink) {
+			if (webServer && (!persistentWebLink || !webServer.isLanAccessible())) {
 				try {
 					await webServer.stop();
 				} catch (err: any) {
@@ -519,8 +563,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 			// Create web server if it doesn't exist
 			if (!webServer) {
-				logger.info('Creating web server', 'WebServer');
-				webServer = createWebServer();
+				logger.info('Creating LAN web server for Live Mode', 'WebServer');
+				webServer = createWebServer({ lanAccess: true });
 				setWebServer(webServer);
 			}
 
@@ -577,9 +621,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return { success: false, error: error.message };
 		}
 
-		// Bring the CLI server back up on a fresh port + token. The user
-		// turned off Live Mode (closing the public URL) but the CLI server
-		// must remain reachable for maestro-cli.
+		// Bring the CLI server back up on a fresh port + token, bound to
+		// loopback. The user turned off Live Mode (closing the LAN URL) but
+		// the CLI server must remain reachable for maestro-cli.
 		await ensureCliServer(deps);
 		return { success: true };
 	});
@@ -663,8 +707,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return { success: false, count, error: error.message };
 		}
 
-		// Bring the CLI server back up on a fresh port + token so maestro-cli
-		// continues working after Live Mode is fully disabled.
+		// Bring the CLI server back up on a fresh port + token, bound to
+		// loopback, so maestro-cli keeps working after Live Mode is disabled.
 		await ensureCliServer(deps);
 		return { success: true, count };
 	});

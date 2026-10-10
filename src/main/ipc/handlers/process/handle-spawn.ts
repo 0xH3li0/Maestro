@@ -46,9 +46,14 @@ import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
+import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
+import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver';
+import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
+import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
+import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
@@ -149,9 +154,31 @@ export async function handleProcessSpawn(
 			: null,
 	});
 
+	// An SSH remote that was deleted or disabled is refused by the launch plan
+	// below, before anything with a side effect. resolveClaudeSpawnContext
+	// persists nothing and skips the remote probe and the transcript sanitizer
+	// for such a spawn, so running it first is safe.
+
+	// Env layers the spawned process receives beyond its own custom vars:
+	// the provider-level config (`agentConfigValues.customEnvVars`) and the
+	// global Shell Configuration vars. Read once here because the Claude
+	// config-dir lookups in resolveClaudeSpawnContext (spawn-mode resolution
+	// and the API-resume sanitizer) must see the same env the child will, and
+	// both layers are applied again at spawn further down.
+	const allConfigs = agentConfigsStore.get('configs', {});
+	const agentConfigValues = allConfigs[config.toolType] || {};
+	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+	const claudeEnvLayers: ClaudeSpawnEnvLayers = {
+		agentDefaultEnvVars: agent?.defaultEnvVars,
+		globalShellEnvVars,
+		agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+		sessionCustomEnvVars: config.sessionCustomEnvVars,
+	};
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
+		envLayers: claudeEnvLayers,
 	});
 	const {
 		baseSessionId,
@@ -178,8 +205,6 @@ export async function handleProcessSpawn(
 	// Apply agent config options and session overrides
 	// Session-level overrides take precedence over agent-level config
 	// ========================================================================
-	const allConfigs = agentConfigsStore.get('configs', {});
-	const agentConfigValues = allConfigs[config.toolType] || {};
 	const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 		agentConfigValues,
 		sessionCustomModel: config.sessionCustomModel,
@@ -202,32 +227,6 @@ export async function handleProcessSpawn(
 		);
 	}
 
-	// ========================================================================
-	// Prompt delivery: argv vs stdin. Decided HERE, never by the caller.
-	//
-	// Windows spawns hand the prompt to the child over stdin instead of argv to
-	// stay under the ~32K CreateProcess command-line limit. That is a property of
-	// the machine that runs the CLI and of the CLI itself, so the renderer must
-	// not decide it: a web-desktop client is a browser that can sit on a
-	// completely different OS than the host (`window.maestro.platform` there is
-	// derived from the browser's user agent), so a Windows browser driving a Linux
-	// host used to request stdin delivery. Agents that only accept a positional
-	// prompt then started with no prompt at all - omp emitted its session line and
-	// exited 0, which left the tab holding an agent session id omp never persisted,
-	// so every later turn failed to resume it too.
-	// ========================================================================
-	// An agent that has not declared the capability keeps its prompt in argv: an
-	// over-long command line fails loudly at spawn, while stdin delivery to a CLI
-	// that ignores stdin fails silently and poisons the tab's session id.
-	const hostDeliversPromptViaStdin =
-		isWindows() && !isSshEnabled && (agent?.capabilities?.supportsPromptViaStdin ?? false);
-	const promptHasImages = !!config.images?.length;
-	const supportsStreamJsonInput = agent?.capabilities?.supportsStreamJsonInput ?? false;
-	const sendPromptViaStdin =
-		hostDeliversPromptViaStdin && supportsStreamJsonInput && promptHasImages;
-	const sendPromptViaStdinRaw =
-		hostDeliversPromptViaStdin && (!supportsStreamJsonInput || !promptHasImages);
-
 	// Derive effective read-only state, honoring the legacy boolean flag only
 	// when permissionMode wasn't explicitly set (back-compat for older configs).
 	const hasExplicitPermissionMode = config.permissionMode !== undefined;
@@ -235,14 +234,54 @@ export async function handleProcessSpawn(
 		config.permissionMode === 'readonly' ||
 		(!hasExplicitPermissionMode && config.readOnlyMode === true);
 
-	// In read-only mode, apply agent-specific env var overrides to strip blanket
-	// permission grants.
-	let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
-	if (isReadOnly && agent?.readOnlyEnvOverrides) {
-		effectiveCustomEnvVars = {
-			...(effectiveCustomEnvVars || {}),
-			...agent.readOnlyEnvOverrides,
-		};
+	// Settings -> Environment (`globalShellEnvVars`, read above before
+	// resolveClaudeSpawnContext). Loaded for every process type: terminals get it
+	// through buildPtyTerminalEnv(), agents through the launch plan below.
+
+	// ========================================================================
+	// Launch plan (shared with Cue and the CLI): where this agent runs and the
+	// env vars Maestro sets on it:
+	//   provider defaults < (agent's own ?? provider-level) < read-only overrides.
+	// The global Settings vars are not in that record. For a local process they
+	// are handed to the process manager separately (`shellEnvVars`), which
+	// applies them BENEATH it. For an SSH remote, `wrapSpawnForSsh` merges them
+	// beneath the record into the remote environment, as `rc` does.
+	// Planned BEFORE anything with a side effect (MCP temp dirs, the permission
+	// relay, system prompt files), so an SSH remote that cannot be resolved fails
+	// the spawn up front instead of silently running the agent on this machine.
+	// The prompt delivery the plan reports is decided again at spawn time from
+	// the FINAL prompt (system prompt and preambles folded in), with the same
+	// shared function.
+	// ========================================================================
+	let effectiveCustomEnvVars: Record<string, string> | undefined;
+	if (config.toolType !== 'terminal') {
+		const planResult = buildAgentLaunchPlan({
+			surface: 'desktop',
+			agent: agent ?? undefined,
+			command: config.sessionCustomPath || agent?.path || config.command,
+			args: finalArgs,
+			cwd: config.cwd,
+			prompt: config.prompt,
+			hasImages: !!config.images?.length,
+			globalShellEnvVars,
+			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+			sessionCustomEnvVars: config.sessionCustomEnvVars,
+			readOnlyMode: isReadOnly,
+			sshRemoteConfig: config.sessionSshRemoteConfig,
+			sshStore: createSshRemoteStoreAdapter(settingsStore),
+		});
+		if (!planResult.ok) {
+			logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				remoteId: config.sessionSshRemoteConfig?.remoteId,
+				reason: planResult.reason,
+			});
+			reportSpawnRefusal(deps, config.sessionId, planResult.error);
+			return { success: false, pid: 0 };
+		}
+		effectiveCustomEnvVars = planResult.plan.envVars;
+	} else {
+		effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
 	}
 	if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
 		logger.debug(
@@ -397,15 +436,12 @@ export async function handleProcessSpawn(
 			logger.error('Claude Code standard permission mode is not supported over SSH', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 			});
-			const win = getMainWindow();
-			if (win && isWebContentsAvailable(win)) {
-				win.webContents.send(
-					'process:data',
-					config.sessionId,
-					'\r\n[Maestro] Standard permission mode is not available for Claude Code over SSH. ' +
-						'Switch this agent to Full Access or Read-Only, or disable SSH.\r\n'
-				);
-			}
+			reportSpawnRefusal(
+				deps,
+				config.sessionId,
+				'Standard permission mode is not available for Claude Code over SSH. ' +
+					'Switch this agent to Full Access or Read-Only, or disable SSH.'
+			);
 			return { success: false, pid: 0 };
 		}
 		try {
@@ -423,15 +459,12 @@ export async function handleProcessSpawn(
 				sessionId: config.sessionId,
 				error: e instanceof Error ? e.message : String(e),
 			});
-			const win = getMainWindow();
-			if (win && isWebContentsAvailable(win)) {
-				win.webContents.send(
-					'process:data',
-					config.sessionId,
-					'\r\n[Maestro] Could not start the permission relay for Standard mode. ' +
-						'Switch to Full Access or Read-Only to continue.\r\n'
-				);
-			}
+			reportSpawnRefusal(
+				deps,
+				config.sessionId,
+				'Could not start the permission relay for Standard mode. ' +
+					'Switch to Full Access or Read-Only to continue.'
+			);
 			return { success: false, pid: 0 };
 		}
 	}
@@ -585,20 +618,6 @@ export async function handleProcessSpawn(
 			: undefined);
 	let shellArgsStr: string | undefined;
 
-	// Load global shell environment variables for ALL process types (terminals and agents)
-	//
-	// IMPORTANT: These are the user-defined global env vars from Settings → General → Shell Configuration.
-	// They apply to BOTH terminal sessions AND agent processes. This allows users to set API keys,
-	// proxy settings, and other environment variables once and have them apply everywhere.
-	//
-	// Precedence order (highest to lowest):
-	// 1. Session-level overrides (config.sessionCustomEnvVars)
-	// 2. Global vars (shellEnvVars from Settings) - loaded here
-	// 3. Process defaults (with Electron/IDE vars stripped for agents)
-	//
-	// The actual merging happens in buildChildProcessEnv() or buildPtyTerminalEnv().
-	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
-
 	// Debug logging when global env vars are configured
 	if (Object.keys(globalShellEnvVars).length > 0) {
 		logger.debug(
@@ -733,9 +752,22 @@ export async function handleProcessSpawn(
 	if (isWindows() && !config.sessionSshRemoteConfig?.enabled) {
 		// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 		const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
-		// Filter out undefined values to match Record<string, string> type
+		// The expanded env carries every INHERITED variable, and custom vars are
+		// applied after the global shell layer. An inherited copy of a key the
+		// global layer sets would therefore beat it, which no other platform
+		// does (and which sent the API-resume sanitizer, keyed off the global
+		// CLAUDE_CONFIG_DIR, to a different transcript than claude used). Drop
+		// those inherited copies so the global value wins. PATH stays expanded.
+		const explicitKeys = new Set(
+			Object.keys(customEnvVarsToPass ?? {}).map((k) => k.toUpperCase())
+		);
+		const globalKeys = new Set(Object.keys(globalShellEnvVars).map((k) => k.toUpperCase()));
 		customEnvVarsToPass = Object.fromEntries(
-			Object.entries(expandedEnv).filter(([_, value]) => value !== undefined)
+			Object.entries(expandedEnv).filter(([key, value]) => {
+				if (value === undefined) return false;
+				const upper = key.toUpperCase();
+				return upper === 'PATH' || explicitKeys.has(upper) || !globalKeys.has(upper);
+			})
 		) as Record<string, string>;
 
 		// Get the preferred shell for Windows (custom -> current -> PowerShell)
@@ -780,6 +812,18 @@ export async function handleProcessSpawn(
 	customEnvVarsToPass = sshWrap.customEnvVarsToPass;
 	useShell = sshWrap.useShell;
 	shellToUse = sshWrap.shellToUse;
+
+	// The launch plan resolved this remote above; if the wrapper could not use it
+	// after all, fail rather than run the agent locally against the remote's cwd.
+	if (config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled && !sshRemoteUsed) {
+		const message = sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig);
+		logger.error('SSH remote was lost between planning and wrapping; not spawning', LOG_CONTEXT, {
+			sessionId: config.sessionId,
+			remoteId: config.sessionSshRemoteConfig.remoteId,
+		});
+		reportSpawnRefusal(deps, config.sessionId, message);
+		return { success: false, pid: 0 };
+	}
 
 	// Debug logging for shell configuration
 	logger.info(`Shell configuration before spawn`, LOG_CONTEXT, {
@@ -899,6 +943,33 @@ export async function handleProcessSpawn(
 		}
 	}
 
+	// ========================================================================
+	// Prompt delivery: argv vs stdin, decided HERE by the host, never by the
+	// caller, and from the FINAL prompt (system prompt and preambles folded in).
+	//
+	// Windows spawns hand the prompt to the child over stdin instead of argv to
+	// stay under the ~32K CreateProcess command-line limit. That is a property of
+	// the machine that runs the CLI and of the CLI itself, so the renderer must
+	// not decide it: a web-desktop client is a browser that can sit on a
+	// completely different OS than the host (`window.maestro.platform` there is
+	// derived from the browser's user agent), so a Windows browser driving a Linux
+	// host used to request stdin delivery. Agents that only accept a positional
+	// prompt then started with no prompt at all - omp emitted its session line and
+	// exited 0, which left the tab holding an agent session id omp never persisted,
+	// so every later turn failed to resume it too. The rule itself lives in the
+	// shared resolvePromptDelivery, which Cue and the CLI use too.
+	// ========================================================================
+	const promptDelivery = resolvePromptDelivery({
+		agent,
+		prompt: effectivePrompt,
+		isWindowsHost: isWindows(),
+		sshRemote: !!sshRemoteUsed,
+		hasImages: !!config.images?.length,
+	});
+	const sendPromptViaStdin =
+		promptDelivery.via === 'stdin' && promptDelivery.format === 'stream-json';
+	const sendPromptViaStdinRaw = promptDelivery.via === 'stdin' && promptDelivery.format === 'raw';
+
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -991,6 +1062,10 @@ export async function handleProcessSpawn(
 		const originalEffectivePrompt = effectivePrompt;
 		const originalCustomEnvVars = effectiveCustomEnvVars;
 		const originalContextWindow = contextWindow;
+		// Snapshot the global shell vars at registration time so the replay
+		// spawn uses the same environment as the original turn even if settings
+		// change before the quota retry fires.
+		const originalGlobalShellEnvVars = globalShellEnvVars;
 
 		deps.interactiveReplayController.registerInteractiveReplay(config.sessionId, {
 			configDirKey: resolvedConfigDirKey,
@@ -1067,6 +1142,7 @@ export async function handleProcessSpawn(
 					noPromptSeparator: originalAgent.noPromptSeparator,
 					projectPath: originalConfig.cwd,
 					querySource: originalConfig.querySource,
+					shellEnvVars: originalGlobalShellEnvVars,
 					tabId: originalConfig.tabId,
 				};
 			},
@@ -1111,4 +1187,20 @@ export async function handleProcessSpawn(
 				}
 			: undefined,
 	};
+}
+
+/**
+ * Tell the tab why a spawn was refused, in its own output. Used for failures
+ * found before a process exists (an unresolvable SSH remote, the permission
+ * relay), which therefore have no exit to report them.
+ */
+function reportSpawnRefusal(
+	deps: SpawnHandlerDependencies,
+	sessionId: string,
+	message: string
+): void {
+	const win = deps.getMainWindow();
+	if (win && isWebContentsAvailable(win)) {
+		win.webContents.send('process:data', sessionId, `\r\n[Maestro] ${message}\r\n`);
+	}
 }

@@ -35,12 +35,21 @@ import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { version } from './commands/version';
+import {
+	groupChatList,
+	groupChatSend,
+	groupChatStart,
+	groupChatStatus,
+	groupChatStop,
+} from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
 import { reference } from './commands/reference';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
+import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
+import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import {
 	cuePipelineAdd,
@@ -50,6 +59,12 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
+import {
+	cueEngineStart,
+	cueEngineStop,
+	cueEngineStatus,
+	cueEngineInspect,
+} from './commands/cue-engine';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -102,6 +117,15 @@ import {
 	movementInspect,
 	movementInteract,
 } from './commands/movement';
+import { supportPackage } from './commands/support-package';
+import {
+	feedbackAccounts,
+	feedbackAuth,
+	feedbackLogin,
+	feedbackSearch,
+	feedbackSubmit,
+	feedbackSubscribe,
+} from './commands/feedback';
 import { stats, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
@@ -112,6 +136,8 @@ import {
 	skipAutoRun,
 	abortAutoRun,
 	resetAutoRunTasks,
+	autoRunStatus,
+	autoRunFolder,
 } from './commands/auto-run-control';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
@@ -163,6 +189,7 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import { logger } from '../main/utils/logger';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -170,6 +197,11 @@ import { mcpServe } from './commands/mcp';
 declare const __MAESTRO_CLI_VERSION__: string;
 const cliVersion: string =
 	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
+
+// stdout carries command output (often JSON that scripts parse), so the
+// main-process logger shared with modules like the WakaTime manager must keep
+// its diagnostics on stderr. See #1698.
+logger.routeConsoleToStderr();
 
 const program = new Command();
 
@@ -617,6 +649,58 @@ session
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
 
+// Group chat commands - start and drive multi-agent group chats in the desktop app.
+// `start` is how a script hands a job to a moderator (the release commands use it);
+// participants join by @mention, exactly as when a user types them. Never moves the view.
+const groupChat = program
+	.command('group-chat')
+	.description('Start, message, and inspect group chats in the desktop app');
+
+groupChat
+	.command('start <name>')
+	.description('Create a group chat and send its moderator the opening message')
+	.option(
+		'-p, --participant <agent>',
+		'Participant agent ID or name (repeatable; at least one)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option(
+		'--moderator <agent-type>',
+		"Moderator agent type (e.g. claude-code); defaults to the first participant's type"
+	)
+	.option('-m, --message <text>', 'Opening message for the moderator (defaults to the name)')
+	.option('--message-file <path>', 'Read the opening message from a file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatStart);
+
+groupChat
+	.command('send <chat> [message]')
+	.description('Send a message to a group chat (ID, ID prefix, or name); refused while busy')
+	.option('--message-file <path>', 'Read the message from a file')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatSend);
+
+groupChat
+	.command('status <chat>')
+	.description("Show a group chat's state, participants, and latest messages")
+	.option('--tail <n>', 'How many recent messages to print (default 5; 0 for none)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatStatus);
+
+groupChat
+	.command('list')
+	.description('List group chats and whether each is busy')
+	.option('--all', 'Include archived chats')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatList);
+
+groupChat
+	.command('stop <chat>')
+	.description("Stop a group chat's moderator and participants")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatStop);
+
 // Open file command - open a file in the Maestro desktop app.
 //
 // Also the verb that PLAYS media: the renderer's open path recognizes a
@@ -635,6 +719,10 @@ program
 	)
 	.option('--focus', 'Switch to the file after opening it (default)')
 	.option('--no-switch', "Don't switch to the target agent, but still activate the tab there")
+	.option(
+		'--queue',
+		'Audio/video only: add to the media player queue and show the player without starting playback'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openFile);
 
@@ -727,6 +815,7 @@ program
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
 	)
 	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--input-required', 'Notify the user that this terminal needs human input')
 	.option('--focus', 'Switch to the terminal tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
@@ -860,6 +949,50 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((filename, options) => resetAutoRunTasks(options.agent, filename, options));
 
+program
+	.command('auto-run-status')
+	.description('Show whether an Auto Run is active and its document/task progress')
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => autoRunStatus(options.agent, options));
+
+program
+	.command('auto-run-folder <path>')
+	.description(
+		"Point an agent at a different Auto Run folder (relative paths resolve against this shell's cwd)"
+	)
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((folder, options) => autoRunFolder(options.agent, folder, options));
+
+// Playbook Exchange - browse and install community playbooks
+const marketplace = program
+	.command('marketplace')
+	.description('Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)');
+
+marketplace
+	.command('list')
+	.description('List playbooks in the official + local catalog')
+	.option('-c, --category <name>', 'Only this category')
+	.option('-s, --search <text>', 'Match id, title, description, or tags')
+	.option('--refresh', 'Bypass the catalog cache')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceList);
+
+marketplace
+	.command('show <playbook-id>')
+	.description("Show a playbook's details, documents, and README")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceShow);
+
+marketplace
+	.command('import <playbook-id>')
+	.description("Install a playbook into an agent's Auto Run folder")
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('-f, --folder <name>', 'Folder name under the Auto Run folder (default: from the title)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(marketplaceImport);
+
 // Remove playbook command - delete a saved playbook from an agent
 program
 	.command('remove-playbook <agent-id> <playbook-id>')
@@ -884,6 +1017,28 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
 
+cue
+	.command('enable <subscription>')
+	.description('Turn a Cue subscription on (name, or the full id from `cue list --json`)')
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEnable);
+
+cue
+	.command('disable <subscription>')
+	.description('Turn a Cue subscription off without deleting it')
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueDisable);
+
+cue
+	.command('activity')
+	.description('Show recent Cue runs, newest first')
+	.option('-a, --agent <id>', 'Only runs for this agent')
+	.option('-n, --limit <n>', 'How many runs to show (default 20)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueActivity);
+
 // Cue schedule - author / inspect / edit / cancel Scheduled Tasks (the
 // clock-driven subscriptions: time.once, time.scheduled, time.heartbeat).
 // Primary agent surface for "in 20 minutes do X", "remind me at 4pm…", and
@@ -906,7 +1061,41 @@ cue
 	.option('--pause <name>', 'Disable a task without deleting it')
 	.option('--resume <name>', 'Re-enable a paused task')
 	.option('-a, --agent <id-or-name>', 'Target agent (required when creating; scopes other modes)')
-	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
+	.option(
+		'-p, --prompt <text>',
+		'Prompt to send when the task fires. With --auto-run: extra instructions for the run'
+	)
+	.option(
+		'--auto-run <documents...>',
+		"Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch"
+	)
+	.option('--reset-on-completion', 'With --auto-run: uncheck every task when the run finishes')
+	.option('--loop', 'With --auto-run: re-run the documents once every task is checked off')
+	.option('--max-loops <n>', 'With --auto-run: loop ceiling (implies --loop)')
+	.option('--model <id>', 'With --auto-run: model for this run only')
+	.option('--effort <level>', 'With --auto-run: reasoning effort for this run only')
+	.option('--per-document', 'With --auto-run: one agent turn per document instead of one per task')
+	.option('--ignore-model-hints', "With --auto-run: ignore the documents' MAESTRO:MODEL hints")
+	.option('--no-auto-resume', 'With --auto-run: stay paused after an agent error')
+	.option('--auto-resume-after <minutes>', 'With --auto-run: minutes between auto-resume attempts')
+	.option('--max-auto-resumes <n>', 'With --auto-run: auto-resume attempt ceiling')
+	.option(
+		'--worktree-branch <name>',
+		'With --auto-run: create a worktree on this branch when the run fires, and run there'
+	)
+	.option(
+		'--worktree-agent <id-or-name>',
+		'With --auto-run: run in this already-open worktree agent'
+	)
+	.option(
+		'--worktree-path <path>',
+		'With --auto-run: run in the worktree already on disk at this path'
+	)
+	.option(
+		'--base-branch <ref>',
+		'With a worktree flag: ref a new branch is cut from, and the pull request target'
+	)
+	.option('--create-pr', 'With a worktree flag: open a pull request when the run finishes')
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
@@ -968,6 +1157,42 @@ cuePipeline
 	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
+
+// Cue engine subcommands - run Maestro Cue unattended, without the desktop
+// app, and inspect/control that runner. See `cue-engine.ts` for what the
+// standalone engine can and cannot do relative to the desktop app's own
+// instance, and `cue-engine-lock.ts` for the cross-process guard that keeps
+// this from double-firing triggers alongside a desktop app left open.
+const cueEngine = cue
+	.command('engine')
+	.description('Run Maestro Cue unattended (no desktop app) and control that runner');
+
+cueEngine
+	.command('start')
+	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
+	.option('--json', 'Print machine-readable start/failure status')
+	.action(cueEngineStart);
+
+cueEngine
+	.command('stop')
+	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+		parseInt(v, 10)
+	)
+	.action((opts) => cueEngineStop(opts));
+
+cueEngine
+	.command('status')
+	.description('Report whether an engine is running and its last known heartbeat')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineStatus);
+
+cueEngine
+	.command('inspect')
+	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineInspect);
 
 // Director's Notes commands
 const directorNotes = program
@@ -1103,7 +1328,9 @@ program
 // backward compatibility.
 program
 	.command('update-group <group-id>')
-	.description("Update a group's name, icon, color, or parent in the Maestro desktop app")
+	.description(
+		"Update a group's name, icon, color, parent, or Left Bar visibility in the Maestro desktop app"
+	)
 	.option('-n, --name <name>', 'New group name')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
 	.option(
@@ -1116,6 +1343,11 @@ program
 	.option('--clear-icon', 'Remove the icon')
 	.option('--clear-color', 'Remove the label color')
 	.option('--clear-parent', 'Promote the group to the top level')
+	.option(
+		'--hide',
+		'Park the group out of the Left Bar. Its agents stay reachable through search and the switcher'
+	)
+	.option('--show', 'Bring a hidden group back into the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroup(groupId, options));
 
@@ -2112,6 +2344,97 @@ movement
 	.option('--value <text>', 'Text used with --type')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInteract);
+program
+	.command('support-package')
+	.description(
+		'Write a sanitized support (debug) package zip, as Create Debug Package does, without a save dialog'
+	)
+	.requiredOption(
+		'-o, --output <dir>',
+		'Directory to write maestro-debug-<timestamp>.zip into (created if missing; ~ expanded)'
+	)
+	.option('--no-logs', 'Leave out application logs')
+	.option('--no-errors', 'Leave out recent errors')
+	.option('--no-sessions', 'Leave out agent/session metadata')
+	.option('--no-group-chats', 'Leave out group chat metadata')
+	.option('--no-batch-state', 'Leave out Auto Run state')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(supportPackage);
+
+const feedback = program
+	.command('feedback')
+	.description(
+		'Send Feedback from the CLI: check gh, find duplicates, +1 an issue, or file a new one (open the modal with `open feedback`)'
+	);
+
+feedback
+	.command('auth')
+	.description(
+		'Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it'
+	)
+	.option('--fresh', 'Skip the cached verdict (after logging in elsewhere)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAuth);
+
+feedback
+	.command('login')
+	.description(
+		'Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal\'s "Log in to GitHub" does'
+	)
+	.option('--json', 'Output the result as JSON (for scripting)')
+	.action(feedbackLogin);
+
+feedback
+	.command('accounts')
+	.description(
+		'List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)'
+	)
+	.option(
+		'--use <key>',
+		'Make this account (a key from the list) the one the next chat tries first'
+	)
+	.option('--clear', 'Forget the remembered account and pick automatically again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAccounts);
+
+feedback
+	.command('search <query>')
+	.description('Search RunMaestro/Maestro for issues matching a description')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackSearch);
+
+feedback
+	.command('submit')
+	.description(
+		'File a GitHub issue exactly as the Feedback modal does. Stops on likely duplicates unless --force'
+	)
+	.requiredOption('-c, --category <category>', 'bug | feature | improvement | general')
+	.requiredOption('-s, --summary <text>', 'One-line summary (max 120 chars; becomes the title)')
+	.requiredOption(
+		'-e, --expected <text>',
+		'Expected behavior (bug) or desired outcome (other categories)'
+	)
+	.requiredOption('-a, --actual <text>', 'Actual behavior (bug) or details (other categories)')
+	.option('--steps <text>', 'Steps to reproduce')
+	.option('--context <text>', 'Additional context')
+	.option(
+		'--attach <image...>',
+		'Screenshots to attach: PNG, JPG, GIF, or WebP, up to 5 files, 10 MB each'
+	)
+	.option(
+		'--support-package',
+		'Generate a sanitized support package and link it from the issue (the modal checkbox)'
+	)
+	.option('--force', 'File even when possible duplicates exist')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackSubmit);
+
+feedback
+	.command('subscribe <issue>')
+	.description('Add a +1 to an existing issue instead of filing a duplicate')
+	.option('--comment <text>', 'Also post this comment on the issue')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackSubscribe);
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).

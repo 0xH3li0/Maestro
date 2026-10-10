@@ -301,6 +301,8 @@ const mockMaestro = {
 			delete: vi.fn().mockResolvedValue({}),
 			refreshStates: vi.fn().mockResolvedValue({ issues: [] }),
 		},
+		listAccounts: vi.fn().mockResolvedValue({ accounts: [], lastWorkingKey: null }),
+		rememberAccount: vi.fn().mockResolvedValue(undefined),
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),
@@ -585,6 +587,8 @@ const mockMaestro = {
 	web: {
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
+		takeOrphanedAutoRuns: vi.fn().mockResolvedValue([]),
+		abandonAutoRunReclaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),

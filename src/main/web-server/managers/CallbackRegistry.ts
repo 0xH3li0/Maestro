@@ -17,6 +17,7 @@ import type {
 	SelectTabCallback,
 	NewTabCallback,
 	CloseTabCallback,
+	ReopenTabCallback,
 	RenameTabCallback,
 	RenameTabResult,
 	StarTabCallback,
@@ -24,6 +25,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenFileTabOptions,
 	OpenDocumentGraphCallback,
 	OpenDocumentGraphParams,
 	OpenModalCallback,
@@ -106,6 +108,8 @@ import type {
 	ListWorktreesResult,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
+	StartGroupChatOptions,
+	StartGroupChatResult,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
@@ -133,6 +137,7 @@ import type {
 	GetMovementDesignerInspectionCallback,
 	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
+	GetDebugPackageDepsCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
 	GetMarketplaceManifestCallback,
@@ -171,6 +176,7 @@ export interface WebServerCallbacks {
 	selectTab: SelectTabCallback | null;
 	newTab: NewTabCallback | null;
 	closeTab: CloseTabCallback | null;
+	reopenTab: ReopenTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
@@ -251,6 +257,7 @@ export interface WebServerCallbacks {
 	getMovementDesignerInspection: GetMovementDesignerInspectionCallback | null;
 	interactMovementDesigner: InteractMovementDesignerCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
+	getDebugPackageDeps: GetDebugPackageDepsCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
 	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
@@ -274,6 +281,7 @@ export class CallbackRegistry {
 		selectTab: null,
 		newTab: null,
 		closeTab: null,
+		reopenTab: null,
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
@@ -354,6 +362,7 @@ export class CallbackRegistry {
 		getMovementDesignerInspection: null,
 		interactMovementDesigner: null,
 		notifyCenterFlash: null,
+		getDebugPackageDeps: null,
 		getMarketplaceManifest: null,
 		getMarketplaceDocument: null,
 		getMarketplaceReadme: null,
@@ -442,6 +451,11 @@ export class CallbackRegistry {
 		return this.callbacks.closeTab(sessionId, tabId);
 	}
 
+	/** Restore the requested conversation from the owning renderer's close history. */
+	async reopenTab(sessionId: string, tabId: string): Promise<{ tabId: string } | null> {
+		return this.callbacks.reopenTab?.(sessionId, tabId) ?? null;
+	}
+
 	async renameTab(
 		sessionId: string,
 		tabId: string,
@@ -476,7 +490,7 @@ export class CallbackRegistry {
 	async openFileTab(
 		sessionId: string,
 		filePath: string,
-		options: { background: boolean; switchToAgent: boolean }
+		options: OpenFileTabOptions
 	): Promise<boolean> {
 		if (!this.callbacks.openFileTab) return false;
 		return this.callbacks.openFileTab(sessionId, filePath, options);
@@ -872,10 +886,11 @@ export class CallbackRegistry {
 
 	async startGroupChat(
 		topic: string,
-		participantIds: string[]
-	): Promise<{ chatId: string } | null> {
+		participantIds: string[],
+		options?: StartGroupChatOptions
+	): Promise<StartGroupChatResult | null> {
 		if (!this.callbacks.startGroupChat) return null;
-		return this.callbacks.startGroupChat(topic, participantIds);
+		return this.callbacks.startGroupChat(topic, participantIds, options);
 	}
 
 	async getGroupChatState(chatId: string): Promise<GroupChatState | null> {
@@ -1019,6 +1034,10 @@ export class CallbackRegistry {
 		return this.callbacks.notifyCenterFlash(params);
 	}
 
+	getDebugPackageDeps(): ReturnType<GetDebugPackageDepsCallback> | null {
+		return this.callbacks.getDebugPackageDeps?.() ?? null;
+	}
+
 	async getMarketplaceManifest(options?: {
 		refresh?: boolean;
 	}): Promise<MarketplaceManifestResult | null> {
@@ -1118,6 +1137,11 @@ export class CallbackRegistry {
 	setCloseTabCallback(callback: CloseTabCallback): void {
 		logger.info('[CallbackRegistry] setCloseTabCallback called', LOG_CONTEXT);
 		this.callbacks.closeTab = callback;
+	}
+
+	/** Register the owner-side conversation restore callback. */
+	setReopenTabCallback(callback: ReopenTabCallback): void {
+		this.callbacks.reopenTab = callback;
 	}
 
 	setRenameTabCallback(callback: RenameTabCallback): void {
@@ -1439,6 +1463,10 @@ export class CallbackRegistry {
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbacks.notifyCenterFlash = callback;
+	}
+
+	setGetDebugPackageDepsCallback(callback: GetDebugPackageDepsCallback): void {
+		this.callbacks.getDebugPackageDeps = callback;
 	}
 
 	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {

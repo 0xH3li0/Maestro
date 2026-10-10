@@ -77,6 +77,44 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
+## Scheduling a Run
+
+By default an Auto Run starts as soon as you press **Go**. The **Start** control
+in the Auto Run window switches that to a specific date and time:
+
+| Option            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| **Now**           | The default. Press Go and the run starts immediately.                       |
+| **At a set time** | Pick a date and time; the run fires once, and a run that starts is removed. |
+
+When a time is set the **Go** button becomes **Schedule**. The most common use
+is starting a run after your provider's token limit resets, so you wake up to
+finished work rather than a run that stalled at 2am.
+
+A few things worth knowing:
+
+- The time is your local time, and the schedule survives quitting and reopening
+  Maestro.
+- The documents are pinned when you schedule, not when the run fires. Repointing
+  the agent's Auto Run folder afterwards will not swap out what runs.
+- You can schedule while the agent is busy. Readiness is checked when the run
+  actually fires, not when you schedule it.
+- Scheduling is one-shot. For a run that repeats, use a recurring
+  [Maestro Cue](./maestro-cue) task instead.
+- A run that fails to start is kept, not removed. It stays under Scheduled Tasks
+  in the Cue window so you can see why it did not start and trigger it again.
+- A scheduled run keeps its **Run in Worktree** choice. A new worktree is
+  created when the run fires, not when you schedule it. If the worktree agent or
+  path you picked is gone by then, the run does not start and the schedule is
+  kept; it never falls back to the agent's own checkout.
+- The auto-resume settings travel with the schedule too.
+- A script or another agent can schedule the same run with
+  `maestro-cli cue schedule --at <time> --agent <id> --auto-run <documents...>`.
+
+Scheduled runs are stored as Maestro Cue tasks, so **Start** requires the
+Maestro Cue Encore Feature. Pending runs appear under **Scheduled Tasks** in the
+Cue window, which is also where you cancel one.
+
 ## Model Override
 
 The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
@@ -134,6 +172,8 @@ Save your Auto Run configurations as Playbooks for reuse:
 2. Click **Save as Playbook** and enter a name
 3. Load saved playbooks from the **Load Playbook** dropdown
 4. Update or discard changes to loaded playbooks
+
+**Save & Exit** saves and closes in one click. With a playbook loaded, it saves your changes to that playbook. Otherwise it creates a new playbook named `YYYY-MM-DD-CODENAME`, with the codename taken from the first document (its folder, or its file name minus the phase number). A `-2`, `-3`, ... suffix keeps the name unique.
 
 ![Playbooks](./screenshots/autorun-2.png)
 
@@ -380,7 +420,9 @@ Click **Collapse** or press `Esc` to return to the sidebar panel view.
 
 ## Saving Documents
 
-Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the **Save** button in the editor footer. The editor shows "Unsaved changes" and a **Revert** button when you have pending edits. Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`.
+Save your changes with `Cmd+S` (Mac) or `Ctrl+S` (Windows/Linux), or click the **Save** button in the editor footer. The editor shows "Unsaved changes" and a **Revert** button when you have pending edits. Revert discards everything since the last save, including pasted text, inserted images, and checkboxes ticked in preview. Full undo/redo support with `Cmd+Z` / `Cmd+Shift+Z`.
+
+If the file changes on disk while you have unsaved edits (an agent, a sync tool, or another editor wrote to it), your edits are kept and a toast tells you. **Save** overwrites the file with your version; **Revert** loads the version now on disk. With no unsaved edits, the editor simply shows the new version. The one exception is a document an Auto Run is actively driving: the editor is read-only then and always follows the disk.
 
 **Note**: Switching documents discards unsaved changes. Save before switching if you want to preserve your edits.
 
@@ -550,7 +592,7 @@ The badge disappears when the run continues, so a run that rescued itself leaves
 
 Every Maestro marker is an HTML comment, which means it renders as nothing. That is right for the file - other markdown tools ignore it, and an agent editing the document leaves it alone - but it is wrong for you. Two of the three markers do not merely change how a run behaves, they stop it:
 
-- A leftover **HITL gate** pauses every re-run until the box below it is ticked.
+- A leftover **HITL gate** pauses every re-run until someone passes it.
 - A leftover **halt marker** makes Auto Run refuse to start at all.
 
 Both present the same way: you press **Run** and nothing happens, with the cause sitting in text the panel does not draw.
@@ -559,7 +601,7 @@ So Maestro renders each marker as a small pill wherever the document is previewe
 
 | Pill                          | Meaning                                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you tick the box.                                           |
+| ⏸ **Pauses here**             | A live HITL gate. The run stops here until you click **Done, Resume**.                                 |
 | ✓ **Approved**                | A gate you already passed. Inert, shown dimmed.                                                        |
 | ■ **Halted**                  | A halt marker. Auto Run will refuse to start until you delete it.                                      |
 | ◆ **high model, high effort** | A model hint. Full strength when it governs the next task, slightly muted when it governs a later one. |
@@ -587,7 +629,7 @@ When a task needs a person - manual testing, visual judgment, sign-off, or a cre
 <!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" artifact="https://staging.example.com/checkout" -->
 ```
 
-In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. You resume by ticking the box above the marker or clicking Resume. That is a deliberate, visible pause, the opposite of a stall.
+In the desktop app the run **pauses** there, surfaces the reason (and the optional `artifact` to look at) in the Auto Run panel and a toast, and waits. When you have done the step, click **Done, Resume**: Maestro writes a ticked `Human step done` box under the marker, so the gate shows as Approved and a re-run does not stop there again. That is a deliberate, visible pause, the opposite of a stall.
 
 A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
 
@@ -626,7 +668,7 @@ Halting should be **rare**. Agents are told to reserve it for the case where con
 
 | Situation                                                              | Right mechanism                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| A task needs a person                                                  | HITL gate - pauses, then resumes on a tick             |
+| A task needs a person                                                  | HITL gate - pauses until you click Done, Resume        |
 | A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
 | One task failed, others are independent                                | Nothing; the run continues                             |
 | Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |

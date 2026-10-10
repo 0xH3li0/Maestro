@@ -12,9 +12,11 @@ import {
 } from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
+import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
@@ -1194,6 +1196,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (targetIndex >= 0 && targetIndex < ctx.visibleSessions.length) {
 					const targetSession = ctx.visibleSessions[targetIndex];
 					ctx.setActiveSessionId(targetSession.id);
+					// Jumping to the agent that is already active is not a switch, so ask
+					// for the reveal explicitly; the Left Bar may be scrolled away from it.
+					requestSidebarReveal();
 					trackShortcut('jumpToSession');
 					// Also expand sidebar if collapsed
 					if (!ctx.leftSidebarOpen) {
@@ -1430,12 +1435,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
 					e.preventDefault();
-					const result = ctx.reopenUnifiedClosedTab(activeSession);
-					if (result) {
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === activeSession!.id ? result.session : s))
-						);
+					if (reopenDesktopTabIfNeeded(activeSession)) {
 						trackShortcut('reopenClosedTab');
+					} else {
+						const result = ctx.reopenUnifiedClosedTab(activeSession);
+						if (result) {
+							ctx.setSessions((prev: Session[]) =>
+								prev.map((s: Session) => (s.id === activeSession!.id ? result.session : s))
+							);
+							trackShortcut('reopenClosedTab');
+						}
 					}
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {

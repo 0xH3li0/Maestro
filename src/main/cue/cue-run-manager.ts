@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type {
+	CueAutoRunConfig,
 	CueCommand,
 	CueEvent,
 	CueNotifyConfig,
@@ -53,7 +54,7 @@ const MAX_CUE_ERROR_MESSAGE_CHARS = 2000;
  * signal the Activity Log and History filter on.
  */
 function completionInfoFromResult(
-	result: Pick<CueRunResult, 'status' | 'stdout' | 'stderr' | 'exitCode'>
+	result: Pick<CueRunResult, 'status' | 'stdout' | 'stderr' | 'exitCode' | 'usage'>
 ): CueEventCompletionInfo {
 	const trimmed = result.stderr?.trim() ?? '';
 	const errorMessage =
@@ -61,7 +62,13 @@ function completionInfoFromResult(
 			? sliceHeadByChars(trimmed, MAX_CUE_ERROR_MESSAGE_CHARS)
 			: null;
 	const { excerpt, fullOutput } = buildCuePersistedOutput(result);
-	return { errorMessage, exitCode: result.exitCode ?? null, outputExcerpt: excerpt, fullOutput };
+	return {
+		errorMessage,
+		exitCode: result.exitCode ?? null,
+		outputExcerpt: excerpt,
+		fullOutput,
+		streamUsageJson: result.usage ? JSON.stringify(result.usage) : null,
+	};
 }
 
 /** Phase of a run in the state machine: running → stopping | finished */
@@ -109,6 +116,11 @@ export interface QueuedEvent {
 	 *  need to re-derive anything. Optional - non-notify actions leave
 	 *  this undefined. */
 	notify?: CueNotifyConfig;
+	/** Captured Auto Run payload for `action: autorun` runs. Travels with the
+	 *  run so the launch is pinned to the documents chosen when the run was
+	 *  scheduled, rather than re-resolved from the agent's (mutable) Auto Run
+	 *  folder at fire time. Optional - other actions leave this undefined. */
+	autoRun?: CueAutoRunConfig;
 	/** Phase 12A - DB row id for the persisted copy, when persistence is enabled. */
 	persistId?: string;
 	/** Phase 01 - chain lineage propagated from the dispatching parent. When
@@ -131,6 +143,7 @@ export interface CueRunManagerDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		autoRun?: CueAutoRunConfig;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -228,7 +241,13 @@ export interface CueRunManager {
 		 * concurrency-gated notify runs still surface the right toast body
 		 * and sticky flag when they drain.
 		 */
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		/**
+		 * Captured Auto Run payload for `action: autorun` runs. Threaded
+		 * through the queue alongside `notify` so a concurrency-gated
+		 * scheduled run still launches the documents it was scheduled with.
+		 */
+		autoRun?: CueAutoRunConfig
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -386,7 +405,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.command,
 				entry.chainRootId,
 				entry.parentEventId,
-				entry.notify
+				entry.notify,
+				entry.autoRun
 			);
 		}
 
@@ -436,7 +456,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		command?: CueCommand,
 		incomingChainRootId?: string,
 		parentEventId?: string,
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		autoRun?: CueAutoRunConfig
 	): Promise<void> {
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
@@ -515,6 +536,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				action,
 				command,
 				notify,
+				autoRun,
 			});
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
@@ -548,10 +570,14 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.stdout = runResult.stdout;
 			result.stderr = runResult.stderr;
 			result.exitCode = runResult.exitCode;
-			// Carry the main task's provider session id for token attribution.
-			// The output-prompt phase (below) overwrites stdout but NOT this -
-			// it records its own session id on its own event row (outputRunId).
+			// Carry the main task's provider session id and stream-parsed usage
+			// for token attribution. The output-prompt phase (below) overwrites
+			// stdout but NOT these - it records its own session id/usage on its
+			// own event row (outputRunId).
 			result.providerSessionId = runResult.providerSessionId;
+			// Usage follows the same rule: this is the MAIN task's, and the
+			// output phase does not fold its tokens in here.
+			result.usage = runResult.usage;
 
 			// Execute output prompt if the main task succeeded and an output prompt is configured.
 			// Skipped for `action: command` runs - output_prompt is an AI follow-up, not a
@@ -818,7 +844,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			pipelineName?: string,
 			chainRootId?: string,
 			parentEventId?: string,
-			notify?: CueNotifyConfig
+			notify?: CueNotifyConfig,
+			autoRun?: CueAutoRunConfig
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -908,6 +935,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					action,
 					command,
 					notify,
+					autoRun,
 					persistId,
 					chainRootId,
 					parentEventId,
@@ -930,6 +958,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						queuedAt,
 						chainRootId,
 						parentEventId,
+						autoRun,
+						notify,
 					});
 				}
 
@@ -955,7 +985,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				autoRun
 			);
 		},
 
