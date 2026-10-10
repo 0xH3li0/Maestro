@@ -675,7 +675,7 @@ describe('cue-spawn-builder', () => {
 		});
 
 		it('hands the embedded prompt to the SSH wrapper (stdin path)', async () => {
-			const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+			const mockSshStore = sshStoreWithRemotes();
 			mockWrapSpawnWithSsh.mockResolvedValue({
 				command: 'ssh',
 				args: ['user@host'],
@@ -690,7 +690,7 @@ describe('cue-spawn-builder', () => {
 				createConfig({
 					appendSystemPrompt: 'SYS',
 					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
-					sshStore: mockSshStore as any,
+					sshStore: mockSshStore,
 				}),
 				'Do it'
 			);
@@ -704,7 +704,7 @@ describe('cue-spawn-builder', () => {
 
 		it('hands the native flag to the SSH wrapper inline', async () => {
 			mockGetAgentCapabilities.mockReturnValueOnce(nativeCaps() as any);
-			const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+			const mockSshStore = sshStoreWithRemotes();
 			mockWrapSpawnWithSsh.mockResolvedValue({
 				command: 'ssh',
 				args: ['user@host'],
@@ -718,7 +718,7 @@ describe('cue-spawn-builder', () => {
 				createConfig({
 					appendSystemPrompt: 'SYS',
 					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
-					sshStore: mockSshStore as any,
+					sshStore: mockSshStore,
 				}),
 				'Do it'
 			);

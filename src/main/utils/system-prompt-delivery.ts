@@ -3,26 +3,18 @@
  *
  * Shared by the desktop `process:spawn` handler, Cue runs, and Group Chat (and
  * cross-agent consults, which spawn through Group Chat's helper), so every
- * main-process spawn delivers it the same way:
+ * main-process spawn delivers it the same way.
  *
- * - Agents with native support (`supportsAppendSystemPrompt`, e.g. Claude Code)
- *   get `--append-system-prompt <text>` on every invocation, resume included:
- *   the flag is metadata, not conversation content, and Claude Code does not
- *   persist it into the session transcript.
- * - On Windows local execution the text goes to a temp file passed with
- *   `--append-system-prompt-file`, so it cannot blow the ~32K CreateProcess
- *   command-line limit. SSH spawns are exempt (the command runs inside a stdin
- *   script, not the OS command line) and always pass it inline.
- * - Agents without native support get it embedded into the user prompt
- *   (`embedSystemPromptInPrompt`). That first turn is kept in the agent's own
- *   transcript, so a resumed turn skips re-embedding rather than repeating the
- *   whole system prompt in every message.
- * - With no user prompt to embed into, the system prompt becomes the prompt.
+ * WHICH way is decided by `resolveSystemPromptDelivery`
+ * (`src/shared/maestro-lib/launch/prompt-delivery.ts`), the same pure rule the
+ * CLI spawner asks, so the two cannot drift on flag vs temp file vs embed vs
+ * resume skip. This module is the main-process REALIZATION of that decision:
+ * the args, the embedded prompt, the Windows temp file and its cleanup, and
+ * the logging.
  *
- * The CLI (`src/cli/services/agent-spawner.ts`) keeps its own copy: it cannot
- * import main modules, and its temp-file lifecycle differs (it falls back to
- * inline on a write failure and cleans up when the child exits). The one piece
- * worth sharing, the embed envelope, already lives in `src/shared`.
+ * The CLI (`src/cli/services/agent-spawner.ts`) realizes the same decision
+ * itself: it cannot import main modules, and it cleans its temp file up when
+ * the child exits rather than on a timer.
  */
 
 import * as os from 'os';
@@ -31,6 +23,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
+import { resolveSystemPromptDelivery } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { logger } from './logger';
 import { captureException } from './sentry';
 
@@ -103,10 +96,24 @@ export async function applySystemPromptDelivery(
 ): Promise<SystemPromptDeliveryResult> {
 	const { args, prompt, systemPrompt, sessionId, agentId } = input;
 	const logContext = input.logContext ?? '[SystemPromptDelivery]';
-	if (!systemPrompt) return { args, prompt };
+	const decision = resolveSystemPromptDelivery({
+		systemPrompt,
+		supportsAppendSystemPrompt: input.supportsAppendSystemPrompt,
+		isWindowsHost: isWindows(),
+		sshRemote: input.isSshSession,
+		isResume: input.isResume,
+		hasUserPrompt: !!prompt,
+	});
+	if (!systemPrompt || decision.via === 'none') return { args, prompt };
 
-	if (input.supportsAppendSystemPrompt) {
-		if (isWindows() && !input.isSshSession) {
+	const inline = (): SystemPromptDeliveryResult => ({
+		args: [...args, '--append-system-prompt', systemPrompt],
+		prompt,
+		delivery: 'cli-arg',
+	});
+
+	switch (decision.via) {
+		case 'file': {
 			// Windows local: write to temp file to avoid CLI length limits
 			const tempFile = path.join(os.tmpdir(), systemPromptTempFileName(sessionId));
 			try {
@@ -124,11 +131,7 @@ export async function applySystemPromptDelivery(
 						error: writeErr instanceof Error ? writeErr.message : String(writeErr),
 					}
 				);
-				return {
-					args: [...args, '--append-system-prompt', systemPrompt],
-					prompt,
-					delivery: 'cli-arg',
-				};
+				return inline();
 			}
 			// Schedule cleanup early so the file is removed even if spawn fails.
 			// Fire-and-forget unlink mirrors process-manager/utils/imageUtils.cleanupTempFiles:
@@ -158,52 +161,49 @@ export async function applySystemPromptDelivery(
 				delivery: 'file',
 			};
 		}
-		// Non-Windows or SSH: pass inline (no command-line length concern)
-		logger.debug('Using --append-system-prompt for system prompt delivery', logContext, {
-			agentId,
-			systemPromptLength: systemPrompt.length,
-		});
-		return {
-			args: [...args, '--append-system-prompt', systemPrompt],
-			prompt,
-			delivery: 'cli-arg',
-		};
-	}
-
-	if (input.isResume) {
-		// The system prompt was embedded in the first user turn at initial spawn
-		// and is preserved in the agent's session transcript.
-		logger.debug(
-			'Skipping system prompt re-injection on resume (already in transcript)',
-			logContext,
-			{
+		case 'flag':
+			// Non-Windows or SSH: pass inline (no command-line length concern)
+			logger.debug('Using --append-system-prompt for system prompt delivery', logContext, {
 				agentId,
 				systemPromptLength: systemPrompt.length,
-			}
-		);
-		return { args, prompt, delivery: 'skipped-resume' };
+			});
+			return inline();
+		case 'skip-on-resume':
+			// The system prompt was embedded in the first user turn at initial spawn
+			// and is preserved in the agent's session transcript.
+			logger.debug(
+				'Skipping system prompt re-injection on resume (already in transcript)',
+				logContext,
+				{
+					agentId,
+					systemPromptLength: systemPrompt.length,
+				}
+			);
+			return { args, prompt, delivery: 'skipped-resume' };
+		case 'embed':
+			// The envelope is built by the shared helper because the transcript
+			// renderer has to take it back apart again when a tab is hydrated from
+			// disk (see src/shared/embeddedSystemPrompt.ts).
+			logger.debug('Embedding system prompt in user message (fallback)', logContext, {
+				agentId,
+				systemPromptLength: systemPrompt.length,
+			});
+			return {
+				args,
+				prompt: embedSystemPromptInPrompt(systemPrompt, prompt ?? ''),
+				delivery: 'embedded',
+			};
+		case 'as-prompt':
+			logger.warn(
+				'appendSystemPrompt provided without a user prompt; using as sole prompt',
+				logContext,
+				{
+					agentId,
+					systemPromptLength: systemPrompt.length,
+				}
+			);
+			return { args, prompt: systemPrompt, delivery: 'sole-prompt' };
 	}
-
-	if (prompt) {
-		// The envelope is built by the shared helper because the transcript
-		// renderer has to take it back apart again when a tab is hydrated from
-		// disk (see src/shared/embeddedSystemPrompt.ts).
-		logger.debug('Embedding system prompt in user message (fallback)', logContext, {
-			agentId,
-			systemPromptLength: systemPrompt.length,
-		});
-		return { args, prompt: embedSystemPromptInPrompt(systemPrompt, prompt), delivery: 'embedded' };
-	}
-
-	logger.warn(
-		'appendSystemPrompt provided without a user prompt; using as sole prompt',
-		logContext,
-		{
-			agentId,
-			systemPromptLength: systemPrompt.length,
-		}
-	);
-	return { args, prompt: systemPrompt, delivery: 'sole-prompt' };
 }
 
 /**
