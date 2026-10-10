@@ -381,15 +381,7 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		// `unknown`, not `network_error`, because resending the same prompt under
 		// the same timeout repeats the partial work and is cut off again.
 		if (PRINT_TIMEOUT_WARNING.test(line)) {
-			return {
-				type: 'unknown',
-				message:
-					'The headless run hit its timeout and returned a partial answer. Raise the "Headless Timeout" option in the agent settings.',
-				recoverable: true,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				raw: { errorLine: line },
-			};
+			return this.printTimeoutError({ errorLine: line });
 		}
 
 		try {
@@ -402,6 +394,19 @@ export class AntigravityOutputParser implements AgentOutputParser {
 			// Not JSON - nothing structured to classify.
 			return null;
 		}
+	}
+
+	/** agy's --print-timeout expired mid-turn; see detectErrorFromLine. */
+	private printTimeoutError(raw: AgentError['raw']): AgentError {
+		return {
+			type: 'unknown',
+			message:
+				'The headless run hit its timeout and returned a partial answer. Raise the "Headless Timeout" option in the agent settings.',
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw,
+		};
 	}
 
 	detectErrorFromParsed(parsed: unknown): AgentError | null {
@@ -433,7 +438,12 @@ export class AntigravityOutputParser implements AgentOutputParser {
 
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
 		if (exitCode === 0) {
-			return null;
+			// The stderr handler checks each chunk as it arrives, so a warning split
+			// across two chunks matches neither. The exit sees all of stderr, and
+			// only runs when nothing was raised mid-stream, so this cannot double up.
+			return PRINT_TIMEOUT_WARNING.test(stderr)
+				? this.printTimeoutError({ exitCode, stderr })
+				: null;
 		}
 
 		const combined = `${stderr}\n${stdout}`;

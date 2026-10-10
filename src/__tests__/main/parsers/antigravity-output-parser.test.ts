@@ -365,6 +365,22 @@ describe('AntigravityOutputParser', () => {
 		expect(parser.detectErrorFromLine(`loading tools\n${warning}\n`)).not.toBeNull();
 	});
 
+	// stderr is checked chunk by chunk, so a warning split across two chunks
+	// matches neither; the exit sees all of stderr.
+	it('reports a timeout warning split across stderr chunks at exit', () => {
+		const parser = new AntigravityOutputParser();
+		const warning =
+			'[agy] print timeout after 30m0s with turn in progress; returning partial output\n';
+		const [first, second] = [warning.slice(0, 20), warning.slice(20)];
+
+		expect(parser.detectErrorFromLine(first)).toBeNull();
+		expect(parser.detectErrorFromLine(second)).toBeNull();
+		expect(parser.detectErrorFromExit(0, first + second, '')).toEqual(
+			expect.objectContaining({ type: 'unknown', agentId: 'antigravity' })
+		);
+		expect(parser.detectErrorFromExit(0, 'loading tools\n', '')).toBeNull();
+	});
+
 	it('does not classify text that merely mentions the print timeout', () => {
 		const parser = new AntigravityOutputParser();
 

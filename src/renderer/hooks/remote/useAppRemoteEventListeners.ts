@@ -1805,9 +1805,18 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				executionQueue: [],
 			};
 
-			// Kill the old provider's AI processes (no-op if none). Every tab is
-			// replaced below, so a turn left running would write into nothing.
-			killAgentAiProcesses(sessionId).catch(() => {});
+			// Kill the old provider's AI processes (no-op if none) before the tabs
+			// are replaced: a turn left running would write into nothing, and one
+			// started on a new tab during the kill would be caught in its sweep.
+			try {
+				await killAgentAiProcesses(sessionId);
+			} catch (killErr) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Could not stop the running agent: ${killErr instanceof Error ? killErr.message : String(killErr)}`,
+				});
+				return;
+			}
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => (s.id === sessionId ? { ...s, ...providerSwitch } : s))

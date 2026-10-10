@@ -37,7 +37,13 @@ import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
+import {
+	useSessionStore,
+	selectSessionById,
+	takePendingMergedContext,
+	updateSessionWith,
+} from './sessionStore';
+import { probeSessionAiProcesses } from '../services/process';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
@@ -55,6 +61,7 @@ import {
 	applyQueuedItemAbort,
 	applyQueuedItemDispatchFailure,
 	applyQueuedItemRelease,
+	queuedItemOwnerTabId,
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 
@@ -175,6 +182,12 @@ export interface ProcessQueuedItemDeps {
 	speckitCommands: SpecKitCommand[];
 	openspecCommands: OpenSpecCommand[];
 	bmadCommands?: BmadCommand[];
+	/**
+	 * Checked right before the spawn, after every await that prepares it. An
+	 * auto-retry resend passes "Stop has not ended me": Stop can land while the
+	 * agent and system prompt load, when there is no process yet to interrupt.
+	 */
+	isCancelled?: () => boolean;
 }
 
 export type AgentStore = AgentStoreState & AgentStoreActions;
@@ -392,11 +405,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
-			useSessionStore
-				.getState()
-				.setSessions((prev) =>
-					prev.map((s) => (s.id === sessionId ? applyQueuedItemAbort(s, item) : s))
-				);
+			// Release the tab the dequeue marked, unless a live turn owns it (a
+			// read-only or forced-parallel item can land beside one).
+			const ownerTabId = queuedItemOwnerTabId(session, item);
+			const ownerRunning = ownerTabId
+				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
+				: false;
+			updateSessionWith(sessionId, (s) =>
+				applyQueuedItemAbort(s, item, ownerRunning ? undefined : ownerTabId)
+			);
 			return false;
 		}
 
@@ -523,6 +540,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					args: spawnArgs,
 				});
 
+				if (deps.isCancelled?.()) {
+					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
+					return false;
+				}
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -627,6 +648,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}));
 
 					// Spawn agent with the prompt
+					if (deps.isCancelled?.()) {
+						updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
+						return false;
+					}
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
 						toolType: session.toolType,
@@ -660,11 +685,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// Nothing spawned and nothing will: the command does not exist, so
 					// no exit is coming to settle this turn. Release the tab it was
 					// marked on and keep the agent busy if another tab is mid-turn.
-					useSessionStore
-						.getState()
-						.setSessions((prev) =>
-							prev.map((s) => (s.id === sessionId ? applyQueuedItemRelease(s, targetTab.id) : s))
-						);
+					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
 			}

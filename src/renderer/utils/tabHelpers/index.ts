@@ -998,13 +998,19 @@ export function settleTabThinkingState(session: Session, tabId: string): Session
  * Both take over the agent-level `state` while they run, but an AI tab can be
  * mid-turn underneath. Ending them hands the agent back to that turn rather
  * than to idle: going straight to idle (a failed command, `clear`, a playbook
- * finishing) painted a working agent "Ready" and hid its Thinking pill.
+ * finishing) painted a working agent "Ready" and hid its Thinking pill. A tab
+ * closed mid-turn counts too, and `error` stays, as in `settleTabThinkingState`.
  */
 export function settleAgentStateFromTabs(session: Session): Session {
-	const anyAiTabBusy = session.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
-	return anyAiTabBusy
-		? { ...session, state: 'busy', busySource: 'ai' }
-		: { ...session, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
+	const stillThinking =
+		(session.aiTabs?.some((tab) => tab.state === 'busy') ?? false) ||
+		!!session.orphanedThinkingTabs?.length;
+	return {
+		...session,
+		state: session.state === 'error' ? 'error' : stillThinking ? 'busy' : 'idle',
+		busySource: stillThinking ? 'ai' : undefined,
+		thinkingStartTime: stillThinking ? session.thinkingStartTime : undefined,
+	};
 }
 
 /**

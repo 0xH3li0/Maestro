@@ -51,6 +51,9 @@ const deps: ProcessQueuedItemDeps = {
 
 let processQueuedItem: ReturnType<typeof vi.fn>;
 
+/** A retry resend passes its deps plus the Stop check `fireRetry` adds. */
+const withCancelCheck = (d: object) => ({ ...d, isCancelled: expect.any(Function) });
+
 /** Build an AgentError-shaped object with sensible recoverable defaults. */
 function err(partial: Partial<AgentError> & { message: string }): AgentError {
 	return {
@@ -195,7 +198,7 @@ describe('firing the retry', () => {
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's8',
 			expect.objectContaining({ id: 'item-1', tabId: 't1' }),
-			deps
+			withCancelCheck(deps)
 		);
 		// Flipped to in-flight before dispatch; stays there until the exit listener settles it.
 		expect(getRetryEntry('s8', 't1')?.status).toBe('in-flight');
@@ -495,7 +498,7 @@ describe('firing the retry', () => {
 				text: 'hi',
 				turnSettings: { model: 'fable', effort: 'low' },
 			}),
-			deps
+			withCancelCheck(deps)
 		);
 	});
 
@@ -512,7 +515,7 @@ describe('firing the retry', () => {
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's11',
 			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'medium' } }),
-			deps
+			withCancelCheck(deps)
 		);
 	});
 });
@@ -568,6 +571,28 @@ describe('cancel and settle transitions', () => {
 		const session = useSessionStore.getState().sessions[0];
 		expect(session.aiTabs[0].state).toBe('busy');
 		expect(session.state).toBe('busy');
+	});
+
+	// Stop can land while the resend loads the agent and system prompt, before
+	// any process exists to interrupt. The spawn checks for it last.
+	it('tells a resend still being prepared that Stop ended it, and toasts nothing', async () => {
+		setupSession('stopMid', 't1');
+		seedSnapshot('stopMid', 't1');
+		scheduleRetryForError('stopMid', 't1', overload());
+		let cancelledAtSpawn: boolean | undefined;
+		processQueuedItem.mockImplementationOnce(async (_sid, _item, d: ProcessQueuedItemDeps) => {
+			expect(d.isCancelled?.()).toBe(false);
+			stopRetriesForAgent('stopMid');
+			cancelledAtSpawn = d.isCancelled?.();
+			return false;
+		});
+		const toastsBefore = useNotificationStore.getState().toasts.length;
+
+		retryNow('stopMid', 't1');
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(cancelledAtSpawn).toBe(true);
+		expect(useNotificationStore.getState().toasts).toHaveLength(toastsBefore);
 	});
 
 	it("stopRetriesForAgent ends only that agent's outages and raises no error", () => {
@@ -1652,7 +1677,7 @@ describe('noteDirectDispatch', () => {
 		expect(item.images).toEqual(directItem.images);
 		// The consult already went out with the original send.
 		expect(item.crossAgentMention).toBeUndefined();
-		expect(replayDeps).toBe(providerDeps);
+		expect(replayDeps).toEqual(withCancelCheck(providerDeps));
 	});
 
 	it('records nothing when no provider is registered, rather than a snapshot with no deps', () => {

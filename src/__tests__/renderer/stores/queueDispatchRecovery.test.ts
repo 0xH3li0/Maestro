@@ -46,9 +46,16 @@ import type { AgentConfig, QueuedItem, Session } from '../../../renderer/types';
 
 const mockSpawn = vi.fn().mockResolvedValue({ pid: 1, success: true });
 const mockGetAgent = vi.fn();
+/** What the main process reports as running. Empty unless a test says otherwise. */
+const mockGetActiveProcesses = vi.fn().mockResolvedValue([]);
 
 (window as any).maestro = {
-	process: { spawn: mockSpawn, kill: vi.fn(), interrupt: vi.fn() },
+	process: {
+		spawn: mockSpawn,
+		kill: vi.fn(),
+		interrupt: vi.fn(),
+		getActiveProcesses: mockGetActiveProcesses,
+	},
 	agents: { detect: vi.fn().mockResolvedValue([]), get: mockGetAgent },
 	agentError: { clearError: vi.fn() },
 	prompts: {
@@ -131,6 +138,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mockGetAgent.mockResolvedValue(AGENT);
 	mockSpawn.mockResolvedValue({ pid: 1, success: true });
+	mockGetActiveProcesses.mockResolvedValue([]);
 	setSession(
 		createMockSession({
 			id: SESSION,
@@ -374,6 +382,79 @@ describe('a queued item whose tab was closed', () => {
 
 		expect(session().aiTabs[0].state).toBe('idle');
 		expect(session().state).toBe('idle');
+	});
+
+	// The dispatch runs after the dequeue, so the user can switch tabs in
+	// between. Re-resolving the fallback then released the NEW active tab and
+	// left the one actually marked running pulsing.
+	it('releases the tab the dequeue marked, not whichever tab is active now', async () => {
+		setSession({
+			...session(),
+			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
+			activeTabId: TAB,
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+		const { item } = takeNextRunnableQueueItem(session().executionQueue);
+		setSession(applyQueuedItemDispatch(session(), item!));
+		setSession({ ...session(), activeTabId: 'tab-2' });
+
+		await useAgentStore.getState().processQueuedItem(SESSION, item!, deps);
+
+		expect(session().aiTabs.find((t) => t.id === TAB)!.state).toBe('idle');
+		expect(cardsFor('q1')).toBe(0);
+		expect(session().aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+	});
+
+	// A read-only or forced-parallel item can land beside a live turn. Releasing
+	// that tab would paint a running turn idle.
+	it('leaves the tab busy when a live turn owns it, and only takes the card back', async () => {
+		mockGetActiveProcesses.mockResolvedValue([
+			{ sessionId: `${SESSION}-ai-${TAB}`, pid: 7, isTerminal: false, toolType: 'claude-code' },
+		]);
+		setSession({
+			...session(),
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+
+		await drainOnce();
+
+		expect(cardsFor('q1')).toBe(0);
+		expect(session().aiTabs[0].state).toBe('busy');
+	});
+});
+
+// ============================================================================
+// A dispatch cancelled while it was being prepared
+// ============================================================================
+
+describe('a dispatch cancelled before it spawns', () => {
+	// An auto-retry resend passes "Stop has not ended me". Stop can land while
+	// the agent and system prompt load, before any process exists to interrupt.
+	it('does not spawn, releases the tab, and reports nothing sent', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'stopped meanwhile')] });
+		const { item } = takeNextRunnableQueueItem(session().executionQueue);
+		setSession(applyQueuedItemDispatch(session(), item!));
+
+		const sent = await useAgentStore
+			.getState()
+			.processQueuedItem(SESSION, item!, { ...deps, isCancelled: () => true });
+
+		expect(sent).toBe(false);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(session().aiTabs[0].state).toBe('idle');
+		expect(session().state).toBe('idle');
+	});
+
+	it('spawns as usual when the check says it is still wanted', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'still wanted')] });
+		const { item } = takeNextRunnableQueueItem(session().executionQueue);
+		setSession(applyQueuedItemDispatch(session(), item!));
+
+		await useAgentStore
+			.getState()
+			.processQueuedItem(SESSION, item!, { ...deps, isCancelled: () => false });
+
+		expect(mockSpawn).toHaveBeenCalledTimes(1);
 	});
 });
 

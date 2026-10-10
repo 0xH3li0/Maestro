@@ -6799,6 +6799,31 @@ describe('settleAgentStateFromTabs', () => {
 		expect(result.busySource).toBe('ai');
 	});
 
+	it('keeps the blocking error state', () => {
+		const session = createMockSession({
+			state: 'error',
+			busySource: 'terminal',
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+		});
+
+		expect(settleAgentStateFromTabs(session).state).toBe('error');
+	});
+
+	// A tab closed mid-turn survives as an orphan so the pill keeps counting it.
+	it('counts a tab closed while its turn was still running', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'terminal',
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+			orphanedThinkingTabs: [createMockTab({ id: 'closed', state: 'busy' })],
+		});
+
+		const result = settleAgentStateFromTabs(session);
+
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+	});
+
 	it('goes idle when no AI tab is running', () => {
 		const session = createMockSession({
 			state: 'busy',

@@ -281,15 +281,39 @@ export function applyQueuedItemDispatchFailure(
  *
  * The dispatcher resolved that dead tabId onto the agent's ACTIVE tab (the
  * fallback in `resolveQueuedItemTarget`) and marked THAT tab running, card
- * included, before `processQueuedItem` declined to run it there. Nothing is
- * running, so release the tab the item resolved to and take its card back.
+ * included, before `processQueuedItem` declined to run it there. Release that
+ * tab (`ownerTabId`, see `queuedItemOwnerTabId`) and take its card back.
  * Forcing only the agent idle left that tab pulsing forever over a message no
- * model saw, and read "Ready" while another tab was still mid-turn. The item
+ * model saw, and read "Ready" while another tab was still mid-turn. The caller
+ * passes `undefined` when a live turn owns the tab (a read-only or
+ * forced-parallel item can land beside one): then only the card goes. The item
  * is not re-queued: it would resolve onto the same wrong tab again.
  */
-export function applyQueuedItemAbort(session: Session, item: QueuedItem): Session {
-	const target = resolveQueuedItemTarget(session, item);
-	return stripQueuedItemCard(applyQueuedItemRelease(session, target?.tabId), item.id);
+export function applyQueuedItemAbort(
+	session: Session,
+	item: QueuedItem,
+	ownerTabId: string | undefined
+): Session {
+	return stripQueuedItemCard(
+		ownerTabId ? applyQueuedItemRelease(session, ownerTabId) : session,
+		item.id
+	);
+}
+
+/**
+ * The tab a dequeue marked running for `item`: the one holding its card, found
+ * by `queuedItemId` because the active tab can change between the dequeue and
+ * the dispatch. A command item writes no card, so it falls back to resolving
+ * the target again.
+ */
+export function queuedItemOwnerTabId(session: Session, item: QueuedItem): string | undefined {
+	const holdsCard = (tab: { logs: LogEntry[] }) =>
+		tab.logs.some((log) => log.queuedItemId === item.id);
+	return (
+		session.aiTabs.find(holdsCard)?.id ??
+		session.orphanedThinkingTabs?.find(holdsCard)?.id ??
+		resolveQueuedItemTarget(session, item)?.tabId
+	);
 }
 
 /**

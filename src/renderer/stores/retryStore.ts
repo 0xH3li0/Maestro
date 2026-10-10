@@ -880,10 +880,14 @@ async function fireRetry(key: string): Promise<void> {
 			return;
 		}
 
+		// Stop (`stopRetriesForAgent`) removes this entry. It can land while the
+		// resend loads the agent and system prompt, before any process exists to
+		// interrupt, so the spawn checks for it last.
+		const stopped = () => useRetryStore.getState().retries[key]?.outageId !== entry.outageId;
 		const dispatched = await useAgentStore
 			.getState()
-			.processQueuedItem(entry.sessionId, item, snapshot.deps);
-		if (!dispatched) reportUndeliverableRetry(entry, snapshot.item);
+			.processQueuedItem(entry.sessionId, item, { ...snapshot.deps, isCancelled: stopped });
+		if (!dispatched && !stopped()) reportUndeliverableRetry(entry, snapshot.item);
 	} catch (error) {
 		// The resend never reached the provider (a spawn refusal, a bad config, a
 		// thrown dep). That is not an outcome the agent-error path will ever
