@@ -6799,6 +6799,23 @@ describe('settleAgentStateFromTabs', () => {
 		expect(result.busySource).toBe('ai');
 	});
 
+	it('times the agent from its earliest running turn, not from the command', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'terminal',
+			thinkingStartTime: 9_000,
+			aiTabs: [
+				createMockTab({ id: 't1', state: 'busy', thinkingStartTime: 5_000 }),
+				createMockTab({ id: 't2', state: 'idle', thinkingStartTime: 1_000 }),
+			],
+			orphanedThinkingTabs: [
+				createMockTab({ id: 'closed', state: 'busy', thinkingStartTime: 3_000 }),
+			],
+		});
+
+		expect(settleAgentStateFromTabs(session).thinkingStartTime).toBe(3_000);
+	});
+
 	it('keeps the blocking error state', () => {
 		const session = createMockSession({
 			state: 'error',

@@ -887,7 +887,15 @@ async function fireRetry(key: string): Promise<void> {
 		const dispatched = await useAgentStore
 			.getState()
 			.processQueuedItem(entry.sessionId, item, { ...snapshot.deps, isCancelled: stopped });
-		if (!dispatched && !stopped()) reportUndeliverableRetry(entry, snapshot.item);
+		if (dispatched) return;
+		if (!stopped()) {
+			reportUndeliverableRetry(entry, snapshot.item);
+		} else if (useRetryStore.getState().outages[entry.outageId]?.status === 'stopped') {
+			// Stop found nothing to hold: the prompt left the queue when this resend
+			// began. Park it the way Stop parks a queued one, paused and one click
+			// from Force Send. Another resolution (a re-auth replay) is sending it.
+			holdFailedItemInQueue(entry.sessionId, entry.tabId, { ...snapshot.item, paused: true });
+		}
 	} catch (error) {
 		// The resend never reached the provider (a spawn refusal, a bad config, a
 		// thrown dep). That is not an outcome the agent-error path will ever

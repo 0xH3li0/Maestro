@@ -593,6 +593,10 @@ describe('cancel and settle transitions', () => {
 
 		expect(cancelledAtSpawn).toBe(true);
 		expect(useNotificationStore.getState().toasts).toHaveLength(toastsBefore);
+		// The prompt had already left the queue, so Stop had nothing to hold.
+		// It comes back paused, exactly once.
+		const [session] = useSessionStore.getState().sessions;
+		expect(session.executionQueue.map((i) => [i.id, i.paused])).toEqual([['item-1', true]]);
 	});
 
 	it("stopRetriesForAgent ends only that agent's outages and raises no error", () => {

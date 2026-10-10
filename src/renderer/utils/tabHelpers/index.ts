@@ -1000,16 +1000,25 @@ export function settleTabThinkingState(session: Session, tabId: string): Session
  * than to idle: going straight to idle (a failed command, `clear`, a playbook
  * finishing) painted a working agent "Ready" and hid its Thinking pill. A tab
  * closed mid-turn counts too, and `error` stays, as in `settleTabThinkingState`.
+ * The elapsed timer restarts from the earliest running turn, not from the
+ * command that just ended.
  */
 export function settleAgentStateFromTabs(session: Session): Session {
-	const stillThinking =
-		(session.aiTabs?.some((tab) => tab.state === 'busy') ?? false) ||
-		!!session.orphanedThinkingTabs?.length;
+	const running = [
+		...(session.aiTabs?.filter((tab) => tab.state === 'busy') ?? []),
+		...(session.orphanedThinkingTabs ?? []),
+	];
+	const stillThinking = running.length > 0;
+	const starts = running.flatMap((tab) => tab.thinkingStartTime ?? []);
 	return {
 		...session,
 		state: session.state === 'error' ? 'error' : stillThinking ? 'busy' : 'idle',
 		busySource: stillThinking ? 'ai' : undefined,
-		thinkingStartTime: stillThinking ? session.thinkingStartTime : undefined,
+		thinkingStartTime: !stillThinking
+			? undefined
+			: starts.length > 0
+				? Math.min(...starts)
+				: session.thinkingStartTime,
 	};
 }
 
