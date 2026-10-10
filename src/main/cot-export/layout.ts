@@ -10,6 +10,9 @@
  * person who reads these folders reads them on their own clock, so a UTC
  * name would read as the wrong hour to everyone outside UTC.
  *
+ * `turnFileFolder` and `listTurnFiles` read that same layout back, so the
+ * writer and the verifier do not each hold a copy of it.
+ *
  * `validateAgentFolder` is the barrier that keeps a log out of any agent's
  * workspace and out of Maestro's own data directory. An agent searches its
  * workspace as a matter of course, and learns the data directory from its
@@ -71,6 +74,83 @@ export function turnFilePath(
 	const tab = idPrefix(tabId, NO_TAB_LABEL);
 	const turn = idPrefix(turnId, 'noturn');
 	return path.join(agentFolder, year, month, day, hour, `${time}-${tab}-${turn}.jsonl`);
+}
+
+/**
+ * The agent folder a turn file lies in: the inverse of `turnFilePath`. A turn
+ * file sits four folders down (year, month, day, hour), so this is five
+ * levels up from the file.
+ *
+ * One folder holds one chain, so this is how a file names its chain.
+ */
+export function turnFileFolder(filePath: string): string {
+	return path.resolve(filePath, '..', '..', '..', '..', '..');
+}
+
+const YEAR_FOLDER = /^\d{4}$/;
+const TWO_DIGIT_FOLDER = /^\d{2}$/;
+/** A turn file: `.jsonl`, and not a dotfile such as the write probe. */
+const TURN_FILE = /^[^.].*\.jsonl$/;
+
+/**
+ * The names in `dir` that match `pattern`, newest first. Every name in the
+ * layout is zero-padded, so name order is time order. A folder that does not
+ * exist holds nothing. A symlink is not followed: Maestro creates none here.
+ */
+async function namesNewestFirst(
+	dir: string,
+	pattern: RegExp,
+	kind: 'folder' | 'file'
+): Promise<string[]> {
+	let entries: fs.Dirent[];
+	try {
+		entries = await fs.promises.readdir(dir, { withFileTypes: true });
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException | null)?.code;
+		if (code === 'ENOENT' || code === 'ENOTDIR') return [];
+		throw error;
+	}
+	return entries
+		.filter((entry) => (kind === 'folder' ? entry.isDirectory() : entry.isFile()))
+		.map((entry) => entry.name)
+		.filter((name) => pattern.test(name))
+		.sort()
+		.reverse();
+}
+
+/**
+ * Every turn file under `agentFolder`, newest first by the time its turn
+ * started. Anything that is not part of the layout is left out.
+ *
+ * `newestHourFolders` stops the walk after that many hour folders that hold a
+ * turn file, so a caller that needs only recent turns does not walk a year of
+ * logs.
+ */
+export async function listTurnFiles(
+	agentFolder: string,
+	options: { newestHourFolders?: number } = {}
+): Promise<string[]> {
+	const limit = options.newestHourFolders ?? Infinity;
+	const files: string[] = [];
+	let hourFolders = 0;
+	for (const year of await namesNewestFirst(agentFolder, YEAR_FOLDER, 'folder')) {
+		const yearDir = path.join(agentFolder, year);
+		for (const month of await namesNewestFirst(yearDir, TWO_DIGIT_FOLDER, 'folder')) {
+			const monthDir = path.join(yearDir, month);
+			for (const day of await namesNewestFirst(monthDir, TWO_DIGIT_FOLDER, 'folder')) {
+				const dayDir = path.join(monthDir, day);
+				for (const hour of await namesNewestFirst(dayDir, TWO_DIGIT_FOLDER, 'folder')) {
+					const hourDir = path.join(dayDir, hour);
+					const names = await namesNewestFirst(hourDir, TURN_FILE, 'file');
+					if (names.length === 0) continue;
+					for (const name of names) files.push(path.join(hourDir, name));
+					hourFolders += 1;
+					if (hourFolders >= limit) return files;
+				}
+			}
+		}
+	}
+	return files;
 }
 
 /** What `validateAgentFolder` needs to know about the machine. */

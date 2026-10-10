@@ -10,7 +10,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { turnFilePath, validateAgentFolder } from '../../../main/cot-export/layout';
+import {
+	listTurnFiles,
+	turnFileFolder,
+	turnFilePath,
+	validateAgentFolder,
+} from '../../../main/cot-export/layout';
 
 describe('turnFilePath', () => {
 	const base = path.join(os.tmpdir(), 'agent-log');
@@ -52,6 +57,78 @@ describe('turnFilePath', () => {
 		const lateInHour = new Date(2026, 5, 15, 23, 59, 59);
 		const file = turnFilePath(base, lateInHour, 'tab', 'turn');
 		expect(path.dirname(file)).toBe(path.join(base, '2026', '06', '15', '23'));
+	});
+});
+
+describe('turnFileFolder', () => {
+	it('gives back the agent folder a turn file was built under', () => {
+		const base = path.join(os.tmpdir(), 'agent-log');
+		const file = turnFilePath(base, new Date(2026, 9, 10, 14, 30, 59), 'tab', 'turn');
+		expect(turnFileFolder(file)).toBe(base);
+	});
+
+	it('keeps two agent folders apart when one lies inside the other', () => {
+		const outer = path.join(os.tmpdir(), 'agent-log');
+		const inner = path.join(outer, 'agent-a');
+		const start = new Date(2026, 9, 10, 14, 30, 59);
+		expect(turnFileFolder(turnFilePath(outer, start, 'tab', 'turn'))).toBe(outer);
+		expect(turnFileFolder(turnFilePath(inner, start, 'tab', 'turn'))).toBe(inner);
+	});
+});
+
+describe('listTurnFiles', () => {
+	let folder: string;
+
+	/** Creates an empty turn file and returns its path. */
+	const touch = (start: Date, turnId: string): string => {
+		const file = turnFilePath(folder, start, 'tab', turnId);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, '');
+		return file;
+	};
+
+	beforeEach(() => {
+		folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cot-list-')));
+	});
+
+	afterEach(() => {
+		fs.rmSync(folder, { recursive: true, force: true });
+	});
+
+	it('lists every turn file, newest first by the time the turn started', async () => {
+		const oldest = touch(new Date(2025, 11, 31, 23, 59, 59), 'turn-a');
+		const earlier = touch(new Date(2026, 9, 10, 9, 0, 0), 'turn-b');
+		const later = touch(new Date(2026, 9, 10, 9, 30, 0), 'turn-c');
+		const newest = touch(new Date(2026, 9, 10, 14, 0, 0), 'turn-d');
+		expect(await listTurnFiles(folder)).toEqual([newest, later, earlier, oldest]);
+	});
+
+	it('leaves out everything that is not part of the layout', async () => {
+		const turn = touch(new Date(2026, 9, 10, 9, 0, 0), 'turn-a');
+		const hourDir = path.dirname(turn);
+		fs.writeFileSync(path.join(hourDir, '.maestro-write-probe-1-abc'), '');
+		fs.writeFileSync(path.join(hourDir, '.hidden.jsonl'), '');
+		fs.writeFileSync(path.join(hourDir, 'notes.txt'), '');
+		fs.mkdirSync(path.join(hourDir, 'folder.jsonl'));
+		fs.mkdirSync(path.join(folder, 'not-a-year', '10', '10', '09'), { recursive: true });
+		fs.writeFileSync(path.join(folder, 'not-a-year', '10', '10', '09', 'stray.jsonl'), '');
+		fs.writeFileSync(path.join(folder, 'stray.jsonl'), '');
+		expect(await listTurnFiles(folder)).toEqual([turn]);
+	});
+
+	it('stops after the newest hour folders that hold a turn file', async () => {
+		touch(new Date(2026, 9, 10, 8, 0, 0), 'turn-a');
+		const second = touch(new Date(2026, 9, 10, 9, 0, 0), 'turn-b');
+		const thirdA = touch(new Date(2026, 9, 10, 10, 0, 0), 'turn-c');
+		const thirdB = touch(new Date(2026, 9, 10, 10, 5, 0), 'turn-d');
+		// An empty hour folder does not count toward the limit.
+		fs.mkdirSync(path.join(folder, '2026', '10', '10', '11'));
+		expect(await listTurnFiles(folder, { newestHourFolders: 2 })).toEqual([thirdB, thirdA, second]);
+	});
+
+	it('finds nothing in a folder that is empty or does not exist', async () => {
+		expect(await listTurnFiles(folder)).toEqual([]);
+		expect(await listTurnFiles(path.join(folder, 'missing'))).toEqual([]);
 	});
 });
 

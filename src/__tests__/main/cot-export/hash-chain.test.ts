@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { describe, it, expect } from 'vitest';
 import {
 	isLinked,
+	readChainLink,
 	recomputeHash,
 	sealRecord,
 	sha256Hex,
@@ -295,5 +296,66 @@ describe('isLinked', () => {
 	it('needs only the prevHash of a record', () => {
 		expect(isLinked({ prevHash: 'd'.repeat(64) }, 'd'.repeat(64))).toBe(true);
 		expect(isLinked({ prevHash: 'd'.repeat(64) }, 'D'.repeat(64))).toBe(false);
+	});
+});
+
+describe('readChainLink', () => {
+	it('reads the chain fields of a sealed record back from its line', () => {
+		const first = sealRecord(TURN_START, COT_GENESIS_HASH);
+		const second = sealRecord(THINKING, first.hash);
+		expect(readChainLink(JSON.stringify(second))).toEqual({
+			chainSeq: 1,
+			prevHash: first.hash,
+			hash: second.hash,
+			intact: true,
+		});
+	});
+
+	it('reads the same link whatever order the keys were written in', () => {
+		const sealed = sealRecord(TOOL_CALL, COT_GENESIS_HASH);
+		const reversed = Object.fromEntries(Object.entries(sealed).reverse());
+		expect(readChainLink(JSON.stringify(reversed))).toEqual(readChainLink(JSON.stringify(sealed)));
+	});
+
+	it('marks a record whose content was changed after it was sealed', () => {
+		const sealed = sealRecord(TURN_START, COT_GENESIS_HASH);
+		const edited = JSON.stringify(sealed).replace('List the files.', 'Delete the files.');
+		expect(readChainLink(edited)).toEqual({
+			chainSeq: 0,
+			prevHash: COT_GENESIS_HASH,
+			hash: sealed.hash,
+			intact: false,
+		});
+	});
+
+	it('marks a record whose hash was replaced', () => {
+		const sealed = sealRecord(TURN_START, COT_GENESIS_HASH);
+		const link = readChainLink(JSON.stringify({ ...sealed, hash: 'e'.repeat(64) }));
+		expect(link).toMatchObject({ hash: 'e'.repeat(64), intact: false });
+	});
+
+	it('gives null for a line that is not a record', () => {
+		const sealed = sealRecord(TURN_START, COT_GENESIS_HASH);
+		const line = JSON.stringify(sealed);
+		// Blank, cut short, and JSON that is not an object.
+		expect(readChainLink('')).toBeNull();
+		expect(readChainLink('   ')).toBeNull();
+		expect(readChainLink(line.slice(0, 40))).toBeNull();
+		expect(readChainLink('null')).toBeNull();
+		expect(readChainLink('42')).toBeNull();
+		expect(readChainLink('"text"')).toBeNull();
+		expect(readChainLink(JSON.stringify([sealed]))).toBeNull();
+		// An object without usable chain fields.
+		expect(readChainLink('{}')).toBeNull();
+		expect(readChainLink(JSON.stringify({ ...sealed, chainSeq: '0' }))).toBeNull();
+		expect(readChainLink(JSON.stringify({ ...sealed, chainSeq: 0.5 }))).toBeNull();
+		expect(readChainLink(JSON.stringify({ ...sealed, prevHash: undefined }))).toBeNull();
+		expect(readChainLink(JSON.stringify({ ...sealed, hash: 7 }))).toBeNull();
+	});
+
+	it('does not throw for a number that JSON reads as infinite', () => {
+		const sealed = sealRecord(TURN_START, COT_GENESIS_HASH);
+		const line = JSON.stringify(sealed).replace('"imageCount":0', '"imageCount":1e999');
+		expect(readChainLink(line)).toMatchObject({ chainSeq: 0, intact: false });
 	});
 });

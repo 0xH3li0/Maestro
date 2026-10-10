@@ -14,7 +14,8 @@
  * says (see `CotRecordBase`).
  *
  * The writer seals with this module and the verifier recomputes with it, so
- * the two cannot disagree about what a hash covers.
+ * the two cannot disagree about what a hash covers. `readChainLink` is the
+ * one way a line of a file is read back into its place in the chain.
  *
  * The hash follows the record's VALUE, not the text of its line.
  * `canonicalJson` sorts keys, so a line can be written in any key order and
@@ -77,4 +78,45 @@ export function sealRecord(unsealed: CotUnsealedRecord, prevHash: string): CotRe
  */
 export function isLinked(record: Pick<CotRecordBase, 'prevHash'>, expectedPrev: string): boolean {
 	return record.prevHash === expectedPrev;
+}
+
+/**
+ * One line of a turn file, cut down to what the chain needs. A reader that
+ * walks a large log keeps these few fields for each line, not the record.
+ */
+export interface CotChainLink {
+	chainSeq: number;
+	prevHash: string;
+	hash: string;
+	/**
+	 * Whether the stored `hash` is the hash the record's content gives. False
+	 * means the record was changed after it was sealed.
+	 */
+	intact: boolean;
+}
+
+/**
+ * The chain fields of one line of a turn file, or null when the line is not
+ * a record: it is blank, it is not JSON (a line cut short by a failed write,
+ * for example), it is JSON but not an object, or it has no chain fields.
+ */
+export function readChainLink(line: string): CotChainLink | null {
+	let value: unknown;
+	try {
+		value = JSON.parse(line);
+	} catch {
+		return null;
+	}
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+	const { chainSeq, prevHash, hash } = value as Partial<CotRecordBase>;
+	if (typeof chainSeq !== 'number' || !Number.isInteger(chainSeq)) return null;
+	if (typeof prevHash !== 'string' || typeof hash !== 'string') return null;
+	let intact = false;
+	try {
+		intact = recomputeHash(value as CotRecord) === hash;
+	} catch {
+		// Canonical JSON refused the value (a number too large to be finite, for
+		// example). Maestro never sealed such a record, so it is not intact.
+	}
+	return { chainSeq, prevHash, hash, intact };
 }
