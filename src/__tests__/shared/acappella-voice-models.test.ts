@@ -37,6 +37,7 @@ import {
 	normalizeWakePhrase,
 	runtimesForSlot,
 	voiceModelCapability,
+	voiceModelUsageLabel,
 	voiceSlotForModel,
 	voiceSlotsForRuntime,
 } from '../../shared/acappella/voice-models';
@@ -170,5 +171,18 @@ describe('voice models', () => {
 			).build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? '';
 		expect(description).toContain('A Cappella');
 		expect(description.toLowerCase()).toContain('local');
+	});
+});
+
+describe('voiceModelUsageLabel', () => {
+	it('names the voice slot a runnable voice model serves', () => {
+		expect(voiceModelUsageLabel(PARAKEET_TDT_V2_ID)).toBe('Voice (speech-to-text)');
+		expect(voiceModelUsageLabel(HEY_JARVIS_WAKE_ID)).toBe('Voice (wake word)');
+	});
+
+	it('is undefined for a pending voice model and for a non-voice model', () => {
+		expect(voiceModelUsageLabel(KOKORO_82M_ID)).toBeUndefined();
+		expect(voiceModelUsageLabel(BGE_SMALL_EN_ID)).toBeUndefined();
+		expect(voiceModelUsageLabel('not-a-model')).toBeUndefined();
 	});
 });

@@ -7,19 +7,20 @@
  * - Assignments: which source runs each housekeeping task in `LOCAL_MODEL_TASKS`.
  *
  * It is a CORE tab, not an Encore Feature, and it starts empty: opening it
- * fetches nothing and downloads nothing. Every download, detection, and test
+ * reads what is on disk and downloads nothing. Every download, detection, and test
  * is an explicit click inside a section.
  */
 
 import { HardDrive, ListChecks, Server } from 'lucide-react';
 import type { Theme } from '../../../../types';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
+import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 
 export interface LocalModelsTabProps {
 	theme: Theme;
 }
 
-export function LocalModelsTab({ theme: _theme }: LocalModelsTabProps) {
+export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 	return (
 		<div className="space-y-5" data-testid="local-models-tab">
 			<div data-setting-id="local-models-models">
@@ -29,6 +30,7 @@ export function LocalModelsTab({ theme: _theme }: LocalModelsTabProps) {
 				>
 					Models
 				</SettingsSectionHeading>
+				<LocalModelsModelsSection theme={theme} />
 			</div>
 
 			<div data-setting-id="local-models-endpoints">

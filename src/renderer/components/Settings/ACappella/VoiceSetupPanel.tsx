@@ -30,7 +30,7 @@ import type { Theme } from '../../../types';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
-import { VoiceModelRow } from './VoiceModelRow';
+import { LocalModelRow } from '../tabs/LocalModelsTab/LocalModelRow';
 import { useVoiceModels } from './useVoiceModels';
 import { VoiceInputPicker, useVoiceInputDevices } from '../../ACappella';
 import {
@@ -129,7 +129,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 					</div>
 
 					{modes[role] === 'local' && listing && (
-						<VoiceModelRow
+						<LocalModelRow
 							theme={theme}
 							listing={listing}
 							progress={models.progress[listing.entry.id]}
@@ -230,7 +230,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 					{/* The shared front end, then the default phrase's own detector: both
 					    are downloaded, so both are listed. */}
 					{wakeModels.map((listing) => (
-						<VoiceModelRow
+						<LocalModelRow
 							key={listing.entry.id}
 							theme={theme}
 							listing={listing}

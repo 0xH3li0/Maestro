@@ -1,7 +1,6 @@
 export { ACappellaSettingsBody } from './ACappellaSettingsBody';
 export { VoiceSetupPanel } from './VoiceSetupPanel';
 export { VoiceModelsPage } from './VoiceModelsPage';
-export { VoiceModelRow } from './VoiceModelRow';
 export { VoiceSelfTestCard } from './VoiceSelfTestCard';
 export { VoiceLatencyCard } from './VoiceLatencyCard';
 export { VoiceProvidersPanel } from './VoiceProvidersPanel';

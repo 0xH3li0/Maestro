@@ -23,7 +23,7 @@ import type { Theme } from '../../../types';
 import { StatCardGrid, type StatCardDatum } from '../../widgets';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
-import { VoiceModelRow } from './VoiceModelRow';
+import { LocalModelRow } from '../tabs/LocalModelsTab/LocalModelRow';
 import { VoiceLatencyCard } from './VoiceLatencyCard';
 import { VoiceSelfTestCard } from './VoiceSelfTestCard';
 import { useVoiceModels } from './useVoiceModels';
@@ -152,7 +152,7 @@ export function VoiceModelsPage({ theme, enabled }: VoiceModelsPageProps) {
 								? `Installed ${formatRelativeTime(listing.status.manifest.installedAt)} - last verified ${formatRelativeTime(listing.status.manifest.verifiedAt)} - ${formatSize(listing.status.bytesOnDisk)} on disk`
 								: `${formatSize(listing.status.bytesOnDisk)} on disk with no manifest`}
 						</div>
-						<VoiceModelRow
+						<LocalModelRow
 							theme={theme}
 							listing={listing}
 							compact

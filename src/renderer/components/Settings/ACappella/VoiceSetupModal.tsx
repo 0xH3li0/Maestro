@@ -22,7 +22,7 @@
  * user believing voice is ready.
  *
  * This is a thin shell over the pieces Voice Setup already uses -
- * `useVoiceModels` for the listing and the downloads, `VoiceModelRow` for
+ * `useVoiceModels` for the listing and the downloads, `LocalModelRow` for
  * per-file progress, `MODEL_SETS` for what a bundle contains. It deliberately
  * owns no download logic of its own, so the modal and the settings panel cannot
  * drift on what "installed" means.
@@ -40,7 +40,7 @@ import { formatSize } from '../../../../shared/formatters';
 import type { Theme } from '../../../types';
 import { Modal } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
-import { VoiceModelRow } from './VoiceModelRow';
+import { LocalModelRow } from '../tabs/LocalModelsTab/LocalModelRow';
 import { useVoiceModels } from './useVoiceModels';
 import { useVoiceRuntimes } from './useVoiceRuntimes';
 import type { RuntimeInstallProgress } from '../../../../main/local-models/runtime/runtime-installer';
@@ -218,7 +218,7 @@ export function VoiceSetupModal({ theme, onClose, enabled, onOpenSettings }: Voi
 						const listing = listingsById.get(entry.id);
 						if (!listing) return null;
 						return (
-							<VoiceModelRow
+							<LocalModelRow
 								key={entry.id}
 								theme={theme}
 								listing={listing}

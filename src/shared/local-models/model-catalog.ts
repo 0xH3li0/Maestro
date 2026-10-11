@@ -606,3 +606,46 @@ export function localModelsForRuntime(runtimeId: NativeRuntimeId): LocalModelEnt
 export function sumModelBytes(ids: readonly string[]): number {
 	return ids.reduce((total, id) => total + (getLocalModel(id)?.bytes ?? 0), 0);
 }
+
+/**
+ * What each kind is called in front of a person. One table so the Settings tab,
+ * the CLI, and the docs cannot name a kind three different ways.
+ */
+export const LOCAL_MODEL_KIND_LABELS: Readonly<Record<LocalModelKind, string>> = Object.freeze({
+	'text-gen': 'Text generation',
+	embedding: 'Embeddings',
+	classifier: 'Classifiers',
+	stt: 'Speech-to-text',
+	tts: 'Text-to-speech',
+	'wake-word': 'Wake word',
+});
+
+/**
+ * The order kinds are listed in. General-purpose kinds first, voice kinds last,
+ * so a user who never turns voice on reads the models they can use before the
+ * ones they cannot.
+ */
+export const LOCAL_MODEL_KIND_ORDER: readonly LocalModelKind[] = Object.freeze([
+	'text-gen',
+	'embedding',
+	'classifier',
+	'stt',
+	'tts',
+	'wake-word',
+]);
+
+/**
+ * Group items by model kind in {@link LOCAL_MODEL_KIND_ORDER}, keeping each
+ * group in the order given. `kindOf` reads the kind off whatever the caller
+ * holds (a catalog entry, a listing). Kinds with no item are left out, so a
+ * caller never draws an empty heading.
+ */
+export function groupByLocalModelKind<T>(
+	items: readonly T[],
+	kindOf: (item: T) => LocalModelKind
+): { kind: LocalModelKind; items: T[] }[] {
+	return LOCAL_MODEL_KIND_ORDER.map((kind) => ({
+		kind,
+		items: items.filter((item) => kindOf(item) === kind),
+	})).filter((group) => group.items.length > 0);
+}

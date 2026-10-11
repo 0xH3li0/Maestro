@@ -13,12 +13,18 @@ import {
 	endpointServesNeed,
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
+	tasksNeedingKind,
+	tasksUsingLocalModel,
 	resolveLocalModelAssignment,
 	resolveLocalModelAssignments,
 	withLocalModelAssignment,
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
-import { KOKORO_82M_ID, QWEN3_1_7B_ID } from '../../shared/local-models/model-catalog';
+import {
+	BGE_SMALL_EN_ID,
+	KOKORO_82M_ID,
+	QWEN3_1_7B_ID,
+} from '../../shared/local-models/model-catalog';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
 import { SETTINGS_DEFAULTS } from '../../main/stores/defaults';
 
@@ -284,5 +290,42 @@ describe('localModelAssignments setting', () => {
 		expect(SETTINGS_METADATA.localModelAssignments.default).toEqual({});
 		expect(SETTINGS_METADATA.localModelAssignments.type).toBe('object');
 		expect(SETTINGS_DEFAULTS.localModelAssignments).toEqual({});
+	});
+});
+
+describe('tasksUsingLocalModel', () => {
+	it('names every task whose effective assignment runs the model, in registry order', () => {
+		const tasks = tasksUsingLocalModel(
+			{
+				'tab-summary': { type: 'local', modelId: QWEN3_1_7B_ID },
+				'tab-naming': { type: 'local', modelId: QWEN3_1_7B_ID },
+				'semantic-search': { type: 'local', modelId: BGE_SMALL_EN_ID },
+			},
+			QWEN3_1_7B_ID
+		);
+		expect(tasks.map((task) => task.id)).toEqual(['tab-naming', 'tab-summary']);
+	});
+
+	it('returns nothing for a model no task is assigned', () => {
+		expect(tasksUsingLocalModel({}, BGE_SMALL_EN_ID)).toEqual([]);
+		expect(tasksUsingLocalModel(undefined, BGE_SMALL_EN_ID)).toEqual([]);
+	});
+
+	it('ignores endpoint assignments that happen to share the model name', () => {
+		expect(
+			tasksUsingLocalModel(
+				{ 'tab-naming': { type: 'endpoint', endpointId: 'e1', model: QWEN3_1_7B_ID } },
+				QWEN3_1_7B_ID
+			)
+		).toEqual([]);
+	});
+});
+
+describe('tasksNeedingKind', () => {
+	it('lists exactly the tasks whose need matches the kind', () => {
+		const embedding = tasksNeedingKind('embedding');
+		expect(embedding.length).toBeGreaterThan(0);
+		for (const task of embedding) expect(task.needs).toBe('embedding');
+		expect(tasksNeedingKind('wake-word')).toEqual([]);
 	});
 });

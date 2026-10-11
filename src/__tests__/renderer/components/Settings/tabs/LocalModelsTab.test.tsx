@@ -3,7 +3,7 @@
  *
  * Verifies the section headings render, each section carries the
  * `data-setting-id` its searchable-settings entry points at, and opening the
- * tab touches no Local Models IPC (nothing downloads or probes on open).
+ * tab only reads what is on disk (nothing downloads or probes on open).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -42,5 +42,6 @@ describe('LocalModelsTab', () => {
 	it('says that nothing downloads until the user asks', () => {
 		render(<LocalModelsTab theme={theme} />);
 		expect(screen.getByText(/Nothing downloads until you ask for it/)).toBeInTheDocument();
+		expect(window.maestro.localModels.download).not.toHaveBeenCalled();
 	});
 });

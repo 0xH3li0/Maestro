@@ -416,3 +416,26 @@ export function withLocalModelAssignment(
 	}
 	return next;
 }
+
+/**
+ * The tasks whose EFFECTIVE assignment runs a given local model, in registry
+ * order. Reads defaults too, so a task that would run the model without a
+ * stored entry still counts. This is the list a surface names before removing
+ * the model, because removing it turns each of those tasks unavailable.
+ */
+export function tasksUsingLocalModel(
+	assignments: LocalModelAssignments | undefined,
+	modelId: string
+): LocalModelTaskDefinition[] {
+	return LOCAL_MODEL_TASK_IDS.filter((taskId) => {
+		const assignment = resolveLocalModelAssignment(assignments, taskId);
+		return assignment.type === 'local' && assignment.modelId === modelId;
+	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
+}
+
+/** The tasks that can be assigned a model of this kind, in registry order. */
+export function tasksNeedingKind(kind: LocalModelKind): LocalModelTaskDefinition[] {
+	return LOCAL_MODEL_TASK_IDS.map((taskId) => LOCAL_MODEL_TASKS[taskId]).filter(
+		(task) => task.needs === kind
+	);
+}

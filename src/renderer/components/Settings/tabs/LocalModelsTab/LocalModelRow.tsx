@@ -1,8 +1,8 @@
 /**
  * One model's row: bill of materials, install state, and the actions for it.
  *
- * Shared by Voice Setup and the Models page so the two surfaces cannot describe
- * the same model differently. Everything shown here comes from the frozen
+ * Shared by the Local Models tab, Voice Setup, and A Cappella's Models page so
+ * no two surfaces can describe the same model differently. Everything shown here comes from the frozen
  * catalog plus a disk stat; nothing in this component can start a download by
  * rendering, which is the property the panel test asserts.
  *
@@ -23,16 +23,16 @@ import {
 	X,
 } from 'lucide-react';
 
-import type { DownloadProgress } from '../../../../main/local-models/model-downloader';
-import type { VoiceModelListing } from '../../../../main/ipc/handlers/acappella-models';
-import type { VerifyResult } from '../../../../main/local-models/model-store';
-import { formatSize } from '../../../../shared/formatters';
-import { formatDurationHuman } from '../../../../shared/duration';
-import type { Theme } from '../../../types';
+import type { DownloadProgress } from '../../../../../main/local-models/model-downloader';
+import type { LocalModelListing } from '../../../../../main/local-models/service';
+import type { VerifyResult } from '../../../../../main/local-models/model-store';
+import { formatSize } from '../../../../../shared/formatters';
+import { formatDurationHuman } from '../../../../../shared/duration';
+import type { Theme } from '../../../../types';
 
-export interface VoiceModelRowProps {
+export interface LocalModelRowProps {
 	theme: Theme;
-	listing: VoiceModelListing;
+	listing: LocalModelListing;
 	progress?: DownloadProgress;
 	verifyResult?: VerifyResult;
 	/** Hides the license and path block on the compact Models page. */
@@ -43,6 +43,11 @@ export interface VoiceModelRowProps {
 	onCancel: (modelId: string) => void;
 	onVerify: (modelId: string) => void;
 	onRemove?: (modelId: string) => void;
+	/**
+	 * What uses this model right now, in display words ("Tab naming", "Voice:
+	 * speech-to-text"). Shown as a line under the description; omitted when empty.
+	 */
+	usedBy?: readonly string[];
 }
 
 /** A download is "in flight" in every phase except the terminal ones. */
@@ -55,7 +60,7 @@ function isActive(progress?: DownloadProgress): boolean {
 	);
 }
 
-function VoiceModelRowInner({
+function LocalModelRowInner({
 	theme,
 	listing,
 	progress,
@@ -67,7 +72,8 @@ function VoiceModelRowInner({
 	onCancel,
 	onVerify,
 	onRemove,
-}: VoiceModelRowProps) {
+	usedBy,
+}: LocalModelRowProps) {
 	const { entry, status, installPaths } = listing;
 	const active = isActive(progress);
 	const paused = progress?.phase === 'paused';
@@ -87,6 +93,15 @@ function VoiceModelRowInner({
 						{entry.displayName}
 					</div>
 					<p className="text-xs opacity-70 mt-0.5">{entry.description}</p>
+					{usedBy && usedBy.length > 0 && (
+						<p
+							className="text-xs-plus mt-0.5"
+							style={{ color: theme.colors.accent }}
+							data-testid={`local-model-used-by-${entry.id}`}
+						>
+							In use by {usedBy.join(', ')}
+						</p>
+					)}
 				</div>
 				<StatusBadge theme={theme} listing={listing} progress={progress} />
 			</div>
@@ -213,7 +228,7 @@ function StatusBadge({
 	progress,
 }: {
 	theme: Theme;
-	listing: VoiceModelListing;
+	listing: LocalModelListing;
 	progress?: DownloadProgress;
 }) {
 	if (progress && isActive(progress)) {
@@ -277,4 +292,4 @@ function RowButton({
 	);
 }
 
-export const VoiceModelRow = memo(VoiceModelRowInner);
+export const LocalModelRow = memo(LocalModelRowInner);

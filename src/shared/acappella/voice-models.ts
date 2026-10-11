@@ -66,6 +66,25 @@ export function voiceModelCapability(modelId: string): VoiceModelCapability | un
 	return VOICE_MODEL_CAPABILITIES[modelId];
 }
 
+/** How each capability reads in a cross-consumer "in use by" list. */
+const VOICE_USAGE_LABELS: Readonly<Record<VoiceModelCapability, string>> = Object.freeze({
+	'local-speech-to-text': 'Voice (speech-to-text)',
+	'local-text-to-speech': 'Voice (text-to-speech)',
+	'local-conductor-brain': 'Voice (Conductor)',
+	'hands-free-wake-word': 'Voice (wake word)',
+});
+
+/**
+ * The words a shared surface (the Local Models tab) uses to say voice relies on
+ * a model, or undefined when voice does not. A pending model is excluded: voice
+ * cannot run it in this build, so naming voice as its user would be untrue.
+ */
+export function voiceModelUsageLabel(modelId: string): string | undefined {
+	const capability = voiceModelCapability(modelId);
+	if (!capability || getLocalModel(modelId)?.pending) return undefined;
+	return VOICE_USAGE_LABELS[capability];
+}
+
 /**
  * Whether a model directory is voice's to delete when the user reclaims disk
  * after switching voice off.
