@@ -32,6 +32,7 @@ import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
+import { ContextCompactionCard } from '../../ContextCompactionCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
@@ -337,6 +338,25 @@ export const LogItem = memo(
 					<div className="hidden sm:block w-20 shrink-0" />
 					<div className="flex-1 min-w-0">
 						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
+		// Maestro compacted the conversation to get a refused turn through. Same
+		// clean pill row as a hand-off: it marks where it happened and asks nothing.
+		if (log.contextCompaction) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<ContextCompactionCard log={log} theme={theme} />
 					</div>
 				</div>
 			);
@@ -1212,6 +1232,8 @@ export const LogItem = memo(
 			// consult tab id the jump arrow needs only arrives with the answer.
 			prevProps.log.delegation?.status === nextProps.log.delegation?.status &&
 			prevProps.log.delegation?.toTabId === nextProps.log.delegation?.toTabId &&
+			// A compaction pill settles the same way: spinner to outcome, same text.
+			prevProps.log.contextCompaction?.status === nextProps.log.contextCompaction?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

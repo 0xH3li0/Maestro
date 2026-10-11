@@ -32,6 +32,7 @@ import { useAgentDataListener } from './internal/useAgentDataListener';
 import { useAgentUserInputListener } from './internal/useAgentUserInputListener';
 import { useAgentErrorListener } from './internal/useAgentErrorListener';
 import { useAgentExitListener } from './internal/useAgentExitListener';
+import { registerContextCompactionSpawner } from '../../services/contextCompaction';
 
 export type { BatchedUpdater, UseAgentListenersDeps } from './internal/types';
 export { getErrorTitleForType } from './internal/helpers/errorTitles';
@@ -112,4 +113,18 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			activeHiddenTools.clear();
 		};
 	}, []);
+
+	// Automatic context compaction runs its hidden turn through the synopsis
+	// spawner. The retry engine that drives it lives outside React, so the
+	// spawner is handed across here. Read through the ref at call time: it is
+	// populated after this hook runs.
+	const spawnBackgroundSynopsisRef = deps.spawnBackgroundSynopsisRef;
+	useEffect(() => {
+		registerContextCompactionSpawner(async (...args) => {
+			const spawn = spawnBackgroundSynopsisRef.current;
+			if (!spawn) return { success: false, error: 'Agent execution is not ready.' };
+			return spawn(...args);
+		});
+		return () => registerContextCompactionSpawner(null);
+	}, [spawnBackgroundSynopsisRef]);
 }
