@@ -36,21 +36,30 @@ const COMPACT_HEIGHT = 148;
 const EXPANDED_HEIGHT = 600;
 /** The window's top edge sits this far down the work area on first show. */
 const TOP_OFFSET_RATIO = 0.2;
+/** How long after the page loads a fresh window waits for its first paint. */
+const FIRST_SHOW_FALLBACK_MS = 150;
 
 let quickWindow: BrowserWindow | null = null;
 let quickWindowId: string | null = null;
 let layout: QuickChatLayout = 'compact';
 /** Set once the user drags the window, so later shows keep their spot. */
 let userPlaced = false;
+/** A show was asked for while a fresh window has not painted yet. */
+let revealPending = false;
 
 /** The Quick Chat window, or null when it has not been created (or was closed). */
 export function getQuickChatWindow(): BrowserWindow | null {
 	return quickWindow && !quickWindow.isDestroyed() ? quickWindow : null;
 }
 
-/** Whether the Quick Chat window is on screen right now. */
+/**
+ * Whether the Quick Chat window is on screen, or about to be: a show that is
+ * waiting for a fresh window's first paint counts, so a status read right
+ * after the show reports what the caller asked for.
+ */
 export function isQuickChatWindowVisible(): boolean {
-	return getQuickChatWindow()?.isVisible() ?? false;
+	const win = getQuickChatWindow();
+	return !!win && (win.isVisible() || revealPending);
 }
 
 function heightFor(next: QuickChatLayout): number {
@@ -125,6 +134,7 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 		}
 		quickWindow = null;
 		userPlaced = false;
+		revealPending = false;
 	});
 
 	// The window only ever shows its own bundle: deny popups and navigation away.
@@ -145,19 +155,34 @@ export function showQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	const win = existing ?? createQuickChatWindow(deps);
 	if (!userPlaced) win.setBounds(defaultBounds(heightFor(layout)));
 	const reveal = () => {
+		revealPending = false;
 		if (win.isDestroyed()) return;
 		win.show();
 		win.focus();
 		win.webContents.send('quickChat:focusInput');
 	};
+	if (existing) {
+		reveal();
+		return win;
+	}
 	// A fresh window paints its first frame later; showing it before then
-	// flashes an empty transparent rectangle.
-	if (existing) reveal();
-	else win.once('ready-to-show', reveal);
+	// flashes an empty transparent rectangle. `ready-to-show` alone is not
+	// enough: this transparent panel did not emit it (seen on macOS), which left
+	// the first hotkey press after launch doing nothing. Whichever signal lands first
+	// reveals the window, unless a hide arrived in between.
+	revealPending = true;
+	const revealIfStillWanted = () => {
+		if (revealPending) reveal();
+	};
+	win.once('ready-to-show', revealIfStillWanted);
+	win.webContents.once('did-finish-load', () => {
+		setTimeout(revealIfStillWanted, FIRST_SHOW_FALLBACK_MS);
+	});
 	return win;
 }
 
 export function hideQuickChatWindow(): void {
+	revealPending = false;
 	const win = getQuickChatWindow();
 	if (win?.isVisible()) win.hide();
 }

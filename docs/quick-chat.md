@@ -6,6 +6,8 @@ icon: comment-dots
 
 Quick Chat is a small floating window for a fast conversation with one agent. Press the hotkey from any app, type, read the answer, and press the hotkey again to put it away. You never switch to the main Maestro window.
 
+![Quick Chat](./screenshots/quick-chat.png)
+
 Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as the first-party **Quick Chat** plugin.
 
 ## Opening and closing it
