@@ -54,10 +54,16 @@ describe('resolveCueTurnSettings', () => {
 	});
 
 	it('keeps the agent model and warns when the provider has no tier table', () => {
-		const resolved = resolveCueTurnSettings('codex', { tier: 'high' }, 'gpt-5');
+		const resolved = resolveCueTurnSettings('copilot-cli', { tier: 'high' }, 'gpt-5');
 		expect(resolved.model).toBe('gpt-5');
 		expect(resolved.warnings).toHaveLength(1);
-		expect(resolved.warnings[0]).toMatch(/codex has no model tier mapping/);
+		expect(resolved.warnings[0]).toMatch(/copilot-cli has no model tier mapping/);
+	});
+
+	it('maps a codex tier to the family model', () => {
+		const resolved = resolveCueTurnSettings('codex', { tier: 'high' }, 'gpt-6.1-sol');
+		expect(resolved.model).toBe('gpt-6-astra');
+		expect(resolved.warnings).toEqual([]);
 	});
 
 	it('warns when the provider has no effort setting', () => {

@@ -19,7 +19,7 @@
  * is not the identity even where the provider happens to use the same three
  * words. Claude's ladder runs `low, medium, high, xhigh, max`, so Maestro's
  * `high` means `max` (the actual ceiling) and Maestro's `medium` means `high`
- * (the actual middle). Codex's floor is `minimal`, not `low`. The tables below
+ * (the actual middle). Codex runs the same five rungs today. The tables below
  * are written out per provider rather than computed from an index so the
  * resolution is auditable by reading it - a surprising row should be obvious
  * here rather than discovered at runtime.
@@ -64,8 +64,13 @@ export function asTierLevel(value: unknown): ModelTier | undefined {
 const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// Ladder: low, medium, high, xhigh, max
 	'claude-code': { low: 'low', medium: 'high', high: 'max' },
-	// Ladder: minimal, low, medium, high, xhigh
-	codex: { low: 'minimal', medium: 'medium', high: 'xhigh' },
+	// Ladder: low, medium, high, xhigh, max (Codex 0.162.1, every listed model in
+	// models_cache.json). `minimal` was the floor of the older ladder and the
+	// current models reject it with a 400 ("'minimal' is not supported with the
+	// 'gpt-6.1-sol' model"), so mapping low to it failed every cheap turn. `ultra`
+	// is listed for some models but is a delegation mode, not a deeper rung, and
+	// the API refused it too.
+	codex: { low: 'low', medium: 'high', high: 'max' },
 	// Ladder: low, medium, high - the one provider where the mapping IS the identity.
 	'factory-droid': { low: 'low', medium: 'medium', high: 'high' },
 	// Ladder: low, medium, high, xhigh. Even-length, so "middle" is a judgment
@@ -85,13 +90,23 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
  * - `factory-droid` takes one model family so the three tiers are genuinely
  *   comparable. The IDs are versioned and will need revising, but they are
  *   already hard-coded in the agent definition, so this is no new exposure.
+ * - `codex` maps by FAMILY. Its catalogue names three lines that keep their
+ *   role across generations: Luna ("fast and affordable"), Sol ("workhorse for
+ *   coding") and Astra ("frontier intelligence"); gpt-5.6-luna became
+ *   gpt-6-luna. The table names the newest listed member of each family. The
+ *   slugs DO churn, so they must be bumped when a generation lands; two things
+ *   keep that from going wrong quietly: a stale slug is refused by Codex with a
+ *   400 rather than run on some other model, and the agent detector logs a
+ *   warning naming the replacement when a slug here is not in the user's
+ *   catalogue (`staleCodexTierModels`). All three were checked with a real
+ *   turn on Codex CLI 0.162.1 with a ChatGPT login (2026-10-11).
  *
- * Absent on purpose: `codex` and `copilot-cli` discover their catalogues at
- * runtime (`models_cache.json`, models.dev) and their IDs churn per release;
- * `opencode` runs whatever the user configured, which may be a local Ollama
- * model with no knowable tier. Guessing for those would produce a table that
- * silently rots into naming models the user cannot run. They resolve to the
- * agent default, and the caller says so out loud.
+ * Absent on purpose: `copilot-cli` discovers its catalogue at runtime
+ * (models.dev) with no stable family names; `opencode` runs whatever the user
+ * configured, which may be a local Ollama model with no knowable tier.
+ * Guessing for those would produce a table that silently rots into naming
+ * models the user cannot run. They resolve to the agent default, and the
+ * caller says so out loud.
  */
 const TIER_MODELS: Partial<Record<ToolType, Record<ModelTier, string>>> = {
 	'claude-code': { low: 'haiku', medium: 'sonnet', high: 'opus' },
@@ -100,7 +115,50 @@ const TIER_MODELS: Partial<Record<ToolType, Record<ModelTier, string>>> = {
 		medium: 'claude-sonnet-4-5-20250929',
 		high: 'claude-opus-4-5-20251101',
 	},
+	codex: { low: 'gpt-6-luna', medium: 'gpt-6.1-sol', high: 'gpt-6-astra' },
 };
+
+/** The Codex model family behind each tier (see the `codex` row above). */
+export const CODEX_TIER_FAMILIES: Readonly<Record<ModelTier, string>> = Object.freeze({
+	low: 'luna',
+	medium: 'sol',
+	high: 'astra',
+});
+
+/** One entry of Codex's `models_cache.json`, as much of it as the tier check reads. */
+export interface CodexCatalogModel {
+	slug?: string;
+	visibility?: string;
+	priority?: number;
+}
+
+/**
+ * The Codex tier slugs that are not in this catalogue, each with the newest
+ * listed member of the same family to replace it with (or `null` when the
+ * family is gone). Empty when every tier slug is listed. For a warning only:
+ * the tier table itself is never rewritten at runtime, because a document must
+ * resolve to the same model on every machine.
+ */
+export function staleCodexTierModels(
+	catalog: readonly CodexCatalogModel[]
+): Array<{ tier: ModelTier; slug: string; replacement: string | null }> {
+	const listed = catalog.filter(
+		(m): m is CodexCatalogModel & { slug: string } =>
+			typeof m.slug === 'string' && m.visibility !== 'hide'
+	);
+	const slugs = new Set(listed.map((m) => m.slug));
+	const stale: Array<{ tier: ModelTier; slug: string; replacement: string | null }> = [];
+	for (const tier of TIER_LEVELS) {
+		const slug = TIER_MODELS.codex?.[tier];
+		if (!slug || slugs.has(slug)) continue;
+		const family = CODEX_TIER_FAMILIES[tier];
+		const newest = listed
+			.filter((m) => m.slug.split('-').pop() === family)
+			.sort((a, b) => (a.priority ?? Infinity) - (b.priority ?? Infinity))[0];
+		stale.push({ tier, slug, replacement: newest?.slug ?? null });
+	}
+	return stale;
+}
 
 /**
  * The model for a tier on this provider, or `undefined` when Maestro has no

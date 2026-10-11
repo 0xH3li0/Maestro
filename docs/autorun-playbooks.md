@@ -484,17 +484,17 @@ Per-document mode hands the agent the whole file in one run, and a run has one m
 
 A document that names no markers - which is every playbook written before this feature - is unaffected. It is still a single whole-document dispatch, with the same prompt text it has always had.
 
-The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Codex, Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
+The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
 
 ### `low`, `medium`, and `high` are positions, not literal values
 
-The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's effort ladder runs `low, medium, high, xhigh, max`, so:
+The three levels mean the floor, the middle, and the ceiling of whatever that provider offers. They are deliberately not passed through as-is, because providers do not agree on the words. Claude Code's and Codex's effort ladders both run `low, medium, high, xhigh, max`, so:
 
 | You write         | Claude Code sends | Codex sends |
 | ----------------- | ----------------- | ----------- |
-| `effort="low"`    | `low`             | `minimal`   |
-| `effort="medium"` | `high`            | `medium`    |
-| `effort="high"`   | `max`             | `xhigh`     |
+| `effort="low"`    | `low`             | `low`       |
+| `effort="medium"` | `high`            | `high`      |
+| `effort="high"`   | `max`             | `max`       |
 
 Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
 
@@ -504,11 +504,11 @@ Write the Maestro level, not the provider's word. A playbook that says `effort="
 | ------------- | ----------------------- | ------ |
 | Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
 | Factory Droid | Yes                     | Yes    |
-| Codex         | Agent default           | Yes    |
+| Codex         | Yes (luna/sol/astra)    | Yes    |
 | Copilot-CLI   | Agent default           | Yes    |
 | OpenCode      | Agent default           | None   |
 
-Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
+Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex maps by model family: `low` is the newest Luna model (fast and affordable), `medium` the newest Sol (the coding workhorse), and `high` the newest Astra (frontier). Its slugs change each generation, so if one is no longer offered to your account, Codex refuses the turn by name and Maestro's log names the replacement. Copilot-CLI discovers its catalogue at runtime with no stable families, and OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 
 ### Recording why
 

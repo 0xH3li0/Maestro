@@ -247,13 +247,13 @@ subscriptions:
 
 `tier` and `effort` use one vocabulary for every provider. Maestro maps each level to that provider's own models and effort ladder, using the same tables as Auto Run's `MAESTRO:MODEL` markers:
 
-| Provider      | `tier` low / medium / high            | `effort` low / medium / high |
-| ------------- | ------------------------------------- | ---------------------------- |
-| Claude Code   | haiku / sonnet / opus                 | low / high / max             |
-| Factory Droid | Claude Haiku / Sonnet / Opus model id | low / medium / high          |
-| Codex         | not mapped: use `model`               | minimal / medium / xhigh     |
-| Copilot-CLI   | not mapped: use `model`               | low / medium / xhigh         |
-| OpenCode      | not mapped: use `model`               | not supported                |
+| Provider      | `tier` low / medium / high             | `effort` low / medium / high |
+| ------------- | -------------------------------------- | ---------------------------- |
+| Claude Code   | haiku / sonnet / opus                  | low / high / max             |
+| Factory Droid | Claude Haiku / Sonnet / Opus model id  | low / medium / high          |
+| Codex         | gpt-6-luna / gpt-6.1-sol / gpt-6-astra | low / high / max             |
+| Copilot-CLI   | not mapped: use `model`                | low / medium / xhigh         |
+| OpenCode      | not mapped: use `model`                | not supported                |
 
 Rules:
 

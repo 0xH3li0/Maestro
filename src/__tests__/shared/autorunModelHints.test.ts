@@ -340,12 +340,12 @@ describe('resolveTurnSettings', () => {
 	});
 
 	it('honors the axis it can and warns about the one it cannot', () => {
-		// Codex has an effort ladder but no tier map, so a marker setting both
-		// must not be all-or-nothing.
+		// Copilot-CLI has an effort ladder but no tier map, so a marker setting
+		// both must not be all-or-nothing.
 		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] x`);
-		const resolved = resolveTurnSettings('codex', hint, 'gpt-5.3-codex', undefined);
+		const resolved = resolveTurnSettings('copilot-cli', hint, 'gpt-5.3', undefined);
 		expect(resolved.effort).toBe('xhigh');
-		expect(resolved.model).toBe('gpt-5.3-codex');
+		expect(resolved.model).toBe('gpt-5.3');
 		expect(resolved.warnings).toHaveLength(1);
 	});
 
@@ -422,7 +422,7 @@ describe('countTasksUnderActiveHint', () => {
 	});
 
 	// The whole reason this compares resolved settings instead of tier words:
-	// codex has no tier table, so both tiers fall back to the agent's own model.
+	// copilot-cli has no tier table, so both tiers fall back to the agent's own model.
 	// Splitting here would end one dispatch and start another at exactly the
 	// same configuration.
 	it('does not split on tier words that resolve to identical settings', () => {
@@ -431,7 +431,7 @@ describe('countTasksUnderActiveHint', () => {
 			'- [ ] one',
 			'- [ ] two <!-- MAESTRO:MODEL tier="high" -->',
 		].join('\n');
-		expect(countTasksUnderActiveHint(content, 'codex', 'gpt-5', 'medium')).toEqual({
+		expect(countTasksUnderActiveHint(content, 'copilot-cli', 'gpt-5', 'medium')).toEqual({
 			count: 2,
 			total: 2,
 		});

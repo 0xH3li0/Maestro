@@ -10,7 +10,9 @@ import {
 	asTierLevel,
 	cheapResumeTurnSettings,
 	cheapTurnSettings,
+	CODEX_TIER_FAMILIES,
 	resolveEffortLevel,
+	staleCodexTierModels,
 	resolveTierModel,
 	supportsEffortSelection,
 	supportsTierSelection,
@@ -41,10 +43,15 @@ describe('effort ladders', () => {
 		expect(resolveEffortLevel('claude-code', 'high')).toBe('max');
 	});
 
-	it("uses codex's real floor, which is minimal rather than low", () => {
-		expect(resolveEffortLevel('codex', 'low')).toBe('minimal');
-		expect(resolveEffortLevel('codex', 'medium')).toBe('medium');
-		expect(resolveEffortLevel('codex', 'high')).toBe('xhigh');
+	it("follows codex's current five-rung ladder, never the retired minimal", () => {
+		// Codex 0.162.1 models list low, medium, high, xhigh, max. gpt-6.1-sol
+		// answers `minimal` with a 400, which failed every cheap Codex turn.
+		expect(resolveEffortLevel('codex', 'low')).toBe('low');
+		expect(resolveEffortLevel('codex', 'medium')).toBe('high');
+		expect(resolveEffortLevel('codex', 'high')).toBe('max');
+		for (const level of ['low', 'medium', 'high'] as const) {
+			expect(resolveEffortLevel('codex', level)).not.toBe('minimal');
+		}
 	});
 
 	it('is the identity only where the provider ladder is exactly three rungs', () => {
@@ -69,11 +76,20 @@ describe('model tiers', () => {
 		expect(resolveTierModel('claude-code', 'high')).toBe('opus');
 	});
 
-	it('leaves discovery-driven providers unmapped rather than guessing', () => {
-		// Codex/Copilot IDs churn per release and OpenCode runs whatever the user
+	it('maps codex by family: luna, sol, astra', () => {
+		expect(resolveTierModel('codex', 'low')).toBe('gpt-6-luna');
+		expect(resolveTierModel('codex', 'medium')).toBe('gpt-6.1-sol');
+		expect(resolveTierModel('codex', 'high')).toBe('gpt-6-astra');
+		for (const tier of ['low', 'medium', 'high'] as const) {
+			expect(resolveTierModel('codex', tier)?.endsWith(`-${CODEX_TIER_FAMILIES[tier]}`)).toBe(true);
+		}
+		expect(supportsTierSelection('codex')).toBe(true);
+	});
+
+	it('leaves discovery-driven providers without stable families unmapped', () => {
+		// Copilot IDs churn per release and OpenCode runs whatever the user
 		// configured. A shipped guess would rot into naming a model they cannot
 		// run, so these resolve to the agent default and the caller warns.
-		expect(resolveTierModel('codex', 'high')).toBeUndefined();
 		expect(resolveTierModel('copilot-cli', 'high')).toBeUndefined();
 		expect(resolveTierModel('opencode', 'high')).toBeUndefined();
 		expect(supportsTierSelection('opencode')).toBe(false);
@@ -84,7 +100,7 @@ describe('model tiers', () => {
 describe('cheap synopsis turn', () => {
 	it('pins to the bottom of both ladders', () => {
 		expect(cheapTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
-		expect(cheapTurnSettings('codex')).toEqual({ model: undefined, effort: 'minimal' });
+		expect(cheapTurnSettings('codex')).toEqual({ model: 'gpt-6-luna', effort: 'low' });
 	});
 
 	it('yields all-undefined for a provider with neither axis mapped', () => {
@@ -110,11 +126,14 @@ describe('cheap synopsis turn resumed on its session', () => {
 		});
 	});
 
-	it('inherits the session values on a provider with no cheap tier', () => {
-		expect(cheapResumeTurnSettings('codex', { model: 'gpt-5-codex', effort: 'high' })).toEqual({
-			model: 'gpt-5-codex',
-			effort: 'minimal',
+	it('drops a codex session to the luna tier (a resume across models keeps the context)', () => {
+		expect(cheapResumeTurnSettings('codex', { model: 'gpt-6.1-sol', effort: 'high' })).toEqual({
+			model: 'gpt-6-luna',
+			effort: 'low',
 		});
+	});
+
+	it('inherits the session values on a provider with no cheap tier', () => {
 		expect(cheapResumeTurnSettings('opencode', { model: 'm', effort: 'e' })).toEqual({
 			model: 'm',
 			effort: 'e',
@@ -124,5 +143,43 @@ describe('cheap synopsis turn resumed on its session', () => {
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
+	});
+});
+
+describe('stale codex tier slugs', () => {
+	// The shape of ~/.codex/models_cache.json `models` on Codex CLI 0.162.1.
+	const current = [
+		{ slug: 'gpt-6.1-sol', visibility: 'list', priority: 1 },
+		{ slug: 'gpt-6-astra', visibility: 'list', priority: 2 },
+		{ slug: 'gpt-6-sol', visibility: 'list', priority: 3 },
+		{ slug: 'gpt-6-luna', visibility: 'list', priority: 4 },
+		{ slug: 'gpt-reserve', visibility: 'hide', priority: 4 },
+		{ slug: 'gpt-5.6-luna', visibility: 'list', priority: 9 },
+	];
+
+	it('reports nothing when every tier slug is listed', () => {
+		expect(staleCodexTierModels(current)).toEqual([]);
+	});
+
+	it('names the newest listed member of the family as the replacement', () => {
+		const nextGeneration = [
+			{ slug: 'gpt-7-luna', visibility: 'list', priority: 3 },
+			{ slug: 'gpt-7-sol', visibility: 'list', priority: 1 },
+			{ slug: 'gpt-6.1-sol', visibility: 'list', priority: 2 },
+			{ slug: 'gpt-6-luna', visibility: 'hide', priority: 9 },
+		];
+		expect(staleCodexTierModels(nextGeneration)).toEqual([
+			{ tier: 'low', slug: 'gpt-6-luna', replacement: 'gpt-7-luna' },
+			{ tier: 'high', slug: 'gpt-6-astra', replacement: null },
+		]);
+	});
+
+	it('treats a hidden model as not listed', () => {
+		const hidden = current.map((m) =>
+			m.slug === 'gpt-6-astra' ? { ...m, visibility: 'hide' } : m
+		);
+		expect(staleCodexTierModels(hidden)).toEqual([
+			{ tier: 'high', slug: 'gpt-6-astra', replacement: null },
+		]);
 	});
 });

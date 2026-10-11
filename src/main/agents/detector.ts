@@ -32,6 +32,7 @@ import { resolveConfigDirKeyFromEnv } from './claudeSpawnCore';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { staleCodexTierModels, type CodexCatalogModel } from '../../shared/modelTiers';
 import { capabilitySnapshots } from './capability-snapshot';
 import {
 	setOmpModelCatalog,
@@ -695,9 +696,20 @@ export class AgentDetector {
 						const cachePath = path.join(codexHome, 'models_cache.json');
 						const cacheContent = fs.readFileSync(cachePath, 'utf8');
 						const cache = parseJsonWithBom<{
-							models?: Array<{ slug?: string; visibility?: string }>;
+							models?: CodexCatalogModel[];
 						}>(cacheContent);
 						if (Array.isArray(cache.models)) {
+							// The Codex tier table names one slug per family, and the
+							// slugs move every generation. Say so here, where the
+							// user's own catalogue is read, rather than at the 400
+							// Codex answers a stale slug with.
+							for (const stale of staleCodexTierModels(cache.models)) {
+								logger.warn(
+									`Codex tier "${stale.tier}" maps to ${stale.slug}, which this Codex account does not list`,
+									LOG_CONTEXT,
+									{ tier: stale.tier, slug: stale.slug, replacement: stale.replacement }
+								);
+							}
 							const models = cache.models
 								.filter(
 									(m: {

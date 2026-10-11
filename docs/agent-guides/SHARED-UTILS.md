@@ -663,7 +663,7 @@ Document ids are always reconciled against the batch store's `documentList`, NOT
 
 ## Model Tiers & Effort (`src/shared/modelTiers.ts` - Both)
 
-One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.
+One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's and Codex's ceiling is `max`, and neither floor is spelled `minimal` any more.
 
 | Function / Constant                          | Signature                                                                | Purpose                                                                                                                                                                         |
 | -------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -676,7 +676,7 @@ One vocabulary (`low | medium | high`) for two independent axes: which model run
 | `cheapTurnSettings(toolType)`                | `(ToolType) => { model?: string; effort?: string }`                      | Bottom of both ladders. Used to pin throwaway synopsis turns.                                                                                                                   |
 | `cheapResumeTurnSettings(toolType, current)` | `(ToolType, { model?, effort? }) => { model?: string; effort?: string }` | `cheapTurnSettings` for a turn that resumes its session: keeps `current.model` when the cheap one has a smaller context window, and inherits `current` where no tier is mapped. |
 
-Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`). Do NOT add one for a provider that discovers its catalogue at runtime (`codex`, `copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution.
+Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`) or follow a stable family (`codex`: Luna, Sol, Astra, the newest listed member of each, with `staleCodexTierModels(catalog)` warning from the agent detector when a slug drops out of the user's `models_cache.json`; bump the three slugs when a generation lands). Do NOT add one for a provider with no stable families (`copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution. Codex's effort floor is `low`, not `minimal`: current models answer `minimal` with a 400.
 
 `cheapTurnSettings` is safe only because a synopsis is a LEAF - every caller discards the `agentSessionId` it returns. A future caller that adopts that id has to revisit the pin first, or the tab silently continues on the cheap model.
 

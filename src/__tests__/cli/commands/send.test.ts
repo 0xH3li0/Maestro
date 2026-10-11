@@ -274,7 +274,11 @@ describe('send command', () => {
 			'/path/to/project',
 			'SYNOPSIS PROMPT',
 			'provider-1',
-			expect.objectContaining({ querySource: 'auto', customEffort: 'minimal' })
+			expect.objectContaining({
+				querySource: 'auto',
+				customModel: 'gpt-6-luna',
+				customEffort: 'low',
+			})
 		);
 		expect(addHistoryEntry).toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'USER', summary: 'Reported it.', success: true })
