@@ -520,6 +520,9 @@
 		],
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"
+		],
+		"{CLAUDE.md,docs/agent-guides/CANONICAL-UTILITIES.md}": [
+			"node scripts/verify-docs-paths.mjs"
 		]
 	},
 	"allowScripts": {
