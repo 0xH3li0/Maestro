@@ -83,6 +83,18 @@ describe('agent resolution', () => {
 		expect(snapshot.agentId).toBe('a');
 		expect(snapshot.agents.map((x) => x.id)).toEqual(['a']);
 	});
+
+	it('lists each agent with its group and provider for the picker', () => {
+		useSessionStore.setState({
+			sessions: [agent('a', { groupId: 'g1', toolType: 'codex' }), agent('b', { groupId: '' })],
+			groups: [{ id: 'g1', name: 'Backend', emoji: '', collapsed: false }],
+			activeSessionId: 'b',
+		});
+		expect(buildQuickChatSnapshot().agents).toEqual([
+			{ id: 'a', name: 'Agent a', groupName: 'Backend', provider: 'Codex' },
+			{ id: 'b', name: 'Agent b', groupName: undefined, provider: 'Claude Code' },
+		]);
+	});
 });
 
 describe('send', () => {

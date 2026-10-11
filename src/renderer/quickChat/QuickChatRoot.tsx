@@ -12,7 +12,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ExternalLink, PenSquare, Pin, PinOff, Square, X } from 'lucide-react';
+import {
+	ArrowUp,
+	ChevronDown,
+	ExternalLink,
+	PenSquare,
+	Pin,
+	PinOff,
+	Square,
+	X,
+} from 'lucide-react';
 import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
 	type QuickChatCommand,
@@ -29,6 +38,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import type { Theme } from '../types';
+import { QuickChatAgentPicker } from './QuickChatAgentPicker';
 
 const COMPOSER_MAX_HEIGHT = 120;
 /** `-webkit-app-region` lets the frameless window be dragged by its header. */
@@ -115,6 +125,7 @@ export function QuickChatRoot() {
 	const [snapshot, setSnapshot] = useState<QuickChatSnapshot>({ ...EMPTY_QUICK_CHAT_SNAPSHOT });
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState<string | null>(null);
+	const [pickerOpen, setPickerOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// This window boots its own renderer and never runs useSettings: load the
@@ -138,7 +149,10 @@ export function QuickChatRoot() {
 		return result.ok;
 	}, []);
 
-	const expanded = snapshot.messages.length > 0 || snapshot.busy;
+	// The picker needs room the composer-only window does not have, so the
+	// window grows while it is open and shrinks back when it closes.
+	const hasConversation = snapshot.messages.length > 0 || snapshot.busy;
+	const expanded = hasConversation || pickerOpen;
 	useEffect(() => {
 		window.maestro.quickChat.setLayout(expanded ? 'expanded' : 'compact');
 	}, [expanded]);
@@ -159,6 +173,21 @@ export function QuickChatRoot() {
 	}, [draft, snapshot.busy, run]);
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
+	const closePicker = useCallback(() => {
+		setPickerOpen(false);
+		textareaRef.current?.focus();
+	}, []);
+	const pickAgent = useCallback(
+		(agentId: string) => {
+			setPickerOpen(false);
+			// Picking the agent the chat is already on is not a reason to wipe it.
+			const done =
+				agentId === snapshot.agentId ? Promise.resolve(true) : run({ type: 'setAgent', agentId });
+			void done.then(() => textareaRef.current?.focus());
+		},
+		[run, snapshot.agentId]
+	);
+	const pickerShortcut = formatShortcutKeys(['Meta', 'k']);
 	const newChat = useCallback(() => {
 		setDraft('');
 		void run({ type: 'new' }).then(() => textareaRef.current?.focus());
@@ -168,15 +197,21 @@ export function QuickChatRoot() {
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
-				hide();
+				// Escape backs out of the picker first; only a second press hides.
+				if (pickerOpen) closePicker();
+				else hide();
 			} else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'n') {
 				e.preventDefault();
 				newChat();
+			} else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'k') {
+				e.preventDefault();
+				if (pickerOpen) closePicker();
+				else setPickerOpen(true);
 			}
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [hide, newChat]);
+	}, [hide, newChat, pickerOpen, closePicker]);
 
 	const proseStyles = useMemo(
 		() => generateTerminalProseStyles(theme, '.quick-chat-messages'),
@@ -212,20 +247,21 @@ export function QuickChatRoot() {
 				style={{ color: c.textMain }}
 			/>
 			<div className="flex items-center gap-2">
-				<select
-					value={snapshot.agentId ?? ''}
-					onChange={(e) => void run({ type: 'setAgent', agentId: e.target.value })}
-					title="Agent this chat talks to (switching starts a new chat)"
-					className="bg-transparent outline-none text-sm max-w-[220px] truncate cursor-pointer"
+				<button
+					type="button"
+					onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+					title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
+					aria-label="Switch agent"
+					aria-expanded={pickerOpen}
+					className="flex items-center gap-1 text-sm max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
 					style={{ color: c.textDim }}
+					data-testid="quick-chat-agent-button"
 				>
-					{snapshot.agentId === null && <option value="">No agent</option>}
-					{snapshot.agents.map((agent) => (
-						<option key={agent.id} value={agent.id}>
-							{agent.name}
-						</option>
-					))}
-				</select>
+					<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
+					<ChevronDown
+						className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
+					/>
+				</button>
 				<div className="flex-1" />
 				<IconButton
 					theme={theme}
@@ -310,7 +346,18 @@ export function QuickChatRoot() {
 					</IconButton>
 				</div>
 			)}
-			{expanded && (
+			{pickerOpen && (
+				<div className="flex-1 min-h-0 flex flex-col" style={NO_DRAG_REGION}>
+					<QuickChatAgentPicker
+						theme={theme}
+						agents={snapshot.agents}
+						currentAgentId={snapshot.agentId}
+						onPick={pickAgent}
+						onClose={closePicker}
+					/>
+				</div>
+			)}
+			{expanded && !pickerOpen && (
 				<div
 					ref={stickRef}
 					className="quick-chat-messages flex-1 overflow-y-auto px-5 pb-3 flex flex-col gap-4"

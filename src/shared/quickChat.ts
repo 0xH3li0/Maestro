@@ -79,6 +79,10 @@ export interface QuickChatMessage {
 export interface QuickChatAgentOption {
 	id: string;
 	name: string;
+	/** The agent's Left Bar group, so the picker can show and match on it. */
+	groupName?: string;
+	/** Provider display name ("Claude Code", "Codex"). */
+	provider?: string;
 }
 
 /** What the quick window renders. Produced by the engine, relayed by main. */
