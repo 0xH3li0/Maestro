@@ -109,10 +109,13 @@ function getLedgerRecorder(): CotLedgerRecorder {
 		const store = getCotConfigStore();
 		_ledgerRecorder = createCotLedgerRecorder({
 			listEnabledAgents: () => store.listEnabledAgents(),
-			getFolder: (agentId) => store.getAgentConfig(agentId).folder,
+			getFolders: (agentId) => {
+				const { current, past } = store.getChains(agentId);
+				// With no current folder there is nowhere to write, so none is given.
+				return current ? [current.folder, ...past.map((chain) => chain.folder)] : [];
+			},
 			getToolType: toolTypeOf,
-			getCursor: (agentId) => store.getLedgerCursor(agentId),
-			setCursor: (agentId, cursor) => store.setLedgerCursor(agentId, cursor),
+			getSince: (agentId) => store.getLedgerSince(agentId),
 			writer: getCotWriter(),
 			onError: (agentId, error) => {
 				if (agentId !== null) store.recordError(agentId, error.message, Date.now());

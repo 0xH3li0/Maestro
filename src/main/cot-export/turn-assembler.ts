@@ -121,6 +121,8 @@ export type CotSpawnConfig = Pick<
  */
 type CotTurnStartInput = Omit<CotSpawnConfig, 'sessionId' | 'querySource'> & {
 	querySource?: string;
+	/** The run of the command line the turn is built from. Only a `cli` turn has one. */
+	cliRunId?: string;
 };
 
 /** Everything the assembler needs from outside. It reads no store and no clock itself. */
@@ -388,6 +390,7 @@ function buildTurnStart(
 		origin,
 		...(target.tabId ? { tabId: target.tabId } : {}),
 		...(target.consultedBy ? { consultedBy: target.consultedBy } : {}),
+		...(config.cliRunId ? { cliRunId: config.cliRunId } : {}),
 		...(config.agentSessionId ? { providerSessionId: config.agentSessionId } : {}),
 		cwd: ssh && config.projectPath ? config.projectPath : config.cwd,
 		...(config.sshRemoteId ? { sshRemoteId: config.sshRemoteId } : {}),
@@ -682,6 +685,16 @@ export interface CotCueRunDecision {
 export interface CotCompletedRun {
 	/** What started the run. Defaults to `cue`. */
 	origin?: Extract<CotTurnOrigin, 'cue' | 'cli'>;
+	/**
+	 * The id of the run in the command line's run ledger, for a `cli` run. It
+	 * is written into `turn-start`.
+	 */
+	cliRunId?: string;
+	/**
+	 * The turn id to use, in place of a new one. A caller gives it when the
+	 * same run must always land in the same file.
+	 */
+	turnId?: string;
 	toolType: string;
 	/** The agent's own directory (the remote path, for a run over SSH). */
 	cwd: string;
@@ -808,13 +821,14 @@ export async function recordCompletedRun(
 	const { agentId, folder } = decision;
 	const origin = run.origin ?? 'cue';
 	try {
-		const turnId = (deps.newTurnId ?? randomUUID)();
+		const turnId = run.turnId ?? (deps.newTurnId ?? randomUUID)();
 		const filePath = turnFilePath(folder, new Date(run.startTime), undefined, turnId);
 		const { start, startGaps } = buildTurnStart(
 			{
 				toolType: run.toolType as ToolType,
 				cwd: run.cwd,
 				prompt: run.prompt,
+				...(run.cliRunId ? { cliRunId: run.cliRunId } : {}),
 				...(origin === 'cue' ? { querySource: 'cue' } : {}),
 				...(run.providerSessionId ? { agentSessionId: run.providerSessionId } : {}),
 				...(run.sshRemoteId ? { sshRemoteId: run.sshRemoteId } : {}),

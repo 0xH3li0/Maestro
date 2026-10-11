@@ -1142,86 +1142,50 @@ describe('cot-export/config-store', () => {
 		});
 	});
 
-	describe('the mark of the command line runs that were recorded', () => {
+	describe('from when the runs of the command line are recorded', () => {
 		let logs: string;
 
 		beforeEach(() => {
 			logs = logFolder('logs');
 		});
 
-		it('has none for an agent that was never turned on', () => {
+		it('is never, for an agent that was never turned on', () => {
 			const store = makeStore();
-			expect(store.getLedgerCursor(AGENT)).toBeNull();
+			expect(store.getLedgerSince(AGENT)).toBeNull();
 
 			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
-			expect(store.getLedgerCursor(AGENT)).toBeNull();
-			// A mark is never made by moving it.
-			store.setLedgerCursor(AGENT, { at: START + 5, ids: ['run-1'] });
-			expect(store.getLedgerCursor(AGENT)).toBeNull();
+			expect(store.getLedgerSince(AGENT)).toBeNull();
 		});
 
-		it('starts at the moment export is turned on', () => {
+		it('is the moment export is turned on, and is saved', () => {
 			const store = makeStore();
 			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
 
-			expect(store.getLedgerCursor(AGENT)).toEqual({ since: START, at: START, ids: [] });
-		});
-
-		it('moves forward, keeps when export was turned on, and is saved', () => {
-			const store = makeStore();
-			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
-
-			store.setLedgerCursor(AGENT, { at: START + 9000, ids: ['run-1', 'run-2'] });
-			expect(store.getLedgerCursor(AGENT)).toEqual({
-				since: START,
-				at: START + 9000,
-				ids: ['run-1', 'run-2'],
-			});
-
-			store.flushSync();
-			expect(makeStore().getLedgerCursor(AGENT)).toEqual({
-				since: START,
-				at: START + 9000,
-				ids: ['run-1', 'run-2'],
-			});
-		});
-
-		it('hands out a copy, so a caller cannot move the mark by accident', () => {
-			const store = makeStore();
-			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
-
-			store.getLedgerCursor(AGENT)?.ids.push('run-x');
-
-			expect(store.getLedgerCursor(AGENT)?.ids).toEqual([]);
+			expect(store.getLedgerSince(AGENT)).toBe(START);
+			expect(makeStore().getLedgerSince(AGENT)).toBe(START);
 		});
 
 		it('is kept through a change of folder, and through being turned off', () => {
 			const store = makeStore();
 			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
-			store.setLedgerCursor(AGENT, { at: START + 9000, ids: ['run-1'] });
 			clock = START + 60_000;
 
 			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('other-logs') });
-			expect(store.getLedgerCursor(AGENT)).toMatchObject({ since: START, at: START + 9000 });
+			expect(store.getLedgerSince(AGENT)).toBe(START);
 
 			store.setAgentConfig(AGENT, { enabled: false, folder: logFolder('other-logs') });
-			expect(store.getLedgerCursor(AGENT)).toMatchObject({ since: START, at: START + 9000 });
+			expect(store.getLedgerSince(AGENT)).toBe(START);
 		});
 
 		it('starts anew when export is turned on again, so a run from the time it was off is left out', () => {
 			const store = makeStore();
 			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
-			store.setLedgerCursor(AGENT, { at: START + 9000, ids: ['run-1'] });
 			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
 			clock = START + 60_000;
 
 			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
 
-			expect(store.getLedgerCursor(AGENT)).toEqual({
-				since: START + 60_000,
-				at: START + 60_000,
-				ids: [],
-			});
+			expect(store.getLedgerSince(AGENT)).toBe(START + 60_000);
 		});
 
 		it('lists the agents that are recorded right now', () => {

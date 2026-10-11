@@ -8,8 +8,10 @@
  * - Which runs are taken: reported by the command line, finished, for an
  *   agent that is recorded, started after export was turned on, and not
  *   taken before. Everything else is left alone.
- * - A run is taken once, however often the ledger changes, and a run that
- *   finishes late is not lost behind one that finished early.
+ * - A run is taken once, however often the ledger changes, through a restart
+ *   and through a crash right after the write, because a run always lands in
+ *   the same file. A run that reaches the ledger late is not lost behind one
+ *   that reached it early.
  * - With export off for everyone the ledger is not even read.
  *
  * The writer is the real one, over a fresh folder in the OS temp dir, and the
@@ -20,8 +22,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CotLedgerCursor } from '../../../main/cot-export/config-store';
-import { createCotLedgerRecorder } from '../../../main/cot-export/ledger-runs';
+import { cliTurnId, createCotLedgerRecorder } from '../../../main/cot-export/ledger-runs';
 import type {
 	CotLedgerRecorder,
 	CotLedgerRecorderDeps,
@@ -67,12 +68,13 @@ function run(overrides: Partial<AgentRun> & { endedAfterMs?: number } = {}): Age
 describe('cot-export ledger runs', () => {
 	let root: string;
 	let folder: string;
-	let enabled: Map<string, string>;
-	let cursors: Map<string, CotLedgerCursor>;
+	/** Agents with export on, and the folders of each: the current one first. */
+	let enabled: Map<string, string[]>;
+	/** When export was turned on for each agent. */
+	let since: Map<string, number>;
 	let chains: Map<string, CotChainState>;
 	let errors: Array<{ agentId: string | null; message: string }>;
 	let toolTypes: Map<string, string>;
-	let turnIds: number;
 
 	const chainIn = (dir: string): CotChainState => {
 		let chain = chains.get(dir);
@@ -86,13 +88,9 @@ describe('cot-export ledger runs', () => {
 	const makeRecorder = (overrides: Partial<CotLedgerRecorderDeps> = {}): CotLedgerRecorder =>
 		createCotLedgerRecorder({
 			listEnabledAgents: () => [...enabled.keys()],
-			getFolder: (agentId) => enabled.get(agentId) ?? null,
+			getFolders: (agentId) => enabled.get(agentId) ?? [],
 			getToolType: (agentId) => toolTypes.get(agentId) ?? null,
-			getCursor: (agentId) => cursors.get(agentId) ?? null,
-			setCursor: (agentId, cursor) => {
-				const current = cursors.get(agentId);
-				if (current) cursors.set(agentId, { since: current.since, ...cursor });
-			},
+			getSince: (agentId) => since.get(agentId) ?? null,
 			writer: createCotWriter({
 				getChainState: (_agentId, dir) => chainIn(dir),
 				onHeadAdvanced: (_agentId, state) => {
@@ -102,7 +100,6 @@ describe('cot-export ledger runs', () => {
 				now: () => SINCE,
 			}),
 			onError: (agentId, error) => errors.push({ agentId, message: error.message }),
-			newTurnId: () => `turn-${++turnIds}`,
 			...overrides,
 		});
 
@@ -117,15 +114,14 @@ describe('cot-export ledger runs', () => {
 	beforeEach(() => {
 		root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cot-ledger-')));
 		folder = path.join(root, 'logs');
-		enabled = new Map([[AGENT, folder]]);
-		cursors = new Map([[AGENT, { since: SINCE, at: SINCE, ids: [] }]]);
+		enabled = new Map([[AGENT, [folder]]]);
+		since = new Map([[AGENT, SINCE]]);
 		chains = new Map();
 		errors = [];
 		toolTypes = new Map([
 			[AGENT, 'claude-code'],
 			[OTHER_AGENT, 'codex'],
 		]);
-		turnIds = 0;
 	});
 
 	afterEach(() => {
@@ -146,6 +142,8 @@ describe('cot-export ledger runs', () => {
 			expect(records[0]).toMatchObject({
 				agentId: AGENT,
 				origin: 'cli',
+				cliRunId: 'run_cli-send_1',
+				turnId: cliTurnId('run_cli-send_1'),
 				toolType: 'claude-code',
 				cwd: '/work/project',
 				prompt: 'List the files.',
@@ -247,7 +245,6 @@ describe('cot-export ledger runs', () => {
 			await makeRecorder().recordPending(() => [run(overrides)]);
 
 			expect(await readTurns()).toEqual([]);
-			expect(cursors.get(AGENT)).toEqual({ since: SINCE, at: SINCE, ids: [] });
 			expect(errors).toEqual([]);
 		});
 
@@ -269,8 +266,8 @@ describe('cot-export ledger runs', () => {
 
 		it('writes each agent into its own folder', async () => {
 			const otherFolder = path.join(root, 'other-logs');
-			enabled.set(OTHER_AGENT, otherFolder);
-			cursors.set(OTHER_AGENT, { since: SINCE, at: SINCE, ids: [] });
+			enabled.set(OTHER_AGENT, [otherFolder]);
+			since.set(OTHER_AGENT, SINCE);
 
 			await makeRecorder().recordPending(() => [
 				run({ id: 'a', prompt: 'For the first agent.' }),
@@ -298,35 +295,86 @@ describe('cot-export ledger runs', () => {
 			await recorder.recordPending(() => [{ ...ledger[0], updatedAt: SINCE + 10 * MINUTE }]);
 
 			expect(await readTurns()).toHaveLength(1);
-			expect(cursors.get(AGENT)).toEqual({
-				since: SINCE,
-				at: SINCE + MINUTE + 4000,
-				ids: ['run_cli-send_1'],
-			});
 		});
 
-		it('does not take a run again after a restart', async () => {
+		it('looks at the disk once for a run, not at every change of the ledger', async () => {
+			const recorder = makeRecorder();
+			const ledger = [run()];
+			await recorder.recordPending(() => ledger);
+			const access = vi.spyOn(fs.promises, 'access');
+
+			await recorder.recordPending(() => ledger);
+			await recorder.recordPending(() => ledger);
+
+			expect(access).not.toHaveBeenCalled();
+			access.mockRestore();
+		});
+
+		it('does not take a run again after a restart, with nothing saved in between', async () => {
+			const ledger = [run()];
+			await makeRecorder().recordPending(() => ledger);
+			const before = await readTurns();
+
+			// A new recorder, as after a start of the app, or after a crash right
+			// behind the write. It remembers nothing: the file is what says so.
+			await makeRecorder().recordPending(() => ledger);
+
+			expect(await readTurns()).toEqual(before);
+		});
+
+		it('always gives one run the same turn, and two runs different ones', () => {
+			expect(cliTurnId('run_cli-send_1')).toBe(cliTurnId('run_cli-send_1'));
+			expect(cliTurnId('run_cli-send_1')).toMatch(/^[0-9a-f]{32}$/);
+			expect(cliTurnId('run_cli-send_2')).not.toBe(cliTurnId('run_cli-send_1'));
+		});
+
+		it('does not take a run again that lies in a folder the agent used before', async () => {
 			const ledger = [run()];
 			await makeRecorder().recordPending(() => ledger);
 
-			// A new recorder over the same mark, as after a start of the app.
+			// The person chose another folder, and the app started again.
+			const newFolder = path.join(root, 'new-logs');
+			enabled.set(AGENT, [newFolder, folder]);
 			await makeRecorder().recordPending(() => ledger);
 
-			expect(await readTurns()).toHaveLength(1);
+			expect(await readTurns(newFolder)).toEqual([]);
+			expect(await readTurns(folder)).toHaveLength(1);
 		});
 
-		it('writes the runs in the order they ended', async () => {
+		it('writes a new run into the folder the agent uses now', async () => {
+			const newFolder = path.join(root, 'new-logs');
+			enabled.set(AGENT, [newFolder, folder]);
+
+			await makeRecorder().recordPending(() => [run()]);
+
+			expect(await readTurns(newFolder)).toHaveLength(1);
+			expect(await readTurns(folder)).toEqual([]);
+		});
+
+		it('writes the runs in the order they started', async () => {
 			await makeRecorder().recordPending(() => [
-				run({ id: 'late', createdAt: SINCE + MINUTE, endedAfterMs: 9000, prompt: 'second' }),
-				run({ id: 'early', createdAt: SINCE + MINUTE + 1000, endedAfterMs: 2000, prompt: 'first' }),
+				run({ id: 'later', createdAt: SINCE + 2 * MINUTE, prompt: 'second' }),
+				run({ id: 'earlier', createdAt: SINCE + MINUTE, prompt: 'first' }),
 			]);
 
-			const turns = await readTurns();
-			const byChain = turns
+			const byChain = (await readTurns())
 				.map((records) => records[0])
 				.sort((a, b) => a.chainSeq - b.chainSeq)
 				.map((start) => (start.kind === 'turn-start' ? start.prompt : ''));
 			expect(byChain).toEqual(['first', 'second']);
+		});
+
+		it('still takes a run that reaches the ledger after one that ended later', async () => {
+			// Two runs of the command line. The one that ended first had to wait
+			// for the ledger, so the one that ended later is written to it first.
+			const recorder = makeRecorder();
+			const endedLater = run({ id: 'ended-later', endedAfterMs: 9000, prompt: 'Ended later.' });
+			const endedFirst = run({ id: 'ended-first', endedAfterMs: 2000, prompt: 'Ended first.' });
+
+			await recorder.recordPending(() => [endedLater]);
+			await recorder.recordPending(() => [endedLater, endedFirst]);
+
+			expect((await promptsIn()).sort()).toEqual(['Ended first.', 'Ended later.']);
 		});
 
 		it('still takes a run that started first and ended after one already taken', async () => {
@@ -347,7 +395,7 @@ describe('cot-export ledger runs', () => {
 			expect(await readTurns()).toHaveLength(2);
 		});
 
-		it('takes two runs that ended in the same millisecond, each once', async () => {
+		it('takes two runs that started and ended in the same millisecond, each once', async () => {
 			const recorder = makeRecorder();
 			const first = run({ id: 'tie-a', prompt: 'a' });
 			const second = run({ id: 'tie-b', prompt: 'b' });
@@ -356,8 +404,7 @@ describe('cot-export ledger runs', () => {
 			await recorder.recordPending(() => [first, second]);
 			await recorder.recordPending(() => [first, second]);
 
-			expect(await readTurns()).toHaveLength(2);
-			expect(cursors.get(AGENT)?.ids).toEqual(['tie-a', 'tie-b']);
+			expect((await promptsIn()).sort()).toEqual(['a', 'b']);
 		});
 
 		it('runs one call at a time, so two changes at once do not write a run twice', async () => {
@@ -371,6 +418,19 @@ describe('cot-export ledger runs', () => {
 			]);
 
 			expect(await readTurns()).toHaveLength(1);
+		});
+
+		it('forgets a run the ledger no longer holds, and is not confused when it does', async () => {
+			const recorder = makeRecorder();
+			const old = run({ id: 'old', prompt: 'old' });
+			const next = run({ id: 'next', createdAt: SINCE + 5 * MINUTE, prompt: 'next' });
+
+			await recorder.recordPending(() => [old]);
+			// The ledger dropped the old run to make room.
+			await recorder.recordPending(() => [next]);
+			await recorder.recordPending(() => [next]);
+
+			expect((await promptsIn()).sort()).toEqual(['next', 'old']);
 		});
 	});
 
@@ -401,12 +461,12 @@ describe('cot-export ledger runs', () => {
 
 		it('goes on to the next agent when one fails', async () => {
 			const otherFolder = path.join(root, 'other-logs');
-			enabled.set(OTHER_AGENT, otherFolder);
-			cursors.set(OTHER_AGENT, { since: SINCE, at: SINCE, ids: [] });
+			enabled.set(OTHER_AGENT, [otherFolder]);
+			since.set(OTHER_AGENT, SINCE);
 			const recorder = makeRecorder({
-				getFolder: (agentId) => {
+				getFolders: (agentId) => {
 					if (agentId === AGENT) throw new Error('The store is closed.');
-					return enabled.get(agentId) ?? null;
+					return enabled.get(agentId) ?? [];
 				},
 			});
 
@@ -416,10 +476,16 @@ describe('cot-export ledger runs', () => {
 			expect(await readTurns(otherFolder)).toHaveLength(1);
 		});
 
-		it('does nothing for an agent whose mark was never set', async () => {
-			cursors.delete(AGENT);
+		it('does nothing for an agent that was never turned on, or that has no folder', async () => {
+			since.delete(AGENT);
 			await makeRecorder().recordPending(() => [run()]);
 			expect(await readTurns()).toEqual([]);
+
+			since.set(AGENT, SINCE);
+			enabled.set(AGENT, []);
+			await makeRecorder().recordPending(() => [run()]);
+			expect(await readTurns()).toEqual([]);
+			expect(errors).toEqual([]);
 		});
 	});
 });

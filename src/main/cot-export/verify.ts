@@ -7,7 +7,8 @@
  * WHAT IT CAN SHOW
  * - A record that was edited: its contents no longer match its hash.
  * - Records that were reordered, replaced, or spliced in: a record does not
- *   link to the one before it.
+ *   link to the one before it, or the lines of a file are no longer in the
+ *   order they were written in.
  * - A record or a whole file that was deleted from the middle: a position
  *   is missing.
  * - The newest records or files that were deleted: the newest record on disk
@@ -73,12 +74,19 @@ type FirstBreak = NonNullable<CotVerifyResult['firstBreak']>;
  * Reads one turn file line by line, adding each record to `records` and each
  * line that is not a record to `suspects`. Returns false when the file could
  * not be read to the end. Records read before the failure are kept.
+ *
+ * The writer appends, one record at a time, so the positions in a file only
+ * ever go up. A record that comes after one with a higher position was moved
+ * there, and it is added to `misplaced`. The walk over the whole chain sorts
+ * by position and would not see it: every record is intact and every link
+ * holds, and still the file no longer reads in the order things happened.
  */
 async function readTurnFile(
 	file: string,
 	fileIndex: number,
 	records: RecordTuple[],
-	suspects: Suspect[]
+	suspects: Suspect[],
+	misplaced: FirstBreak[]
 ): Promise<boolean> {
 	let lineNumber = 0;
 	let lastChainSeq = COT_GENESIS_CHAIN_SEQ;
@@ -110,7 +118,16 @@ async function readTurnFile(
 		}
 		for (const suspect of waiting) suspect.before = link.chainSeq;
 		waiting = [];
-		lastChainSeq = link.chainSeq;
+		// A repeat of a position is the chain walk's to report, so only a step
+		// back is taken here.
+		if (link.chainSeq < lastChainSeq) {
+			misplaced.push({
+				file,
+				chainSeq: link.chainSeq,
+				reason: `Record ${link.chainSeq} comes after record ${lastChainSeq} in its file, so the lines of the file were reordered.`,
+			});
+		}
+		lastChainSeq = Math.max(lastChainSeq, link.chainSeq);
 		records.push({
 			chainSeq: link.chainSeq,
 			prevHash: link.prevHash,
@@ -251,16 +268,20 @@ export async function verifyAgentChain(
 	const files = await listTurnFiles(folder);
 	const records: RecordTuple[] = [];
 	const suspects: Suspect[] = [];
+	const misplaced: FirstBreak[] = [];
 	let filesChecked = 0;
 	for (let index = 0; index < files.length; index++) {
-		if (await readTurnFile(files[index], index, records, suspects)) filesChecked += 1;
+		if (await readTurnFile(files[index], index, records, suspects, misplaced)) filesChecked += 1;
 	}
 
 	// Concurrent turns of one agent write to different files, so file order is
 	// not chain order. The position inside each record is the order.
 	records.sort((a, b) => a.chainSeq - b.chainSeq);
 
-	const firstBreak = findFirstBreak(records, files, suspects);
+	// The earliest problem, whichever kind it is.
+	const firstBreak = [findFirstBreak(records, files, suspects), ...misplaced]
+		.filter((found): found is FirstBreak => found !== undefined)
+		.sort((a, b) => a.chainSeq - b.chainSeq)[0];
 	const newestHash = records.length > 0 ? records[records.length - 1].hash : COT_GENESIS_HASH;
 	const headMatches = newestHash === (expectedHead ?? COT_GENESIS_HASH);
 

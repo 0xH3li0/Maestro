@@ -271,6 +271,61 @@ describe('cot-export normalize', () => {
 			]);
 		});
 
+		it('keeps two entries of one line that hold the same text as two blocks', () => {
+			const hello = { type: 'text', text: 'Hello' };
+			const blocks = claude([assistant([hello, hello])]);
+
+			expect(ofKind(blocks, 'text')).toEqual([
+				{ kind: 'text', text: 'Hello', providerMessageId: MSG, blockIndex: 0 },
+				{ kind: 'text', text: 'Hello', providerMessageId: MSG, blockIndex: 1 },
+			]);
+		});
+
+		it('keeps two entries of one line as two blocks when one text starts with the other', () => {
+			const blocks = claude([
+				assistant([
+					{ type: 'text', text: 'Hello' },
+					{ type: 'text', text: 'Hello world' },
+				]),
+			]);
+
+			// Not one block that grew: the line holds both, whole.
+			expect(ofKind(blocks, 'text')).toEqual([
+				{ kind: 'text', text: 'Hello', providerMessageId: MSG, blockIndex: 0 },
+				{ kind: 'text', text: 'Hello world', providerMessageId: MSG, blockIndex: 1 },
+			]);
+		});
+
+		it('records nothing when a line with two alike entries is sent again', () => {
+			const line = assistant([
+				{ type: 'text', text: 'Hello' },
+				{ type: 'text', text: 'Hello' },
+			]);
+			const turn = createTurnNormalizeState();
+			expect(ofKind(claude([line], turn), 'text')).toHaveLength(2);
+
+			// Each entry of the repeat is matched to a block of its own.
+			expect(claude([line], turn)).toEqual([]);
+		});
+
+		it('still takes a text sent on a later line for the block that grew', () => {
+			const turn = createTurnNormalizeState();
+			claude([assistant([{ type: 'text', text: 'Hello' }])], turn);
+
+			const blocks = claude([assistant([{ type: 'text', text: 'Hello world' }])], turn);
+
+			expect(blocks).toEqual([
+				{ kind: 'text', text: ' world', providerMessageId: MSG, blockIndex: 0 },
+			]);
+		});
+
+		it('keeps two alike reasoning entries of one line as two blocks', () => {
+			const thinking = { type: 'thinking', thinking: 'Check the folder.', signature: 'sig' };
+			const blocks = claude([assistant([thinking, thinking])]);
+
+			expect(ofKind(blocks, 'thinking').map((block) => block.blockIndex)).toEqual([0, 1]);
+		});
+
 		it('keeps the same text in two different messages', () => {
 			const blocks = claude([
 				assistant([{ type: 'text', text: 'Done.' }], {}, { id: 'msg_a' }),

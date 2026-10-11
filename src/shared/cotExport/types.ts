@@ -176,6 +176,12 @@ export interface CotTurnStartPayload {
 	 */
 	consultedBy?: string;
 	/**
+	 * The id of the run in the command line's run ledger that this turn was
+	 * built from. Present only when `origin` is `cli`. The turn's `turnId` is
+	 * derived from it, so one run always gives the same turn file.
+	 */
+	cliRunId?: string;
+	/**
 	 * The provider conversation the turn continues, when one was known at
 	 * spawn. A turn that opens a new provider conversation has none yet.
 	 */

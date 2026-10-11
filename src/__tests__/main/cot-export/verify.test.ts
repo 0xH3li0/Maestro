@@ -330,6 +330,60 @@ describe('cot-export verifyAgentChain', () => {
 			expect(result.firstBreak).toMatchObject({ file: files[1], chainSeq: 0 });
 		});
 
+		it('reports two intact lines of one file that were swapped', async () => {
+			const { files, head } = await buildLog(folder);
+			const lines = readLines(files[0]);
+			const first = lineOf(files[0], 1);
+			const second = lineOf(files[0], 2);
+			[lines[first], lines[second]] = [lines[second], lines[first]];
+			writeLines(files[0], lines);
+
+			const result = await verifyAgentChain(folder, head);
+
+			// Every record is intact and every link holds. Only the order is wrong.
+			expect(result.ok).toBe(false);
+			expect(result.headMatches).toBe(true);
+			expect(result.recordsChecked).toBe(9);
+			expect(result.firstBreak).toMatchObject({ file: files[0], chainSeq: 1 });
+			expect(result.firstBreak?.reason).toBe(
+				'Record 1 comes after record 2 in its file, so the lines of the file were reordered.'
+			);
+		});
+
+		it('reports a record that was moved to the top of its file', async () => {
+			const { files, head } = await buildLog(folder);
+			const lines = readLines(files[1]);
+			const [moved] = lines.splice(lineOf(files[1], 6), 1);
+			lines.unshift(moved);
+			writeLines(files[1], lines);
+
+			const result = await verifyAgentChain(folder, head);
+
+			expect(result.ok).toBe(false);
+			// Positions 4 and 5 now come after 6. The earlier of them is named.
+			expect(result.firstBreak).toMatchObject({ file: files[1], chainSeq: 4 });
+			expect(result.firstBreak?.reason).toContain('were reordered');
+		});
+
+		it('names the earlier problem when a file was reordered and another was edited', async () => {
+			const { files, head } = await buildLog(folder);
+			// Reordered in the second file, edited in the first.
+			const later = readLines(files[1]);
+			const a = lineOf(files[1], 4);
+			const b = lineOf(files[1], 5);
+			[later[a], later[b]] = [later[b], later[a]];
+			writeLines(files[1], later);
+			const earlier = readLines(files[0]);
+			const edited = lineOf(files[0], 1);
+			earlier[edited] = earlier[edited].replace('a-one', 'a-ONE');
+			writeLines(files[0], earlier);
+
+			const result = await verifyAgentChain(folder, head);
+
+			expect(result.firstBreak).toMatchObject({ file: files[0], chainSeq: 1 });
+			expect(result.firstBreak?.reason).toContain('was changed after it was written');
+		});
+
 		it('reports a missing record when one line is removed from the middle of a file', async () => {
 			const { files, head } = await buildLog(folder);
 			const lines = readLines(files[1]);

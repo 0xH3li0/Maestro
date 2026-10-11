@@ -315,6 +315,49 @@ describe('validateAgentFolder', () => {
 		if (!inside.ok) expect(inside.reason).toMatch(/data folder/i);
 	});
 
+	it('rejects a folder that contains an agent workspace', () => {
+		fs.mkdirSync(path.join(workspace, 'app'), { recursive: true });
+		// The data folder lies somewhere else, so only the workspace is in the way.
+		const elsewhere = path.join(path.dirname(sandbox), 'cot-layout-elsewhere', 'data');
+		const withWorkspace = (dirs: string[]) => ({
+			agentDirs: dirs,
+			userDataPath: elsewhere,
+			homeDir: home,
+		});
+
+		// `sandbox` holds `workspace`: the year folders would lie right beside it.
+		const parent = validateAgentFolder(sandbox, withWorkspace([workspace]));
+		expect(parent.ok).toBe(false);
+		if (!parent.ok) expect(parent.reason).toMatch(/contains an agent workspace/);
+
+		// A workspace deeper down is contained just the same.
+		const deeper = validateAgentFolder(sandbox, withWorkspace([path.join(workspace, 'app')]));
+		expect(deeper.ok).toBe(false);
+		// With no workspace under it, the same folder is an ordinary one.
+		expect(validateAgentFolder(sandbox, withWorkspace([])).ok).toBe(true);
+	});
+
+	it('rejects a folder that contains the Maestro data folder, or the folder its agent list was moved to', () => {
+		const noWorkspaces = { agentDirs: [], userDataPath: userData, homeDir: home };
+		const parent = validateAgentFolder(sandbox, noWorkspaces);
+		expect(parent.ok).toBe(false);
+		if (!parent.ok) expect(parent.reason).toMatch(/contains the Maestro data folder/);
+
+		const synced = path.join(sandbox, 'cloud', 'maestro');
+		const moved = { agentDirs: [], userDataPath: path.join(home, 'data'), homeDir: home };
+		expect(
+			validateAgentFolder(path.join(sandbox, 'cloud'), { ...moved, syncPath: synced }).ok
+		).toBe(false);
+		// With nothing moved there, the same folder is an ordinary one.
+		expect(validateAgentFolder(path.join(sandbox, 'cloud'), moved).ok).toBe(true);
+	});
+
+	it('accepts a folder that lies beside a workspace and beside the data folder', () => {
+		expect(validateAgentFolder(path.join(sandbox, 'logs'), context()).ok).toBe(true);
+		// A name that only starts like the workspace's is another folder.
+		expect(validateAgentFolder(`${workspace}-logs`, context()).ok).toBe(true);
+	});
+
 	it('rejects a folder equal to or inside the folder the agent list was moved to', () => {
 		const synced = path.join(sandbox, 'synced');
 		const moved = { ...context(), syncPath: synced };

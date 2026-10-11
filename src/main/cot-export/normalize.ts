@@ -52,7 +52,13 @@
  * A block is known again by what it is: a tool call by its id, encrypted
  * reasoning by its hash, reasoning and reply text by their text. Text that
  * starts with all the text of an earlier block of the same kind in the same
- * message is that block, grown.
+ * message is that block, grown. Two entries of ONE line are never one block,
+ * though: a line that holds two reply blocks with the same text, or with one
+ * text that starts with the other, holds two blocks.
+ *
+ * A limit, stated plainly: two blocks of one message with the very same text
+ * that arrive on two lines cannot be told from one block sent twice, and are
+ * recorded once.
  *
  * REASONING WITH NO TEXT
  * The current Claude models return most of their reasoning with an empty
@@ -439,8 +445,11 @@ function claudeAssistantBlocks(
 		blocks.push({ kind: 'other', mark, length: 0, index: blocks.length });
 		return true;
 	};
+	// The blocks this line has already been matched to. A later entry of the
+	// same line is another block, whatever its text.
+	const claimed = new Set<MessageBlock>();
 	const pushProse = (kind: ProseKind, text: string): void => {
-		const piece = newProse(blocks, kind, text, nextIndex);
+		const piece = newProse(blocks, kind, text, nextIndex, claimed);
 		if (!piece) return;
 		if (kind === 'text') {
 			noteReply(turn, piece.text, piece.continues, parent);
@@ -533,18 +542,26 @@ function blockTypeLabel(type: unknown): string {
 /**
  * What a reasoning or reply block adds to the record: all of it for a new
  * block, the new end for a block that grew, and null for a repeat.
+ *
+ * `claimed` holds the blocks the current line was already matched to. They
+ * are passed over, and the block this text is matched to (or makes) joins
+ * them, so that two entries of one line are never taken for one block.
  */
 function newProse(
 	ledger: MessageBlock[],
 	kind: ProseKind,
 	text: string,
-	nextIndex: () => number
+	nextIndex: () => number,
+	claimed: Set<MessageBlock>
 ): { text: string; index: number; continues: boolean } | null {
 	const mark = sha256Hex(text);
 	let grown: MessageBlock | undefined;
 	for (const block of ledger) {
-		if (block.kind !== kind) continue;
-		if (block.length === text.length && block.mark === mark) return null;
+		if (block.kind !== kind || claimed.has(block)) continue;
+		if (block.length === text.length && block.mark === mark) {
+			claimed.add(block);
+			return null;
+		}
 		// The longest earlier block this text starts with is the one that grew.
 		if (
 			block.length < text.length &&
@@ -558,10 +575,13 @@ function newProse(
 		const added = text.slice(grown.length);
 		grown.mark = mark;
 		grown.length = text.length;
+		claimed.add(grown);
 		return { text: added, index: grown.index, continues: true };
 	}
 	const index = nextIndex();
-	ledger.push({ kind, mark, length: text.length, index });
+	const block: MessageBlock = { kind, mark, length: text.length, index };
+	ledger.push(block);
+	claimed.add(block);
 	return { text, index, continues: false };
 }
 

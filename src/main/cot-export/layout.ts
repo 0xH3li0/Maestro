@@ -257,15 +257,26 @@ function rejectionFor(resolved: string, ctx: AgentFolderContext): string | null 
 	if (ctx.homeDir && foldCase(resolved) === foldCase(resolveRealPath(ctx.homeDir))) {
 		return 'The folder is your home folder, which is too broad to hold an agent log.';
 	}
+	// Both ways round. A log folder that CONTAINS a workspace or the data
+	// folder puts its year folders beside them, where one `ls ..` lists them.
 	for (const dataDir of [ctx.userDataPath, ctx.syncPath]) {
-		if (dataDir && isSameOrInside(resolved, resolveRealPath(dataDir))) {
+		if (!dataDir) continue;
+		const real = resolveRealPath(dataDir);
+		if (isSameOrInside(resolved, real)) {
 			return 'The folder is inside the Maestro data folder, which agents can find from their environment.';
+		}
+		if (isSameOrInside(real, resolved)) {
+			return 'The folder contains the Maestro data folder, so the log would lie right beside it.';
 		}
 	}
 	for (const dir of ctx.agentDirs) {
 		if (!dir) continue;
-		if (isSameOrInside(resolved, resolveRealPath(dir))) {
+		const real = resolveRealPath(dir);
+		if (isSameOrInside(resolved, real)) {
 			return 'The folder is inside an agent workspace, where that agent could read it.';
+		}
+		if (isSameOrInside(real, resolved)) {
+			return 'The folder contains an agent workspace, so the log would lie right beside it.';
 		}
 	}
 	return null;
@@ -282,8 +293,9 @@ function describeFsError(action: string, error: unknown): string {
  *
  * It rejects a relative path, the root of a drive, the home folder itself,
  * any folder equal to or inside a folder ANY agent works in (an agent can
- * read another agent's workspace), and any folder equal to or inside Maestro's
- * data directory or the folder its agent list was moved to.
+ * read another agent's workspace), any folder equal to or inside Maestro's
+ * data directory or the folder its agent list was moved to, and any folder
+ * that contains one of those.
  *
  * Symlinks are followed before the checks, so a link that points into a
  * workspace is judged by where it lands. The folder is created when it does

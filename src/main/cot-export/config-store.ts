@@ -164,21 +164,11 @@ interface CotAgentEntry {
 	/** Chains in folders the agent used before. Kept so they can be verified. */
 	pastChains: CotPastChain[];
 	status: { lastWriteAt?: number; lastError?: CotLastError };
-	/** Which runs of the command line were taken into the log. Set when export is turned on. */
-	ledger?: CotLedgerCursor;
-}
-
-/**
- * How far the log has followed the runs the command line reports for one
- * agent (see `ledger-runs.ts`).
- */
-export interface CotLedgerCursor {
-	/** When export was last turned on. A run that started before it is not recorded. */
-	since: number;
-	/** When the newest recorded run ended. A run that ended before it is not recorded again. */
-	at: number;
-	/** The runs recorded that ended exactly at `at`, so that a tie is not taken twice. */
-	ids: string[];
+	/**
+	 * From when the runs of the command line are taken into the log (see
+	 * `ledger-runs.ts`). Set when export is turned on.
+	 */
+	ledger?: { since: number };
 }
 
 /** The state as it is sealed. */
@@ -319,12 +309,11 @@ export interface CotConfigStore {
 	/** The agents whose turns are recorded right now. */
 	listEnabledAgents(): string[];
 	/**
-	 * How far the log has followed the command line's runs for the agent, or
-	 * null for an agent that was never turned on.
+	 * When export was last turned on for the agent, in epoch milliseconds, or
+	 * null for an agent that was never turned on. A run of the command line
+	 * that started before it is not taken into the log.
 	 */
-	getLedgerCursor(agentId: string): CotLedgerCursor | null;
-	/** Moves that mark forward. `since` is kept. Ignored for an agent with no mark. */
-	setLedgerCursor(agentId: string, cursor: Pick<CotLedgerCursor, 'at' | 'ids'>): void;
+	getLedgerSince(agentId: string): number | null;
 	/** Saves now, without waiting for the clock. For the way out of the app. */
 	flushSync(): void;
 	/** Stops the clock that saves the file. `flushSync` still saves. For tests. */
@@ -397,15 +386,8 @@ function readEntry(raw: unknown): CotAgentEntry | null {
 		pastChains,
 		status,
 	};
-	if (isRecord(raw.ledger)) {
-		const { since, at, ids } = raw.ledger;
-		if (typeof since === 'number' && typeof at === 'number') {
-			entry.ledger = {
-				since,
-				at,
-				ids: Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [],
-			};
-		}
+	if (isRecord(raw.ledger) && typeof raw.ledger.since === 'number') {
+		entry.ledger = { since: raw.ledger.since };
 	}
 	return entry;
 }
@@ -542,11 +524,12 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			saveFailing = false;
 		} catch (error) {
 			// The state is still in memory, and the next beat tries again. Logged
-			// once per run of failures, under the file's own bland name, so a full
-			// disk does not fill the log as well.
+			// once per run of failures, so a full disk does not fill the log as
+			// well, and without the file's name: agents can read Maestro's logs,
+			// and the name is what would point one at the file.
 			if (!saveFailing) {
 				const code = (error as NodeJS.ErrnoException | null)?.code ?? 'unknown error';
-				logger.warn(`Could not save ${COT_CONFIG_STORE_NAME}.json (${code}).`, LOG_CONTEXT);
+				logger.warn(`Could not save a state file (${code}).`, LOG_CONTEXT);
 			}
 			saveFailing = true;
 		}
@@ -786,7 +769,7 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			};
 			// Turning export on starts the mark anew: a run of the command line
 			// that began before this moment is not recorded.
-			if (enabled && !entry.config.enabled) nextEntry.ledger = { since: at, at, ids: [] };
+			if (enabled && !entry.config.enabled) nextEntry.ledger = { since: at };
 			else if (entry.ledger) nextEntry.ledger = entry.ledger;
 			// Save first, and take the change into memory only once it is on
 			// disk: a switch that reads as on and is gone after a restart is
@@ -932,15 +915,8 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			return [...enabledAgents];
 		},
 
-		getLedgerCursor(agentId) {
-			const cursor = agents.get(agentId)?.ledger;
-			return cursor ? { since: cursor.since, at: cursor.at, ids: [...cursor.ids] } : null;
-		},
-
-		setLedgerCursor(agentId, cursor) {
-			const entry = agents.get(agentId);
-			if (!entry?.ledger) return;
-			entry.ledger = { since: entry.ledger.since, at: cursor.at, ids: [...cursor.ids] };
+		getLedgerSince(agentId) {
+			return agents.get(agentId)?.ledger?.since ?? null;
 		},
 
 		flushSync() {
