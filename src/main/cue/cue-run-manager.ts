@@ -249,6 +249,25 @@ export interface CueRunManager {
 		 */
 		autoRun?: CueAutoRunConfig
 	): void;
+	/**
+	 * Record an event that was skipped before anything was spawned (a
+	 * subscription's `gate` said no). Writes one `cue_events` row, born in its
+	 * final status, and returns the result for the activity log.
+	 *
+	 * It claims no concurrency slot, holds no self-overlap guard, and raises no
+	 * completion: nothing ran, so nothing downstream may fire off it.
+	 */
+	recordSkippedRun(skipped: {
+		sessionId: string;
+		event: CueEvent;
+		subscriptionName: string;
+		pipelineName?: string;
+		status: Extract<CueRunResult['status'], 'gated'>;
+		/** When the check that skipped it began (ms). Defaults to now. */
+		startedAt?: number;
+		chainRootId?: string;
+		parentEventId?: string;
+	}): CueRunResult;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
 	getActiveRuns(): CueRunResult[];
@@ -988,6 +1007,47 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				notify,
 				autoRun
 			);
+		},
+
+		recordSkippedRun(skipped): CueRunResult {
+			const runId = crypto.randomUUID();
+			const endedAtMs = Date.now();
+			const startedAtMs = Math.min(skipped.startedAt ?? endedAtMs, endedAtMs);
+			const result: CueRunResult = {
+				runId,
+				sessionId: skipped.sessionId,
+				sessionName: getSessionName(skipped.sessionId),
+				subscriptionName: skipped.subscriptionName,
+				pipelineName: skipped.pipelineName,
+				event: skipped.event,
+				status: skipped.status,
+				stdout: '',
+				stderr: '',
+				exitCode: null,
+				durationMs: endedAtMs - startedAtMs,
+				startedAt: new Date(startedAtMs).toISOString(),
+				endedAt: new Date(endedAtMs).toISOString(),
+			};
+			// Born finalized, like a stale queue drop: there is no `running`
+			// phase to flip out of. No output columns are written, which is what
+			// keeps a skipped event out of History (see
+			// CUE_EVENT_WORTH_SHOWING_SQL).
+			safeRecordCueEvent({
+				id: runId,
+				type: skipped.event.type,
+				triggerName: skipped.event.triggerName,
+				sessionId: skipped.sessionId,
+				subscriptionName: skipped.subscriptionName,
+				status: skipped.status,
+				payload: JSON.stringify(skipped.event.payload),
+				...buildLineageColumns({
+					runId,
+					chainRootId: skipped.chainRootId,
+					parentEventId: skipped.parentEventId,
+					pipelineName: skipped.pipelineName,
+				}),
+			});
+			return result;
 		},
 
 		stopRun(runId: string): boolean {

@@ -1,10 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
+
+const mockCaptureException = vi.fn();
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 import {
 	createCueDispatchService,
 	type CueDispatchServiceDeps,
+	type CueGatedDispatch,
 } from '../../../main/cue/cue-dispatch-service';
 import { createCueEvent } from '../../../main/cue/cue-types';
-import type { CueSubscription } from '../../../shared/cue';
+import type { CueGateCheck, CueGateEvaluator, CueSubscription } from '../../../shared/cue';
+import { readCueGateRecord } from '../../../shared/cue/gate';
 
 function makeDeps(
 	sessionsByName: Array<{ id: string; name: string }> = [
@@ -383,6 +391,303 @@ describe('createCueDispatchService', () => {
 
 			expect(onTriggerFired).toHaveBeenCalledTimes(1);
 			expect(onTriggerFired).toHaveBeenCalledWith('time.heartbeat');
+		});
+	});
+
+	// A gate is checked BEFORE a run is queued. The contract these guard: a
+	// "no" spawns nothing and records why; a gate whose model cannot answer
+	// fails open with a warning unless the subscription asked to skip; and a
+	// person pressing Play is never gated.
+	describe('gate', () => {
+		function makeGated(check: CueGateCheck | (() => Promise<CueGateCheck>)) {
+			const { deps, executeRun, logs } = makeDeps();
+			const evaluateGate = vi.fn<CueGateEvaluator>(
+				typeof check === 'function' ? check : async () => check
+			);
+			const onGated = vi.fn<(gated: CueGatedDispatch) => void>();
+			const payloads: unknown[] = [];
+			const svc = createCueDispatchService({
+				...deps,
+				evaluateGate,
+				onGated,
+				onLog: (level, message, data) => {
+					logs.push([level, message]);
+					if (data) payloads.push(data);
+				},
+			});
+			return { svc, executeRun, evaluateGate, onGated, logs, payloads };
+		}
+
+		const gatedSub = (overrides: Partial<CueSubscription> = {}) =>
+			makeSub({ gate: 'the comment reports a bug', ...overrides });
+
+		/** Let the awaited gate check and the dispatch behind it settle. */
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+		it('does not consult the evaluator for a subscription with no gate', () => {
+			const { svc, executeRun, evaluateGate } = makeGated({ status: 'fail', reason: 'no' });
+			const event = createCueEvent('time.heartbeat', 'my-sub');
+
+			expect(svc.dispatchSubscription('owner', makeSub(), event, 'src')).toBe(1);
+
+			expect(evaluateGate).not.toHaveBeenCalled();
+			// Ungated dispatch stays synchronous.
+			expect(executeRun).toHaveBeenCalledTimes(1);
+		});
+
+		it('starts the run when the gate passes, and stamps the verdict on the event', async () => {
+			const { svc, executeRun, evaluateGate, onGated } = makeGated({
+				status: 'pass',
+				reason: 'Reports a crash.',
+			});
+			const event = createCueEvent('github.issue', 'my-sub', { title: 'Crash on save' });
+
+			// Accepted: the verdict (a run, or a gated event) follows.
+			expect(svc.dispatchSubscription('owner', gatedSub(), event, 'src')).toBe(1);
+			expect(executeRun).not.toHaveBeenCalled();
+			await settle();
+
+			expect(evaluateGate).toHaveBeenCalledWith({
+				condition: 'the comment reports a bug',
+				event,
+				subscriptionName: 'my-sub',
+			});
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			expect(onGated).not.toHaveBeenCalled();
+			const dispatchedEvent = executeRun.mock.calls[0][2];
+			expect(dispatchedEvent.id).toBe(event.id);
+			expect(dispatchedEvent.payload.title).toBe('Crash on save');
+			expect(readCueGateRecord(dispatchedEvent.payload)).toEqual({
+				outcome: 'passed',
+				reason: 'Reports a crash.',
+			});
+		});
+
+		it('spawns nothing and records a gated event when the gate fails', async () => {
+			const { svc, executeRun, onGated, payloads } = makeGated({
+				status: 'fail',
+				reason: 'Praise only.',
+			});
+			const sub = gatedSub({ pipeline_name: 'Triage' });
+			const event = createCueEvent('github.issue', 'my-sub', { comments: 'Thanks!' });
+
+			svc.dispatchSubscription('owner', sub, event, 'src', 0, undefined, 'root-1', 'parent-1');
+			await settle();
+
+			expect(executeRun).not.toHaveBeenCalled();
+			expect(onGated).toHaveBeenCalledTimes(1);
+			const gated = onGated.mock.calls[0][0];
+			expect(gated.ownerSessionId).toBe('owner');
+			expect(gated.subscription).toBe(sub);
+			expect(gated.record).toEqual({ outcome: 'gated', reason: 'Praise only.' });
+			expect(gated.chainRootId).toBe('root-1');
+			expect(gated.parentEventId).toBe('parent-1');
+			expect(typeof gated.startedAt).toBe('number');
+			// The recorded event carries the reason, and the original payload.
+			expect(gated.event.payload.comments).toBe('Thanks!');
+			expect(readCueGateRecord(gated.event.payload)?.reason).toBe('Praise only.');
+			// A real verdict is not a warning.
+			expect(payloads).toEqual([]);
+		});
+
+		it('fails OPEN with a warning when the gate is unavailable (the default)', async () => {
+			const { svc, executeRun, onGated, payloads } = makeGated({
+				status: 'unavailable',
+				reason: 'Cue gate is off.',
+			});
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub(), event, 'src');
+			await settle();
+
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			expect(onGated).not.toHaveBeenCalled();
+			expect(readCueGateRecord(executeRun.mock.calls[0][2].payload)?.outcome).toBe('ran-unchecked');
+			expect(payloads).toEqual([
+				{
+					type: 'gateUnavailable',
+					sessionId: 'owner',
+					subscriptionName: 'my-sub',
+					message: expect.stringContaining('Cue gate is off.'),
+					ran: true,
+				},
+			]);
+		});
+
+		it('fails closed, still warning, with gate_on_unavailable: skip', async () => {
+			const { svc, executeRun, onGated, payloads } = makeGated({
+				status: 'unavailable',
+				reason: 'Model not installed.',
+			});
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub({ gate_on_unavailable: 'skip' }), event, 'src');
+			await settle();
+
+			expect(executeRun).not.toHaveBeenCalled();
+			expect(onGated).toHaveBeenCalledTimes(1);
+			expect(onGated.mock.calls[0][0].record.outcome).toBe('gated');
+			expect(onGated.mock.calls[0][0].record.reason).toContain('Model not installed.');
+			expect(payloads).toEqual([expect.objectContaining({ type: 'gateUnavailable', ran: false })]);
+		});
+
+		it('treats a runner with no evaluator as unavailable, not as ungated', async () => {
+			const { deps, executeRun } = makeDeps();
+			const onGated = vi.fn();
+			const svc = createCueDispatchService({ ...deps, onGated });
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub({ gate_on_unavailable: 'skip' }), event, 'src');
+			svc.dispatchSubscription('owner', gatedSub({ name: 'open-sub' }), event, 'src');
+			await settle();
+
+			// skip: nothing ran. Default: ran unchecked.
+			expect(onGated).toHaveBeenCalledTimes(1);
+			expect(onGated.mock.calls[0][0].record.reason).toMatch(/does not load Local Models/);
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			expect(executeRun.mock.calls[0][3]).toBe('open-sub');
+		});
+
+		it('treats an evaluator that throws as unavailable and reports it', async () => {
+			mockCaptureException.mockClear();
+			const { svc, executeRun } = makeGated(async () => {
+				throw new Error('engine bug');
+			});
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub(), event, 'src');
+			await settle();
+
+			// Fail open: the throw must not strand the event.
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			const record = readCueGateRecord(executeRun.mock.calls[0][2].payload);
+			expect(record?.outcome).toBe('ran-unchecked');
+			expect(record?.reason).toContain('engine bug');
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				expect.any(Error),
+				expect.objectContaining({ operation: 'cue:gate', subscriptionName: 'my-sub' })
+			);
+		});
+
+		it('does not gate a manual trigger', () => {
+			const { svc, executeRun, evaluateGate, logs } = makeGated({ status: 'fail', reason: 'no' });
+			const event = createCueEvent('github.issue', 'my-sub', { manual: true });
+
+			expect(svc.dispatchSubscription('owner', gatedSub(), event, 'manual')).toBe(1);
+
+			expect(evaluateGate).not.toHaveBeenCalled();
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			expect(logs.some(([, msg]) => /gate not applied to a manual trigger/.test(msg))).toBe(true);
+		});
+
+		it('checks the gate once for a fan-out, then runs every target', async () => {
+			const { svc, executeRun, evaluateGate } = makeGated({ status: 'pass', reason: 'ok' });
+			const sub = gatedSub({ fan_out: ['alpha', 'bravo'], prompt: 'p' });
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', sub, event, 'src');
+			await settle();
+
+			expect(evaluateGate).toHaveBeenCalledTimes(1);
+			expect(executeRun).toHaveBeenCalledTimes(2);
+		});
+
+		it('gates a fan-out as one event when the gate fails', async () => {
+			const { svc, executeRun, onGated } = makeGated({ status: 'fail', reason: 'no' });
+			const sub = gatedSub({ fan_out: ['alpha', 'bravo'], prompt: 'p' });
+
+			svc.dispatchSubscription('owner', sub, createCueEvent('github.issue', 'my-sub'), 'src');
+			await settle();
+
+			expect(executeRun).not.toHaveBeenCalled();
+			expect(onGated).toHaveBeenCalledTimes(1);
+		});
+
+		it('dispatches one subscription in arrival order even when checks finish out of order', async () => {
+			const resolvers: Array<(check: CueGateCheck) => void> = [];
+			const { svc, executeRun, evaluateGate } = makeGated(
+				() => new Promise<CueGateCheck>((resolve) => resolvers.push(resolve))
+			);
+			const first = createCueEvent('github.issue', 'my-sub', { n: 1 });
+			const second = createCueEvent('github.issue', 'my-sub', { n: 2 });
+
+			svc.dispatchSubscription('owner', gatedSub(), first, 'src');
+			svc.dispatchSubscription('owner', gatedSub(), second, 'src');
+			await settle();
+
+			// The second check does not start until the first has dispatched.
+			expect(evaluateGate).toHaveBeenCalledTimes(1);
+			resolvers[0]({ status: 'pass', reason: 'ok' });
+			await settle();
+			expect(evaluateGate).toHaveBeenCalledTimes(2);
+			resolvers[1]({ status: 'pass', reason: 'ok' });
+			await settle();
+
+			expect(executeRun.mock.calls.map((call) => call[2].payload.n)).toEqual([1, 2]);
+		});
+
+		it('checks different subscriptions concurrently', async () => {
+			const { svc, evaluateGate } = makeGated(() => new Promise<CueGateCheck>(() => {}));
+
+			svc.dispatchSubscription(
+				'owner',
+				gatedSub({ name: 'a' }),
+				createCueEvent('github.issue', 'a'),
+				'src'
+			);
+			svc.dispatchSubscription(
+				'owner',
+				gatedSub({ name: 'b' }),
+				createCueEvent('github.issue', 'b'),
+				'src'
+			);
+			await settle();
+
+			expect(evaluateGate).toHaveBeenCalledTimes(2);
+		});
+
+		it('drops the dispatch when the engine stopped while the gate was being checked', async () => {
+			const { deps, executeRun, logs } = makeDeps();
+			const onGated = vi.fn();
+			let active = true;
+			const svc = createCueDispatchService({
+				...deps,
+				evaluateGate: async () => ({ status: 'pass', reason: 'ok' }),
+				onGated,
+				isActive: () => active,
+			});
+
+			svc.dispatchSubscription(
+				'owner',
+				gatedSub(),
+				createCueEvent('github.issue', 'my-sub'),
+				'src'
+			);
+			active = false;
+			await settle();
+
+			expect(executeRun).not.toHaveBeenCalled();
+			expect(onGated).not.toHaveBeenCalled();
+			expect(logs.some(([, msg]) => /after the engine stopped/.test(msg))).toBe(true);
+		});
+
+		it('still fires trigger telemetry hooks for a gated dispatch', () => {
+			const { deps } = makeDeps();
+			const onTriggerFired = vi.fn();
+			const svc = createCueDispatchService({
+				...deps,
+				onTriggerFired,
+				evaluateGate: async () => ({ status: 'fail', reason: 'no' }),
+			});
+
+			svc.dispatchSubscription(
+				'owner',
+				gatedSub(),
+				createCueEvent('github.issue', 'my-sub'),
+				'src'
+			);
+
+			expect(onTriggerFired).toHaveBeenCalledWith('github.issue');
 		});
 	});
 });

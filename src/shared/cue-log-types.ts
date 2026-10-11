@@ -38,6 +38,33 @@ export type CueLogPayload =
 			subscriptionName: string;
 	  }
 	| {
+			/**
+			 * A subscription's `gate` skipped an event: nothing was spawned, and
+			 * a `gated` row was recorded with the reason. Not a `runFinished`,
+			 * because no run started, so it must not count as one.
+			 */
+			type: 'runGated';
+			runId: string;
+			sessionId: string;
+			subscriptionName: string;
+			reason: string;
+	  }
+	| {
+			/**
+			 * A subscription's `gate` could not be checked (the `cue-gate` task
+			 * is off, its model is not installed, its server is down). `ran`
+			 * says which way the subscription's `gate_on_unavailable` policy
+			 * went. Raised to the user as a sticky notice even with the Cue
+			 * modal closed: an unchecked gate is either spending turns the gate
+			 * was meant to save, or skipping events the user expects handled.
+			 */
+			type: 'gateUnavailable';
+			sessionId: string;
+			subscriptionName: string;
+			message: string;
+			ran: boolean;
+	  }
+	| {
 			type: 'queueOverflow';
 			sessionId: string;
 			sessionName: string;

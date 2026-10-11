@@ -77,6 +77,7 @@ import {
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
+import type { CueGateEvaluator } from '../../shared/cue/gate';
 import {
 	acquireCueEngineLock,
 	releaseCueEngineLock,
@@ -132,6 +133,15 @@ export interface CueEngineDeps {
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+	/**
+	 * Answers a subscription's `gate` condition against an event (the `cue-gate`
+	 * Local Models task). Injected so the engine never imports the model stack:
+	 * the desktop passes `evaluateCueGate`, the standalone runner passes
+	 * nothing. Omitted means a gate cannot be checked in this process; the
+	 * subscription's `gate_on_unavailable` policy then decides, and the default
+	 * is to run with a warning.
+	 */
+	evaluateGate?: CueGateEvaluator;
 	/**
 	 * Which kind of process this engine instance runs in - `'desktop'`
 	 * (default, every existing caller) or `'standalone'` (the headless
@@ -438,6 +448,36 @@ export class CueEngine {
 			},
 			onLog: meteredOnLog,
 			onTriggerFired: deps.onTriggerFired,
+			evaluateGate: deps.evaluateGate,
+			isActive: () => this.enabled,
+			onGated: (gated) => {
+				// The run manager owns `cue_events` writes and their stats
+				// lineage; the engine owns the activity log.
+				const result = this.runManager.recordSkippedRun({
+					sessionId: gated.ownerSessionId,
+					event: gated.event,
+					subscriptionName: gated.subscription.name,
+					pipelineName: gated.subscription.pipeline_name,
+					status: 'gated',
+					startedAt: gated.startedAt,
+					chainRootId: gated.chainRootId,
+					parentEventId: gated.parentEventId,
+				});
+				this.pushActivityLog(result);
+				// A typed payload, so the renderer refreshes the activity list.
+				// Not `runFinished`: nothing ran, and it must not count as a run.
+				meteredOnLog('cue', `[CUE] Run gated: ${gated.subscription.name}`, {
+					type: 'runGated',
+					runId: result.runId,
+					sessionId: result.sessionId,
+					subscriptionName: result.subscriptionName,
+					reason: gated.record.reason,
+				} satisfies CueLogPayload);
+				// No completion is raised: nothing ran, so no chain step may
+				// fire off it, and no Conductor time is credited. A one-shot is
+				// still consumed (see maybeSelfDestructOnce).
+				this.maybeSelfDestructOnce(gated.ownerSessionId, result, gated.subscription.name);
+			},
 		});
 		this.sessionRuntimeService = createCueSessionRuntimeService({
 			enabled: () => this.enabled,
@@ -1234,6 +1274,9 @@ export class CueEngine {
 			case 'runStopped':
 				this.metrics.increment('runsStopped');
 				break;
+			case 'runGated':
+				this.metrics.increment('runsGated');
+				break;
 			case 'queueOverflow':
 				this.metrics.increment('eventsDropped');
 				break;
@@ -1464,6 +1507,10 @@ export class CueEngine {
 	 *  - `failed` / `timeout` → self-destruct unless the sub set
 	 *                  `self_destruct_on_failure: false` (default true).
 	 *  - `stopped`    → never; the manual-stop callback never reaches here.
+	 *  - `gated`      → always self-destruct. The one-shot's gate was asked at
+	 *                  its instant and said no, so the task is consumed. Left
+	 *                  in place it would fire again on every reload inside its
+	 *                  grace window and ask a model the same question each time.
 	 *
 	 * No-op for non-`time.once` runs and when the sub is already absent from
 	 * the in-memory config (e.g. removed by a hot-reload between fire and
@@ -1481,9 +1528,11 @@ export class CueEngine {
 		const sub = state?.config.subscriptions.find((s) => s.name === subscriptionName);
 		if (!sub) return;
 
-		let reason: 'completed' | 'failed';
+		let reason: 'completed' | 'failed' | 'gated';
 		if (result.status === 'completed') {
 			reason = 'completed';
+		} else if (result.status === 'gated') {
+			reason = 'gated';
 		} else if (
 			(result.status === 'failed' || result.status === 'timeout') &&
 			sub.self_destruct_on_failure !== false

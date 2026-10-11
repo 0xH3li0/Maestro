@@ -629,13 +629,14 @@ registers its own yet.
 A consumer calls `runLocalTask()` and decides what each verdict means for its own surface. None
 falls back to another source.
 
-| Task          | Consumer                                                                                      | `off`                       | `unavailable`                                                   |
-| ------------- | --------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------- |
-| `tab-naming`  | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                   | Tab stays unnamed           | Skips; one yellow toast per agent (`task-notices.ts`)           |
-| `tab-summary` | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset | Keeps the agent path        | Compaction fails with the reason; the participant summary skips |
-| `ai-command`  | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                   | Refuses, names the setting  | Fails with the reason in the composer                           |
-| `git-drafts`  | `draftPullRequest()` in `local-models/git-drafts.ts`                                          | Button hidden (the default) | Button disabled with the readiness reason                       |
-| `tab-cleanup` | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                        | Modal says so (the default) | Modal shows the reason in place of the list                     |
+| Task          | Consumer                                                                                      | `off`                                                                 | `unavailable`                                                                               |
+| ------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `tab-naming`  | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                   | Tab stays unnamed                                                     | Skips; one yellow toast per agent (`task-notices.ts`)                                       |
+| `tab-summary` | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset | Keeps the agent path                                                  | Compaction fails with the reason; the participant summary skips                             |
+| `ai-command`  | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                   | Refuses, names the setting                                            | Fails with the reason in the composer                                                       |
+| `git-drafts`  | `draftPullRequest()` in `local-models/git-drafts.ts`                                          | Button hidden (the default)                                           | Button disabled with the readiness reason                                                   |
+| `tab-cleanup` | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                        | Modal says so (the default)                                           | Modal shows the reason in place of the list                                                 |
+| `cue-gate`    | `evaluateCueGate()` in `local-models/cue-gate.ts`, called by the Cue dispatch service         | Gate unavailable (the default): the run starts and the user is warned | The same: fail open with a warning, unless the subscription set `gate_on_unavailable: skip` |
 
 `git-drafts` is the one consumer with no agent path. It reads `git log --oneline base..HEAD` and
 `git diff --stat base...HEAD` from a LOCAL checkout (Create Pull Request is local-only), caps both
@@ -709,6 +710,75 @@ has no `--apply`; it prints the ordinary verb for each suggestion (`tabCleanupAp
 Transports: `localModels:suggestTabCleanup` (no argument is read) and the WS bridge message
 `local_models_tab_cleanup`, both calling `suggestTabCleanup()`. The stores are handed over once at
 startup by `configureTabCleanup()` in `src/main/index.ts`.
+
+### The Cue gate: `evaluateCueGate()`
+
+A Cue subscription may carry a `gate`: a condition in plain language, such as
+`gate: "the comment asks for a code change or reports a bug"`. Before Cue starts a run for an
+event, the `cue-gate` task answers yes or no against the event payload. A "no" skips the run and
+records a `gated` event with the reason. The point is cost: Cue events are most of what Maestro
+runs, and most of them do not need a cloud turn.
+
+```mermaid
+flowchart LR
+	T[trigger source] -->|event passed filter| D[dispatchSubscription]
+	D -->|no gate, or manual trigger| R[run manager]
+	D -->|gate set| Q[per-subscription queue]
+	Q --> E[evaluateCueGate]
+	E -->|CueGateCheck| P[resolveCueGateDecision]
+	P -->|run| R
+	P -->|skip| G[recordSkippedRun: status gated]
+	G --> A[activity log + cue_events]
+	P -.->|unavailable| W[gateUnavailable: sticky notice]
+```
+
+| Piece                                            | File                                         |
+| ------------------------------------------------ | -------------------------------------------- |
+| Contract, caps, policy, event record (pure)      | `src/shared/cue/gate.ts`                     |
+| The model call                                   | `src/main/local-models/cue-gate.ts`          |
+| Prompt (`cue-gate-local`)                        | `src/prompts/cue-gate-local.md`              |
+| Where a gate is applied                          | `src/main/cue/cue-dispatch-service.ts`       |
+| Recording a skipped event                        | `recordSkippedRun()` in `cue-run-manager.ts` |
+| Activity log entry, metric, one-shot consumption | `onGated` in `src/main/cue/cue-engine.ts`    |
+
+**Failure policy.** A gate whose model cannot answer fails OPEN with a visible warning: the run
+starts, the event is stamped `ran-unchecked`, and a `gateUnavailable` log payload raises a sticky
+notice (coalesced per agent for 30 minutes in `src/main/index.ts`). A missing gate model must not
+silently stop the user's automation. `gate_on_unavailable: skip` is the per-subscription opt-in to
+fail closed. Everything that is not a verdict is "unavailable": the task is `off` (the default), the
+model is not installed, the server is down, the call timed out (`CUE_GATE_TIMEOUT_MS`), the reply was
+not a yes or no, the evaluator threw, or the engine has no evaluator at all. `resolveCueGateDecision()`
+is the one place the policy lives.
+
+**The engine never imports the model stack.** The evaluator is injected as
+`CueEngineDeps.evaluateGate`. The desktop passes `evaluateCueGate`; the standalone runner
+(`maestro-cli cue engine`) passes nothing, so a gate there is unavailable and follows the policy.
+Absent is not "no gate".
+
+**What the model sees.** `formatCueGateInput()` sends the condition, the event type, and the payload
+as compact JSON cut by `compactCueGateEvent()`: each string to 1,500 characters first (so one long
+body cannot push every later field out), lists to 20 items, nesting to 4 levels, then the whole
+document to 6,000 characters. The reply schema (`CUE_GATE_REPLY_SCHEMA`) is `{ reason, pass }` with
+the reason first, so the model states what it saw before it commits. The prompt tells it to answer
+`true` when the event does not say enough: a run that was not needed costs little, and a skipped
+run that was needed is lost.
+
+**A gate is not a security control.** The payload is untrusted text and can argue its way past a
+yes/no model. The prompt-injection screen is the control for hostile text.
+
+**`gated` is a run status that is not a run.** Nothing is spawned, no concurrency slot is claimed,
+no completion is raised (so no chain step fires and no Conductor time is credited), and no
+`runStarted` / `runFinished` payload is emitted (`runGated` is, and counts `runsGated`). Readers of
+`cue_events` leave it out of anything that counts runs: `CUE_EVENT_WORTH_SHOWING_SQL` (History),
+the group `failure_count`, the Cue stats aggregation, pipeline health, and the dashboard's average
+runtime all skip it (`isCueRunSkipped()`). The gate's verdict rides the event payload under `gate`
+(`withCueGateRecord()` / `readCueGateRecord()`), which is what `cue_events` keeps, so the Activity
+Log shows the reason after a restart too.
+
+**Order and stop.** A check is awaited, so the dispatch service chains checks per subscription
+(`createKeyedWriteQueue()`): two events for one subscription start their runs in arrival order.
+`dispatchSubscription()` still returns synchronously, reporting a gated dispatch as accepted. If the
+engine stops while a check is in flight, the dispatch is dropped. A manual trigger is never gated.
 
 ## Related
 

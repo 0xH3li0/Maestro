@@ -3,6 +3,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
+import { readCueGateRecord } from '../../../shared/cue/gate';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -147,16 +148,25 @@ export function registerCueCallbacks(
 			sessionId: r.sessionId,
 			timestamp: Date.parse(r.startedAt) || 0,
 			// Map engine-side status (`timeout` / `stopped` are terminal
-			// failure variants) onto the web-facing four-state enum.
+			// failure variants) onto the web-facing enum. `gated` keeps its own
+			// value: the event was skipped by its gate, which is neither a run
+			// that failed nor one still waiting to start.
 			status:
 				r.status === 'completed'
 					? 'completed'
 					: r.status === 'running'
 						? 'running'
-						: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
-							? 'failed'
-							: 'triggered',
-			result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
+						: r.status === 'gated'
+							? 'gated'
+							: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
+								? 'failed'
+								: 'triggered',
+			result:
+				r.status === 'completed'
+					? r.stdout || undefined
+					: r.status === 'gated'
+						? readCueGateRecord(r.event.payload)?.reason || undefined
+						: r.stderr || undefined,
 			duration: r.durationMs,
 		}));
 		return entries;

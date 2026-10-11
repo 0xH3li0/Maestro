@@ -58,7 +58,11 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `run-${++uuidCounter}`),
 }));
 
-import { updateCueEventStatus, safeUpdateCueEventStatus } from '../../../main/cue/cue-db';
+import {
+	updateCueEventStatus,
+	safeRecordCueEvent,
+	safeUpdateCueEventStatus,
+} from '../../../main/cue/cue-db';
 import {
 	createCueRunManager,
 	type CueRunManagerDeps,
@@ -1760,6 +1764,96 @@ describe('createCueRunManager', () => {
 				expect.objectContaining({ subscriptionName: 'sub-incoming' })
 			);
 			expect(manager.getQueueStatus().size).toBe(0);
+		});
+	});
+
+	// A gated event never ran: it is recorded, and nothing else about a run
+	// (a slot, a sleep block, a completion) may happen for it.
+	describe('recordSkippedRun', () => {
+		it('writes one finalized gated row and returns the result for the activity log', () => {
+			const deps = createDeps({ getUsageStatsEnabled: () => true });
+			const manager = createCueRunManager(deps);
+			const event = createEvent({
+				payload: { title: 'x', gate: { outcome: 'gated', reason: 'Praise only.' } },
+			});
+			vi.setSystemTime(new Date('2026-10-11T12:00:05.000Z'));
+
+			const result = manager.recordSkippedRun({
+				sessionId: 'session-1',
+				event,
+				subscriptionName: 'triage',
+				pipelineName: 'Triage',
+				status: 'gated',
+				startedAt: new Date('2026-10-11T12:00:03.000Z').getTime(),
+				parentEventId: 'parent-1',
+			});
+
+			expect(result).toMatchObject({
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'triage',
+				pipelineName: 'Triage',
+				status: 'gated',
+				event,
+				stdout: '',
+				stderr: '',
+				exitCode: null,
+				durationMs: 2000,
+				startedAt: '2026-10-11T12:00:03.000Z',
+				endedAt: '2026-10-11T12:00:05.000Z',
+			});
+			expect(safeRecordCueEvent).toHaveBeenCalledTimes(1);
+			expect(safeRecordCueEvent).toHaveBeenCalledWith({
+				id: result.runId,
+				type: event.type,
+				triggerName: event.triggerName,
+				sessionId: 'session-1',
+				subscriptionName: 'triage',
+				status: 'gated',
+				payload: JSON.stringify(event.payload),
+				pipelineId: 'Triage',
+				// A skipped root is its own chain root, like any root event.
+				chainRootId: result.runId,
+				parentEventId: 'parent-1',
+			});
+		});
+
+		it('leaves the stats lineage blank when usage stats are off', () => {
+			const manager = createCueRunManager(createDeps());
+
+			manager.recordSkippedRun({
+				sessionId: 'session-1',
+				event: createEvent(),
+				subscriptionName: 'triage',
+				pipelineName: 'Triage',
+				status: 'gated',
+			});
+
+			expect(safeRecordCueEvent).toHaveBeenCalledWith(
+				expect.objectContaining({ pipelineId: null, chainRootId: null, parentEventId: null })
+			);
+		});
+
+		it('claims no slot, blocks no sleep, and raises no completion', () => {
+			const deps = createDeps();
+			const manager = createCueRunManager(deps);
+
+			manager.recordSkippedRun({
+				sessionId: 'session-1',
+				event: createEvent(),
+				subscriptionName: 'triage',
+				status: 'gated',
+			});
+
+			expect(deps.onCueRun).not.toHaveBeenCalled();
+			expect(deps.onRunCompleted).not.toHaveBeenCalled();
+			expect(deps.onRunStopped).not.toHaveBeenCalled();
+			expect(deps.onPreventSleep).not.toHaveBeenCalled();
+			expect(manager.getActiveRuns()).toEqual([]);
+			expect(manager.getActiveRunCount('session-1')).toBe(0);
+			// The slot is free: a real run for the same subscription starts at once.
+			manager.execute('session-1', 'p', createEvent(), 'triage');
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 		});
 	});
 });

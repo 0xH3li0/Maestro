@@ -14,6 +14,8 @@ export interface CueMetrics {
 	runsFailed: number;
 	runsTimedOut: number;
 	runsStopped: number;
+	/** Events a subscription's `gate` skipped. Not runs: nothing was spawned. */
+	runsGated: number;
 	eventsDropped: number;
 	queueRestored: number;
 	fanInTimeouts: number;
@@ -43,6 +45,7 @@ function zero(): CueMetrics {
 		runsFailed: 0,
 		runsTimedOut: 0,
 		runsStopped: 0,
+		runsGated: 0,
 		eventsDropped: 0,
 		queueRestored: 0,
 		fanInTimeouts: 0,

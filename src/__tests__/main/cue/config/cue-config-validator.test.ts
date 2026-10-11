@@ -455,3 +455,45 @@ describe('validateSubscription - github.label', () => {
 		).toBe(true);
 	});
 });
+
+describe('validateSubscription - gate', () => {
+	const base = {
+		name: 'triage',
+		event: 'github.issue',
+		prompt: 'Triage it',
+		repo: 'RunMaestro/Maestro',
+	};
+
+	it('accepts a gate, with or without a policy', () => {
+		expect(errs({ ...base, gate: 'the comment reports a bug' })).toEqual([]);
+		expect(errs({ ...base, gate: 'x', gate_on_unavailable: 'run' })).toEqual([]);
+		expect(errs({ ...base, gate: 'x', gate_on_unavailable: 'skip' })).toEqual([]);
+	});
+
+	it('accepts a gate on any event type', () => {
+		expect(
+			errs({ name: 'beat', event: 'time.heartbeat', prompt: 'p', interval_minutes: 5, gate: 'x' })
+		).toEqual([]);
+	});
+
+	it('rejects a gate that is not a non-empty string', () => {
+		expect(errs({ ...base, gate: '' }).join('\n')).toMatch(/"gate" must be a non-empty string/);
+		expect(errs({ ...base, gate: '   ' }).join('\n')).toMatch(/"gate" must be a non-empty string/);
+		expect(errs({ ...base, gate: true }).join('\n')).toMatch(/"gate" must be a non-empty string/);
+	});
+
+	it('rejects a gate longer than a condition needs to be', () => {
+		expect(errs({ ...base, gate: 'x'.repeat(1001) }).join('\n')).toMatch(
+			/"gate" must be at most 1000 characters/
+		);
+		expect(errs({ ...base, gate: 'x'.repeat(1000) })).toEqual([]);
+	});
+
+	it('rejects an unknown gate_on_unavailable, naming the choices', () => {
+		const messages = errs({ ...base, gate: 'x', gate_on_unavailable: 'explode' }).join('\n');
+		expect(messages).toMatch(/"gate_on_unavailable" must be one of: run, skip/);
+		expect(errs({ ...base, gate: 'x', gate_on_unavailable: true }).join('\n')).toMatch(
+			/"gate_on_unavailable" must be one of/
+		);
+	});
+});

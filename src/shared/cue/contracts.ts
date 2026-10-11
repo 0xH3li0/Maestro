@@ -5,6 +5,7 @@
  */
 
 import type { TaskSelectionMode, UsageStats } from '../types';
+import type { CueGateOnUnavailable } from './gate';
 
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -336,6 +337,19 @@ export interface CueSubscription {
 	 *  in its own file instead of bloating the YAML. */
 	fan_out_prompt_files?: string[];
 	filter?: Record<string, string | number | boolean>;
+	/** A condition in plain language that the event must meet before a run
+	 *  starts, such as "the comment asks for a code change or reports a bug".
+	 *  The `cue-gate` Local Models task answers it against the event payload;
+	 *  a "no" skips the run and records a `gated` event with the reason.
+	 *  Unlike `filter`, which drops an event before anything sees it, a gated
+	 *  event is kept in the activity log. Manual triggers are not gated. A cost
+	 *  control, not a security control: see `src/shared/cue/gate.ts`. */
+	gate?: string;
+	/** What a `gate` does when its model cannot answer (the task is off, the
+	 *  model is not installed, the server is down). `'run'` (the default)
+	 *  starts the run and warns the user; `'skip'` records a `gated` event
+	 *  instead. Ignored without a `gate`. */
+	gate_on_unavailable?: CueGateOnUnavailable;
 	repo?: string;
 	poll_minutes?: number;
 	gh_state?: CueGitHubState;
@@ -490,8 +504,21 @@ export interface CueEvent {
 	payload: Record<string, unknown>;
 }
 
-/** Status of a Cue run */
-export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';
+/**
+ * Status of a Cue run.
+ *
+ * `gated` is the one status that is not a run: the subscription's `gate` said
+ * the event does not need one, so nothing was spawned. It is recorded so the
+ * activity list can show the event and the reason. Code that counts runs,
+ * failures, or "the last run" must leave `gated` out (see
+ * {@link isCueRunSkipped}).
+ */
+export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'stopped' | 'gated';
+
+/** Whether a status records an event that was skipped before anything was spawned. */
+export function isCueRunSkipped(status: CueRunStatus | string): boolean {
+	return status === 'gated';
+}
 
 /** Result of a completed (or failed/timed-out) Cue run */
 export interface CueRunResult {

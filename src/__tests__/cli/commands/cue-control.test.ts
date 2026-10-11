@@ -119,6 +119,48 @@ describe('cue enable/disable/activity', () => {
 		await expect(cueActivity({})).rejects.toThrow('__exit__');
 	});
 
+	it('activity prints why a gate skipped an event', async () => {
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		mockBridge({
+			get_cue_activity: {
+				type: 'cue_activity',
+				entries: [
+					{
+						id: 'r1',
+						subscriptionId: 'a1::p::on-pr',
+						subscriptionName: 'on-pr',
+						eventType: 'github.issue',
+						sessionId: 'a1',
+						timestamp: Date.parse('2026-10-11T12:00:00Z'),
+						status: 'gated',
+						result: 'The comment is praise and asks for nothing.',
+						duration: 40,
+					},
+					{
+						id: 'r2',
+						subscriptionId: 'a1::p::on-pr',
+						subscriptionName: 'on-pr',
+						eventType: 'github.issue',
+						sessionId: 'a1',
+						timestamp: Date.parse('2026-10-11T12:01:00Z'),
+						status: 'completed',
+						result: 'Opened a fix.',
+						duration: 9000,
+					},
+				],
+			},
+		});
+
+		await cueActivity({});
+
+		const lines = logSpy.mock.calls.map((call) => String(call[0]));
+		expect(lines[0]).toMatch(/gated\s+on-pr\s+\[github\.issue\]/);
+		expect(lines[0]).toContain('- The comment is praise and asks for nothing.');
+		// A run's output is not echoed on the one-line form.
+		expect(lines[1]).toMatch(/completed\s+on-pr/);
+		expect(lines[1]).not.toContain('Opened a fix.');
+	});
+
 	it('activity rejects a bad --limit before connecting', async () => {
 		const sent = mockBridge({});
 		await expect(cueActivity({ limit: 'lots' })).rejects.toThrow('__exit__');

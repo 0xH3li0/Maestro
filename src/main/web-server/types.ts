@@ -1400,7 +1400,9 @@ export interface CueActivityEntry {
 	eventType: string;
 	sessionId: string;
 	timestamp: number;
-	status: 'triggered' | 'running' | 'completed' | 'failed';
+	/** `gated`: the subscription's gate skipped the event and nothing ran;
+	 *  `result` then carries the gate's reason. */
+	status: 'triggered' | 'running' | 'completed' | 'failed' | 'gated';
 	result?: string;
 	duration?: number;
 }

@@ -60,5 +60,12 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		webhook_signature_header: sub.webhook?.signature_header ?? null,
 		label: sub.label ?? null,
 		filter,
+		// Two subs that differ only in their gate are different triggers: one
+		// fires on every event and the other on the events its condition
+		// admits. Collapsing them would let the next save rewrite both to
+		// whichever gate won, and would make Play fire a sub a real event
+		// would have gated.
+		gate: sub.gate ?? null,
+		gate_on_unavailable: sub.gate_on_unavailable ?? null,
 	});
 }

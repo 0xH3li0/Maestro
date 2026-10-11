@@ -152,6 +152,17 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 	if (triggerData.customLabel) {
 		sub.label = triggerData.customLabel;
 	}
+	// The gate is event-type independent. Every sub a trigger fans out into
+	// re-carries it, the same as the rest of the trigger config, so each
+	// branch is gated and `triggerGroupKey` still groups them on load. The
+	// policy is only written beside a gate: alone it means nothing.
+	const gate = triggerData.config.gate?.trim();
+	if (gate) {
+		sub.gate = gate;
+		if (triggerData.config.gate_on_unavailable) {
+			sub.gate_on_unavailable = triggerData.config.gate_on_unavailable;
+		}
+	}
 	switch (triggerData.eventType) {
 		case 'time.heartbeat':
 			if (triggerData.config.interval_minutes) {
@@ -985,6 +996,8 @@ export function pipelinesToSubscriptionRecords(
 				record.fan_out_prompts = sub.fan_out_prompts;
 			}
 			if (sub.filter != null) record.filter = sub.filter;
+			if (sub.gate != null) record.gate = sub.gate;
+			if (sub.gate_on_unavailable != null) record.gate_on_unavailable = sub.gate_on_unavailable;
 			if (sub.fan_in_timeout_minutes != null)
 				record.fan_in_timeout_minutes = sub.fan_in_timeout_minutes;
 			if (sub.fan_in_timeout_on_fail != null)

@@ -66,6 +66,13 @@ export interface TriggerNodeData {
 		repo?: string;
 		poll_minutes?: number;
 		filter?: Record<string, string | number | boolean>;
+		/** Any event type: a condition the event must meet before a run starts,
+		 *  answered by the `cue-gate` Local Models task. See
+		 *  `CueSubscription.gate`. */
+		gate?: string;
+		/** What the gate does when its model cannot answer. See
+		 *  `CueSubscription.gate_on_unavailable`. */
+		gate_on_unavailable?: 'run' | 'skip';
 		/** `github.label` only: pull requests, issues, or both. See
 		 *  `CueSubscription.gh_label_target`. */
 		gh_label_target?: 'pr' | 'issue' | 'both';

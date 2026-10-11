@@ -344,6 +344,25 @@ subscriptions:
 
 **`time.once`:** `{{CUE_FIRE_AT}}` (the originally-scheduled fire timestamp, ISO-8601 with timezone - handy for "you asked me to remind you at {{CUE_FIRE_AT}}" phrasing in notify messages or prompts)
 
+### Gate (`gate`)
+
+Any subscription may carry a `gate`: one sentence in plain language that the event must meet before a run starts. A local model (the **Cue gate** task in Settings > Local Models) reads the event payload and answers yes or no. A "no" starts nothing and records a `gated` event with the reason in the Activity Log.
+
+```yaml
+- name: triage-comments
+  event: github.issue
+  retrigger_on_comments: true
+  gate: the newest comment asks for a code change or reports a bug
+  gate_on_unavailable: run # default. "skip" records a gated event instead of running unchecked
+  prompt: Handle the request in issue {{CUE_GH_NUMBER}}.
+```
+
+- Use `filter` for what a field comparison can decide, `gate` for what needs reading. `filter` runs first and leaves no record; a gated event is recorded.
+- The gate is a cost control. It saves agent turns on events that do not need one. It is not a security check.
+- If the gate model cannot answer (task off, model missing, server down), the run starts and the user is warned, unless `gate_on_unavailable: skip`.
+- A manual trigger (`cue trigger`, Play) is never gated.
+- Suggest a gate only when the user has (or wants) a model assigned to the Cue gate task; without one, every event runs unchecked and raises a warning.
+
 ### CLI
 
 ```bash

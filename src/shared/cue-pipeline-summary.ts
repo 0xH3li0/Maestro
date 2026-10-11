@@ -12,7 +12,7 @@
  *   - `derivePipelineHealth(...)`   → whether it is working (status + detail)
  */
 
-import { normalizeWebhookPath, type CueRunResult } from './cue/contracts';
+import { isCueRunSkipped, normalizeWebhookPath, type CueRunResult } from './cue/contracts';
 import { parseSubscriptionName, CUE_EVENT_LABELS } from './cue/cue-summary';
 import type {
 	AgentNodeData,
@@ -445,8 +445,15 @@ export function derivePipelineHealth(
 
 	// The activity log arrives newest-first from the engine, but sort defensively
 	// so a re-ordered or merged feed can't make "last run" mean "oldest run".
+	// A `gated` entry is an event the gate skipped, not a run, so it can be
+	// neither "the last run" nor one of the runs that succeeded.
 	const finished = ctx.activityLog
-		.filter((r) => r.status !== 'running' && runBelongsToPipeline(r, pipeline.name))
+		.filter(
+			(r) =>
+				r.status !== 'running' &&
+				!isCueRunSkipped(r.status) &&
+				runBelongsToPipeline(r, pipeline.name)
+		)
 		.sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime());
 	const lastRun = finished[0];
 	const recentFailureCount = finished.filter(isFailure).length;

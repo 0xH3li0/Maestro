@@ -380,6 +380,48 @@ describe('normalizer - github re-trigger field passthrough', () => {
 	});
 });
 
+describe('normalizer - gate field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'triage',
+		event: 'github.issue',
+		prompt: 'Triage it',
+		enabled: true,
+		repo: 'RunMaestro/Maestro',
+	};
+
+	it('keeps gate and gate_on_unavailable for the dispatch service', () => {
+		const sub = normalizeSub({
+			...base,
+			gate: '  the comment reports a bug  ',
+			gate_on_unavailable: 'skip',
+		});
+		expect(sub.gate).toBe('the comment reports a bug');
+		expect(sub.gate_on_unavailable).toBe('skip');
+	});
+
+	it('leaves both undefined when the YAML has no gate', () => {
+		const sub = normalizeSub(base);
+		expect(sub.gate).toBeUndefined();
+		expect(sub.gate_on_unavailable).toBeUndefined();
+	});
+
+	it('treats a blank gate as no gate', () => {
+		expect(normalizeSub({ ...base, gate: '   ' }).gate).toBeUndefined();
+	});
+
+	it('drops malformed values rather than passing them to dispatch', () => {
+		const sub = normalizeSub({ ...base, gate: 42, gate_on_unavailable: 'explode' });
+		expect(sub.gate).toBeUndefined();
+		expect(sub.gate_on_unavailable).toBeUndefined();
+	});
+});
+
 describe('normalizer - github.label field passthrough', () => {
 	function normalizeSub(sub: Record<string, unknown>) {
 		const raw = yaml.dump({ subscriptions: [sub] });

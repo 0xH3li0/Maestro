@@ -57,12 +57,13 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 
 1. **Trigger fires.** `cue-github-poller.ts:73` records new items in `cue_github_seen` and emits a `CueEvent` via the trigger source adapter (`triggers/cue-github-poller-trigger-source.ts:45`).
 2. **Filter check.** `passesFilter(subscription, event)` runs the subscription's `filter` block against `event.payload` (`cue-filter.ts:41`). All conditions AND'd.
-3. **Dispatch.** `CueDispatchService.dispatchSubscription` (`cue-dispatch-service.ts:42`) decides single vs fan-out. Fan-out resolves each `fan_out` target through `fan_out_ids[i]` (preferred, stable across rename) or by name match (legacy). For each target it builds a `fanOutEvent` carrying `payload.fanOutSource` + `payload.fanOutIndex` and calls `executeRun(...)`.
-4. **Run manager intercepts.** `CueRunManager.execute` (`cue-run-manager.ts:559`) consults `max_concurrent`. If a slot is open, it calls `doExecuteCueRun` immediately (`cue-run-manager.ts:243`). Otherwise it pushes a `QueuedEvent` into the in-memory queue AND persists it to `cue_event_queue` via `safePersistQueuedEvent` (`cue-run-manager.ts:622-655`).
-5. **Spawn.** `executeCuePrompt` (`cue-executor.ts:116`) builds template context (`buildCueTemplateContext`), substitutes variables, builds spawn args (`cue-spawn-builder.ts:58`), wraps with SSH if `sshRemoteConfig.enabled`, then launches via `cue-process-lifecycle.ts:runProcess`. **`forceBatchMode: true`** is set so the agent never falls into TUI mode without a stdin (`cue-spawn-builder.ts`).
-6. **Output capture.** Stdout is parsed by the per-agent output parser (`getOutputParser`) - Claude Code → result-event extraction from stream-json, others → raw stdout. Truncation cap is 5000 chars for chain-source output (`SOURCE_OUTPUT_MAX_CHARS`).
-7. **Result + history.** `executeCuePrompt` returns a `CueRunResult` with `pipelineName: subscription.pipeline_name` populated. `recordCueHistoryEntry` (`cue-executor.ts:253`) builds a `HistoryEntry` whose `summary` is rendered by `buildCueRunSummary` (`src/shared/cue/cue-summary.ts`).
-8. **Chain propagation.** When the agent process exits, the run manager calls `onRunCompleted` which flips through to `notifyAgentCompleted` (`cue-completion-service.ts:122`). Desktop agent turns exiting through `exit-listener.ts` also resolve their status via `cueStatusForTurn` (the shared turn contract) and notify through the same path. Each enabled `agent.completed` subscription whose `source_session` includes the completing agent fires - single-source via `dispatchService`, multi-source via `CueFanInTracker.handleCompletion`. Chain depth is incremented and **aborted at 10** (`MAX_CHAIN_DEPTH`, `cue-engine.ts:63`).
+3. **Gate (optional).** When the subscription has a `gate`, `dispatchSubscription` hands the event to the injected evaluator (`CueEngineDeps.evaluateGate`, the `cue-gate` Local Models task) before anything is queued. A "no" records a `gated` event and stops here. An unavailable gate fails open with a warning unless `gate_on_unavailable: skip`. See [Subscription gate](#subscription-gate).
+4. **Dispatch.** `CueDispatchService.dispatchSubscription` (`cue-dispatch-service.ts:42`) decides single vs fan-out. Fan-out resolves each `fan_out` target through `fan_out_ids[i]` (preferred, stable across rename) or by name match (legacy). For each target it builds a `fanOutEvent` carrying `payload.fanOutSource` + `payload.fanOutIndex` and calls `executeRun(...)`.
+5. **Run manager intercepts.** `CueRunManager.execute` (`cue-run-manager.ts:559`) consults `max_concurrent`. If a slot is open, it calls `doExecuteCueRun` immediately (`cue-run-manager.ts:243`). Otherwise it pushes a `QueuedEvent` into the in-memory queue AND persists it to `cue_event_queue` via `safePersistQueuedEvent` (`cue-run-manager.ts:622-655`).
+6. **Spawn.** `executeCuePrompt` (`cue-executor.ts:116`) builds template context (`buildCueTemplateContext`), substitutes variables, builds spawn args (`cue-spawn-builder.ts:58`), wraps with SSH if `sshRemoteConfig.enabled`, then launches via `cue-process-lifecycle.ts:runProcess`. **`forceBatchMode: true`** is set so the agent never falls into TUI mode without a stdin (`cue-spawn-builder.ts`).
+7. **Output capture.** Stdout is parsed by the per-agent output parser (`getOutputParser`) - Claude Code → result-event extraction from stream-json, others → raw stdout. Truncation cap is 5000 chars for chain-source output (`SOURCE_OUTPUT_MAX_CHARS`).
+8. **Result + history.** `executeCuePrompt` returns a `CueRunResult` with `pipelineName: subscription.pipeline_name` populated. `recordCueHistoryEntry` (`cue-executor.ts:253`) builds a `HistoryEntry` whose `summary` is rendered by `buildCueRunSummary` (`src/shared/cue/cue-summary.ts`).
+9. **Chain propagation.** When the agent process exits, the run manager calls `onRunCompleted` which flips through to `notifyAgentCompleted` (`cue-completion-service.ts:122`). Desktop agent turns exiting through `exit-listener.ts` also resolve their status via `cueStatusForTurn` (the shared turn contract) and notify through the same path. Each enabled `agent.completed` subscription whose `source_session` includes the completing agent fires - single-source via `dispatchService`, multi-source via `CueFanInTracker.handleCompletion`. Chain depth is incremented and **aborted at 10** (`MAX_CHAIN_DEPTH`, `cue-engine.ts:63`).
 
 ## Engine lifecycle (`CueEngine`, `cue-engine.ts:397`)
 
@@ -88,12 +89,27 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 
 ## Subscription model
 
-Subscriptions live in `CueSubscription` (`src/shared/cue/contracts.ts`). Required: `name` (unique per file), `event`. Common optional: `agent_id`, `prompt`/`prompt_file`, `filter`, `enabled`, `source_session`, `source_sub`, `fan_out`/`fan_out_ids`/`fan_out_prompts`, `output_prompt`, `pipeline_name`, `pipeline_color`, `target_node_key`/`fan_out_node_keys`, `interval_minutes`, `schedule_times`/`schedule_days`, `watch`, `repo`/`gh_state`/`poll_minutes`, `action` (`prompt`|`command`), `command` (`{ mode: 'shell'|'cli', ... }`), `include_output_from`, `forward_output_from`.
+Subscriptions live in `CueSubscription` (`src/shared/cue/contracts.ts`). Required: `name` (unique per file), `event`. Common optional: `agent_id`, `prompt`/`prompt_file`, `filter`, `gate`/`gate_on_unavailable`, `enabled`, `source_session`, `source_sub`, `fan_out`/`fan_out_ids`/`fan_out_prompts`, `output_prompt`, `pipeline_name`, `pipeline_color`, `target_node_key`/`fan_out_node_keys`, `interval_minutes`, `schedule_times`/`schedule_days`, `watch`, `repo`/`gh_state`/`poll_minutes`, `action` (`prompt`|`command`), `command` (`{ mode: 'shell'|'cli', ... }`), `include_output_from`, `forward_output_from`.
 
 Two facts that aren't obvious:
 
 - **`prompt_file` is resolved at config load time, not run time.** `materializeCueConfig` reads the file and replaces it with inline `prompt`. A missing `prompt_file` is a **warning, not an error** - the subscription is kept with `prompt = ''` and fails loudly only when it tries to run (`cue-executor.ts` ⇒ `failedResult('...has no prompt content')`). This is the most common "my sub silently doesn't work" cause.
 - **`pipeline_name` and visual node keys (`target_node_key`, `fan_out_node_keys`) are renderer concerns** that the engine ignores - but the normalizer must allowlist them or the editor's visual round-trip breaks (multiple separate canvas nodes silently collapse into one). See `cue-config-normalizer.ts:normalizeSubscription`.
+
+## Subscription gate
+
+`gate` is a condition in plain language ("the comment asks for a code change or reports a bug") that a local model answers against the event payload before a run starts. It exists for cost: most events do not need a cloud turn. Pure contract and policy in `src/shared/cue/gate.ts`; full design in [docs/architecture/local-models.md](docs/architecture/local-models.md#the-cue-gate-evaluatecuegate).
+
+Rules worth knowing before editing it:
+
+- **Applied in the dispatch service, before the run manager.** A gated event never enters the queue, claims no slot, and holds no self-overlap guard. A queued (or restored) entry has already passed its gate, which is why the gate does not travel on `QueuedEvent` or the persisted queue.
+- **The failure policy is fail OPEN.** A gate whose model cannot answer starts the run and raises a `gateUnavailable` warning, because a missing gate model must not silently stop the user's automation. `gate_on_unavailable: skip` is the opt-in to fail closed. `resolveCueGateDecision()` is the one place this lives; do not branch on a check's status anywhere else.
+- **The engine never imports the model stack.** The evaluator is `CueEngineDeps.evaluateGate`. The standalone runner passes none, and absent means "unavailable", not "no gate".
+- **`gated` is a `CueRunStatus` that is not a run.** `recordSkippedRun()` writes the row born final. Nothing calls `onRunCompleted`, so no chain step fires, no telemetry `run_completed` is sent, and no Conductor time is credited. Anything that counts runs, failures, or "the last run" must skip it (`isCueRunSkipped()`); the History SQL predicate and the stats aggregation already do.
+- **`dispatchSubscription` stays synchronous.** A gated dispatch returns 1 ("accepted") and its verdict follows. Checks for one subscription are chained so runs start in arrival order.
+- **Manual triggers bypass the gate.** `payload.manual === true` (Play, `maestro-cli cue trigger`) is a person asking for the run, and its synthetic payload has nothing to judge.
+- **A gated `time.once` self-destructs.** Its condition was asked at its instant. Left in place it would re-fire on every reload inside its grace window.
+- **Not a security control.** The payload is untrusted text. Hostile text is the injection screen's job.
 
 ## Scheduled Tasks (`cue-scheduled-tasks.ts`)
 
@@ -304,6 +320,7 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 - `cue-sleep-prevention.test.ts` + `cue-sleep-wake.test.ts` + `cue-reconciler.test.ts` - sleep/wake, reconciliation.
 - `cue-config-normalizer-fanout.test.ts` + `cue-fanout-vanishing-pipeline.test.ts` - round-trip of `pipeline_name` / `target_node_key` / `fan_out_node_keys` (the round-trip-or-bust contract).
 - `cue-security.test.ts` - env sanitization, prompt-file path traversal, SSH-resolution failure modes.
+- `cue-engine-gate.test.ts` + the `gate` block in `cue-dispatch-service.test.ts` + `src/__tests__/shared/cue/gate.test.ts` - subscription gate: pass, fail, unavailable under both policies, no spawn for a gated event, manual bypass, arrival order.
 - `src/__tests__/shared/cue/cue-summary.test.ts` - `buildCueRunSummary` formatting, chain-N stripping, fan-in tagging, pipeline_name preference.
 
 If you change anything in `src/main/cue/`, run `npx vitest run src/__tests__/main/cue/ src/__tests__/shared/cue/` before pushing - the cue suite is fast and exhaustive.

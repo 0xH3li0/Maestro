@@ -138,6 +138,7 @@ import {
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
+import { evaluateCueGate } from './local-models/cue-gate';
 import { closeEmbeddingStore } from './local-models/embedding-store';
 import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
 import { startSemanticIndex } from './local-models/semantic-index-startup';
@@ -1233,6 +1234,8 @@ app
 
 		// Initialize Cue Engine for event-driven automation
 		const cueHealthToastAt = new Map<string, number>();
+		const cueGateToastAt = new Map<string, number>();
+		const CUE_GATE_NOTICE_INTERVAL_MS = 30 * DURATION_MS.minute;
 		cueEngine = new CueEngine({
 			getSessions: () => {
 				const stored = sessionsStore.get('sessions', []);
@@ -1570,6 +1573,29 @@ app
 						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
 					}
 				}
+				if (payload?.type === 'gateUnavailable') {
+					// A gate that could not be checked fails open by default, so
+					// this notice is the only thing that tells the user their gate
+					// is not saving the turns it was written to save (or, with
+					// `gate_on_unavailable: skip`, that events are being dropped).
+					// Every one is logged; the sticky notice is coalesced per
+					// agent, on a longer window than trigger health because a
+					// gate with no model fires on every event until it is fixed.
+					const now = Date.now();
+					for (const [id, at] of cueGateToastAt) {
+						if (now - at >= CUE_GATE_NOTICE_INTERVAL_MS) cueGateToastAt.delete(id);
+					}
+					if (!cueGateToastAt.has(payload.sessionId)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							title: payload.ran ? 'Cue gate not checked' : 'Cue gate skipped a run',
+							message: payload.message,
+							sticky: true,
+							color: 'orange',
+						});
+						if (delivered) cueGateToastAt.set(payload.sessionId, now);
+					}
+				}
 				// Push activity updates to renderer (and web-desktop bridge clients)
 				if (data) {
 					safeSend('cue:activityUpdate', data);
@@ -1592,6 +1618,10 @@ app
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
 			getUsageStatsEnabled: () => resolveEncoreFeatures(store.get('encoreFeatures')).usageStats,
+			// A subscription's `gate` is answered by the `cue-gate` Local Models
+			// task. Passed in rather than imported by the engine, so the
+			// standalone runner never loads the model stack.
+			evaluateGate: evaluateCueGate,
 			// How far back the engine-start prune keeps cue_events. Read on every
 			// start (not captured once) so changing the setting takes effect the
 			// next time Cue is enabled, without an app restart.

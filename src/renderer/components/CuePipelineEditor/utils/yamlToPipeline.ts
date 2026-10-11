@@ -282,6 +282,12 @@ function isInitialTrigger(sub: CueSubscription): boolean {
 function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 	const config: TriggerNodeData['config'] = {};
 
+	// The gate applies to every event type, so it is read outside the switch.
+	// Both fields are part of `triggerGroupKey`, which is what keeps two subs
+	// with different gates from collapsing onto this one node.
+	if (sub.gate != null) config.gate = sub.gate;
+	if (sub.gate_on_unavailable != null) config.gate_on_unavailable = sub.gate_on_unavailable;
+
 	switch (sub.event as CueEventType) {
 		case 'time.heartbeat':
 			if (sub.interval_minutes != null) config.interval_minutes = sub.interval_minutes;

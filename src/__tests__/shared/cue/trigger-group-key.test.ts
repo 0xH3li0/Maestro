@@ -49,6 +49,23 @@ describe('triggerGroupKey', () => {
 		);
 	});
 
+	it('separates triggers whose gate differs', () => {
+		const gated = sub({ gate: 'the comment reports a bug' });
+		expect(triggerGroupKey(sub())).not.toBe(triggerGroupKey(gated));
+		expect(triggerGroupKey(gated)).not.toBe(
+			triggerGroupKey(sub({ gate: 'the comment asks for a code change' }))
+		);
+		expect(triggerGroupKey(gated)).not.toBe(
+			triggerGroupKey(sub({ gate: 'the comment reports a bug', gate_on_unavailable: 'skip' }))
+		);
+	});
+
+	it('groups parallel branches that carry the same gate', () => {
+		const a = sub({ name: 'p1', gate: 'the comment reports a bug' });
+		const b = sub({ name: 'p1-chain-2', gate: 'the comment reports a bug' });
+		expect(triggerGroupKey(a)).toBe(triggerGroupKey(b));
+	});
+
 	it('separates github.label triggers that watch different kinds or labels', () => {
 		const base = sub({ event: 'github.label' });
 		expect(triggerGroupKey(base)).not.toBe(

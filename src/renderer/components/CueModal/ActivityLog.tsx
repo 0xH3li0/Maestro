@@ -19,6 +19,7 @@ import {
 import type { Theme } from '../../types';
 import type { CueRunResult } from '../../hooks/useCue';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { readCueGateRecord } from '../../../shared/cue/gate';
 import {
 	cueHistoryRetentionOptions,
 	resolveCueHistoryRetentionDays,
@@ -56,6 +57,10 @@ function buildHaystack(
 		if (typeof p.filename === 'string') parts.push(p.filename);
 		if (typeof p.title === 'string') parts.push(p.title);
 		if (p.number !== undefined && p.number !== null) parts.push(`#${String(p.number)}`);
+		// Why a gate skipped (or passed) the event is what a user searches a
+		// gated row by.
+		const gate = readCueGateRecord(p);
+		if (gate?.reason) parts.push(gate.reason);
 	}
 	// Include the OUTPUT body so users can search by anything the run printed
 	// (PR URLs, file paths, error messages). Trim each stream to a sensible
@@ -317,6 +322,11 @@ export function ActivityLog({
 										? ` [${String(entry.event.payload.label)}]`
 										: '';
 								const isReconciled = entry.event.payload?.reconciled === true;
+								// A gated row is an event its subscription's gate skipped:
+								// nothing ran, so it is neither a success nor a failure.
+								const isGated = entry.status === 'gated';
+								const gate = readCueGateRecord(entry.event.payload);
+								const gateUnchecked = gate?.outcome === 'ran-unchecked';
 								const isExpanded = expandedRunIds.has(entry.runId);
 								const hasStderr =
 									entry.stderr.length > 0 && cleanStderrForDisplay(entry.stderr).trim().length > 0;
@@ -383,6 +393,7 @@ export function ActivityLog({
 													{taskPayload}
 													{githubPayload}
 													{githubLabelPayload}
+													{isGated && gate?.reason ? ` - ${gate.reason}` : ''}
 												</div>
 											</td>
 											<td className="py-1.5 pr-2 whitespace-nowrap text-right">
@@ -396,7 +407,26 @@ export function ActivityLog({
 															/>
 														</span>
 													)}
-													{isFailed ? (
+													{gateUnchecked && (
+														<span
+															title={`Gate not checked. ${gate?.reason ?? ''}`.trim()}
+															className="inline-flex"
+														>
+															<AlertTriangle
+																className="w-3 h-3"
+																style={{ color: theme.colors.warning }}
+																aria-label="Gate not checked"
+															/>
+														</span>
+													)}
+													{isGated ? (
+														<span
+															style={{ color: theme.colors.textDim }}
+															title={gate?.reason || 'The gate skipped this event'}
+														>
+															gated
+														</span>
+													) : isFailed ? (
 														<span style={{ color: theme.colors.error }}>{entry.status} ✗</span>
 													) : entry.status === 'stopped' ? (
 														<span style={{ color: theme.colors.warning }}>stopped</span>

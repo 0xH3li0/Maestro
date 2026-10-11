@@ -175,6 +175,48 @@ The `triggeredBy` field contains the subscription name that triggered the comple
   prompt: Lint {{CUE_FILE_PATH}}.
 ```
 
+## Gating with a local model
+
+A `filter` matches fields. A `gate` asks a question. Write the condition in plain language, and a local model reads the event and answers yes or no before Cue starts a run:
+
+```yaml
+- name: triage-comments
+  event: github.issue
+  retrigger_on_comments: true
+  gate: the newest comment asks for a code change or reports a bug
+  prompt: Handle the request in issue {{CUE_GH_NUMBER}}.
+```
+
+A "no" starts nothing. The event is recorded as **gated** in the Cue modal's Activity Log, with the model's one-sentence reason, so you can see what was skipped and why. A gated event does not appear in History, does not count as a run or a failure, and does not fire downstream chain steps.
+
+The point is cost. Most events a busy subscription sees do not need an agent turn, and a small model on your own machine can tell which ones do.
+
+**Setup.** The gate runs on the **Cue gate** task in Settings > Local Models > Assignments. Assign it a local model or an endpoint (Ollama, LM Studio). The task is off by default.
+
+**When the model cannot answer** (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
+
+```yaml
+gate: the change touches the public API
+gate_on_unavailable: skip # default is run
+```
+
+| `gate_on_unavailable` | Gate model cannot answer                              |
+| --------------------- | ----------------------------------------------------- |
+| `run` (default)       | The run starts. You get a warning.                    |
+| `skip`                | No run. A gated event is recorded. You get a warning. |
+
+Things to know:
+
+- **Manual triggers are not gated.** Play in the Cue modal and `maestro-cli cue trigger` always run: you asked for that run.
+- **`filter` runs first.** A filtered-out event never reaches the gate, and leaves no record. Use `filter` for anything a field comparison can decide, and `gate` for what needs reading.
+- **The model reads a shortened event.** Long text (an issue body, a diff) is cut to fit a small model, so write a condition the first part of the text can answer.
+- **When the event does not say enough, the gate passes.** A run that was not needed costs little. A skipped run that was needed is lost.
+- **A gate is not a security check.** Text inside the event can argue with a yes/no model. Do not rely on a gate to keep hostile text away from an agent or a shell command.
+- **A gated `time.once` task is consumed.** Its condition was checked at its scheduled time and the answer was no.
+- **The standalone engine cannot check a gate.** `maestro-cli cue engine` does not load local models, so every gate there follows `gate_on_unavailable`.
+
+Read gated events from the command line with `maestro-cli cue activity`.
+
 ## Agent Chaining
 
 Agent chaining connects multiple agents in a pipeline where each agent's completion triggers the next. This is built on `agent.completed` events with optional filtering.

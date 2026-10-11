@@ -28,7 +28,7 @@ interface CueActivityEntry {
 	eventType: string;
 	sessionId: string;
 	timestamp: number;
-	status: 'triggered' | 'running' | 'completed' | 'failed';
+	status: 'triggered' | 'running' | 'completed' | 'failed' | 'gated';
 	result?: string;
 	duration?: number;
 }
@@ -149,8 +149,10 @@ export async function cueActivity(options: ActivityOptions): Promise<void> {
 		const when = new Date(entry.timestamp).toLocaleString();
 		const took =
 			typeof entry.duration === 'number' ? `  ${(entry.duration / 1000).toFixed(1)}s` : '';
+		// A gated event ran nothing; its `result` is why the gate skipped it.
+		const why = entry.status === 'gated' && entry.result ? `  - ${entry.result}` : '';
 		console.log(
-			`${when}  ${entry.status.padEnd(9)}  ${entry.subscriptionName}  [${entry.eventType}]${took}`
+			`${when}  ${entry.status.padEnd(9)}  ${entry.subscriptionName}  [${entry.eventType}]${took}${why}`
 		);
 	}
 }

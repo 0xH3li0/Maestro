@@ -148,3 +148,88 @@ describe('ActivityLog retention control', () => {
 		expect(retentionSelect().disabled).toBe(false);
 	});
 });
+
+// A gated row is an event its subscription's gate skipped. Nothing ran, so it
+// must read as neither a success nor a failure, and it must say why.
+describe('ActivityLog gated events', () => {
+	const gatedRun = (reason = 'The comment is praise and asks for nothing.') =>
+		makeRun({
+			runId: 'run-gated',
+			status: 'gated',
+			stdout: '',
+			exitCode: null,
+			durationMs: 40,
+			event: {
+				id: 'evt-2',
+				type: 'github.issue',
+				timestamp: new Date('2026-09-14T10:00:00Z').toISOString(),
+				triggerName: 'nightly',
+				payload: { number: 7, title: 'Thanks', gate: { outcome: 'gated', reason } },
+			},
+		});
+
+	function renderWithQuery(log: CueRunResult[], searchQuery: string) {
+		return render(
+			<ActivityLog
+				log={log}
+				theme={theme}
+				subscriptionPipelineMap={new Map()}
+				searchQuery={searchQuery}
+				setSearchQuery={vi.fn()}
+				searchInputRef={{ current: null }}
+			/>
+		);
+	}
+
+	it('labels the row gated, not completed or failed, and shows the reason', () => {
+		renderLog([gatedRun()]);
+
+		expect(screen.getByText('gated')).toBeTruthy();
+		expect(screen.queryByText(/completed in/)).toBeNull();
+		expect(screen.queryByText(/✗/)).toBeNull();
+		expect(screen.getByText(/The comment is praise and asks for nothing\./)).toBeTruthy();
+	});
+
+	it('finds a gated row by its reason', () => {
+		renderWithQuery([gatedRun(), makeRun()], 'praise');
+
+		expect(screen.getByText('gated')).toBeTruthy();
+		expect(screen.queryByText(/completed in/)).toBeNull();
+	});
+
+	it('shows the verdict in the expanded detail, apart from the event payload', () => {
+		renderLog([gatedRun()]);
+		fireEvent.click(screen.getByText('gated'));
+
+		const detail = screen.getByTestId('cue-activity-gate');
+		expect(detail.textContent).toContain('Skipped the run');
+		expect(detail.textContent).toContain('The comment is praise and asks for nothing.');
+		// The record is drawn once, in its own section, not again as a payload row.
+		expect(screen.queryByText('gate:')).toBeNull();
+		expect(screen.getByText('title:')).toBeTruthy();
+	});
+
+	it('flags a run that started with its gate unchecked', () => {
+		renderLog([
+			makeRun({
+				event: {
+					id: 'evt-3',
+					type: 'github.issue',
+					timestamp: new Date('2026-09-14T10:00:00Z').toISOString(),
+					triggerName: 'nightly',
+					payload: { gate: { outcome: 'ran-unchecked', reason: 'Cue gate is off.' } },
+				},
+			}),
+		]);
+
+		// The run itself completed; the warning says the gate did not check it.
+		expect(screen.getByText(/completed in/)).toBeTruthy();
+		expect(screen.getByLabelText('Gate not checked')).toBeTruthy();
+	});
+
+	it('draws no gate marker on a row no gate touched', () => {
+		renderLog([makeRun()]);
+		expect(screen.queryByLabelText('Gate not checked')).toBeNull();
+		expect(screen.queryByText('gated')).toBeNull();
+	});
+});

@@ -140,6 +140,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Tab cleanup suggestions for a small local model or endpoint: reads one line of facts per tab and suggests which to close, snooze, or wake, as JSON',
 		category: 'commands',
 	},
+	{
+		id: 'cue-gate-local',
+		filename: 'cue-gate-local.md',
+		description:
+			'Cue gate for a small local model or endpoint: reads a subscription gate condition and one event, and answers whether the run should start, as JSON',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -387,6 +394,7 @@ export const PROMPT_IDS = {
 	AI_COMMAND_LOCAL: 'ai-command-local',
 	GIT_DRAFT_PR_LOCAL: 'git-draft-pr-local',
 	TAB_CLEANUP_LOCAL: 'tab-cleanup-local',
+	CUE_GATE_LOCAL: 'cue-gate-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

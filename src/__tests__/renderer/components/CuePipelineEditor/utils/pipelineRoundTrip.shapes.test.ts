@@ -445,6 +445,69 @@ describe('round-trip: trigger event configs survive serialization', () => {
 		expect(data.config.retrigger_on_comments).toBeUndefined();
 		expect(data.config.max_notifications).toBeUndefined();
 	});
+
+	it('preserves gate and gate_on_unavailable on any event type', () => {
+		for (const [eventType, config] of [
+			['github.issue', { repo: 'org/repo' }],
+			['file.changed', { watch: 'src/**/*.ts' }],
+			['time.heartbeat', { interval_minutes: 5 }],
+		] as Array<[CueEventType, TriggerNodeData['config']]>) {
+			const data = getReconstructedTriggerConfig(eventType, {
+				...config,
+				gate: 'the change touches the public API',
+				gate_on_unavailable: 'skip',
+			});
+			expect(data.config.gate).toBe('the change touches the public API');
+			expect(data.config.gate_on_unavailable).toBe('skip');
+		}
+	});
+
+	it('omits the gate fields when the trigger has no gate', () => {
+		const data = getReconstructedTriggerConfig('github.issue', { repo: 'org/repo' });
+		expect(data.config.gate).toBeUndefined();
+		expect(data.config.gate_on_unavailable).toBeUndefined();
+	});
+
+	it('does not write a gate policy without a gate', () => {
+		const t1 = trigger('t1', 'github.issue', { repo: 'org/repo', gate_on_unavailable: 'skip' });
+		const a1 = agent('a1', 'sess-a', 'Alpha');
+		const { yaml: yamlStr } = pipelinesToYaml([
+			pipeline('Trig', '#06b6d4', [t1, a1], [edge('e1', 't1', 'a1', { prompt: 'work' })]),
+		]);
+		expect(yamlStr).not.toContain('gate');
+	});
+
+	it('gates every branch of a fan-out and keeps them one trigger node', () => {
+		const t1 = trigger('t1', 'github.issue', {
+			repo: 'org/repo',
+			gate: 'the comment reports a bug',
+		});
+		const a1 = agent('a1', 'sess-a', 'Alpha');
+		const a2 = agent('a2', 'sess-b', 'Bravo');
+		const pipelines = [
+			pipeline(
+				'Fan',
+				'#06b6d4',
+				[t1, a1, a2],
+				[edge('e1', 't1', 'a1', { prompt: 'one' }), edge('e2', 't1', 'a2', { prompt: 'two' })]
+			),
+		];
+		const sessions: PipelineSession[] = [
+			{ id: 'sess-a', name: 'Alpha', toolType: 'claude-code' },
+			{ id: 'sess-b', name: 'Bravo', toolType: 'claude-code' },
+		];
+
+		const { yaml: yamlStr } = pipelinesToYaml(pipelines);
+		const parsed = yaml.load(yamlStr) as { subscriptions: Array<Record<string, unknown>> };
+		const triggerSubs = parsed.subscriptions.filter((s) => s.event === 'github.issue');
+		expect(triggerSubs.length).toBeGreaterThan(0);
+		for (const sub of triggerSubs) expect(sub.gate).toBe('the comment reports a bug');
+
+		const [reconstructed] = roundTrip(pipelines, sessions);
+		const triggerNodes = reconstructed.nodes.filter((n) => n.type === 'trigger');
+		expect(triggerNodes).toHaveLength(1);
+		expect((triggerNodes[0].data as TriggerNodeData).config.gate).toBe('the comment reports a bug');
+	});
 });
 
 // ─── Shape: double round-trip is a no-op (idempotence) ──────────────────────

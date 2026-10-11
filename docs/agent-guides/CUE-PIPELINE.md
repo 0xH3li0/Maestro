@@ -229,6 +229,27 @@ Supports:
 - Dot-notation nested key access (`source.status`)
 - All conditions are AND'd
 
+### Gate (`gate` / `gate_on_unavailable`)
+
+A subscription's `gate` is a condition in plain language that a local model (the `cue-gate` Local
+Models task) answers against the event payload before a run starts. It is applied in
+`cue-dispatch-service.ts`, after the filter and before the run manager:
+
+- `src/shared/cue/gate.ts` holds everything pure: the reply schema, the event caps, the failure
+  policy (`resolveCueGateDecision`), and the record stamped on the event payload under `gate`.
+- The evaluator is injected (`CueEngineDeps.evaluateGate`); the engine never imports the model
+  stack. Desktop: `evaluateCueGate` in `src/main/local-models/cue-gate.ts`. Standalone runner: none,
+  which means "unavailable", not "no gate".
+- A "no" calls `onGated`: the run manager's `recordSkippedRun()` writes one `cue_events` row with
+  status `gated`, and the engine pushes it to the activity log. No slot, no completion, no chain.
+- Unavailable gate: fail OPEN with a `gateUnavailable` warning, unless `gate_on_unavailable: skip`.
+- Manual triggers (`payload.manual`) are never gated.
+- Both fields are in `triggerGroupKey()` and round-trip through the editor on the trigger node
+  (`TriggerNodeData.config.gate`). A gate hand-written on an `agent.completed` chain sub is honored
+  by the engine but is not carried by the editor's chain emission, the same as `filter` there.
+
+Full design: [docs/architecture/local-models.md](../architecture/local-models.md#the-cue-gate-evaluatecuegate).
+
 ### cue-activity-log.ts (~40 lines)
 
 Simple in-memory ring buffer of completed run results (max 500). Used by the Cue Modal dashboard.

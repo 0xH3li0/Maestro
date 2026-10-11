@@ -414,6 +414,27 @@ describe('describePipeline', () => {
 describe('derivePipelineHealth', () => {
 	const empty = { activeRuns: [], activityLog: [] };
 
+	// A gated entry is an event the gate skipped. It is not a run, so it can
+	// be neither the last run nor one of the runs that succeeded or failed.
+	it('ignores gated events when judging the last run', () => {
+		const failedThenGated = derivePipelineHealth(pipeline(), {
+			...empty,
+			activityLog: [
+				run({ status: 'gated', endedAt: '2026-10-11T12:05:00.000Z' }),
+				run({ status: 'failed', exitCode: 1, endedAt: '2026-10-11T12:00:00.000Z' }),
+			],
+		});
+		expect(failedThenGated.status).toBe('failing');
+		expect(failedThenGated.recentRunCount).toBe(1);
+
+		const onlyGated = derivePipelineHealth(pipeline(), {
+			...empty,
+			activityLog: [run({ status: 'gated' })],
+		});
+		expect(onlyGated.status).toBe('idle');
+		expect(onlyGated.lastRun).toBeUndefined();
+	});
+
 	it('reports healthy when the most recent finished run completed', () => {
 		const health = derivePipelineHealth(pipeline(), { ...empty, activityLog: [run()] });
 		expect(health.status).toBe('healthy');
