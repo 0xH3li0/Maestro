@@ -30,6 +30,7 @@ import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import type {
 	AggregatedContributions,
+	PanelContribution,
 	SettingContribution,
 } from '../../../../../shared/plugins/contributions';
 
@@ -65,7 +66,7 @@ function builtinTile(flag: keyof EncoreFeatureFlags, enabled: boolean): UnifiedE
 
 const SETTINGS_BODY = <div data-testid="first-party-body">Usage config body</div>;
 
-function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionDetails>>): void {
+function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionDetails>>) {
 	const base: React.ComponentProps<typeof ExtensionDetails> = {
 		theme,
 		ext: builtinTile('usageStats', true),
@@ -77,16 +78,17 @@ function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionD
 		onRevoke: vi.fn(),
 		getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
 	};
-	render(<ExtensionDetails {...base} {...overrides} />);
+	return render(<ExtensionDetails {...base} {...overrides} />);
 }
 
-function pluginRecord(id: string): PluginRecord {
+function pluginRecord(id: string, declaresPanel = false): PluginRecord {
 	return {
 		id,
 		source: `/plugins/${id}`,
 		folderName: id,
 		enabled: true,
 		loadStatus: 'ok',
+		signature: { status: 'trusted' },
 		errors: [],
 		manifest: {
 			id,
@@ -95,11 +97,25 @@ function pluginRecord(id: string): PluginRecord {
 			tier: 1,
 			maestro: { minHostApi: '1.0.0' },
 			entry: 'main.js',
+			...(declaresPanel
+				? {
+						contributes: {
+							panels: [
+								{
+									id: 'config',
+									title: `${id} config`,
+									entry: 'panel.html',
+									placement: 'settings' as const,
+								},
+							],
+						},
+					}
+				: {}),
 		},
 	};
 }
 
-function pluginTile(id: string): UnifiedExtension {
+function pluginTile(id: string, declaresPanel = false): UnifiedExtension {
 	return {
 		key: `plugin:${id}`,
 		kind: 'plugin',
@@ -108,20 +124,20 @@ function pluginTile(id: string): UnifiedExtension {
 		description: 'A demo.',
 		category: 'automation',
 		state: 'enabled',
-		tier: 0,
+		tier: 1,
 		trust: 'trusted',
 		version: '1.0.0',
 		loadStatus: 'ok',
-		record: pluginRecord(id),
+		record: pluginRecord(id, declaresPanel),
 	} as UnifiedExtension;
 }
 
-function contributionsWith(setting: SettingContribution): AggregatedContributions {
+function contributionsWith(setting?: SettingContribution): AggregatedContributions {
 	return {
 		themes: [],
 		iconPacks: [],
 		prompts: [],
-		settings: [setting],
+		settings: setting ? [setting] : [],
 		commandMacros: [],
 		cueTriggers: [],
 		commands: [],
@@ -284,6 +300,221 @@ describe('ExtensionDetails sub-tabs - plugin Configure (grant + edit)', () => {
 			expect(screen.getByTestId('extension-setting-input')).toBeInTheDocument();
 		});
 		expect(screen.getByText('Poll automatically')).toBeInTheDocument();
+	});
+});
+
+describe('ExtensionDetails - plugin settings panels', () => {
+	const panel = (pluginId: string): PanelContribution => ({
+		id: `${pluginId}/config`,
+		localId: 'config',
+		pluginId,
+		title: `${pluginId} config`,
+		entry: 'panel.html',
+		placement: 'settings',
+		size: 'default',
+	});
+	const contributions = (panels: PanelContribution[]): AggregatedContributions => ({
+		...contributionsWith(),
+		panels,
+	});
+	const granted = { requested: [], granted: [{ capability: 'ui:panel' as const, grantedAt: 1 }] };
+
+	it('shows only the owning plugin settings link and keeps management free of executable content', async () => {
+		const { container } = renderDetails({
+			ext: pluginTile('plugin-a', true),
+			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
+			getGrants: vi.fn(async () => granted),
+		});
+		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		expect(container.querySelector('webview')).toBeNull();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeEnabled()
+		);
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Open plugin-a config' }));
+		});
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			tab: 'encore',
+			settingId: 'plugin-settings:plugin-a/config',
+		});
+		expect(screen.queryByText('plugin-b config')).not.toBeInTheDocument();
+		expect(screen.getByTestId('extension-revoke')).toBeInTheDocument();
+		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
+	});
+
+	it('offers a local update for plugins, including disabled ones', () => {
+		const onUpdate = vi.fn();
+		const plugin = pluginTile('plugin-a');
+		plugin.record = { ...plugin.record!, enabled: false };
+		plugin.state = 'installed';
+		renderDetails({ ext: plugin, onUpdate });
+
+		fireEvent.click(screen.getByTestId('extension-update'));
+		expect(onUpdate).toHaveBeenCalledExactlyOnceWith(plugin.record);
+		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
+	});
+
+	it('keeps a disabled installed panel discoverable without mounting plugin content', async () => {
+		const plugin = pluginTile('plugin-a', true);
+		plugin.state = 'installed';
+		plugin.record = { ...plugin.record!, enabled: false };
+		const onTogglePlugin = vi.fn();
+		const { container } = renderDetails({
+			ext: plugin,
+			contributions: contributions([]),
+			getGrants: vi.fn(async () => granted),
+			onTogglePlugin,
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument()
+		);
+		expect(screen.getByTestId('extension-plugin-settings-status')).toHaveTextContent(
+			'Select Enable to review permissions for this version'
+		);
+		expect(container.querySelector('webview')).toBeNull();
+		fireEvent.click(screen.getByTestId('extension-enable-toggle'));
+		expect(onTogglePlugin).toHaveBeenCalledExactlyOnceWith(plugin.record);
+	});
+
+	it('keeps the settings link disabled until the owning plugin is enabled', async () => {
+		const disabled = pluginTile('plugin-a', true);
+		disabled.state = 'installed';
+		disabled.record = { ...disabled.record!, enabled: false };
+		let grantedNow = false;
+		const getGrants = vi.fn(async () => (grantedNow ? granted : { requested: [], granted: [] }));
+		const props = {
+			theme,
+			ext: disabled,
+			contributions: contributions([]),
+			busy: false,
+			onTogglePlugin: vi.fn(),
+			onToggleBuiltin: vi.fn(),
+			onUninstall: vi.fn(),
+			onRevoke: vi.fn(),
+			getGrants,
+		};
+		const view = render(<ExtensionDetails {...props} />);
+		expect(view.container.querySelector('webview')).toBeNull();
+		const enabled = pluginTile('plugin-a', true);
+		view.rerender(<ExtensionDetails {...props} ext={enabled} />);
+		expect(view.container.querySelector('webview')).toBeNull();
+		grantedNow = true;
+		view.rerender(
+			<ExtensionDetails
+				{...props}
+				ext={enabled}
+				contributions={contributions([panel('plugin-a')])}
+				getGrants={vi.fn(async () => granted)}
+			/>
+		);
+		expect(view.container.querySelector('webview')).toBeNull();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeEnabled()
+		);
+	});
+
+	it.each(['no-grant', 'untrusted', 'inactive'] as const)(
+		'keeps declared Settings links disabled when the live destination is %s',
+		async (reason) => {
+			useModalStore.getState().closeModal('settings');
+			const plugin = pluginTile('plugin-a', true);
+			if (reason === 'untrusted') plugin.record!.signature = { status: 'unknown' };
+			renderDetails({
+				ext: plugin,
+				contributions: contributions(reason === 'inactive' ? [] : [panel('plugin-a')]),
+				getGrants: vi.fn(async () =>
+					reason === 'no-grant' ? { requested: [], granted: [] } : granted
+				),
+			});
+			await act(async () => {});
+			const open = screen.getByRole('button', { name: 'Open plugin-a config' });
+			expect(open).toBeDisabled();
+			fireEvent.click(open);
+			expect(useModalStore.getState().isOpen('settings')).toBe(false);
+		}
+	);
+
+	it('discovers a disabled declarative setting, but not an unrelated settings-less plugin', () => {
+		const plugin = pluginTile('plugin-a');
+		plugin.state = 'installed';
+		plugin.record = {
+			...plugin.record!,
+			enabled: false,
+			manifest: {
+				...plugin.record!.manifest!,
+				contributes: {
+					settings: [{ id: 'enabled', key: 'enabled', type: 'boolean', default: false }],
+				},
+			},
+		};
+		const view = renderDetails({ ext: plugin, contributions: contributions([]) });
+		expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument();
+		expect(screen.getByTestId('extension-plugin-settings-status')).toBeInTheDocument();
+		view.rerender(
+			<ExtensionDetails
+				{...{
+					theme,
+					ext: pluginTile('plugin-b'),
+					contributions: contributions([]),
+					busy: false,
+					onTogglePlugin: vi.fn(),
+					onToggleBuiltin: vi.fn(),
+					onUninstall: vi.fn(),
+					onRevoke: vi.fn(),
+					getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
+				}}
+			/>
+		);
+		expect(screen.queryByTestId('extension-subtab-settings')).not.toBeInTheDocument();
+	});
+
+	it('does not discover or mount panels from unloadable or invalid packages', () => {
+		for (const change of [
+			{ loadStatus: 'incompatible' as const },
+			{ loadStatus: 'invalid' as const, manifest: null },
+			{ signature: { status: 'invalid' as const } },
+		]) {
+			const plugin = pluginTile('plugin-a', true);
+			plugin.state = 'installed';
+			plugin.record = { ...plugin.record!, enabled: false, ...change };
+			plugin.loadStatus = plugin.record.loadStatus;
+			plugin.trust = plugin.record.signature?.status;
+			const view = renderDetails({ ext: plugin, contributions: contributions([]) });
+			expect(screen.queryByTestId('extension-subtab-settings')).not.toBeInTheDocument();
+			expect(view.container.querySelector('webview')).toBeNull();
+			view.unmount();
+		}
+	});
+
+	it('does not offer a local update for built-in features', () => {
+		renderDetails({ ext: builtinTile('usageStats', true), onUpdate: vi.fn() });
+		expect(screen.queryByTestId('extension-update')).not.toBeInTheDocument();
+	});
+
+	it('keeps contributed setting controls beside a plugin settings panel', async () => {
+		const pluginId = 'plugin-a';
+		renderDetails({
+			ext: pluginTile(pluginId, true),
+			contributions: {
+				...contributions([panel(pluginId)]),
+				settings: [
+					{
+						id: `${pluginId}:enabled`,
+						localId: 'enabled',
+						pluginId,
+						key: 'enabled',
+						type: 'boolean',
+						default: false,
+					},
+				],
+			},
+			getGrants: vi.fn(async () => granted),
+		});
+		expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeInTheDocument();
+		expect(screen.getByTestId('extension-configure')).toBeInTheDocument();
 	});
 });
 

@@ -67,7 +67,12 @@ export interface PluginSandboxLifecycle {
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
 	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
-	invokeTool: (pluginId: string, commandId: string, args?: unknown) => Promise<unknown>;
+	invokeTool: (
+		pluginId: string,
+		commandId: string,
+		args?: unknown,
+		context?: { callerAgentId: string | null }
+	) => Promise<unknown>;
 }
 
 export interface PluginManagerDeps {
@@ -291,9 +296,20 @@ export class PluginManager {
 	}
 
 	/** Toggle a plugin on/off, persist, rebuild the registry, and reconcile the
-	 * sandbox (start a newly-enabled tier-1 plugin, stop a disabled one). */
+	 * sandbox. Code-tier activation must verify the current on-disk identity
+	 * against its consented authorization before persisting or starting code;
+	 * refresh() applies the same gate to previously enabled plugins. */
 	setEnabled(id: string, enabled: boolean): PluginRegistry {
 		if (!this.deps.isEnabled()) return this.registry;
+		const record = this.registry.records.find((item) => item.id === id);
+		if (
+			enabled &&
+			record?.manifest &&
+			record.manifest.tier >= 1 &&
+			this.deps.verifyRecord?.(record).disable
+		) {
+			throw new Error('PluginNotAuthorized');
+		}
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
 		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);
@@ -753,7 +769,11 @@ export class PluginManager {
 	 * early child exit, handler error). Reserved service: handlers reject with ServiceDenied
 	 * before sandbox dispatch; only the host service broker may invoke them.
 	 */
-	invokeTool(toolId: string, args?: unknown): Promise<unknown> {
+	invokeTool(
+		toolId: string,
+		args?: unknown,
+		context: { callerAgentId: string | null } = { callerAgentId: null }
+	): Promise<unknown> {
 		const sep = toolId.indexOf('/');
 		if (sep <= 0 || sep === toolId.length - 1) {
 			return Promise.reject(new Error('InvalidToolId'));
@@ -762,7 +782,7 @@ export class PluginManager {
 		const localId = toolId.slice(sep + 1);
 		if (localId.startsWith('service:')) return Promise.reject(new Error('ServiceDenied'));
 		if (!this.deps.sandbox) return Promise.reject(new Error('sandbox not available'));
-		return this.deps.sandbox.invokeTool(pluginId, localId, args);
+		return this.deps.sandbox.invokeTool(pluginId, localId, args, context);
 	}
 
 	/**

@@ -9,8 +9,8 @@
  * it shows the description and an enable toggle.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Power, Settings as SettingsIcon, Trash2, KeyRound, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { formatCalendarDay } from '../../../../shared/formatters';
@@ -23,6 +23,7 @@ import type {
 	AggregatedContributions,
 	SettingContribution,
 } from '../../../../shared/plugins/contributions';
+import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
@@ -43,6 +44,7 @@ interface ExtensionDetailsProps {
 	busy: boolean;
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
+	onUpdate?: (record: PluginRecord) => void;
 	onUninstall: (record: PluginRecord) => void;
 	onRevoke: (id: string) => void;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
@@ -77,6 +79,7 @@ export function ExtensionDetails({
 	busy,
 	onTogglePlugin,
 	onToggleBuiltin,
+	onUpdate,
 	onUninstall,
 	onRevoke,
 	getGrants,
@@ -98,28 +101,40 @@ export function ExtensionDetails({
 
 	const isPlugin = ext.kind === 'plugin';
 	const record = ext.record;
+	const grantsLoadGeneration = useRef(0);
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
-	// Load the plugin's requested/granted permissions whenever the selection
-	// changes. First-party features disclose statically from their definition
-	// (grants are minted host-side on enable), so no ledger round-trip.
+	// Refresh grants without mounting any executable panel inside management.
 	useEffect(() => {
-		if (!isPlugin) {
-			setGrantsState(null);
-			return;
-		}
 		let cancelled = false;
-		void getGrants(ext.id)
-			.then((snap) => {
-				if (!cancelled) setGrantsState({ pluginId: ext.id, snapshot: snap });
-			})
-			.catch(() => {
-				if (!cancelled) setGrantsState(null);
-			});
+		setGrantsState(null);
+		if (!isPlugin) return;
+		const load = () => {
+			const generation = ++grantsLoadGeneration.current;
+			void getGrants(ext.id)
+				.then((snapshot) => {
+					if (!cancelled && generation === grantsLoadGeneration.current)
+						setGrantsState({ pluginId: ext.id, snapshot });
+				})
+				.catch(() => {
+					if (!cancelled && generation === grantsLoadGeneration.current) setGrantsState(null);
+				});
+		};
+		load();
+		const unsubscribe = window.maestro.plugins.onChanged(() => load());
 		return () => {
 			cancelled = true;
+			unsubscribe?.();
 		};
-	}, [isPlugin, ext.id, getGrants]);
+	}, [
+		isPlugin,
+		ext.id,
+		getGrants,
+		record?.enabled,
+		record?.manifest?.version,
+		record?.loadStatus,
+		record?.signature?.status,
+	]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
 	// Web Login manages its accounts in its own tile: the channels behind that
@@ -129,8 +144,15 @@ export function ExtensionDetails({
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
-	const settingsPanels =
-		contributions?.panels.filter((p) => p.pluginId === ext.id && p.placement === 'settings') ?? [];
+	const declared =
+		isPlugin &&
+		record?.manifest &&
+		record.loadStatus === 'ok' &&
+		record.signature?.status !== 'invalid'
+			? collectContributions(record.manifest)
+			: null;
+	const settingsPanels = declared?.panels.filter((panel) => panel.placement === 'settings') ?? [];
+
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
 
 	// The Settings sub-tab exists when there's something to configure: a
@@ -138,6 +160,7 @@ export function ExtensionDetails({
 	const hasSettingsTab =
 		Boolean(settingsBody) ||
 		canConfigurePlugin ||
+		Boolean(declared?.settings.length) ||
 		isPianola ||
 		isWebLogin ||
 		settingsPanels.length > 0;
@@ -333,6 +356,19 @@ export function ExtensionDetails({
 						style={{ borderColor: theme.colors.border, color: theme.colors.error }}
 					>
 						<Trash2 className="w-4 h-4" /> Uninstall
+					</button>
+				)}
+				{isPlugin && record && onUpdate && (
+					<button
+						type="button"
+						data-testid="extension-update"
+						disabled={busy}
+						onClick={() => onUpdate(record)}
+						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						title="Choose a folder with a newer version of this plugin"
+					>
+						<RefreshCw className="w-4 h-4" /> Update from folder…
 					</button>
 				)}
 			</div>
@@ -609,11 +645,31 @@ export function ExtensionDetails({
 							</div>
 						))}
 
+					{isPlugin &&
+						ext.state !== 'enabled' &&
+						declared &&
+						(settingsPanels.length > 0 || declared.settings.length > 0) && (
+							<div
+								data-testid="extension-plugin-settings-status"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Select Enable to review permissions for this version. Plugin content stays disabled.
+							</div>
+						)}
 					{settingsPanels.map((panel) => (
 						<button
 							key={panel.id}
+							disabled={
+								ext.state !== 'enabled' ||
+								record?.signature?.status !== 'trusted' ||
+								!grantedCaps.has('ui:panel') ||
+								!contributions?.panels.some(
+									(active) => active.id === panel.id && active.pluginId === ext.id
+								)
+							}
 							type="button"
-							className="w-full px-3 py-2 rounded border text-sm"
+							className="w-full px-3 py-2 rounded border text-sm disabled:opacity-50"
 							style={{ borderColor: theme.colors.border }}
 							onClick={() =>
 								useModalStore

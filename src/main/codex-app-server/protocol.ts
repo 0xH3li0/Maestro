@@ -66,6 +66,7 @@ export interface CodexAppServerItem {
 	id: string;
 	/** agentMessage */
 	text?: string;
+	phase?: string;
 	/** userMessage */
 	content?: Array<{ type: string; text?: string }> | string[];
 	/** reasoning */

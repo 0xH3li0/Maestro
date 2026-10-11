@@ -175,9 +175,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) preserves today's
- * Settings-launched behavior; the others dock the same sandboxed iframe into a
- * UI slot via the contribution registry. */
+/** Where a contributed panel renders. `settings` uses an independent
+ * host Settings card; `left`/`right`/`main` use shared docks. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /**

@@ -26,6 +26,24 @@ import {
 	buildRemoteInteractiveSpawn,
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { logger } from '../utils/logger';
+import os from 'os';
+import path from 'path';
+import {
+	buildMcpInjection,
+	mergeMcpInjectionArgs,
+	MCP_CONFIG_BY_AGENT,
+} from '../../shared/plugins/mcp-agent-config';
+import {
+	getActivePluginManager,
+	isPluginsFeatureEnabled,
+} from '../plugins/plugin-manager-singleton';
+import {
+	pluginToolRunIdentity,
+	createPluginRunProofFile,
+	removePluginRunProofFile,
+} from '../plugins/plugin-tool-run-identity';
+import { resolveMaestroCliScriptPath } from './cue-cli-executor';
 import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
@@ -44,6 +62,9 @@ export interface SpawnSpec {
 	stdinPrompt?: string;
 	/** Whether SSH remote execution was actually used */
 	sshRemoteUsed?: { name?: string; host: string };
+	/** Main-process proof to revoke after this Cue run. Never logged. */
+	pluginRunToken?: string;
+	pluginRunProofFile?: string;
 }
 
 /** Error result when the spawn spec cannot be built (e.g. unknown agent). */
@@ -316,6 +337,59 @@ export async function buildSpawnSpec(
 		spawnEnv = { ...spawnEnv, ...(applied.customEnvVars ?? {}) };
 	}
 
+	let pluginRunToken: string | undefined;
+	let pluginRunProofFile: string | undefined;
+	const mcpCap = MCP_CONFIG_BY_AGENT[toolType];
+	if (
+		!sshRemoteUsed &&
+		mcpCap?.verified &&
+		!(toolType === 'claude-code' && claudeSpawnDecision.mode === 'interactive') &&
+		isPluginsFeatureEnabled() &&
+		(getActivePluginManager()?.getContributions().tools.length ?? 0) > 0
+	) {
+		pluginRunToken = pluginToolRunIdentity.issue(session.id, config.timeoutMs + 60_000);
+		try {
+			pluginRunProofFile = createPluginRunProofFile(pluginRunToken, config.timeoutMs + 60_000);
+		} catch (error) {
+			pluginToolRunIdentity.revoke(pluginRunToken);
+			throw error;
+		}
+		const injection = buildMcpInjection(
+			mcpCap,
+			{
+				command: process.execPath,
+				args: [resolveMaestroCliScriptPath(), 'mcp', 'serve'],
+				env: {
+					ELECTRON_RUN_AS_NODE: '1',
+					MAESTRO_PLUGIN_RUN_TOKEN_FILE: pluginRunProofFile,
+					...(process.env.MAESTRO_USER_DATA
+						? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+						: {}),
+					...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
+				},
+			},
+			{ tmpDir: os.tmpdir(), join: path.join }
+		);
+		if (injection.files.length === 0) {
+			spawnArgs = mergeMcpInjectionArgs(mcpCap, spawnArgs, injection.globalArgs);
+			spawnEnv = {
+				...spawnEnv,
+				...injection.env,
+			};
+		} else {
+			pluginToolRunIdentity.revoke(pluginRunToken);
+			try {
+				removePluginRunProofFile(pluginRunProofFile);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
+			pluginRunToken = undefined;
+			pluginRunProofFile = undefined;
+		}
+	}
+
 	return {
 		ok: true,
 		spec: {
@@ -327,6 +401,8 @@ export async function buildSpawnSpec(
 			sshRemoteCommand,
 			stdinPrompt,
 			sshRemoteUsed,
+			pluginRunToken,
+			pluginRunProofFile,
 		},
 	};
 }

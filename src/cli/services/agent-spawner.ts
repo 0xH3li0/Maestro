@@ -28,7 +28,11 @@ import {
 } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
-import { startTurn, type StartTurnOptions } from '../../shared/maestro-lib/run/start-turn';
+import {
+	startTurn,
+	DEFAULT_STDERR_TAIL_LIMIT,
+	type StartTurnOptions,
+} from '../../shared/maestro-lib/run/start-turn';
 import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
@@ -43,6 +47,14 @@ import {
 	applyAgentConfigOverrides,
 	buildAdditionalDirArgs,
 } from '../../shared/maestro-lib/launch/agent-args';
+import { superviseAgentProcess } from './agent-process-supervisor';
+import { CODEX_STARTUP_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
+import {
+	buildMcpInjection,
+	mergeMcpInjectionArgs,
+	MCP_CONFIG_BY_AGENT,
+} from '../../shared/plugins/mcp-agent-config';
+import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -76,13 +88,21 @@ type SshSpawnWrapResult = import('../../main/utils/ssh-spawn-wrapper').SshSpawnW
  * failing, so a CLI without maestro-p degrades safely.
  */
 function getCliMaestroPBinPath(): string | null {
-	const candidate = path.join(__dirname, 'maestro-p.js');
-	try {
-		fs.accessSync(candidate, fs.constants.R_OK);
-		return candidate;
-	} catch {
-		return null;
+	// Bundled CLI: dist/cli/maestro-cli.js has __dirname=dist/cli.
+	// Main-process import: tsc emits this module at dist/cli/services/, one
+	// level deeper, while the bundled maestro-p script stays at dist/cli/.
+	for (const candidate of [
+		path.join(__dirname, 'maestro-p.js'),
+		path.resolve(__dirname, '..', 'maestro-p.js'),
+	]) {
+		try {
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return candidate;
+		} catch {
+			// Check the next compiled layout.
+		}
 	}
+	return null;
 }
 
 /**
@@ -150,7 +170,116 @@ type SpawnOverrides = Pick<
 	| 'additionalDirectories'
 	| 'querySource'
 	| 'signal'
+	| 'pluginRunProofFile'
+	| 'mcpCliScriptPath'
+	| 'timeoutMs'
+	| 'onProgress'
 >;
+
+/** Derive an action only from known tool names and narrow public metadata fields. */
+function publicToolSummary(tool: string, input: unknown): string | undefined {
+	const data =
+		input && typeof input === 'object' && !Array.isArray(input)
+			? (input as Record<string, unknown>)
+			: undefined;
+	const fileName = (value: unknown): string | undefined => {
+		if (typeof value !== 'string' || value.length > 512 || /[\x00-\x1f\x7f]/.test(value)) return;
+		const name = value.replace(/\\/g, '/').split('/').pop();
+		return name &&
+			name !== '.' &&
+			name !== '..' &&
+			name.length <= 80 &&
+			/^[\p{L}\p{N}._ -]+$/u.test(name)
+			? name
+			: undefined;
+	};
+	const targetName = (value: unknown): string | undefined =>
+		typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) ? value : undefined;
+
+	if (tool === 'functions.exec') {
+		// The wrapper's JavaScript is untrusted. Recognize only a tool identifier;
+		// never copy the code, nested arguments, or shell text into progress.
+		const code = typeof input === 'string' ? input : data?.code;
+		if (typeof code !== 'string' || code.length > 64_000) return;
+		const shellCalls = (code.match(/\btools\.exec_command\s*\(/g) ?? []).length;
+		if (shellCalls) return shellCalls === 1 ? 'Running shell command' : 'Running shell commands';
+		return;
+	}
+	if (
+		[
+			'Bash',
+			'bash',
+			'Shell',
+			'shell',
+			'shell_command',
+			'functions.shell_command',
+			'functions.exec_command',
+			'exec_command',
+		].includes(tool)
+	) {
+		return 'Running shell command';
+	}
+	if (['Read', 'read_file', 'functions.read_file', 'fs.read'].includes(tool)) {
+		const name = fileName(data?.file_path ?? data?.path);
+		return name ? `Reading file ${name}` : 'Reading file';
+	}
+	if (
+		['Write', 'Edit', 'MultiEdit', 'write_file', 'functions.apply_patch', 'fs.write'].includes(tool)
+	) {
+		const name = fileName(data?.file_path ?? data?.path);
+		return name ? `Editing file ${name}` : 'Editing files';
+	}
+	if (
+		['Task', 'functions.collaboration.spawn_agent', 'agents.dispatch', 'agents.send'].includes(tool)
+	) {
+		const name = targetName(data?.subagent_type ?? data?.task_name ?? data?.agentId);
+		return name ? `Dispatching to agent ${name}` : 'Dispatching to agent';
+	}
+	if (['Grep', 'Glob', 'functions.web__run'].includes(tool)) return 'Searching';
+	return;
+}
+
+/** Emit only public, bounded fields; never pass parser raw/tool state downstream. */
+function emitAgentProgress(
+	callback: SpawnAgentOptions['onProgress'],
+	event: AgentSendProgressEvent
+): void {
+	if (!callback) return;
+	try {
+		callback(event);
+	} catch {
+		// A consumer callback cannot change the provider run's result.
+	}
+}
+
+/** Verified local MCP strategies need no config files. The server spec carries
+ * only a path to the owner-only run proof, never the proof bytes. */
+function localPluginMcp(
+	toolType: ToolType,
+	overrides: SpawnOverrides
+): { args: string[]; env: Record<string, string> } {
+	const cap = MCP_CONFIG_BY_AGENT[toolType];
+	if (!cap?.verified || !overrides.pluginRunProofFile || !overrides.mcpCliScriptPath)
+		return { args: [], env: {} };
+	const injection = buildMcpInjection(
+		cap,
+		{
+			command: process.execPath,
+			args: [overrides.mcpCliScriptPath, 'mcp', 'serve'],
+			env: {
+				ELECTRON_RUN_AS_NODE: '1',
+				MAESTRO_PLUGIN_RUN_TOKEN_FILE: overrides.pluginRunProofFile,
+				...(process.env.MAESTRO_USER_DATA
+					? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+					: {}),
+				...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
+			},
+		},
+		{ tmpDir: os.tmpdir(), join: path.join }
+	);
+	if (injection.files.length) return { args: [], env: {} };
+	return { args: injection.globalArgs, env: injection.env };
+}
 
 /**
  * Maximum command-line length we'll accept before falling back to
@@ -502,12 +631,10 @@ function warnOversizedLineBuffer(droppedLength: number): void {
 const NO_EXIT_CLASSIFICATION = { detectErrorFromExit: () => null };
 
 /**
- * How every CLI turn is started and stopped. Aborting the caller's signal runs
- * the shared stop ladder from SIGTERM: if the agent is still alive after the
- * grace period its whole tree is killed (some agents trap SIGTERM to finish a
- * tool call, and a stop that never lands is worse than an abrupt one), and
- * whatever it started is stopped with it. On Windows the tree goes through
- * `taskkill /t /f`. The turn then settles as `interrupted`, never as a crash.
+ * The canonical turn owns streaming, bounded output tails and process cleanup.
+ * The supervisor below owns startup, lifetime and cancellation deadlines and
+ * invokes the shared ownership-aware stop ladder. Cancellation settles as
+ * `interrupted`; timeout and startup failures settle as `crashed`.
  *
  * Over SSH this stops the LOCAL ssh client; without a forced TTY the remote
  * process is not guaranteed to receive the hangup, so a remote agent may
@@ -519,6 +646,7 @@ function cliTurnOptions(signal: AbortSignal | undefined): StartTurnOptions {
 		signal,
 		maxLineLength: MAX_LINE_BUFFER_LENGTH,
 		stdoutTailLimit: STDOUT_TAIL_LIMIT,
+		stderrTailLimit: DEFAULT_STDERR_TAIL_LIMIT,
 		label: 'cli',
 	};
 }
@@ -583,7 +711,7 @@ async function spawnClaudeAgent(
 		!!agentSessionId,
 		sshRemoteConfig
 	);
-	const baseArgs = [
+	let baseArgs = [
 		...resolvedArgs,
 		...buildAppendSystemPromptArgs(
 			systemPromptDelivery,
@@ -591,6 +719,11 @@ async function spawnClaudeAgent(
 			agentSessionId || 'fresh'
 		),
 	];
+
+	if (!sshRemoteConfig?.enabled) {
+		const mcp = localPluginMcp('claude-code', overrides);
+		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT['claude-code'], baseArgs, mcp.args);
+	}
 
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
@@ -743,10 +876,56 @@ async function spawnClaudeAgent(
 	// usage, which is the turn's real context occupancy (`absoluteUsage`).
 	// The totals themselves still come from `aggregateModelUsage` below.
 	const occupancyTracker = new ClaudeOutputParser();
+	const progressTools = new Map<string, { tool: string; summary?: string }>();
+	let stopped = false;
+	let stopReason: string | undefined;
 
 	// Process a single parsed JSON message from Claude Code's stream-json output
 
 	const processMessage = (msg: any) => {
+		if (!stopped && !overrides.signal?.aborted) {
+			if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+				for (const block of msg.message.content) {
+					if (block?.type !== 'tool_use') continue;
+					const tool =
+						typeof block.name === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(block.name)
+							? block.name
+							: 'Tool';
+					const summary = publicToolSummary(tool, block.input);
+					if (typeof block.id === 'string' && block.id.length <= 128) {
+						progressTools.set(block.id, { tool, summary });
+						if (progressTools.size > 128) {
+							const oldest = progressTools.keys().next().value;
+							if (oldest) progressTools.delete(oldest);
+						}
+					}
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool,
+						status: 'started',
+						...(summary ? { summary } : {}),
+						at: new Date().toISOString(),
+					});
+				}
+			}
+			if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
+				for (const block of msg.message.content) {
+					if (block?.type !== 'tool_result') continue;
+					const invocation =
+						typeof block.tool_use_id === 'string'
+							? progressTools.get(block.tool_use_id)
+							: undefined;
+					if (typeof block.tool_use_id === 'string') progressTools.delete(block.tool_use_id);
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool: invocation?.tool ?? 'Tool',
+						status: block.is_error ? 'failed' : 'completed',
+						...(invocation?.summary ? { summary: invocation.summary } : {}),
+						at: new Date().toISOString(),
+					});
+				}
+			}
+		}
 		// An explicit result event is the provider's "done" signal, independent
 		// of whether it carried any text.
 		if (msg.type === 'result') resultMessageSeen = true;
@@ -827,9 +1006,32 @@ async function spawnClaudeAgent(
 			onLine: processLine,
 			onOversizedLine: warnOversizedLineBuffer,
 		},
-		cliTurnOptions(overrides.signal)
+		cliTurnOptions(undefined)
 	);
-	const exit = await turn.done;
+	let forcedStop!: () => void;
+	const forced = new Promise<undefined>((resolve) => {
+		forcedStop = () => resolve(undefined);
+	});
+	const supervision = superviseAgentProcess(turn.child, {
+		timeoutMs: overrides.timeoutMs,
+		signal: overrides.signal,
+		onStop: (reason) => {
+			stopped = true;
+			stopReason = reason;
+		},
+		onForcedStop: forcedStop,
+	});
+	const exit = await Promise.race([turn.done, forced]);
+	stopped = true;
+	supervision.dispose();
+	if (stopReason)
+		return {
+			...(overrides.signal?.aborted ? interruptedResult() : spawnFailureResult(stopReason)),
+			error: stopReason,
+			agentSessionId: sessionId,
+			usageStats,
+		};
+	if (!exit) return interruptedResult();
 	if (exit.spawnError) {
 		return spawnFailureResult(`Failed to spawn Claude: ${exit.spawnError.message}`);
 	}
@@ -986,7 +1188,7 @@ async function spawnJsonLineAgent(
 		isResume,
 		sshRemoteConfig
 	);
-	const baseArgs = [
+	let baseArgs = [
 		...resolvedArgs,
 		...buildAppendSystemPromptArgs(
 			systemPromptDelivery,
@@ -999,6 +1201,11 @@ async function spawnJsonLineAgent(
 		overrides.appendSystemPrompt,
 		prompt
 	);
+
+	if (!sshRemoteConfig?.enabled) {
+		const mcp = localPluginMcp(toolType, overrides);
+		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT[toolType], baseArgs, mcp.args);
+	}
 
 	const noPromptSeparator = !!def?.noPromptSeparator;
 
@@ -1084,6 +1291,23 @@ async function spawnJsonLineAgent(
 	// event carries any. This path settles on the text of `error` events, so the
 	// in-band classifier stays off and its outcomes are what they always were.
 	const capture = new TurnCapture(toolType, parser, { classifyInBandErrors: false });
+	let stopped = false;
+	let stopReason: string | undefined;
+	const progressSummaries = new Map<string, string>();
+	let codexCandidate: string | undefined;
+	let codexFinal: string | undefined;
+	const codexProgressTexts = new Set<string>();
+	const emitCodexInterim = (text: string): void => {
+		if (codexProgressTexts.has(text)) return;
+		codexProgressTexts.add(text);
+		if (codexProgressTexts.size > 128)
+			codexProgressTexts.delete(codexProgressTexts.values().next().value!);
+		emitAgentProgress(overrides.onProgress, {
+			type: 'commentary',
+			text: text.slice(0, 2000),
+			at: new Date().toISOString(),
+		});
+	};
 
 	const turn = startTurn(
 		{
@@ -1095,12 +1319,113 @@ async function spawnJsonLineAgent(
 		},
 		{
 			onStdout: () => wakaHeartbeat?.(),
-			onEvent: (event) => capture.handleEvent(event),
+			onEvent: (event) => {
+				if (stopped || overrides.signal?.aborted) {
+					capture.handleEvent({ ...event, type: 'system', text: undefined });
+					return;
+				}
+				capture.handleEvent(event);
+				if (
+					toolType === 'codex' &&
+					!event.isRetryNotice &&
+					event.raw &&
+					typeof event.raw === 'object' &&
+					((['text', 'result'].includes(event.type) && Boolean(event.text)) ||
+						event.type === 'tool_use' ||
+						event.type === 'usage')
+				)
+					supervision.modelActivity();
+				if (event.type === 'tool_use') {
+					const tool =
+						typeof event.toolName === 'string' &&
+						/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
+							? event.toolName
+							: 'Tool';
+					const state =
+						event.toolState && typeof event.toolState === 'object' && 'status' in event.toolState
+							? (event.toolState as { status?: unknown }).status
+							: undefined;
+					const status =
+						state === 'failed' || state === 'error'
+							? 'failed'
+							: state === 'completed' || state === 'success'
+								? 'completed'
+								: 'started';
+					const input =
+						event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
+							? (event.toolState as { input?: unknown }).input
+							: undefined;
+					let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
+					if (event.toolCallId && event.toolCallId.length <= 128) {
+						if (status === 'started' && summary) {
+							progressSummaries.set(event.toolCallId, summary);
+							if (progressSummaries.size > 128) {
+								const oldest = progressSummaries.keys().next().value;
+								if (oldest) progressSummaries.delete(oldest);
+							}
+						} else if (status !== 'started') {
+							summary = progressSummaries.get(event.toolCallId);
+							progressSummaries.delete(event.toolCallId);
+						}
+					}
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool,
+						status,
+						...(summary ? { summary } : {}),
+						at: new Date().toISOString(),
+					});
+				}
+				// Phase-less Codex messages remain buffered until a distinct answer
+				// follows. Only then can we safely release one as public progress.
+				if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
+					emitCodexInterim(event.text);
+				}
+
+				if (event.type === 'result' && event.text) {
+					if (toolType === 'codex') {
+						if (event.responsePhase === 'final') {
+							if (codexCandidate && codexCandidate !== event.text) {
+								emitCodexInterim(codexCandidate);
+							}
+							codexCandidate = undefined;
+							codexFinal = event.text;
+						} else if (!codexFinal && event.text !== codexCandidate) {
+							if (codexCandidate) emitCodexInterim(codexCandidate);
+							codexCandidate = event.text;
+						}
+					}
+				}
+			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
-		{ ...cliTurnOptions(overrides.signal), parser }
+		{ ...cliTurnOptions(undefined), parser }
 	);
-	const exit = await turn.done;
+	let forcedStop!: () => void;
+	const forced = new Promise<undefined>((resolve) => {
+		forcedStop = () => resolve(undefined);
+	});
+	const supervision = superviseAgentProcess(turn.child, {
+		timeoutMs: overrides.timeoutMs,
+		signal: overrides.signal,
+		startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
+		onStop: (reason) => {
+			stopped = true;
+			stopReason = reason;
+		},
+		onForcedStop: forcedStop,
+	});
+	const exit = await Promise.race([turn.done, forced]);
+	stopped = true;
+	supervision.dispose();
+	if (stopReason)
+		return {
+			...(overrides.signal?.aborted ? interruptedResult() : spawnFailureResult(stopReason)),
+			error: stopReason,
+			agentSessionId: capture.sessionId,
+			usageStats: capture.usage,
+		};
+	if (!exit) return interruptedResult();
 	if (exit.spawnError) {
 		const agentName = def?.name || toolType;
 		return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);
@@ -1119,14 +1444,18 @@ async function spawnJsonLineAgent(
 		stderrText: exit.stderrText,
 		stdoutText: exit.stdoutText,
 		stdinError: exit.stdinError,
-		errorText: capture.errorText,
-		answerText: capture.answerText,
+		errorText:
+			capture.errorText ??
+			(toolType === 'codex' && exit.exitCode === 0 && !codexFinal && !codexCandidate
+				? 'Agent returned no final text'
+				: undefined),
+		answerText: toolType === 'codex' ? codexFinal || codexCandidate : capture.answerText,
 		resultMessageSeen: capture.resultMessageSeen,
 		agentSessionId: capture.sessionId,
 		usageStats: capture.usage,
 		// This path has always accepted a clean exit with no answer, and a
 		// non-zero exit after a full answer (Grok with `--max-turns`).
-		strictEmptyAnswer: false,
+		strictEmptyAnswer: toolType === 'codex' || overrides.timeoutMs !== undefined,
 		answerOutranksBareExit: true,
 		droppedOutputBytes: exit.droppedOutputBytes,
 	});
@@ -1140,6 +1469,10 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	pluginRunProofFile?: string;
+	mcpCliScriptPath?: string;
+	timeoutMs?: number;
+	onProgress?: (event: AgentSendProgressEvent) => void;
 	/** Resume an existing agent session */
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
@@ -1193,8 +1526,8 @@ export interface SpawnAgentOptions {
 	 */
 	querySource?: QuerySource;
 	/**
-	 * Abort the turn. The agent is sent SIGTERM (then SIGKILL after a grace
-	 * period) and the result comes back with `outcome: 'interrupted'` - a user
+	 * Abort the turn. The shared stop ladder terminates the process tree and
+	 * the result comes back with `outcome: 'interrupted'` - a user
 	 * stop, never reported as a crash. An already-aborted signal returns
 	 * immediately without spawning anything.
 	 */
@@ -1217,6 +1550,10 @@ export async function spawnAgent(
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
 		signal: options?.signal,
+		pluginRunProofFile: options?.pluginRunProofFile,
+		mcpCliScriptPath: options?.mcpCliScriptPath,
+		timeoutMs: options?.timeoutMs,
+		onProgress: options?.onProgress,
 		customModel: options?.customModel,
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,

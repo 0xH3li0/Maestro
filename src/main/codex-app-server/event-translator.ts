@@ -295,7 +295,12 @@ export class CodexAppServerEventTranslator {
 				return [
 					{
 						type: 'item.completed',
-						item: { id: item.id, type: 'agent_message', text: item.text ?? '' },
+						item: {
+							id: item.id,
+							type: 'agent_message',
+							text: item.text ?? '',
+							...(item.phase === undefined ? {} : { phase: item.phase }),
+						},
 					},
 				];
 

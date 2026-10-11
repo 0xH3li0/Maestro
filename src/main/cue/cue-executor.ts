@@ -25,6 +25,11 @@ import {
 	getProcessList,
 } from './cue-process-lifecycle';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
+import { logger } from '../utils/logger';
+import {
+	pluginToolRunIdentity,
+	removePluginRunProofFile,
+} from '../plugins/plugin-tool-run-identity';
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
@@ -218,27 +223,38 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sshActuallyUsed
 	);
 
-	// Asked for only when someone is listening. It is a reference to the string
-	// the run already holds, so the copy costs nothing.
+	// Capture the existing raw stream only when the optional recorder listens.
 	let rawStdout = '';
-	const processResult = await runProcess(runId, spec, {
-		toolType: config.toolType,
-		timeoutMs,
-		sshRemoteEnabled: sshActuallyUsed,
-		sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
-		// Set only by the SSH wrapper: a local Cue run carries its prompt on the
-		// command line, on every host.
-		stdinPrompt: spec.stdinPrompt,
-		onLog,
-		onActivity: wakaHeartbeat,
-		...(config.onRunTranscript
-			? {
-					onRawStdout: (raw: string) => {
-						rawStdout = raw;
-					},
-				}
-			: {}),
-	});
+	let processResult;
+	try {
+		processResult = await runProcess(runId, spec, {
+			toolType: config.toolType,
+			timeoutMs,
+			sshRemoteEnabled: sshActuallyUsed,
+			sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
+			stdinPrompt: spec.stdinPrompt,
+			onLog,
+			onActivity: wakaHeartbeat,
+			...(config.onRunTranscript
+				? {
+						onRawStdout: (raw: string) => {
+							rawStdout = raw;
+						},
+					}
+				: {}),
+		});
+	} finally {
+		if (spec.pluginRunToken) pluginToolRunIdentity.revoke(spec.pluginRunToken);
+		if (spec.pluginRunProofFile) {
+			try {
+				removePluginRunProofFile(spec.pluginRunProofFile);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
+		}
+	}
 
 	// 5. Assemble final result. `processResult.stdout` is already clean text and
 	// `providerSessionId`/`usage` already extracted - both parsed once, live,
