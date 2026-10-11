@@ -154,6 +154,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Cue gate for a small local model or endpoint: reads a subscription gate condition and one event, and answers whether the run should start, as JSON',
 		category: 'commands',
 	},
+	{
+		id: 'token-proxy-local',
+		filename: 'token-proxy-local.md',
+		description:
+			'Token proxy summary for a small local model or endpoint: shortens one piece of a large tool result, keeping paths, identifiers, numbers and errors',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -403,6 +410,7 @@ export const PROMPT_IDS = {
 	TAB_CLEANUP_LOCAL: 'tab-cleanup-local',
 	SPOKEN_NOTICE_LOCAL: 'spoken-notice-local',
 	CUE_GATE_LOCAL: 'cue-gate-local',
+	TOKEN_PROXY_LOCAL: 'token-proxy-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

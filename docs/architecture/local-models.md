@@ -1390,7 +1390,8 @@ table's **Show environment** draws it with `<EnvVarList>`.
 
 Maestro's own proxy is an HTTP server on `127.0.0.1` that an agent reaches through its gateway
 URL. In this phase it is an **exact passthrough**: it changes nothing in either direction and logs
-the bytes it carried. Compression is a later phase and sits on top of this path.
+the bytes it carried. The compressor exists (`proxy/compress.ts`, see
+[Compression](#compression)) but the server does not call it yet: that is the next phase.
 
 ```mermaid
 flowchart LR
@@ -1515,6 +1516,199 @@ Limits of this phase:
   the per-route gateway URLs, the agents that point at it and the last start error for the surfaces
   a later phase adds.
 - WebSocket upgrades are not forwarded.
+
+### Compression
+
+`compressRequestBody(kind, body, options)` in `src/main/local-models/proxy/compress.ts` shortens the
+large tool results of one request and changes nothing else. The server does not call it yet. It is
+a library with four parts:
+
+| File                         | Owns                                                               |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `proxy/json-spans.ts`        | Where each JSON value sits in the request text (`parseJsonSpans`)  |
+| `proxy/compressors.ts`       | The pure heuristics (`compressWithHeuristics`)                     |
+| `proxy/compression-cache.ts` | The content-addressed store of verdicts (`createCompressionCache`) |
+| `proxy/compress.ts`          | Which blocks may change, the model tier, and the order of work     |
+
+```mermaid
+flowchart TD
+	B["request body (text)"] --> S["parseJsonSpans()<br/>locate values, parse nothing"]
+	S --> F["findToolResultSpans(kind)<br/>tool results outside the protected regions"]
+	F --> T{"at least 1000 tokens?"}
+	T -->|no| KEEP["left as sent"]
+	T -->|yes| H["SHA-256 of the original"]
+	H --> C{"verdict in the cache?"}
+	C -->|yes| USE["use it: same bytes as every earlier turn"]
+	C -->|no| HEUR["heuristics<br/>JSON, or logs then long lines"]
+	HEUR --> M{"still 8000 tokens or more?"}
+	M -->|yes| LM["token-proxy task<br/>runLocalTask(), piece by piece"]
+	M -->|no| D
+	LM --> D{"at least 10% smaller,<br/>marker included?"}
+	D -->|no| K["verdict: kept"]
+	D -->|yes| Z["verdict: compressed"]
+	K --> W[("proxy-cache/<br/>record")]
+	Z --> W2[("proxy-cache/<br/>record, original, replacement")]
+	W2 --> SP["spliceSpans()<br/>new string literal over the old one"]
+	USE --> SP
+```
+
+#### The body is text, never a value
+
+`JSON.parse` followed by `JSON.stringify` is not the identity on bytes. It drops whitespace,
+re-spells escapes, moves integer-like keys to the front of an object, and rounds an integer past
+2^53 (an id inside a `tool_use` input would change). So the compressor does not parse the body.
+`parseJsonSpans()` locates every value, `stringValue()` decodes only the tool results that are
+read, and `spliceSpans()` writes one new string literal over each block that is compressed. Every
+other byte is the byte the client sent. When nothing is compressed the result carries the SAME
+string and `changed: false`, and the caller forwards the bytes it received.
+
+The scanner reads a 3.5 MB request in about 2 ms (measured on an Apple Silicon laptop; `JSON.parse`
+takes about 6 ms on the same text), because a string is skipped with `indexOf`.
+
+#### What is a tool result
+
+| API                     | The text that may be compressed                                            |
+| ----------------------- | -------------------------------------------------------------------------- |
+| Anthropic Messages      | A `tool_result` block's content: a string, or the `text` parts of a list   |
+| OpenAI Chat Completions | A `tool` role message's content                                            |
+| OpenAI Responses        | The `output` of a `function_call_output` or `custom_tool_call_output` item |
+
+#### What is never touched
+
+1. **Anything that is not a tool result.** The system prompt, the tool definitions and every user
+   and assistant message are walked around, not read.
+2. **The most recent user message, and tool results the model has not answered yet.** The model
+   reads every tool result in full once. In an Anthropic request fresh tool results ARE the last
+   `user` message, so that message goes out whole. In the OpenAI formats a tool result is not a
+   user message, so the same rule is applied by position: a `tool` message after the last
+   `assistant` message, and a Responses output after the last model item (`role: assistant`,
+   `reasoning`, or a type that ends in `_call`), are held back.
+3. **Any block marked with `cache_control`,** and everything inside it. `cache_control: null` is
+   not a mark.
+4. **A tool result under the threshold** (`DEFAULT_COMPRESS_MIN_TOKENS`, 1000). It is not hashed
+   and nothing is stored for it.
+
+A protected block is never hashed, so no verdict exists for it until the request in which it is
+first unprotected.
+
+#### The compressors
+
+Which one a text gets depends on what the text is. Each is a pure function.
+
+| Compressor   | Applies to                            | Does                                                                                                                                                                                |
+| ------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `json`       | A text that is one JSON object/array  | Minifies. Samples an array longer than 20 items to its first 10 and last 5, with a count between them. Runs the two line compressors over a string value longer than 1000 chars.    |
+| `logs`       | Any other text                        | Strips terminal escapes (`stripAnsiCodes`), collapses carriage-return overwrites (`processCarriageReturns`), folds a repeated line or block of up to 8 lines into one copy + count. |
+| `long-lines` | Any other text, after `logs`          | Cuts a line longer than 1000 characters to 800, with a count of what was cut.                                                                                                       |
+| `model`      | A result still at 8000 tokens or more | Asks the `token-proxy` Local Models task to shorten it (prompt `token-proxy-local`).                                                                                                |
+
+- JSON is compressed as JSON and stays JSON. The line compressors never see the whole document:
+  minified JSON is one line, and cutting that line would cut the structure.
+- Numbers and strings inside JSON are copied as text. They are never parsed and printed again.
+- A long string value inside JSON gets the line compressors because a shell result is often
+  `{"output": "<the log>", "metadata": {...}}`.
+- Everything left out is named in the text, in a `[maestro: ...]` note, for example
+  `[maestro: 85 of 100 items omitted]` or `[maestro: previous line repeated 399 more times]`.
+- A fold happens only when it removes more characters than its note adds.
+
+The model tier is off until the user assigns the `token-proxy` task. A local model has a 4096
+token context, so `summarizeToolResult()` cuts the text with `chunkText()` into pieces of about
+1200 estimated tokens, shortens each (reply budget 400 tokens), and joins the replies. One piece
+that fails abandons the whole summary. All pieces share one 60 second budget. A text past 24000
+tokens is not given to the model. Off, unavailable, timed out, an empty reply and a reply that is
+not shorter all leave the heuristic result in place; `onModelUnavailable` hands an `unavailable`
+verdict to the caller for `reportLocalTaskUnavailable()`.
+
+Token counts are `estimateTokenCount()` (characters / 4) everywhere, including the marker.
+
+#### The marker and the cache
+
+A compressed block is the shortened text, a newline, and one line:
+
+```
+[maestro-compressed sha256=<hash of the original> original_tokens=<n>]
+```
+
+`formatCompressionMarker()` writes it and `parseCompressionMarker()` reads it.
+
+The cache is content-addressed, under `userData/proxy-cache/`:
+
+| File                           | Holds                                               |
+| ------------------------------ | --------------------------------------------------- |
+| `<hh>/<sha256>.json`           | The verdict record. Written last: it is the commit. |
+| `<hh>/<sha256>.original.txt`   | The text the agent sent (compressed blocks only)    |
+| `<hh>/<sha256>.compressed.txt` | The exact text sent in its place, marker included   |
+
+Rules:
+
+1. **The first verdict for a hash is the only one.** `compressed` and `kept` are both stored. The
+   heuristics are pure, but the model tier is not: a model can be unassigned, time out, or word a
+   summary differently. A block that was decided once is never decided again, so it is the same
+   bytes on every turn, after a restart, and after an app update that changes a compressor. A
+   model failure is frozen too (`modelFailure` in the record says why).
+2. **The verdict is stored BEFORE the replacement is used.** When the cache cannot be read or
+   written (disk full, permissions) the block is sent as it was and `stats.storeFailures` counts
+   it. A compression that is not recorded cannot be reproduced or audited.
+3. **One block is decided once at a time.** A process-wide `createKeyedWriteQueue()` keyed by hash
+   makes a second request that carries the same new block wait and read the first one's verdict.
+4. **A record that cannot be read is absent.** Bad JSON, another record version, another hash, or
+   a missing replacement file is logged and decided again.
+5. **Nothing prunes the directory.** An entry that vanished mid conversation would be decided
+   again, which for a model-written block can mean different bytes.
+
+`createCompressionCache()` keeps the newest 1024 verdicts in memory, so a request does not read the
+disk for each block. `readOriginal(hash)` is the read for an audit view; `isContentHash()` is its
+path guard.
+
+#### What the result reports
+
+`CompressRequestResult` is `{ body, changed, blocks, stats }`. `blocks` has one entry per replaced
+block (hash, tokens before and after, compressors, whether the verdict was cached). `stats` counts
+candidates, blocks under the threshold, compressed, kept, cache hits, tokens before and after,
+blocks per compressor, model failures and store failures. This function has no failure that stops
+a request: a body that is not JSON, or not a shape it knows, comes back unchanged.
+
+#### Known cost: the turn a block is first compressed
+
+Rule 2 of "never touched" and the cache rule do not fit together for free. A tool result is sent
+in full once (fresh) and compressed from the next request on, so its bytes change ONCE. For
+Anthropic that one change matters, because a cache entry is written only at a `cache_control`
+breakpoint, and Claude Code puts the breakpoint on the newest message:
+
+| Request | Sent                                   | Cache entry written at  |
+| ------- | -------------------------------------- | ----------------------- |
+| N       | `..., T(N) in full`                    | end of `T(N)` in full   |
+| N+1     | `..., T(N) compressed, T(N+1) in full` | end of `T(N+1)` in full |
+
+Request N+1 cannot read the entry request N wrote, because that entry's prefix holds `T(N)` in
+full. It reads back to the newest entry whose prefix did not change.
+
+- **One compressible result, then small ones:** request N+1 re-writes one extra segment (the
+  compressed `T(N)` and the assistant turn before it). After that the compressed bytes are read
+  from cache on every turn. Example: a 10000 token result that compresses to 2000 costs 2500
+  token-equivalents once (2000 at the 1.25x write price) and saves 800 per later turn (8000 at the
+  0.1x read price), so it pays for itself on the fourth turn after.
+- **Several compressible results in a row:** every entry in the run ends in a block that is in
+  full there and compressed later, so none of them can be read. Each request re-writes everything
+  back to the last entry before the run. A long run costs more than no proxy.
+
+Only a result that is over the threshold AND shrinks by 10% triggers this. A source file that no
+heuristic shortens is `kept`, and its bytes never change. OpenAI's prefix cache needs no
+breakpoint, so there the cost is one compressed block re-read per step.
+
+This is not measured yet. The real-run phase must record `cache_creation_input_tokens` and
+`cache_read_input_tokens` for a run of consecutive large log results, with compression on and
+off. If the cost is what the table predicts, the alternative is to compress a tool result the
+first time it is sent (keeping its `cache_control` field and changing only its text), which keeps
+every prefix stable and costs the model its one full read.
+
+Limits of this phase:
+
+- The server does not call `compressRequestBody()` yet, so no request is changed.
+- The local model is called inside the request. A large result on a small local model can hold the
+  request for up to 60 seconds, once per block.
+- Parallel tool results in a Responses request that the client interleaves with their calls
+  (`call A, output A, call B, output B`) are read as answered up to the last call.
 
 ## Related
 
