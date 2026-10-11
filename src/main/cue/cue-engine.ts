@@ -98,6 +98,7 @@ import {
 	CUE_ENGINE_LOCK_HEARTBEAT_MS,
 	type CueEngineRunnerMode,
 } from './cue-engine-lock';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -115,6 +116,9 @@ export interface CueEngineDeps {
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
 		autoRun?: CueAutoRunConfig;
+		/** The subscription's `tier` / `model` / `effort`; the host resolves it
+		 *  against the target agent (see `resolveCueTurnSettings`). */
+		turnSettings?: CueTurnSettings;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -447,7 +451,8 @@ export class CueEngine {
 				chainRootId,
 				parentEventId,
 				notify,
-				autoRun
+				autoRun,
+				turnSettings
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -464,7 +469,8 @@ export class CueEngine {
 					chainRootId,
 					parentEventId,
 					notify,
-					autoRun
+					autoRun,
+					turnSettings
 				);
 			},
 			onLog: meteredOnLog,
@@ -779,7 +785,8 @@ export class CueEngine {
 					// being re-read from the subscription: a notify's `sticky`, and
 					// the documents an `action: autorun` run was scheduled with.
 					entry.notify,
-					entry.autoRun
+					entry.autoRun,
+					entry.turnSettings
 				);
 			}
 		}

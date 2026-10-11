@@ -550,6 +550,7 @@ export interface AgentDetailDisplay {
 	customEffort?: string | null;
 	customContextWindow?: number | null;
 	tokenSource?: string | null;
+	codexTransport?: string | null;
 	stats: {
 		historyEntries: number;
 		successCount: number;
@@ -642,6 +643,9 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	addConfig('Token proxy mode', agent.tokenProxyMode ?? undefined);
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);
+	}
+	if (agent.toolType === 'codex' && agent.codexTransport) {
+		addConfig('Codex transport', agent.codexTransport);
 	}
 	if (configRows.length > 0) {
 		lines.push('');

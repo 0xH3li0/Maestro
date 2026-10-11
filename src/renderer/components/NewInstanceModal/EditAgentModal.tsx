@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
+import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -37,6 +39,7 @@ import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -94,6 +97,8 @@ export function EditAgentModal({
 	// on Session for why this one does NOT follow the resilience flags' default-on
 	// rule: reset credits are finite and irreversible.
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
+	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
+	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -335,6 +340,10 @@ export function EditAgentModal({
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
+			// Read the stored value, not `resolveCodexTransport`: that answers `exec`
+			// for a non-Codex agent, and saving it back would erase the preference
+			// of an agent that was moved off Codex and may move back.
+			setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
 		}
 
 		return () => {
@@ -574,6 +583,7 @@ export function EditAgentModal({
 			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
 			workingDirChanged ? trimmedWorkingDir : undefined,
 			codexAutoReset,
+			codexTransport,
 			gatewayEdit.gatewayUrl ?? undefined
 		);
 		onClose();
@@ -599,6 +609,7 @@ export function EditAgentModal({
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
 		codexAutoReset,
+		codexTransport,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -665,6 +676,13 @@ export function EditAgentModal({
 	if (!isOpen || !session) return null;
 
 	const agentName = getAgentDisplayName(selectedToolType);
+	// Whether a turn of this agent can run through the claude TUI, as the form
+	// stands now. Dynamic counts: it starts on the TUI and leaves it only near a
+	// limit. Read through the one resolver every spawn uses, so an SSH agent
+	// that was never configured (TUI by default) is answered the same way here.
+	const usesInteractiveTokenSource =
+		selectedToolType === 'claude-code' &&
+		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
 
 	return (
 		<Modal
@@ -786,6 +804,18 @@ export function EditAgentModal({
 					theme={theme}
 					agentSessionId={session.id}
 					enabled={aCappellaEnabled}
+				/>
+
+				{/* Chain of thought export. The section saves its own changes the
+				    moment they are made, into the feature's own store. It hands this
+				    dialog no state on purpose: nothing of it may reach `onSave`, and
+				    through that the Session object. */}
+				<AgentCotExportSection
+					theme={theme}
+					agentId={session.id}
+					agentName={session.name}
+					supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+					usesInteractiveTokenSource={usesInteractiveTokenSource}
 				/>
 
 				{/* Working Directory */}
@@ -980,6 +1010,8 @@ export function EditAgentModal({
 							detectedMaestroPPath={detectedMaestroPPath}
 							codexAutoResetOnExhaustion={codexAutoReset}
 							onCodexAutoResetChange={setCodexAutoReset}
+							codexTransport={codexTransport}
+							onCodexTransportChange={setCodexTransport}
 						/>
 					</div>
 				)}

@@ -6,8 +6,9 @@
  * on its own: a combo the OS has already claimed fails that id and leaves the
  * others bound. That independence is the whole reason this stopped being a
  * singleton. When there was one hotkey, "did it register" was a boolean; with
- * the A Cappella voice hotkeys there are three, and a shared failure path would
- * mean the user losing "show Maestro" because they picked a bad voice combo.
+ * the A Cappella voice hotkeys and Quick Chat's summon key there are several,
+ * and a shared failure path would mean the user losing "show Maestro" because
+ * they picked a bad voice combo.
  *
  * Settings still store a key array (`['Meta','Shift','M']`), the same format the
  * in-app shortcut recorder produces, and it is translated to an Electron
@@ -74,6 +75,13 @@ export function keysToAccelerator(keys: string[]): string | null {
 				break;
 			case 'Shift':
 				modifiers.push('Shift');
+				break;
+			case ' ':
+			case '\u00a0':
+				// The shortcut recorder stores the space bar as its literal key
+				// value (a non-breaking space with Option held on macOS); Electron
+				// only accepts the name.
+				mainKey = 'Space';
 				break;
 			default:
 				mainKey = raw.length === 1 ? raw.toUpperCase() : raw;
@@ -167,8 +175,13 @@ export class GlobalHotkeyRegistry {
 	 * Always releases the previous accelerator first, so a typo cannot leave a
 	 * stale combo registered, and a rebind back onto a combo this id already held
 	 * cannot report itself as its own conflict.
+	 *
+	 * `silent` skips the failure listener (the failure is still logged and still
+	 * returned). It is for an owner that reports its own failures to its own UI,
+	 * so the user is not told twice about one bad combo.
 	 */
-	setKeys(id: string, keys: string[]): GlobalHotkeyStatus {
+	setKeys(id: string, keys: string[], options: { silent?: boolean } = {}): GlobalHotkeyStatus {
+		const silent = options.silent === true;
 		this.clear(id);
 
 		const accelerator = keysToAccelerator(keys);
@@ -185,7 +198,7 @@ export class GlobalHotkeyRegistry {
 					}
 				: { id, keys, accelerator: null, registered: false };
 			this.statuses.set(id, status);
-			if (status.reason) this.reportFailure(status);
+			if (status.reason) this.reportFailure(status, silent);
 			else logger.info(`Global hotkey '${id}' cleared`, LOG_CONTEXT);
 			return status;
 		}
@@ -202,7 +215,7 @@ export class GlobalHotkeyRegistry {
 				message: `${accelerator} is already used by another Maestro hotkey (${owner}).`,
 			};
 			this.statuses.set(id, status);
-			this.reportFailure(status);
+			this.reportFailure(status, silent);
 			return status;
 		}
 
@@ -229,7 +242,7 @@ export class GlobalHotkeyRegistry {
 					: `${accelerator} is already in use by another application.`,
 			};
 			this.statuses.set(id, status);
-			this.reportFailure(status);
+			this.reportFailure(status, silent);
 			return status;
 		}
 
@@ -285,8 +298,9 @@ export class GlobalHotkeyRegistry {
 		this.owners.clear();
 	}
 
-	private reportFailure(status: GlobalHotkeyStatus): void {
+	private reportFailure(status: GlobalHotkeyStatus, silent = false): void {
 		logger.warn(`Global hotkey '${status.id}' failed: ${status.message}`, LOG_CONTEXT);
+		if (silent) return;
 		try {
 			this.failureListener?.(status);
 		} catch (err) {
@@ -334,6 +348,27 @@ export function initGlobalHotkey(getWindow: () => BrowserWindow | null): void {
  */
 export function setGlobalShowHotkey(keys: string[]): boolean {
 	return !registry.setKeys(SHOW_MAESTRO_HOTKEY_ID, keys).reason;
+}
+
+/**
+ * Register (or re-register) one owner's system-wide hotkey together with what it
+ * does. Pass an empty array to clear it.
+ *
+ * The one-call form for a feature that owns a single hotkey and reports a
+ * failure to its own UI (Quick Chat). It rides the registry, so a combo another
+ * Maestro hotkey already holds is refused here exactly as it is for the voice
+ * hotkeys, and it is registered silently: the caller tells the user, the
+ * registry's failure listener does not tell them a second time.
+ *
+ * @returns `true` on success (including a deliberate clear), `false` if
+ *          registration failed.
+ */
+export function setNamedGlobalHotkey(id: string, keys: string[], onPress: () => void): boolean {
+	// Forget the id first: `define` re-registers an id whose last attempt failed,
+	// and that retry would be for the keys being replaced.
+	registry.remove(id);
+	registry.define(id, onPress);
+	return !registry.setKeys(id, keys, { silent: true }).reason;
 }
 
 /** Tear down the "show Maestro" shortcut. Safe to call multiple times. */

@@ -121,6 +121,43 @@ describe('cue-queue-persistence', () => {
 			expect(entries[0].event.type).toBe('time.heartbeat');
 		});
 
+		it('round-trips the model choice so a restored run keeps its tier / model / effort', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'pid-tier', makeEntry({ turnSettings: { tier: 'high', effort: 'low' } }));
+			p.persist('s-1', 'pid-model', makeEntry({ turnSettings: { model: 'gpt-5.5-codex' } }));
+			p.persist('s-1', 'pid-none', makeEntry());
+
+			const entries = p.restoreAll().get('s-1')!;
+			const byId = new Map(entries.map((e) => [e.persistId, e]));
+			expect(byId.get('pid-tier')!.turnSettings).toEqual({ tier: 'high', effort: 'low' });
+			expect(byId.get('pid-model')!.turnSettings).toEqual({ model: 'gpt-5.5-codex' });
+			expect(byId.get('pid-none')!.turnSettings).toBeUndefined();
+		});
+
+		it('restores a row persisted before turn_settings_json existed', () => {
+			const p = makePersistence();
+			// Pre-column row: the field is absent rather than null.
+			getSharedDb().persistQueuedEvent({
+				id: 'legacy',
+				sessionId: 's-1',
+				subscriptionName: 'sub',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: 'p',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: null,
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+			});
+
+			const entries = p.restoreAll().get('s-1')!;
+			expect(entries).toHaveLength(1);
+			expect(entries[0].turnSettings).toBeUndefined();
+		});
+
 		it('round-trips chain lineage (chainRootId + parentEventId) through the queue table', () => {
 			const p = makePersistence();
 			p.persist(

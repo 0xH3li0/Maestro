@@ -4,7 +4,7 @@
  * provider switching, SSH config, keyboard shortcuts
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
@@ -79,7 +79,8 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 const SAVE_ARG = {
 	workingDirectory: 20,
 	codexAutoResetOnExhaustion: 21,
-	gatewayUrl: 22,
+	codexTransport: 22,
+	gatewayUrl: 23,
 } as const;
 
 describe('EditAgentModal', () => {
@@ -531,6 +532,7 @@ describe('EditAgentModal', () => {
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
 				false, // codexAutoResetOnExhaustion: off by default
+				'exec', // codexTransport: Standard by default
 				undefined // gatewayUrl: no Local Models gateway set
 			);
 		});
@@ -632,6 +634,7 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
+			'exec', // codexTransport: Standard by default
 			undefined // gatewayUrl: no Local Models gateway set
 		);
 		expect(onClose).toHaveBeenCalled();
@@ -870,6 +873,7 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
+			'exec', // codexTransport: Standard by default
 			undefined // gatewayUrl: no Local Models gateway set
 		);
 	});
@@ -948,6 +952,7 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
+			'exec', // codexTransport: Standard by default
 			undefined // gatewayUrl: no Local Models gateway set
 		);
 	});
@@ -1032,6 +1037,7 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
+			'exec', // codexTransport: Standard by default
 			undefined // gatewayUrl: no Local Models gateway set
 		);
 	});
@@ -1488,6 +1494,269 @@ describe('EditAgentModal', () => {
 
 			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
+		});
+
+		// The transport rides the same Codex-only slot. Load and Save are both
+		// pinned: a Save that dropped the value would silently put an opted-in
+		// agent back on codex exec.
+		describe('Codex transport', () => {
+			const appServerButton = () =>
+				screen.getByText('App server (experimental, enables steering)').closest('button');
+
+			it('loads Standard for an agent that never opted in, and saves exec', async () => {
+				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				expect(appServerButton()?.className).not.toContain('ring-2');
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[SAVE_ARG.codexTransport]).toBe('exec');
+			});
+
+			it('reflects a stored app-server choice', async () => {
+				renderCodex(codexSession({ codexTransport: 'app-server' }));
+
+				await waitFor(() => expect(appServerButton()?.className).toContain('ring-2'));
+			});
+
+			it('carries a new app-server choice out through Save', async () => {
+				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				fireEvent.click(appServerButton()!);
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[SAVE_ARG.codexTransport]).toBe('app-server');
+			});
+
+			it('is absent for a non-Codex agent', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={createSession()}
+						existingSessions={[]}
+					/>
+				);
+
+				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+			});
+		});
+	});
+
+	// The export section saves its own changes into its own store. Nothing of
+	// it may ride along with Save: Save writes the Session object, and that
+	// object lands in a file the CLI reads.
+	describe('chain of thought export section', () => {
+		/** A name unlike anything else in the dialog, so a leak of the folder is found by it. */
+		const LOG_FOLDER = '/audit/turn-log-7f3c91d2';
+		const TOGGLE_LABEL = 'Export chain of thought for this agent';
+		const UNSUPPORTED_NOTE = /This provider does not expose its reasoning\./;
+		const INTERACTIVE_NOTE =
+			/Reasoning may be missing while this agent runs through the interactive/;
+
+		type Choice = { enabled: boolean; folder: string | null };
+		const statusOf = (choice: Choice) => ({ ...choice, turnsToday: 0, unencrypted: false });
+
+		/** A fake `window.maestro.cotExport` that keeps what it is told, as the store does. */
+		function installCotExport(initial: Choice = { enabled: false, folder: null }) {
+			let stored = initial;
+			const api = {
+				get: vi.fn(),
+				set: vi.fn(async (_agentId: string, choice: Choice) => {
+					stored = choice;
+					return { ok: true, status: statusOf(stored) };
+				}),
+				status: vi.fn(async () => statusOf(stored)),
+				validateFolder: vi.fn(async (_agentId: string, folder: string) => ({
+					ok: true,
+					resolved: folder,
+				})),
+				verify: vi.fn(async () => []),
+			};
+			(window.maestro as any).cotExport = api;
+			return api;
+		}
+
+		const renderModal = (session: Session = createSession()) =>
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+
+		/** The form, once the agent and its config have loaded: what Save reads. */
+		const formReady = () =>
+			waitFor(() => {
+				expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0);
+			});
+
+		/** The section, once its first status has arrived and its controls are free. */
+		const sectionReady = () =>
+			waitFor(() => expect(screen.getByText('Choose Folder')).not.toBeDisabled());
+
+		let originalDialog: unknown;
+
+		beforeEach(() => {
+			originalDialog = (window.maestro as any).dialog;
+		});
+
+		afterEach(() => {
+			delete (window.maestro as any).cotExport;
+			(window.maestro as any).dialog = originalDialog;
+		});
+
+		it('is absent where the API is not exposed', async () => {
+			renderModal();
+
+			await formReady();
+			expect(screen.queryByText('Chain of Thought Export')).not.toBeInTheDocument();
+		});
+
+		it('mounts directly after Agent Resilience, for the agent being edited', async () => {
+			const api = installCotExport();
+			renderModal(createSession({ id: 'agent-under-edit' }));
+
+			const section = await screen.findByTestId('cot-export-section');
+			expect(section.previousElementSibling).toHaveTextContent('Agent Resilience');
+			expect(api.status).toHaveBeenCalledWith('agent-under-edit');
+		});
+
+		it('keeps every export change out of Save', async () => {
+			// What Save hands over with the feature absent...
+			const without = renderModal();
+			await formReady();
+			fireEvent.click(screen.getByText('Save Changes'));
+			const baseline = onSave.mock.calls[0];
+			expect(baseline).toBeDefined();
+			without.unmount();
+			onSave.mockClear();
+
+			// ...is what it hands over after a folder was chosen and export turned on.
+			const api = installCotExport();
+			const selectFolder = vi.fn().mockResolvedValue(LOG_FOLDER);
+			(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
+			renderModal();
+			await formReady();
+			await sectionReady();
+
+			fireEvent.click(screen.getByText('Choose Folder'));
+			await waitFor(() =>
+				expect(screen.getByTestId('cot-export-folder')).toHaveTextContent(LOG_FOLDER)
+			);
+			fireEvent.click(screen.getByLabelText(TOGGLE_LABEL));
+			await waitFor(() =>
+				expect((screen.getByLabelText(TOGGLE_LABEL) as HTMLInputElement).checked).toBe(true)
+			);
+
+			// The section saved both changes itself, the moment they were made.
+			expect(api.set).toHaveBeenNthCalledWith(1, 'session-123', {
+				enabled: false,
+				folder: LOG_FOLDER,
+			});
+			expect(api.set).toHaveBeenNthCalledWith(2, 'session-123', {
+				enabled: true,
+				folder: LOG_FOLDER,
+			});
+			expect(onSave).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const saved = onSave.mock.calls[0];
+			expect(saved).toEqual(baseline);
+			expect(JSON.stringify(saved)).not.toMatch(
+				/cot[-_ ]?export|chain of thought|turn-log-7f3c91d2/i
+			);
+		});
+
+		it('notes a provider that does not expose its reasoning', async () => {
+			installCotExport();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					available: true,
+					path: '/usr/local/bin/claude',
+					binaryName: 'claude',
+					hidden: false,
+					capabilities: { supportsThinkingDisplay: false },
+				} as unknown as AgentConfig,
+			]);
+			renderModal();
+
+			expect(await screen.findByText(UNSUPPORTED_NOTE)).toBeInTheDocument();
+		});
+
+		it('shows no reasoning note for a provider that exposes it', async () => {
+			installCotExport();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					available: true,
+					path: '/usr/local/bin/claude',
+					binaryName: 'claude',
+					hidden: false,
+					capabilities: { supportsThinkingDisplay: true },
+				} as unknown as AgentConfig,
+			]);
+			renderModal();
+			await sectionReady();
+
+			expect(screen.queryByText(UNSUPPORTED_NOTE)).not.toBeInTheDocument();
+		});
+
+		it.each([
+			['interactive', { enableMaestroP: true, maestroPMode: 'interactive' }],
+			// Dynamic starts every turn on the TUI and leaves it only near a limit.
+			['dynamic', { enableMaestroP: true, maestroPMode: 'dynamic' }],
+		] as const)(
+			'notes that reasoning may be missing on the %s token source',
+			async (_mode, source) => {
+				installCotExport();
+				renderModal(createSession(source));
+
+				expect(await screen.findByText(INTERACTIVE_NOTE)).toBeInTheDocument();
+			}
+		);
+
+		it('shows no token source note for an agent on the API', async () => {
+			installCotExport();
+			renderModal(createSession({ enableMaestroP: false }));
+			await sectionReady();
+
+			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+		});
+
+		it('shows no token source note for another provider', async () => {
+			installCotExport();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'codex',
+					name: 'Codex',
+					available: true,
+					path: '/usr/local/bin/codex',
+					binaryName: 'codex',
+					hidden: false,
+				} as AgentConfig,
+			]);
+			renderModal(
+				createSession({ toolType: 'codex', enableMaestroP: true, maestroPMode: 'interactive' })
+			);
+			await sectionReady();
+
+			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
 		});
 	});
 

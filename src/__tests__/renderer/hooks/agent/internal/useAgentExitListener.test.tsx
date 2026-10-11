@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
-import { useRetryStore } from '../../../../../renderer/stores/retryStore';
+import {
+	useRetryStore,
+	noteDispatch,
+	scheduleRetryForError,
+	cancelContextCompaction,
+} from '../../../../../renderer/stores/retryStore';
+import { registerContextCompactionSpawner } from '../../../../../renderer/services/contextCompaction';
 import { DEFAULT_BATCH_STATE } from '../../../../../renderer/hooks/batch/batchReducer';
 import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
@@ -560,6 +566,68 @@ describe('useAgentExitListener', () => {
 
 		expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
 		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+	});
+
+	// The whole point of tying the compaction to this exit: the failed turn's
+	// process is gone (no second writer on the provider session), the tab has
+	// been settled, and no synopsis or completion runs for a turn that is about
+	// to be re-run.
+	it('starts a waiting context compaction once the failed turn has exited', async () => {
+		const compact = vi.fn(() => new Promise<{ success: boolean }>(() => {}));
+		registerContextCompactionSpawner(compact);
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			agentSessionId: 'claude-abc',
+			saveToHistory: true,
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		noteDispatch(
+			'sess-1',
+			{ id: 'turn-1', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'hi' },
+			{} as any
+		);
+		scheduleRetryForError('sess-1', 'tab-1', {
+			type: 'token_exhaustion',
+			message: 'Prompt is too long',
+			recoverable: true,
+			timestamp: 1,
+			agentId: 'claude-code',
+		} as any);
+		expect(compact).not.toHaveBeenCalled();
+
+		const deps = makeDeps();
+		const spawnSynopsis = vi.fn();
+		deps.spawnBackgroundSynopsisRef = { current: spawnSynopsis } as any;
+		const processQueuedItem = vi.fn().mockResolvedValue(true);
+		deps.processQueuedItemRef = { current: processQueuedItem } as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+		});
+
+		expect(compact).toHaveBeenCalledTimes(1);
+		// The turn still reads as running, the parked prompt was not drained, and
+		// the turn that died got no synopsis.
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.aiTabs[0].state).toBe('busy');
+		expect(updated.state).toBe('busy');
+		expect(updated.executionQueue.map((i) => i.id)).toEqual(['turn-1']);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(spawnSynopsis).not.toHaveBeenCalled();
+		expect(useRetryStore.getState().retries['sess-1:tab-1']?.status).toBe('in-flight');
+
+		cancelContextCompaction('sess-1');
+		registerContextCompactionSpawner(null);
 	});
 
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {

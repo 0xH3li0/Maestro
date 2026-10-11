@@ -24,16 +24,16 @@
 		"dev:group-chat-load": "node scripts/group-chat-load-demo.mjs",
 		"dev:showcase": "node scripts/showcase/launch.js",
 		"capture:showcase": "node scripts/showcase/capture.js",
-		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development electron .",
-		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && cross-env NODE_ENV=development USE_PROD_DATA=1 electron .",
+		"dev:main": "npm run build:main && cross-env NODE_ENV=development electron .",
+		"dev:main:prod-data": "npm run build:main && cross-env NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",
 		"dev:web-desktop": "vite --config vite.config.web-desktop.mts",
 		"build:web-desktop": "vite build --config vite.config.web-desktop.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:main && npm run build:provenance && npm run build:preload && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:maestro-lib-run && npm run build:permission-relay-bridge",
+		"build": "npm run build:main && npm run build:provenance && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:maestro-lib-run && npm run build:permission-relay-bridge",
 		"build:provenance": "node scripts/write-build-provenance.mjs",
 		"verify:provenance": "node scripts/write-build-provenance.mjs --verify",
-		"build:main": "tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs",
+		"build:main": "node scripts/clean-tsc-output.mjs && tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs && npm run build:preload",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
@@ -41,6 +41,7 @@
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:maestro-lib-run": "node scripts/build-maestro-lib-run.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
+		"build:observer": "node scripts/build-maestro-observer.mjs",
 		"build:renderer": "vite build",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux && npm run verify:native-packaging",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac && npm run verify:native-packaging",
@@ -102,6 +103,7 @@
 		},
 		"files": [
 			"dist/**/*",
+			"!dist/native/**/*",
 			"package.json"
 		],
 		"asarUnpack": [
@@ -189,6 +191,13 @@
 				{
 					"from": "examples/plugins/agent-flow",
 					"to": "plugins/agent-flow"
+				},
+				{
+					"from": "dist/native/darwin-${arch}",
+					"to": "native",
+					"filter": [
+						"maestro-observer"
+					]
 				}
 			]
 		},
@@ -248,6 +257,13 @@
 				{
 					"from": "examples/plugins/agent-flow",
 					"to": "plugins/agent-flow"
+				},
+				{
+					"from": "dist/native/win32-${arch}",
+					"to": "native",
+					"filter": [
+						"maestro-observer.exe"
+					]
 				}
 			]
 		},
@@ -299,6 +315,13 @@
 				{
 					"from": "examples/plugins/agent-flow",
 					"to": "plugins/agent-flow"
+				},
+				{
+					"from": "dist/native/linux-${arch}",
+					"to": "native",
+					"filter": [
+						"maestro-observer"
+					]
 				}
 			]
 		},
@@ -432,6 +455,7 @@
 		"semver": "^7.7.4",
 		"shiki": "^4.0.2",
 		"tar": "^7.5.17",
+		"undici": "^7.29.1",
 		"ws": "^8.16.0",
 		"zustand": "^5.0.11"
 	},
@@ -507,6 +531,9 @@
 		],
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"
+		],
+		"{CLAUDE.md,docs/agent-guides/CANONICAL-UTILITIES.md}": [
+			"node scripts/verify-docs-paths.mjs"
 		]
 	},
 	"allowScripts": {

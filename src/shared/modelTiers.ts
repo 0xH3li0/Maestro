@@ -32,6 +32,7 @@
  */
 
 import type { ToolType } from './types';
+import { FALLBACK_CONTEXT_WINDOW, getModelContextWindowOverride } from './agentConstants';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -153,5 +154,38 @@ export function cheapTurnSettings(toolType: ToolType): {
 	return {
 		model: resolveTierModel(toolType, 'low'),
 		effort: resolveEffortLevel(toolType, 'low'),
+	};
+}
+
+/**
+ * `cheapTurnSettings` for a turn that RESUMES the session it summarizes, with
+ * the fallbacks already applied. This is what a synopsis spawn should pass.
+ *
+ * The cheap tier is a MODEL swap, and a model carries a context window with
+ * it. Resuming replays the whole transcript, so downgrading a session running
+ * Anthropic's 1M beta (`opus[1m]`) onto a 200k model makes the synopsis of a
+ * long conversation fail with "Prompt is too long": the transcript fit the
+ * session's model and cannot fit the cheap one. So the session's model is kept
+ * whenever the downgrade would shrink the window. Effort still drops to the
+ * bottom rung, since that costs nothing to read.
+ *
+ * `current` is what the summarized turn ran at. It is also what the turn
+ * inherits on a provider with no tier mapping (codex, opencode), where there
+ * is nothing to downgrade TO.
+ */
+export function cheapResumeTurnSettings(
+	toolType: ToolType,
+	current: { model?: string; effort?: string } = {}
+): {
+	model: string | undefined;
+	effort: string | undefined;
+} {
+	const cheap = cheapTurnSettings(toolType);
+	const shrinksWindow =
+		(getModelContextWindowOverride(current.model) ?? FALLBACK_CONTEXT_WINDOW) >
+		(getModelContextWindowOverride(cheap.model) ?? FALLBACK_CONTEXT_WINDOW);
+	return {
+		model: shrinksWindow ? current.model : (cheap.model ?? current.model),
+		effort: cheap.effort ?? current.effort,
 	};
 }

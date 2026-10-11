@@ -33,15 +33,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import {
-	createKeyringEntry,
-	loadKeyringModule,
-	type KeyringEntry,
-	type KeyringModuleLoader,
-} from '../utils/keyring';
 import { isAllowlistScoped, isValidAllowlistMember } from '../../shared/plugins/permissions';
 import type { PermissionGrant, PluginCapability } from '../../shared/plugins/permissions';
 import type { SignatureStatus } from '../../shared/plugins/signing';
+import { createKeyringAnchor, keyringAnchor, noAnchor } from '../utils/keyring-anchor';
+import type { Anchor, AnchorStore, KeyringEntry, KeyringModule } from '../utils/keyring-anchor';
+import { safeStorageSeal } from '../utils/safe-storage-seal';
+import type { SafeStorageLike, SealProvider } from '../utils/safe-storage-seal';
 
 /** Schema version of the sealed ledger payload. */
 export const LEDGER_VERSION = 1 as const;
@@ -87,32 +85,15 @@ export interface AuthorizationLedger {
 	tombstones: Tombstone[];
 }
 
-/** The freshness anchor stored in the OS credential vault. */
-export interface Anchor {
-	installSecret: string;
-	epoch: number;
-}
+// The seal primitive lives in `utils/safe-storage-seal.ts` so every sealed
+// store shares one copy. Re-exported so this module's importers are unchanged.
+export { safeStorageSeal };
+export type { SafeStorageLike, SealProvider };
 
-/** Seals/unseals bytes via an OS-key-backed primitive (safeStorage). */
-export interface SealProvider {
-	available(): boolean;
-	seal(plaintext: string): Buffer;
-	unseal(blob: Buffer): string;
-}
-
-export interface SafeStorageLike {
-	isEncryptionAvailable(): boolean;
-	encryptString(s: string): Buffer;
-	decryptString(b: Buffer): string;
-}
-
-/** Named credential-store slot for the anchor, OUTSIDE the data-dir file tree. */
-export interface AnchorStore {
-	available(): boolean;
-	read(): Anchor | null;
-	write(anchor: Anchor): void;
-	clear(): void;
-}
+// The freshness anchor and its keyring binding live in `utils/keyring-anchor.ts`
+// for the same reason. Re-exported so this module's importers are unchanged.
+export { createKeyringAnchor, keyringAnchor, noAnchor };
+export type { Anchor, AnchorStore, KeyringEntry, KeyringModule };
 
 export interface AuthorizationStoreDeps {
 	seal: SealProvider;
@@ -482,103 +463,6 @@ export class AuthorizationStore {
 	}
 }
 
-/** Production `SealProvider` over Electron `safeStorage`. */
-export function safeStorageSeal(safeStorage: SafeStorageLike): SealProvider {
-	return {
-		available: () => {
-			try {
-				return safeStorage.isEncryptionAvailable();
-			} catch {
-				return false;
-			}
-		},
-		seal: (plaintext) => safeStorage.encryptString(plaintext),
-		unseal: (blob) => safeStorage.decryptString(blob),
-	};
-}
-
-/**
- * Production `AnchorStore` over a named OS credential entry. `entryFactory`
- * lazily constructs the keyring entry so a missing/unavailable native module
- * degrades to `available() === false` (→ session-only) instead of throwing.
- *
- * The entry shape and the lazy module load live in `src/main/utils/keyring.ts`,
- * shared with A Cappella's credential store; they are re-exported here so this
- * module's existing importers keep their one import site.
- */
-export type { KeyringEntry, KeyringModule } from '../utils/keyring';
-
-export function keyringAnchor(entryFactory: () => KeyringEntry | null): AnchorStore {
-	let entry: KeyringEntry | null | undefined;
-	const get = (): KeyringEntry | null => {
-		if (entry === undefined) {
-			try {
-				entry = entryFactory();
-			} catch {
-				entry = null;
-			}
-		}
-		return entry;
-	};
-	return {
-		available: () => get() !== null,
-		read: () => {
-			const e = get();
-			if (!e) return null;
-			try {
-				const raw = e.getPassword();
-				if (!raw) return null;
-				const parsed: unknown = JSON.parse(raw);
-				if (
-					typeof parsed !== 'object' ||
-					parsed === null ||
-					!('installSecret' in parsed) ||
-					!('epoch' in parsed) ||
-					typeof parsed.installSecret !== 'string' ||
-					typeof parsed.epoch !== 'number'
-				) {
-					return null;
-				}
-				return { installSecret: parsed.installSecret, epoch: parsed.epoch };
-			} catch {
-				return null;
-			}
-		},
-		write: (anchor) => {
-			const e = get();
-			if (!e) return;
-			e.setPassword(JSON.stringify(anchor));
-		},
-		clear: () => {
-			const e = get();
-			if (!e) return;
-			try {
-				e.deletePassword();
-			} catch {
-				/* best-effort */
-			}
-		},
-	};
-}
-
-/** A no-op anchor - `available() === false`, so the store runs session-only. */
-export function noAnchor(): AnchorStore {
-	return {
-		available: () => false,
-		read: () => null,
-		write: () => {},
-		clear: () => {},
-	};
-}
-
-/** Lazily adapt `@napi-rs/keyring` without making app startup depend on it. */
-export function createKeyringAnchor(
-	service: string,
-	account: string,
-	loadModule: KeyringModuleLoader = loadKeyringModule
-): AnchorStore {
-	return keyringAnchor(() => createKeyringEntry(service, account, loadModule));
-}
 export function createAuthorizationStore(opts: {
 	safeStorage: SafeStorageLike;
 	ledgerPath: string;

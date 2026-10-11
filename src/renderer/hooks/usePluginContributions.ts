@@ -30,14 +30,19 @@ const EMPTY: AggregatedContributions = {
 	errorsByPlugin: {},
 };
 
-export function usePluginContributions(): AggregatedContributions {
-	const [contributions, setContributions] = useState<AggregatedContributions>(EMPTY);
+export function usePluginContributions(): AggregatedContributions & { isLoading: boolean } {
+	const [contributions, setContributions] = useState<
+		AggregatedContributions & { isLoading: boolean }
+	>({ ...EMPTY, isLoading: true });
 
 	useEffect(() => {
 		// The plugins API is absent in the web build (and before the preload bridge
 		// is ready); treat that exactly like feature-off and stay on empty buckets.
 		const plugins = window.maestro?.plugins;
-		if (!plugins) return;
+		if (!plugins) {
+			setContributions({ ...EMPTY, isLoading: false });
+			return;
+		}
 
 		let cancelled = false;
 		let requestGeneration = 0;
@@ -46,15 +51,29 @@ export function usePluginContributions(): AggregatedContributions {
 			const generation = ++requestGeneration;
 			try {
 				const next = await plugins.contributions();
-				if (!cancelled && generation === requestGeneration) setContributions(next);
+				if (!cancelled && generation === requestGeneration)
+					setContributions({ ...next, isLoading: false });
 			} catch {
 				// 'PluginsDisabled' or any read failure -> behave as feature-off.
-				if (!cancelled && generation === requestGeneration) setContributions(EMPTY);
+				if (!cancelled && generation === requestGeneration)
+					setContributions({ ...EMPTY, isLoading: false });
 			}
 		};
 
 		void load();
-		const unsubscribe = plugins.onChanged(() => {
+		const unsubscribe = plugins.onChanged((activePanelIds) => {
+			// The host sends live, grant-filtered panel IDs. Remove revoked guests
+			// immediately while retaining unaffected guests and their unsaved edits.
+			// A legacy notification without IDs cannot confirm eligibility.
+			setContributions((previous) => ({
+				...EMPTY,
+				isLoading: true,
+				// Groupings are presentation-only. A transient empty list makes the
+				// sidebar persist its manual fallback, losing the selected grouping.
+				// Keep them until the authoritative read confirms removal or fails.
+				groupings: previous.groupings,
+				panels: previous.panels.filter((panel) => activePanelIds?.includes(panel.id)),
+			}));
 			void load();
 		});
 

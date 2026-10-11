@@ -5,6 +5,7 @@ import {
 	buildCrossAgentPrompt,
 	startCrossAgentRequest,
 	cancelCrossAgentRequestsForSource,
+	getCrossAgentConsultParties,
 	type CrossAgentTargetSession,
 } from '../../main/cross-agent/cross-agent-router';
 import type {
@@ -13,6 +14,7 @@ import type {
 	CrossAgentTranscriptEntry,
 } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
+import { buildMaestroSystemPromptForSession } from '../../main/utils/maestro-system-prompt';
 
 // The router's spawn + output-parse collaborators are mocked so these tests
 // exercise the dispatch lifecycle (timers, settlement, spawn-failure) rather
@@ -26,6 +28,11 @@ vi.mock('../../main/group-chat/output-parser', () => ({
 vi.mock('../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+// The consulted agent's Maestro system prompt is built from the persisted
+// stores; stub the builder so the dispatch tests can assert it is threaded.
+vi.mock('../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: vi.fn(async (id: string) => `SYSTEM PROMPT FOR ${id}`),
 }));
 
 /**
@@ -232,12 +239,14 @@ function harness(
 	overrides: {
 		getTargetSession?: () => CrossAgentTargetSession | null;
 		writable?: boolean;
+		request?: Partial<CrossAgentRequest>;
+		agent?: Record<string, unknown>;
 	} = {}
 ) {
 	const processManager = new FakeProcessManager();
 	const chunks: CrossAgentResponseChunk[] = [];
 	const dispatch = () =>
-		startCrossAgentRequest(request(), {
+		startCrossAgentRequest(request(overrides.request), {
 			processManager: processManager as never,
 			agentDetector: {
 				getAgent: async () => ({
@@ -253,6 +262,7 @@ function harness(
 					fullAccessArgs: ['--dangerously-skip-permissions'],
 					readOnlyArgs: ['--permission-mode', 'plan'],
 					readOnlyCliEnforced: true,
+					...overrides.agent,
 				}),
 			} as never,
 			sshStore: null,
@@ -315,6 +325,36 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		// already told the agent it may apply changes directly.
 		expect(config.args).toContain('--dangerously-skip-permissions');
 		expect(config.args).not.toContain('plan');
+	});
+
+	it('hands the consulted agent its own Maestro system prompt (fresh session)', async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt');
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
+		expect(config.isResume).toBe(false);
+	});
+
+	it('marks a consult that resumes the pairing session as a resume', async () => {
+		const { dispatch } = harness({
+			request: { resumeAgentSessionId: 'prov-1' },
+			agent: { resumeArgs: (id: string) => ['--resume', id] },
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.isResume).toBe(true);
+		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
+	});
+
+	it('does not treat a resume id as a resume when the agent cannot resume', async () => {
+		const { dispatch } = harness({ request: { resumeAgentSessionId: 'prov-1' } });
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.isResume).toBe(false);
 	});
 
 	it('spawns the binary the agent is configured with, not the auto-detected one', async () => {
@@ -531,6 +571,34 @@ describe('cancelCrossAgentRequestsForSource', () => {
 		expect(chunks[0].error).toBeUndefined();
 		// Whatever the target managed to say before the plug was pulled is kept.
 		expect(chunks[0].chunk).toBe('half an answer');
+	});
+
+	it('says who asks and who answers while a consult is in flight, and nothing once it settled', async () => {
+		const { dispatch } = harness();
+		expect(getCrossAgentConsultParties('r1')).toBeNull();
+
+		await dispatch();
+		expect(getCrossAgentConsultParties('r1')).toEqual({
+			sourceSessionId: 'src',
+			targetSessionId: 'tgt',
+		});
+		expect(getCrossAgentConsultParties('some-other-request')).toBeNull();
+
+		cancelCrossAgentRequestsForSource('src');
+		expect(getCrossAgentConsultParties('r1')).toBeNull();
+	});
+
+	it('already lists the consult at the moment its process is spawned', async () => {
+		// A process listener asks while the spawn is still on the stack.
+		let atSpawn: ReturnType<typeof getCrossAgentConsultParties> = null;
+		vi.mocked(spawnGroupChatAgent).mockImplementationOnce(async () => {
+			atSpawn = getCrossAgentConsultParties('r1');
+			return { pid: 123, success: true };
+		});
+
+		await harness().dispatch();
+
+		expect(atSpawn).toEqual({ sourceSessionId: 'src', targetSessionId: 'tgt' });
 	});
 
 	it('leaves consults belonging to another source agent alone', async () => {

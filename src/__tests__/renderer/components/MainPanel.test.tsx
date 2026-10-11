@@ -116,8 +116,12 @@ vi.mock('../../../renderer/components/LogViewer', () => ({
 	},
 }));
 
+// The latest props TerminalOutput received, so prop-forwarding regressions are visible.
+const terminalOutputProps: { current: Record<string, unknown> | null } = { current: null };
+
 vi.mock('../../../renderer/components/TerminalOutput', () => ({
 	TerminalOutput: React.forwardRef((props: { session: { name: string } }, ref) => {
+		terminalOutputProps.current = props as unknown as Record<string, unknown>;
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'terminal-output', ref },
@@ -3690,6 +3694,21 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
 			expect(screen.getByText('Wizard Conversation (2 messages)')).toBeInTheDocument();
 			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
+		});
+
+		it('forwards the queued-item Steer props down to TerminalOutput', () => {
+			// Regression: MainPanel dropped these two props, so the Steer button never
+			// rendered in the app even though every layer below it was wired.
+			const getSteerContext = vi.fn();
+			const onSteerQueuedItem = vi.fn();
+			renderMainPanel({
+				activeSession: createSessionWithTabWizardState(undefined),
+				getSteerContext,
+				onSteerQueuedItem,
+			} as never);
+
+			expect(terminalOutputProps.current?.getSteerContext).toBe(getSteerContext);
+			expect(terminalOutputProps.current?.onSteerQueuedItem).toBe(onSteerQueuedItem);
 		});
 
 		it('should render TerminalOutput when wizard is not active', () => {

@@ -40,6 +40,9 @@ subscriptions:
     output_prompt_file: string # Optional. Path to a .md file for the output prompt
     label: string # Optional. Human-readable label displayed in the Cue dashboard
     agent_id: string # Optional. UUID of the target agent
+    tier: string # Optional. Model tier for the run: low | medium | high. Not with model
+    model: string # Optional. Exact model id for the run. Not with tier
+    effort: string # Optional. Effort for the run: low | medium | high
 
     # Event-specific fields
     interval_minutes: number # Required for time.heartbeat
@@ -166,6 +169,9 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `notify`                   | object            | -        | Notify payload when `action: notify`. Fields: `message` (string, required), `sticky` (boolean), `level` (`info` \| `success` \| `warning` \| `error`). The toast renders through the owning agent; clicking it jumps there                                                                                                                                                                                                                                                                                                      |
 | `command`                  | object            | -        | Command spec when `action: command`. Fields include `mode` (`shell` \| `cli`), `shell`/`cli` invocation, and related options (see [Command Nodes](./maestro-cue-advanced))                                                                                                                                                                                                                                                                                                                                                      |
 | `auto_run`                 | object            | -        | Auto Run payload when `action: autorun`. Fields: `documents` (list of absolute `.md` paths, required), `reset_on_completion` (list of booleans, one per document), `prompt`, `loop_enabled`, `max_loops`, `model`, `effort`, `task_selection_mode` (`task` or `document`), `ignore_model_hints`, `auto_resume_on_error`, `auto_resume_after_min`, `max_auto_resumes`, `worktree` (`mode` of `create-new` with `branch`, `existing-open` with `agent_id`, or `existing-closed` with `path`; optional `base_branch`, `create_pr`) |
+| `tier`                     | string            | -        | Model tier for the run: `low`, `medium`, or `high`, mapped per provider. Not with `model`. See [Model and Effort](#model-and-effort)                                                                                                                                                                                                                                                                                                                                                                                            |
+| `model`                    | string            | -        | Exact model id for the run, passed to the agent as-is. Not with `tier`                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `effort`                   | string            | -        | Effort for the run: `low`, `medium`, or `high`, mapped to the provider's own effort ladder                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ### Prompt Field
 
@@ -218,6 +224,46 @@ subscriptions:
 <Note>
 The output prompt only fires when the main run completes successfully. If the main run times out or fails, the output phase is skipped.
 </Note>
+
+### Model and Effort
+
+By default a subscription runs on the agent's own configured model and effort. Set `tier` (or an exact `model`) and `effort` to give one pipeline step a different model without changing the agent:
+
+```yaml
+subscriptions:
+  - name: triage-issues
+    event: github.issue
+    tier: low # cheap, fast model for sorting
+    effort: low
+    prompt: Label and prioritize {{CUE_GH_URL}}.
+
+  - name: nightly-architecture-review
+    event: time.scheduled
+    schedule_times: ['02:00']
+    tier: high # the provider's top model
+    effort: high
+    prompt_file: .maestro/prompts/architecture-review.md
+```
+
+`tier` and `effort` use one vocabulary for every provider. Maestro maps each level to that provider's own models and effort ladder, using the same tables as Auto Run's `MAESTRO:MODEL` markers:
+
+| Provider      | `tier` low / medium / high            | `effort` low / medium / high |
+| ------------- | ------------------------------------- | ---------------------------- |
+| Claude Code   | haiku / sonnet / opus                 | low / high / max             |
+| Factory Droid | Claude Haiku / Sonnet / Opus model id | low / medium / high          |
+| Codex         | not mapped: use `model`               | minimal / medium / xhigh     |
+| Copilot-CLI   | not mapped: use `model`               | low / medium / xhigh         |
+| OpenCode      | not mapped: use `model`               | not supported                |
+
+Rules:
+
+- Set `tier` or `model`, never both. Use `model` for a provider with no tier table, or for a model a tier cannot name.
+- If the provider cannot honor a `tier` or `effort`, the run still happens on the agent's own value, and the Cue log records a warning.
+- A fan-out subscription applies one setting to every target. In the Pipeline Graph, agents with different settings get their own subscription each.
+- An `output_prompt` follow-up runs on the same model as its main run.
+- `tier`, `model`, and `effort` apply only to agent runs. The validator rejects them on `action: command` and `action: notify`.
+
+In the Pipeline Graph, set these with the **Model** and **Effort** selectors on an agent node. From the CLI, pass `--tier`, `--model`, and `--effort` to `maestro-cli cue schedule`.
 
 ### Pipelines
 

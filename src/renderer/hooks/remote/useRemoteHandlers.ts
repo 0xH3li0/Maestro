@@ -39,6 +39,7 @@ import {
 	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
 import { noteDirectDispatch } from '../../stores/retryStore';
+import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -389,6 +390,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					return;
 				}
 				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+				// The bubble below lands in this tab, so name it from the message just as
+				// the composer does for a leading mention (it names before planning).
+				requestTabAutoNameForMessage(session, writeTabId, command, 'remote');
 				const mentionOnlyEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -576,6 +580,19 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prompt: promptToSend.substring(0, 100),
 					imageCount: remoteImages?.length ?? 0,
 				});
+
+				// Name the tab from what was dispatched, exactly as the composer does for a
+				// typed message. `maestro-cli dispatch`, `send --live`, an idle `dispatch
+				// --new-tab`, and the web/mobile composer all land here without passing
+				// through the desktop composer, so this is the only chance such a tab
+				// gets to be named. A matched slash command is skipped, as it is in the
+				// composer (which returns before naming) and in the queue drain (which
+				// skips `command` items): its text is a command name, not a request.
+				// Runs after the awaits above, and the helper reads the live tab, so a
+				// tab closed or named in the meantime is left alone.
+				if (targetTab && !commandMetadata) {
+					requestTabAutoNameForMessage(session, targetTab.id, command, 'remote');
+				}
 
 				// Add user message to target tab's logs and set state to busy
 				const userLogEntry: LogEntry = {

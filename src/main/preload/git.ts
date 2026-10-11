@@ -219,7 +219,7 @@ export function createGitApi() {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:numstat', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -229,7 +229,7 @@ export function createGitApi() {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		): Promise<{ stdout: string; stderr: string }> =>
+		): Promise<{ stdout: string; stderr: string; timedOut?: boolean }> =>
 			ipcRenderer.invoke('git:branch', cwd, sshRemoteId, remoteCwd),
 
 		/**
@@ -275,6 +275,8 @@ export function createGitApi() {
 			behind: number;
 			ahead: number;
 			uncommittedChanges: number;
+			/** One of the underlying queries timed out; the zero/empty fields are placeholders. */
+			timedOut?: boolean;
 		}> => ipcRenderer.invoke('git:info', cwd, sshRemoteId, remoteCwd),
 
 		/**

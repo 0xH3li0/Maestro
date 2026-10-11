@@ -11,6 +11,7 @@ import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
 import { DEFAULT_SPOKEN_NOTICE_MODE } from '../../shared/spokenNotices';
+import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../shared/quickChat';
 
 import type {
 	MaestroSettings,
@@ -101,6 +102,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	agentPowersPromptSeen: false,
 	hasPriorInstallation: false,
 	customFonts: [],
+	mediaModelDirectory: '',
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,
 	mediaPlayerQueue: null,
@@ -142,6 +144,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// Quick Chat: the floating window's hotkey (Opt+Space), agent, and modes
+	quickChatSettings: {
+		...DEFAULT_QUICK_CHAT_SETTINGS,
+		hotkey: [...DEFAULT_QUICK_CHAT_SETTINGS.hotkey],
+	},
 	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
 	utilityAgentId: null,
 	utilityModelId: null,

@@ -21,6 +21,8 @@ import {
 	Clapperboard,
 	Bot,
 	Mic,
+	ScanEye,
+	KeyRound,
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
@@ -63,6 +65,8 @@ const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	directorNotes: Clapperboard,
 	pianola: Bot,
 	aCappella: Mic,
+	computerHistory: ScanEye,
+	maestroRun: KeyRound,
 };
 
 const TRUST_META: Record<

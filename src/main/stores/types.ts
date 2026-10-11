@@ -11,6 +11,7 @@ import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { LocalModelAssignments } from '../../shared/local-models/tasks';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
+import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -133,6 +134,9 @@ export interface MaestroSettings {
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
 	globalShowHotkey: string[];
+	// Quick Chat (Encore Feature): its own system-wide hotkey, target agent, and
+	// ephemeral/persistent defaults. See src/shared/quickChat.ts.
+	quickChatSettings: QuickChatSettings;
 	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
 	// the task uses the session's own agent (fully backward compatible).
 	utilityAgentId: string | null;
@@ -216,6 +220,8 @@ export interface WindowState {
 	 * becomes the source of truth once windows are created through the registry.
 	 */
 	multiWindow?: MultiWindowState;
+	/** Where the user left the Quick Chat window (see `QuickChatWindowBounds`). */
+	quickChat?: QuickChatWindowBounds;
 }
 
 // ============================================================================

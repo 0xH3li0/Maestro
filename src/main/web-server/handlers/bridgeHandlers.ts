@@ -19,7 +19,9 @@ import { logger } from '../../utils/logger';
 import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
 import { runAsActingUser } from '../auth/acting-user';
+import { isDesktopOnlyChannel } from '../../ipc/desktop-only-channels';
 import { bridgeDeniedChannelError, isBridgeDeniedChannel } from './bridgeDenyList';
+import { bridgeGuardViolation } from './bridgePathGuard';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -94,9 +96,12 @@ export function uninstallWebContentsBridgeHook(): void {
  *
  * No-op when the Encore Feature is off (`broadcastSink === null`) or when
  * no web-desktop clients are connected (handled inside the sink itself).
+ * A channel under a denied prefix is never fanned out either: a browser that
+ * may not invoke `computerHistory:*` must not receive its pushes.
  */
 export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
 	if (!broadcastSink) return;
+	if (isBridgeDeniedChannel(channel) || isDesktopOnlyChannel(channel)) return;
 	try {
 		broadcastSink(channel, args);
 	} catch (err) {
@@ -141,8 +146,26 @@ export async function handleBridgeInvoke(
 		return;
 	}
 
+	// Argument guard for web clients, before EITHER dispatch path (invoke or
+	// the ipcMain.emit fallback below): no Computer History files or CLI
+	// secret through generic handlers like `fs:readFile`, and no toggling the
+	// Computer History flag. maestro-cli (`client.cli`) is exempt. See
+	// bridgePathGuard.ts.
+	if (!client.cli) {
+		const violation = bridgeGuardViolation(channel, args);
+		if (violation) {
+			logger.warn(`Refused bridge call "${channel}" from ${client.id}: ${violation}`, LOG_CONTEXT);
+			send(client, { type: 'bridge.response', requestId, ok: false, error: violation });
+			return;
+		}
+	}
+
+	// A desktop-only channel is answered as if nobody had registered it: no
+	// handler is looked up and no listener is run, so the reply below is the one
+	// an unknown channel gets. See ipc/desktop-only-channels.ts.
+	const desktopOnly = isDesktopOnlyChannel(channel);
 	const handlers = (ipcMain as unknown as IpcMainInternal)._invokeHandlers;
-	const handler = handlers?.get(channel);
+	const handler = desktopOnly ? undefined : handlers?.get(channel);
 	if (!handler) {
 		// Electron has TWO renderer→main directions and the bridge carries both
 		// over this one frame. `ipcRenderer.invoke` pairs with `ipcMain.handle`
@@ -164,7 +187,7 @@ export async function handleBridgeInvoke(
 		// it grants no new authority: this same function already dispatches every
 		// registered invoke handler to an authenticated client, so a `send`
 		// listener is strictly less reachable than what is already exposed.
-		if (ipcMain.listenerCount(channel) > 0) {
+		if (!desktopOnly && ipcMain.listenerCount(channel) > 0) {
 			try {
 				// Same acting-user context as the invoke path below: a `send`-style
 				// API mutates state too, and a turn started through one has to be

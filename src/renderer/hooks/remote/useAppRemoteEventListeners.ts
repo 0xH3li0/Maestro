@@ -16,7 +16,13 @@ import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
-import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import {
+	getRemoteMediaKind,
+	getRemoteMediaName,
+	isRemoteMediaUrl,
+	type MediaOpenMode,
+} from '../../../shared/mediaTypes';
+import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -59,6 +65,7 @@ import {
 	validateGroupUpdate,
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
+import { isCodexTransport } from '../../../shared/codexTransport';
 
 // ============================================================================
 // Group update helpers
@@ -236,6 +243,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
 			logger.error('[Remote] Session not found for openFileTab:', undefined, sessionId);
+			return;
+		}
+		// An http(s) URL is remote media (`maestro-cli open-file <url>`). There is
+		// no file to read and no preview tab to make, so it goes straight to the
+		// player. No agent switch either: the player is app-wide, so the agent the
+		// URL was filed under is not somewhere the user needs to be.
+		if (isRemoteMediaUrl(filePath)) {
+			const request = {
+				path: filePath,
+				name: getRemoteMediaName(filePath),
+				kind: getRemoteMediaKind(filePath),
+				sessionId: session.id,
+				sessionName: session.name,
+			};
+			const store = useMediaPlaybackStore.getState();
+			if (mediaMode === 'queue') store.enqueueMedia([request]);
+			else store.openMedia(request);
 			return;
 		}
 		const sshRemoteId =
@@ -1943,6 +1967,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// Codex transport opt-in (`update-agent --codex-transport`). Validated
+			// below, since an unknown value must never reach the spawner.
+			'codexTransport',
 			// UI state
 			'bookmarked',
 		]);
@@ -1954,6 +1981,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		for (const key of Object.keys(patch)) {
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
+			if (key === 'codexTransport' && value !== null && !isCodexTransport(value)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Invalid value for field '${key}'`,
+				});
+				return;
+			}
+			// `exec` is the default, so it is stored the way the Edit Agent modal
+			// stores it: as an unset field.
+			if (key === 'codexTransport' && value === 'exec') {
+				updated.codexTransport = undefined;
+				continue;
+			}
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
 		}
 

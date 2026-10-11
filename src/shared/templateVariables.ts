@@ -26,6 +26,8 @@ import type { AdditionalDirectory } from './types';
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
  *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
  *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
+ *   {{COMPUTER_HISTORY_DIR}} - Computer History store on this machine (empty for SSH-remote agents)
+ *   {{MAESTRO_RUN_PATH}}  - The MaestroRun launcher on this Mac (empty until it is installed and granted)
  *
  * Auto Run Variables:
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
@@ -213,6 +215,25 @@ export interface TemplateContext {
 	predecessorHandoff?: string;
 	// History file path for task recall
 	historyFilePath?: string;
+	/**
+	 * `<userData>/computer-history` on the Maestro machine, for the Computer
+	 * History system-prompt section. Builders leave it unset for SSH-remote
+	 * agents, whose shell cannot reach that path.
+	 */
+	computerHistoryDir?: string;
+	/**
+	 * Absolute path of the `maestro-run` launcher, set only while MaestroRun is
+	 * installed, verified, and holds Full Disk Access. The MaestroRun
+	 * system-prompt section is included under exactly the same condition.
+	 */
+	maestroRunPath?: string;
+	/**
+	 * Absolute path of `maestro-cli.js` as the main process resolved it. The
+	 * renderer gets it through preload (`window.maestro.maestroCliPath`); a
+	 * main-process builder has no such global and passes it here. Unset falls
+	 * back to `getMaestroCLIPath()`.
+	 */
+	maestroCliPath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
 	// Cue event context (for Cue automation prompts)
@@ -304,6 +325,14 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
 	{ variable: '{{AGENT_ID}}', description: 'Agent UUID (for CLI targeting)' },
 	{ variable: '{{CONDUCTOR_PROFILE}}', description: "Conductor's About Me profile" },
+	{
+		variable: '{{COMPUTER_HISTORY_DIR}}',
+		description: 'Computer History store path (empty for SSH agents)',
+	},
+	{
+		variable: '{{MAESTRO_RUN_PATH}}',
+		description: 'MaestroRun launcher path (empty until installed and granted)',
+	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
@@ -644,6 +673,8 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		goalExitCriteria,
 		predecessorHandoff,
 		historyFilePath,
+		computerHistoryDir,
+		maestroRunPath,
 		conductorProfile,
 	} = context;
 	const now = new Date();
@@ -660,6 +691,8 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
+		MAESTRO_RUN_PATH: maestroRunPath || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
 		// playbooks, Cue) that have no desktop tab of their own.
 		TAB_ID: activeTabId || '',
@@ -732,7 +765,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CONTEXT_USAGE: String(session.contextUsage || 0),
 
 		// Maestro variables
-		MAESTRO_CLI_PATH: getMaestroCLIPath(),
+		MAESTRO_CLI_PATH: context.maestroCliPath
+			? `node "${context.maestroCliPath}"`
+			: getMaestroCLIPath(),
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',

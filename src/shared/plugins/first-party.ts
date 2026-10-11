@@ -41,7 +41,10 @@ export type FirstPartyEncoreFlag =
 	| 'concerto'
 	| 'groupsPlus'
 	| 'aCappella'
-	| 'webLogin';
+	| 'webLogin'
+	| 'computerHistory'
+	| 'quickChat'
+	| 'maestroRun';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -113,6 +116,9 @@ export interface FirstPartyUsageGuide {
 	docsSlug?: string;
 }
 
+/** A host operating system, as `process.platform` names it. */
+export type FirstPartyPlatform = 'darwin' | 'win32' | 'linux';
+
 export interface FirstPartyPluginDefinition {
 	/** Stable, reverse-DNS plugin identity (`com.maestro.*`). */
 	id: string;
@@ -135,8 +141,40 @@ export interface FirstPartyPluginDefinition {
 	releaseDate: string;
 	/** Supervised background services the feature runs (empty when none). */
 	backgroundServices: readonly FirstPartyBackgroundService[];
+	/**
+	 * The host operating systems the feature exists on. Absent means all of
+	 * them. A feature is not offered anywhere else: no marketplace tile, no
+	 * `maestro-cli encore enable`, and its main-process service does nothing.
+	 * Ask through `isFirstPartyPluginAvailableOn`, never by reading this field.
+	 */
+	platforms?: readonly FirstPartyPlatform[];
 	/** How to actually use the feature once it is on. */
 	usage?: FirstPartyUsageGuide;
+	/**
+	 * A section appended to EVERY Maestro-spawned agent's system prompt while
+	 * the feature is enabled. `promptId` names a core prompt (so the user can
+	 * edit it in Maestro Prompts); it is substituted with the same template
+	 * context as the main system prompt. First-party only by design: a
+	 * community plugin that could write into every agent's system prompt would
+	 * be a prompt-injection channel into the whole fleet.
+	 *
+	 * `localOnly` sections are skipped for SSH-remote agents, whose shell
+	 * cannot reach paths on the Maestro machine.
+	 *
+	 * `requiresReady` sections need more than the flag: the builder must also
+	 * vouch that the feature's setup is complete (see `readyFlags` on
+	 * `systemPromptSectionsFor`). Agents are told about a tool only once it
+	 * works, never the moment a tile is switched on.
+	 */
+	systemPromptSection?: { promptId: string; localOnly?: boolean; requiresReady?: boolean };
+}
+
+/** Whether a first-party feature exists on `platform` (`process.platform`). */
+export function isFirstPartyPluginAvailableOn(
+	def: Pick<FirstPartyPluginDefinition, 'platforms'>,
+	platform: string
+): boolean {
+	return !def.platforms || (def.platforms as readonly string[]).includes(platform);
 }
 
 /** Stable first-party plugin identity for Pianola's plugin-backed Encore surface. */
@@ -878,6 +916,219 @@ export const WEB_LOGIN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
+/** Broker capabilities Computer History actually touches. */
+export const COMPUTER_HISTORY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: 'com.maestro.computer-history',
+	name: 'Computer History',
+	description:
+		'Record what you read and type across your apps, locally, so every agent can recall it.',
+	firstParty: true,
+	category: 'data',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Computer History Encore flag before starting the recorder.',
+		},
+		{
+			capability: 'background:service',
+			reason:
+				'Run the supervised accessibility observer (maestro-observer) and the segment writer while the feature is on.',
+		},
+	],
+	// NOTE: the recorder reads the OS accessibility tree (macOS AX, Windows UI
+	// Automation, Linux AT-SPI2) through a HOST-OWNED native helper with fixed
+	// argv. There is no plugin capability for OS accessibility access, and
+	// `process:spawn` is deliberately ABSENT (same doctrine as Usage & Stats):
+	// spawn authority stays host-owned. The store under
+	// `<userData>/computer-history/` is host-owned too, so no `fs:write` scope.
+	// The recorder never logs keystrokes: typed text comes from a field's
+	// committed value, and secure/password fields are never read.
+	settingsNamespace: 'computerHistory',
+	encoreFlag: 'computerHistory',
+	releaseDate: '2026-10-03',
+	backgroundServices: [
+		{
+			id: 'computerHistory.observer',
+			kind: 'supervised',
+			description:
+				'Accessibility observer plus the local segment writer; stops when the feature is disabled or paused.',
+		},
+	],
+	systemPromptSection: { promptId: 'computer-history-system', localOnly: true },
+	usage: {
+		overview: [
+			'Computer History watches the app in front through the operating system accessibility API: which app and window you are in, what text is on screen, what you select, and what you type into fields once you stop typing. It never logs keystrokes, never reads password fields, and never takes screenshots.',
+			'Everything stays on this computer under the Maestro data folder as plain JSONL. While it is on, every agent Maestro starts is told where that folder is and how to query it, so you can ask any agent "what was I looking at in Slack an hour ago?"',
+		],
+		agentCommands: [
+			{ label: 'Check recorder state', command: 'maestro-cli computer-history status' },
+			{
+				label: 'Search the last hour',
+				command: 'maestro-cli computer-history query --since 1h --grep <text>',
+			},
+			{ label: 'Pause for an hour', command: 'maestro-cli computer-history pause --for 1h' },
+		],
+		steps: [
+			{
+				title: 'Grant accessibility access',
+				body: 'macOS asks once for Accessibility access for Maestro. On Linux, Maestro offers to turn on the desktop accessibility bus. Windows needs nothing.',
+			},
+			{
+				title: 'Choose which apps are recorded',
+				body: "Record every app except the ones you switch off, or only the apps you switch on. Password managers, private browser windows, and Maestro itself are always excluded. Set it from this tile, the viewer's Capture tab, or `maestro-cli computer-history rules`.",
+			},
+			{
+				title: 'Explore your history',
+				body: 'Open the viewer from the command palette, the hamburger menu, or its keyboard shortcut: an activity timeline by app, everything you typed and selected, search, and digests.',
+			},
+		],
+		notes: [
+			'Captured text is plaintext on disk, including messages from chat apps you have open. Exclude those apps if that matters to you.',
+			'History older than 90 days, or past 25 GB, is deleted oldest first. Both limits are configurable.',
+			'Optional digests: an agent you choose writes a summary of every 15-minute window with activity and a 6-hour roll-up of each block. Off by default.',
+			'Agents treat captured content as untrusted: a page you read can contain instructions aimed at an agent.',
+		],
+		docsSlug: 'computer-history',
+	},
+};
+
+/** Quick Chat runs host-side: a system-wide hotkey and a floating window owned
+ * by the main process, with the conversation in an ordinary AI tab driven by
+ * the app renderer. Nothing goes through the broker, so the tile only re-reads
+ * its own flag and settings. */
+export const QUICK_CHAT_FIRST_PARTY_PLUGIN_ID = 'com.maestro.quick-chat';
+
+export const QUICK_CHAT_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: QUICK_CHAT_FIRST_PARTY_PLUGIN_ID,
+	name: 'Quick Chat',
+	description:
+		'Press a system-wide hotkey from any app to open a small floating chat with your chosen agent. Keep the chat as a tab on that agent, or let it vanish when you start the next one.',
+	firstParty: true,
+	category: 'ui',
+	permissions: [
+		{
+			capability: 'agents:read',
+			reason: 'List your agents so you can pick the one Quick Chat talks to.',
+		},
+		{
+			capability: 'settings:read',
+			reason: 'Read the Quick Chat hotkey, agent, and mode settings.',
+		},
+	],
+	settingsNamespace: 'quickChat',
+	encoreFlag: 'quickChat',
+	releaseDate: '2026-10-03',
+	// The hotkey and window are app-scoped and main-process owned. Disable = flag
+	// off: the hotkey is released and the window closes. Chats kept as tabs stay.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'Press the Quick Chat hotkey (Option+Space on macOS, Alt+Space on Windows and Linux, by default) anywhere on your computer. A small window opens on top of whatever you are doing, ready to type. Press the hotkey again, or Escape, to put it away. Your conversation is still there the next time you open it.',
+			"Every chat runs as a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
+			'An ephemeral chat lives in a hidden tab and is deleted when you start a new chat. A kept chat is an ordinary tab on the agent that stays after you move on. Flip between the two with the pin in the window; the setting below picks the default.',
+		],
+		access: [
+			{ label: 'Open or close Quick Chat', menu: 'the Quick Chat hotkey, from any app' },
+			{ label: 'Start a new chat', menu: 'the pencil in the Quick Chat window' },
+			{ label: 'Open the chat as a tab in Maestro', menu: 'the arrow in the Quick Chat window' },
+		],
+		agentCommands: [
+			{ label: 'Open, close, or toggle the window', command: 'maestro-cli quick-chat toggle' },
+			{ label: 'Send a message', command: 'maestro-cli quick-chat send "<message>"' },
+			{
+				label: 'Read the current chat (--json for scripting)',
+				command: 'maestro-cli quick-chat status',
+			},
+		],
+		notes: [
+			'The hotkey is system-wide. If another app already holds it, Maestro shows a warning; record a different one below.',
+			'Turning Quick Chat off releases the hotkey and closes the window. Chats you kept as tabs stay on their agents.',
+		],
+		docsSlug: 'quick-chat',
+	},
+};
+
+/**
+ * MaestroRun runs host-side: the main process downloads the signed launcher,
+ * verifies it, and puts it in place. Nothing goes through the broker; the
+ * permissions below are the honest disclosure of what that host code does.
+ */
+export const MAESTRO_RUN_FIRST_PARTY_PLUGIN_ID = 'com.maestro.maestro-run';
+
+export const MAESTRO_RUN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: MAESTRO_RUN_FIRST_PARTY_PLUGIN_ID,
+	name: 'MaestroRun',
+	description:
+		'Give your scheduled scripts one Full Disk Access grant that survives every Python, Node, or Homebrew upgrade.',
+	firstParty: true,
+	category: 'automation',
+	platforms: ['darwin'],
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the MaestroRun Encore flag before installing or checking the launcher.',
+		},
+		{
+			capability: 'net:fetch',
+			scope: 'github.com',
+			reason:
+				'Read the MaestroRun release list and download the signed launcher and its checksum from GitHub.',
+		},
+		{
+			capability: 'net:fetch',
+			scope: 'githubusercontent.com',
+			reason: 'Follow the GitHub release-asset redirect to the CDN when downloading the launcher.',
+		},
+		{
+			capability: 'fs:write',
+			scope: '~/Applications/MaestroRun.app',
+			reason:
+				'Put the verified MaestroRun.app in place, or update the copy that is already installed.',
+		},
+	],
+	// NOTE: `process:spawn` is deliberately ABSENT (same doctrine as Symphony
+	// and Computer History): the codesign, spctl, ditto and `maestro-run doctor`
+	// calls are HOST-OWNED with fixed argv. Agents run the launcher themselves,
+	// from their own shell, once the system prompt tells them it is ready.
+	settingsNamespace: 'maestroRun',
+	encoreFlag: 'maestroRun',
+	releaseDate: '2026-10-11',
+	backgroundServices: [],
+	systemPromptSection: { promptId: 'maestro-run-system', localOnly: true, requiresReady: true },
+	usage: {
+		overview: [
+			'A script gets Full Disk Access through its interpreter, and Homebrew and most version managers sign their interpreters ad hoc. macOS pins that grant to one exact build, so every upgrade silently kills it and your launchd or cron job starts failing.',
+			'MaestroRun is a small launcher signed with a Developer ID. You grant Full Disk Access once, to MaestroRun. It then runs only the scripts you approved, at the contents you approved, and hands them the grant. The interpreter can change as often as it likes.',
+			'Maestro installs the right build for this Mac, checks its signature and notarization, and walks you through the grant. Agents are told about MaestroRun only after that is done.',
+		],
+		steps: [
+			{
+				title: 'Install',
+				body: 'Maestro downloads the newest release for this Mac from GitHub, verifies the checksum, the signature and the notarization, and puts MaestroRun.app in ~/Applications. Nothing from the download runs before those checks pass.',
+			},
+			{
+				title: 'Grant Full Disk Access',
+				body: 'macOS has no prompt for this permission. Maestro opens System Settings on the Full Disk Access list; switch MaestroRun on. If it is not in the list, reveal it in Finder and drag it in.',
+			},
+			{
+				title: 'Use it',
+				body: 'Ask any agent to move a scheduled script onto MaestroRun. The agent shows you the script and its interpreter and waits for your yes before it approves anything.',
+			},
+		],
+		agentCommands: [
+			{ label: 'Check setup', command: 'maestro-cli maestro-run status' },
+			{ label: 'Install or update the launcher', command: 'maestro-cli maestro-run install' },
+			{ label: 'Open the Full Disk Access list', command: 'maestro-cli maestro-run grant' },
+		],
+		notes: [
+			'MaestroRun is a registry and a tamper check, not a sandbox. Everything an approved script starts inherits every privacy permission MaestroRun holds.',
+			'Turning this off stops telling agents about MaestroRun. It does not remove MaestroRun.app or its grant, because your scheduled jobs may depend on both.',
+			'An edited script stops running (exit 126) until it is approved again. That is the point: a rewritten script loses the grant until you have looked at it.',
+		],
+		docsSlug: 'maestro-run',
+	},
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -894,6 +1145,9 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	A_CAPPELLA_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
+	QUICK_CHAT_FIRST_PARTY_PLUGIN,
+	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -916,4 +1170,7 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	aCappella: A_CAPPELLA_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
+	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,
+	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 };

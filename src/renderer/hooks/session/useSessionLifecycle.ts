@@ -39,6 +39,7 @@ import { collectLeafTabRefs, generateGroupName, resolveTabRefTitle } from '../..
 import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
+import type { CodexTransport } from '../../../shared/codexTransport';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { flushAgentToStore } from '../../services/agentGateway';
@@ -99,6 +100,8 @@ export interface SessionLifecycleReturn {
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string
 	) => void;
@@ -192,6 +195,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			workingDirectory?: string,
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 			codexAutoResetOnExhaustion?: boolean,
+			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+			codexTransport?: CodexTransport,
 			/** Local Models gateway URL, already validated; `undefined` clears it. */
 			gatewayUrl?: string
 		) => {
@@ -245,6 +250,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// the preference so moving back does not silently lose it, and the
 					// flag is inert for any provider without reset credits.
 					codexAutoResetOnExhaustion,
+					// Same provider-switch rule as the reset flag: kept, and inert off
+					// Codex because `resolveCodexTransport` ignores it there. Only the
+					// opt-in is stored, so choosing Standard clears the field.
+					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
 				};
 
 				// If the provider changed, park each tab's provider-specific state and
@@ -289,6 +298,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				const next = { ...s, ...updatedFields };
 				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 			});
+			// The spawn path routes from the PERSISTED record (Codex transport, Claude
+			// token mode), so a stale renderer cannot send a turn somewhere other than
+			// what is saved. Persistence is debounced and re-arms on every store
+			// change, so while any agent streams this save could still be unwritten
+			// when the next turn spawns. Write it now.
+			setTimeout(() => flushSessionPersistence(), 0);
 
 			// The desktop spawn reads the gateway from the main-process store, which
 			// the debounced persistence would not reach for two seconds. Flush now
@@ -298,7 +313,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				void flushAgentToStore(sessionId);
 			}
 		},
-		[]
+		[flushSessionPersistence]
 	);
 
 	const handleRenameTab = useCallback(

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
+import { ComputerHistoryRecordingDot } from './ComputerHistoryRecordingDot';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import {
 	subscribeSidebarReveal,
@@ -64,7 +65,12 @@ import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
-import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
+import {
+	buildGroupWindowMoveTargets,
+	buildWindowMoveTargets,
+	collectGroupAgentIds,
+	scopeSessionsToOwningWindow,
+} from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
@@ -250,9 +256,10 @@ function SessionListInner(props: SessionListProps) {
 	// likewise outside a WindowProvider (isolation tests). Worktree children ride
 	// along with an owned parent so a detached agent keeps its worktrees together.
 	//
-	// Separately, a secondary window renders its owned agents as a FOCUSED flat
-	// list (no starred/bookmarks/group section headers - see the `isSecondaryWindow`
-	// gates below); the primary keeps its full sectioned layout, just scoped.
+	// Separately, a secondary window renders a FOCUSED list: no starred or
+	// bookmarks sections (see the `isSecondaryWindow` gates below), and group
+	// headers only for groups holding its owned agents (`displayGroups`); the
+	// primary keeps its full sectioned layout, just scoped.
 	const windowCtx = useWindowContextOptional();
 	const isSecondaryWindow = !!windowCtx && !windowCtx.isMainWindow;
 	const scopeSessionsToWindow = useCallback(
@@ -1058,6 +1065,23 @@ function SessionListInner(props: SessionListProps) {
 	// child drawn at full strength looks like a group that was never hidden.
 	const parkedGroupIds = useMemo(() => collectHiddenGroupIds(sortedGroups), [sortedGroups]);
 
+	// The group sections this window draws. The primary draws every group (empty
+	// ones included - it owns the fleet). A secondary draws only the groups that
+	// hold an agent it owns, so a group moved here with "Move Group to Window"
+	// arrives as a group instead of being flattened; a parent stays when only its
+	// subgroup holds owned agents. With no owned grouped agents it falls back to
+	// the flat focused list.
+	const displayGroups = useMemo(() => {
+		if (!isSecondaryWindow) return orderedGroups;
+		const holdsOwned = (groupId: string) => (sortedGroupSessionsById.get(groupId)?.length ?? 0) > 0;
+		return orderedGroups.filter(
+			(group) =>
+				holdsOwned(group.id) ||
+				(childrenByParentId.get(group.id) ?? []).some((child) => holdsOwned(child.id))
+		);
+	}, [isSecondaryWindow, orderedGroups, sortedGroupSessionsById, childrenByParentId]);
+	const hasDisplayGroups = isSecondaryWindow ? displayGroups.length > 0 : groups.length > 0;
+
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
 	// These Maps store stable function references keyed by session id. They only
 	// depend on the *set of session ids* - not on per-session field changes - so
@@ -1573,6 +1597,7 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<Menu className="w-4 h-4" />
 								</GhostIconButton>
+								<ComputerHistoryRecordingDot theme={theme} />
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<HamburgerDropdown
@@ -1946,10 +1971,10 @@ function SessionListInner(props: SessionListProps) {
 								);
 							})}
 
-					{/* GROUPS - hidden in a secondary window, which renders its owned agents
-					    as a flat focused list (see the flat-list branch below). */}
+					{/* GROUPS - a secondary window draws only the groups holding its owned
+					    agents (see `displayGroups`). */}
 					{!activeVirtualGrouping &&
-						(isSecondaryWindow ? [] : orderedGroups).map((group) => {
+						displayGroups.map((group) => {
 							const groupSessions = sortedGroupSessionsById.get(group.id) || [];
 							const parentGroup =
 								groupsPlusEnabled && group.parentGroupId
@@ -2175,12 +2200,9 @@ function SessionListInner(props: SessionListProps) {
 							);
 						})}
 
-					{/* SESSIONS - Flat list when no groups exist (or in a secondary window, which
-					    always shows its owned agents as a flat focused list), otherwise the
-					    Ungrouped folder. */}
-					{!activeVirtualGrouping &&
-					sessions.length > 0 &&
-					(groups.length === 0 || isSecondaryWindow) ? (
+					{/* SESSIONS - Flat list when no groups are drawn (a secondary window with
+					    no owned grouped agents counts), otherwise the Ungrouped folder. */}
+					{!activeVirtualGrouping && sessions.length > 0 && !hasDisplayGroups ? (
 						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
 						<>
 							<div className="flex flex-col">
@@ -2206,10 +2228,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</>
-					) : !activeVirtualGrouping &&
-					  !isSecondaryWindow &&
-					  groups.length > 0 &&
-					  ungroupedSessions.length > 0 ? (
+					) : !activeVirtualGrouping && hasDisplayGroups && ungroupedSessions.length > 0 ? (
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div
 							className="mb-1 mt-4 rounded"
@@ -2545,6 +2564,32 @@ function SessionListInner(props: SessionListProps) {
 					onMoveToTopLevel={() => setGroupParent(groupContextMenuGroup.id, undefined)}
 					onNewGroupInside={() => createNewGroup(groupContextMenuGroup.id)}
 					onToggleHidden={() => toggleGroupHidden(groupContextMenuGroup.id)}
+					windowTargets={
+						windowCtx
+							? buildGroupWindowMoveTargets(
+									windowCtx.windows,
+									// Every agent in the group, not just the ones this window shows:
+									// "already here" means the WHOLE group is here.
+									collectGroupAgentIds(
+										allSessions,
+										groups,
+										groupContextMenuGroup.id,
+										groupsPlusEnabled
+									)
+								)
+							: undefined
+					}
+					onMoveToNewWindow={
+						windowCtx
+							? () => void windowCtx.moveGroupToNewWindow(groupContextMenuGroup.id)
+							: undefined
+					}
+					onMoveToWindow={
+						windowCtx
+							? (targetWindowId) =>
+									void windowCtx.moveGroupToWindow(groupContextMenuGroup.id, targetWindowId)
+							: undefined
+					}
 					onRename={() => {
 						const modalActions = getModalActions();
 						modalActions.setRenameGroupId(groupContextMenuGroup.id);

@@ -23,6 +23,7 @@ import { getActiveTab, getWriteModeTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { removeMatchingAgentErrorLog } from './helpers/agentErrorLogMatch';
+import { isAwaitingContextCompaction } from '../../../stores/retryStore';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 import type { SessionState } from '../../../types';
 import type { BatchedUpdater, ToolProgressState } from './types';
@@ -62,6 +63,13 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 			}
 
 			if (!isFromAi && !data.trim()) return;
+
+			// The turn on this tab already failed on the context limit and is about
+			// to be re-run after a compaction. Whatever it still prints is its own
+			// failure text, and showing it would put the masked error back on screen.
+			if (tabIdFromSession && isAwaitingContextCompaction(actualSessionId, tabIdFromSession)) {
+				return;
+			}
 
 			if (!isFromAi) {
 				deps.batchedUpdater.appendLog(actualSessionId, null, false, data);

@@ -154,6 +154,8 @@ export const MainPanel = React.memo(
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			onOpenQueueBrowser,
 			isMobileLandscape = false,
 			showFlashNotification,
@@ -1441,6 +1443,8 @@ export const MainPanel = React.memo(
 									onForceSendQueuedItem={onForceSendQueuedItem}
 									forcedParallelEnabled={forcedParallelEnabled}
 									getForceSendContext={getForceSendContext}
+									getSteerContext={getSteerContext}
+									onSteerQueuedItem={onSteerQueuedItem}
 									onOpenQueueBrowser={onOpenQueueBrowser}
 									showFlashNotification={showFlashNotification}
 									summarizeProgress={summarizeProgress}

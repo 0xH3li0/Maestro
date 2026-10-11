@@ -33,6 +33,7 @@ import {
 import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
 import { readCueGateSetting, writeCueGateFields, type CueGateSetting } from '../../shared/cue/gate';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
+import { cueTurnSettingsOf } from '../../shared/cue/turn-settings';
 import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
 import { removeSubscriptionFromYaml } from './cue-self-destruct';
@@ -208,6 +209,7 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		autoRun: sub.auto_run,
 		...(gate ? { gate: gate.condition } : {}),
 		...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
+		...cueTurnSettingsOf(sub),
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -281,6 +283,13 @@ export function buildScheduledTaskSubscriptions(
 	const gate: CueGateSetting | null = input.gate?.trim()
 		? { condition: input.gate, onUnavailable: input.gateOnUnavailable }
 		: null;
+	const turnSettings = cueTurnSettingsOf(input);
+	if (turnSettings?.tier && turnSettings.model) {
+		throw new Error('set a model tier or an exact model, not both');
+	}
+	if (turnSettings && !hasPrompt) {
+		throw new Error('a model tier, model, or effort needs a prompt to run');
+	}
 
 	const timing: Record<string, unknown> = {};
 	let baseName: string;
@@ -336,6 +345,7 @@ export function buildScheduledTaskSubscriptions(
 			enabled: true,
 			action: 'prompt',
 			prompt: promptText,
+			...turnSettings,
 			...timing,
 			agent_id: agent.id,
 			pipeline_name: pipelineName,

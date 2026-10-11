@@ -21,11 +21,16 @@
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
-import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
+import {
+	clearRetryIfSettled,
+	hasPendingRetry,
+	noteFailedTurnExited,
+} from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { announceAgentFinished } from '../../../services/spokenNotices';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { isQuickChatTab } from '../../../services/quickChatEngine';
 import {
 	formatSessionId,
 	getActiveTab,
@@ -826,6 +831,15 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				releaseMentionHandoff(actualSessionId, tabIdFromSession, { failed: code !== 0 });
 			}
 
+			// A turn refused on the context limit is recovered by compacting its
+			// session and resending, and that waits for exactly this: the failed
+			// process is gone and the tab is settled. After the state update above
+			// on purpose - the compaction marks the tab busy again, and the update
+			// would have idled it.
+			if (isFromAi && tabIdFromSession) {
+				noteFailedTurnExited(actualSessionId, tabIdFromSession);
+			}
+
 			if (queuedItemToProcess && ownsSideEffects) {
 				// Flush any pending batched stdout/stderr chunks before the queued
 				// message is dispatched. Otherwise the new user log entry is appended
@@ -870,9 +884,17 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 
 					const currentActiveSession = getSessions().find((s) => s.id === getActiveSessionId());
+					// A Quick Chat reply is read in the Quick Chat window (and an
+					// ephemeral one sits in a hidden tab a toast could not open), so it
+					// counts as watched: no visual toast, the audio cue still fires.
+					const completedSession = getSessions().find((s) => s.id === actualSessionId);
+					const isQuickChatReply = isQuickChatTab(
+						completedSession?.aiTabs?.find((t) => t.id === tabIdFromSession)
+					);
 					const isViewingCompletedTab =
-						currentActiveSession?.id === actualSessionId &&
-						(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
+						isQuickChatReply ||
+						(currentActiveSession?.id === actualSessionId &&
+							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession));
 
 					if (!isViewingCompletedTab) {
 						notifyToast({

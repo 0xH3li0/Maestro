@@ -4,6 +4,7 @@
 // Re-export agent ID constants and types from the single source of truth
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
+import type { CodexTransport } from './codexTransport';
 
 /**
  * Union type of all valid agent IDs.
@@ -273,6 +274,8 @@ export interface SessionInfo {
 	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
+	/** The pinned Pianola manager agent; its system prompt gets the Pianola role section. */
+	isPianola?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
@@ -316,6 +319,12 @@ export interface SessionInfo {
 	maestroPMode?: 'interactive' | 'dynamic';
 	/** Per-session override of the maestro-p binary path. */
 	maestroPPath?: string;
+	/**
+	 * Codex transport opt-in: `'app-server'` runs local interactive chat turns on
+	 * `codex app-server` so they can be steered mid-turn. Absent means `'exec'`.
+	 * Resolve with `resolveCodexTransport` in shared/codexTransport.
+	 */
+	codexTransport?: CodexTransport;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential

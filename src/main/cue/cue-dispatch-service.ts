@@ -8,6 +8,7 @@ import type {
 	CueSubscription,
 } from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
+import { cueTurnSettingsOf, type CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import {
 	resolveCueGateDecision,
@@ -80,7 +81,8 @@ export interface CueDispatchServiceDeps {
 		chainRootId?: string,
 		parentEventId?: string,
 		notify?: CueNotifyConfig,
-		autoRun?: CueAutoRunConfig
+		autoRun?: CueAutoRunConfig,
+		turnSettings?: CueTurnSettings
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/**
@@ -522,6 +524,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 		chainRootId?: string,
 		parentEventId?: string
 	): number {
+		// One model choice per subscription: every fan-out target shares it.
+		const turnSettings = cueTurnSettingsOf(sub);
+
 		if (sub.fan_out && sub.fan_out.length > 0) {
 			const targetNames = sub.fan_out.join(', ');
 			deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
@@ -578,7 +583,10 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 					sub.action,
 					sub.command,
 					chainRootId,
-					parentEventId
+					parentEventId,
+					undefined, // notify: a fan-out branch is always a prompt run
+					undefined, // autoRun: same
+					turnSettings
 				);
 				dispatched++;
 			}
@@ -641,7 +649,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			chainRootId,
 			parentEventId,
 			resolvedNotify,
-			resolvedAutoRun
+			resolvedAutoRun,
+			turnSettings
 		);
 		return 1;
 	}

@@ -5,6 +5,7 @@ import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
 import { readCueGateRecord, readCueGateSetting } from '../../../shared/cue/gate';
 import { isCueRunBlocked } from '../../../shared/cue/contracts';
+import { cueTurnSettingsOf } from '../../../shared/cue/turn-settings';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -108,6 +109,7 @@ export function registerCueCallbacks(
 					// numeric fields zero so the CLI renders "never triggered"
 					// rather than fabricating a value.
 					triggerCount: 0,
+					...cueTurnSettingsOf(sub),
 				});
 			}
 		}

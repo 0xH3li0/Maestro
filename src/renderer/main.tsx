@@ -7,6 +7,7 @@ import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
 import { AudioHostRoot } from './acappella-audio';
 import { CadenzaHudRoot } from './cadenzaHud';
+import { QuickChatRoot } from './quickChat/QuickChatRoot';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
 // ToastProvider removed - notification state now managed by notificationStore (Zustand)
@@ -112,6 +113,10 @@ window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => 
 // always-on-top child window with `?cadenzaHud`. Render just the floating
 // cadenza cards - no app chrome, no providers the cards don't need.
 const isCadenzaHud = new URLSearchParams(window.location.search).has('cadenzaHud');
+// Quick Chat mode: the hotkey-summoned floating chat window, loaded with
+// `?quickChat`. Renders only the chat view; the conversation runs in the app
+// window that owns the agent.
+const isQuickChat = new URLSearchParams(window.location.search).has('quickChat');
 
 // Audio host mode: A Cappella's hidden window (src/main/acappella/audio-host-window.ts)
 // loads this bundle with `?acappellaAudio` purely to own an AudioContext, the
@@ -128,6 +133,17 @@ if (isAcappellaAudioHost) {
 		<React.StrictMode>
 			<ErrorBoundary>
 				<AudioHostRoot />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+} else if (isQuickChat) {
+	document.documentElement.classList.add('quick-chat-window');
+	document.body.classList.add('quick-chat-window');
+	document.getElementById('initial-splash')?.remove();
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<QuickChatRoot />
 			</ErrorBoundary>
 		</React.StrictMode>
 	);

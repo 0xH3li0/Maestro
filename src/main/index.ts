@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { DURATION_MS } from '../shared/duration';
-import { installApplicationMenu } from './app-menu';
+import { installApplicationMenu, setMenuEncoreFeatures } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -38,6 +38,13 @@ import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
+import {
+	getComputerHistoryService,
+	createComputerHistorySupervisorHooks,
+} from './computer-history';
+import { createComputerHistoryForApp } from './computer-history/bootstrap';
+import { getMaestroRunService } from './maestro-run';
+import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
@@ -99,6 +106,7 @@ import {
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
+import { beginCueRunCapture, recordCommandLineRuns } from './cot-export/runtime';
 import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
@@ -115,6 +123,8 @@ import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
+import { resolveCueTurnSettings } from '../shared/cue/turn-settings';
+import { describeTurnSettings } from '../shared/autorunTurnSettings';
 import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
@@ -160,7 +170,7 @@ import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
-import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
+import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
@@ -188,6 +198,7 @@ import { shutdownACappellaForDisable } from './ipc/handlers/acappella';
 import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
+import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
 import { planWindowRestore, pickFocusWindowSpec } from './window-state-persistence';
@@ -273,8 +284,9 @@ const IMAGE_SCHEME = 'maestro-image';
 }
 
 // Capture the production data path before any modification
-// Used for stores that should be shared between dev and prod (e.g., agent configs)
-const productionDataPath = app.getPath('userData');
+// Used for stores that should be shared between dev and prod (e.g., agent configs).
+// A demo profile shares nothing: see resolveSharedDataPath.
+const productionDataPath = resolveSharedDataPath(app.getPath('userData'));
 
 // Demo mode: use a separate data directory for fresh demos
 if (DEMO_MODE) {
@@ -649,11 +661,37 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 		pluginSandboxHost?.stopAll();
 		pluginGroupingRegistry?.clearAll();
 	}
+	// Feature changes also invalidate cached settings guests, including changes
+	// made outside this renderer. Reads remain pure; do not refresh discovery.
+	try {
+		mainWindow?.webContents.send(
+			'plugins:changed',
+			undefined,
+			pluginManager?.getContributions().panels.map((panel) => panel.id) ?? []
+		);
+	} catch {
+		// Renderer may be gone during shutdown.
+	}
 	if (!arePluginHostViewsEnabled()) {
 		pluginHostViews.purgeAll();
 		return;
 	}
 	pluginHostViews.sync();
+});
+
+// Computer History follows its Encore flag live. `maestro-cli encore enable`
+// writes through set_setting rather than the first-party bridge, so this store
+// change is the one signal every enable/disable path produces. reconcile() is
+// idempotent and a no-op before the service exists.
+store.onDidChange('encoreFeatures', () => {
+	void getComputerHistoryService()
+		?.reconcile()
+		.catch((err) => void captureException(err, { operation: 'computerHistory:flagChange' }));
+	// MaestroRun follows the same signal: inspect the launcher when its flag
+	// turns on, stop polling for the grant when it turns off.
+	void getMaestroRunService()
+		?.reconcile()
+		.catch((err) => void captureException(err, { operation: 'maestroRun:flagChange' }));
 });
 
 // Collectors for a support (debug) package. One object shared by the debug and
@@ -669,6 +707,33 @@ const debugPackageDeps: DebugPackageDependencies = {
 	bootstrapStore,
 };
 
+// The app window that owns an agent, falling back to the primary window.
+function resolveWindowForSession(sessionId: string): BrowserWindow | null {
+	const ownerId = windowRegistry.getWindowForSession(sessionId);
+	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+	return owner?.browserWindow ?? mainWindow;
+}
+
+// Quick Chat: the hotkey-summoned floating chat window. Its IPC handlers and
+// hotkey register at app-ready (see quickChatController.init below).
+const quickChatController = createQuickChatController({
+	settingsStore: store,
+	windowDeps: {
+		isDevelopment,
+		preloadPath,
+		rendererProductionUrl,
+		devServerUrl,
+		windowRegistry,
+		// Per-device, like every other window's bounds.
+		boundsStore: {
+			get: () => windowStateStore.get('quickChat'),
+			set: (bounds) => windowStateStore.set('quickChat', bounds),
+		},
+	},
+	getMainWindow: () => mainWindow,
+	getWindowForSession: resolveWindowForSession,
+});
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
@@ -676,11 +741,7 @@ const createWebServer = createWebServerFactory({
 	groupsStore,
 	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
-	getWindowForSession: (sessionId: string) => {
-		const ownerId = windowRegistry.getWindowForSession(sessionId);
-		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
-		return owner?.browserWindow ?? mainWindow;
-	},
+	getWindowForSession: resolveWindowForSession,
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
@@ -727,6 +788,8 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		// It deliberately stays visible while Maestro is merely minimized - the
 		// whole point of a HUD is to watch things while working in other apps.
 		closeCadenzaHudWindow();
+		// Same for Quick Chat: it is a feature window, not a reason to keep running.
+		closeQuickChatWindow();
 
 		// The primary window is the app's anchor: it owns the auto-updater, the
 		// global hotkey, the deep-link target, and the quit-confirmation surface.
@@ -948,7 +1011,11 @@ app
 		// Load logger settings first
 		const logLevel = store.get('logLevel', 'info');
 		logger.setLogLevel(logLevel);
-		const maxLogBuffer = store.get('maxLogBuffer', 1000);
+		// Same fallback as the history cap. The renderer reads this value back
+		// through `logger:getMaxLogBuffer` and shows it as the setting, so a
+		// different fallback here made a fresh install display one limit
+		// (1,000) while history was actually trimmed at another.
+		const maxLogBuffer = store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION);
 		logger.setMaxLogBuffer(maxLogBuffer);
 
 		logger.info('Maestro application starting', 'Startup', {
@@ -966,7 +1033,8 @@ app
 		// `encoreFeatures.opencodeServer` plugin. Read live on every spawn so the
 		// Extensions toggle takes effect without an app restart.
 		processManager = new ProcessManager(
-			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true
+			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true,
+			{ appVersion: app.getVersion() }
 		);
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
@@ -1285,6 +1353,7 @@ app
 				command,
 				notify,
 				autoRun,
+				turnSettings,
 			}) => {
 				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
 				const storedSession = storedSessions.find((s) => s.id === sessionId);
@@ -1502,15 +1571,43 @@ app
 
 				const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
 
-				// Resolve the agent's binary path using the agent detector.
-				// Without this, Cue falls back to the bare command name (e.g., 'claude')
-				// which fails with ENOENT when spawn() can't find it on PATH.
-				let resolvedAgentPath = agentConfigValues.customPath as string | undefined;
-				if (!resolvedAgentPath && agentDetector) {
-					const detectedAgent = await agentDetector.getAgent(storedSession.toolType);
-					if (detectedAgent?.available && detectedAgent.path) {
-						resolvedAgentPath = detectedAgent.path;
-					}
+				// Resolve the agent's binary the way a tab spawn does: the agent's
+				// own custom path, then the provider's, then the detector's. Without
+				// the last rung Cue falls back to the bare command name (e.g.
+				// 'claude'), which fails with ENOENT when spawn() can't find it on PATH.
+				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
+				const resolvedAgentPath = await resolveCueAgentBinary({
+					sessionCustomPath: storedSession.customPath,
+					providerCustomPath: agentConfigValues.customPath as string | undefined,
+					sshEnabled: !!storedSession.sessionSshRemoteConfig?.enabled,
+					getDetectedPath: async () => {
+						const detectedAgent = await agentDetector?.getAgent(storedSession.toolType);
+						return detectedAgent?.available ? detectedAgent.path : undefined;
+					},
+					onWarn: (message) => logger.warn(message, 'Cue', { sessionId: storedSession.id }),
+				});
+
+				// The same Maestro system prompt a tab spawn gets, built from the
+				// stored agent (an SSH agent gets it without localOnly sections).
+				const { buildMaestroSystemPromptForSession } =
+					await import('./utils/maestro-system-prompt');
+				const appendSystemPrompt = await buildMaestroSystemPromptForSession(storedSession.id);
+
+				// The subscription's tier / model / effort outranks the agent's own
+				// config for this run only. A tier or effort the provider cannot
+				// honor falls back to the agent's value and is logged as a warning,
+				// so a run never silently lands on a different model than asked.
+				const turn = resolveCueTurnSettings(
+					storedSession.toolType,
+					turnSettings,
+					storedSession.customModel,
+					storedSession.customEffort
+				);
+				const turnNote = describeTurnSettings(turn);
+				if (turnNote) {
+					const line = `[CUE] "${subscriptionName}" model: ${turnNote}`;
+					if (turn.warnings.length > 0) logger.warn(line, 'Cue');
+					else logger.cue(line, 'Cue');
 				}
 
 				const result = await executeCuePrompt({
@@ -1540,11 +1637,11 @@ app
 					customArgs: storedSession.customArgs,
 					customEnvVars: storedSession.customEnvVars,
 					gatewayUrl: storedSession.gatewayUrl,
-					customModel: storedSession.customModel,
-					customEffort: storedSession.customEffort,
+					customModel: turn.model,
+					customEffort: turn.effort,
 					// Claude token-source selection (TUI / API / dynamic), read from
-					// the same persisted session record that supplies customModel
-					// above, so Cue runs honor the triggering agent's choice.
+					// the same persisted session record the model fallback above
+					// reads, so Cue runs honor the triggering agent's choice.
 					enableMaestroP: storedSession.enableMaestroP,
 					maestroPMode: storedSession.maestroPMode,
 					maestroPPath: storedSession.maestroPPath,
@@ -1561,6 +1658,10 @@ app
 					},
 					sshStore: createSshRemoteStoreAdapter(store),
 					agentConfigValues,
+					// Decided here, at dispatch, and never throws: a run is not affected
+					// by what happens to its record.
+					onRunTranscript: beginCueRunCapture(storedSession.id),
+					appendSystemPrompt,
 				});
 
 				// Cue spawns agents outside the ProcessManager, so a failed run is the
@@ -1712,6 +1813,26 @@ app
 		pianolaSupervisor = pianolaLifecycle.supervisor;
 		pianolaRelearnScheduler = pianolaLifecycle.relearnScheduler;
 
+		// Computer History: construct the one service (IPC, the CLI's WS writes,
+		// and the first-party hooks all reach it). Started below at boot when its
+		// Encore flag is on; see src/main/computer-history/.
+		createComputerHistoryForApp({
+			settingsStore: store as unknown as { get: (key: string) => unknown },
+			safeSend,
+			getWindowForSession: (sessionId: string) => {
+				const ownerId = windowRegistry.getWindowForSession(sessionId);
+				const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+				return owner?.browserWindow ?? mainWindow;
+			},
+		});
+
+		// MaestroRun: construct the one service (IPC, the CLI's WS verbs, and the
+		// system-prompt builder all reach it). macOS only; inert elsewhere.
+		createMaestroRunForApp({
+			settingsStore: store as unknown as { get: (key: string) => unknown },
+			safeSend,
+		});
+
 		// Plugin manager: discovers installed community plugins, tracks their
 		// enable state, verifies signatures, and (tier 1) runs their sandboxed
 		// code. Self-gates on encoreFeatures.plugins. The permission broker is the
@@ -1774,6 +1895,19 @@ app
 				usageStats: {
 					reconcile: () => usageRefreshScheduler?.start(),
 					stopAll: () => usageRefreshScheduler?.stop(),
+				},
+				// Computer History: `computerHistory.observer` - the accessibility
+				// helper plus the segment writer. Disable/revoke stops both.
+				computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
+				// MaestroRun: no long-running service, only the bounded poll that
+				// watches for the Full Disk Access grant. Disable/revoke stops it.
+				maestroRun: {
+					reconcile: () => {
+						void getMaestroRunService()
+							?.reconcile()
+							.catch((err) => void captureException(err, { operation: 'maestroRun:reconcile' }));
+					},
+					stopAll: () => getMaestroRunService()?.stopWatching(),
 				},
 			};
 		const firstPartyBridges: Partial<Record<FirstPartyEncoreFlag, FirstPartyPluginBridge>> = {};
@@ -2492,7 +2626,10 @@ app
 			}
 		}
 
-		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
+		let serviceAvailable: ((pluginId: string, requirementId: string) => boolean) | undefined;
+		let serviceReconcileQueued = false;
+		let serviceReconcile: (() => void) | undefined;
+		let pluginResourceCleanup: ((pluginId: string) => Promise<void>) | undefined;
 		const groupingRegistry = new PluginGroupingRegistry(() => {
 			try {
 				mainWindow?.webContents.send('plugins:groupings-changed');
@@ -2504,6 +2641,41 @@ app
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
+				serviceManifest: (id) =>
+					pluginManager
+						?.getActiveRecords()
+						.find((r) => r.id === id && r.signature?.status === 'trusted')?.manifest ?? undefined,
+				serviceCancelProvider: (id, callId) => {
+					pluginSandboxHost?.pushEvent(id, {
+						topic: 'services.cancel',
+						at: new Date().toISOString(),
+						payload: { callId },
+					});
+				},
+				serviceRunning: (id) => pluginSandboxHost?.isAcceptingServiceCalls(id) === true,
+				serviceAllowed: (id, capability, target) => isPermitted(grantsOf(id), capability, target),
+				serviceInvoke: (id, command, request, signal, timeoutMs) =>
+					pluginSandboxHost
+						? pluginSandboxHost.invokeTool(id, command, request, {
+								signal,
+								timeoutMs,
+								service: true,
+							})
+						: Promise.reject(new Error('ServiceUnavailable')),
+				registerServiceReconcile: (reconcile) => {
+					serviceReconcile = reconcile;
+				},
+				registerServiceAvailability: (available) => {
+					serviceAvailable = available;
+				},
+				serviceChanged: () => {
+					if (serviceReconcileQueued) return;
+					serviceReconcileQueued = true;
+					queueMicrotask(() => {
+						serviceReconcileQueued = false;
+						pluginManager?.reconcileServiceDependencies();
+					});
+				},
 				broker: pluginBroker,
 				actionGuard: pluginActionGuard,
 				kvStore: pluginKvStore,
@@ -2695,21 +2867,28 @@ app
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
-				pluginResourceCleanup?.(pluginId);
+				const drain = pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
-				backgroundSupervisor.onPluginCrash(pluginId, code);
+				backgroundSupervisor.onPluginCrash(
+					pluginId,
+					code,
+					drain ? Promise.resolve(drain) : undefined
+				);
+				return drain;
 			},
 			onStop: (pluginId) => {
-				pluginResourceCleanup?.(pluginId);
+				const drain = pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
+				return drain;
 			},
 		});
 		pluginSandboxHost = sandboxHost;
 		pluginManager = new PluginManager({
+			serviceAvailable: (id, requirement) => serviceAvailable?.(id, requirement) === true,
 			isEnabled: () => {
 				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
 				return ef.plugins === true;
@@ -2744,9 +2923,15 @@ app
 				backgroundSupervisor.teardown(id);
 			},
 			onChange: (registry) => {
+				serviceReconcile?.();
+				pluginManager?.reconcileServiceDependencies();
 				pluginHostViews.sync();
 				try {
-					mainWindow?.webContents.send('plugins:changed', registry);
+					mainWindow?.webContents.send(
+						'plugins:changed',
+						registry,
+						pluginManager?.getContributions().panels.map((panel) => panel.id) ?? []
+					);
 				} catch {
 					// Renderer may be gone during shutdown; ignore.
 				}
@@ -3155,7 +3340,10 @@ app
 				});
 				// F3: also watch the store files so CLI-origin writes (pianola/send/batch)
 				// reach the renderer when the app is running (ISC-3.1).
-				startAgentRunStoreWatcher();
+				// The same change also tells the per-agent turn log which runs the
+				// command line finished, including those that ended while the app
+				// was closed (the watcher reports once when it starts).
+				startAgentRunStoreWatcher({ onRunsChanged: recordCommandLineRuns });
 				// F1/ISC-1.10 crash recovery: settle runs left non-terminal by a previous
 				// crash. Runs once, before any new agent spawns; error-tolerant inside.
 				setupAgentRunRecovery(processManager);
@@ -3178,6 +3366,24 @@ app
 				);
 			}
 		}
+
+		// Start Computer History when its Encore flag is on. start() re-checks the
+		// flag itself; a missing helper binary is reported in status, not thrown.
+		void getComputerHistoryService()
+			?.start()
+			.catch((err) => {
+				void captureException(err, { operation: 'computerHistory:boot' });
+				logger.error(`Computer History failed to start at boot: ${err}`, 'Startup');
+			});
+
+		// Inspect MaestroRun when its Encore flag is on, so the first agent
+		// spawned after launch already knows whether the launcher is ready.
+		void getMaestroRunService()
+			?.reconcile()
+			.catch((err) => {
+				void captureException(err, { operation: 'maestroRun:boot' });
+				logger.error(`MaestroRun check failed at boot: ${err}`, 'Startup');
+			});
 
 		// Start the Pianola supervisor unconditionally: it self-gates on the
 		// pianola Encore flag (reconcile kills everything and spawns nothing when
@@ -3226,7 +3432,11 @@ app
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
 		// menu is display-only and how clicks are routed back to the renderer.
+		// The Encore flags go in first: an item for a switched-off feature is
+		// left out, and the menu follows the flags live from then on.
+		setMenuEncoreFeatures(store.get('encoreFeatures'));
 		installApplicationMenu();
+		store.onDidChange('encoreFeatures', (value) => setMenuEncoreFeatures(value));
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).
@@ -3252,6 +3462,8 @@ app
 		store.onDidChange('globalShowHotkey', (value) => {
 			setGlobalShowHotkey(Array.isArray(value) ? (value as string[]) : []);
 		});
+		// Quick Chat registers its own hotkey through the same manager.
+		quickChatController.init();
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeAllGlobalHotkeys);
@@ -3424,6 +3636,15 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
+		// Stop the Computer History helper (it also exits on stdin EOF) and close
+		// the open segment. If quit outruns the close, the next start indexes it.
+		void getComputerHistoryService()
+			?.stop()
+			.catch((error) => {
+				void captureException(error, { operation: 'shutdown:computerHistory' });
+			});
+		// Stop polling for the MaestroRun grant.
+		getMaestroRunService()?.dispose();
 		// Tear down plugin hot-reload watching and running sandboxes.
 		pluginManager?.stopWatching();
 		pluginManager?.stopAllSandboxes();

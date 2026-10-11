@@ -5,8 +5,11 @@ import { ExtensionsView } from '../../Extensions/ExtensionsView';
 import { CoworkingSetup } from '../../CoworkingSetup';
 import { ACappellaSettingsBody } from '../../ACappella';
 import {
+	ComputerHistorySection,
+	MaestroRunSection,
 	CueSettingsSection,
 	DirectorNotesSection,
+	QuickChatSection,
 	SymphonyRegistrySection,
 	UsageStatsSection,
 } from './components';
@@ -94,6 +97,15 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		// offer exists precisely for the moment after A Cappella is switched off.
 		aCappella: (
 			<ACappellaSettingsBody theme={theme} enabled={settings.encoreFeatures.aCappella === true} />
+		),
+		computerHistory: <ComputerHistorySection theme={theme} />,
+		maestroRun: <MaestroRunSection theme={theme} />,
+		quickChat: (
+			<QuickChatSection
+				theme={theme}
+				quickChatSettings={settings.quickChatSettings}
+				setQuickChatSettings={settings.setQuickChatSettings}
+			/>
 		),
 	};
 

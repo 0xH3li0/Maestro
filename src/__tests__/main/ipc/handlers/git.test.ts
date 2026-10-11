@@ -16,6 +16,7 @@ import {
 } from '../../../../main/ipc/handlers/git/worktreeCreationMarks';
 import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
+import type { SshRemoteConfig } from '../../../../shared/types';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -110,6 +111,8 @@ vi.mock('../../../../shared/maestro-lib/launch/getShellPath', () => ({
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
 	execGit: vi.fn(),
+	execGitReadOnly: vi.fn(),
+	isGitTimeout: (result: { exitCode: number | string }) => result.exitCode === 'ETIMEDOUT',
 	listWorktreesRemote: vi.fn(),
 	resolveWorktreePathsRemote: vi.fn(),
 	resolveWorktreeAliasesRemote: vi.fn(),
@@ -213,13 +216,21 @@ describe('Git IPC handlers', () => {
 
 		// Set up execGit mock to dispatch to local or remote
 		const remoteGit = await import('../../../../main/utils/remote-git');
-		vi.mocked(remoteGit.execGit).mockImplementation(async (args, localCwd, sshRemote) => {
+		const dispatchGit = async (
+			args: string[],
+			localCwd: string,
+			sshRemote?: SshRemoteConfig | null
+		) => {
 			if (sshRemote) {
 				return remoteGit.execGitRemote(args, { sshRemote, remoteCwd: localCwd });
 			} else {
 				return execFile.execFileNoThrow('git', args, localCwd);
 			}
-		});
+		};
+		vi.mocked(remoteGit.execGit).mockImplementation(dispatchGit);
+		// The read-only runner's own behaviour (locks flag, timeout,
+		// single-flight) is covered in remote-git.test.ts.
+		vi.mocked(remoteGit.execGitReadOnly).mockImplementation(dispatchGit);
 	});
 
 	afterEach(() => {
@@ -268,6 +279,75 @@ describe('Git IPC handlers', () => {
 			expect(handlers.size).toBe(expectedChannels.length);
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
+			}
+		});
+	});
+
+	describe('background read-only polls (#1739)', () => {
+		const timedOut = {
+			stdout: '',
+			stderr: 'ETIMEDOUT: process timed out after 20000ms',
+			exitCode: 'ETIMEDOUT' as const,
+		};
+
+		it('routes status, numstat, branch and info through the read-only runner', async () => {
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			for (const channel of ['git:status', 'git:numstat', 'git:branch', 'git:info']) {
+				await handlers.get(channel)!({} as any, '/test/repo');
+			}
+
+			const readOnlyArgs = vi.mocked(remoteGit.execGitReadOnly).mock.calls.map((c) => c[0]);
+			expect(readOnlyArgs).toEqual(
+				expect.arrayContaining([
+					['status', '--porcelain'],
+					['diff', '--numstat'],
+					['rev-parse', '--abbrev-ref', 'HEAD'],
+					['remote', 'get-url', 'origin'],
+					['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
+				])
+			);
+			expect(remoteGit.execGit).not.toHaveBeenCalled();
+		});
+
+		it('marks a timed-out status, numstat or branch reply so it is not read as clean', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue(timedOut);
+
+			for (const channel of ['git:status', 'git:numstat', 'git:branch']) {
+				const result = await handlers.get(channel)!({} as any, '/icloud/repo');
+				expect(result).toEqual({ stdout: '', stderr: timedOut.stderr, timedOut: true });
+			}
+		});
+
+		it('marks git:info when any one of its queries timed out', async () => {
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: 'main\n', stderr: '', exitCode: 0 })
+				.mockResolvedValueOnce({ stdout: 'git@github.com:u/r.git\n', stderr: '', exitCode: 0 })
+				.mockResolvedValueOnce({ stdout: ' M a.ts\n', stderr: '', exitCode: 0 })
+				.mockResolvedValueOnce(timedOut);
+
+			const result = await handlers.get('git:info')!({} as any, '/icloud/repo');
+
+			expect(result).toEqual(
+				expect.objectContaining({ branch: 'main', ahead: 0, behind: 0, timedOut: true })
+			);
+		});
+
+		it('leaves timedOut off a reply git actually answered', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			for (const channel of ['git:status', 'git:numstat', 'git:branch', 'git:info']) {
+				const result = await handlers.get(channel)!({} as any, '/test/repo');
+				expect(result).not.toHaveProperty('timedOut');
 			}
 		});
 	});
@@ -6033,7 +6113,7 @@ branch refs/heads/bugfix-123
 
 			expect(mockFs.access).toHaveBeenCalledWith('/parent/worktrees');
 			expect(mockChokidar.watch).toHaveBeenCalledWith('/parent/worktrees', {
-				ignored: [/(^|[/\\])\../, expect.any(RegExp)],
+				ignored: [expect.any(Function), expect.any(RegExp)],
 				persistent: true,
 				ignoreInitial: true,
 				depth: 1,

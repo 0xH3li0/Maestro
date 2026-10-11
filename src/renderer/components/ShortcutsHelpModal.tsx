@@ -16,6 +16,8 @@ import {
 	getLevelForPercentage,
 } from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
+import { availableShortcuts } from '../utils/encoreShortcuts';
+import { useSettingsStore } from '../stores/settingsStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface ShortcutsHelpModalProps {
@@ -59,14 +61,20 @@ export function ShortcutsHelpModal({
 		return true;
 	}, []);
 
-	// Combine all shortcuts for display and mastery tracking
+	// Combine all shortcuts for display and mastery tracking. A switched-off
+	// Encore Feature's chord cannot fire, so it is neither listed nor counted.
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const allShortcuts = useMemo(
-		() => ({
-			...shortcuts,
-			...tabShortcuts,
-			...FIXED_SHORTCUTS,
-		}),
-		[shortcuts, tabShortcuts]
+		() =>
+			availableShortcuts(
+				{
+					...shortcuts,
+					...tabShortcuts,
+					...FIXED_SHORTCUTS,
+				},
+				encoreFeatures
+			),
+		[shortcuts, tabShortcuts, encoreFeatures]
 	);
 
 	const totalShortcuts = Object.values(allShortcuts).length;
@@ -90,10 +98,7 @@ export function ShortcutsHelpModal({
 	// above (the user should still know the action exists and can give it a
 	// chord), but they cannot be fired, so counting them would pin the bar below
 	// 100% no matter how much of the keyboard the user learns.
-	const boundShortcuts = useMemo(
-		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
-		[shortcuts, tabShortcuts]
-	);
+	const boundShortcuts = useMemo(() => collectBoundShortcuts(allShortcuts), [allShortcuts]);
 	const masteryTotal = boundShortcuts.length;
 	const usedShortcutsCount = countUsedBoundShortcuts(
 		boundShortcuts,

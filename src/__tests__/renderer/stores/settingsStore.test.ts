@@ -31,6 +31,7 @@ import {
 	KEYBOARD_MASTERY_LEVELS,
 	collectBoundShortcuts,
 } from '../../../renderer/constants/keyboardMastery';
+import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 
@@ -92,6 +93,7 @@ function resetStore() {
 		globalShowHotkey: [],
 		defaultShell: 'zsh',
 		customShellPath: '',
+		mediaModelDirectory: '',
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
@@ -117,7 +119,7 @@ function resetStore() {
 		spokenNotices: 'off',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: 10000,
 		maxOutputLines: Infinity,
 		osNotificationsEnabled: true,
 		audioFeedbackEnabled: false,
@@ -250,7 +252,7 @@ describe('settingsStore', () => {
 			expect(state.spokenNotices).toBe('off');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
-			expect(state.maxLogBuffer).toBe(5000);
+			expect(state.maxLogBuffer).toBe(10000);
 			expect(state.maxOutputLines).toBe(Infinity);
 			expect(state.osNotificationsEnabled).toBe(true);
 			expect(state.audioFeedbackEnabled).toBe(false);
@@ -1185,9 +1187,9 @@ describe('settingsStore', () => {
 		});
 
 		it('setMaxLogBuffer updates state and calls logger.setMaxLogBuffer', async () => {
-			await useSettingsStore.getState().setMaxLogBuffer(10000);
-			expect(useSettingsStore.getState().maxLogBuffer).toBe(10000);
-			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(10000);
+			await useSettingsStore.getState().setMaxLogBuffer(25000);
+			expect(useSettingsStore.getState().maxLogBuffer).toBe(25000);
+			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(25000);
 		});
 
 		it('setPreventSleepEnabled updates state, persists, and calls power.setEnabled', async () => {
@@ -1785,8 +1787,16 @@ describe('settingsStore', () => {
 
 		// The denominator is the shortcuts that actually have a chord bound, so the
 		// ids used here have to be real ones - made-up ids count for nothing.
-		const boundShortcutIds = () =>
-			collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS).map((s) => s.id);
+		// It also leaves out the chord of an Encore Feature that is switched off:
+		// the keyboard handler refuses it, so it can never be fired either.
+		const boundShortcutIds = () => {
+			const encoreFeatures = useSettingsStore.getState().encoreFeatures;
+			return collectBoundShortcuts(
+				availableShortcuts(DEFAULT_SHORTCUTS, encoreFeatures),
+				TAB_SHORTCUTS,
+				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
+			).map((s) => s.id);
+		};
 
 		it('recordShortcutUsage detects level-up', () => {
 			const bound = boundShortcutIds();
@@ -1921,6 +1931,43 @@ describe('settingsStore', () => {
 	// ========================================================================
 	// 11. loadAllSettings
 	// ========================================================================
+
+	describe('host media directory', () => {
+		it.each([undefined, null, 42])(
+			'keeps a controlled empty value for a malformed persisted directory: %s',
+			async (persisted) => {
+				vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+				vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(persisted);
+				expect(await useSettingsStore.getState().setMediaModelDirectory('/models')).toBe(true);
+				expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+			}
+		);
+
+		it('updates state only after successful persistence and reads the canonical path', async () => {
+			vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(false);
+			expect(await useSettingsStore.getState().setMediaModelDirectory('/bad')).toBe(false);
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+			vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+			vi.mocked(window.maestro.settings.get).mockResolvedValueOnce('/canonical/models');
+			expect(await useSettingsStore.getState().setMediaModelDirectory('/alias/models')).toBe(true);
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('/canonical/models');
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				'mediaModelDirectory',
+				'/alias/models'
+			);
+		});
+
+		it('hydrates the host directory and clears stale values if removed externally', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				mediaModelDirectory: '/models',
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('/models');
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().mediaModelDirectory).toBe('');
+		});
+	});
 
 	describe('loadAllSettings', () => {
 		describe('localModelAssignments', () => {

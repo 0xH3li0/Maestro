@@ -189,6 +189,21 @@ describe('cue-shell-executor', () => {
 		await promise;
 	});
 
+	it('claims the Cue origin in the command env, over an inherited value', async () => {
+		// What the command launches can start an agent turn (`maestro-cli send`),
+		// which reads this to record the turn as Cue's.
+		vi.stubEnv('MAESTRO_QUERY_SOURCE', 'user');
+		const promise = executeCueShell(createConfig() as any);
+		await vi.advanceTimersByTimeAsync(0);
+
+		const opts = mockSpawn.mock.calls[0][2] as Record<string, unknown>;
+		expect((opts.env as Record<string, string>).MAESTRO_QUERY_SOURCE).toBe('cue');
+
+		mockChild.emit('close', 0);
+		await promise;
+		vi.unstubAllEnvs();
+	});
+
 	it('falls back to the expanded PATH, not the launchd PATH, when getShellPath fails (#1573)', async () => {
 		const launchdPath = '/usr/bin:/bin:/usr/sbin:/sbin';
 		const originalPath = process.env.PATH;

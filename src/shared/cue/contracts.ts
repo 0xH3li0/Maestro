@@ -6,6 +6,7 @@
 
 import type { TaskSelectionMode, UsageStats } from '../types';
 import type { CueGateOnUnavailable } from './gate';
+import type { EffortLevel, ModelTier } from '../modelTiers';
 
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -402,6 +403,19 @@ export interface CueSubscription {
 	 *  agents later in the chain can access it via per-source template variables
 	 *  like {{CUE_OUTPUT_<NAME>}}. */
 	forward_output_from?: string[];
+	/** Model tier for the agent run (`low | medium | high`), mapped per provider
+	 *  by `resolveTierModel` (Claude: `high` -> `opus`). Mutually exclusive with
+	 *  `model`. Omitted = the agent's configured model. Fan-out targets share it.
+	 *  Ignored by `action: command` and `action: notify`. */
+	tier?: ModelTier;
+	/** Exact model id handed to the agent verbatim. For a model a tier cannot
+	 *  name, or a provider with no tier table (Codex, OpenCode). Mutually
+	 *  exclusive with `tier`. */
+	model?: string;
+	/** Effort level (`low | medium | high`), mapped to the provider's own ladder
+	 *  by `resolveEffortLevel` (Claude: `high` -> `max`). Omitted = the agent's
+	 *  configured effort. */
+	effort?: EffortLevel;
 	/**
 	 * @deprecated Replaced by a downstream `action: command` subscription with
 	 * `command: { mode: 'cli', cli: { command: 'send', target } }`. The

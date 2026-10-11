@@ -183,6 +183,22 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Pianola manager agent system prompt (appended for the pinned Pianola agent)',
 		category: 'pianola',
 	},
+	// Computer History (first-party plugin system-prompt section)
+	{
+		id: 'computer-history-system',
+		filename: 'computer-history-system.md',
+		description:
+			'Computer History section appended to every local agent system prompt while the feature is on',
+		category: 'computer-history',
+	},
+	// MaestroRun (first-party plugin system-prompt section, macOS only)
+	{
+		id: 'maestro-run-system',
+		filename: 'maestro-run-system.md',
+		description:
+			'MaestroRun section appended to every local agent system prompt once the launcher is installed and holds Full Disk Access',
+		category: 'maestro-run',
+	},
 	// Group Chat
 	{
 		id: 'group-chat-moderator-system',
@@ -362,6 +378,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'includes',
 	},
 	{
+		id: '_computer-history',
+		filename: '_computer-history.md',
+		description:
+			'Computer History guide: CLI queries, event meanings, untrusted-content and privacy rules',
+		category: 'includes',
+	},
+	{
+		id: '_maestro-run',
+		filename: '_maestro-run.md',
+		description:
+			'MaestroRun guide: when to use the launcher, its commands and exit codes, and the approval rule',
+		category: 'includes',
+	},
+	{
 		id: '_desktop-instrumentation',
 		filename: '_desktop-instrumentation.md',
 		description:
@@ -417,6 +447,10 @@ export const PROMPT_IDS = {
 	MAESTRO_SYSTEM_PROMPT: 'maestro-system-prompt',
 	// Pianola
 	PIANOLA_SYSTEM: 'pianola-system',
+	// Computer History
+	COMPUTER_HISTORY_SYSTEM: 'computer-history-system',
+	// MaestroRun
+	MAESTRO_RUN_SYSTEM: 'maestro-run-system',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',
@@ -451,6 +485,8 @@ export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];
 export const QUICK_ACTION_PROMPTS: { id: PromptId; label: string }[] = [
 	{ id: 'maestro-system-prompt', label: 'Maestro System Prompt' },
 	{ id: 'pianola-system', label: 'Pianola Manager System Prompt' },
+	{ id: 'computer-history-system', label: 'Computer History System Prompt Section' },
+	{ id: 'maestro-run-system', label: 'MaestroRun System Prompt Section' },
 	{ id: 'autorun-default', label: 'Auto Run Default' },
 	{ id: 'commit-command', label: 'Commit Command' },
 	{ id: 'ai-command', label: 'AI Command Mode' },

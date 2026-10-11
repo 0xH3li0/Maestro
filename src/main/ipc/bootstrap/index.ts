@@ -38,6 +38,8 @@ import {
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
+	registerComputerHistoryHandlers,
+	registerMaestroRunHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
@@ -64,6 +66,7 @@ import {
 	registerAgentRunHandlers,
 	registerCoworkingHandlers,
 	registerBrowserSessionHandlers,
+	registerCotExportHandlers,
 	registerWindowsHandlers,
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
@@ -78,6 +81,7 @@ import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
 import { syncTokenProxy } from '../../local-models/proxy/service';
+import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
@@ -98,6 +102,15 @@ import type { IpcBootstrapDependencies } from './types';
 export type { IpcBootstrapDependencies } from './types';
 
 export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
+	/** The name the person gave an agent, read from the stored agent list. */
+	const getAgentName = (agentId: string): string | undefined => {
+		const sessions = deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			name?: string;
+		}>;
+		return sessions.find((s) => s.id === agentId)?.name;
+	};
+
 	// Settings, sessions, and groups persistence - extracted to src/main/ipc/handlers/persistence.ts
 
 	// Web/Live handlers - extracted to src/main/ipc/handlers/web.ts
@@ -112,18 +125,20 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// `webLogin:*` channel. See src/main/ipc/handlers/webLogin.ts.
 	registerWebLoginHandlers();
 
+	// Computer History - desktop-only, the bridge refuses every
+	// `computerHistory:*` channel (D15). See src/main/ipc/handlers/computerHistory.ts.
+	registerComputerHistoryHandlers();
+
+	// MaestroRun - install, grant walkthrough, and the readiness that gates its
+	// system-prompt section. See src/main/ipc/handlers/maestroRun.ts.
+	registerMaestroRunHandlers();
+
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
-		getAgentName: (agentId) => {
-			const sessions = deps.sessionsStore.get('sessions', []) as Array<{
-				id?: string;
-				name?: string;
-			}>;
-			return sessions.find((s) => s.id === agentId)?.name;
-		},
+		getAgentName,
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -428,6 +443,17 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register Browser Session handlers (clear per-partition browsing data)
 	registerBrowserSessionHandlers();
+
+	// Per-agent turn log control. Desktop window only: every handler refuses a
+	// caller that is not one. See src/main/ipc/handlers/cot-export.ts.
+	registerCotExportHandlers({
+		getAgentName,
+		anchor: createCotStateKeyringAnchor(),
+		isAppWindow: (window) =>
+			deps.windowRegistry
+				.getAll()
+				.some((entry) => entry.browserWindow === window && entry.kind === 'app'),
+	});
 
 	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
 	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation

@@ -12,6 +12,8 @@
  * first (rejecting the 'browser' sentinel) and falls back to this same bridge.
  */
 
+import { isWebDesktop } from './runtimeContext';
+
 /**
  * The raw `process.platform` string as the preload bridge reported it, or '' in
  * a context with no bridge. Exported for the callers that need the value itself
@@ -20,6 +22,17 @@
  */
 export function getPlatform(): string {
 	return (window as any).maestro?.platform ?? '';
+}
+
+/**
+ * The operating system Maestro itself RUNS on, or '' when this client cannot
+ * know it. In the desktop app that is the preload's `process.platform`. In a
+ * web-desktop browser `window.maestro.platform` describes the BROWSER's device
+ * (a phone can be pointed at a Mac host), so it is no answer to "what can the
+ * host install or run": that case returns ''.
+ */
+export function hostPlatform(): string {
+	return isWebDesktop() ? '' : getPlatform();
 }
 
 export function isWindowsPlatform(): boolean {

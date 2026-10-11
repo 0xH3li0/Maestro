@@ -47,6 +47,11 @@ import {
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
 import {
+	QUICK_CHAT_SETTINGS_KEY,
+	resolveQuickChatSettings,
+	type QuickChatSettings,
+} from '../../shared/quickChat';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -56,11 +61,13 @@ import {
 	countUsedBoundShortcuts,
 	getLevelIndex,
 } from '../constants/keyboardMastery';
+import { availableShortcuts } from '../utils/encoreShortcuts';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { MAX_ENTRIES_PER_SESSION } from '../../shared/history';
 import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared/usagePeaks';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
@@ -376,6 +383,7 @@ export interface SettingsStoreState
 	 */
 	semanticIndexCue: boolean;
 	ghPath: string;
+	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
 	 * True when the main process found an installation id already on disk (i.e.
@@ -479,6 +487,7 @@ export interface SettingsStoreState
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
+	quickChatSettings: QuickChatSettings;
 	cueHistoryRetentionDays: number;
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
@@ -526,6 +535,7 @@ export interface SettingsStoreActions
 	setLocalModelAssignments: (value: LocalModelAssignments) => void;
 	setSemanticIndexCue: (value: boolean) => void;
 	setGhPath: (value: string) => void;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
@@ -600,6 +610,7 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+	setQuickChatSettings: (value: QuickChatSettings) => void;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
@@ -780,6 +791,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		localModelAssignments: {},
 		semanticIndexCue: false,
 		ghPath: '',
+		mediaModelDirectory: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -806,7 +818,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: MAX_ENTRIES_PER_SESSION,
 		maxOutputLines: Infinity,
 		checkForUpdatesOnStartup: true,
 		autoResumeOnLimit: true,
@@ -862,6 +874,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		quickChatSettings: resolveQuickChatSettings(undefined),
 		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
@@ -950,6 +963,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setGhPath: (value) => {
 			set({ ghPath: value });
 			window.maestro.settings.set('ghPath', value);
+		},
+
+		setMediaModelDirectory: async (value) => {
+			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
+			const persisted = await window.maestro.settings.get('mediaModelDirectory');
+			set({ mediaModelDirectory: typeof persisted === 'string' ? persisted : '' });
+			return true;
 		},
 
 		setMediaPlaybackRate: (value) => {
@@ -1419,6 +1439,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setDirectorNotesSettings: (value) => {
 			set({ directorNotesSettings: value });
 			window.maestro.settings.set('directorNotesSettings', value);
+		},
+
+		setQuickChatSettings: (value) => {
+			set({ quickChatSettings: value });
+			window.maestro.settings.set(QUICK_CHAT_SETTINGS_KEY, value);
 		},
 
 		setCueHistoryRetentionDays: (value) => {
@@ -1946,7 +1971,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// unbound one can never be fired, so counting it would make the top
 			// level unreachable. Read from the live maps so a binding the user
 			// cleared in Settings leaves the denominator too.
-			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const bound = collectBoundShortcuts(
+				availableShortcuts(get().shortcuts, get().encoreFeatures),
+				get().tabShortcuts,
+				availableShortcuts(FIXED_SHORTCUTS, get().encoreFeatures)
+			);
 			const percentage =
 				bound.length > 0
 					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
@@ -2035,6 +2064,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		patch.mediaModelDirectory =
+			typeof allSettings['mediaModelDirectory'] === 'string'
+				? allSettings['mediaModelDirectory']
+				: '';
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
@@ -2636,6 +2669,11 @@ export async function loadAllSettings(): Promise<void> {
 			};
 		}
 
+		// Quick Chat settings (field-by-field merge so a partial object keeps defaults)
+		if (allSettings[QUICK_CHAT_SETTINGS_KEY] !== undefined) {
+			patch.quickChatSettings = resolveQuickChatSettings(allSettings[QUICK_CHAT_SETTINGS_KEY]);
+		}
+
 		hydrateWakatimeSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
 		// falls back to the default rather than being shown as-is: the number in
@@ -2964,6 +3002,7 @@ export function getSettingsActions() {
 		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
+		setQuickChatSettings: state.setQuickChatSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,

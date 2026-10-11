@@ -20,6 +20,7 @@ import type {
 	CueNotifyConfig,
 	CueSubscription,
 } from './cue-types';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import {
 	getQueuedEvents,
 	clearPersistedQueue,
@@ -53,6 +54,8 @@ export interface PersistableQueueEntry {
 	/** Resolved notify config for `action: notify`. The message also rides the
 	 *  `prompt` slot, but `sticky` lives nowhere else. */
 	notify?: CueNotifyConfig;
+	/** The subscription's model choice, so a restored run keeps it. */
+	turnSettings?: CueTurnSettings;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
@@ -105,6 +108,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			parentEventId: entry.parentEventId ?? null,
 			autoRunJson: entry.autoRun ? JSON.stringify(entry.autoRun) : null,
 			notifyJson: entry.notify ? JSON.stringify(entry.notify) : null,
+			turnSettingsJson: entry.turnSettings ? JSON.stringify(entry.turnSettings) : null,
 		};
 		safePersistQueuedEvent(record);
 	}
@@ -231,12 +235,14 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			let command: CueCommand | undefined;
 			let autoRun: CueAutoRunConfig | undefined;
 			let notify: CueNotifyConfig | undefined;
+			let turnSettings: CueTurnSettings | undefined;
 			try {
 				event = JSON.parse(row.eventJson);
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
 				autoRun = row.autoRunJson ? JSON.parse(row.autoRunJson) : undefined;
 				notify = row.notifyJson ? JSON.parse(row.notifyJson) : undefined;
+				turnSettings = row.turnSettingsJson ? JSON.parse(row.turnSettingsJson) : undefined;
 			} catch (err) {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 				deps.onLog(
@@ -266,6 +272,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				parentEventId: row.parentEventId ?? undefined,
 				autoRun,
 				notify,
+				turnSettings,
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);

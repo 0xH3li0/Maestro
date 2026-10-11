@@ -30,7 +30,12 @@ import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
-import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
+import {
+	useSettingsStore,
+	selectGroupsPlusEnabled,
+	selectIsLeaderboardRegistered,
+} from '../../stores/settingsStore';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
@@ -51,6 +56,8 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
@@ -79,7 +86,14 @@ import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
-import { buildWindowMoveTargets } from '../../utils/windowTargets';
+import {
+	buildGroupWindowMoveTargets,
+	buildWindowMoveTargets,
+	collectGroupAgentIds,
+} from '../../utils/windowTargets';
+
+/** Stable fallback so the selector never hands React a fresh array. */
+const NO_QUICK_CHAT_HOTKEY: string[] = [];
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
@@ -221,6 +235,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
+	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const setAudioFeedbackEnabled = useSettingsStore((s) => s.setAudioFeedbackEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
@@ -254,11 +269,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	// Quick Chat is on by default, and only the Electron app has its window.
+	const quickChatAvailable =
+		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
+	const quickChatHotkey =
+		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
 	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
 	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const computerHistoryAvailable = useSettingsStore((s) =>
+		canOpenComputerHistory(s.encoreFeatures)
+	);
+	const openComputerHistory = useCallback(() => getModalActions().setComputerHistoryOpen(true), []);
 	const toggleConcertoStageFloating = useCallback(
 		() => setConcertoStageFloating(!concertoStageFloating),
 		[concertoStageFloating, setConcertoStageFloating]
@@ -394,6 +418,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	// The group a "Move Group to ..." command carries: a worktree child is filed
+	// under its parent's group, the same unit the window move relocates.
+	const activeWindowGroupId = activeSession?.parentSessionId
+		? sessions.find((s) => s.id === activeSession.parentSessionId)?.groupId
+		: activeSession?.groupId;
+	const activeWindowGroup = activeWindowGroupId
+		? groups.find((g) => g.id === activeWindowGroupId)
+		: undefined;
 	// The palette is the third surface for the git action set, after the header
 	// branch pill and the Left Bar right-click menu.
 	const gitActions = useGitAgentActions(activeSession);
@@ -510,7 +542,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	);
 
 	const sessionActions = buildSessionJumpCommands({
-		sessions,
+		sessions: switchableSessions,
 		setActiveSessionId,
 		revealJumpTarget,
 		getSessionWindow,
@@ -530,6 +562,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			canOpenMediaPlayer,
 			openMediaPlayer,
 			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
+			setQuickActionOpen,
+		}),
+		...buildQuickChatCommands({
+			quickChatAvailable,
+			hotkey: quickChatHotkey,
+			openQuickChat: () => void window.maestro.quickChat.window('show'),
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
@@ -634,6 +672,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					: [],
 			moveToNewWindow: (id) => windowCtx?.moveSessionToNewWindow(id),
 			moveToWindow: (id, targetWindowId) => windowCtx?.moveSessionToWindow(id, targetWindowId),
+			activeGroup: activeWindowGroup,
+			groupWindowTargets:
+				windowCtx && activeWindowGroup
+					? buildGroupWindowMoveTargets(
+							windowCtx.windows,
+							collectGroupAgentIds(sessions, groups, activeWindowGroup.id, groupsPlusEnabled)
+						)
+					: [],
+			moveGroupToNewWindow: (groupId) => windowCtx?.moveGroupToNewWindow(groupId),
+			moveGroupToWindow: (groupId, targetWindowId) =>
+				windowCtx?.moveGroupToWindow(groupId, targetWindowId),
 			setQuickActionOpen,
 			canRenameCurrentWindow: isSecondaryWindow,
 			beginRenameCurrentWindow,
@@ -739,6 +788,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onOpenDirectorNotes,
 			onOpenMaestroCue,
 			onOpenPianola,
+			onOpenComputerHistory: computerHistoryAvailable ? openComputerHistory : undefined,
 			onConfigureCue,
 			onOpenLastDocumentGraph,
 			onOpenCurrentFileInGraph,
@@ -760,6 +810,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
+				computerHistory: shortcuts.computerHistory,
 				fuzzyFileSearch: shortcuts.fuzzyFileSearch,
 				editClipboardImage: shortcuts.editClipboardImage,
 			},

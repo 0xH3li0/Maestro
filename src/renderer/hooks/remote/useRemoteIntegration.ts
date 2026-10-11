@@ -39,6 +39,7 @@ import {
 } from '../../stores/movementStore';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { steerQueuedItem } from '../../services/chatSteering';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
@@ -1275,6 +1276,28 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote "steer queue item" from the CLI (`queue steer`). Runs the SAME
+		// steerQueuedItem() the Steer button does, so the queue removal and the later
+		// re-queue on a `dropped` verdict happen exactly as they do for a click.
+		const unsubscribeSteerQueueItem = window.maestro.process.onRemoteSteerQueueItem?.(
+			(sessionId: string, itemId: string, responseChannel: string) => {
+				steerQueuedItem(sessionId, itemId)
+					.then((result) => {
+						window.maestro.process.sendRemoteSteerQueueItemResponse(responseChannel, {
+							success: true,
+							result,
+						});
+					})
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] onRemoteSteerQueueItem failed:', undefined, error);
+						window.maestro.process.sendRemoteSteerQueueItemResponse(responseChannel, {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeFocusAiTab();
@@ -1293,6 +1316,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeEnqueueCommand();
 			unsubscribeListQueue();
 			unsubscribeRemoveQueueItem();
+			unsubscribeSteerQueueItem?.();
 		};
 	}, [
 		sessionsRef,

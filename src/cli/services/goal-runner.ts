@@ -101,6 +101,7 @@ async function requestHandoffBlurb(
 	try {
 		const result = await captureCliRun(
 			{
+				agentId: session.id,
 				sessionId: agentSessionId ?? session.id,
 				toolType: session.toolType,
 				cwd: session.cwd,
@@ -256,6 +257,7 @@ export async function* runGoal(
 			const iterationStart = Date.now();
 			const result = await captureCliRun(
 				{
+					agentId: session.id,
 					sessionId: session.id,
 					toolType: session.toolType,
 					cwd: session.cwd,

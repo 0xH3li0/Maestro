@@ -30,6 +30,7 @@ import {
 	buildRemoteInteractiveSpawn,
 } from '../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -137,6 +138,28 @@ export async function buildSpawnSpec(
 	});
 	finalArgs = configResolution.args;
 
+	// 3a. Deliver the Maestro system prompt the way `process:spawn` does: the
+	// native flag (a temp file on Windows local) for agents that support it,
+	// otherwise embedded into the prompt. Done before the launch plan, which takes
+	// the prompt already final, so both the SSH stdin path and the local argv
+	// carry it, and before the maestro-p rewrite, which forwards the flag to the
+	// TUI. A Cue run never resumes a provider session, so the embed is never
+	// skipped.
+	const delivered = await applySystemPromptDelivery({
+		args: finalArgs,
+		prompt: substitutedPrompt,
+		systemPrompt: config.appendSystemPrompt,
+		supportsAppendSystemPrompt: !!agentConfig.capabilities?.supportsAppendSystemPrompt,
+		isResume: false,
+		// A remote launch runs from a script, so it never needs the temp file.
+		isSshSession: !!sshRemoteConfig?.enabled && !!sshStore,
+		sessionId: `cue-${config.runId}`,
+		agentId: agentDef.id,
+		logContext: '[CueSpawnBuilder]',
+	});
+	finalArgs = delivered.args;
+	const promptToSend = delivered.prompt ?? substitutedPrompt;
+
 	// Sanitize every user-set env layer BEFORE it reaches the spawn environment.
 	// This drops blocklisted names (PATH, HOME, USER, SHELL, LD_PRELOAD,
 	// DYLD_INSERT_LIBRARIES, NODE_OPTIONS) and any name that does not match the
@@ -160,7 +183,7 @@ export async function buildSpawnSpec(
 		command: customPath || agentDef.command,
 		args: finalArgs,
 		cwd: projectRoot,
-		prompt: substitutedPrompt,
+		prompt: promptToSend,
 		agentCustomEnvVars: sanitizeLayer(
 			(agentConfigValues as Record<string, unknown> | undefined)?.customEnvVars as
 				| Record<string, string>
@@ -255,7 +278,7 @@ export async function buildSpawnSpec(
 			command: plan.command,
 			args: remoteInteractive ? [...remoteInteractive.prependArgs, ...plan.args] : plan.args,
 			cwd: plan.cwd,
-			prompt: substitutedPrompt,
+			prompt: promptToSend,
 			customEnvVars: remoteInteractive
 				? { ...(plan.envVars ?? {}), ...remoteInteractive.env }
 				: plan.envVars,

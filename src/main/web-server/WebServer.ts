@@ -90,6 +90,7 @@ import type {
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -113,6 +114,7 @@ import type {
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
+	SteerQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -193,6 +195,7 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { WindowCommandRequest } from '../../shared/windowCommands';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -560,6 +563,10 @@ export class WebServer {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
 	}
 
+	setWindowCommandCallback(callback: WindowCommandCallback): void {
+		this.callbackRegistry.setWindowCommandCallback(callback);
+	}
+
 	setReorderTabCallback(callback: ReorderTabCallback): void {
 		this.callbackRegistry.setReorderTabCallback(callback);
 	}
@@ -653,6 +660,10 @@ export class WebServer {
 
 	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
 		this.callbackRegistry.setRemoveQueueItemCallback(callback);
+	}
+
+	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
+		this.callbackRegistry.setSteerQueueItemCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1158,6 +1169,7 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
+			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
 			executeCommand: async (
 				sessionId: string,
 				command: string,
@@ -1192,6 +1204,8 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			windowCommand: async (request: WindowCommandRequest) =>
+				this.callbackRegistry.windowCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
@@ -1240,6 +1254,8 @@ export class WebServer {
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
+			steerQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.steerQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (

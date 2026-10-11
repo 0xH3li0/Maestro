@@ -4,11 +4,14 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
@@ -244,6 +247,13 @@ export interface WebClient {
 	 * while the account stays, and the socket must still go.
 	 */
 	sessionId?: string;
+	/**
+	 * True when the upgrade presented this boot's CLI secret (`maestro-cli`).
+	 * A browser cannot set custom headers on a WebSocket upgrade, so this is
+	 * how a handler tells the CLI from a web client. Handlers for data a
+	 * browser must never touch (Computer History) refuse sockets without it.
+	 */
+	cli?: boolean;
 }
 
 /**
@@ -400,6 +410,12 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * `maestro-cli window` - list windows, or move an agent or a whole group
+ * between them. Answered by the primary window through the same WindowContext
+ * methods the Left Bar menus call. Resolves rather than rejects on a miss.
+ */
+export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
@@ -581,6 +597,12 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
+export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
+export type SteerQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SteerQueueItemResult>;
 /**
  * Opens a URL as a browser tab in the desktop app.
  *
@@ -1231,8 +1253,8 @@ export type UpdateSessionSshCallback = (
  * Update an agent's editable per-session config from the CLI/web. `configPatch`
  * is a partial bag of the fields the Edit Agent modal exposes (nudge / new
  * session message, custom binary path / args / env vars, model, effort, context
- * window, and the Claude token-source tri-state `enableMaestroP` /
- * `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
+ * window, the Codex transport `codexTransport`, and the Claude token-source
+ * tri-state `enableMaestroP` / `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
  * present with value `null` clears that field to undefined. Typed as a plain
  * record because the payload crosses the IPC bridge to the renderer.
  */
@@ -1417,6 +1439,10 @@ export interface CueSubscriptionInfo {
 	injectionThreshold?: number;
 	lastTriggered?: number;
 	triggerCount: number;
+	/** The run's model choice, when the subscription sets one. */
+	tier?: CueTurnSettings['tier'];
+	model?: string;
+	effort?: CueTurnSettings['effort'];
 }
 
 /** Web-specific Cue activity log entry (simplified from engine types) */

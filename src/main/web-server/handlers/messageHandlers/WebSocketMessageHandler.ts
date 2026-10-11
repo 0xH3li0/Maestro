@@ -26,6 +26,7 @@
  * - voice_wake_enrollment: record, train and manage a user's own wake phrase
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
+ * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -73,6 +74,7 @@ import {
 	handleInteractMovementDesigner,
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
+import { handleQuickChat } from './quickChat';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
@@ -128,6 +130,9 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleComputerHistoryCommand } from './computerHistory';
+import { handleMaestroRunCommand } from './maestroRun';
+import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -188,7 +193,12 @@ import {
 	handleCuePipelineSet,
 	handleCuePipelineRemove,
 } from './cue';
-import { handleEnqueueCommand, handleListQueue, handleRemoveQueueItem } from './queue';
+import {
+	handleEnqueueCommand,
+	handleListQueue,
+	handleRemoveQueueItem,
+	handleSteerQueueItem,
+} from './queue';
 import {
 	handleListPlaybooks,
 	handleCreatePlaybook,
@@ -334,6 +344,18 @@ export class WebSocketMessageHandler {
 				handleSnoozeCommand(this.ctx, client, message);
 				break;
 
+			case 'computer_history_command':
+				void handleComputerHistoryCommand(this.ctx, client, message);
+				break;
+
+			case 'maestro_run_command':
+				void handleMaestroRunCommand(this.ctx, client, message);
+				break;
+
+			case 'window_command':
+				handleWindowCommand(this.ctx, client, message);
+				break;
+
 			case 'reorder_tab':
 				handleReorderTab(this.ctx, client, message);
 				break;
@@ -392,6 +414,10 @@ export class WebSocketMessageHandler {
 
 			case 'remove_queue_item':
 				handleRemoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'steer_queue_item':
+				handleSteerQueueItem(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -684,6 +710,10 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case 'quick_chat':
+				handleQuickChat(this.ctx, client, message);
 				break;
 
 			case 'support_package_create':

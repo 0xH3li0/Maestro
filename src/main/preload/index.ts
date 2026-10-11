@@ -19,6 +19,8 @@ import {
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
+import { createComputerHistoryApi } from './computerHistory';
+import { createMaestroRunApi } from './maestroRun';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -73,6 +75,8 @@ import { createImagesApi } from './images';
 import { createVoiceApi } from './acappella';
 import { createVoiceAudioHostApi } from './acappellaAudio';
 import { createLocalModelsApi } from './localModels';
+import { createCotExportApi } from './cotExport';
+import { createQuickChatApi } from './quickChat';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -127,6 +131,12 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Web Login API (accounts for the web interface - desktop-only)
 	webLogin: createWebLoginApi(),
+
+	// Computer History API (desktop-only; the web bridge refuses these channels)
+	computerHistory: createComputerHistoryApi(),
+
+	// MaestroRun API (macOS launcher install + Full Disk Access walkthrough)
+	maestroRun: createMaestroRunApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -292,6 +302,11 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Local Models API (core model + native runtime manager; ungated, voice is one consumer)
 	localModels: createLocalModelsApi(),
+
+	// Chain of thought export (desktop-only; the handlers refuse every other sender)
+	cotExport: createCotExportApi(),
+	// Quick Chat API (hotkey-summoned floating chat window + its engine)
+	quickChat: createQuickChatApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -309,6 +324,9 @@ export {
 	createLiveApi,
 	// Web Login accounts
 	createWebLoginApi,
+	// Computer History
+	createComputerHistoryApi,
+	createMaestroRunApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -404,6 +422,10 @@ export {
 	createVoiceAudioHostApi,
 	// Local Models
 	createLocalModelsApi,
+	// Chain of thought export
+	createCotExportApi,
+	// Quick Chat
+	createQuickChatApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -704,3 +726,7 @@ export type {
 	// From localModels
 	LocalModelsApi,
 } from './localModels';
+export type {
+	// From cotExport
+	CotExportApi,
+} from './cotExport';

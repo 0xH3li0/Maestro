@@ -42,6 +42,7 @@ import type {
 } from '../../shared/crossAgentTypes';
 import { CROSS_AGENT_SESSION_PREFIX } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
+import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
@@ -105,11 +106,28 @@ const CROSS_AGENT_MAX_DURATION_MS = 30 * 60 * 1000;
 interface ActiveConsult {
 	/** The agent the mention was typed in - what Stop is addressed to. */
 	sourceSessionId: string;
+	/** The agent that is answering. */
+	targetSessionId: string;
 	/** Terminate this consult and emit its terminal chunk. Idempotent. */
 	cancel: () => void;
 }
 
 const activeConsults = new Map<string, ActiveConsult>();
+
+/**
+ * Who is asking and who is answering in a consult that is still in flight, or
+ * null once it has settled. A consult runs as an ephemeral
+ * `cross-agent-<requestId>` process that carries neither agent's id, so this
+ * is the only way a process listener can tell which agents it belongs to.
+ */
+export function getCrossAgentConsultParties(
+	requestId: string
+): { sourceSessionId: string; targetSessionId: string } | null {
+	const consult = activeConsults.get(requestId);
+	return consult
+		? { sourceSessionId: consult.sourceSessionId, targetSessionId: consult.targetSessionId }
+		: null;
+}
 
 /**
  * Stop every consult the given source agent still has in flight.
@@ -371,6 +389,7 @@ export async function startCrossAgentRequest(
 	let cancelRequested = false;
 	const registration: ActiveConsult = {
 		sourceSessionId: request.sourceSessionId,
+		targetSessionId: request.targetSessionId,
 		cancel: () => {
 			cancelRequested = true;
 		},
@@ -644,6 +663,11 @@ export async function startCrossAgentRequest(
 			// idle default and kills a still-working consult long before our budget.
 			maxWaitSeconds: Math.ceil(CROSS_AGENT_IDLE_TIMEOUT_MS / 1000),
 			debugLabel: `cross-agent:${target.name}`,
+			// The consulted agent is a real Maestro agent: it answers with the same
+			// system prompt its own tabs carry. A resumed consult skips re-embedding
+			// for agents without the native flag (already in that transcript).
+			appendSystemPrompt: await buildMaestroSystemPromptForSession(target.id),
+			isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
 		});
 		// The spawners CATCH their own failures and return `{ pid: -1, success: false }`
 		// rather than throwing (see ChildProcessSpawner). Such a process emits no

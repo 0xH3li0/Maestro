@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { QueueSteerResult } from '../../../shared/chatSteering';
 
 export function createQueueRemoteApi() {
 	return {
@@ -108,6 +109,32 @@ export function createQueueRemoteApi() {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote "steer queue item" from the CLI (`queue steer`).
+		 * Renderer replies via sendRemoteSteerQueueItemResponse.
+		 */
+		onRemoteSteerQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, itemId: string, responseChannel: string) => {
+				try {
+					callback(sessionId, itemId, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, { success: false });
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:steerQueueItem', handler);
+			return () => ipcRenderer.removeListener('remote:steerQueueItem', handler);
+		},
+
+		sendRemoteSteerQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; result?: QueueSteerResult; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
