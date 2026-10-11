@@ -9,6 +9,7 @@ import {
 	cancelContextCompaction,
 } from '../../../../../renderer/stores/retryStore';
 import { registerContextCompactionSpawner } from '../../../../../renderer/services/contextCompaction';
+import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
 import { DEFAULT_BATCH_STATE } from '../../../../../renderer/hooks/batch/batchReducer';
 import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
@@ -461,6 +462,60 @@ describe('useAgentExitListener', () => {
 		expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-1']);
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	// A failed attempt is not a completed turn. Each attempt of an outage used to
+	// raise a green "success" toast quoting whatever the dying turn printed last,
+	// so the user was told the work was done three times while it had not run.
+	it.each([
+		['raises no completion toast while a retry is counting down', true, 0],
+		['raises the completion toast once no retry is pending', false, 1],
+	])('%s', async (_name, retryPending, expectedToasts) => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			logs: [
+				{ id: 'u', timestamp: 1, source: 'user', text: 'do the thing' },
+				{ id: 'a', timestamp: 2, source: 'stdout', text: 'Halfway there before it died.' },
+			],
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [],
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		useNotificationStore.setState({ toasts: [] } as any);
+		if (retryPending) {
+			useRetryStore.setState({
+				retries: {
+					'sess-1:tab-1': {
+						sessionId: 'sess-1',
+						tabId: 'tab-1',
+						key: 'sess-1:tab-1',
+						outageId: 'outage-1',
+						mode: 'resend',
+						status: 'scheduled',
+						attempt: 0,
+						startedAt: 0,
+						nextRetryAt: 60_000,
+						lastMessage: 'Your workspace is out of credits.',
+					},
+				},
+			} as any);
+		}
+
+		renderHook(() => useAgentExitListener(makeDeps()));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(useNotificationStore.getState().toasts).toHaveLength(expectedToasts);
 	});
 
 	it('drains the queue normally once the retry has settled', async () => {
