@@ -1848,7 +1848,9 @@ Some text with [x] in it that's not a checkbox
 					mockStdout.emit(
 						'data',
 						Buffer.from(
-							'noise\n{"type":"thread.started","thread_id":"waiting"}\n{"type":"turn.started"}\n'
+							'noise\n{"type":"thread.started","thread_id":"waiting"}\n{"type":"turn.started"}\n' +
+								'{"type":"error","message":"Reconnecting... 1/5"}\n' +
+								'{"type":"event_msg","payload":{"type":"stream_error","message":"stream disconnected; retrying"}}\n'
 						)
 					);
 					mockStderr.emit('data', Buffer.from('Reading additional input from stdin...'));

@@ -5,6 +5,7 @@ import { ExtensionsView } from '../../Extensions/ExtensionsView';
 import { CoworkingSetup } from '../../CoworkingSetup';
 import {
 	ComputerHistorySection,
+	MaestroRunSection,
 	CueSettingsSection,
 	DirectorNotesSection,
 	QuickChatSection,
@@ -92,6 +93,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			</div>
 		),
 		computerHistory: <ComputerHistorySection theme={theme} />,
+		maestroRun: <MaestroRunSection theme={theme} />,
 		quickChat: (
 			<QuickChatSection
 				theme={theme}

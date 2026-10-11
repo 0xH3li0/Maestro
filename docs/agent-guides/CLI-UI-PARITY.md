@@ -291,6 +291,9 @@ of taking a second round trip or trusting a value the caller guessed.
 | Computer History viewer: open (Ctrl+Cmd+H, palette, hamburger menu)                         | `open computer-history`                                                                                                                            |
 | Computer History viewer: Timeline (strip, app list, visit stream, search)                   | `computer-history apps`, `computer-history list`, `computer-history query [--app] [--kind] [--grep]`                                               |
 | Computer History viewer: Digests tab                                                        | `computer-history digests`                                                                                                                         |
+| MaestroRun tile (macOS): setup status, Check again                                          | `maestro-run status [--check-latest]`                                                                                                              |
+| MaestroRun tile (macOS): Install MaestroRun / Update to <version>                           | `maestro-run install`, read with `maestro-run status`                                                                                              |
+| MaestroRun tile (macOS): Open Full Disk Access / Reveal in Finder                           | `maestro-run grant [--reveal]`, read with `maestro-run status`                                                                                     |
 
 ## Open gaps
 

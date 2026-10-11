@@ -41,6 +41,22 @@ vi.mock('../../../main/maestro-cli-manager', () => ({
 	resolveBundledCliPathSync: vi.fn(() => bundledCliPath),
 }));
 
+/** The MaestroRun launcher path while ready; undefined otherwise. `null` = no service yet. */
+let maestroRun: { fresh?: string; cached?: string; throws?: boolean } | null = null;
+vi.mock('../../../main/maestro-run', () => ({
+	getMaestroRunService: vi.fn(() =>
+		maestroRun
+			? {
+					readyBinaryPath: vi.fn(async () => {
+						if (maestroRun?.throws) throw new Error('doctor exploded');
+						return maestroRun?.fresh;
+					}),
+					readyBinaryPathCached: vi.fn(() => maestroRun?.cached),
+				}
+			: null
+	),
+}));
+
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -135,12 +151,67 @@ describe('buildMaestroSystemPromptForSession', () => {
 	});
 });
 
+describe('the MaestroRun section (main builder)', () => {
+	const LAUNCHER = '/Users/me/Applications/MaestroRun.app/Contents/MacOS/maestro-run';
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		for (const key of Object.keys(prompts)) delete prompts[key];
+		prompts['maestro-system-prompt'] = 'BASE';
+		prompts['maestro-run-system'] = 'RUN {{MAESTRO_RUN_PATH}}';
+		storedSessions = [agent()];
+		settings = { encoreFeatures: { maestroRun: true } };
+		maestroRun = null;
+	});
+
+	it('is left out while the flag is on but the launcher is not ready', async () => {
+		maestroRun = { fresh: undefined };
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+		maestroRun = null; // no service at all (headless boot)
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+	});
+
+	it('is appended with the launcher path once the service says ready', async () => {
+		maestroRun = { fresh: LAUNCHER };
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe(
+			`BASE\n\n---\n\nRUN ${LAUNCHER}`
+		);
+	});
+
+	it('is never given to an SSH agent, and the service is not asked', async () => {
+		maestroRun = { fresh: LAUNCHER };
+		storedSessions = [agent({ sshRemoteId: 'remote-1' })];
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+	});
+
+	it('is left out when the flag is off, even if the launcher is ready', async () => {
+		maestroRun = { fresh: LAUNCHER };
+		settings = { encoreFeatures: { maestroRun: false } };
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+	});
+
+	it('reads a failed readiness check as not ready instead of failing the spawn', async () => {
+		maestroRun = { throws: true };
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+		expect(logger.warn).toHaveBeenCalled();
+	});
+
+	it('uses the cached answer for the synchronous moderator variant', () => {
+		maestroRun = { fresh: LAUNCHER, cached: undefined };
+		expect(buildPluginSystemPromptSections({ isSsh: false })).toBeUndefined();
+		maestroRun = { cached: LAUNCHER };
+		expect(buildPluginSystemPromptSections({ isSsh: false })).toBe(`RUN ${LAUNCHER}`);
+		expect(buildPluginSystemPromptSections({ isSsh: true })).toBeUndefined();
+	});
+});
+
 describe('buildPluginSystemPromptSections', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		for (const key of Object.keys(prompts)) delete prompts[key];
 		prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
 		settings = {};
+		maestroRun = null;
 	});
 
 	it('returns undefined when no plugin section is enabled', () => {

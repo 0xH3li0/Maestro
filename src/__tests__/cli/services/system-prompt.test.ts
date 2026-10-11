@@ -20,6 +20,10 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveSessionHistoryFilePath: vi.fn(),
 }));
 
+vi.mock('../../../shared/maestro-run/state-file', () => ({
+	readMaestroRunReadyPath: vi.fn(),
+}));
+
 vi.mock('../../../cli/services/git-utils', () => ({
 	getGitBranch: vi.fn(),
 	isGitRepo: vi.fn(),
@@ -29,6 +33,7 @@ import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prom
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
 import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
+import { readMaestroRunReadyPath } from '../../../shared/maestro-run/state-file';
 
 const mockSession = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
 	id: 'agent-abc-123',
@@ -51,6 +56,8 @@ describe('prepareMaestroSystemPromptCli', () => {
 		vi.mocked(readSettingValue).mockReturnValue('');
 		// Default: history file does NOT exist (fresh session)
 		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
+		// Default: the app has not recorded MaestroRun as ready.
+		vi.mocked(readMaestroRunReadyPath).mockReturnValue(undefined);
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {
@@ -187,6 +194,42 @@ describe('prepareMaestroSystemPromptCli', () => {
 			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
 
 			expect(result).toBe('BASE A\n\n---\n\nHISTORY at /mock/config/computer-history');
+		});
+
+		describe('MaestroRun', () => {
+			const LAUNCHER = '/Users/me/Applications/MaestroRun.app/Contents/MacOS/maestro-run';
+
+			beforeEach(() => {
+				prompts['maestro-run-system'] = 'RUN {{MAESTRO_RUN_PATH}}';
+				vi.mocked(readSettingValue).mockImplementation(settings({ maestroRun: true }));
+			});
+
+			it('is left out while the app has not recorded the launcher as ready', async () => {
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+				expect(result).toBe('BASE A');
+				expect(readMaestroRunReadyPath).toHaveBeenCalledWith('/mock/config');
+			});
+
+			it('is appended with the launcher path once the state file says ready', async () => {
+				vi.mocked(readMaestroRunReadyPath).mockReturnValue(LAUNCHER);
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+				expect(result).toBe(`BASE A\n\n---\n\nRUN ${LAUNCHER}`);
+			});
+
+			it('is left out when ready but the flag is off', async () => {
+				vi.mocked(readMaestroRunReadyPath).mockReturnValue(LAUNCHER);
+				vi.mocked(readSettingValue).mockImplementation(settings({ maestroRun: false }));
+				expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }))).toBe('BASE A');
+			});
+
+			it('is never given to an SSH agent, and the state file is not read', async () => {
+				vi.mocked(readMaestroRunReadyPath).mockReturnValue(LAUNCHER);
+				const result = await prepareMaestroSystemPromptCli(
+					mockSession({ name: 'A', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+				);
+				expect(result).toBe('BASE A');
+				expect(readMaestroRunReadyPath).not.toHaveBeenCalled();
+			});
 		});
 
 		it('skips the localOnly Computer History section for SSH agents', async () => {

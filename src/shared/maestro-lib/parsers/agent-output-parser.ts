@@ -160,6 +160,9 @@ export interface ParsedEvent {
 	 */
 	isPartial?: boolean;
 
+	/** Transport retry progress, rather than evidence of model activity. */
+	isRetryNotice?: boolean;
+
 	/** Codex answer role when its JSON format supplies a phase (or omits one). */
 	responsePhase?: 'commentary' | 'final' | 'candidate';
 

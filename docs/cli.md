@@ -1132,9 +1132,23 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`).
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`).
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
+
+### MaestroRun (macOS)
+
+Set up [MaestroRun](./maestro-run), the signed launcher that holds one Full Disk Access grant for your scheduled scripts. Each verb takes the same path as the matching button on the MaestroRun tile in Settings. The app must be running, and the plugin must be on (`maestro-cli encore enable maestroRun`).
+
+```bash
+maestro-cli maestro-run status               # installed version, signature, Full Disk Access
+maestro-cli maestro-run status --check-latest --json
+maestro-cli maestro-run install              # install the newest release for this Mac, or update
+maestro-cli maestro-run grant                # open the Full Disk Access list and watch for the switch
+maestro-cli maestro-run grant --reveal       # also show MaestroRun.app in Finder
+```
+
+`grant` cannot switch the permission on: macOS has no prompt for Full Disk Access, so you flip the switch in System Settings and `status` reports `ready` once you have. These verbs set MaestroRun up. To run a script, use the launcher itself, at the path `status` prints.
 
 ### Quick Chat
 

@@ -1327,6 +1327,7 @@ async function spawnJsonLineAgent(
 				capture.handleEvent(event);
 				if (
 					toolType === 'codex' &&
+					!event.isRetryNotice &&
 					event.raw &&
 					typeof event.raw === 'object' &&
 					((['text', 'result'].includes(event.type) && Boolean(event.text)) ||

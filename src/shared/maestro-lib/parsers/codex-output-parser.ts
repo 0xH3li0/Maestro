@@ -558,6 +558,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (isCodexRetryNotice(msg as Record<string, unknown>)) {
 			return {
 				type: 'text',
+				isRetryNotice: true,
 				text: String(msg.message),
 				isPartial: true,
 				isReasoning: true,
@@ -687,6 +688,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (payload.type === 'stream_error' && payload.message) {
 			return {
 				type: 'text',
+				isRetryNotice: true,
 				text: payload.message,
 				isPartial: true,
 				isReasoning: true,

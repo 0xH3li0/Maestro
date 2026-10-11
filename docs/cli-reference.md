@@ -1539,7 +1539,7 @@ List Encore features and whether each is enabled
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat)
+Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1980,6 +1980,36 @@ Report whether a capture is currently recording
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli maestro-run`
+
+MaestroRun (macOS): install the launcher and grant it Full Disk Access for scheduled scripts
+
+## `maestro-cli maestro-run status`
+
+Re-check the launcher: installed version, signature, and Full Disk Access
+
+| Option           | Description                            | Default |
+| ---------------- | -------------------------------------- | ------- |
+| `--check-latest` | Also ask GitHub for the newest release | -       |
+| `--json`         | Output as JSON (for scripting)         | -       |
+
+## `maestro-cli maestro-run install`
+
+Download, verify, and install the newest MaestroRun release for this Mac (or update it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli maestro-run grant`
+
+Open System Settings on the Full Disk Access list and watch for the switch (the user flips it)
+
+| Option     | Description                                                    | Default |
+| ---------- | -------------------------------------------------------------- | ------- |
+| `--reveal` | Also show MaestroRun.app in Finder, for dragging into the list | -       |
+| `--json`   | Output as JSON (for scripting)                                 | -       |
 
 ## `maestro-cli quick-chat`
 

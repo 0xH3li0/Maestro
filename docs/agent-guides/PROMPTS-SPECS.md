@@ -117,6 +117,7 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 | `{{AGENT_SESSION_ID}}`     | Agent session ID (for conversation continuity)                   |
 | `{{AGENT_HISTORY_PATH}}`   | Path to agent's history JSON file                                |
 | `{{COMPUTER_HISTORY_DIR}}` | `<userData>/computer-history` (empty for SSH-remote agents)      |
+| `{{MAESTRO_RUN_PATH}}`     | The MaestroRun launcher (empty until installed and granted)      |
 | `{{TAB_ID}}`               | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
 | `{{TAB_NAME}}`             | Custom tab name (alias: `SESSION_NAME`)                          |
 | `{{TOOL_TYPE}}`            | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |

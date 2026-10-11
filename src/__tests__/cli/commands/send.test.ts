@@ -138,6 +138,30 @@ describe('send command', () => {
 		}
 	);
 
+	it.each(['ssh', 'interactive', 'dynamic'] as const)(
+		'refuses required plugin tools for an unsupported %s mode before dispatch',
+		async (mode) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(
+				mockAgent(
+					mode === 'ssh'
+						? { toolType: 'codex', sessionSshRemoteConfig: { enabled: true, remoteId: 'host' } }
+						: { enableMaestroP: true, maestroPMode: mode }
+				)
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/agent' });
+			desktop.connect.mockResolvedValue(undefined);
+			await send('agent-abc', 'report', { requirePluginTools: true });
+			expect(desktop.sendCommand).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				code: 'PLUGIN_TOOLS_UNAVAILABLE',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		}
+	);
+
 	it('requires the authenticated desktop plugin path when requested', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));

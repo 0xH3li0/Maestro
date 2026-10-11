@@ -19,6 +19,7 @@ import type { ToolType } from '../../shared/types';
 import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 import type { PluginToolReceipt } from '../../main/plugins/plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
+import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 
 interface SendOptions {
 	session?: string;
@@ -158,8 +159,16 @@ export async function send(
 		return;
 	}
 	const requirePluginHost = options.requirePluginTools || !!requiredToolId;
-	if (requirePluginHost && !MCP_CONFIG_BY_AGENT[agent.toolType]?.verified) {
-		emitErrorJson(`Plugin tools are not verified for ${def.name}`, 'PLUGIN_TOOLS_UNAVAILABLE');
+	if (
+		requirePluginHost &&
+		(agent.sessionSshRemoteConfig?.enabled ||
+			!MCP_CONFIG_BY_AGENT[agent.toolType]?.verified ||
+			(agent.toolType === 'claude-code' && getClaudeTokenMode(agent) !== 'api'))
+	) {
+		emitErrorJson(
+			'Verified local plugin tools are unavailable for this agent',
+			'PLUGIN_TOOLS_UNAVAILABLE'
+		);
 		process.exit(1);
 		return;
 	}
