@@ -87,7 +87,11 @@ import {
 	handleMarketplaceImportPlaybook,
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
-import { handleLocalModelsEndpointsDetect, handleLocalModelsEndpointTest } from './localModels';
+import {
+	handleLocalModelsEndpointsDetect,
+	handleLocalModelsEndpointTest,
+	handleLocalModelsRunTask,
+} from './localModels';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -686,6 +690,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_endpoint_test':
 				void handleLocalModelsEndpointTest(this.ctx, client, message);
+				break;
+
+			case 'local_models_run_task':
+				void handleLocalModelsRunTask(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

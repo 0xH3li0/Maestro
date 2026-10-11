@@ -1801,6 +1801,17 @@ Show a center-screen flash (momentary, exclusive - replaces any active flash)
 
 Local Models: model sources Maestro can use
 
+## `maestro-cli models run <task-id>`
+
+Run a text-generation task through its assignment; prints the text, or why it did not run (requires the desktop app)
+
+| Option                | Description                              | Default |
+| --------------------- | ---------------------------------------- | ------- |
+| `-i, --input <text>`  | The prompt to send                       | -       |
+| `-s, --system <text>` | System prompt                            | -       |
+| `--max-tokens <n>`    | Token budget for the reply (default 512) | -       |
+| `--json`              | Output as JSON (for scripting)           | -       |
+
 ## `maestro-cli models endpoints`
 
 Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL

@@ -20,6 +20,7 @@ import type {
 	SessionLifecycleEvent,
 	ResilienceEvent,
 	WizardRun,
+	LocalModelRun,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -57,6 +58,11 @@ import {
 } from './session-lifecycle';
 import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
 import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
+import {
+	recordLocalModelRun,
+	getLocalModelRuns,
+	clearLocalModelRunsCache,
+} from './local-model-runs';
 import { getAggregatedStats } from './aggregations';
 import {
 	getQuerySourceTotals,
@@ -212,6 +218,7 @@ export class StatsDB {
 			clearSessionLifecycleCache();
 			clearResilienceCache();
 			clearWizardRunsCache();
+			clearLocalModelRunsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
@@ -844,6 +851,18 @@ export class StatsDB {
 
 	getWizardRuns(range: StatsTimeRange): WizardRun[] {
 		return getWizardRuns(this.database, range);
+	}
+
+	// ============================================================================
+	// Local Model Runs (delegated)
+	// ============================================================================
+
+	recordLocalModelRun(run: Omit<LocalModelRun, 'id'>): string {
+		return recordLocalModelRun(this.database, run);
+	}
+
+	getLocalModelRuns(range: StatsTimeRange): LocalModelRun[] {
+		return getLocalModelRuns(this.database, range);
 	}
 
 	// ============================================================================

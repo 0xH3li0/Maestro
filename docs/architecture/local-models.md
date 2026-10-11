@@ -96,6 +96,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()`; the llama probe initializes the real backend   |
 | `runtime/llama-options.ts`     | `LLAMA_GET_OPTIONS` (never compile from source) and `llamaBackendLabel()`, shared by every `getLlama()` |
 | `text-gen.ts`                  | `generateText()` for a local model or an endpoint; the one shared, idle-unloading `LocalTextEngine`     |
+| `task-router.ts`               | `runLocalTask()`: a task's assignment decides off / Utility Agent / model; records `local_model_runs`   |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`          |
 | `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
 | `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)   |
@@ -104,7 +105,8 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 ### IPC and renderer
 
 - `src/main/ipc/handlers/local-models.ts` registers `localModels:{list,download,pause,resume,cancel,verify,remove,remove-all,footprint}`
-  and `localModels:runtimes:{list,install,footprint,remove-all}`, broadcasting on
+  and `localModels:runtimes:{list,install,footprint,remove-all}`, plus `localModels:runTask` (the
+  task router) and `localModels:endpoints:*`, broadcasting on
   `localModels:progress` and `localModels:runtimes:progress`. It is **not** gated by the A Cappella
   Encore flag. It is wired in `setupIpcHandlers()`.
 - Preload: `window.maestro.localModels` (with a `.runtimes` sub-namespace), in
@@ -267,6 +269,35 @@ set) behaves exactly as before; every task new with Local Models defaults to `of
 catalog no longer knows is KEPT, so the router can name it as unavailable instead of the task
 quietly changing source. Save-time checks (catalog membership, matching kind) are
 `localModelAssignmentProblem()`.
+
+## The task router
+
+`runLocalTask(taskId, input)` in `src/main/local-models/task-router.ts` is the one choke point a
+housekeeping task calls. It reads the task's assignment and answers:
+
+| Assignment      | Result                                                                                       |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `off`           | `{ status: 'off' }`. No model is touched.                                                    |
+| `utility-agent` | `{ status: 'use-utility-agent' }`. The CALLER keeps its existing spawn path; none is copied. |
+| `local`         | `generateText` on that model: `ok`, or `unavailable` with the classified `code`.             |
+| `endpoint`      | `generateText` on that endpoint: `ok`, or `unavailable` with the classified `code`.          |
+
+A caller abort is `cancelled`, not a failure. `unavailable` carries a `reason` that names the model
+or endpoint and what to do. **There is no fallback**: an unavailable local model is never swapped for
+an endpoint, and the router never reaches for a cloud agent on its own, because that would spend
+money or send text somewhere the user did not choose. An unclassified failure is a bug and is
+rethrown for Sentry. Only `needs: 'text-gen'` tasks run here; embedding and classifier tasks get
+their own entries in phase 04.
+
+Every call that reaches a model is recorded in the stats database as a `local_model_runs` row (stats
+migration v15: task, source type, model, endpoint id, start, sleep-aware duration, `ok` / `error` /
+`cancelled`, error code, tokens), honoring `statsCollectionEnabled`. A stats write that fails is
+reported to Sentry and never fails the task. `off` and `use-utility-agent` record nothing.
+
+Transports: `localModels:runTask` (IPC, `window.maestro.localModels.runTask`) and
+`maestro-cli models run <task-id> --input <text>` (WS bridge message `local_models_run_task`) both
+call `runLocalTaskRequest()`, which validates the task id and input once. The CLI exits 0 only for
+`ok`, printing just the text, so a script's `$(...)` captures text or fails.
 
 ## Related
 

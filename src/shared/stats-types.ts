@@ -303,6 +303,33 @@ export interface WizardRun {
 }
 
 /**
+ * One Local Models task run that reached a model: the task router called a
+ * local model or an endpoint for it (see `src/main/local-models/task-router.ts`).
+ * A task that was off, or handed back to its Utility Agent path, is not a run.
+ */
+export interface LocalModelRun {
+	id: string;
+	/** The task id from `LOCAL_MODEL_TASKS` ('tab-naming', 'cue-gate', ...). */
+	taskId: string;
+	/** Where it ran: a catalog model on this machine, or a user-run endpoint. */
+	sourceType: 'local' | 'endpoint';
+	/** The catalog model id (local) or the server's model name (endpoint). */
+	modelId: string;
+	/** The saved endpoint's id. Absent for a local source. */
+	endpointId?: string;
+	/** Epoch ms the run started. */
+	startedAt: number;
+	/** Duration with machine sleep removed. Includes a cold model load. */
+	durationMs: number;
+	/** 'cancelled' is a caller abort, not a fault. */
+	outcome: 'ok' | 'error' | 'cancelled';
+	/** The classified failure (`model-not-installed`, `network`, ...). Absent on success. */
+	errorCode?: string;
+	tokensIn?: number;
+	tokensOut?: number;
+}
+
+/**
  * File format for a Usage Dashboard export. `json` is one file holding every
  * table plus the dashboard aggregation; `csv` is a zip with one CSV per table.
  */
@@ -322,4 +349,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 14;
+export const STATS_DB_VERSION = 15;

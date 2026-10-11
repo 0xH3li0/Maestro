@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 14;
+const RC_TARGET_VERSION = 15;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -92,6 +92,7 @@ function crossBranchDb(
 		resilience?: boolean;
 		wizard?: boolean;
 		wizardActiveMs?: boolean;
+		localModelRuns?: boolean;
 	}
 ): Database.Database {
 	const db = openDb();
@@ -105,6 +106,7 @@ function crossBranchDb(
 	if (missing.resilience) db.exec('DROP TABLE resilience_events');
 	if (missing.wizard) db.exec('DROP TABLE wizard_runs');
 	if (missing.wizardActiveMs) db.exec('ALTER TABLE wizard_runs DROP COLUMN active_ms');
+	if (missing.localModelRuns) db.exec('DROP TABLE local_model_runs');
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -186,5 +188,18 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(logger.warn).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v13');
 		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('creates local_model_runs for a database stamped v15 without it', () => {
+		// v15 declares isApplied, so if rc ships a different v15 first, an install
+		// stamped 15 by that build still gets this table.
+		const db = crossBranchDb(RC_TARGET_VERSION, { localModelRuns: true });
+		expect(hasTable(db, 'local_model_runs')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'local_model_runs')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v15');
 	});
 });

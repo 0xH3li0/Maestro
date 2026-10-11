@@ -85,6 +85,14 @@ import {
 	testLocalModelEndpoint,
 } from '../../../../main/local-models/endpoint-service';
 
+// The task router reads assignments and calls models; the handler tests only
+// care that `maestro-cli models run` reaches it and the verdict comes back.
+vi.mock('../../../../main/local-models/task-router', () => ({
+	runLocalTaskRequest: vi.fn().mockResolvedValue({ status: 'off' }),
+}));
+
+import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -4948,6 +4956,35 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			});
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_endpoint_test_result'));
 			expect(lastResponse()).toMatchObject({ success: false, error: 'store gone' });
+		});
+
+		it('local_models_run_task passes the task id and input through', async () => {
+			const input = { prompt: 'diff' };
+			handler.handleMessage(client, {
+				type: 'local_models_run_task',
+				requestId: 'r1',
+				taskId: 'git-drafts',
+				input,
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_task_result'));
+			expect(runLocalTaskRequest).toHaveBeenCalledWith('git-drafts', input);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'r1',
+				result: { status: 'off' },
+			});
+		});
+
+		it('local_models_run_task reports a refused request as success: false', async () => {
+			vi.mocked(runLocalTaskRequest).mockRejectedValueOnce(new Error('Unknown task "x".'));
+			handler.handleMessage(client, {
+				type: 'local_models_run_task',
+				requestId: 'r2',
+				taskId: 'x',
+				input: { prompt: 'p' },
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_task_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown task "x".' });
 		});
 	});
 

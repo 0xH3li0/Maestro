@@ -16,6 +16,8 @@
  *   - **Re-registering never doubles a broadcast.**
  *   - **Endpoint channels are thin.** `endpoints:*` hand their arguments to the
  *     endpoint service untouched, the same functions the CLI bridge calls.
+ *   - **`runTask` is thin too.** It hands the task id and input to the task
+ *     router's request entry, which the CLI bridge also calls.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -84,6 +86,10 @@ vi.mock('../../../../main/local-models/endpoint-service', () => ({
 	testLocalModelEndpoint: vi.fn(async () => ({ ok: true, model: 'm', latencyMs: 12 })),
 }));
 
+vi.mock('../../../../main/local-models/task-router', () => ({
+	runLocalTaskRequest: vi.fn(async () => ({ status: 'use-utility-agent' })),
+}));
+
 import {
 	registerLocalModelsHandlers,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
@@ -103,6 +109,7 @@ import {
 	listLocalModelEndpointModels,
 	testLocalModelEndpoint,
 } from '../../../../main/local-models/endpoint-service';
+import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -290,5 +297,15 @@ describe('endpoint channels', () => {
 			latencyMs: 12,
 		});
 		expect(testLocalModelEndpoint).toHaveBeenCalledWith(draft, 'llama');
+	});
+});
+
+describe('task router channel', () => {
+	it('hands runTask its task id and input untouched', async () => {
+		const input = { prompt: 'Fix the login timeout' };
+		await expect(handlerFor('localModels:runTask')({}, 'tab-naming', input)).resolves.toEqual({
+			status: 'use-utility-agent',
+		});
+		expect(runLocalTaskRequest).toHaveBeenCalledWith('tab-naming', input);
 	});
 });

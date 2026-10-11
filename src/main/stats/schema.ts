@@ -262,6 +262,40 @@ export const CREATE_WIZARD_RUNS_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Local Model Runs (Migration v15)
+// ============================================================================
+
+/**
+ * One row per Local Models task run that reached a model (see `LocalModelRun`
+ * in shared/stats-types.ts). A task that was off, or handed back to its
+ * Utility Agent path, ran nothing here and is not recorded.
+ *
+ * `model_id` is the catalog id for a local source and the server's model name
+ * for an endpoint; `endpoint_id` is NULL for a local source. `error_code` is the
+ * classified failure (`model-not-installed`, `network`, ...) and NULL on success.
+ */
+export const CREATE_LOCAL_MODEL_RUNS_SQL = `
+  CREATE TABLE IF NOT EXISTS local_model_runs (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK(source_type IN ('local', 'endpoint')),
+    model_id TEXT NOT NULL,
+    endpoint_id TEXT,
+    started_at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('ok', 'error', 'cancelled')),
+    error_code TEXT,
+    tokens_in INTEGER,
+    tokens_out INTEGER
+  )
+`;
+
+export const CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_local_model_runs_started ON local_model_runs(started_at);
+  CREATE INDEX IF NOT EXISTS idx_local_model_runs_task ON local_model_runs(task_id, started_at)
+`;
+
+// ============================================================================
 // Compound Indexes (Migration v4)
 // ============================================================================
 

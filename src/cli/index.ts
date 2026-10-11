@@ -111,6 +111,7 @@ import {
 	modelsEndpointsRemove,
 	modelsEndpointsTest,
 } from './commands/models-endpoints';
+import { modelsRun } from './commands/models-run';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -2158,9 +2159,20 @@ notify
 	.action(notifyFlash);
 
 // Local Models commands - model servers the user runs (Ollama, LM Studio,
-// OpenAI-compatible). list/add/remove edit settings directly; test/detect run
-// in the desktop app.
+// OpenAI-compatible) and the task router. Endpoint list/add/remove edit
+// settings directly; test/detect/run run in the desktop app.
 const models = program.command('models').description('Local Models: model sources Maestro can use');
+
+models
+	.command('run <task-id>')
+	.description(
+		'Run a text-generation task through its assignment; prints the text, or why it did not run (requires the desktop app)'
+	)
+	.requiredOption('-i, --input <text>', 'The prompt to send')
+	.option('-s, --system <text>', 'System prompt')
+	.option('--max-tokens <n>', 'Token budget for the reply (default 512)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRun);
 
 const modelEndpoints = models
 	.command('endpoints')

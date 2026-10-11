@@ -35,6 +35,8 @@ import {
 	CREATE_WIZARD_RUNS_SQL,
 	CREATE_WIZARD_RUNS_INDEXES_SQL,
 	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
+	CREATE_LOCAL_MODEL_RUNS_SQL,
+	CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -138,6 +140,12 @@ function getMigrations(): Migration[] {
 			version: 14,
 			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
 			up: (db) => migrateV14(db),
+		},
+		{
+			version: 15,
+			description: 'Add local_model_runs table for Local Models task router runs',
+			up: (db) => migrateV15(db),
+			isApplied: (db) => hasTable(db, 'local_model_runs'),
 		},
 	];
 }
@@ -510,6 +518,20 @@ function migrateV14(db: Database.Database): void {
 		db.prepare(ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL).run();
 	}
 	logger.debug('Added kind column to auto_run_sessions table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v15: local_model_runs - one row per Local Models task run that
+ * reached a model (local or endpoint), so the Usage Dashboard can show what
+ * housekeeping ran where, how long it took, and what failed.
+ *
+ * Declares `isApplied` like v8 onwards: if rc lands a different v15 first, an
+ * install stamped 15 by that build still gets this table.
+ */
+function migrateV15(db: Database.Database): void {
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+	logger.debug('Created local_model_runs table', LOG_CONTEXT);
 }
 
 /**

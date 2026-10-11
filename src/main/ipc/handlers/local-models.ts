@@ -11,7 +11,8 @@
  * only calls that reach the network are `download`, `resume`, and
  * `runtimes:install`, each of which a user pressed a button to send, plus the
  * `endpoints:*` calls, which talk to a model server the user runs.
- * `endpoints:detect` probes loopback only and saves nothing.
+ * `endpoints:detect` probes loopback only and saves nothing. `runTask` reaches
+ * a model only when the user assigned one to that task.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`.
@@ -32,6 +33,7 @@ import {
 import type { DownloadProgress, DownloadResult } from '../../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../local-models/model-store';
 import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-installer';
+import { runLocalTaskRequest, type LocalTaskResult } from '../../local-models/task-router';
 import {
 	cancelLocalModel,
 	downloadLocalModel,
@@ -210,6 +212,15 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('endpoints:test'),
 			async (ref: unknown, model?: unknown): Promise<EndpointTestResult> =>
 				testLocalModelEndpoint(ref, model)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:runTask',
+		withIpcErrorLogging(
+			handlerOpts('runTask'),
+			async (taskId: unknown, input: unknown): Promise<LocalTaskResult> =>
+				runLocalTaskRequest(taskId, input)
 		)
 	);
 }

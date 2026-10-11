@@ -1,0 +1,145 @@
+/**
+ * @file models-run.test.ts
+ * @description Tests for `maestro-cli models run`: the task id and flags are
+ * checked before the bridge is opened, the request crosses the WS bridge in the
+ * shape the desktop handler expects, and only an `ok` verdict prints text and
+ * exits 0.
+ */
+
+import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+
+vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/maestro-client')>()),
+	withMaestroClient: vi.fn(),
+}));
+
+import { modelsRun } from '../../../cli/commands/models-run';
+import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { ExitCode } from '../../../cli/exit-codes';
+
+function mockSend(reply: Record<string, unknown>) {
+	const captured: { payload?: Record<string, unknown>; responseType?: string; timeout?: number } =
+		{};
+	vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+		action({
+			sendCommand: vi
+				.fn()
+				.mockImplementation((payload: Record<string, unknown>, rt: string, timeout?: number) => {
+					captured.payload = payload;
+					captured.responseType = rt;
+					captured.timeout = timeout;
+					return Promise.resolve(reply);
+				}),
+		} as never)
+	);
+	return captured;
+}
+
+const OK = {
+	status: 'ok',
+	text: 'Fix login timeout',
+	source: { type: 'local', modelId: 'qwen3-1.7b-instruct-q4km' },
+	durationMs: 420,
+};
+
+describe('models run command', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	let exitSpy: MockInstance;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the task and input over the bridge and prints only the text', async () => {
+		const captured = mockSend({ success: true, result: OK });
+
+		await modelsRun('tab-naming', { input: 'hi', system: 'Name it.', maxTokens: '32' });
+
+		expect(captured.payload).toEqual({
+			type: 'local_models_run_task',
+			taskId: 'tab-naming',
+			input: { prompt: 'hi', system: 'Name it.', maxTokens: 32 },
+		});
+		expect(captured.responseType).toBe('local_models_run_task_result');
+		expect(captured.timeout).toBeGreaterThan(120_000);
+		expect(logSpy).toHaveBeenCalledWith('Fix login timeout');
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it('prints the whole verdict as JSON', async () => {
+		mockSend({ success: true, result: OK });
+
+		await modelsRun('tab-naming', { input: 'hi', json: true });
+
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: true,
+			taskId: 'tab-naming',
+			...OK,
+		});
+	});
+
+	it.each([
+		[{ status: 'off' }, /Tab naming is off/],
+		[{ status: 'use-utility-agent' }, /assigned to the Utility Agent/],
+		[
+			{
+				status: 'unavailable',
+				reason: 'Qwen3 1.7B is not downloaded.',
+				code: 'model-not-installed',
+				source: OK.source,
+			},
+			/Qwen3 1\.7B is not downloaded\. \[model-not-installed\]/,
+		],
+		[{ status: 'cancelled', source: OK.source }, /was cancelled/],
+	])('exits non-zero with the reason for %j', async (result, message) => {
+		mockSend({ success: true, result });
+
+		await expect(modelsRun('tab-naming', { input: 'hi' })).rejects.toThrow('__exit__');
+
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		expect(errorSpy.mock.calls[0][0]).toMatch(message);
+		expect(logSpy).not.toHaveBeenCalled();
+	});
+
+	it('still prints JSON for a non-ok verdict, then exits non-zero', async () => {
+		mockSend({ success: true, result: { status: 'off' } });
+
+		await expect(modelsRun('git-drafts', { input: 'diff', json: true })).rejects.toThrow(
+			'__exit__'
+		);
+
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: false,
+			taskId: 'git-drafts',
+			status: 'off',
+		});
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+	});
+
+	it('reports a refused request from the app', async () => {
+		mockSend({ success: false, error: 'Task input needs a non-empty prompt.' });
+
+		await expect(modelsRun('tab-naming', { input: 'hi' })).rejects.toThrow('__exit__');
+
+		expect(errorSpy).toHaveBeenCalledWith('Error: Task input needs a non-empty prompt.');
+	});
+
+	it.each([
+		['tab-nameing', { input: 'hi' }, /Unknown task "tab-nameing"/],
+		['semantic-search', { input: 'hi' }, /embedding task/],
+		['tab-naming', { input: '   ' }, /--input must not be empty/],
+		['tab-naming', { input: 'hi', maxTokens: 'lots' }, /--max-tokens/],
+	])('refuses %s %j before opening the bridge', async (taskId, options, message) => {
+		await expect(modelsRun(taskId, options)).rejects.toThrow('__exit__');
+
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+		expect(errorSpy.mock.calls[0][0]).toMatch(message);
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+});

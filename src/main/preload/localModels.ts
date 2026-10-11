@@ -23,6 +23,8 @@ import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { DownloadProgress, DownloadResult } from '../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../local-models/model-store';
 import type { RuntimeInstallProgress } from '../local-models/runtime/runtime-installer';
+import type { LocalTaskInput, LocalTaskResult } from '../local-models/task-router';
+import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -124,6 +126,16 @@ export function createLocalModelsApi() {
 		/** Download progress, throttled at the source. Broadcast to every window. */
 		onProgress: (handler: (progress: DownloadProgress) => void): (() => void) =>
 			subscribe('localModels:progress', handler),
+
+		/**
+		 * Run a text-generation task through the user's assignment for it. Answers
+		 * `off` or `use-utility-agent` without touching a model; the caller keeps
+		 * its existing path for the latter. Never falls back to another source.
+		 */
+		runTask: (
+			taskId: LocalModelTaskId,
+			input: Omit<LocalTaskInput, 'signal'>
+		): Promise<LocalTaskResult> => ipcRenderer.invoke('localModels:runTask', taskId, input),
 
 		runtimes: createLocalRuntimesApi(),
 

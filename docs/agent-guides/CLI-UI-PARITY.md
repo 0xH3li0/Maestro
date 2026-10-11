@@ -273,6 +273,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Auto Run panel: Change folder                      | `auto-run-folder <path> -a <agent>`                                                              |
 | Playbook Exchange: browse, README, install         | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
 | Local Models endpoints: add, remove, test, detect  | `models endpoints list\|add\|remove\|test\|detect`                                               |
+| Local Models task router (`localModels:runTask`)   | `models run <task-id> --input <text> [--system] [--max-tokens]`                                  |
 
 ## Open gaps
 
