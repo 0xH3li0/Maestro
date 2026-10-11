@@ -40,7 +40,8 @@ export type FirstPartyEncoreFlag =
 	| 'opencodeServer'
 	| 'concerto'
 	| 'groupsPlus'
-	| 'webLogin';
+	| 'webLogin'
+	| 'computerHistory';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -136,6 +137,18 @@ export interface FirstPartyPluginDefinition {
 	backgroundServices: readonly FirstPartyBackgroundService[];
 	/** How to actually use the feature once it is on. */
 	usage?: FirstPartyUsageGuide;
+	/**
+	 * A section appended to EVERY Maestro-spawned agent's system prompt while
+	 * the feature is enabled. `promptId` names a core prompt (so the user can
+	 * edit it in Maestro Prompts); it is substituted with the same template
+	 * context as the main system prompt. First-party only by design: a
+	 * community plugin that could write into every agent's system prompt would
+	 * be a prompt-injection channel into the whole fleet.
+	 *
+	 * `localOnly` sections are skipped for SSH-remote agents, whose shell
+	 * cannot reach paths on the Maestro machine.
+	 */
+	systemPromptSection?: { promptId: string; localOnly?: boolean };
 }
 
 /** Stable first-party plugin identity for Pianola's plugin-backed Encore surface. */
@@ -832,6 +845,82 @@ export const WEB_LOGIN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
+/** Broker capabilities Computer History actually touches. */
+export const COMPUTER_HISTORY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: 'com.maestro.computer-history',
+	name: 'Computer History',
+	description:
+		'Record what you read and type across your apps, locally, so every agent can recall it.',
+	firstParty: true,
+	category: 'data',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Computer History Encore flag before starting the recorder.',
+		},
+		{
+			capability: 'background:service',
+			reason:
+				'Run the supervised accessibility observer (maestro-observer) and the segment writer while the feature is on.',
+		},
+	],
+	// NOTE: the recorder reads the OS accessibility tree (macOS AX, Windows UI
+	// Automation, Linux AT-SPI2) through a HOST-OWNED native helper with fixed
+	// argv. There is no plugin capability for OS accessibility access, and
+	// `process:spawn` is deliberately ABSENT (same doctrine as Usage & Stats):
+	// spawn authority stays host-owned. The store under
+	// `<userData>/computer-history/` is host-owned too, so no `fs:write` scope.
+	// The recorder never logs keystrokes: typed text comes from a field's
+	// committed value, and secure/password fields are never read.
+	settingsNamespace: 'computerHistory',
+	encoreFlag: 'computerHistory',
+	releaseDate: '2026-10-03',
+	backgroundServices: [
+		{
+			id: 'computerHistory.observer',
+			kind: 'supervised',
+			description:
+				'Accessibility observer plus the local segment writer; stops when the feature is disabled or paused.',
+		},
+	],
+	systemPromptSection: { promptId: 'computer-history-system', localOnly: true },
+	usage: {
+		overview: [
+			'Computer History watches the app in front through the operating system accessibility API: which app and window you are in, what text is on screen, what you select, and what you type into fields once you stop typing. It never logs keystrokes, never reads password fields, and never takes screenshots.',
+			'Everything stays on this computer under the Maestro data folder as plain JSONL. While it is on, every agent Maestro starts is told where that folder is and how to query it, so you can ask any agent "what was I looking at in Slack an hour ago?"',
+		],
+		agentCommands: [
+			{ label: 'Check recorder state', command: 'maestro-cli computer-history status' },
+			{
+				label: 'Search the last hour',
+				command: 'maestro-cli computer-history query --since 1h --grep <text>',
+			},
+			{ label: 'Pause for an hour', command: 'maestro-cli computer-history pause --for 1h' },
+		],
+		steps: [
+			{
+				title: 'Grant accessibility access',
+				body: 'macOS asks once for Accessibility access for Maestro. On Linux, Maestro offers to turn on the desktop accessibility bus. Windows needs nothing.',
+			},
+			{
+				title: 'Choose which apps are recorded',
+				body: "Record every app except the ones you switch off, or only the apps you switch on. Password managers, private browser windows, and Maestro itself are always excluded. Set it from this tile, the viewer's Capture tab, or `maestro-cli computer-history rules`.",
+			},
+			{
+				title: 'Explore your history',
+				body: 'Open the viewer from the command palette, the hamburger menu, or its keyboard shortcut: an activity timeline by app, everything you typed and selected, search, and digests.',
+			},
+		],
+		notes: [
+			'Captured text is plaintext on disk, including messages from chat apps you have open. Exclude those apps if that matters to you.',
+			'History older than 90 days, or past 25 GB, is deleted oldest first. Both limits are configurable.',
+			'Optional digests: an agent you choose writes a summary of every 15-minute window with activity and a 6-hour roll-up of each block. Off by default.',
+			'Agents treat captured content as untrusted: a page you read can contain instructions aimed at an agent.',
+		],
+		docsSlug: 'computer-history',
+	},
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -847,6 +936,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -868,4 +958,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 };

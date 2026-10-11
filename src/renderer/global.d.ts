@@ -215,6 +215,7 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { WebUserPublic } from '../shared/webLogin';
+import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -1784,6 +1785,12 @@ interface MaestroAPI {
 		setDisabled: (id: string, disabled: boolean) => Promise<WebUserPublic>;
 		deleteUser: (id: string) => Promise<void>;
 	};
+	/**
+	 * Computer History (the recorder's status, config, rules, pause, clear,
+	 * permission flow, and recent-activity query). Desktop-only: the web-desktop
+	 * bridge refuses every `computerHistory:*` channel (D15).
+	 */
+	computerHistory: ComputerHistoryApi;
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
 		refresh: (
@@ -4699,6 +4706,11 @@ interface MaestroAPI {
 			id: string
 		) => Promise<{ success: boolean; content?: string; error?: string }>;
 		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		getSystemPromptPaths: () => Promise<{
+			success: boolean;
+			computerHistoryDir?: string;
+			error?: string;
+		}>;
 		listFiles: () => Promise<{
 			success: boolean;
 			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
