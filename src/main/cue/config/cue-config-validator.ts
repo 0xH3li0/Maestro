@@ -6,6 +6,8 @@ import {
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	DEFAULT_CUE_INJECTION_THRESHOLD,
+	cueInjectionThresholdProblem,
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
@@ -384,6 +386,20 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 				`${prefix}: "gate_on_unavailable" must be one of: ${CUE_GATE_ON_UNAVAILABLE.join(', ')} (what a gate does when its model cannot answer; omitted = run)`
 			);
 		}
+	}
+
+	if (subRecord.screen_injection !== undefined && typeof subRecord.screen_injection !== 'boolean') {
+		errors.push(
+			`${prefix}: "screen_injection" must be true or false (omitted = screen shell commands that use untrusted text)`
+		);
+	}
+	if (
+		subRecord.injection_threshold !== undefined &&
+		cueInjectionThresholdProblem(subRecord.injection_threshold) !== null
+	) {
+		errors.push(
+			`${prefix}: "injection_threshold" must be a number above 0 and at most 1 (omitted = ${DEFAULT_CUE_INJECTION_THRESHOLD})`
+		);
 	}
 
 	if (subRecord.filter !== undefined) {

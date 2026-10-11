@@ -372,6 +372,29 @@ Any subscription may carry a `gate`: one sentence in plain language that the eve
 {{MAESTRO_CLI_PATH}} cue schedule --every 30m --agent <id> --prompt "..." --gate "the build is red"
 ```
 
+### Injection screen (`screen_injection`)
+
+Some variables carry text other people wrote: `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_TASK_CONTENT}}`, `{{CUE_TASK_LIST}}`, and every `{{CUE_WEBHOOK_*}}` variable except the path. A subscription can have a local classifier (the **Prompt-injection screen** task in Settings > Local Models) score that text before a run starts. A score at or above `injection_threshold` (default 0.8) blocks the run and records a `blocked` event.
+
+```yaml
+- name: reply-to-comments
+  event: github.issue
+  screen_injection: true
+  prompt: Reply to the new comments. {{CUE_NEW_COMMENTS}}
+```
+
+- Not set, an `action: command` subscription that uses one of those variables is screened, and nothing else is. `true` always screens; `false` never does.
+- If the classifier cannot run, a command that asked for the screen is BLOCKED, and a prompt starts with a warning. A command with the key not set, while the task is off, starts unscreened.
+- When you write a subscription that puts one of those variables in a prompt, set `screen_injection: true` if the user has a classifier assigned.
+- Do not put an untrusted variable in a shell command. The screen looks for instructions aimed at a model; it does not make text safe for a shell. Pass the text to an agent prompt instead, or have the command read it from a file or an API by number.
+- To read or change the screen on an existing subscription, use the CLI:
+
+```bash
+{{MAESTRO_CLI_PATH}} cue screen <subscription>                  # print the screen
+{{MAESTRO_CLI_PATH}} cue screen <subscription> --mode on        # always screen (off, auto)
+{{MAESTRO_CLI_PATH}} cue screen <subscription> --threshold 0.9  # change only the threshold
+```
+
 ### CLI
 
 ```bash

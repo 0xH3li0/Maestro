@@ -1855,5 +1855,47 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'p', createEvent(), 'triage');
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 		});
+
+		it('writes no completion columns for a gated event, which has no reason to show', () => {
+			vi.mocked(safeUpdateCueEventStatus).mockClear();
+			const manager = createCueRunManager(createDeps());
+
+			manager.recordSkippedRun({
+				sessionId: 'session-1',
+				event: createEvent(),
+				subscriptionName: 'triage',
+				status: 'gated',
+			});
+
+			expect(safeUpdateCueEventStatus).not.toHaveBeenCalled();
+		});
+
+		it('records a blocked run with its reason where a failed run keeps its error', () => {
+			vi.mocked(safeUpdateCueEventStatus).mockClear();
+			const manager = createCueRunManager(createDeps());
+			const reason =
+				'({{CUE_GH_BODY}}) scored 0.97 on the prompt-injection screen (threshold 0.80).';
+
+			const result = manager.recordSkippedRun({
+				sessionId: 'session-1',
+				event: createEvent(),
+				subscriptionName: 'triage',
+				status: 'blocked-injection',
+				reason,
+			});
+
+			expect(result).toMatchObject({ status: 'blocked-injection', stderr: reason, stdout: '' });
+			expect(safeRecordCueEvent).toHaveBeenCalledWith(
+				expect.objectContaining({ id: result.runId, status: 'blocked-injection' })
+			);
+			// The reason is the row's error message, so History and the activity
+			// log explain the block without reading the payload.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+				result.runId,
+				'blocked-injection',
+				null,
+				expect.objectContaining({ errorMessage: reason, exitCode: null })
+			);
+		});
 	});
 });

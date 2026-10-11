@@ -121,6 +121,7 @@ import type {
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	SetCueSubscriptionGateCallback,
+	SetCueSubscriptionInjectionScreenCallback,
 	GetCueActivityCallback,
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
@@ -155,6 +156,10 @@ import type {
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { CueGateSetting, CueGateWriteResult } from '../../../shared/cue/gate';
+import type {
+	CueInjectionScreenSetting,
+	CueInjectionScreenWriteResult,
+} from '../../../shared/cue/injection-screen';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -248,6 +253,7 @@ export interface WebServerCallbacks {
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	setCueSubscriptionGate: SetCueSubscriptionGateCallback | null;
+	setCueSubscriptionInjectionScreen: SetCueSubscriptionInjectionScreenCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
 	getUsageDashboard: GetUsageDashboardCallback | null;
@@ -354,6 +360,7 @@ export class CallbackRegistry {
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		setCueSubscriptionGate: null,
+		setCueSubscriptionInjectionScreen: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
 		getUsageDashboard: null,
@@ -959,6 +966,16 @@ export class CallbackRegistry {
 		return this.callbacks.setCueSubscriptionGate(subscriptionId, gate);
 	}
 
+	async setCueSubscriptionInjectionScreen(
+		subscriptionId: string,
+		setting: CueInjectionScreenSetting
+	): Promise<CueInjectionScreenWriteResult> {
+		if (!this.callbacks.setCueSubscriptionInjectionScreen) {
+			return { ok: false, error: 'Cue injection screen editing is not available.' };
+		}
+		return this.callbacks.setCueSubscriptionInjectionScreen(subscriptionId, setting);
+	}
+
 	async getCueActivity(sessionId?: string, limit?: number): Promise<CueActivityEntry[]> {
 		if (!this.callbacks.getCueActivity) return [];
 		return this.callbacks.getCueActivity(sessionId, limit);
@@ -1433,6 +1450,12 @@ export class CallbackRegistry {
 
 	setSetCueSubscriptionGateCallback(callback: SetCueSubscriptionGateCallback): void {
 		this.callbacks.setCueSubscriptionGate = callback;
+	}
+
+	setSetCueSubscriptionInjectionScreenCallback(
+		callback: SetCueSubscriptionInjectionScreenCallback
+	): void {
+		this.callbacks.setCueSubscriptionInjectionScreen = callback;
 	}
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {

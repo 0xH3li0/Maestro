@@ -251,8 +251,9 @@ export interface CueRunManager {
 	): void;
 	/**
 	 * Record an event that was skipped before anything was spawned (a
-	 * subscription's `gate` said no). Writes one `cue_events` row, born in its
-	 * final status, and returns the result for the activity log.
+	 * subscription's `gate` said no, or the prompt-injection screen refused
+	 * it). Writes one `cue_events` row, born in its final status, and returns
+	 * the result for the activity log.
 	 *
 	 * It claims no concurrency slot, holds no self-overlap guard, and raises no
 	 * completion: nothing ran, so nothing downstream may fire off it.
@@ -262,7 +263,9 @@ export interface CueRunManager {
 		event: CueEvent;
 		subscriptionName: string;
 		pipelineName?: string;
-		status: Extract<CueRunResult['status'], 'gated'>;
+		status: Extract<CueRunResult['status'], 'gated' | 'blocked-injection'>;
+		/** Why it was skipped, when a person should read it in History. */
+		reason?: string;
 		/** When the check that skipped it began (ms). Defaults to now. */
 		startedAt?: number;
 		chainRootId?: string;
@@ -1022,7 +1025,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				event: skipped.event,
 				status: skipped.status,
 				stdout: '',
-				stderr: '',
+				// A refusal explains itself where a failed run would: the
+				// activity row and History both read `stderr`.
+				stderr: skipped.reason ?? '',
 				exitCode: null,
 				durationMs: endedAtMs - startedAtMs,
 				startedAt: new Date(startedAtMs).toISOString(),
@@ -1047,6 +1052,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					pipelineName: skipped.pipelineName,
 				}),
 			});
+			if (skipped.reason) {
+				// Only a skip with a reason to show writes the completion
+				// columns. A `gated` event passes none and keeps them NULL.
+				safeUpdateCueEventStatus(runId, skipped.status, null, completionInfoFromResult(result));
+			}
 			return result;
 		},
 

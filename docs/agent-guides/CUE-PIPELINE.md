@@ -258,6 +258,36 @@ Models task) answers against the event payload before a run starts. It is applie
 
 Full design: [docs/architecture/local-models.md](../architecture/local-models.md#the-cue-gate-evaluatecuegate).
 
+### Injection screen (`screen_injection` / `injection_threshold`)
+
+Untrusted text a subscription substitutes (a comment, an issue body, a webhook payload) is scored by
+a local classifier (the `injection-screen` Local Models task) before a run starts. It is applied in
+`cue-dispatch-service.ts`, after the gate and before the run manager:
+
+- `src/shared/cue/injection-screen.ts` holds everything pure: when a subscription is screened
+  (`resolveCueInjectionScreen`), what is scored (`collectCueInjectionTargets`), the failure policy
+  (`resolveCueInjectionDecision`), the stored shape (`writeCueInjectionScreenFields`), and the record
+  stamped on the event payload under `injectionScreen`.
+- The untrusted variables are one list: `CUE_UNTRUSTED_TEMPLATE_VARIABLES` in
+  `src/shared/templateVariables.ts`.
+- The scorer is injected (`CueEngineDeps.scoreInjection`). Desktop: `scoreCueInjectionText` in
+  `src/main/local-models/cue-injection-screen.ts`. Standalone runner: none, which means `off`.
+- Default: an `action: command` subscription that substitutes an untrusted variable is screened.
+  `screen_injection: true | false` overrides it.
+- A score at or above the threshold calls `onInjectionBlocked`: `recordSkippedRun()` writes one
+  `cue_events` row with status `blocked-injection` and the reason, and the engine pushes it to the
+  activity log and emits `injectionBlocked` (the red toast). No slot, no completion, no chain.
+- Screen cannot run: a command that asked for it is blocked (fail CLOSED); any other action runs
+  with an `injectionScreenUnavailable` warning (fail OPEN).
+- Both fields are in `triggerGroupKey()` and round-trip through the editor on the trigger node
+  (`TriggerNodeData.config`).
+- Authoring: `<CueInjectionScreenField>` (`CuePipelineEditor/panels/`), drawn by `TriggerConfig`
+  only under triggers that carry untrusted text (`cueEventCarriesUntrustedText`).
+- CLI: `maestro-cli cue screen <sub>` (`set_cue_subscription_injection_screen` ->
+  `CueEngine.setSubscriptionInjectionScreen()`, which writes every member of the trigger group).
+
+Rules and reasoning: [CLAUDE-CUE.md](../../CLAUDE-CUE.md#prompt-injection-screen).
+
 ### cue-activity-log.ts (~40 lines)
 
 Simple in-memory ring buffer of completed run results (max 500). Used by the Cue Modal dashboard.

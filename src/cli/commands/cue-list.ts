@@ -17,6 +17,8 @@ interface CueSubscription {
 	enabled: boolean;
 	gate?: string;
 	gateOnUnavailable?: 'run' | 'skip';
+	screenInjection?: boolean;
+	injectionThreshold?: number;
 	lastTriggered?: number;
 	triggerCount: number;
 }
@@ -60,6 +62,10 @@ export async function cueList(options: CueListOptions): Promise<void> {
 				}
 				if (sub.gate) {
 					lines.push(`     gate: ${sub.gate}`);
+				}
+				// Only a screen someone set is listed; the default is silent.
+				if (sub.screenInjection !== undefined) {
+					lines.push(`     injection screen: ${sub.screenInjection ? 'on' : 'off'}`);
 				}
 				lines.push('');
 			}

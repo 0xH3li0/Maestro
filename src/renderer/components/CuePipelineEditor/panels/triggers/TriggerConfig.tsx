@@ -3,7 +3,8 @@
  *
  * Renders form fields based on the trigger's event type (heartbeat, scheduled,
  * file change, agent completed, GitHub PR/issue, task pending), followed by
- * the Gate, which applies to every event type that can fire by itself.
+ * the Gate, which applies to every event type that can fire by itself, and
+ * the prompt-injection screen, on the event types that carry untrusted text.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -12,11 +13,18 @@ import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pi
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
 import { normalizeWebhookPath } from '../../../../../shared/cue';
 import { DEFAULT_CUE_GATE_ON_UNAVAILABLE } from '../../../../../shared/cue/gate';
+import {
+	readCueInjectionScreenSetting,
+	writeCueInjectionScreenFields,
+	type CueInjectionScreenSetting,
+} from '../../../../../shared/cue/injection-screen';
+import { cueEventCarriesUntrustedText } from '../../../../../shared/templateVariables';
 import { useDebouncedCallback } from '../../../../hooks/utils';
 import { registerPendingEdit } from '../../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
 import { CueSelect } from '../CueSelect';
 import { CueGateField, type CueGateFieldValue } from '../CueGateField';
+import { CueInjectionScreenField } from '../CueInjectionScreenField';
 
 /** Sentinel value matching `cue-github-poller.UNLIMITED_NOTIFICATIONS`. */
 const UNLIMITED_NOTIFICATIONS = 0;
@@ -190,11 +198,37 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		[localConfig, debouncedUpdate]
 	);
 
+	/**
+	 * Store the screen on the trigger config, in the same shape every other
+	 * writer uses (`writeCueInjectionScreenFields`): the automatic mode and the
+	 * default threshold are no keys at all, for the reason given on `updateGate`.
+	 */
+	const updateInjectionScreen = useCallback(
+		(next: CueInjectionScreenSetting) => {
+			const updated = { ...localConfig };
+			writeCueInjectionScreenFields(updated as Record<string, unknown>, next);
+			setLocalConfig(updated);
+			debouncedUpdate(updated);
+		},
+		[localConfig, debouncedUpdate]
+	);
+
 	// Rendered under the event-specific fields of every trigger that can fire
 	// by itself. `cli.trigger` is left out: it only ever fires from a manual
 	// run, and a manual run is never gated, so a gate there could not apply.
+	// The injection screen joins it only where the event carries text someone
+	// else wrote; elsewhere there is nothing for it to score.
 	const gateField = (
-		<div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: 8, marginTop: 4 }}>
+		<div
+			style={{
+				borderTop: `1px solid ${theme.colors.border}`,
+				paddingTop: 8,
+				marginTop: 4,
+				display: 'flex',
+				flexDirection: 'column',
+				gap: 12,
+			}}
+		>
 			<CueGateField
 				theme={theme}
 				value={{
@@ -203,6 +237,13 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 				}}
 				onChange={updateGate}
 			/>
+			{cueEventCarriesUntrustedText(data.eventType) && (
+				<CueInjectionScreenField
+					theme={theme}
+					value={readCueInjectionScreenSetting(localConfig)}
+					onChange={updateInjectionScreen}
+				/>
+			)}
 		</div>
 	);
 

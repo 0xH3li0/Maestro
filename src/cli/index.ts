@@ -48,7 +48,7 @@ import { reference } from './commands/reference';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
-import { cueEnable, cueDisable, cueGate, cueActivity } from './commands/cue-control';
+import { cueEnable, cueDisable, cueGate, cueScreen, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import {
@@ -1062,6 +1062,27 @@ cue
 	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueGate);
+
+// Cue screen - the pipeline editor's injection screen field: whether the
+// Local Models `injection-screen` task scores the untrusted text a
+// subscription substitutes before a run starts. With no flag it prints the
+// screen, so a write can be read back.
+cue
+	.command('screen <subscription>')
+	.description(
+		"Show or set a subscription's prompt-injection screen (a local classifier scores untrusted text before a run starts)"
+	)
+	.option(
+		'--mode <mode>',
+		'on (always screen), off (never), or auto (screen commands that use untrusted text; default)'
+	)
+	.option(
+		'--threshold <score>',
+		'Block at or above this score, above 0 and at most 1 (default 0.8)'
+	)
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueScreen);
 
 cue
 	.command('activity')

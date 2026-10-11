@@ -287,6 +287,10 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 	// with different gates from collapsing onto this one node.
 	if (sub.gate != null) config.gate = sub.gate;
 	if (sub.gate_on_unavailable != null) config.gate_on_unavailable = sub.gate_on_unavailable;
+	// The injection screen is read the same way, and is in `triggerGroupKey`
+	// for the same reason.
+	if (sub.screen_injection != null) config.screen_injection = sub.screen_injection;
+	if (sub.injection_threshold != null) config.injection_threshold = sub.injection_threshold;
 
 	switch (sub.event as CueEventType) {
 		case 'time.heartbeat':

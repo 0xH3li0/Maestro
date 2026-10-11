@@ -350,6 +350,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		setCueSubscriptionGate: vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] }),
+		setCueSubscriptionInjectionScreen: vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] }),
 		getCueActivity: vi.fn().mockResolvedValue([]),
 		triggerCueSubscription: vi.fn().mockResolvedValue(true),
 		listCuePipelines: vi.fn().mockResolvedValue({ pipelines: [] }),
@@ -4988,6 +4989,101 @@ describe('WebSocketMessageHandler', () => {
 				message: expect.stringContaining('Missing subscriptionId'),
 			});
 			expect(callbacks.setCueSubscriptionGate).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Cue injection screen (maestro-cli cue screen)', () => {
+		const lastFrame = () =>
+			JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, unknown>;
+		const RESULT = 'set_cue_subscription_injection_screen_result';
+
+		it('sets the mode and threshold and reports every subscription changed', async () => {
+			vi.mocked(callbacks.setCueSubscriptionInjectionScreen).mockResolvedValue({
+				ok: true,
+				updated: ['Triage', 'Triage-cmd-a'],
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_injection_screen',
+				requestId: 's1',
+				subscriptionId: 'a1::Triage::Triage',
+				mode: 'on',
+				threshold: 0.6,
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe(RESULT));
+			expect(callbacks.setCueSubscriptionInjectionScreen).toHaveBeenCalledWith(
+				'a1::Triage::Triage',
+				{ mode: 'on', threshold: 0.6 }
+			);
+			expect(lastFrame()).toMatchObject({
+				success: true,
+				requestId: 's1',
+				subscriptionId: 'a1::Triage::Triage',
+				updated: ['Triage', 'Triage-cmd-a'],
+				mode: 'on',
+				threshold: 0.6,
+			});
+		});
+
+		it('sets a mode with no threshold', async () => {
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_injection_screen',
+				subscriptionId: 'a1::Triage::Triage',
+				mode: 'off',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe(RESULT));
+			expect(callbacks.setCueSubscriptionInjectionScreen).toHaveBeenCalledWith(
+				'a1::Triage::Triage',
+				{ mode: 'off' }
+			);
+			expect(lastFrame()).not.toHaveProperty('threshold');
+		});
+
+		it('passes the engine refusal back as a failed result', async () => {
+			vi.mocked(callbacks.setCueSubscriptionInjectionScreen).mockResolvedValue({
+				ok: false,
+				error: 'Could not write the screen.',
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_injection_screen',
+				subscriptionId: 'a1::Triage::Missing',
+				mode: 'on',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe(RESULT));
+			expect(lastFrame()).toMatchObject({ success: false, error: 'Could not write the screen.' });
+			expect(lastFrame()).not.toHaveProperty('updated');
+		});
+
+		it('refuses a frame with no mode, an unknown mode, or a bad threshold', () => {
+			const refused = (frame: Record<string, unknown>) => {
+				handler.handleMessage(client, {
+					type: 'set_cue_subscription_injection_screen',
+					...frame,
+				});
+				return lastFrame();
+			};
+
+			// A dropped `mode` must not be read as "back to the default": that
+			// would switch off a screen someone turned on.
+			expect(refused({ subscriptionId: 'a1::T::T' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Invalid mode'),
+			});
+			expect(refused({ subscriptionId: 'a1::T::T', mode: 'sometimes' }).type).toBe('error');
+			expect(refused({ subscriptionId: 'a1::T::T', mode: 'on', threshold: 0 })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('above 0 and at most 1'),
+			});
+			expect(refused({ subscriptionId: 'a1::T::T', mode: 'on', threshold: '0.5' }).type).toBe(
+				'error'
+			);
+			expect(refused({ mode: 'on' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Missing subscriptionId'),
+			});
+			expect(callbacks.setCueSubscriptionInjectionScreen).not.toHaveBeenCalled();
 		});
 	});
 });

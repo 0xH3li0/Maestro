@@ -20,6 +20,8 @@ import type { Theme } from '../../types';
 import type { CueRunResult } from '../../hooks/useCue';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { readCueGateRecord } from '../../../shared/cue/gate';
+import { readCueInjectionRecord } from '../../../shared/cue/injection-screen';
+import { isCueRunBlocked } from '../../../shared/cue/contracts';
 import {
 	cueHistoryRetentionOptions,
 	resolveCueHistoryRetentionDays,
@@ -61,6 +63,9 @@ function buildHaystack(
 		// gated row by.
 		const gate = readCueGateRecord(p);
 		if (gate?.reason) parts.push(gate.reason);
+		// The same for a blocked row: the variable and score are in the reason.
+		const injection = readCueInjectionRecord(p);
+		if (injection?.reason) parts.push(injection.reason);
 	}
 	// Include the OUTPUT body so users can search by anything the run printed
 	// (PR URLs, file paths, error messages). Trim each stream to a sensible
@@ -327,6 +332,11 @@ export function ActivityLog({
 								const isGated = entry.status === 'gated';
 								const gate = readCueGateRecord(entry.event.payload);
 								const gateUnchecked = gate?.outcome === 'ran-unchecked';
+								// A blocked row is a run the prompt-injection screen
+								// refused: nothing ran, and it IS a failure to look at.
+								const isBlocked = isCueRunBlocked(entry.status);
+								const injection = readCueInjectionRecord(entry.event.payload);
+								const ranUnscreened = injection?.outcome === 'ran-unscreened';
 								const isExpanded = expandedRunIds.has(entry.runId);
 								const hasStderr =
 									entry.stderr.length > 0 && cleanStderrForDisplay(entry.stderr).trim().length > 0;
@@ -394,11 +404,12 @@ export function ActivityLog({
 													{githubPayload}
 													{githubLabelPayload}
 													{isGated && gate?.reason ? ` - ${gate.reason}` : ''}
+													{isBlocked && injection?.reason ? ` - ${injection.reason}` : ''}
 												</div>
 											</td>
 											<td className="py-1.5 pr-2 whitespace-nowrap text-right">
 												<span className="inline-flex items-center gap-1.5 justify-end">
-													{hasStderr && !isFailed && (
+													{hasStderr && !isFailed && !isBlocked && (
 														<span title="Run produced error output" className="inline-flex">
 															<AlertTriangle
 																className="w-3 h-3"
@@ -419,12 +430,31 @@ export function ActivityLog({
 															/>
 														</span>
 													)}
+													{ranUnscreened && (
+														<span
+															title={`Not screened for prompt injection. ${injection?.reason ?? ''}`.trim()}
+															className="inline-flex"
+														>
+															<AlertTriangle
+																className="w-3 h-3"
+																style={{ color: theme.colors.warning }}
+																aria-label="Not screened for prompt injection"
+															/>
+														</span>
+													)}
 													{isGated ? (
 														<span
 															style={{ color: theme.colors.textDim }}
 															title={gate?.reason || 'The gate skipped this event'}
 														>
 															gated
+														</span>
+													) : isBlocked ? (
+														<span
+															style={{ color: theme.colors.error }}
+															title={injection?.reason || 'The injection screen blocked this run'}
+														>
+															blocked ✗
 														</span>
 													) : isFailed ? (
 														<span style={{ color: theme.colors.error }}>{entry.status} ✗</span>

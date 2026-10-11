@@ -538,7 +538,9 @@ export async function getCueStatsAggregation(
 
 	// A `gated` row is an event a subscription's gate skipped, not a run: it
 	// spent no agent time and no tokens. Counting it as an occurrence would
-	// bury the real runs under the events the gate exists to filter out.
+	// bury the real runs under the events the gate exists to filter out. A
+	// run the injection screen blocked spent none either, and its duration is
+	// the classifier's, so it stays out of these run statistics too.
 	const allEvents = getRecentCueEvents(windowStartMs).filter(
 		(event) => !isCueRunSkipped(event.status)
 	);

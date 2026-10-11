@@ -2,7 +2,8 @@
  * Cue domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_cue_subscriptions,
- * toggle_cue_subscription, set_cue_subscription_gate, get_cue_activity,
+ * toggle_cue_subscription, set_cue_subscription_gate,
+ * set_cue_subscription_injection_screen, get_cue_activity,
  * trigger_cue_subscription,
  * cue_pipeline_list, cue_pipeline_get, cue_pipeline_set, cue_pipeline_remove.
  */
@@ -14,6 +15,12 @@ import {
 	parseCueGateOnUnavailable,
 	type CueGateSetting,
 } from '../../../../shared/cue/gate';
+import {
+	CUE_INJECTION_SCREEN_MODES,
+	cueInjectionThresholdProblem,
+	parseCueInjectionScreenMode,
+	type CueInjectionScreenSetting,
+} from '../../../../shared/cue/injection-screen';
 
 /**
  * Handle get_cue_subscriptions message - fetch Cue subscriptions
@@ -159,6 +166,71 @@ export function handleSetCueSubscriptionGate(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to set the Cue gate: ${error.message}`, {
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle set_cue_subscription_injection_screen message - set a subscription's
+ * prompt-injection screen: `mode` (`auto` | `on` | `off`) and an optional
+ * `threshold` (above 0, at most 1).
+ *
+ * `mode` is required. A frame without it is refused instead of being read as
+ * `auto`: that would turn off a screen someone set to `on`, on a caller's
+ * dropped field.
+ */
+export function handleSetCueSubscriptionInjectionScreen(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const subscriptionId = message.subscriptionId;
+	if (typeof subscriptionId !== 'string' || subscriptionId.length === 0) {
+		ctx.sendError(client, 'Missing subscriptionId', { requestId: message.requestId });
+		return;
+	}
+
+	const mode = parseCueInjectionScreenMode(message.mode);
+	if (!mode) {
+		ctx.sendError(client, `Invalid mode: must be one of ${CUE_INJECTION_SCREEN_MODES.join(', ')}`, {
+			requestId: message.requestId,
+		});
+		return;
+	}
+	const setting: CueInjectionScreenSetting = { mode };
+	if (message.threshold !== undefined) {
+		const problem = cueInjectionThresholdProblem(message.threshold);
+		if (problem) {
+			ctx.sendError(client, problem, { requestId: message.requestId });
+			return;
+		}
+		setting.threshold = message.threshold as number;
+	}
+
+	if (!ctx.callbacks.setCueSubscriptionInjectionScreen) {
+		ctx.sendError(client, 'Cue injection screen editing is not available', {
+			requestId: message.requestId,
+		});
+		return;
+	}
+
+	ctx.callbacks
+		.setCueSubscriptionInjectionScreen(subscriptionId, setting)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'set_cue_subscription_injection_screen_result',
+				success: result.ok,
+				subscriptionId,
+				...(result.ok ? { updated: result.updated } : { error: result.error }),
+				mode: setting.mode,
+				...(setting.threshold !== undefined ? { threshold: setting.threshold } : {}),
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to set the Cue injection screen: ${error.message}`, {
 				requestId: message.requestId,
 			});
 		});

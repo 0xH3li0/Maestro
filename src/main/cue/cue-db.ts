@@ -685,6 +685,11 @@ function rowToCueEventRecord(row: CueEventRow): CueEventRecord {
  * so they stay in the Cue activity list and out of History, and they are not
  * failures.
  *
+ * A `blocked-injection` row was not spawned either, but it is the opposite
+ * case: the prompt-injection screen refused it, which is rare and is exactly
+ * what a person needs to see. It is shown in History and counted as a failure
+ * (see `getCueEventGroupCounts`), so it is deliberately absent from both lists.
+ *
  * Exported so every reader of this table (History merge, activity-graph
  * buckets) filters on one predicate instead of three drifting copies.
  */

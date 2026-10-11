@@ -163,6 +163,15 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 			sub.gate_on_unavailable = triggerData.config.gate_on_unavailable;
 		}
 	}
+	// The injection screen rides the trigger the same way. Each key is written
+	// only when it is set: absent is the default, which the engine resolves
+	// per subscription from its action.
+	if (typeof triggerData.config.screen_injection === 'boolean') {
+		sub.screen_injection = triggerData.config.screen_injection;
+	}
+	if (typeof triggerData.config.injection_threshold === 'number') {
+		sub.injection_threshold = triggerData.config.injection_threshold;
+	}
 	switch (triggerData.eventType) {
 		case 'time.heartbeat':
 			if (triggerData.config.interval_minutes) {
@@ -998,6 +1007,8 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.filter != null) record.filter = sub.filter;
 			if (sub.gate != null) record.gate = sub.gate;
 			if (sub.gate_on_unavailable != null) record.gate_on_unavailable = sub.gate_on_unavailable;
+			if (sub.screen_injection != null) record.screen_injection = sub.screen_injection;
+			if (sub.injection_threshold != null) record.injection_threshold = sub.injection_threshold;
 			if (sub.fan_in_timeout_minutes != null)
 				record.fan_in_timeout_minutes = sub.fan_in_timeout_minutes;
 			if (sub.fan_in_timeout_on_fail != null)

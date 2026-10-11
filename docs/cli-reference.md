@@ -770,6 +770,17 @@ Show, set, or remove a subscription's gate (a condition a local model checks bef
 | `-a, --agent <id>`          | Disambiguate a name several agents share                                | -       |
 | `--json`                    | Output as JSON (for scripting)                                          | -       |
 
+## `maestro-cli cue screen <subscription>`
+
+Show or set a subscription's prompt-injection screen (a local classifier scores untrusted text before a run starts)
+
+| Option                | Description                                                                                 | Default |
+| --------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| `--mode <mode>`       | on (always screen), off (never), or auto (screen commands that use untrusted text; default) | -       |
+| `--threshold <score>` | Block at or above this score, above 0 and at most 1 (default 0.8)                           | -       |
+| `-a, --agent <id>`    | Disambiguate a name several agents share                                                    | -       |
+| `--json`              | Output as JSON (for scripting)                                                              | -       |
+
 ## `maestro-cli cue activity`
 
 Show recent Cue runs, newest first

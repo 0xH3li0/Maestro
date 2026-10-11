@@ -139,6 +139,7 @@ import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
+import { scoreCueInjectionText } from './local-models/cue-injection-screen';
 import { closeEmbeddingStore } from './local-models/embedding-store';
 import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
 import { startSemanticIndex } from './local-models/semantic-index-startup';
@@ -697,6 +698,10 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return { ok: false, error: 'The Cue engine is not running.' };
 		return cueEngine.setSubscriptionGate(subscriptionId, gate);
 	},
+	setCueSubscriptionInjectionScreen: async (subscriptionId, setting) => {
+		if (!cueEngine) return { ok: false, error: 'The Cue engine is not running.' };
+		return cueEngine.setSubscriptionInjectionScreen(subscriptionId, setting);
+	},
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
@@ -1239,7 +1244,24 @@ app
 		// Initialize Cue Engine for event-driven automation
 		const cueHealthToastAt = new Map<string, number>();
 		const cueGateToastAt = new Map<string, number>();
+		const cueScreenToastAt = new Map<string, number>();
+		const cueBlockToastAt = new Map<string, number>();
+		const CUE_HEALTH_NOTICE_INTERVAL_MS = 5 * DURATION_MS.minute;
 		const CUE_GATE_NOTICE_INTERVAL_MS = 30 * DURATION_MS.minute;
+		const CUE_BLOCK_NOTICE_INTERVAL_MS = 5 * DURATION_MS.minute;
+		/**
+		 * Whether a coalesced Cue notice for `key` is due. Every event is still
+		 * logged; this only keeps one stuck subscription from stacking a sticky
+		 * notice per event. Entries older than the interval are dropped first,
+		 * so the map stays bounded over a session that runs for days.
+		 */
+		const cueNoticeDue = (seen: Map<string, number>, key: string, intervalMs: number): boolean => {
+			const now = Date.now();
+			for (const [id, at] of seen) {
+				if (now - at >= intervalMs) seen.delete(id);
+			}
+			return !seen.has(key);
+		};
 		cueEngine = new CueEngine({
 			getSessions: () => {
 				const stored = sessionsStore.get('sessions', []);
@@ -1560,13 +1582,9 @@ app
 				logger.cue(message, 'Cue', data);
 				const payload = data as import('../shared/cue-log-types').CueLogPayload | undefined;
 				if (payload?.type === 'triggerHealthWarning') {
-					const now = Date.now();
-					for (const [id, at] of cueHealthToastAt) {
-						if (now - at >= 5 * DURATION_MS.minute) cueHealthToastAt.delete(id);
-					}
 					// Reach the always-mounted toast channel, even with Cue closed.
 					// Log every warning, but coalesce sticky notices per agent for 5m.
-					if (!cueHealthToastAt.has(payload.sessionId)) {
+					if (cueNoticeDue(cueHealthToastAt, payload.sessionId, CUE_HEALTH_NOTICE_INTERVAL_MS)) {
 						const delivered = emitCueNotifyToast(mainWindow, {
 							agentId: payload.sessionId,
 							title: 'Cue trigger health',
@@ -1574,7 +1592,7 @@ app
 							sticky: true,
 							color: 'orange',
 						});
-						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
+						if (delivered) cueHealthToastAt.set(payload.sessionId, Date.now());
 					}
 				}
 				if (payload?.type === 'gateUnavailable') {
@@ -1585,11 +1603,7 @@ app
 					// Every one is logged; the sticky notice is coalesced per
 					// agent, on a longer window than trigger health because a
 					// gate with no model fires on every event until it is fixed.
-					const now = Date.now();
-					for (const [id, at] of cueGateToastAt) {
-						if (now - at >= CUE_GATE_NOTICE_INTERVAL_MS) cueGateToastAt.delete(id);
-					}
-					if (!cueGateToastAt.has(payload.sessionId)) {
+					if (cueNoticeDue(cueGateToastAt, payload.sessionId, CUE_GATE_NOTICE_INTERVAL_MS)) {
 						const delivered = emitCueNotifyToast(mainWindow, {
 							agentId: payload.sessionId,
 							title: payload.ran ? 'Cue gate not checked' : 'Cue gate skipped a run',
@@ -1597,7 +1611,43 @@ app
 							sticky: true,
 							color: 'orange',
 						});
-						if (delivered) cueGateToastAt.set(payload.sessionId, now);
+						if (delivered) cueGateToastAt.set(payload.sessionId, Date.now());
+					}
+				}
+				if (payload?.type === 'injectionScreenUnavailable') {
+					// The subscription asked for the prompt-injection screen, it
+					// could not run, and the agent turn started anyway (a prompt
+					// fails open). Without this notice, text the user wanted
+					// screened reaches an agent with nothing saying so. Coalesced
+					// like the gate: it repeats on every event until it is fixed.
+					if (cueNoticeDue(cueScreenToastAt, payload.sessionId, CUE_GATE_NOTICE_INTERVAL_MS)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							title: 'Cue ran without the injection screen',
+							message: payload.message,
+							sticky: true,
+							color: 'orange',
+						});
+						if (delivered) cueScreenToastAt.set(payload.sessionId, Date.now());
+					}
+				}
+				if (payload?.type === 'injectionBlocked') {
+					// A refused run is a security decision the user has to
+					// acknowledge, so the notice is red and sticky. Every block
+					// is a row in the activity log; the notice is coalesced per
+					// subscription so a burst of hostile comments cannot bury
+					// the screen under one notice each.
+					const key = `${payload.sessionId}\u0000${payload.subscriptionName}`;
+					if (cueNoticeDue(cueBlockToastAt, key, CUE_BLOCK_NOTICE_INTERVAL_MS)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							sourceAgent: payload.sessionName,
+							title: 'Cue blocked a run',
+							message: `"${payload.subscriptionName}" was NOT started. ${payload.reason} Review the event in the Cue activity log.`,
+							sticky: true,
+							color: 'red',
+						});
+						if (delivered) cueBlockToastAt.set(key, Date.now());
 					}
 				}
 				// Push activity updates to renderer (and web-desktop bridge clients)
@@ -1626,6 +1676,9 @@ app
 			// task. Passed in rather than imported by the engine, so the
 			// standalone runner never loads the model stack.
 			evaluateGate: evaluateCueGate,
+			// Untrusted text a subscription substitutes is scored by the
+			// `injection-screen` Local Models task, injected the same way.
+			scoreInjection: scoreCueInjectionText,
 			// How far back the engine-start prune keeps cue_events. Read on every
 			// start (not captured once) so changing the setting takes effect the
 			// next time Cue is enabled, without an app restart.

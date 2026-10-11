@@ -124,6 +124,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
 			setSetCueSubscriptionGateCallback = vi.fn();
+			setSetCueSubscriptionInjectionScreenCallback = vi.fn();
 			setGetCueActivityCallback = vi.fn();
 			setTriggerCueSubscriptionCallback = vi.fn();
 			setGetUsageDashboardCallback = vi.fn();
@@ -1874,6 +1875,83 @@ describe('web-server/web-server-factory', () => {
 			expect(gated).toMatchObject({ gate: 'the issue reports a bug', gateOnUnavailable: 'skip' });
 			expect(plain).not.toHaveProperty('gate');
 			expect(plain).not.toHaveProperty('gateOnUnavailable');
+		});
+	});
+
+	describe('Cue injection screen callback', () => {
+		it('delegates to setCueSubscriptionInjectionScreen', async () => {
+			const setCueSubscriptionInjectionScreen = vi
+				.fn()
+				.mockResolvedValue({ ok: true, updated: ['Triage'] });
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionInjectionScreen,
+			});
+			const server = createWebServer() as any;
+
+			expect(server.setSetCueSubscriptionInjectionScreenCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setSetCueSubscriptionInjectionScreenCallback.mock.calls[0][0];
+
+			const setting = { mode: 'on', threshold: 0.6 };
+			expect(await callback('agent-1::Triage::Triage', setting)).toEqual({
+				ok: true,
+				updated: ['Triage'],
+			});
+			expect(setCueSubscriptionInjectionScreen).toHaveBeenCalledWith(
+				'agent-1::Triage::Triage',
+				setting
+			);
+		});
+
+		it('answers with a printable refusal when the dep is missing', async () => {
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionInjectionScreen: undefined,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setSetCueSubscriptionInjectionScreenCallback.mock.calls[0][0];
+
+			expect(await callback('agent-1::P::Triage', { mode: 'on' })).toEqual({
+				ok: false,
+				error: 'Cue injection screen editing is not available.',
+			});
+		});
+
+		it('lists the screen back as written, and leaves a default one without the keys', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Screened',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'triage it',
+							pipeline_name: 'Screened',
+							screen_injection: false,
+							injection_threshold: 0.6,
+						},
+						{
+							name: 'Plain',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'x',
+							pipeline_name: 'Plain',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const [screened, plain] = await callback();
+
+			// `false` is a setting the caller has to be able to read back.
+			expect(screened).toMatchObject({ screenInjection: false, injectionThreshold: 0.6 });
+			expect(plain).not.toHaveProperty('screenInjection');
+			expect(plain).not.toHaveProperty('injectionThreshold');
 		});
 	});
 

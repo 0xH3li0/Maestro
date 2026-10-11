@@ -230,6 +230,68 @@ Things to know:
 
 Read gated events from the command line with `maestro-cli cue activity`. Read a subscription's gate with `maestro-cli cue gate <subscription>`, or list every gate with `maestro-cli cue list`.
 
+## Screening for prompt injection
+
+Some triggers carry text that other people wrote: a GitHub comment, an issue or pull request title and body, a webhook payload, the content of a watched task file. When a prompt or a command uses that text, the writer can try to give your agent instructions. The injection screen has a local classifier score that text before Cue starts a run.
+
+```yaml
+- name: reply-to-comments
+  event: github.issue
+  retrigger_on_comments: true
+  screen_injection: true
+  injection_threshold: 0.8 # default
+  prompt: Reply to the new comments on issue {{CUE_GH_NUMBER}}. {{CUE_NEW_COMMENTS}}
+```
+
+A score at or above the threshold starts nothing. The event is recorded as **blocked** in the Cue modal's Activity Log, with the variable and the score, and you get a red notice that stays until you dismiss it. A blocked run counts as a failure for the pipeline, appears in History, and does not fire downstream chain steps.
+
+**Setup.** The screen runs on the **Prompt-injection screen** task in Settings > Local Models > Assignments. Assign it a classifier model from the catalog. The task is off by default.
+
+**What is screened.** Only the untrusted variables your prompt or command uses, and only the ones the event filled:
+
+| Trigger            | Untrusted variables                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `github.*`         | `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, `{{CUE_GH_BRANCH}}`                        |
+| `task.pending`     | `{{CUE_TASK_CONTENT}}`, `{{CUE_TASK_LIST}}`                                                               |
+| `webhook.received` | `{{CUE_WEBHOOK_BODY}}`, `{{CUE_WEBHOOK_HEADERS}}`, `{{CUE_WEBHOOK_EVENT}}`, `{{CUE_WEBHOOK_DELIVERY_ID}}` |
+
+The output of your own upstream agent (`{{CUE_SOURCE_OUTPUT}}`) is not screened.
+
+**When a subscription is screened.**
+
+| `screen_injection` | Result                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| not set (default)  | Screened when it is an `action: command` subscription that uses an untrusted variable. |
+| `true`             | Always screened.                                                                       |
+| `false`            | Never screened.                                                                        |
+
+**Where to set it.**
+
+| Surface                        | How                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Pipeline editor                | Select the trigger node. The **Prompt-injection screen** field is under the Gate, on triggers that carry untrusted text. |
+| `maestro-cli cue screen <sub>` | `--mode on\|off\|auto`, `--threshold <score>`. With no flag, it prints the screen.                                       |
+
+**When the classifier cannot run** (the task is off, the model is not downloaded, it takes too long), what happens depends on what the subscription does:
+
+| Subscription                                               | Classifier cannot run                                                  |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| A command, and you asked for the screen                    | The run is **blocked**. A command does not start with unscreened text. |
+| A command, `screen_injection` not set, and the task is off | The run starts, marked as not screened in the Activity Log.            |
+| A prompt with `screen_injection: true`                     | The run starts. You get a warning.                                     |
+
+"You asked for the screen" means `screen_injection: true`, or a model assigned to the Prompt-injection screen task. If you assign a model and it stops working, every command that uses untrusted text is blocked until you fix it or set `screen_injection: false`.
+
+Things to know:
+
+- **A clean score does not make text safe for a shell.** The classifier looks for instructions aimed at a model. Text such as `$(rm -rf ~)` is not one and can score low. Do not put untrusted variables in a shell command unless the command quotes and validates them itself.
+- **The whole value is read.** A long body is scored in overlapping pieces and the highest score counts, so an injection at the end of a long comment is not hidden.
+- **The gate runs first.** An event the gate skips is not screened.
+- **A manual run fills no untrusted variable**, so there is nothing to screen and nothing to block.
+- **The standalone engine has no classifier.** In `maestro-cli cue engine`, `screen_injection: true` on a command blocks the run, and the default lets it start.
+
+Read blocked runs from the command line with `maestro-cli cue activity`. Read a subscription's screen with `maestro-cli cue screen <subscription>`.
+
 ## Agent Chaining
 
 Agent chaining connects multiple agents in a pipeline where each agent's completion triggers the next. This is built on `agent.completed` events with optional filtering.

@@ -497,3 +497,33 @@ describe('validateSubscription - gate', () => {
 		);
 	});
 });
+
+describe('validateSubscription - injection screen', () => {
+	const base = {
+		name: 'triage',
+		event: 'github.issue',
+		prompt: 'Triage it',
+		repo: 'RunMaestro/Maestro',
+	};
+
+	it('accepts the screen on or off, with or without a threshold', () => {
+		expect(errs({ ...base, screen_injection: true })).toEqual([]);
+		expect(errs({ ...base, screen_injection: false })).toEqual([]);
+		expect(errs({ ...base, injection_threshold: 0.5 })).toEqual([]);
+		expect(errs({ ...base, screen_injection: true, injection_threshold: 1 })).toEqual([]);
+	});
+
+	it('rejects a screen_injection that is not a boolean', () => {
+		expect(errs({ ...base, screen_injection: 'yes' }).join('\n')).toMatch(
+			/"screen_injection" must be true or false/
+		);
+	});
+
+	it('rejects a threshold that is not above 0 and at most 1', () => {
+		for (const bad of [0, -1, 1.5, '0.8']) {
+			expect(errs({ ...base, injection_threshold: bad }).join('\n')).toMatch(
+				/"injection_threshold" must be a number above 0 and at most 1/
+			);
+		}
+	});
+});

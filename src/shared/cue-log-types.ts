@@ -65,6 +65,37 @@ export type CueLogPayload =
 			ran: boolean;
 	  }
 	| {
+			/**
+			 * The prompt-injection screen refused a dispatch: nothing was
+			 * spawned, and a `blocked-injection` row was recorded. Raised to
+			 * the user as a red notice they have to dismiss. `variable` and
+			 * `score` are absent when the block is the fail-closed one (the
+			 * screen could not run on a command).
+			 */
+			type: 'injectionBlocked';
+			runId: string;
+			sessionId: string;
+			/** The owning agent's name, for the notice's header strip. */
+			sessionName: string;
+			subscriptionName: string;
+			pipelineName?: string;
+			reason: string;
+			variable?: string;
+			score?: number;
+	  }
+	| {
+			/**
+			 * A subscription asked for the prompt-injection screen and it could
+			 * not run, and the run started anyway (an agent prompt fails open).
+			 * Raised as a sticky notice: text the user wanted screened is
+			 * reaching an agent unscreened.
+			 */
+			type: 'injectionScreenUnavailable';
+			sessionId: string;
+			subscriptionName: string;
+			message: string;
+	  }
+	| {
 			type: 'queueOverflow';
 			sessionId: string;
 			sessionName: string;

@@ -19,6 +19,7 @@ import {
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
+	cueInjectionThresholdProblem,
 } from '../../../shared/cue';
 import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 
@@ -421,6 +422,14 @@ function normalizeSubscription(
 			typeof sub.gate_on_unavailable === 'string' &&
 			(CUE_GATE_ON_UNAVAILABLE as readonly string[]).includes(sub.gate_on_unavailable)
 				? (sub.gate_on_unavailable as CueGateOnUnavailable)
+				: undefined,
+		// Absent stays absent: it is the "apply the default" value, which the
+		// dispatch service resolves per subscription (see
+		// `resolveCueInjectionScreen`), not a `false`.
+		screen_injection: typeof sub.screen_injection === 'boolean' ? sub.screen_injection : undefined,
+		injection_threshold:
+			cueInjectionThresholdProblem(sub.injection_threshold) === null
+				? (sub.injection_threshold as number)
 				: undefined,
 		repo: typeof sub.repo === 'string' ? sub.repo : undefined,
 		poll_minutes: typeof sub.poll_minutes === 'number' ? sub.poll_minutes : undefined,

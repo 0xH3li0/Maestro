@@ -66,6 +66,20 @@ describe('triggerGroupKey', () => {
 		expect(triggerGroupKey(a)).toBe(triggerGroupKey(b));
 	});
 
+	it('separates triggers whose injection screen differs', () => {
+		expect(triggerGroupKey(sub())).not.toBe(triggerGroupKey(sub({ screen_injection: true })));
+		expect(triggerGroupKey(sub({ screen_injection: true }))).not.toBe(
+			triggerGroupKey(sub({ screen_injection: false }))
+		);
+		expect(triggerGroupKey(sub())).not.toBe(triggerGroupKey(sub({ injection_threshold: 0.5 })));
+	});
+
+	it('groups parallel branches that carry the same injection screen', () => {
+		const a = sub({ name: 'p1', screen_injection: true, injection_threshold: 0.6 });
+		const b = sub({ name: 'p1-chain-2', screen_injection: true, injection_threshold: 0.6 });
+		expect(triggerGroupKey(a)).toBe(triggerGroupKey(b));
+	});
+
 	it('separates github.label triggers that watch different kinds or labels', () => {
 		const base = sub({ event: 'github.label' });
 		expect(triggerGroupKey(base)).not.toBe(

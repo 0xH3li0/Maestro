@@ -28,6 +28,10 @@ import type {
 	CueGateSetting,
 	CueGateWriteResult,
 } from '../../shared/cue/gate';
+import type {
+	CueInjectionScreenSetting,
+	CueInjectionScreenWriteResult,
+} from '../../shared/cue/injection-screen';
 import type { DebugPackageDependencies } from '../debug-package';
 
 // Re-export Theme for convenience
@@ -1399,6 +1403,12 @@ export interface CueSubscriptionInfo {
 	/** What the gate does when its model cannot answer. Present only beside a
 	 *  `gate`, and only when the subscription spells it out (absent = run). */
 	gateOnUnavailable?: CueGateOnUnavailable;
+	/** `screen_injection` as written: `true` or `false`. Absent is the default
+	 *  (shell commands that use untrusted text are screened). Set with
+	 *  `set_cue_subscription_injection_screen`. */
+	screenInjection?: boolean;
+	/** `injection_threshold` as written. Absent means 0.8. */
+	injectionThreshold?: number;
 	lastTriggered?: number;
 	triggerCount: number;
 }
@@ -1412,8 +1422,9 @@ export interface CueActivityEntry {
 	sessionId: string;
 	timestamp: number;
 	/** `gated`: the subscription's gate skipped the event and nothing ran;
-	 *  `result` then carries the gate's reason. */
-	status: 'triggered' | 'running' | 'completed' | 'failed' | 'gated';
+	 *  `result` then carries the gate's reason. `blocked`: the prompt-injection
+	 *  screen refused the run; `result` names the variable and the score. */
+	status: 'triggered' | 'running' | 'completed' | 'failed' | 'gated' | 'blocked';
 	result?: string;
 	duration?: number;
 }
@@ -1432,6 +1443,11 @@ export type SetCueSubscriptionGateCallback = (
 	subscriptionId: string,
 	gate: CueGateSetting | null
 ) => Promise<CueGateWriteResult>;
+/** Set a subscription's prompt-injection screen (mode and threshold). */
+export type SetCueSubscriptionInjectionScreenCallback = (
+	subscriptionId: string,
+	setting: CueInjectionScreenSetting
+) => Promise<CueInjectionScreenWriteResult>;
 export type GetCueActivityCallback = (
 	sessionId?: string,
 	limit?: number

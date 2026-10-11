@@ -18,7 +18,7 @@ Local Models is the core service that downloads, verifies, stores, and runs mode
 machine: wake word, speech-to-text, text-to-speech, text generation, embeddings, and classifiers.
 It is not an Encore Feature and it does not belong to any one feature. Every feature that wants a
 local model is a **consumer** of it. A Cappella (voice) is the first consumer; tab naming, AI
-command mode, semantic search, the Cue gate, and the prompt-injection screen come later.
+command mode, semantic search, the Cue gate, and the prompt-injection screen followed.
 
 The download, verification, and disk rules are unchanged from when the stack lived under voice.
 [[model-manager]] states them in full (pinned revisions, hash-before-final-path, resumable
@@ -629,14 +629,15 @@ registers its own yet.
 A consumer calls `runLocalTask()` and decides what each verdict means for its own surface. None
 falls back to another source.
 
-| Task          | Consumer                                                                                      | `off`                                                                 | `unavailable`                                                                               |
-| ------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `tab-naming`  | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                   | Tab stays unnamed                                                     | Skips; one yellow toast per agent (`task-notices.ts`)                                       |
-| `tab-summary` | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset | Keeps the agent path                                                  | Compaction fails with the reason; the participant summary skips                             |
-| `ai-command`  | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                   | Refuses, names the setting                                            | Fails with the reason in the composer                                                       |
-| `git-drafts`  | `draftPullRequest()` in `local-models/git-drafts.ts`                                          | Button hidden (the default)                                           | Button disabled with the readiness reason                                                   |
-| `tab-cleanup` | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                        | Modal says so (the default)                                           | Modal shows the reason in place of the list                                                 |
-| `cue-gate`    | `evaluateCueGate()` in `local-models/cue-gate.ts`, called by the Cue dispatch service         | Gate unavailable (the default): the run starts and the user is warned | The same: fail open with a warning, unless the subscription set `gate_on_unavailable: skip` |
+| Task               | Consumer                                                                                                                                                   | `off`                                                                                                                                                                        | `unavailable`                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `tab-naming`       | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                                                                                | Tab stays unnamed                                                                                                                                                            | Skips; one yellow toast per agent (`task-notices.ts`)                                            |
+| `tab-summary`      | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset                                                              | Keeps the agent path                                                                                                                                                         | Compaction fails with the reason; the participant summary skips                                  |
+| `ai-command`       | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                                                                                | Refuses, names the setting                                                                                                                                                   | Fails with the reason in the composer                                                            |
+| `git-drafts`       | `draftPullRequest()` in `local-models/git-drafts.ts`                                                                                                       | Button hidden (the default)                                                                                                                                                  | Button disabled with the readiness reason                                                        |
+| `tab-cleanup`      | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                                                                                     | Modal says so (the default)                                                                                                                                                  | Modal shows the reason in place of the list                                                      |
+| `cue-gate`         | `evaluateCueGate()` in `local-models/cue-gate.ts`, called by the Cue dispatch service                                                                      | Gate unavailable (the default): the run starts and the user is warned                                                                                                        | The same: fail open with a warning, unless the subscription set `gate_on_unavailable: skip`      |
+| `injection-screen` | `scoreCueInjectionText()` in `local-models/cue-injection-screen.ts`, called by the Cue dispatch service (a classifier task, through `runClassifierTask()`) | Reported as `off`: a command that set `screen_injection: true` is blocked, a prompt that set it starts with a warning, a command that only got the default starts unscreened | A screened command is blocked (fail closed); a screened prompt starts with a warning (fail open) |
 
 `git-drafts` is the one consumer with no agent path. It reads `git log --oneline base..HEAD` and
 `git diff --stat base...HEAD` from a LOCAL checkout (Create Pull Request is local-only), caps both
@@ -793,6 +794,83 @@ Log shows the reason after a restart too.
 (`createKeyedWriteQueue()`): two events for one subscription start their runs in arrival order.
 `dispatchSubscription()` still returns synchronously, reporting a gated dispatch as accepted. If the
 engine stops while a check is in flight, the dispatch is dropped. A manual trigger is never gated.
+
+### The Cue injection screen: `scoreCueInjectionText()`
+
+Cue substitutes text other people wrote into a prompt or a shell command: a GitHub comment, an issue
+or pull request title and body, a webhook payload, the content of a watched task file. A
+subscription's `screen_injection` has the `injection-screen` task score that text before a run
+starts. A score at or above `injection_threshold` (default 0.8) blocks the run.
+
+```mermaid
+flowchart TD
+	ev["Cue event<br/>(after filter and gate)"] --> plan{"screened?<br/>resolveCueInjectionScreen()"}
+	plan -- no --> run["dispatchNow()"]
+	plan -- yes --> targets{"untrusted values<br/>the event filled?"}
+	targets -- none --> run
+	targets -- some --> score["scoreCueInjectionText()<br/>one call per value"]
+	score --> decide{"resolveCueInjectionDecision()"}
+	decide -- "all below threshold" --> run
+	decide -- "one at or above" --> block["blocked-injection event<br/>red toast"]
+	decide -- "cannot score, command asked" --> block
+	decide -- "cannot score, otherwise" --> warn["run, stamped ran-unscreened"]
+	warn --> run
+```
+
+| File                                            | What it holds                                                                                                                                                |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/shared/templateVariables.ts`               | `CUE_UNTRUSTED_TEMPLATE_VARIABLES`: the one list of variables that carry outside text, each with the `TemplateContext.cue` key it is substituted from        |
+| `src/shared/cue/injection-screen.ts`            | Pure contract: the default, what is scored, the scoring loop, the failure policy, the stored shape, the record on the event payload                          |
+| `src/main/local-models/cue-injection-screen.ts` | `scoreCueInjectionText()`: one value through `runClassifierTask('injection-screen')` with a 60 second timeout, reported as `scored`, `off`, or `unavailable` |
+| `src/main/cue/cue-dispatch-service.ts`          | The one place the screen is applied (`planInjectionScreen`, `applyInjectionScreen`), after the gate, on the same per-subscription chain                      |
+
+**What is scored.** Only the untrusted variables the subscription's templates reference
+(`cueSubscriptionTemplates()`: the prompt or its override, fan-out prompts, the output prompt, the
+command), and only the ones the event filled. Text that is never substituted reaches nothing, so
+scoring it could only produce a false block. Each value is scored whole: `classifyText()` reads every
+token in overlapping windows and reports the highest score. Scoring stops at the first value that
+reaches the threshold. Agent output (`{{CUE_SOURCE_OUTPUT}}`) is not in the list: it is the user's
+own agent, it reads as instructions by nature, and a chain would be blocked constantly.
+
+**The default.** `screen_injection` absent means: screened when this is an `action: command`
+subscription that substitutes an untrusted variable. Text in a shell command needs no model to
+follow it, so those are screened without being asked. `true` and `false` override the default.
+
+**Failure policy.** One function, `resolveCueInjectionDecision()`:
+
+| Screen result               | Command, asked for    | Command, default only | Any other action, asked for |
+| --------------------------- | --------------------- | --------------------- | --------------------------- |
+| A value at or above         | Blocked               | Blocked               | Blocked                     |
+| All values below            | Runs                  | Runs                  | Runs                        |
+| Assigned model cannot run   | Blocked (fail closed) | Blocked (fail closed) | Runs, with a warning        |
+| Task is `off` (the default) | Blocked (fail closed) | Runs, marked          | Runs, with a warning        |
+
+A shell action is not started with unscreened text when screening was asked for, either by
+`screen_injection: true` or by assigning the task a model. The one command case that runs is the
+last row, middle column: the key is absent and no model is assigned, so nobody asked for a screen
+and none exists. Blocking there would stop every existing command subscription on upgrade, for a
+user who never heard of the screen. That run is stamped `ran-unscreened`, which the Activity Log
+marks. An engine with no scorer (the standalone runner) reports `off`.
+
+**`blocked-injection` is a run status that was not spawned but is a failure.** `recordSkippedRun()`
+writes the row with the reason as its `error_message` and the run's `stderr`, so History and the
+Activity Log explain it without reading the payload. `isCueRunSkipped()` is true for it (the stats
+aggregation and the average runtime leave it out: it spent no agent time) and so is
+`isCueRunBlocked()` (pipeline health, History, and the group `failure_count` keep it). No completion
+is raised, so no chain step fires. The `injectionBlocked` log payload counts `runsBlocked` and is
+what `src/main/index.ts` turns into a red sticky toast with `sourceAgent` set, coalesced per
+subscription for 5 minutes.
+
+**It is not shell escaping.** The classifier scores instructions aimed at a model. `$(rm -rf ~)` is
+not one and can score low. The screen lowers the risk that a hostile comment steers an agent or a
+command that hands text to one. It does not make an untrusted variable safe to put in a shell
+command line, and the user docs say so.
+
+**Authoring.** `<CueInjectionScreenField>` on a trigger node (drawn only where
+`cueEventCarriesUntrustedText()` is true), hand-written YAML, and `maestro-cli cue screen <sub>`
+(`set_cue_subscription_injection_screen` -> `CueEngine.setSubscriptionInjectionScreen()`, which
+writes every subscription of the trigger). Every patch goes through
+`writeCueInjectionScreenFields()`.
 
 ## Related
 

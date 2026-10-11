@@ -7,6 +7,7 @@
 import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 import { formatDurationHuman } from '../../../shared/formatters';
 import { CUE_GATE_PAYLOAD_KEY } from '../../../shared/cue/gate';
+import { CUE_INJECTION_PAYLOAD_KEY } from '../../../shared/cue/injection-screen';
 
 export function formatRelativeTime(dateStr?: string): string {
 	if (!dateStr) return '-';
@@ -84,9 +85,15 @@ export function getPipelineForSubscription(
 
 /** Formats event payload into human-readable key-value pairs, filtering out noise. */
 export function formatPayloadEntries(payload: Record<string, unknown>): Array<[string, string]> {
-	// `gate` is the gate's own record, drawn in its own section of the detail
-	// view (see `readCueGateRecord`), not a field of what happened.
-	const skipKeys = new Set(['outputPromptPhase', 'manual', CUE_GATE_PAYLOAD_KEY]);
+	// `gate` and `injectionScreen` are the checks' own records, each drawn in
+	// its own section of the detail view (see `readCueGateRecord` and
+	// `readCueInjectionRecord`), not fields of what happened.
+	const skipKeys = new Set([
+		'outputPromptPhase',
+		'manual',
+		CUE_GATE_PAYLOAD_KEY,
+		CUE_INJECTION_PAYLOAD_KEY,
+	]);
 	const entries: Array<[string, string]> = [];
 	for (const [key, value] of Object.entries(payload)) {
 		if (skipKeys.has(key)) continue;

@@ -435,6 +435,22 @@ describe('derivePipelineHealth', () => {
 		expect(onlyGated.lastRun).toBeUndefined();
 	});
 
+	// A blocked run was not spawned either, but the screen refusing a
+	// pipeline's events is a failure the pipeline row has to show.
+	it('counts a run the injection screen blocked as a failure', () => {
+		const blocked = derivePipelineHealth(pipeline(), {
+			...empty,
+			activityLog: [
+				run({ status: 'blocked-injection', exitCode: null, endedAt: '2026-10-11T12:05:00.000Z' }),
+				run({ endedAt: '2026-10-11T12:00:00.000Z' }),
+			],
+		});
+		expect(blocked.status).toBe('failing');
+		expect(blocked.detail).toBe('Last run was blocked by the injection screen');
+		expect(blocked.recentRunCount).toBe(2);
+		expect(blocked.recentFailureCount).toBe(1);
+	});
+
 	it('reports healthy when the most recent finished run completed', () => {
 		const health = derivePipelineHealth(pipeline(), { ...empty, activityLog: [run()] });
 		expect(health.status).toBe('healthy');

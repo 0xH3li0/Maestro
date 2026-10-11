@@ -67,6 +67,12 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		// would have gated.
 		gate: sub.gate ?? null,
 		gate_on_unavailable: sub.gate_on_unavailable ?? null,
+		// The same reasoning as the gate: two subs that differ in whether
+		// their untrusted text is screened, or at what score, are not one
+		// trigger. Collapsing them would let the next save turn a screen off
+		// on the branch that asked for it.
+		screen_injection: sub.screen_injection ?? null,
+		injection_threshold: sub.injection_threshold ?? null,
 	});
 }
 

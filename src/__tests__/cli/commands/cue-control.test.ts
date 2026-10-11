@@ -1,8 +1,8 @@
 /**
  * @file cue-control.test.ts
- * @description Tests for `cue enable|disable|gate|activity`: name resolution
- * (refusing an ambiguous name), the toggle and gate messages, and error-frame
- * handling.
+ * @description Tests for `cue enable|disable|gate|screen|activity`: name
+ * resolution (refusing an ambiguous name), the toggle, gate and screen
+ * messages, and error-frame handling.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -21,6 +21,7 @@ import {
 	cueDisable,
 	cueEnable,
 	cueGate,
+	cueScreen,
 	resolveSubscription,
 } from '../../../cli/commands/cue-control';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -161,6 +162,34 @@ describe('cue enable/disable/activity', () => {
 		// A run's output is not echoed on the one-line form.
 		expect(lines[1]).toMatch(/completed\s+on-pr/);
 		expect(lines[1]).not.toContain('Opened a fix.');
+	});
+
+	it('activity prints a blocked run with the reason the screen refused it', async () => {
+		const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		mockBridge({
+			get_cue_activity: {
+				type: 'cue_activity',
+				entries: [
+					{
+						id: 'r1',
+						subscriptionId: 'a1::p::on-pr',
+						subscriptionName: 'on-pr',
+						eventType: 'github.issue',
+						sessionId: 'a1',
+						timestamp: Date.parse('2026-10-11T12:00:00Z'),
+						status: 'blocked',
+						result: 'The new comments ({{CUE_NEW_COMMENTS}}) scored 0.97.',
+						duration: 40,
+					},
+				],
+			},
+		});
+
+		await cueActivity({});
+
+		const line = String(logSpy.mock.calls[0][0]);
+		expect(line).toMatch(/blocked\s+on-pr\s+\[github\.issue\]/);
+		expect(line).toContain('- The new comments ({{CUE_NEW_COMMENTS}}) scored 0.97.');
 	});
 
 	it('activity rejects a bad --limit before connecting', async () => {
@@ -398,5 +427,201 @@ describe('cue gate', () => {
 			set_cue_subscription_gate: { type: 'error', message: 'Cue gate editing is not available' },
 		});
 		await expect(cueGate('on-pr', { clear: true })).rejects.toThrow('__exit__');
+	});
+});
+
+describe('cue screen', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+
+	const screened = [
+		...subs,
+		{
+			id: 'a1::p::triage',
+			name: 'triage',
+			eventType: 'github.issue',
+			sessionId: 'a1',
+			sessionName: 'One',
+			enabled: true,
+			screenInjection: true,
+			injectionThreshold: 0.6,
+		},
+	];
+	const ready = {
+		type: 'local_models_task_readiness_result',
+		success: true,
+		readiness: [{ taskId: 'injection-screen', state: 'ready', detail: 'Runs on Prompt Guard.' }],
+	};
+	const off = {
+		type: 'local_models_task_readiness_result',
+		success: true,
+		readiness: [
+			{
+				taskId: 'injection-screen',
+				state: 'off',
+				detail: 'Prompt-injection screen is off.',
+				suggestedAction: 'Assign it a classifier model in Settings > Local Models.',
+			},
+		],
+	};
+	const written = (updated: string[]) => ({
+		type: 'set_cue_subscription_injection_screen_result',
+		success: true,
+		updated,
+	});
+	const printed = () => logSpy.mock.calls.map((call) => String(call[0]));
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('shows the screen without writing anything', async () => {
+		const sent = mockBridge({ get_cue_subscriptions: { subscriptions: screened } });
+		await cueScreen('triage', {});
+		expect(sent.map((frame) => frame.type)).toEqual(['get_cue_subscriptions']);
+		expect(printed()).toEqual([
+			'triage (One)',
+			'  injection screen: on (untrusted text is always screened)',
+			'  blocks at a score of: 0.6',
+		]);
+	});
+
+	it('reads the default back as auto at 0.8, and as JSON', async () => {
+		mockBridge({ get_cue_subscriptions: { subscriptions: screened } });
+		await cueScreen('on-pr', {});
+		expect(printed()).toEqual([
+			'on-pr (One)',
+			'  injection screen: auto (commands that use untrusted text are screened)',
+			'  blocks at a score of: 0.8',
+		]);
+
+		logSpy.mockClear();
+		await cueScreen('on-pr', { json: true });
+		expect(JSON.parse(printed()[0])).toEqual({
+			subscriptionId: 'a1::p::on-pr',
+			name: 'on-pr',
+			mode: 'auto',
+			threshold: 0.8,
+		});
+	});
+
+	it('sets a mode, keeps the threshold the screen had, and names every subscription changed', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: written(['triage', 'triage-cmd-a']),
+			local_models_task_readiness: ready,
+		});
+		await cueScreen('triage', { mode: 'auto' });
+		expect(sent[1]).toEqual({
+			type: 'set_cue_subscription_injection_screen',
+			subscriptionId: 'a1::p::triage',
+			mode: 'auto',
+			threshold: 0.6,
+		});
+		expect(printed()).toEqual([
+			'Injection screen on triage, triage-cmd-a (One): auto (commands that use untrusted text are screened)',
+			'  blocks at a score of: 0.6',
+		]);
+	});
+
+	it('changes only the threshold when only --threshold is passed', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: written(['triage']),
+			local_models_task_readiness: ready,
+		});
+		await cueScreen('triage', { threshold: '0.9' });
+		expect(sent[1]).toMatchObject({ mode: 'on', threshold: 0.9 });
+	});
+
+	it('sends no threshold when the screen is turned off', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: written(['triage']),
+		});
+		await cueScreen('triage', { mode: 'off' });
+		expect(sent[1]).toEqual({
+			type: 'set_cue_subscription_injection_screen',
+			subscriptionId: 'a1::p::triage',
+			mode: 'off',
+		});
+		// Nothing will be screened, so readiness is not asked.
+		expect(sent).toHaveLength(2);
+		expect(printed()).toEqual(['Injection screen on triage (One): off (never screened)']);
+	});
+
+	it('warns when the screen was written but no classifier will run it', async () => {
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: written(['on-pr']),
+			local_models_task_readiness: off,
+		});
+		await cueScreen('on-pr', { mode: 'on' });
+		expect(printed()[2]).toBe(
+			'Note: Prompt-injection screen is off. Assign it a classifier model in Settings > Local Models. Until it can run, a screened command is blocked and a screened prompt starts unscreened with a warning.'
+		);
+	});
+
+	it('prints JSON for a write, without a readiness round trip', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: written(['on-pr']),
+		});
+		await cueScreen('on-pr', { mode: 'on', threshold: '0.5', json: true });
+		expect(sent).toHaveLength(2);
+		expect(JSON.parse(printed()[0])).toEqual({
+			success: true,
+			subscriptionId: 'a1::p::on-pr',
+			updated: ['on-pr'],
+			mode: 'on',
+			threshold: 0.5,
+		});
+	});
+
+	it('refuses bad flags before connecting', async () => {
+		const sent = mockBridge({});
+		await expect(cueScreen('on-pr', { mode: 'sometimes' })).rejects.toThrow('__exit__');
+		await expect(cueScreen('on-pr', { threshold: '0' })).rejects.toThrow('__exit__');
+		await expect(cueScreen('on-pr', { threshold: 'high' })).rejects.toThrow('__exit__');
+		await expect(cueScreen('on-pr', { mode: 'off', threshold: '0.5' })).rejects.toThrow('__exit__');
+		expect(sent).toHaveLength(0);
+	});
+
+	it('refuses a threshold on a screen that is off, instead of writing one that does nothing', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: {
+				subscriptions: [{ ...screened[3], screenInjection: false, injectionThreshold: undefined }],
+			},
+		});
+		await expect(cueScreen('triage', { threshold: '0.5' })).rejects.toThrow('__exit__');
+		expect(sent.map((frame) => frame.type)).toEqual(['get_cue_subscriptions']);
+		expect(String(errorSpy.mock.calls[0][0])).toContain('has its screen off');
+	});
+
+	it('exits non-zero when the engine refuses the write or the bridge answers with an error', async () => {
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: {
+				type: 'set_cue_subscription_injection_screen_result',
+				success: false,
+				error: 'Could not write the screen.',
+			},
+		});
+		await expect(cueScreen('on-pr', { mode: 'on' })).rejects.toThrow('__exit__');
+		expect(String(errorSpy.mock.calls[0][0])).toContain('Could not write the screen.');
+
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: screened },
+			set_cue_subscription_injection_screen: {
+				type: 'error',
+				message: 'Cue injection screen editing is not available',
+			},
+		});
+		await expect(cueScreen('on-pr', { mode: 'off' })).rejects.toThrow('__exit__');
 	});
 });

@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
 import { readCueGateRecord, readCueGateSetting } from '../../../shared/cue/gate';
+import { isCueRunBlocked } from '../../../shared/cue/contracts';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -45,6 +46,7 @@ export function registerCueCallbacks(
 		| 'getCueGraphData'
 		| 'setCueSubscriptionEnabled'
 		| 'setCueSubscriptionGate'
+		| 'setCueSubscriptionInjectionScreen'
 		| 'getCueActivityLog'
 		| 'triggerCueSubscription'
 	>
@@ -93,6 +95,14 @@ export function registerCueCallbacks(
 					// was written can be listed back and checked.
 					...(gate ? { gate: gate.condition } : {}),
 					...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
+					// The read half of `set_cue_subscription_injection_screen`,
+					// as written: absent keys are the defaults.
+					...(typeof sub.screen_injection === 'boolean'
+						? { screenInjection: sub.screen_injection }
+						: {}),
+					...(typeof sub.injection_threshold === 'number'
+						? { injectionThreshold: sub.injection_threshold }
+						: {}),
 					// Per-subscription last-triggered / count are not yet
 					// tracked by the engine (only per-session). Leave the
 					// numeric fields zero so the CLI renders "never triggered"
@@ -127,6 +137,16 @@ export function registerCueCallbacks(
 			return { ok: false, error: 'Cue gate editing is not available.' };
 		}
 		return deps.setCueSubscriptionGate(subscriptionId, gate);
+	});
+
+	// Set a subscription's prompt-injection screen, through the same engine
+	// writer as the gate.
+	server.setSetCueSubscriptionInjectionScreenCallback(async (subscriptionId, setting) => {
+		if (!deps.setCueSubscriptionInjectionScreen) {
+			logger.warn('setCueSubscriptionInjectionScreen dependency not available', 'WebServer');
+			return { ok: false, error: 'Cue injection screen editing is not available.' };
+		}
+		return deps.setCueSubscriptionInjectionScreen(subscriptionId, setting);
 	});
 
 	// Get Cue activity log - calls engine directly in the main process.
@@ -170,7 +190,9 @@ export function registerCueCallbacks(
 			// Map engine-side status (`timeout` / `stopped` are terminal
 			// failure variants) onto the web-facing enum. `gated` keeps its own
 			// value: the event was skipped by its gate, which is neither a run
-			// that failed nor one still waiting to start.
+			// that failed nor one still waiting to start. `blocked` does too: a
+			// caller has to tell a refused run from one that ran and failed.
+			// Its reason is the run's `stderr`, so `result` needs no branch.
 			status:
 				r.status === 'completed'
 					? 'completed'
@@ -178,9 +200,11 @@ export function registerCueCallbacks(
 						? 'running'
 						: r.status === 'gated'
 							? 'gated'
-							: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
-								? 'failed'
-								: 'triggered',
+							: isCueRunBlocked(r.status)
+								? 'blocked'
+								: r.status === 'failed' || r.status === 'timeout' || r.status === 'stopped'
+									? 'failed'
+									: 'triggered',
 			result:
 				r.status === 'completed'
 					? r.stdout || undefined
