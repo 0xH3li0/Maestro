@@ -481,8 +481,24 @@ export interface CotVerifyResult {
 }
 
 /**
+ * One chain's verdict, with the folder the chain lies in. An agent has one
+ * chain per folder it has used, so a verify of the agent gives one of these
+ * per folder, the current folder first.
+ */
+export interface CotChainVerifyResult extends CotVerifyResult {
+	folder: string;
+}
+
+/**
  * Whether a folder may hold an agent's log. `resolved` is the real path, with
  * symlinks followed, and is the path to store. `reason` is one sentence for
  * the person who picked the folder.
  */
 export type CotFolderValidation = { ok: true; resolved: string } | { ok: false; reason: string };
+
+/**
+ * The answer to a change of what the person chose. `status` is the agent's
+ * status after the change. On a refusal nothing was changed, and `reason` is
+ * one sentence for the person who asked.
+ */
+export type CotSetResult = { ok: true; status: CotAgentStatus } | { ok: false; reason: string };

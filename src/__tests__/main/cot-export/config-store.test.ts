@@ -63,11 +63,13 @@ import {
 	createCotConfigStore,
 	flushCotConfigStoreSync,
 	getCotConfigStore,
+	setCotFailureListener,
 } from '../../../main/cot-export/config-store';
-import type { CotConfigStore } from '../../../main/cot-export/config-store';
+import type { CotConfigStore, CotConfigStoreDeps } from '../../../main/cot-export/config-store';
 import { turnFilePath } from '../../../main/cot-export/layout';
 import { safeStorageSeal } from '../../../main/utils/safe-storage-seal';
 import { COT_GENESIS_CHAIN_SEQ, COT_GENESIS_HASH } from '../../../shared/cotExport/types';
+import type { CotLastError } from '../../../shared/cotExport/types';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -92,12 +94,13 @@ describe('cot-export/config-store', () => {
 	const logFolder = (name: string): string => path.join(root, name);
 
 	/** A store over the temp data dir, as the app would make it after a restart. */
-	const makeStore = (): CotConfigStore => {
+	const makeStore = (extra: Partial<CotConfigStoreDeps> = {}): CotConfigStore => {
 		const store = createCotConfigStore({
 			cwd: dataDir,
 			seal: safeStorageSeal(electronMock.safeStorage),
 			getFolderContext: () => ({ agentDirs, userDataPath: dataDir, homeDir }),
 			now: () => clock,
+			...extra,
 		});
 		stores.push(store);
 		return store;
@@ -750,7 +753,64 @@ describe('cot-export/config-store', () => {
 		});
 	});
 
+	describe('a failure it keeps', () => {
+		it('hands every failure of a set-up agent to onError, with no limit of its own', () => {
+			const heard: Array<{ agentId: string; error: CotLastError }> = [];
+			const store = makeStore({ onError: (agentId, error) => heard.push({ agentId, error }) });
+			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+
+			store.recordError(AGENT, 'The disk is full.', START + 1);
+			store.recordError(AGENT, 'The disk is full.', START + 2);
+
+			expect(heard).toEqual([
+				{ agentId: AGENT, error: { message: 'The disk is full.', at: START + 1 } },
+				{ agentId: AGENT, error: { message: 'The disk is full.', at: START + 2 } },
+			]);
+		});
+
+		it('says nothing for an agent that was never set up', () => {
+			const onError = vi.fn();
+			makeStore({ onError }).recordError(OTHER_AGENT, 'nothing', START);
+			expect(onError).not.toHaveBeenCalled();
+		});
+
+		it('keeps the failure when onError throws, and does not throw into the caller', async () => {
+			const store = makeStore({
+				onError: () => {
+					throw new Error('The notice could not be raised.');
+				},
+			});
+			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+
+			expect(() => store.recordError(AGENT, 'The disk is full.', START + 1)).not.toThrow();
+			expect((await store.getStatus(AGENT)).lastError).toEqual({
+				message: 'The disk is full.',
+				at: START + 1,
+			});
+		});
+	});
+
 	describe("the app's store", () => {
+		it('tells the failure listener, whether it was set before the store was made or after', () => {
+			const before = vi.fn();
+			setCotFailureListener(before);
+			const store = getCotConfigStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+			store.recordError(AGENT, 'The disk is full.', START + 1);
+			expect(before).toHaveBeenCalledWith(AGENT, { message: 'The disk is full.', at: START + 1 });
+
+			// A second listener replaces the first, and null means nobody.
+			const after = vi.fn();
+			setCotFailureListener(after);
+			store.recordError(AGENT, 'The disk is full.', START + 2);
+			expect(before).toHaveBeenCalledTimes(1);
+			expect(after).toHaveBeenCalledWith(AGENT, { message: 'The disk is full.', at: START + 2 });
+
+			setCotFailureListener(null);
+			expect(() => store.recordError(AGENT, 'The disk is full.', START + 3)).not.toThrow();
+			expect(after).toHaveBeenCalledTimes(1);
+		});
+
 		it('lies in the app data folder, under the bland name, and is made once', () => {
 			const store = getCotConfigStore();
 			expect(getCotConfigStore()).toBe(store);

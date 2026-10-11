@@ -74,6 +74,7 @@ import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
 import { registerBrowserSessionHandlers } from './browser-session';
+import { registerCotExportHandlers } from './cot-export';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
@@ -157,6 +158,8 @@ export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
 export { registerCoworkingHandlers };
 export { registerBrowserSessionHandlers };
+// Registered from setupIpcHandlers() only. See the header of ./cot-export.ts.
+export { registerCotExportHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };

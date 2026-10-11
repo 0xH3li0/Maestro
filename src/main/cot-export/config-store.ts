@@ -142,9 +142,18 @@ export interface CotConfigStoreDeps {
 	 * change of config, because agents come and go.
 	 */
 	getFolderContext: () => AgentFolderContext;
+	/**
+	 * A failure was kept as an agent's last error. It is told every failure,
+	 * with no limit on how often, and nothing for an agent that was never set
+	 * up. A throw from it goes nowhere.
+	 */
+	onError?: CotFailureListener;
 	/** The clock, in epoch milliseconds. Defaults to `Date.now`. */
 	now?: () => number;
 }
+
+/** Hears a failure the store kept: which agent, and what went wrong. */
+export type CotFailureListener = (agentId: string, error: CotLastError) => void;
 
 export interface CotConfigStore {
 	/** What the person chose for the agent. An agent never set up is off, with no folder. */
@@ -595,6 +604,12 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			if (!entry) return;
 			entry.status.lastError = { message, at };
 			persistSoon();
+			try {
+				deps.onError?.(agentId, { message, at });
+			} catch {
+				// The failure is kept above. A listener that fails must not throw
+				// into the write path that reported it.
+			}
 		},
 
 		async getStatus(agentId) {
@@ -634,6 +649,16 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 // ============================================================================
 
 let _store: CotConfigStore | null = null;
+let _failureListener: CotFailureListener | null = null;
+
+/**
+ * Who is told when the app's store keeps a failure, or null for nobody. It can
+ * be set before or after the store is made, and a second call replaces the
+ * first. The IPC handlers of this feature set it, to tell the person.
+ */
+export function setCotFailureListener(listener: CotFailureListener | null): void {
+	_failureListener = listener;
+}
 
 /**
  * Every folder a local agent works in: its working directory, its project
@@ -678,6 +703,8 @@ export function getCotConfigStore(): CotConfigStore {
 				userDataPath,
 				homeDir: os.homedir(),
 			}),
+			// Read at each failure, so a listener set after this point is heard.
+			onError: (agentId, error) => _failureListener?.(agentId, error),
 		});
 	}
 	return _store;
@@ -692,7 +719,8 @@ export function flushCotConfigStoreSync(): void {
 	_store?.flushSync();
 }
 
-/** Drops the app's store so the next call makes a new one. For tests. */
+/** Drops the app's store and its listener so the next call starts new. For tests. */
 export function __resetCotConfigStoreForTests(): void {
 	_store = null;
+	_failureListener = null;
 }
