@@ -200,7 +200,15 @@ export function QuickChatRoot() {
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
 	const togglePinned = useCallback(() => {
-		void window.maestro.quickChat.setPinned(!pinned).then(setPinned);
+		window.maestro.quickChat
+			.setPinned(!pinned)
+			.then((next) => {
+				setPinned(next);
+				setError(null);
+			})
+			.catch((err: unknown) =>
+				setError(`Could not change the pin: ${err instanceof Error ? err.message : String(err)}`)
+			);
 	}, [pinned]);
 	const closePicker = useCallback(() => {
 		setPickerOpen(false);
@@ -274,7 +282,7 @@ export function QuickChatRoot() {
 
 	const composer = (
 		<div
-			className={`rounded-3xl px-4 pb-2 flex flex-col gap-2 ${expanded ? 'pt-3' : 'pt-1 h-full justify-between'}`}
+			className={`rounded-3xl px-4 pb-2 flex flex-col gap-2 ${expanded ? 'pt-3' : 'h-full justify-between'}`}
 			style={{
 				backgroundColor: expanded ? c.bgActivity : c.bgSidebar,
 				border: expanded ? 'none' : `1px solid ${c.border}`,
@@ -282,11 +290,11 @@ export function QuickChatRoot() {
 			}}
 		>
 			{!expanded && (
-				<div className="relative flex items-center h-6 -mb-1" style={DRAG_REGION}>
-					<div className="absolute inset-x-0 top-0">
-						<DragHandle theme={theme} />
-					</div>
-					<div className="relative flex min-w-0">{agentButton}</div>
+				// Same rows as the conversation header (grip, then a 28px row with
+				// the switcher first), so opening the picker leaves it in place.
+				<div className="-mx-4 -mb-2 flex flex-col" style={DRAG_REGION}>
+					<DragHandle theme={theme} />
+					<div className="h-7 px-4 flex items-center min-w-0">{agentButton}</div>
 				</div>
 			)}
 			<textarea
@@ -377,10 +385,7 @@ export function QuickChatRoot() {
 			<style>{proseStyles}</style>
 			{expanded && <DragHandle theme={theme} />}
 			{expanded && (
-				<div className="flex items-center gap-2 px-4 pb-3 shrink-0" style={DRAG_REGION}>
-					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
-						<X className="w-4 h-4" />
-					</IconButton>
+				<div className="h-7 mb-3 flex items-center gap-2 px-4 shrink-0" style={DRAG_REGION}>
 					<div className="flex-1 min-w-0 flex items-center gap-2 text-sm">
 						{agentButton}
 						<span className="truncate" style={{ color: c.textDim }}>
@@ -401,6 +406,9 @@ export function QuickChatRoot() {
 						disabled={!snapshot.tabId}
 					>
 						<ExternalLink className="w-4 h-4" />
+					</IconButton>
+					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
+						<X className="w-4 h-4" />
 					</IconButton>
 				</div>
 			)}

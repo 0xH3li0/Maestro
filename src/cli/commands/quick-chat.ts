@@ -5,6 +5,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { parseCliBool } from '../utils/parse';
 import {
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
@@ -77,7 +78,7 @@ function printStatus(status: QuickChatStatus): void {
 
 export async function quickChat(
 	action: QuickChatAction,
-	args: { text?: string; persistent?: boolean; pinned?: boolean; agent?: string },
+	args: { text?: string; state?: string; agent?: string },
 	options: QuickChatOptions
 ): Promise<void> {
 	const message: Record<string, unknown> = { type: 'quick_chat', action };
@@ -88,8 +89,20 @@ export async function quickChat(
 		}
 		message.text = args.text;
 	}
-	if (action === 'keep') message.persistent = args.persistent !== false;
-	if (action === 'pin') message.pinned = args.pinned !== false;
+	if (action === 'keep' || action === 'pin') {
+		// A bare `pin` / `keep` means on. Anything else must be a real on/off
+		// word: a typo such as `pin of` must not silently pin.
+		let on = true;
+		if (args.state !== undefined) {
+			try {
+				on = parseCliBool(args.state, action);
+			} catch (error) {
+				fail(error instanceof Error ? error.message : String(error), options);
+				return;
+			}
+		}
+		message[action === 'keep' ? 'persistent' : 'pinned'] = on;
+	}
 	if (action === 'bounds') {
 		const request: QuickChatBoundsRequest = {};
 		for (const key of ['x', 'y', 'width', 'height'] as const) {
