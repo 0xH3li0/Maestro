@@ -75,6 +75,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		let userCount = 0;
 		let cueCount = 0;
 		let agentEntryCount = 0;
+		let relayCount = 0;
 
 		// readHistory with no args returns all entries across all sessions
 		const entries = readHistory();
@@ -88,6 +89,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 			else if (entry.type === 'USER') userCount++;
 			else if (entry.type === 'CUE') cueCount++;
 			else if (entry.type === 'AGENT') agentEntryCount++;
+			else if (entry.type === 'RELAY') relayCount++;
 
 			// Apply type filter
 			if (typeFilter && entry.type !== typeFilter) continue;
@@ -111,7 +113,8 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 			userCount,
 			cueCount,
 			agentEntryCount,
-			totalCount: autoCount + userCount + cueCount + agentEntryCount,
+			relayCount,
+			totalCount: autoCount + userCount + cueCount + agentEntryCount + relayCount,
 			lookbackDays,
 		};
 
@@ -148,7 +151,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 				`**Period:** ${lookbackDays > 0 ? `Last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'All time'}`
 			);
 			lines.push(
-				`**Stats:** ${stats.agentCount} agents, ${stats.totalCount} entries (${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent)`
+				`**Stats:** ${stats.agentCount} agents, ${stats.totalCount} entries (${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent, ${stats.relayCount} relay)`
 			);
 			lines.push(`**Showing:** ${limitedEntries.length} of ${allEntries.length} entries`);
 			lines.push('');

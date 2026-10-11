@@ -82,7 +82,10 @@ export interface AgentSessionOriginsData {
 		string,
 		Record<
 			string,
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>
 	>;
 }
@@ -766,7 +769,10 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				agentId: string,
 				projectPath: string
 			): Promise<
-				Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+				Record<
+					string,
+					{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+				>
 			> => {
 				if (!originsStore) {
 					logger.warn('Origins store not available for getOrigins', LOG_CONTEXT);

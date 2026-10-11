@@ -99,6 +99,7 @@ describe('CodexAppServerEventTranslator', () => {
 						id: 'msg_074baebd0cfcfca0016acb2bf66d488194ad0bf29a3a33addb',
 						type: 'agent_message',
 						text: 'OK',
+						phase: 'final_answer',
 					},
 				},
 				{
@@ -296,6 +297,9 @@ describe('CodexAppServerEventTranslator', () => {
 			const results = events.filter((event) => event && parser.isResultMessage(event));
 
 			expect(results.at(-1)?.text).toBe(finalAnswer.text);
+			expect(results.at(-1)?.responsePhase).toBe('final');
+			expect(results).toHaveLength(1);
+			expect(events.some((event) => event?.responsePhase === 'commentary')).toBe(true);
 			expect(events[0]).toMatchObject({
 				type: 'init',
 				sessionId: '01a129a3-bb7d-7971-9636-b3013de8faa0',

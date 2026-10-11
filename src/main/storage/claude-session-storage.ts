@@ -319,8 +319,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the Claude projects directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteProjectsDir(): string {
-		return '~/.claude/projects';
+	private getRemoteProjectsDir(configDir?: string): string {
+		return path.posix.join(configDir ?? '~/.claude', 'projects');
 	}
 
 	/**
@@ -336,9 +336,9 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * Get the encoded project directory path (remote)
 	 * Uses POSIX-style paths for remote Linux hosts
 	 */
-	private getRemoteEncodedProjectDir(projectPath: string): string {
+	private getRemoteEncodedProjectDir(projectPath: string, configDir?: string): string {
 		const encodedPath = encodeClaudeProjectPath(projectPath);
-		return `${this.getRemoteProjectsDir()}/${encodedPath}`;
+		return `${this.getRemoteProjectsDir(configDir)}/${encodedPath}`;
 	}
 
 	/**
@@ -504,7 +504,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, configDir);
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
@@ -542,9 +542,10 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		configDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
 		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
 		if (!dirResult.success) {

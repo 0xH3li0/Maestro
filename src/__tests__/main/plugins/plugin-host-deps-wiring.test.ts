@@ -27,6 +27,7 @@ import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
+import { getProviderProfileConfig } from '../../../shared/providerProfiles';
 
 vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
@@ -103,6 +104,14 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		if (keys.includes('dispatch')) {
 			expect(keys).toContain('dispatchUnattendedAllowed');
 		}
+	});
+
+	it('wires title generation with the same unattended and host-owned naming path', () => {
+		expect(keys).toContain('generateTitle');
+		expect(keys).toContain('dispatchUnattendedAllowed');
+		expect(source).toMatch(/generateTitle: async \(agentId, firstMessage, signal\) =>/);
+		expect(source).toMatch(/return generateTabName\(/);
+		expect(source).toMatch(/useUtilityAgent: false/);
 	});
 
 	it('still wires the safe read-only deps (guard targets the right call)', () => {
@@ -218,6 +227,96 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		// execFile with explicit shell: false in the sink options object.
 		expect(source).toMatch(/shell: false/);
 		expect(source).not.toMatch(/shell: true/);
+	});
+});
+
+describe('production Relay origin backfill', () => {
+	it('respects provider account roots and skips missing or disabled SSH remotes', async () => {
+		let withinBackfill = false;
+		let callback: ts.ArrowFunction | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isIfStatement(node) &&
+				node.expression.getText(sf) === "pluginProviderSessions.hasBindings('sh.maestro.relay')"
+			) {
+				withinBackfill = true;
+			}
+			if (
+				withinBackfill &&
+				!callback &&
+				ts.isArrowFunction(node) &&
+				node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+			) {
+				callback = node;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(callback).toBeDefined();
+		const agents = [
+			{
+				id: 'claude',
+				toolType: 'claude-code',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/isolated/claude' },
+			},
+			{ id: 'codex', toolType: 'codex', customEnvVars: { CODEX_HOME: '/isolated/codex' } },
+			{
+				id: 'disabled',
+				toolType: 'codex',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'off' },
+			},
+			{
+				id: 'missing',
+				toolType: 'codex',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'gone' },
+			},
+			{
+				id: 'remote',
+				toolType: 'claude-code',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/isolated/remote-claude' },
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'on' },
+			},
+		];
+		const enabledRemote = { enabled: true };
+		const listSessions = vi.fn(async () => [{ sessionId: 'owned' }, { sessionId: 'ordinary-cli' }]);
+		const markRelaySession = vi.fn();
+		const isOwned = vi.fn(
+			(_plugin: string, _agent: string, session: string) => session === 'owned'
+		);
+		const js = ts.transpileModule(`const backfill = ${callback!.getText(sf)}`, {
+			compilerOptions: { target: ts.ScriptTarget.ES2024 },
+		}).outputText;
+		const backfill = new Function(
+			'sessionsStore',
+			'getSessionStorage',
+			'getSshRemoteById',
+			'relayProjectPath',
+			'getProviderProfileConfig',
+			'pluginProviderSessions',
+			'markRelaySession',
+			'logger',
+			`${js}\nreturn backfill;`
+		)(
+			{ get: () => agents },
+			() => ({ listSessions }),
+			(id: string) => (id === 'on' ? enabledRemote : id === 'off' ? { enabled: false } : undefined),
+			() => '/isolated/project',
+			getProviderProfileConfig,
+			{ isOwned },
+			markRelaySession,
+			{ warn: vi.fn() }
+		);
+		await backfill();
+		expect(listSessions.mock.calls).toEqual([
+			['/isolated/project', undefined, '/isolated/claude'],
+			['/isolated/project', undefined, '/isolated/codex'],
+			['/isolated/project', enabledRemote, '/isolated/remote-claude'],
+		]);
+		expect(markRelaySession.mock.calls).toEqual([
+			[agents[0], 'owned', true],
+			[agents[1], 'owned', true],
+			[agents[4], 'owned', true],
+		]);
 	});
 });
 
