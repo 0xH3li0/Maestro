@@ -814,7 +814,25 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, errorText);
+		// An in-turn API error notice puts only a bare category tag in `error`
+		// (`invalid_request`, `server_error`), and a tag matches no pattern. What
+		// actually failed is the notice's own text, so classify from that when the
+		// tag says nothing. Captured live: a full context window arrived as
+		//
+		//   { type: 'assistant', error: 'invalid_request', is_api_error_message: true,
+		//     message: { model: '<synthetic>', content: [{ type: 'text',
+		//       text: 'Prompt is too long' }] } }
+		//
+		// and surfaced as an `unknown` error reading "invalid_request". The result
+		// that follows does classify, but the held notice is settled first and wins.
+		const match =
+			matchErrorPattern(patterns, errorText) ??
+			(this.isProvisionalErrorNotice(parsed)
+				? matchErrorPattern(
+						patterns,
+						this.extractTextFromMessage(obj as unknown as ClaudeRawMessage)
+					)
+				: null);
 
 		if (match) {
 			return {
