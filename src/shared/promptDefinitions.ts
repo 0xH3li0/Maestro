@@ -6,6 +6,8 @@
  * so neither needs to hardcode its own mapping.
  */
 
+import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -15,6 +17,12 @@ export interface PromptDefinition {
 	filename: string;
 	description: string;
 	category: string;
+	/**
+	 * Encore Feature this prompt belongs to. Settings -> Maestro Prompts leaves
+	 * it out while that feature is off (see `isPromptAvailable`). It does not
+	 * change loading: agents and `maestro-cli prompts get` still resolve it.
+	 */
+	encoreFlag?: keyof EncoreFeatureDefaults;
 }
 
 // ============================================================================
@@ -182,6 +190,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'pianola-system.md',
 		description: 'Pianola manager agent system prompt (appended for the pinned Pianola agent)',
 		category: 'pianola',
+		encoreFlag: 'pianola',
 	},
 	// Computer History (first-party plugin system-prompt section)
 	{
@@ -190,6 +199,16 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description:
 			'Computer History section appended to every local agent system prompt while the feature is on',
 		category: 'computer-history',
+		encoreFlag: 'computerHistory',
+	},
+	// Concerto (first-party plugin system-prompt section)
+	{
+		id: 'concerto-system',
+		filename: 'concerto-system.md',
+		description:
+			'Concerto routing section appended to every agent system prompt while the feature is on',
+		category: 'concerto',
+		encoreFlag: 'concerto',
 	},
 	// MaestroRun (first-party plugin system-prompt section, macOS only)
 	{
@@ -198,6 +217,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description:
 			'MaestroRun section appended to every local agent system prompt once the launcher is installed and holds Full Disk Access',
 		category: 'maestro-run',
+		encoreFlag: 'maestroRun',
 	},
 	// Group Chat
 	{
@@ -304,6 +324,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'director-notes.md',
 		description: "Director's Notes prompt",
 		category: 'system',
+		encoreFlag: 'directorNotes',
 	},
 	{
 		id: 'acappella-router',
@@ -376,6 +397,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description:
 			'Maestro Cue reference: event types, `maestro-cue.yaml` schema, pipeline topologies, and template variables',
 		category: 'includes',
+		encoreFlag: 'maestroCue',
 	},
 	{
 		id: '_computer-history',
@@ -383,6 +405,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description:
 			'Computer History guide: CLI queries, event meanings, untrusted-content and privacy rules',
 		category: 'includes',
+		encoreFlag: 'computerHistory',
 	},
 	{
 		id: '_maestro-run',
@@ -390,6 +413,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description:
 			'MaestroRun guide: when to use the launcher, its commands and exit codes, and the approval rule',
 		category: 'includes',
+		encoreFlag: 'maestroRun',
 	},
 	{
 		id: '_desktop-instrumentation',
@@ -415,6 +439,15 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 /**
  * Prompt IDs as constants for type-safe usage.
  */
+/**
+ * Whether Settings -> Maestro Prompts lists a prompt: false only for one whose
+ * Encore Feature is switched off. Unknown ids (plugin prompts) are available.
+ */
+export function isPromptAvailable(promptId: string, encoreFeatures: unknown): boolean {
+	const flag = CORE_PROMPTS.find((def) => def.id === promptId)?.encoreFlag;
+	return !flag || resolveEncoreFeatures(encoreFeatures)[flag];
+}
+
 export const PROMPT_IDS = {
 	// Wizard
 	WIZARD_SYSTEM: 'wizard-system',
@@ -451,6 +484,8 @@ export const PROMPT_IDS = {
 	COMPUTER_HISTORY_SYSTEM: 'computer-history-system',
 	// MaestroRun
 	MAESTRO_RUN_SYSTEM: 'maestro-run-system',
+	// Concerto
+	CONCERTO_SYSTEM: 'concerto-system',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',

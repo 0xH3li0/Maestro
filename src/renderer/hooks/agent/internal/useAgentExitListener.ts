@@ -863,7 +863,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							);
 						});
 				}, 0);
-			} else if (toastData) {
+			} else if (toastData && !(tabIdFromSession && isRetryPending(tabIdFromSession))) {
+				// A retry counting down means this turn FAILED and will run again, so
+				// it gets no completion toast or sound. Without this gate each failed
+				// attempt of an outage announced itself as a green success, quoting
+				// whatever the dying turn printed last.
 				setTimeout(() => {
 					window.maestro.logger.log('info', 'Agent process completed', 'App', {
 						agentSessionId: toastData!.agentSessionId,

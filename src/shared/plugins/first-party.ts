@@ -753,6 +753,10 @@ export const CONCERTO_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	// flag is off), and the bridge that carries them is app-scoped. Disable =
 	// flag off + overlays unmount + payloads dropped; nothing keeps running.
 	backgroundServices: [],
+	// Agents are told to answer on the stage only while the feature is on. In
+	// the base prompt this reached every agent, and one with Concerto off would
+	// compose a view whose payload the render gate then dropped.
+	systemPromptSection: { promptId: 'concerto-system' },
 	usage: {
 		overview: [
 			'Concerto lets an agent answer with something you can look at and click, instead of a wall of text. Ask for a chessboard, a dashboard, a mockup, a simulator, or a comparison, and the agent composes it as a real, interactive view.',

@@ -52,6 +52,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 		enablePluginsSubsystem,
 		togglePlugin,
 		installPlugin,
+		updatePlugin,
 		uninstallPlugin,
 		revokePlugin,
 		getGrants,
@@ -211,6 +212,7 @@ export function ExtensionsView({ theme, settingsBodies }: ExtensionsViewProps) {
 					onTogglePlugin={togglePlugin}
 					onToggleBuiltin={toggleBuiltin}
 					onUninstall={uninstallPlugin}
+					onUpdate={updatePlugin}
 					onRevoke={revokePlugin}
 					getGrants={getGrants}
 					settingsBody={selected.flag ? settingsBodies?.[selected.flag] : undefined}

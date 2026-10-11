@@ -95,6 +95,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Main process: stores, persistence, platform
 
 - **Maestro's data directory, without Electron:** `resolveUserDataDir(options?)`, `assertUserDataDirExists(dir)` in `src/shared/userDataDir.ts`
+- **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **Sealing a file with the key the OS holds for the app:** `safeStorageSeal(safeStorage)`, `obscuringSeal()`, `SealProvider`, `SafeStorageLike` in `src/main/utils/safe-storage-seal.ts`
@@ -275,6 +276,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)` in `src/shared/shortcutKeys.ts`
 - **Whether a keystroke belongs to a text field (guard before `preventDefault`):** `isTextInputTarget()`, `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts`; `isEditingTextTarget()`, `isEditingTextFocused()` in `src/renderer/utils/editableTarget.ts`
 - **Hiding a switched-off Encore Feature's shortcut, menu item, or setting:** `availableShortcuts()`, `isShortcutAvailable()`, `SHORTCUT_ENCORE_FLAGS` in `src/renderer/utils/encoreShortcuts.ts`; `requiresEncore` on `SearchableSetting`; `encoreFlag` on a `MenuCommand` in `src/main/app-menu.ts`
+- **Hiding a switched-off Encore Feature's prompts and template variables:** `isPromptAvailable()` in `src/shared/promptDefinitions.ts`; `availableTemplateVariables()` in `src/shared/templateVariables.ts`, read through `useAvailableTemplateVariables()` in `src/renderer/hooks/input/useAvailableTemplateVariables.ts`
 - **How much of the keyboard the user has mastered:** `collectBoundShortcuts()`, `countUsedBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`
 - **Arrow-key navigation over a list or grid:** `useListNavigation()` in `src/renderer/hooks/keyboard/useListNavigation.ts`; a grid feeds it `useGridColumnCount()` from `src/renderer/hooks/ui/useGridColumnCount.ts`
 - **Bare `+` / `-` / `0` zoom on a surface:** `useScaleShortcuts(control, { enabled })` in `src/renderer/hooks/ui/useScaleShortcuts.ts`

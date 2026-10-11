@@ -240,8 +240,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setSshReduceEntryCapFraction={settings.setSshReduceEntryCapFraction}
 			/>
 
-			{/* This neutral display-settings slot is deliberately outside plugin
-			    management, consent, uninstall, and grant/revoke flows. */}
 			<PluginUiItemsSlot surface="settingsSection" className="rounded-lg border p-3" />
 
 			{bionifyAlgorithmState.showInfoModal && (

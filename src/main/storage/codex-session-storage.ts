@@ -24,6 +24,8 @@ import { app } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
+import type Store from 'electron-store';
+import type { ClaudeSessionOriginsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
@@ -491,6 +493,34 @@ async function parseSessionFile(
 export class CodexSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'codex';
 
+	constructor(private readonly originsStore?: Store<ClaudeSessionOriginsData>) {
+		super();
+	}
+
+	private attachOriginInfo(sessions: AgentSessionInfo[], projectPath: string): AgentSessionInfo[] {
+		if (!this.originsStore) return sessions;
+		const origins = this.originsStore.get('origins', {});
+		return sessions.map((session) => {
+			const record =
+				origins[projectPath]?.[session.sessionId] ??
+				origins[normalizeProjectPath(projectPath)]?.[session.sessionId] ??
+				origins[session.projectPath]?.[session.sessionId] ??
+				origins[normalizeProjectPath(session.projectPath)]?.[session.sessionId];
+			if (!record) return session;
+			const info = typeof record === 'string' ? { origin: record } : record;
+			return {
+				...session,
+				...(info.origin !== undefined ? { origin: info.origin } : {}),
+				...(typeof record === 'object' && record.sessionName !== undefined
+					? { sessionName: record.sessionName }
+					: {}),
+				...(typeof record === 'object' && record.starred !== undefined
+					? { starred: record.starred }
+					: {}),
+			};
+		});
+	}
+
 	/**
 	 * Get the Codex sessions directory path for an account (`CODEX_HOME`), or
 	 * the default account when `accountDir` is undefined.
@@ -503,8 +533,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Get the Codex sessions directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteSessionsDir(): string {
-		return '~/.codex/sessions';
+	private getRemoteSessionsDir(accountDir?: string): string {
+		return path.posix.join(accountDir || '~/.codex', 'sessions');
 	}
 
 	/**
@@ -583,9 +613,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Recursively scans the YYYY/MM/DD directory structure
 	 */
 	private async findAllSessionFilesRemote(
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getRemoteSessionsDir();
+		const sessionsDir = this.getRemoteSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 		// List YYYY directories
@@ -848,7 +879,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
 		}
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const allSessionFiles = await this.findAllSessionFiles(accountDir);
@@ -940,7 +971,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			);
 		}
 
-		return sessions;
+		return this.attachOriginInfo(sessions, projectPath);
 	}
 
 	/**
@@ -948,9 +979,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig);
+		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig, accountDir);
 
 		if (allSessionFiles.length === 0) {
 			logger.info(`No Codex sessions found on remote`, LOG_CONTEXT);
@@ -988,7 +1020,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			LOG_CONTEXT
 		);
 
-		return sessions;
+		return this.attachOriginInfo(sessions, projectPath);
 	}
 
 	async readSessionMessages(

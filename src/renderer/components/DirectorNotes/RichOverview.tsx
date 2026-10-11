@@ -97,6 +97,7 @@ export function RichOverview({
 	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	const retentionLimit = useSettingsStore((s) => resolveHistoryEntryLimit(s.maxLogBuffer));
 	// Agent -> group mapping for narrative bucketing. Derived from live session
 	// state, never from the model.
@@ -190,10 +191,14 @@ export function RichOverview({
 		});
 	}
 
+	// With Maestro Cue off and no Cue entries in range, the Cue source is left
+	// out of the breakdown and the timeline: it would read "Cue 0" for a feature
+	// the user has not turned on. Entries recorded while it was on still show.
+	const showCueSource = maestroCueEnabled || cueCount > 0;
 	const slices: DonutSlice[] = [
 		{ label: 'User', value: userCount, color: userColor },
 		{ label: 'Auto', value: autoCount, color: autoColor },
-		{ label: 'Cue', value: cueCount, color: CUE_COLOR },
+		...(showCueSource ? [{ label: 'Cue', value: cueCount, color: CUE_COLOR }] : []),
 		{ label: 'Agent', value: agentEntryCount, color: AGENT_COLOR },
 	];
 
@@ -241,6 +246,7 @@ export function RichOverview({
 								buckets={timelineBuckets}
 								colors={{ auto: autoColor, user: userColor, cue: CUE_COLOR }}
 								defaultHiddenSeries={['cue']}
+								omitSeries={showCueSource ? undefined : ['cue']}
 							/>
 						</ChartErrorBoundary>
 					</SectionCard>

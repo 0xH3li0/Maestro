@@ -61,8 +61,10 @@ export function HamburgerMenuContent({
 	const phone = usePhoneLayout();
 	// Only a browser that actually signed in has somewhere to sign out to. On
 	// the desktop there is no session and no login page, so the row is absent
-	// rather than disabled.
-	const webLoginUser = isWebDesktop() ? currentWebLoginUser() : null;
+	// rather than disabled. The cookie outlives the feature, so the row also
+	// needs the Encore flag: with Web Login off there is no session to end.
+	const webLoginEnabled = useSettingsStore((s) => s.encoreFeatures.webLogin === true);
+	const webLoginUser = isWebDesktop() && webLoginEnabled ? currentWebLoginUser() : null;
 	const {
 		setShortcutsHelpOpen,
 		setSettingsModalOpen,
