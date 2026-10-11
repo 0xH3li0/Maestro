@@ -52,3 +52,65 @@ export class LocalModelError extends Error {
 export function isLocalModelError(error: unknown): error is LocalModelError {
 	return error instanceof LocalModelError;
 }
+
+/**
+ * Why a call to a user-run model server failed.
+ *
+ *   - `missing-key` - the endpoint names an API key variable that is not set in
+ *                     Settings -> Environment, so the request was never sent.
+ *   - `auth`        - the server answered 401 or 403.
+ *   - `not-found`   - the server answered 404: the path does not exist there
+ *                     (wrong kind, wrong base URL) or the model is unknown.
+ *   - `http`        - any other non-2xx answer.
+ *   - `timeout`     - no response headers inside the request budget.
+ *   - `network`     - the server could not be reached at all.
+ *   - `cancelled`   - the caller aborted. Not a fault; never shown as one.
+ *   - `malformed`   - a 2xx answer whose body was not the shape this kind serves.
+ */
+export type LocalModelEndpointErrorKind =
+	| 'missing-key'
+	| 'auth'
+	| 'not-found'
+	| 'http'
+	| 'timeout'
+	| 'network'
+	| 'cancelled'
+	| 'malformed';
+
+export interface LocalModelEndpointErrorOptions {
+	kind: LocalModelEndpointErrorKind;
+	endpointId: string;
+	endpointName: string;
+	/** The URL that was requested. Carries no credentials: those are refused at save time. */
+	url: string;
+	httpStatus?: number;
+	cause?: unknown;
+}
+
+/**
+ * A failure talking to a configured endpoint. The message names the endpoint
+ * and, for an HTTP failure, the status, so a person can tell "Ollama is not
+ * running" from "LiteLLM rejected the key" without opening a log.
+ */
+export class LocalModelEndpointError extends Error {
+	readonly kind: LocalModelEndpointErrorKind;
+	readonly endpointId: string;
+	readonly endpointName: string;
+	readonly url: string;
+	readonly httpStatus?: number;
+
+	constructor(message: string, options: LocalModelEndpointErrorOptions) {
+		super(message);
+		this.name = 'LocalModelEndpointError';
+		if (options.cause !== undefined) (this as { cause?: unknown }).cause = options.cause;
+		this.kind = options.kind;
+		this.endpointId = options.endpointId;
+		this.endpointName = options.endpointName;
+		this.url = options.url;
+		this.httpStatus = options.httpStatus;
+	}
+}
+
+export function isLocalModelEndpointError(error: unknown): error is LocalModelEndpointError {
+	return error instanceof LocalModelEndpointError;
+}
