@@ -60,6 +60,8 @@ describe('Computer History prompts', () => {
 		expect(routing).toContain('computer-history status');
 		expect(routing).toContain('prompts get _computer-history');
 		expect(routing).toMatch(/only when the user explicitly asks/);
+		// Switching the feature off stops recording; it does not hide saved history.
+		expect(routing).toMatch(/saved earlier is still readable/);
 		expect(routing).toMatch(/untrusted/i);
 
 		expect(read('_documentation-index.md')).toContain(
