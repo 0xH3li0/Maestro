@@ -20,6 +20,7 @@ import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
 import { runAsActingUser } from '../auth/acting-user';
 import { bridgeDeniedChannelError, isBridgeDeniedChannel } from './bridgeDenyList';
+import { bridgeGuardViolation } from './bridgePathGuard';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -94,9 +95,12 @@ export function uninstallWebContentsBridgeHook(): void {
  *
  * No-op when the Encore Feature is off (`broadcastSink === null`) or when
  * no web-desktop clients are connected (handled inside the sink itself).
+ * A channel under a denied prefix is never fanned out either: a browser that
+ * may not invoke `computerHistory:*` must not receive its pushes.
  */
 export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
 	if (!broadcastSink) return;
+	if (isBridgeDeniedChannel(channel)) return;
 	try {
 		broadcastSink(channel, args);
 	} catch (err) {
@@ -139,6 +143,20 @@ export async function handleBridgeInvoke(
 			error: bridgeDeniedChannelError(channel),
 		});
 		return;
+	}
+
+	// Argument guard for web clients, before EITHER dispatch path (invoke or
+	// the ipcMain.emit fallback below): no Computer History files or CLI
+	// secret through generic handlers like `fs:readFile`, and no toggling the
+	// Computer History flag. maestro-cli (`client.cli`) is exempt. See
+	// bridgePathGuard.ts.
+	if (!client.cli) {
+		const violation = bridgeGuardViolation(channel, args);
+		if (violation) {
+			logger.warn(`Refused bridge call "${channel}" from ${client.id}: ${violation}`, LOG_CONTEXT);
+			send(client, { type: 'bridge.response', requestId, ok: false, error: violation });
+			return;
+		}
 	}
 
 	const handlers = (ipcMain as unknown as IpcMainInternal)._invokeHandlers;

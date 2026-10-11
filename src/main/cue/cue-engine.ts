@@ -682,10 +682,10 @@ export class CueEngine {
 					// usageStats was enabled come back as undefined.
 					entry.chainRootId,
 					entry.parentEventId,
-					// The queue table has no column for a notify payload, so a
-					// restored notify run still comes back without one.
-					undefined,
-					// The documents an `action: autorun` run was scheduled with.
+					// The two action payloads that travel with the run instead of
+					// being re-read from the subscription: a notify's `sticky`, and
+					// the documents an `action: autorun` run was scheduled with.
+					entry.notify,
 					entry.autoRun
 				);
 			}

@@ -87,6 +87,18 @@ describe('searchableSettings', () => {
 			expect(results.some((s) => s.id === 'general-rendering')).toBe(true);
 		});
 
+		it.each([
+			'Whisper',
+			'Relay',
+			'speech recognition',
+			'model-directory',
+			'MAESTRO_MEDIA_MODEL_DIR',
+			'Available models',
+			'Check status',
+		])('finds host media settings for %s', (query) => {
+			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
+		});
+
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
 			const upper = searchSettings('FONT');
@@ -228,6 +240,8 @@ describe('searchableSettings', () => {
 			['global cue settings', 'encore-cue'],
 			['playbook registry', 'encore-symphony'],
 			['synopsis provider', 'encore-director-notes'],
+			['computer history', 'encore-computer-history'],
+			['digest agent', 'encore-computer-history'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

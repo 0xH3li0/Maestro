@@ -13,7 +13,13 @@
 
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
-import type { CueAutoRunConfig, CueCommand, CueEvent, CueSubscription } from './cue-types';
+import type {
+	CueAutoRunConfig,
+	CueCommand,
+	CueEvent,
+	CueNotifyConfig,
+	CueSubscription,
+} from './cue-types';
 import {
 	getQueuedEvents,
 	clearPersistedQueue,
@@ -44,6 +50,9 @@ export interface PersistableQueueEntry {
 	 *  THIS, not from the subscription, so it has to survive a restart with the
 	 *  row or the restored run has no documents. */
 	autoRun?: CueAutoRunConfig;
+	/** Resolved notify config for `action: notify`. The message also rides the
+	 *  `prompt` slot, but `sticky` lives nowhere else. */
+	notify?: CueNotifyConfig;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
@@ -95,6 +104,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			chainRootId: entry.chainRootId ?? null,
 			parentEventId: entry.parentEventId ?? null,
 			autoRunJson: entry.autoRun ? JSON.stringify(entry.autoRun) : null,
+			notifyJson: entry.notify ? JSON.stringify(entry.notify) : null,
 		};
 		safePersistQueuedEvent(record);
 	}
@@ -220,11 +230,13 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			let cliOutput: { target: string } | undefined;
 			let command: CueCommand | undefined;
 			let autoRun: CueAutoRunConfig | undefined;
+			let notify: CueNotifyConfig | undefined;
 			try {
 				event = JSON.parse(row.eventJson);
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
 				autoRun = row.autoRunJson ? JSON.parse(row.autoRunJson) : undefined;
+				notify = row.notifyJson ? JSON.parse(row.notifyJson) : undefined;
 			} catch (err) {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 				deps.onLog(
@@ -253,6 +265,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				chainRootId: row.chainRootId ?? undefined,
 				parentEventId: row.parentEventId ?? undefined,
 				autoRun,
+				notify,
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);

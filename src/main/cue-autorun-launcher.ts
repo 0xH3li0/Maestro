@@ -23,6 +23,7 @@ import type { BrowserWindow } from 'electron';
 import type { CueAutoRunLaunchParams, CueAutoRunLaunchResult } from './cue/cue-autorun-executor';
 import { isWebContentsAvailable } from './utils/safe-send';
 import { logger } from './utils/logger';
+import { WORKTREE_SETUP_TIMEOUT_MS } from './utils/worktree-setup-script';
 import { requestFromRenderer } from './web-server/callbacks/remoteRequest';
 
 /**
@@ -35,6 +36,25 @@ import { requestFromRenderer } from './web-server/callbacks/remoteRequest';
  * resolves.
  */
 export const CUE_AUTORUN_LAUNCH_TIMEOUT_MS = 30_000;
+
+/**
+ * How long to wait for a launch into a worktree that does not exist yet.
+ *
+ * The renderer accepts only after `git worktree add` AND the parent agent's
+ * setup script have finished, and the script alone is allowed
+ * `WORKTREE_SETUP_TIMEOUT_MS`. Giving up sooner would report a failed launch
+ * for a run that then starts anyway - and a failed scheduled run is kept on
+ * disk to be re-triggered, which is how one schedule becomes two runs.
+ */
+export const CUE_AUTORUN_WORKTREE_LAUNCH_TIMEOUT_MS =
+	CUE_AUTORUN_LAUNCH_TIMEOUT_MS + WORKTREE_SETUP_TIMEOUT_MS;
+
+/** The acceptance budget for one launch. Exported for tests. */
+export function cueAutoRunLaunchTimeoutMs(params: CueAutoRunLaunchParams): number {
+	return params.worktreeTarget?.mode === 'create-new'
+		? CUE_AUTORUN_WORKTREE_LAUNCH_TIMEOUT_MS
+		: CUE_AUTORUN_LAUNCH_TIMEOUT_MS;
+}
 
 /**
  * Ask the renderer to launch an Auto Run and wait for it to accept.
@@ -59,12 +79,17 @@ export async function launchCueAutoRun(
 		return { success: false, error: 'renderer webContents not available' };
 	}
 
+	const timeoutMs = cueAutoRunLaunchTimeoutMs(params);
 	// A fresh object per call, so a timeout is told apart from a renderer that
 	// answered with a failure of its own by identity rather than by message.
 	const timedOut: CueAutoRunLaunchResult = {
 		success: false,
-		error: `renderer did not accept the launch within ${CUE_AUTORUN_LAUNCH_TIMEOUT_MS / 1000}s`,
+		error: `renderer did not accept the launch within ${timeoutMs / 1000}s`,
 	};
+	// Everything but the agent id IS the launch request, so it is forwarded
+	// whole: a run option added to `CueAutoRunLaunchParams` reaches the renderer
+	// without a second list here to forget it in.
+	const { sessionId, ...run } = params;
 	const result = await requestFromRenderer<CueAutoRunLaunchResult>(
 		mainWindow,
 		'remote:configureAutoRun',
@@ -75,25 +100,12 @@ export async function launchCueAutoRun(
 					success: false,
 					error: 'renderer returned no result',
 				},
-			timeoutMs: CUE_AUTORUN_LAUNCH_TIMEOUT_MS,
-			args: [
-				params.sessionId,
-				{
-					documents: params.documents,
-					prompt: params.prompt,
-					loopEnabled: params.loopEnabled,
-					maxLoops: params.maxLoops,
-					...(params.model && { model: params.model }),
-					...(params.effort && { effort: params.effort }),
-					...(params.taskSelectionMode && { taskSelectionMode: params.taskSelectionMode }),
-					...(params.ignoreModelHints && { ignoreModelHints: true }),
-					launch: true,
-				},
-			],
+			timeoutMs,
+			args: [sessionId, { ...run, launch: true }],
 		}
 	);
 	if (result === timedOut) {
-		logger.warn(`Cue Auto Run launch timed out for session ${params.sessionId}`, 'Cue');
+		logger.warn(`Cue Auto Run launch timed out for session ${sessionId}`, 'Cue');
 	}
 	return result;
 }

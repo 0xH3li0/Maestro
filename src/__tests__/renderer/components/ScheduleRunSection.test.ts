@@ -11,7 +11,6 @@ import { describe, it, expect } from 'vitest';
 import {
 	toDateTimeLocalValue,
 	fromDateTimeLocalValue,
-	scheduleBlockedReason,
 	validateScheduledStart,
 } from '../../../renderer/components/ScheduleRunSection';
 
@@ -64,18 +63,5 @@ describe('validateScheduledStart', () => {
 
 	it('rejects an unparseable value', () => {
 		expect(validateScheduledStart('garbage', now)).toMatch(/valid date and time/);
-	});
-});
-
-// A scheduled run is launched by Cue in the agent's own checkout. Letting one
-// through with a worktree target set would run the documents against the main
-// checkout the user picked a worktree to keep them out of.
-describe('scheduleBlockedReason', () => {
-	it('refuses a run that targets a worktree', () => {
-		expect(scheduleBlockedReason({ hasWorktreeTarget: true })).toMatch(/worktree/);
-	});
-
-	it("allows a run in the agent's own checkout", () => {
-		expect(scheduleBlockedReason({ hasWorktreeTarget: false })).toBeNull();
 	});
 });

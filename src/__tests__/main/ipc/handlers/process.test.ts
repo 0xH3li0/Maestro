@@ -3684,6 +3684,13 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.prompt!.replace(/^COPILOT_PREAMBLE_TEXT\n\n/, '')).toBe(
 				'Follow-up question'
 			);
+			// The spawn log reports what actually happened, not "embedded".
+			const { logger } = await import('../../../../main/utils/logger');
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Spawning process'),
+				expect.anything(),
+				expect.objectContaining({ systemPromptDelivery: 'skipped-resume' })
+			);
 		});
 
 		it('should still embed system prompt on first turn (no agentSessionId) for unsupported agents', async () => {
@@ -3858,10 +3865,10 @@ describe('process IPC handlers', () => {
 				await handler!({} as any, buildSpawnConfig());
 
 				expect(fsp.writeFile).toHaveBeenCalledTimes(1);
-				const [tempPath, content, encoding] = vi.mocked(fsp.writeFile).mock.calls[0];
-				expect(tempPath).toMatch(/maestro-sysprompt-session-1-\d+\.txt/);
+				const [tempPath, content, options] = vi.mocked(fsp.writeFile).mock.calls[0];
+				expect(tempPath).toMatch(/maestro-sysprompt-session-1-\d+-[0-9a-f]{8}\.txt/);
 				expect(content).toBe('You are Maestro system prompt content');
-				expect(encoding).toBe('utf-8');
+				expect(options).toEqual({ encoding: 'utf-8', mode: 0o600 });
 			});
 
 			it('schedules unlink after 30s timer', async () => {
@@ -3880,7 +3887,7 @@ describe('process IPC handlers', () => {
 
 				expect(fsp.unlink).toHaveBeenCalledTimes(1);
 				const [unlinkPath] = vi.mocked(fsp.unlink).mock.calls[0];
-				expect(unlinkPath).toMatch(/maestro-sysprompt-session-1-\d+\.txt/);
+				expect(unlinkPath).toMatch(/maestro-sysprompt-session-1-\d+-[0-9a-f]{8}\.txt/);
 			});
 
 			it('silences ENOENT cleanup errors (file already gone)', async () => {
@@ -3933,7 +3940,7 @@ describe('process IPC handlers', () => {
 				expect(ctxArg).toEqual(
 					expect.objectContaining({
 						context: 'systemPromptTempFile cleanup (safety)',
-						file: expect.stringMatching(/maestro-sysprompt-session-1-\d+\.txt/),
+						file: expect.stringMatching(/maestro-sysprompt-session-1-\d+-[0-9a-f]{8}\.txt/),
 					})
 				);
 			});

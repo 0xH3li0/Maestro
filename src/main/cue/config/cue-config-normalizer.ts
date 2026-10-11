@@ -18,6 +18,7 @@ import {
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
 } from '../../../shared/cue';
+import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 
 export interface PromptSpec {
 	inline?: string;
@@ -252,6 +253,25 @@ function normalizeAutoRun(rawAutoRun: unknown): CueAutoRunConfig | undefined {
 	}
 	if (typeof raw.ignore_model_hints === 'boolean') {
 		result.ignore_model_hints = raw.ignore_model_hints;
+	}
+	if (typeof raw.auto_resume_on_error === 'boolean') {
+		result.auto_resume_on_error = raw.auto_resume_on_error;
+	}
+	// Bounds are applied where the policy is resolved (`resolveAutoResumePolicy`),
+	// the same place every other door into a run is clamped.
+	if (typeof raw.auto_resume_after_min === 'number' && Number.isFinite(raw.auto_resume_after_min)) {
+		result.auto_resume_after_min = raw.auto_resume_after_min;
+	}
+	if (typeof raw.max_auto_resumes === 'number' && Number.isFinite(raw.max_auto_resumes)) {
+		result.max_auto_resumes = raw.max_auto_resumes;
+	}
+	if (raw.worktree !== undefined) {
+		const worktree = parseCueAutoRunWorktree(raw.worktree);
+		// An unusable block makes the whole payload unusable: carrying on without
+		// it would run the documents in the owning agent's own checkout. The
+		// validator reports why.
+		if (!worktree.ok) return undefined;
+		result.worktree = worktree.value;
 	}
 	return result;
 }

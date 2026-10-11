@@ -30,6 +30,7 @@ import {
 	type ScheduledTaskCreateInput,
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
+import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
 import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
@@ -359,6 +360,22 @@ export function buildScheduledTaskSubscriptions(
 			autoRunConfig.task_selection_mode = 'document';
 		}
 		if (input.autoRun!.ignore_model_hints) autoRunConfig.ignore_model_hints = true;
+		// Auto-resume is ON when absent, so only the opt-out is written; the two
+		// numbers are written whenever the caller chose them.
+		if (input.autoRun!.auto_resume_on_error === false) autoRunConfig.auto_resume_on_error = false;
+		if (input.autoRun!.auto_resume_after_min !== undefined) {
+			autoRunConfig.auto_resume_after_min = input.autoRun!.auto_resume_after_min;
+		}
+		if (input.autoRun!.max_auto_resumes !== undefined) {
+			autoRunConfig.max_auto_resumes = input.autoRun!.max_auto_resumes;
+		}
+		if (input.autoRun!.worktree) {
+			// Refused here, not at fire time: a block that cannot be resolved would
+			// otherwise be found out hours later, by a run nobody is watching.
+			const worktree = parseCueAutoRunWorktree(input.autoRun!.worktree);
+			if (!worktree.ok) throw new Error(`auto_run.worktree ${worktree.error}`);
+			autoRunConfig.worktree = worktree.value;
+		}
 		subs.push({
 			name: baseName,
 			event,

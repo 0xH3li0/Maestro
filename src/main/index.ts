@@ -34,9 +34,14 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
-import { PianolaSupervisor } from './pianola/pianola-supervisor';
+import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
+import {
+	getComputerHistoryService,
+	createComputerHistorySupervisorHooks,
+} from './computer-history';
+import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
@@ -153,7 +158,7 @@ import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
-import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
+import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
@@ -261,8 +266,9 @@ const IMAGE_SCHEME = 'maestro-image';
 }
 
 // Capture the production data path before any modification
-// Used for stores that should be shared between dev and prod (e.g., agent configs)
-const productionDataPath = app.getPath('userData');
+// Used for stores that should be shared between dev and prod (e.g., agent configs).
+// A demo profile shares nothing: see resolveSharedDataPath.
+const productionDataPath = resolveSharedDataPath(app.getPath('userData'));
 
 // Demo mode: use a separate data directory for fresh demos
 if (DEMO_MODE) {
@@ -611,11 +617,32 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 		pluginSandboxHost?.stopAll();
 		pluginGroupingRegistry?.clearAll();
 	}
+	// Feature changes also invalidate cached settings guests, including changes
+	// made outside this renderer. Reads remain pure; do not refresh discovery.
+	try {
+		mainWindow?.webContents.send(
+			'plugins:changed',
+			undefined,
+			pluginManager?.getContributions().panels.map((panel) => panel.id) ?? []
+		);
+	} catch {
+		// Renderer may be gone during shutdown.
+	}
 	if (!arePluginHostViewsEnabled()) {
 		pluginHostViews.purgeAll();
 		return;
 	}
 	pluginHostViews.sync();
+});
+
+// Computer History follows its Encore flag live. `maestro-cli encore enable`
+// writes through set_setting rather than the first-party bridge, so this store
+// change is the one signal every enable/disable path produces. reconcile() is
+// idempotent and a no-op before the service exists.
+store.onDidChange('encoreFeatures', () => {
+	void getComputerHistoryService()
+		?.reconcile()
+		.catch((err) => void captureException(err, { operation: 'computerHistory:flagChange' }));
 });
 
 // Collectors for a support (debug) package. One object shared by the debug and
@@ -1318,8 +1345,9 @@ app
 				// notify message is pre-resolved by the dispatch service via the
 				// fallback chain (notify.message → label → prompt → name); falling
 				// back here to `prompt` (which the dispatcher uses as the carrier)
-				// covers the queue-restored corner where the in-memory `notify` was
-				// lost but the message survived in the persisted `prompt` slot.
+				// covers a queue row restored from before the queue table carried
+				// the notify config (`notify_json`), where only the message survived,
+				// in the persisted `prompt` slot.
 				if (action === 'notify') {
 					const sessionInfo = {
 						id: storedSession.id,
@@ -1436,16 +1464,27 @@ app
 
 				const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
 
-				// Resolve the agent's binary path using the agent detector.
-				// Without this, Cue falls back to the bare command name (e.g., 'claude')
-				// which fails with ENOENT when spawn() can't find it on PATH.
-				let resolvedAgentPath = agentConfigValues.customPath as string | undefined;
-				if (!resolvedAgentPath && agentDetector) {
-					const detectedAgent = await agentDetector.getAgent(storedSession.toolType);
-					if (detectedAgent?.available && detectedAgent.path) {
-						resolvedAgentPath = detectedAgent.path;
-					}
-				}
+				// Resolve the agent's binary the way a tab spawn does: the agent's
+				// own custom path, then the provider's, then the detector's. Without
+				// the last rung Cue falls back to the bare command name (e.g.
+				// 'claude'), which fails with ENOENT when spawn() can't find it on PATH.
+				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
+				const resolvedAgentPath = await resolveCueAgentBinary({
+					sessionCustomPath: storedSession.customPath,
+					providerCustomPath: agentConfigValues.customPath as string | undefined,
+					sshEnabled: !!storedSession.sessionSshRemoteConfig?.enabled,
+					getDetectedPath: async () => {
+						const detectedAgent = await agentDetector?.getAgent(storedSession.toolType);
+						return detectedAgent?.available ? detectedAgent.path : undefined;
+					},
+					onWarn: (message) => logger.warn(message, 'Cue', { sessionId: storedSession.id }),
+				});
+
+				// The same Maestro system prompt a tab spawn gets, built from the
+				// stored agent (an SSH agent gets it without localOnly sections).
+				const { buildMaestroSystemPromptForSession } =
+					await import('./utils/maestro-system-prompt');
+				const appendSystemPrompt = await buildMaestroSystemPromptForSession(storedSession.id);
 
 				const result = await executeCuePrompt({
 					runId,
@@ -1497,6 +1536,7 @@ app
 					// Decided here, at dispatch, and never throws: a run is not affected
 					// by what happens to its record.
 					onRunTranscript: beginCueRunCapture(storedSession.id),
+					appendSystemPrompt,
 				});
 
 				// Cue spawns agents outside the ProcessManager, so a failed run is the
@@ -1590,6 +1630,19 @@ app
 		pianolaSupervisor = pianolaLifecycle.supervisor;
 		pianolaRelearnScheduler = pianolaLifecycle.relearnScheduler;
 
+		// Computer History: construct the one service (IPC, the CLI's WS writes,
+		// and the first-party hooks all reach it). Started below at boot when its
+		// Encore flag is on; see src/main/computer-history/.
+		createComputerHistoryForApp({
+			settingsStore: store as unknown as { get: (key: string) => unknown },
+			safeSend,
+			getWindowForSession: (sessionId: string) => {
+				const ownerId = windowRegistry.getWindowForSession(sessionId);
+				const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+				return owner?.browserWindow ?? mainWindow;
+			},
+		});
+
 		// Plugin manager: discovers installed community plugins, tracks their
 		// enable state, verifies signatures, and (tier 1) runs their sandboxed
 		// code. Self-gates on encoreFeatures.plugins. The permission broker is the
@@ -1653,6 +1706,9 @@ app
 					reconcile: () => usageRefreshScheduler?.start(),
 					stopAll: () => usageRefreshScheduler?.stop(),
 				},
+				// Computer History: `computerHistory.observer` - the accessibility
+				// helper plus the segment writer. Disable/revoke stops both.
+				computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
 			};
 		const firstPartyBridges: Partial<Record<FirstPartyEncoreFlag, FirstPartyPluginBridge>> = {};
 		for (const flag of Object.keys(FIRST_PARTY_PLUGINS) as FirstPartyEncoreFlag[]) {
@@ -2203,7 +2259,20 @@ app
 				unifiedTabOrder: [{ type: 'ai', id: tabId }],
 				unifiedClosedTabHistory: [],
 			};
-			setPluginSessionsRaw([...pluginSessionsRaw(), session]);
+			const previousSessions = pluginSessionsRaw();
+			setPluginSessionsRaw([...previousSessions, session]);
+			if (!previousSessions.some((existing) => existing.id === sessionId)) {
+				try {
+					pianolaSupervisor?.autoWatchNewSessions(
+						[session],
+						[...previousSessions, session] as AutoWatchSession[],
+						store.get('pianolaAutoWatchNewAgents', false) === true
+					);
+				} catch (error) {
+					logger.error('Could not register new Pianola watch', '[Pianola]', error);
+					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
+				}
+			}
 			sessionsStore.set('activeSessionId', sessionId);
 			return {
 				id: sessionId,
@@ -2238,7 +2307,19 @@ app
 		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
 			if (!sessions.some((s) => s.id === sessionId)) return false;
-			setPluginSessionsRaw(sessions.filter((s) => s.id !== sessionId));
+			const remaining = sessions.filter((s) => s.id !== sessionId);
+			setPluginSessionsRaw(remaining);
+			try {
+				pianolaSupervisor?.autoWatchNewSessions(
+					[],
+					remaining as unknown as AutoWatchSession[],
+					store.get('pianolaAutoWatchNewAgents', false) === true,
+					[sessionId]
+				);
+			} catch (error) {
+				logger.error('Could not retire Pianola watch', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:retireAutoWatch' });
+			}
 			if (sessionsStore.get('activeSessionId', '') === sessionId) {
 				const nextActive = pluginSessionsRaw()[0]?.id;
 				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');
@@ -2599,7 +2680,11 @@ app
 			onChange: (registry) => {
 				pluginHostViews.sync();
 				try {
-					mainWindow?.webContents.send('plugins:changed', registry);
+					mainWindow?.webContents.send(
+						'plugins:changed',
+						registry,
+						pluginManager?.getContributions().panels.map((panel) => panel.id) ?? []
+					);
 				} catch {
 					// Renderer may be gone during shutdown; ignore.
 				}
@@ -3020,6 +3105,15 @@ app
 			}
 		}
 
+		// Start Computer History when its Encore flag is on. start() re-checks the
+		// flag itself; a missing helper binary is reported in status, not thrown.
+		void getComputerHistoryService()
+			?.start()
+			.catch((err) => {
+				void captureException(err, { operation: 'computerHistory:boot' });
+				logger.error(`Computer History failed to start at boot: ${err}`, 'Startup');
+			});
+
 		// Start the Pianola supervisor unconditionally: it self-gates on the
 		// pianola Encore flag (reconcile kills everything and spawns nothing when
 		// off), and starting it always means its file-watch reconcile picks up
@@ -3228,6 +3322,13 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
+		// Stop the Computer History helper (it also exits on stdin EOF) and close
+		// the open segment. If quit outruns the close, the next start indexes it.
+		void getComputerHistoryService()
+			?.stop()
+			.catch((error) => {
+				void captureException(error, { operation: 'shutdown:computerHistory' });
+			});
 		// Tear down plugin hot-reload watching and running sandboxes.
 		pluginManager?.stopWatching();
 		pluginManager?.stopAllSandboxes();

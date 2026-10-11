@@ -9,6 +9,7 @@ import {
 	type CueScheduleDay,
 	normalizeWebhookPath,
 } from '../../../shared/cue';
+import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
@@ -134,7 +135,7 @@ function validateAutoRunField(value: unknown, prefix: string, errors: string[]):
 		}
 	}
 
-	for (const key of ['loop_enabled', 'ignore_model_hints'] as const) {
+	for (const key of ['loop_enabled', 'ignore_model_hints', 'auto_resume_on_error'] as const) {
 		if (cfg[key] !== undefined && typeof cfg[key] !== 'boolean') {
 			errors.push(`${prefix}: "auto_run.${key}" must be a boolean when provided`);
 		}
@@ -160,6 +161,17 @@ function validateAutoRunField(value: unknown, prefix: string, errors: string[]):
 		) {
 			errors.push(`${prefix}: "auto_run.max_loops" must be a positive integer when provided`);
 		}
+	}
+
+	for (const key of ['auto_resume_after_min', 'max_auto_resumes'] as const) {
+		if (cfg[key] !== undefined && (typeof cfg[key] !== 'number' || !Number.isFinite(cfg[key]))) {
+			errors.push(`${prefix}: "auto_run.${key}" must be a number when provided`);
+		}
+	}
+
+	if (cfg.worktree !== undefined) {
+		const worktree = parseCueAutoRunWorktree(cfg.worktree);
+		if (!worktree.ok) errors.push(`${prefix}: "auto_run.worktree" ${worktree.error}`);
 	}
 }
 

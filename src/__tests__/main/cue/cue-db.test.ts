@@ -84,6 +84,7 @@ const mockDb = {
 				{ name: 'chain_root_id' },
 				{ name: 'parent_event_id' },
 				{ name: 'auto_run_json' },
+				{ name: 'notify_json' },
 			];
 		}
 		// cue_github_seen - the GitHub re-trigger feature added `last_revision`

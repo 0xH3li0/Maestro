@@ -124,6 +124,53 @@ describe('cue-scheduled-tasks', () => {
 			});
 		});
 
+		it('writes the auto-resume settings and the worktree the run fires in', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-01-01T10:00:00.000Z',
+				autoRun: {
+					documents: ['/proj/a.md'],
+					auto_resume_on_error: false,
+					auto_resume_after_min: 10,
+					max_auto_resumes: 3,
+					worktree: { mode: 'create-new', branch: ' nightly ', create_pr: true },
+				},
+			});
+
+			expect(subs[0].auto_run).toEqual({
+				documents: ['/proj/a.md'],
+				auto_resume_on_error: false,
+				auto_resume_after_min: 10,
+				max_auto_resumes: 3,
+				worktree: { mode: 'create-new', branch: 'nightly', create_pr: true },
+			});
+		});
+
+		// Auto-resume is ON when absent, so only the opt-out is written.
+		it('does not write auto-resume when it is left on', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-01-01T10:00:00.000Z',
+				autoRun: { documents: ['/proj/a.md'], auto_resume_on_error: true },
+			});
+
+			expect(subs[0].auto_run).toEqual({ documents: ['/proj/a.md'] });
+		});
+
+		// Refused when written, not when it fires: nobody is watching then.
+		it('refuses a worktree block that cannot be resolved', () => {
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, {
+					agentId: agent.id,
+					kind: 'once',
+					fireAt: '2030-01-01T10:00:00.000Z',
+					autoRun: { documents: ['/proj/a.md'], worktree: { mode: 'existing-open' } },
+				})
+			).toThrow(/auto_run\.worktree "agent_id" is required/);
+		});
+
 		// `task` is what an absent field means, so it is not written.
 		it('writes neither option at its default', () => {
 			const subs = buildScheduledTaskSubscriptions(agent, {

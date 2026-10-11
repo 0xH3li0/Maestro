@@ -224,9 +224,9 @@ function defaultResolve(hostname: string): Promise<string[]> {
 
 function defaultMakeDispatcher(lookup: GuardedLookup): unknown {
 	try {
-		// undici ships with Node and Electron; built lazily so unit tests that
-		// never fetch do not require it, and a missing module degrades to the
-		// always-on pre-connect check rather than throwing.
+		// undici is an explicit production dependency; Node's built-in fetch does
+		// not make it requireable. Build lazily for tests; callers fail closed
+		// when a connection-pinning dispatcher cannot be created.
 		const undici = require('undici') as { Agent: new (opts: unknown) => unknown };
 		return new undici.Agent({ connect: { lookup } });
 	} catch {

@@ -135,6 +135,38 @@ export interface CueNotifyConfig {
 	sticky?: boolean;
 }
 
+/** The three places a worktree-bound Auto Run can land. */
+export const CUE_AUTORUN_WORKTREE_MODES = [
+	'existing-open',
+	'existing-closed',
+	'create-new',
+] as const;
+export type CueAutoRunWorktreeMode = (typeof CUE_AUTORUN_WORKTREE_MODES)[number];
+
+/**
+ * Where an `action: 'autorun'` run executes when it is NOT the owning agent's
+ * own checkout. The cue.yaml spelling of the Auto Run window's "Run in
+ * Worktree" choice; `src/shared/cue/autorun-worktree.ts` converts it to and
+ * from the `WorktreeRunTarget` the launch path speaks.
+ *
+ * Everything here is captured when the run is scheduled and resolved when it
+ * FIRES, so each mode names something that can still be found then: an agent
+ * id, a path on disk, or a branch to create.
+ */
+export interface CueAutoRunWorktree {
+	mode: CueAutoRunWorktreeMode;
+	/** `existing-open`: id of the worktree agent to run in. */
+	agent_id?: string;
+	/** `existing-closed`: absolute path of a worktree already on disk. */
+	path?: string;
+	/** `create-new`: branch the new worktree is created on. */
+	branch?: string;
+	/** Ref a new branch is cut from, and the pull request's target branch. */
+	base_branch?: string;
+	/** Open a pull request when the run finishes. Absent means no. */
+	create_pr?: boolean;
+}
+
 /**
  * Auto Run config for `action: 'autorun'` subscriptions.
  *
@@ -174,6 +206,16 @@ export interface CueAutoRunConfig {
 	/** Ignore the documents' `MAESTRO:MODEL` hints and run every task on the
 	 *  run's own model. Absent means the hints apply. */
 	ignore_model_hints?: boolean;
+	/** Resume on its own after an agent error pauses the run. Absent means ON,
+	 *  as everywhere else (see `resolveAutoResumePolicy`). */
+	auto_resume_on_error?: boolean;
+	/** Minutes between auto-resume attempts. Absent means the default. */
+	auto_resume_after_min?: number;
+	/** Auto-resume attempt ceiling. Absent means the default. */
+	max_auto_resumes?: number;
+	/** Run in a worktree instead of the owning agent's own checkout. Absent
+	 *  means the owning agent's checkout. */
+	worktree?: CueAutoRunWorktree;
 }
 
 /**

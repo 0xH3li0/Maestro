@@ -48,9 +48,9 @@ import { WorktreeRunSection } from './WorktreeRunSection';
 import {
 	ScheduleRunSection,
 	fromDateTimeLocalValue,
-	scheduleBlockedReason,
 	validateScheduledStart,
 } from './ScheduleRunSection';
+import { cueWorktreeFromRunTarget } from '../../shared/cue/autorun-worktree';
 import { AutoRunnerHelpModal } from './AutoRun/AutoRunnerHelpModal';
 import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
@@ -464,10 +464,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// A scheduled run is only offered for Spec-Driven runs: the Cue autorun
 	// payload is a document list, and Goal-Driven runs have no documents.
 	const isScheduled = scheduledStart !== '' && !goalMode;
-	const scheduleBlocker = scheduleBlockedReason({ hasWorktreeTarget: worktreeTarget !== null });
-	const scheduleError = isScheduled
-		? (validateScheduledStart(scheduledStart) ?? scheduleBlocker)
-		: null;
+	const scheduleError = isScheduled ? validateScheduledStart(scheduledStart) : null;
 
 	// Whether the Go button should be disabled, branching on the active mode.
 	// Scheduling deliberately ignores `blocksLaunchWhileBusy` and
@@ -545,9 +542,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	 * user would just find that their run never happened.
 	 */
 	const handleSchedule = async () => {
-		// The Schedule button is already disabled for both of these; re-checked
-		// here because this is the function that writes the subscription.
-		const validationError = validateScheduledStart(scheduledStart) ?? scheduleBlocker;
+		const validationError = validateScheduledStart(scheduledStart);
 		if (validationError) {
 			notifyToast({ color: 'red', title: 'Cannot schedule run', message: validationError });
 			return;
@@ -589,6 +584,12 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					// defaults instead of what this window was set to.
 					...(taskSelectionMode === 'document' && { task_selection_mode: 'document' as const }),
 					...(ignoreModelHints && { ignore_model_hints: true }),
+					...(autoResumeOnError ? {} : { auto_resume_on_error: false }),
+					auto_resume_after_min: clampAutoResumeMinutes(autoResumeAfterMin),
+					max_auto_resumes: clampMaxAutoResumes(maxAutoResumes),
+					// The worktree is resolved when the run FIRES, not now: a new one
+					// is created then, and an existing one is looked up then.
+					...(worktreeTarget && { worktree: cueWorktreeFromRunTarget(worktreeTarget) }),
 				},
 			});
 			notifyToast({
@@ -1065,7 +1066,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							value={scheduledStart}
 							onChange={setScheduledStart}
 							cueEnabled={maestroCueEnabled}
-							blockedReason={scheduleBlocker}
 						/>
 					)}
 

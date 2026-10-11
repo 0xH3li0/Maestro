@@ -29,7 +29,11 @@
  */
 
 import type { CueAutoRunConfig, CueEvent, CueRunResult, CueSubscription } from './cue-types';
-import type { SessionInfo, TaskSelectionMode } from '../../shared/types';
+import type { SessionInfo, TaskSelectionMode, WorktreeRunTarget } from '../../shared/types';
+import {
+	describeCueAutoRunWorktree,
+	runTargetFromCueWorktree,
+} from '../../shared/cue/autorun-worktree';
 
 /** One document to run, in the shape `remote:configureAutoRun` expects. */
 export interface CueAutoRunDocument {
@@ -48,6 +52,11 @@ export interface CueAutoRunLaunchParams {
 	effort?: string;
 	taskSelectionMode?: TaskSelectionMode;
 	ignoreModelHints?: boolean;
+	autoResumeOnError?: boolean;
+	autoResumeAfterMin?: number;
+	maxAutoResumes?: number;
+	/** Where the run executes when it is not the owning agent's own checkout. */
+	worktreeTarget?: WorktreeRunTarget;
 }
 
 export interface CueAutoRunLaunchResult {
@@ -97,7 +106,8 @@ export async function executeCueAutoRun(config: CueAutoRunExecutionConfig): Prom
 	config.onLog(
 		'cue',
 		`[CUE] Auto Run ${runId}: "${subscription.name}" -> agent ${session.id} ` +
-			`(${documents.length} document${documents.length === 1 ? '' : 's'}, ${event.type})`
+			`(${documents.length} document${documents.length === 1 ? '' : 's'}, ${event.type}` +
+			`${autoRun.worktree ? `, ${describeCueAutoRunWorktree(autoRun.worktree)}` : ''})`
 	);
 
 	const result = await config.launch({
@@ -110,6 +120,10 @@ export async function executeCueAutoRun(config: CueAutoRunExecutionConfig): Prom
 		effort: autoRun.effort,
 		taskSelectionMode: autoRun.task_selection_mode,
 		ignoreModelHints: autoRun.ignore_model_hints,
+		autoResumeOnError: autoRun.auto_resume_on_error,
+		autoResumeAfterMin: autoRun.auto_resume_after_min,
+		maxAutoResumes: autoRun.max_auto_resumes,
+		worktreeTarget: autoRun.worktree ? runTargetFromCueWorktree(autoRun.worktree) : undefined,
 	});
 
 	const endedAt = new Date().toISOString();

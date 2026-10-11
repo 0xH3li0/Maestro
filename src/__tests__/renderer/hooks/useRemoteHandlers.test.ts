@@ -67,6 +67,12 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
+// Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
+// here we only assert which entry points hand the message to it (issue #1531).
+vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+	requestTabAutoNameForMessage: vi.fn(),
+}));
+
 // Agents with batch mode support. The real capability module is used (not
 // mocked) so the miss-vs-cached-false distinction the hook now depends on is
 // exercised for real; `seedCapabilitiesCache()` below stands in for the startup
@@ -87,6 +93,7 @@ import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
 } from '../../../renderer/services/crossAgentMentions';
+import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -617,6 +624,87 @@ describe('useRemoteHandlers', () => {
 				'tab-1',
 				undefined
 			);
+		});
+
+		describe('tab auto-naming (issue #1531)', () => {
+			const dispatch = async (deps: UseRemoteHandlersDeps, command: string) => {
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: { sessionId: 'session-1', command, inputMode: 'ai' },
+						})
+					);
+				});
+			};
+
+			beforeEach(() => {
+				vi.mocked(requestTabAutoNameForMessage).mockClear();
+			});
+
+			it('names the target tab from a dispatched AI message', async () => {
+				const session = createMockSession({ inputMode: 'ai' });
+				await dispatch(
+					createMockDeps({ sessionsRef: { current: [session] } }),
+					'explain this code'
+				);
+
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledTimes(1);
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'explain this code',
+					'remote'
+				);
+			});
+
+			it('names the tab a leading @mention lands its bubble in, without spawning', async () => {
+				const session = createMockSession({ inputMode: 'ai' });
+				vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+					targetSessionIds: ['reviewer-1'],
+					suppressLocal: true,
+				} as any);
+				await dispatch(
+					createMockDeps({ sessionsRef: { current: [session] } }),
+					'@Reviewer look at this'
+				);
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledTimes(1);
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'@Reviewer look at this',
+					'remote'
+				);
+			});
+
+			it('does not name a tab from a matched slash command, as the composer does not', async () => {
+				const session = createMockSession({ inputMode: 'ai' });
+				await dispatch(
+					createMockDeps({
+						sessionsRef: { current: [session] },
+						customAICommandsRef: {
+							current: [{ command: '/deploy', description: 'Deploy', prompt: 'Deploy it' }],
+						},
+					}),
+					'/deploy'
+				);
+
+				expect(window.maestro.process.spawn).toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+			});
+
+			it('does not name a tab for a dispatch that is dropped before it runs', async () => {
+				const session = createMockSession({ inputMode: 'ai', state: 'busy' });
+				await dispatch(createMockDeps({ sessionsRef: { current: [session] } }), 'explain this');
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+			});
 		});
 
 		it('includes appendSystemPrompt for new sessions (no agentSessionId)', async () => {

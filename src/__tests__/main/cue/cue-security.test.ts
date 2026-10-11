@@ -543,6 +543,7 @@ const mockDb = {
 				{ name: 'chain_root_id' },
 				{ name: 'parent_event_id' },
 				{ name: 'auto_run_json' },
+				{ name: 'notify_json' },
 			];
 		}
 		// Re-trigger feature added `last_revision` + `fire_count` columns to

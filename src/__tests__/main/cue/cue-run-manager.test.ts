@@ -1533,6 +1533,43 @@ describe('createCueRunManager', () => {
 			);
 		});
 
+		it('persists the notify config of a queued notify run', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			const notify = { message: 'Deploy finished', sticky: true };
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute(
+				'session-1',
+				'Deploy finished',
+				createEvent(),
+				'reminder',
+				undefined,
+				undefined,
+				undefined,
+				'notify',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				notify
+			); // queued
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ action: 'notify', notify })
+			);
+		});
+
 		it('calls queuePersistence.remove when a queued event drains', async () => {
 			const persistence = makeMockPersistence();
 			let resolveFirst: ((r: CueRunResult) => void) | null = null;

@@ -1,8 +1,8 @@
 import { useCallback, useRef } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
-import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
+import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 import { useBatchStore } from '../../stores/batchStore';
@@ -216,88 +216,46 @@ export function useAutoRunHandlers(deps: UseAutoRunHandlersDeps): UseAutoRunHand
 				return;
 			}
 
-			// Determine target session ID - may differ from activeSession when running in a worktree
+			// Which agent the run executes in - the active one, unless it targets a
+			// worktree. Shared with the remote and scheduled launch paths.
 			let targetSessionId = activeSession.id;
-			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
-				// Verify the target session still exists (could have been removed while modal was open)
-				const targetSession = selectSessionById(config.worktreeTarget!.sessionId)(
-					useSessionStore.getState()
+			const dispatch = await resolveAutoRunDispatchTarget(activeSession, config);
+			if (dispatch.ok) {
+				targetSessionId = dispatch.sessionId;
+			} else if (dispatch.reason === 'target-missing') {
+				// The worktree agent was removed while the modal was open. The user
+				// is right here and pressed Go, so run it where they are and say so.
+				window.maestro.logger.log(
+					'warn',
+					`Target worktree session no longer exists: ${config.worktreeTarget?.sessionId}. Falling back to active session.`,
+					'AutoRunHandlers'
 				);
-				if (!targetSession) {
-					window.maestro.logger.log(
-						'warn',
-						`Target worktree session no longer exists: ${config.worktreeTarget.sessionId}. Falling back to active session.`,
-						'AutoRunHandlers'
-					);
-					notifyToast({
-						type: 'warning',
-						title: 'Worktree Agent Not Found',
-						message:
-							'The selected worktree agent was removed. Running on the active agent instead.',
-					});
-					// Fall back to active session
-					targetSessionId = activeSession.id;
-				} else if (targetSession.state === 'busy' || targetSession.state === 'connecting') {
-					// Race condition: agent became busy after user selected it
-					window.maestro.logger.log(
-						'warn',
-						`Target worktree session is busy: ${config.worktreeTarget.sessionId}`,
-						'AutoRunHandlers'
-					);
-					notifyToast({
-						type: 'warning',
-						title: 'Target Agent Busy',
-						message: 'Target agent is busy. Please try again.',
-					});
-					return;
-				} else {
-					targetSessionId = config.worktreeTarget.sessionId;
-
-					// Populate config.worktree for PR creation when using existing-open worktree.
-					// spawnWorktreeAgentAndDispatch does this for create-new/existing-closed,
-					// but existing-open skips that function entirely.
-					if (config.worktreeTarget.createPROnCompletion) {
-						config.worktree = {
-							enabled: true,
-							path: targetSession.cwd,
-							branchName:
-								targetSession.worktreeBranch || targetSession.cwd.split('/').pop() || 'worktree',
-							createPROnCompletion: true,
-							prTargetBranch: config.worktreeTarget.baseBranch || 'main',
-						};
-					}
-				}
-			} else if (
-				config.worktreeTarget?.mode === 'create-new' ||
-				config.worktreeTarget?.mode === 'existing-closed'
-			) {
-				// If the active session is itself a worktree child, resolve to its parent so
-				// basePath/cwd used for worktree creation come from the main repo, not the child.
-				let parentForSpawn = activeSession;
-				if (activeSession.parentSessionId) {
-					const parent = selectSessionById(activeSession.parentSessionId)(
-						useSessionStore.getState()
-					);
-					if (parent) parentForSpawn = parent;
-				}
-				// Spawn a worktree agent and dispatch to it
-				try {
-					const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, config);
-					if (!newSessionId) return; // Error already shown via toast
-					targetSessionId = newSessionId;
-				} catch (err) {
-					window.maestro.logger.log(
-						'error',
-						`Failed to spawn worktree agent: ${err instanceof Error ? err.message : String(err)}`,
-						'AutoRunHandlers'
-					);
-					notifyToast({
-						type: 'error',
-						title: 'Worktree Error',
-						message: err instanceof Error ? err.message : String(err),
-					});
-					return;
-				}
+				notifyToast({
+					type: 'warning',
+					title: 'Worktree Agent Not Found',
+					message: 'The selected worktree agent was removed. Running on the active agent instead.',
+				});
+			} else if (dispatch.reason === 'target-busy') {
+				// Race: the agent became busy after the user selected it.
+				window.maestro.logger.log(
+					'warn',
+					`Target worktree session is busy: ${config.worktreeTarget?.sessionId}`,
+					'AutoRunHandlers'
+				);
+				notifyToast({
+					type: 'warning',
+					title: 'Target Agent Busy',
+					message: 'Target agent is busy. Please try again.',
+				});
+				return;
+			} else {
+				// The worktree could not be created or opened; the toast is already up.
+				window.maestro.logger.log(
+					'error',
+					`Failed to spawn worktree agent: ${dispatch.message}`,
+					'AutoRunHandlers'
+				);
+				return;
 			}
 
 			window.maestro.logger.log('info', 'Starting batch run', 'AutoRunHandlers', {

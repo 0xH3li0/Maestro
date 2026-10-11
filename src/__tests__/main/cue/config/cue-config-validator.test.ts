@@ -338,6 +338,62 @@ describe('validateSubscription - action: autorun', () => {
 		).toBe(true);
 	});
 
+	it('accepts the auto-resume settings and a worktree in every mode', () => {
+		const worktrees = [
+			{ mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+			{ mode: 'existing-open', agent_id: 'agent-9' },
+			{ mode: 'existing-closed', path: '/wt/nightly' },
+		];
+		for (const worktree of worktrees) {
+			expect(
+				errs({
+					...base,
+					auto_run: {
+						documents: ['/a.md'],
+						auto_resume_on_error: false,
+						auto_resume_after_min: 10,
+						max_auto_resumes: 3,
+						worktree,
+					},
+				})
+			).toEqual([]);
+		}
+	});
+
+	// A worktree block that cannot be resolved must be an error, never "no
+	// worktree": the run would otherwise land in the agent's own checkout.
+	it('rejects a worktree block that cannot be resolved', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], worktree: { mode: 'create-new' } } }).some(
+				(e) => /"auto_run\.worktree" "branch" is required/.test(e)
+			)
+		).toBe(true);
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], worktree: 'nightly' } }).some((e) =>
+				/"auto_run\.worktree" must be an object/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects wrongly typed auto-resume settings', () => {
+		const bad = errs({
+			...base,
+			auto_run: {
+				documents: ['/a.md'],
+				auto_resume_on_error: 'no',
+				auto_resume_after_min: '10',
+				max_auto_resumes: null,
+			},
+		});
+		expect(bad.some((e) => /"auto_run\.auto_resume_on_error" must be a boolean/.test(e))).toBe(
+			true
+		);
+		expect(bad.some((e) => /"auto_run\.auto_resume_after_min" must be a number/.test(e))).toBe(
+			true
+		);
+		expect(bad.some((e) => /"auto_run\.max_auto_resumes" must be a number/.test(e))).toBe(true);
+	});
+
 	it('rejects a non-boolean ignore_model_hints', () => {
 		expect(
 			errs({ ...base, auto_run: { documents: ['/a.md'], ignore_model_hints: 'yes' } }).some((e) =>

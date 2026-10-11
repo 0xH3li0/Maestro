@@ -222,6 +222,7 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { WebUserPublic } from '../shared/webLogin';
+import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -261,6 +262,7 @@ interface MaestroAPI {
 		get: (key: string) => Promise<unknown>;
 		set: (key: string, value: unknown) => Promise<boolean>;
 		getAll: () => Promise<Record<string, unknown>>;
+		getMediaStatus?: () => Promise<import('../shared/plugins/media-tools').MediaToolStatus>;
 		onExternalChange: (handler: () => void) => () => void;
 	};
 	sessions: {
@@ -1331,7 +1333,7 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		diff: (
 			cwd: string,
 			file?: string,
@@ -1354,12 +1356,12 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		branch: (
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		/**
 		 * Get list of all branches
 		 */
@@ -1390,6 +1392,8 @@ interface MaestroAPI {
 			behind: number;
 			ahead: number;
 			uncommittedChanges: number;
+			/** One of the underlying queries timed out; the zero/empty fields are placeholders. */
+			timedOut?: boolean;
 		}>;
 		log: (
 			cwd: string,
@@ -1548,10 +1552,23 @@ interface MaestroAPI {
 		// Supports SSH remote execution via optional sshRemoteId parameter
 		listWorktrees: (
 			cwd: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			basePath?: string,
+			sessionPaths?: string[]
 		) => Promise<{
+			resolvedCwd?: string;
+			resolvedBasePath?: string;
+			resolvedSessionPaths?: Record<string, string>;
+			// Missing candidates are safe to reconcile only after a successful registry read.
+			missingSessionPaths?: string[];
+			/** Individual aliases that could not be resolved; keep their existing sessions. */
+			unresolvedSessionPaths?: string[];
 			worktrees: Array<{
 				path: string;
+				resolvedPath?: string;
+				pathUnresolved?: boolean;
+				pathMissing?: boolean;
+				isPrunable?: boolean;
 				head: string;
 				branch: string | null;
 				isBare: boolean;
@@ -1569,6 +1586,8 @@ interface MaestroAPI {
 				repoRoot: string | null;
 			}>;
 			scanFailed?: boolean;
+			/** Uncertain candidate or group roots whose existing sessions must be preserved. */
+			unresolvedPaths?: string[];
 		}>;
 		// File watching is not available for SSH remote sessions.
 		// For remote sessions, returns isRemote: true indicating polling should be used instead.
@@ -1774,6 +1793,12 @@ interface MaestroAPI {
 		setDisabled: (id: string, disabled: boolean) => Promise<WebUserPublic>;
 		deleteUser: (id: string) => Promise<void>;
 	};
+	/**
+	 * Computer History (the recorder's status, config, rules, pause, clear,
+	 * permission flow, and recent-activity query). Desktop-only: the web-desktop
+	 * bridge refuses every `computerHistory:*` channel (D15).
+	 */
+	computerHistory: ComputerHistoryApi;
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
 		refresh: (
@@ -4638,7 +4663,7 @@ interface MaestroAPI {
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
-		onChanged: (callback: () => void) => () => void;
+		onChanged: (callback: (activePanelIds?: string[]) => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
 		onPanelData: (
 			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void
@@ -4689,6 +4714,11 @@ interface MaestroAPI {
 			id: string
 		) => Promise<{ success: boolean; content?: string; error?: string }>;
 		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		getSystemPromptPaths: () => Promise<{
+			success: boolean;
+			computerHistoryDir?: string;
+			error?: string;
+		}>;
 		listFiles: () => Promise<{
 			success: boolean;
 			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;

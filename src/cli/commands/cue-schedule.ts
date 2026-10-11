@@ -44,7 +44,12 @@ import {
 	type ScheduledTaskKind,
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
-import type { CueAutoRunConfig, CueScheduleDay } from '../../shared/cue/contracts';
+import type {
+	CueAutoRunConfig,
+	CueAutoRunWorktree,
+	CueScheduleDay,
+} from '../../shared/cue/contracts';
+import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
 import type { SessionInfo } from '../../shared/types';
 
 export interface CueScheduleOptions {
@@ -77,6 +82,15 @@ export interface CueScheduleOptions {
 	effort?: string;
 	perDocument?: boolean;
 	ignoreModelHints?: boolean;
+	/** Commander's `--no-auto-resume`: true unless the flag was passed. */
+	autoResume?: boolean;
+	autoResumeAfter?: string;
+	maxAutoResumes?: string;
+	worktreeBranch?: string;
+	worktreeAgent?: string;
+	worktreePath?: string;
+	baseBranch?: string;
+	createPr?: boolean;
 	json?: boolean;
 }
 
@@ -172,6 +186,10 @@ interface ScheduledTaskRow {
 	project_root: string;
 	action: string;
 	label: string;
+	/** What an `autorun` task will launch: documents, run options, and the
+	 *  worktree it fires in. Present only on autorun rows, so a schedule written
+	 *  with `--auto-run` can be read back and checked. */
+	auto_run?: CueAutoRunConfig;
 }
 
 function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
@@ -189,6 +207,7 @@ function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
 		project_root: task.projectRoot,
 		action: task.action,
 		label: task.label,
+		...(task.autoRun ? { auto_run: task.autoRun } : {}),
 	};
 }
 
@@ -548,7 +567,91 @@ const AUTO_RUN_ONLY_FLAGS: ReadonlyArray<[keyof CueScheduleOptions, string]> = [
 	['effort', '--effort'],
 	['perDocument', '--per-document'],
 	['ignoreModelHints', '--ignore-model-hints'],
+	['autoResumeAfter', '--auto-resume-after'],
+	['maxAutoResumes', '--max-auto-resumes'],
+	['worktreeBranch', '--worktree-branch'],
+	['worktreeAgent', '--worktree-agent'],
+	['worktreePath', '--worktree-path'],
+	['baseBranch', '--base-branch'],
+	['createPr', '--create-pr'],
 ];
+
+/** Parse a whole-number flag, or exit naming the flag that was wrong. */
+function parseCountFlag(
+	raw: string | undefined,
+	flag: string,
+	code: string,
+	options: CueScheduleOptions
+): number | undefined {
+	if (raw === undefined) return undefined;
+	const n = Number(raw);
+	if (!Number.isInteger(n) || n < 1) {
+		errorOut(`${flag}: must be a positive integer, got "${raw}"`, options, code);
+	}
+	return n;
+}
+
+/**
+ * Build `auto_run.worktree` from the three ways the CLI can name one, or
+ * `undefined` when the run stays in the agent's own checkout. Mirrors the
+ * "Run in Worktree" choice in the Auto Run window: a branch to create, a
+ * worktree agent that is already open, or a worktree already on disk.
+ */
+function buildAutoRunWorktree(
+	options: CueScheduleOptions,
+	sessions: SessionInfo[]
+): CueAutoRunWorktree | undefined {
+	const selectors = [options.worktreeBranch, options.worktreeAgent, options.worktreePath].filter(
+		(value) => value !== undefined
+	);
+	if (selectors.length > 1) {
+		errorOut(
+			'pass only one of --worktree-branch, --worktree-agent, --worktree-path',
+			options,
+			'WORKTREE_CONFLICT'
+		);
+	}
+	if (selectors.length === 0) {
+		const stray =
+			options.baseBranch !== undefined ? '--base-branch' : options.createPr ? '--create-pr' : null;
+		if (stray) {
+			errorOut(
+				`${stray} requires --worktree-branch, --worktree-agent, or --worktree-path`,
+				options,
+				'WORKTREE_FLAG_WITHOUT_WORKTREE'
+			);
+		}
+		return undefined;
+	}
+
+	let raw: CueAutoRunWorktree;
+	if (options.worktreeBranch !== undefined) {
+		raw = { mode: 'create-new', branch: options.worktreeBranch };
+	} else if (options.worktreeAgent !== undefined) {
+		let target: SessionInfo | null;
+		try {
+			target = resolveAgent(options.worktreeAgent, sessions);
+		} catch (err) {
+			errorOut(err instanceof Error ? err.message : String(err), options, 'AMBIGUOUS_AGENT');
+		}
+		if (!target) {
+			errorOut(`worktree agent "${options.worktreeAgent}" not found`, options, 'AGENT_NOT_FOUND');
+		}
+		raw = { mode: 'existing-open', agent_id: target.id };
+	} else {
+		const worktreePath = resolveCliPath(options.worktreePath!);
+		if (!fs.existsSync(worktreePath)) {
+			errorOut(`--worktree-path: "${worktreePath}" does not exist`, options, 'BAD_WORKTREE_PATH');
+		}
+		raw = { mode: 'existing-closed', path: worktreePath };
+	}
+	if (options.baseBranch !== undefined) raw.base_branch = options.baseBranch;
+	if (options.createPr) raw.create_pr = true;
+
+	const parsed = parseCueAutoRunWorktree(raw);
+	if (!parsed.ok) errorOut(`worktree: ${parsed.error}`, options, 'BAD_WORKTREE');
+	return parsed.value;
+}
 
 /**
  * Build the Auto Run payload for `--auto-run`, or `undefined` when the flag was
@@ -561,13 +664,17 @@ const AUTO_RUN_ONLY_FLAGS: ReadonlyArray<[keyof CueScheduleOptions, string]> = [
  */
 function buildAutoRunConfig(
 	options: CueScheduleOptions,
-	promptText: string
+	promptText: string,
+	sessions: SessionInfo[]
 ): CueAutoRunConfig | undefined {
 	const requested = options.autoRun ?? [];
 	if (requested.length === 0) {
-		const stray = AUTO_RUN_ONLY_FLAGS.find(([key]) => options[key] !== undefined);
-		if (stray)
-			errorOut(`${stray[1]} requires --auto-run`, options, 'AUTO_RUN_FLAG_WITHOUT_AUTO_RUN');
+		// `--no-auto-resume` is the one flag here that is defined when absent
+		// (commander defaults a negatable flag to true), so it is tested by value.
+		const stray =
+			AUTO_RUN_ONLY_FLAGS.find(([key]) => options[key] !== undefined)?.[1] ??
+			(options.autoResume === false ? '--no-auto-resume' : undefined);
+		if (stray) errorOut(`${stray} requires --auto-run`, options, 'AUTO_RUN_FLAG_WITHOUT_AUTO_RUN');
 		return undefined;
 	}
 	if (options.notify) {
@@ -584,18 +691,20 @@ function buildAutoRunConfig(
 		}
 	}
 
-	let maxLoops: number | undefined;
-	if (options.maxLoops !== undefined) {
-		const n = Number(options.maxLoops);
-		if (!Number.isInteger(n) || n < 1) {
-			errorOut(
-				`--max-loops: must be a positive integer, got "${options.maxLoops}"`,
-				options,
-				'BAD_MAX_LOOPS'
-			);
-		}
-		maxLoops = n;
-	}
+	const maxLoops = parseCountFlag(options.maxLoops, '--max-loops', 'BAD_MAX_LOOPS', options);
+	const autoResumeAfter = parseCountFlag(
+		options.autoResumeAfter,
+		'--auto-resume-after',
+		'BAD_AUTO_RESUME',
+		options
+	);
+	const maxAutoResumes = parseCountFlag(
+		options.maxAutoResumes,
+		'--max-auto-resumes',
+		'BAD_AUTO_RESUME',
+		options
+	);
+	const worktree = buildAutoRunWorktree(options, sessions);
 
 	return {
 		documents,
@@ -608,6 +717,10 @@ function buildAutoRunConfig(
 		...(options.effort ? { effort: options.effort } : {}),
 		...(options.perDocument ? { task_selection_mode: 'document' as const } : {}),
 		...(options.ignoreModelHints ? { ignore_model_hints: true } : {}),
+		...(options.autoResume === false ? { auto_resume_on_error: false } : {}),
+		...(autoResumeAfter !== undefined ? { auto_resume_after_min: autoResumeAfter } : {}),
+		...(maxAutoResumes !== undefined ? { max_auto_resumes: maxAutoResumes } : {}),
+		...(worktree ? { worktree } : {}),
 	};
 }
 
@@ -625,7 +738,7 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	if (!agent) errorOut(`agent "${options.agent}" not found`, options, 'AGENT_NOT_FOUND');
 
 	const promptText = options.prompt ?? '';
-	const autoRun = buildAutoRunConfig(options, promptText);
+	const autoRun = buildAutoRunConfig(options, promptText, sessions);
 	// With --auto-run the prompt is the run's own instructions, not a message
 	// to send, so it travels inside the Auto Run payload instead.
 	const hasPrompt = promptText.length > 0 && !autoRun;

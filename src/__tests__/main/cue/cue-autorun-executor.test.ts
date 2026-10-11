@@ -106,6 +106,54 @@ describe('executeCueAutoRun', () => {
 		});
 	});
 
+	it('hands the auto-resume settings and the worktree target to the launch', async () => {
+		launchCueAutoRunMock.mockResolvedValue({ success: true });
+
+		await executeCueAutoRun({
+			runId: 'run-1',
+			session: createSession(),
+			subscription: createSubscription(),
+			event,
+			autoRun: {
+				documents: ['/proj/a.md'],
+				auto_resume_on_error: false,
+				auto_resume_after_min: 10,
+				max_auto_resumes: 3,
+				worktree: { mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+			},
+			launch: launchCueAutoRunMock,
+			onLog: vi.fn(),
+		});
+
+		expect(launchCueAutoRunMock.mock.calls[0][0]).toMatchObject({
+			autoResumeOnError: false,
+			autoResumeAfterMin: 10,
+			maxAutoResumes: 3,
+			worktreeTarget: {
+				mode: 'create-new',
+				newBranchName: 'nightly',
+				baseBranch: 'rc',
+				createPROnCompletion: true,
+			},
+		});
+	});
+
+	it("names no worktree target for a run in the agent's own checkout", async () => {
+		launchCueAutoRunMock.mockResolvedValue({ success: true });
+
+		await executeCueAutoRun({
+			runId: 'run-1',
+			session: createSession(),
+			subscription: createSubscription(),
+			event,
+			autoRun: { documents: ['/proj/a.md'] },
+			launch: launchCueAutoRunMock,
+			onLog: vi.fn(),
+		});
+
+		expect(launchCueAutoRunMock.mock.calls[0][0].worktreeTarget).toBeUndefined();
+	});
+
 	it('defaults resetOnCompletion to false when no flags were captured', async () => {
 		launchCueAutoRunMock.mockResolvedValue({ success: true });
 

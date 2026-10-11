@@ -92,6 +92,8 @@ export interface InMemoryCueQueueRow {
 	parentEventId: string | null;
 	/** Serialized Auto Run payload for `action: autorun` rows. */
 	autoRunJson?: string | null;
+	/** Serialized notify config for `action: notify` rows. */
+	notifyJson?: string | null;
 }
 
 export interface InMemoryCueDbState {

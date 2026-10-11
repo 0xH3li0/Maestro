@@ -53,6 +53,7 @@ import {
 import { filterYoloArgs } from '../utils/agentArgs';
 import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
+import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 
 // ============================================================================
 // Store Types
@@ -407,6 +408,25 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
+
+		// Name the tab from the message it is about to run. The composer names at
+		// submit time, but `dispatch --queue`, a busy `dispatch --new-tab`, a snooze
+		// wake prompt and other external producers only reach a tab through this
+		// drain, so without it a tab fed only by the queue stays unnamed forever. A
+		// tab that is already named (or mid-naming) is left alone by the helper's
+		// guards, so composer-queued items cost nothing. Runs ahead of the mention
+		// dispatch so a leading-mention (`crossAgentOnly`) item names its tab the
+		// way the composer does. A released consult hold (`agentContext`) is
+		// skipped: its text is Maestro's own "X replied" note, not something the
+		// user asked for, and the message it continues was named when it was sent.
+		if (
+			item.type === 'message' &&
+			item.text?.trim() &&
+			!item.agentContext &&
+			!item.awaitingConsult
+		) {
+			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		}
 
 		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
 		// becomes this agent's turn - not when the user typed it. Deferring is the

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
+import { ComputerHistoryRecordingDot } from './ComputerHistoryRecordingDot';
 import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
 import {
 	subscribeSidebarReveal,
@@ -286,6 +287,10 @@ function SessionListInner(props: SessionListProps) {
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const showHiddenGroups = useSettingsStore((s) => s.showHiddenGroups);
+	// The first settings load applies its whole snapshot in one write, so a
+	// toggle made before it lands is overwritten on screen (while disk keeps the
+	// click). The desktop splash covers that window; the browser build has none.
+	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 	const starredSectionCollapsed = useSettingsStore((s) => s.starredSessionsCollapsed);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
@@ -1561,6 +1566,7 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<Menu className="w-4 h-4" />
 								</GhostIconButton>
+								<ComputerHistoryRecordingDot theme={theme} />
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<HamburgerDropdown
@@ -2343,8 +2349,10 @@ function SessionListInner(props: SessionListProps) {
 							<button
 								type="button"
 								onClick={() => setShowHiddenGroups(!showHiddenGroups)}
+								disabled={!settingsLoaded}
 								aria-pressed={showHiddenGroups}
-								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+								data-testid="show-hidden-groups-toggle"
+								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-default"
 								style={{
 									backgroundColor: showHiddenGroups ? theme.colors.accent + '20' : 'transparent',
 									color: showHiddenGroups ? theme.colors.accent : theme.colors.textDim,

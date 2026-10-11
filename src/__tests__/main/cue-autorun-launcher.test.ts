@@ -19,11 +19,18 @@ vi.mock('../../main/web-server/callbacks/remoteRequest', () => ({
 vi.mock('../../main/utils/safe-send', () => ({
 	isWebContentsAvailable: (...args: unknown[]) => isWebContentsAvailableMock(...args),
 }));
+vi.mock('../../main/utils/worktree-setup-script', () => ({
+	WORKTREE_SETUP_TIMEOUT_MS: 10 * 60 * 1000,
+}));
 vi.mock('../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { CUE_AUTORUN_LAUNCH_TIMEOUT_MS, launchCueAutoRun } from '../../main/cue-autorun-launcher';
+import {
+	CUE_AUTORUN_LAUNCH_TIMEOUT_MS,
+	CUE_AUTORUN_WORKTREE_LAUNCH_TIMEOUT_MS,
+	launchCueAutoRun,
+} from '../../main/cue-autorun-launcher';
 import { logger } from '../../main/utils/logger';
 
 const mainWindow = {} as BrowserWindow;
@@ -94,6 +101,56 @@ describe('launchCueAutoRun', () => {
 			taskSelectionMode: 'document',
 			ignoreModelHints: true,
 		});
+	});
+
+	// The whole request is forwarded, so a run option added to the launch
+	// params reaches the renderer without a second list to forget it in.
+	it('forwards the worktree target and the auto-resume settings', async () => {
+		const worktreeTarget = {
+			mode: 'existing-open' as const,
+			sessionId: 'wt-child',
+			createPROnCompletion: false,
+		};
+
+		await launchCueAutoRun(mainWindow, {
+			...params,
+			worktreeTarget,
+			autoResumeOnError: false,
+			autoResumeAfterMin: 10,
+			maxAutoResumes: 3,
+		});
+
+		const [, , options] = requestFromRendererMock.mock.calls[0];
+		expect(options.args[0]).toBe('session-1');
+		expect(options.args[1]).toMatchObject({
+			worktreeTarget,
+			autoResumeOnError: false,
+			autoResumeAfterMin: 10,
+			maxAutoResumes: 3,
+			launch: true,
+		});
+		expect(options.args[1]).not.toHaveProperty('sessionId');
+		// An open worktree needs no setup, so the ordinary budget applies.
+		expect(options.timeoutMs).toBe(CUE_AUTORUN_LAUNCH_TIMEOUT_MS);
+	});
+
+	// The renderer accepts only after `git worktree add` and the setup script
+	// finish. Giving up sooner reports a failed launch for a run that then
+	// starts anyway, and a failed schedule is kept to be re-triggered.
+	it('waits out the setup script when the worktree has to be created', async () => {
+		await launchCueAutoRun(mainWindow, {
+			...params,
+			worktreeTarget: {
+				mode: 'create-new',
+				newBranchName: 'nightly',
+				createPROnCompletion: false,
+			},
+		});
+
+		expect(requestFromRendererMock.mock.calls[0][2].timeoutMs).toBe(
+			CUE_AUTORUN_WORKTREE_LAUNCH_TIMEOUT_MS
+		);
+		expect(CUE_AUTORUN_WORKTREE_LAUNCH_TIMEOUT_MS).toBeGreaterThan(10 * 60_000);
 	});
 
 	it("passes the renderer's own rejection through", async () => {

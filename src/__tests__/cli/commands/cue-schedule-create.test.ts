@@ -304,6 +304,198 @@ describe('cue schedule (create)', () => {
 			});
 		});
 
+		it('schedules the run into a worktree created when it fires', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await cueSchedule({
+				in: '2h',
+				agent: 'Alpha',
+				autoRun: [doc],
+				worktreeBranch: 'nightly',
+				baseBranch: 'rc',
+				createPr: true,
+			});
+
+			expect(processExitSpy).not.toHaveBeenCalled();
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect((subs[0].auto_run as Record<string, unknown>).worktree).toEqual({
+				mode: 'create-new',
+				branch: 'nightly',
+				base_branch: 'rc',
+				create_pr: true,
+			});
+		});
+
+		// Every write has a read: what was scheduled, and where it will run, comes
+		// back from --list.
+		it('reports the Auto Run payload, worktree included, in --list --json', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+			await cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], worktreeBranch: 'nightly' });
+			consoleSpy.mockClear();
+
+			await cueSchedule({ list: true, json: true });
+
+			const rows = JSON.parse(consoleSpy.mock.calls[0][0] as string) as Array<
+				Record<string, unknown>
+			>;
+			expect(rows).toHaveLength(1);
+			expect(rows[0].action).toBe('autorun');
+			expect(rows[0].auto_run).toEqual({
+				documents: [doc],
+				worktree: { mode: 'create-new', branch: 'nightly' },
+			});
+		});
+
+		it('schedules the run into an already-open worktree agent, by name', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+				session({ id: 'agent-wt', name: 'nightly', projectRoot: '/projects/alpha-wt/nightly' }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], worktreeAgent: 'nightly' });
+
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect((subs[0].auto_run as Record<string, unknown>).worktree).toEqual({
+				mode: 'existing-open',
+				agent_id: 'agent-wt',
+			});
+		});
+
+		it('schedules the run into a worktree already on disk', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+			const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-schedule-wt-'));
+
+			try {
+				await cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], worktreePath });
+
+				const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<
+					Record<string, unknown>
+				>;
+				expect((subs[0].auto_run as Record<string, unknown>).worktree).toEqual({
+					mode: 'existing-closed',
+					path: worktreePath,
+				});
+			} finally {
+				fs.rmSync(worktreePath, { recursive: true, force: true });
+			}
+		});
+
+		it('writes the auto-resume settings', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await cueSchedule({
+				in: '2h',
+				agent: 'Alpha',
+				autoRun: [doc],
+				autoResume: false,
+				autoResumeAfter: '10',
+				maxAutoResumes: '3',
+			});
+
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect(subs[0].auto_run).toMatchObject({
+				auto_resume_on_error: false,
+				auto_resume_after_min: 10,
+				max_auto_resumes: 3,
+			});
+		});
+
+		it('refuses more than one way of naming the worktree', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await expect(
+				cueSchedule({
+					in: '2h',
+					agent: 'Alpha',
+					autoRun: [doc],
+					worktreeBranch: 'nightly',
+					worktreeAgent: 'nightly',
+				})
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(/pass only one of/);
+			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
+		});
+
+		it('refuses a worktree agent or path that cannot be found, writing nothing', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], worktreeAgent: 'gone' })
+			).rejects.toThrow('process.exit');
+			await expect(
+				cueSchedule({
+					in: '2h',
+					agent: 'Alpha',
+					autoRun: [doc],
+					worktreePath: path.join(projectRoot, 'no-such-worktree'),
+				})
+			).rejects.toThrow('process.exit');
+
+			const messages = consoleErrorSpy.mock.calls.map((call) => call[0] as string);
+			expect(messages[0]).toMatch(/worktree agent "gone" not found/);
+			expect(messages[1]).toMatch(/--worktree-path: .* does not exist/);
+			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
+		});
+
+		it('refuses a worktree option with no worktree named', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('ship-it.md');
+
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], createPr: true })
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(/--create-pr requires/);
+		});
+
+		it('refuses --no-auto-resume without --auto-run', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', prompt: 'hello', autoResume: false })
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(
+				/--no-auto-resume requires --auto-run/
+			);
+		});
+
 		it('refuses a document that does not exist, writing nothing', async () => {
 			processExitSpy.mockImplementation(() => {
 				throw new Error('process.exit');

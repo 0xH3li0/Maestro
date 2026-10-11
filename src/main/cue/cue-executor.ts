@@ -89,6 +89,12 @@ export interface CueExecutionConfig {
 	 * Must return quickly: the run's caller waits for it.
 	 */
 	onRunTranscript?: (run: CueRunTranscript) => void;
+	/**
+	 * The Maestro system prompt for the target agent (built in main from the
+	 * stored session). Delivered by `applySystemPromptDelivery`: the native flag
+	 * for agents that support it, embedded into the prompt otherwise.
+	 */
+	appendSystemPrompt?: string;
 }
 
 /**

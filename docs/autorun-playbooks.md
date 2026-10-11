@@ -103,8 +103,11 @@ A few things worth knowing:
   [Maestro Cue](./maestro-cue) task instead.
 - A run that fails to start is kept, not removed. It stays under Scheduled Tasks
   in the Cue window so you can see why it did not start and trigger it again.
-- A scheduled run starts in the agent's own checkout. It cannot dispatch to a
-  worktree, so the Schedule button is unavailable while a worktree target is set.
+- A scheduled run keeps its **Run in Worktree** choice. A new worktree is
+  created when the run fires, not when you schedule it. If the worktree agent or
+  path you picked is gone by then, the run does not start and the schedule is
+  kept; it never falls back to the agent's own checkout.
+- The auto-resume settings travel with the schedule too.
 - A script or another agent can schedule the same run with
   `maestro-cli cue schedule --at <time> --agent <id> --auto-run <documents...>`.
 

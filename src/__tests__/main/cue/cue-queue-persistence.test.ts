@@ -176,6 +176,20 @@ describe('cue-queue-persistence', () => {
 			expect(restored.find((e) => e.subscriptionName === 'plain')!.autoRun).toBeUndefined();
 		});
 
+		// The message of a queued notify also rides the `prompt` slot, but
+		// `sticky` lives only here. Losing it turned a toast the user asked to
+		// stay on screen into one that dismissed itself after a restart.
+		it('round-trips the notify config through the queue table', () => {
+			const p = makePersistence();
+			const notify = { message: 'Deploy finished', sticky: true };
+			p.persist('s-1', 'pid-notify', makeEntry({ action: 'notify', notify }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'notify')!.notify).toEqual(notify);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.notify).toBeUndefined();
+		});
+
 		it('drops a row whose Auto Run payload is not valid JSON', () => {
 			const p = makePersistence();
 			getSharedDb().persistQueuedEvent({

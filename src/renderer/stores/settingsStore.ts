@@ -350,6 +350,7 @@ export interface SettingsStoreState
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
 	 * True when the main process found an installation id already on disk (i.e.
@@ -475,6 +476,7 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	pianolaAutoWatchNewAgents: boolean;
 }
 
 export interface SettingsStoreActions
@@ -496,6 +498,7 @@ export interface SettingsStoreActions
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
@@ -589,6 +592,7 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -719,6 +723,10 @@ export function resolveForceParallel(optionForce?: boolean): boolean {
 	return optionForce === true || s.forcedParallelAlways;
 }
 
+// Order confirmed auto-watch saves and hydration without exposing unsaved values.
+let pianolaAutoWatchRevision = 0;
+let pianolaAutoWatchAppliedRevision = 0;
+
 export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
@@ -737,6 +745,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
+		mediaModelDirectory: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -838,6 +847,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		pianolaAutoWatchNewAgents: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -891,6 +901,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setGhPath: (value) => {
 			set({ ghPath: value });
 			window.maestro.settings.set('ghPath', value);
+		},
+
+		setMediaModelDirectory: async (value) => {
+			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
+			const persisted = await window.maestro.settings.get('mediaModelDirectory');
+			set({ mediaModelDirectory: typeof persisted === 'string' ? persisted : '' });
+			return true;
 		},
 
 		setMediaPlaybackRate: (value) => {
@@ -1467,6 +1484,25 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('spellCheck', value);
 		},
 
+		setPianolaAutoWatchNewAgents: async (value) => {
+			const revision = ++pianolaAutoWatchRevision;
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoWatchNewAgents', value);
+				if (saved === false) throw new Error('Setting was not saved');
+				// Only confirmed values reach the checkbox. A newer confirmed save
+				// or external hydration must survive a delayed acknowledgement.
+				if (revision > pianolaAutoWatchAppliedRevision) {
+					pianolaAutoWatchAppliedRevision = revision;
+					set({ pianolaAutoWatchNewAgents: value });
+				}
+			} catch (error) {
+				// Re-read the persisted value. If that also fails, the store still
+				// holds its last confirmed value, even with overlapping failed saves.
+				await loadAllSettings();
+				throw error;
+			}
+		},
+
 		// ============================================================================
 		// Async Setters
 		// ============================================================================
@@ -1933,6 +1969,7 @@ export async function loadAllSettings(): Promise<void> {
 	// Snapshot before the awaited reads below. Anything the user changes while
 	// they are in flight must survive this load - see the filter before setState.
 	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
+	const pianolaRevisionAtRead = ++pianolaAutoWatchRevision;
 
 	try {
 		// Batch load all settings in a single IPC call
@@ -1956,6 +1993,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		patch.mediaModelDirectory =
+			typeof allSettings['mediaModelDirectory'] === 'string'
+				? allSettings['mediaModelDirectory']
+				: '';
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
@@ -2638,6 +2679,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
+		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
+
 		hydrateAnnotatorSettings(allSettings, patch);
 
 		// On a RELOAD (system resume, another window's write), drop any key the user
@@ -2654,6 +2697,15 @@ export async function loadAllSettings(): Promise<void> {
 				if (live[key] !== beforeRead[key]) {
 					delete patchKeys[key];
 				}
+			}
+		}
+
+		// Even an identical persisted value supersedes older save acknowledgements.
+		if (patch.pianolaAutoWatchNewAgents !== undefined) {
+			if (pianolaRevisionAtRead > pianolaAutoWatchAppliedRevision) {
+				pianolaAutoWatchAppliedRevision = pianolaRevisionAtRead;
+			} else {
+				delete patch.pianolaAutoWatchNewAgents;
 			}
 		}
 
@@ -2888,6 +2940,7 @@ export function getSettingsActions() {
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,

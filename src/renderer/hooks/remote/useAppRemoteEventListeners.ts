@@ -41,6 +41,7 @@ import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
+import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
 import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
 import {
@@ -822,10 +823,6 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					return;
 				}
 
-				// Capture whether the launch enables worktree dispatch - used below to
-				// decide whether to spawn a child session via the desktop helper.
-				const worktreeEnabled = Boolean(config.worktree?.enabled);
-
 				// CLI/web callers omit prompt → fall back to the default Auto Run prompt
 				// template (autorun-default.md), matching what BatchRunnerModal does for
 				// GUI launches. An empty string here propagates as undefined through
@@ -838,10 +835,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// (e.g. "Cue Dashboard") and a path computed before sanitization, both
 				// of which can drift from what spawnWorktreeAgentAndDispatch actually
 				// resolves on disk (sanitized branch, or an existingPath returned by
-				// `git worktree add` when the branch already had a worktree). The spawn
-				// helper writes the resolved values back into config.worktree when
-				// createPROnCompletion is true; we mirror that result onto batchConfig
-				// below so PR creation downstream sees the correct path/branch.
+				// `git worktree add` when the branch already had a worktree). The
+				// resolver below writes the resolved values onto batchConfig.worktree
+				// when a pull request was asked for, so PR creation downstream sees
+				// the correct path/branch.
 				// Per-run model/effort override (CLI `--model` / `--effort`). Spread
 				// only when set so an omitted flag never serializes as an empty string,
 				// which would pin the run to a nonexistent model instead of falling
@@ -859,95 +856,59 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					...(config.taskSelectionMode === 'document' && {
 						taskSelectionMode: 'document' as const,
 					}),
+					// Auto-resume: absent means the documented default, so each field
+					// is forwarded only when the caller actually chose it.
+					...(config.autoResumeOnError === false && { autoResumeOnError: false }),
+					...(typeof config.autoResumeAfterMin === 'number' && {
+						autoResumeAfterMin: config.autoResumeAfterMin,
+					}),
+					...(typeof config.maxAutoResumes === 'number' && {
+						maxAutoResumes: config.maxAutoResumes,
+					}),
 				};
 
-				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
-				// spawn a child session linked to the launching parent BEFORE calling
-				// startBatchRun. Without this, startBatchRun creates the worktree on
-				// disk but no session is bound to the launching agent - chokidar in
-				// useWorktreeHandlers eventually attaches the new directory to whichever
-				// sibling's worktreeConfig.basePath matches first, producing the wrong-
-				// parent attachment reported in PR #946.
-				let targetSessionId = sessionId;
-				if (worktreeEnabled && config.worktree) {
-					// If the launching session is itself a worktree child, resolve to
-					// its parent so basePath/cwd used for worktree creation come from
-					// the main repo. Falls back to the launching session if the parent
-					// can't be loaded (mirrors desktop behavior).
-					let parentForSpawn = session;
-					if (session.parentSessionId) {
-						const parent = selectSessionById(session.parentSessionId)(useSessionStore.getState());
-						if (parent) parentForSpawn = parent;
-					}
-
-					// Build a WorktreeRunTarget from the mobile/web LaunchWorktreeConfig.
-					// Mobile currently only supports create-new; existing-open/closed are
-					// desktop-only flows.
-					//
-					// baseBranch resolution order: explicit `worktree.baseBranch` from the
-					// caller (CLI `--base-branch`, mobile picker) wins. Fall back to
-					// `prTargetBranch` only for older clients that conflated the two, then
-					// to "main" as a final default. This keeps payloads from pre-baseBranch
-					// CLIs working while letting newer callers pick a base independent of
-					// the PR target.
-					const spawnConfig: BatchRunConfig = {
-						...batchConfig,
-						worktreeTarget: {
-							mode: 'create-new',
-							newBranchName: config.worktree.branchName,
-							baseBranch: config.worktree.baseBranch || config.worktree.prTargetBranch || 'main',
-							createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
-						},
+				// Where the run executes. A scheduled run (Cue) names its target the
+				// way the Auto Run window does, as a `worktreeTarget` in any of the
+				// three modes. The CLI and the web client send the older
+				// `worktree` block, which only ever meant "create a new one".
+				//
+				// baseBranch resolution order for that older block: explicit
+				// `worktree.baseBranch` from the caller (CLI `--base-branch`, mobile
+				// picker) wins. Fall back to `prTargetBranch` only for older clients
+				// that conflated the two, then to "main" as a final default.
+				//
+				// Setting worktreeTarget also tells startBatchRun to skip its own
+				// setupWorktree call - the resolver below has already created the
+				// directory and built the agent, bound to the launching parent.
+				// Without that, startBatchRun creates the worktree on disk with no
+				// agent bound to it, and chokidar attaches the new directory to
+				// whichever sibling's worktreeConfig.basePath matches first (PR #946).
+				if (config.worktreeTarget) {
+					batchConfig.worktreeTarget = config.worktreeTarget;
+				} else if (config.worktree?.enabled) {
+					batchConfig.worktreeTarget = {
+						mode: 'create-new',
+						newBranchName: config.worktree.branchName,
+						baseBranch: config.worktree.baseBranch || config.worktree.prTargetBranch || 'main',
+						createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
 					};
-
-					try {
-						const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, spawnConfig);
-						if (!newSessionId) {
-							window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-								success: false,
-								error: 'Failed to spawn worktree agent',
-							});
-							return;
-						}
-						targetSessionId = newSessionId;
-						// spawnWorktreeAgentAndDispatch writes the resolved worktree
-						// path/branch back into spawnConfig.worktree when PR creation is
-						// requested (sanitized branch name, or the existingPath that
-						// `git worktree add` returned for an already-attached branch).
-						// Forward that authoritative value to startBatchRun; when PR
-						// creation is off, leave batchConfig.worktree undefined and rely
-						// on worktreeTarget + the spawned session's cwd - the same shape
-						// the desktop launch path produces.
-						if (spawnConfig.worktree) {
-							batchConfig.worktree = spawnConfig.worktree;
-						}
-						// Setting worktreeTarget tells startBatchRun to skip its own
-						// setupWorktree call - the spawn helper already created the
-						// directory and built the session.
-						batchConfig.worktreeTarget = spawnConfig.worktreeTarget;
-					} catch (err) {
-						captureException(err, {
-							extra: {
-								event: 'maestro:configureAutoRun',
-								sessionId,
-								parentSessionId: parentForSpawn.id,
-								worktree: config.worktree,
-								responseChannel,
-							},
-						});
-						logger.error('[Remote] Failed to spawn worktree agent:', undefined, err);
-						notifyToast({
-							type: 'error',
-							title: 'Worktree Error',
-							message: err instanceof Error ? err.message : String(err),
-						});
-						window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
-							success: false,
-							error: err instanceof Error ? err.message : String(err),
-						});
-						return;
-					}
 				}
+
+				// Resolves to the launching agent when there is no worktree target.
+				// Any failure ends the launch: nobody is at the keyboard to redirect
+				// a scheduled or scripted run, and quietly running it in the
+				// launching agent's own checkout is the one outcome a worktree
+				// target exists to prevent.
+				const dispatch = await resolveAutoRunDispatchTarget(session, batchConfig);
+				if (!dispatch.ok) {
+					logger.error('[Remote] Auto Run worktree target unavailable:', undefined, dispatch);
+					window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
+						success: false,
+						error: dispatch.message,
+					});
+					return;
+				}
+				const targetSessionId = dispatch.sessionId;
 
 				// Send success response immediately - startBatchRun is long-running
 				// and would exceed the IPC/CLI timeout if awaited.

@@ -466,6 +466,37 @@ describe('normalizer - action: autorun option passthrough', () => {
 		expect(sub.auto_run).not.toHaveProperty('ignore_model_hints');
 	});
 
+	it('carries the auto-resume settings and the worktree to the engine', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: {
+				documents: ['/proj/a.md'],
+				auto_resume_on_error: false,
+				auto_resume_after_min: 10,
+				max_auto_resumes: 3,
+				worktree: { mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+			},
+		});
+
+		expect(sub.auto_run).toMatchObject({
+			auto_resume_on_error: false,
+			auto_resume_after_min: 10,
+			max_auto_resumes: 3,
+			worktree: { mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+		});
+	});
+
+	// Carrying on without the block would run the documents in the owning
+	// agent's own checkout, so the whole payload is unusable instead.
+	it('drops the whole payload when its worktree block cannot be resolved', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: { documents: ['/proj/a.md'], worktree: { mode: 'create-new' } },
+		});
+
+		expect(sub.auto_run).toBeUndefined();
+	});
+
 	it('drops an unknown task_selection_mode rather than handing it to the launch', () => {
 		const sub = normalizeSub({
 			...base,
