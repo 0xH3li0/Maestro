@@ -108,14 +108,15 @@ describe('steerQueuedItem', () => {
 	});
 
 	it('reports why an item is not steerable instead of steering it', async () => {
-		// The CLI surfaces this reason; the button never renders for it.
+		// The CLI surfaces this reason; the button never renders for it. A Codex agent
+		// on the default exec transport has no steering channel.
 		useSessionStore.setState({
 			sessions: [{ ...steerableSession([item()]), toolType: 'codex' } as Session],
 		});
 
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
-		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'not-claude' });
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'codex-exec' });
 		expect(steer).not.toHaveBeenCalled();
 		expect(queue()).toEqual([item()]);
 	});

@@ -15,6 +15,7 @@
 import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
 import { generateId } from './ids';
 import { steeringTextTooLong } from '../../shared/chatSteering';
+import { resolveCodexTransport } from '../../shared/codexTransport';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -503,6 +504,7 @@ export type SteerBlockedReason =
 	| 'no-target-tab'
 	| 'tab-not-working'
 	| 'not-claude'
+	| 'codex-exec'
 	| 'api-token-source'
 	| 'nothing-to-type'
 	| 'has-images'
@@ -529,7 +531,9 @@ export interface SteerEligibility {
  * Only a Claude turn on the INTERACTIVE token source can be steered, and that is a
  * hard physical limit rather than a policy: `claude --print` closes stdin and holds
  * no writable PTY for the length of the turn, so there is nothing to type into.
- * See src/shared/chatSteering.ts.
+ * See src/shared/chatSteering.ts. The one other steerable provider is a Codex agent
+ * opted into the app-server transport (`turn/steer`); see
+ * docs/agent-guides/CODEX-APP-SERVER.md.
  *
  * `dynamic` mode is the interesting case and the reason this reads
  * `session.claudeInteractive.mode` rather than the configured token mode. A dynamic
@@ -563,8 +567,18 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
-	if (session.toolType !== 'claude-code') return { canSteer: false, blockedReason: 'not-claude' };
-	if (session.claudeInteractive?.mode !== 'interactive') {
+	if (session.toolType === 'codex') {
+		// A Codex turn is steerable only on the opt-in app-server transport, which
+		// accepts `turn/steer` while a turn runs. `codex exec` (the default) accepts
+		// nothing once the turn has started. An app-server agent can still run a
+		// given turn on exec (SSH, images); main answers that steer `refused` with
+		// `not-running`, so the routing is not re-derived here.
+		if (resolveCodexTransport(session) !== 'app-server') {
+			return { canSteer: false, blockedReason: 'codex-exec' };
+		}
+	} else if (session.toolType !== 'claude-code') {
+		return { canSteer: false, blockedReason: 'not-claude' };
+	} else if (session.claudeInteractive?.mode !== 'interactive') {
 		return { canSteer: false, blockedReason: 'api-token-source' };
 	}
 	// Steering TYPES text into the composer, so an item with nothing to type has
@@ -601,7 +615,9 @@ export function getSteerEligibility(
  * blocked reason hides the control rather than dimming it. None of them is
  * something the user can act on from a queued card: a tab that is not working has
  * no turn to steer (and will start this very message shortly), a non-Claude agent
- * can never steer, and an API-source turn has no PTY. A dimmed button whose
+ * can never steer, a Codex agent on `codex exec` cannot be reached mid-turn (the
+ * transport is an agent setting, not something to flip from a queued card), and an
+ * API-source turn has no PTY. A dimmed button whose
  * tooltip amounts to "not right now" is exactly the dead control the Force Send
  * work was fixing.
  *

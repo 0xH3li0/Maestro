@@ -713,9 +713,48 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(session, item).blockedReason).toBe('api-token-source');
 	});
 
-	it('refuses a non-Claude agent', () => {
-		const session = steerableSession({ toolType: 'codex' });
+	it('refuses a provider that has no steering channel', () => {
+		const session = steerableSession({ toolType: 'opencode' });
 		expect(getSteerEligibility(session, item).blockedReason).toBe('not-claude');
+	});
+
+	it('allows a Codex agent on the app-server transport', () => {
+		// `turn/steer` reaches a running app-server turn; the Claude token-mode check
+		// does not apply to Codex at all.
+		const session = steerableSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			claudeInteractive: undefined,
+		});
+		const eligibility = getSteerEligibility(session, item);
+		expect(eligibility).toEqual({ canSteer: true });
+		expect(shouldOfferSteer(eligibility)).toBe(true);
+	});
+
+	it('refuses a Codex agent on exec with codex-exec', () => {
+		// `codex exec` is the default and accepts nothing once a turn has started.
+		for (const codexTransport of [undefined, 'exec'] as const) {
+			const eligibility = getSteerEligibility(
+				steerableSession({ toolType: 'codex', codexTransport }),
+				item
+			);
+			expect(eligibility).toEqual({ canSteer: false, blockedReason: 'codex-exec' });
+			expect(shouldOfferSteer(eligibility)).toBe(false);
+		}
+	});
+
+	it('applies the item refusals to a Codex app-server agent unchanged', () => {
+		const session = steerableSession({ toolType: 'codex', codexTransport: 'app-server' });
+		expect(
+			getSteerEligibility(session, {
+				tabId: 'tab-1',
+				text: 'use this screenshot',
+				images: ['maestro-image://store/abc.png'],
+			}).blockedReason
+		).toBe('has-images');
+		expect(
+			getSteerEligibility(session, { tabId: 'tab-1', text: 'x'.repeat(8193) }).blockedReason
+		).toBe('too-long');
 	});
 
 	it('refuses when the agent has no tabs at all', () => {
@@ -805,6 +844,22 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(idle, item).canSteer).toBe(false);
 		expect(getForceSendEligibility(idle, item, forceOpts).canForce).toBe(true);
 	});
+
+	it('is mutually exclusive with Force Send for a Codex app-server agent', () => {
+		const codex = { toolType: 'codex', codexTransport: 'app-server' } as const;
+		const busy = steerableSession(codex);
+		const idle = steerableSession({
+			...codex,
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		const forceOpts = { forcedParallelEnabled: true };
+
+		expect(getSteerEligibility(busy, item).canSteer).toBe(true);
+		expect(getForceSendEligibility(busy, item, forceOpts).canForce).toBe(false);
+
+		expect(getSteerEligibility(idle, item).canSteer).toBe(false);
+		expect(getForceSendEligibility(idle, item, forceOpts).canForce).toBe(true);
+	});
 });
 
 describe('shouldOfferSteer', () => {
@@ -815,6 +870,7 @@ describe('shouldOfferSteer', () => {
 			'no-target-tab',
 			'tab-not-working',
 			'not-claude',
+			'codex-exec',
 			'api-token-source',
 			'nothing-to-type',
 			'has-images',
