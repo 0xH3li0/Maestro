@@ -49,6 +49,8 @@ export function isSelfContainedCard(entry: LogEntry): boolean {
 		entry.snoozeReturn ||
 		// Agent-to-agent hand-off pill - owned by services/agentDelegation.ts
 		entry.delegation ||
+		// Automatic context compaction pill - owned by services/contextCompaction.ts
+		entry.contextCompaction ||
 		// Tool call card / hidden-progress placeholder
 		entry.metadata?.hiddenProgress ||
 		entry.metadata?.toolState ||

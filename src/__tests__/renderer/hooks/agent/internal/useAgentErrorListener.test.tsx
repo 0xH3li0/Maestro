@@ -9,8 +9,11 @@ import {
 	useRetryStore,
 	noteDispatch,
 	cancelRetry,
+	cancelContextCompaction,
+	noteFailedTurnExited,
 	registerBatchResumer,
 } from '../../../../../renderer/stores/retryStore';
+import { registerContextCompactionSpawner } from '../../../../../renderer/services/contextCompaction';
 import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
 
 let handler: ((sessionId: string, error: any) => void) | undefined;
@@ -63,6 +66,14 @@ beforeEach(() => {
 const overloadError = {
 	type: 'rate_limited',
 	message: 'API Error: 529 Overloaded',
+	timestamp: 1700000000000,
+	agentId: 'claude-code',
+	recoverable: true,
+};
+
+const contextLimitError = {
+	type: 'token_exhaustion',
+	message: 'Prompt is too long. Try a shorter message or start a new session.',
 	timestamp: 1700000000000,
 	agentId: 'claude-code',
 	recoverable: true,
@@ -559,6 +570,85 @@ describe('useAgentErrorListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].agentSessionId).toBe('claude-abc');
 		expect(updated.aiTabs[0].logs).toHaveLength(tab.logs.length);
+	});
+
+	// A full context window is fixed by compacting the session and resending, so
+	// the failure itself must leave no mark: no error frame, no ERR badge, no
+	// modal, no outage card. The compaction pill is the whole record.
+	it('masks a context-limit error behind a compaction pill', () => {
+		registerContextCompactionSpawner(vi.fn(() => new Promise(() => {})));
+		const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'claude-abc' });
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', contextLimitError);
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.state).not.toBe('error');
+		expect(updated.agentError).toBeUndefined();
+		expect(updated.aiTabs[0].agentError).toBeUndefined();
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
+
+		const added = updated.aiTabs[0].logs.slice(tab.logs.length);
+		expect(added).toHaveLength(1);
+		expect(added[0].contextCompaction).toEqual({ status: 'pending' });
+		expect(added[0].retryOutageId).toBeUndefined();
+
+		expect(useRetryStore.getState().retries['sess-1:tab-1']?.strategy).toBe('context-compaction');
+		expect(useRetryStore.getState().outages).toEqual({});
+
+		cancelContextCompaction('sess-1');
+		registerContextCompactionSpawner(null);
+	});
+
+	// The compaction could not land, so the retry store hands the SAME error back
+	// through the handler this hook registered, and it shows as it always did.
+	it('surfaces the context-limit error when the compaction fails', async () => {
+		let failCompaction!: (result: { success: boolean; error?: string }) => void;
+		registerContextCompactionSpawner(
+			vi.fn(
+				() =>
+					new Promise<{ success: boolean; error?: string }>((resolve) => {
+						failCompaction = resolve;
+					})
+			)
+		);
+		const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'claude-abc' });
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-1-ai-tab-1', contextLimitError);
+		noteFailedTurnExited('sess-1', 'tab-1');
+		failCompaction({ success: false, error: 'Prompt is too long' });
+
+		await waitFor(() => {
+			expect(useSessionStore.getState().sessions[0].state).toBe('error');
+		});
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.agentError?.type).toBe('token_exhaustion');
+		expect(updated.aiTabs[0].logs.some((l) => l.source === 'error')).toBe(true);
+		expect(updated.aiTabs[0].logs.find((l) => l.contextCompaction)?.contextCompaction).toEqual({
+			status: 'error',
+			error: 'Prompt is too long',
+		});
+		expect(useModalStore.getState().modals.get('agentError')?.open).toBe(true);
+		expect(useRetryStore.getState().retries['sess-1:tab-1']).toBeUndefined();
+
+		registerContextCompactionSpawner(null);
 	});
 
 	it('skips synopsis-process errors', () => {
