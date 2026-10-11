@@ -84,6 +84,8 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/** Admitted by the CLI secret (see the root WebClient in ../../types). */
+	cli?: boolean;
 }
 
 /**
