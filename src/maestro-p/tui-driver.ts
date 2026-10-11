@@ -861,6 +861,17 @@ export class TuiDriver extends EventEmitter {
 			};
 		}
 
+		// An earlier steer that was refused after typing leaves its text in the
+		// editor. Typing behind it would submit both as one message, so clear it
+		// first, and refuse rather than guess if the screen says it is still there.
+		if (this.unsubmittedInjection !== null && !(await this.clearUnsubmittedInjection())) {
+			return {
+				submitted: false,
+				refusal: 'editor-unavailable',
+				detail: 'text from an earlier steer is still in the editor and could not be cleared',
+			};
+		}
+
 		const gate = this.readScreen();
 		if (!editorIsAcceptingInput(gate)) return this.editorRefusal(gate);
 

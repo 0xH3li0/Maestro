@@ -1509,6 +1509,35 @@ describe('TuiDriver', () => {
 			expect(outcome).toMatchObject({ submitted: false, refusal: 'echo-missing' });
 		});
 
+		it('clears an earlier refused steer from the editor before typing the next one', async () => {
+			// A refusal after typing leaves the text in the editor; typing behind it
+			// would submit both as one message.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			let editor = '';
+			let echo = false;
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r') return;
+				if (chunk.startsWith('\u0015')) editor = '';
+				else editor += chunk;
+				feed(`\u001b[2J\u001b[H${RULE}\r\n\u276f ${echo ? editor : ''}\r\n${RULE}\r\n`);
+			});
+
+			const first = await driver.inject('go left');
+			expect(first).toMatchObject({ submitted: false, refusal: 'echo-missing' });
+
+			echo = true;
+			const second = await driver.inject('go right');
+
+			expect(second).toEqual({ submitted: true, typed: 'go right' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			const clearAt = writes.findIndex((w) => w.startsWith('\u0015'));
+			const typeAt = writes.findIndex((w) => w.includes('go right'));
+			expect(clearAt).toBeGreaterThan(-1);
+			expect(clearAt).toBeLessThan(typeAt);
+		});
+
 		it('submits a multi-line steer that grows the editor box', async () => {
 			// The pre-Enter check re-requires the box, and a steer with a newline makes
 			// it taller than one row. A one-row-only box check would refuse every one.

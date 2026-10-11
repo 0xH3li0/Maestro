@@ -516,7 +516,8 @@ export type SteerBlockedReason =
 	| 'paused'
 	| 'waiting-for-connection'
 	| 'ssh-remote'
-	| 'steer-in-flight';
+	| 'steer-in-flight'
+	| 'tui-command-prefix';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -604,6 +605,14 @@ export function getSteerEligibility(
 	// after an unconfirmed delivery (where steering it again types it twice). The
 	// card's play button is the way out, not Steer.
 	if (item.paused) return { canSteer: false, blockedReason: 'paused' };
+	// Steering a Claude turn TYPES into its TUI, where a leading `/` opens the
+	// slash-command menu (Enter would run `/clear` or `/compact` mid-turn) and a
+	// leading `!` switches the editor to bash mode. Neither is the message the user
+	// queued, so it waits and dispatches normally. Codex receives `turn/steer` as
+	// plain input, so it is unaffected.
+	if (session.toolType === 'claude-code' && /^[/!]/.test(item.text.trimStart())) {
+		return { canSteer: false, blockedReason: 'tui-command-prefix' };
+	}
 	if (item.waitingForConnection) {
 		return { canSteer: false, blockedReason: 'waiting-for-connection' };
 	}

@@ -765,6 +765,17 @@ describe('getSteerEligibility', () => {
 		});
 	});
 
+	it('refuses a Claude steer the TUI would read as a slash or bash command', () => {
+		for (const text of ['/compact', '  /clear', '!rm -rf build']) {
+			expect(getSteerEligibility(steerableSession(), { tabId: 'tab-1', text }).blockedReason).toBe(
+				'tui-command-prefix'
+			);
+		}
+		// Codex takes turn/steer as plain input.
+		const codex = steerableSession({ toolType: 'codex', codexTransport: 'app-server' });
+		expect(getSteerEligibility(codex, { tabId: 'tab-1', text: '/compact' }).canSteer).toBe(true);
+	});
+
 	it('refuses an item held for a reconnect', () => {
 		expect(
 			getSteerEligibility(steerableSession(), { ...item, waitingForConnection: true }).blockedReason
@@ -909,6 +920,7 @@ describe('shouldOfferSteer', () => {
 			'waiting-for-connection',
 			'ssh-remote',
 			'steer-in-flight',
+			'tui-command-prefix',
 		] as const) {
 			expect(shouldOfferSteer({ canSteer: false, blockedReason })).toBe(false);
 		}
