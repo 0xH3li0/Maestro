@@ -334,12 +334,11 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		license: 'Apache-2.0',
 		licenseUrl: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF',
 		description:
-			'The Conductor Brain: decides which agent and tab an utterance is for, and reshapes replies for the ear. The largest download, and the one you can skip if you would rather route with an API model.',
-		// The llama runtime now installs node-llama-cpp's JavaScript half as
-		// pinned dependencies, but nobody has proven it loads and generates on a
-		// real machine yet. Hidden until that is recorded in local-models.md.
-		pending:
-			'Not usable yet: the llama.cpp runtime that reads this model is not part of this build. Routing uses the built-in keyword router, or a hosted model, instead.',
+			'A small general text model that runs on this machine: names tabs, writes short summaries, drafts shell commands and pull requests, and answers yes or no for the Cue gate. The largest download here, and one you can skip if you already run Ollama or LM Studio.',
+		// Installable since the llama runtime was proven on real hardware
+		// (docs/architecture/local-models.md, "Llama runtime on real hardware").
+		// It is NOT offered for voice routing: see `unofferedLocalModels` on that
+		// task for the measured reason.
 		files: [
 			{
 				path: 'Qwen3-1.7B-Q4_K_M.gguf',

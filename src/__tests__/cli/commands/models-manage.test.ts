@@ -34,6 +34,7 @@ import {
 	getLocalModel,
 	LOCAL_MODEL_CATALOG,
 	PROMPT_GUARD_2_22M_ID,
+	QWEN3_1_7B_ID,
 } from '../../../shared/local-models/model-catalog';
 import type { LocalModelListing } from '../../../main/local-models/service';
 
@@ -158,6 +159,54 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 			expect(captured.timeout).toBeGreaterThan(60 * 60 * 1000);
 			expect(logSpy.mock.calls.at(-1)?.[0]).toMatch(/Installed BGE Small/);
 			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('says when the engine was installed with the model, and when it could not be', async () => {
+			mockSend({
+				success: true,
+				result: {
+					modelId: QWEN3_1_7B_ID,
+					status: 'complete',
+					runtime: { runtimeId: 'llama', status: 'installed' },
+				},
+			});
+			await modelsInstall(QWEN3_1_7B_ID, {});
+			let printed = logSpy.mock.calls.map(([line]) => String(line)).join('\n');
+			expect(printed).toMatch(/Installed Qwen3/);
+			expect(printed).toMatch(/Installed its engine too \(llama\)/);
+
+			logSpy.mockClear();
+			mockSend({
+				success: true,
+				result: {
+					modelId: QWEN3_1_7B_ID,
+					status: 'complete',
+					runtime: { runtimeId: 'llama', status: 'failed', error: 'hash mismatch' },
+				},
+			});
+			await modelsInstall(QWEN3_1_7B_ID, {});
+			printed = logSpy.mock.calls.map(([line]) => String(line)).join('\n');
+			// The weights arrived, so this is not a failed install, but a model that
+			// cannot run must not be reported as simply installed.
+			expect(printed).toMatch(/did not install: hash mismatch/);
+			expect(printed).toMatch(/maestro-cli models runtimes install llama/);
+			expect(exitSpy).not.toHaveBeenCalled();
+
+			logSpy.mockClear();
+			mockSend({
+				success: true,
+				result: {
+					modelId: QWEN3_1_7B_ID,
+					status: 'complete',
+					runtime: { runtimeId: 'llama', status: 'unavailable' },
+				},
+			});
+			await modelsInstall(QWEN3_1_7B_ID, { json: true });
+			expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toMatchObject({
+				success: true,
+				status: 'complete',
+				runtime: { runtimeId: 'llama', status: 'unavailable' },
+			});
 		});
 
 		it('exits non-zero with the hash mismatch when the download fails', async () => {

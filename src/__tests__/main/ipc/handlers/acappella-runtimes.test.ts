@@ -313,5 +313,22 @@ describe('A Cappella runtime IPC handlers', () => {
 			expect(cancelled).toContain(PARAKEET_TDT_V2_ID);
 			expect(cancelled).not.toContain(PROMPT_GUARD_2_22M_ID);
 		});
+
+		it('spares a voice model that a task other than voice routing is assigned to', async () => {
+			// Dictation runs on the recogniser voice also uses. Switching voice off
+			// and reclaiming its disk must not break dictation.
+			settings = {
+				localModelAssignments: { dictation: { type: 'local', modelId: PARAKEET_TDT_V2_ID } },
+			};
+			await handlerFor('models:footprint')({});
+			await handlerFor('models:remove-all')({});
+
+			const footprintFilter = vi.mocked(totalFootprint).mock.calls[0][0]!;
+			const removeFilter = vi.mocked(removeAll).mock.calls[0][0]!;
+			for (const include of [footprintFilter, removeFilter]) {
+				expect(include(PARAKEET_TDT_V2_ID)).toBe(false);
+				expect(include('retired-model')).toBe(true);
+			}
+		});
 	});
 });

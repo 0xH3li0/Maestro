@@ -140,10 +140,13 @@ describe('local model catalog', () => {
 	});
 
 	it('records pending only for models nothing in this build can read', () => {
-		for (const id of [KOKORO_82M_ID, QWEN3_1_7B_ID]) {
+		for (const id of [KOKORO_82M_ID]) {
 			expect(getLocalModel(id)?.pending).toEqual(expect.any(String));
 		}
 		for (const id of [
+			// Installable since the llama runtime was proven on real hardware. What it
+			// is NOT offered for is a per-task fact (`unofferedLocalModels`).
+			QWEN3_1_7B_ID,
 			PARAKEET_TDT_V2_ID,
 			WHISPER_BASE_EN_ID,
 			OPENWAKEWORD_BASE_ID,

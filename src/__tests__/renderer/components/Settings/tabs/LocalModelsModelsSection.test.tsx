@@ -12,11 +12,12 @@ import type { Theme } from '../../../../../renderer/types';
 import type { LocalModelListing } from '../../../../../main/local-models/service';
 import { LocalModelsModelsSection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsModelsSection';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
-import { useLocalModels } from '../../../../../renderer/hooks/localModels';
+import { useLocalModels, useLocalRuntimes } from '../../../../../renderer/hooks/localModels';
 import {
 	BGE_SMALL_EN_ID,
 	LOCAL_MODEL_CATALOG,
 	PARAKEET_TDT_V2_ID,
+	QWEN3_1_7B_ID,
 	getLocalModel,
 } from '../../../../../shared/local-models/model-catalog';
 
@@ -57,10 +58,26 @@ function listing(id: string, installed: boolean): LocalModelListing {
 /** The section takes the tab's hook state; this stands in for the tab. */
 function ModelsSection() {
 	const models = useLocalModels();
-	return <LocalModelsModelsSection theme={theme} models={models} />;
+	const runtimes = useLocalRuntimes();
+	return <LocalModelsModelsSection theme={theme} models={models} runtimes={runtimes} />;
 }
 
 const api = () => window.maestro.localModels as unknown as Record<string, ReturnType<typeof vi.fn>>;
+const runtimesApi = () =>
+	(window.maestro.localModels as unknown as { runtimes: Record<string, ReturnType<typeof vi.fn>> })
+		.runtimes;
+
+function runtimeListing(id: 'onnx' | 'llama', installed: boolean, bytes: number) {
+	return {
+		id,
+		label: id === 'onnx' ? 'ONNX Runtime' : 'llama.cpp',
+		models: LOCAL_MODEL_CATALOG.filter((entry) => entry.runtime === id).map((entry) => entry.id),
+		installed,
+		stale: false,
+		downloadable: true,
+		bytes,
+	};
+}
 
 describe('LocalModelsModelsSection', () => {
 	beforeEach(() => {
@@ -73,6 +90,13 @@ describe('LocalModelsModelsSection', () => {
 			models: [{ id: BGE_SMALL_EN_ID, bytes: getLocalModel(BGE_SMALL_EN_ID)!.bytes }],
 		});
 		api().onProgress.mockReturnValue(() => {});
+		api().download.mockResolvedValue({ status: 'complete' });
+		runtimesApi().list.mockResolvedValue([
+			runtimeListing('onnx', true, 100_000_000),
+			runtimeListing('llama', false, 40_000_000),
+		]);
+		runtimesApi().install.mockResolvedValue(true);
+		runtimesApi().onProgress.mockReturnValue(() => {});
 		useSettingsStore.setState({ localModelAssignments: {} });
 	});
 
@@ -100,6 +124,51 @@ describe('LocalModelsModelsSection', () => {
 		const row = screen.getByText(prompt.displayName).closest('.rounded.border') as HTMLElement;
 		fireEvent.click(within(row).getByRole('button', { name: /^Download/ }));
 		await waitFor(() => expect(api().download).toHaveBeenCalledWith(prompt.id));
+	});
+
+	it('offers the text model for download and states the engine it fetches with it', async () => {
+		render(<ModelsSection />);
+		await screen.findByTestId('local-models-kind-text-gen');
+		const qwen = getLocalModel(QWEN3_1_7B_ID)!;
+		const row = screen.getByText(qwen.displayName).closest('.rounded.border') as HTMLElement;
+		// llama.cpp is not installed, so the button names both downloads.
+		const button = within(row).getByRole('button', { name: /^Download/ });
+		expect(button).toHaveTextContent('engine');
+		fireEvent.click(button);
+		await waitFor(() => expect(api().download).toHaveBeenCalledWith(QWEN3_1_7B_ID));
+
+		// An ONNX model's engine is already on disk, so its button names only itself.
+		const prompt = getLocalModel('prompt-guard-2-22m')!;
+		const promptRow = screen
+			.getByText(prompt.displayName)
+			.closest('.rounded.border') as HTMLElement;
+		expect(within(promptRow).getByRole('button', { name: /^Download/ })).not.toHaveTextContent(
+			'engine'
+		);
+	});
+
+	it('lists the engines and installs one on its own', async () => {
+		render(<ModelsSection />);
+		const onnx = await screen.findByTestId('local-models-engine-onnx');
+		expect(onnx).toHaveTextContent('Installed');
+		expect(within(onnx).queryByRole('button')).not.toBeInTheDocument();
+
+		const llama = screen.getByTestId('local-models-engine-llama');
+		expect(llama).toHaveTextContent(getLocalModel(QWEN3_1_7B_ID)!.displayName);
+		expect(runtimesApi().install).not.toHaveBeenCalled();
+		fireEvent.click(within(llama).getByRole('button', { name: /^Install/ }));
+		await waitFor(() => expect(runtimesApi().install).toHaveBeenCalledWith('llama'));
+	});
+
+	it('says so when an engine has no build for this platform', async () => {
+		runtimesApi().list.mockResolvedValue([
+			runtimeListing('onnx', true, 100_000_000),
+			{ ...runtimeListing('llama', false, 0), downloadable: false },
+		]);
+		render(<ModelsSection />);
+		const llama = await screen.findByTestId('local-models-engine-llama');
+		expect(llama).toHaveTextContent('No build is published for this platform');
+		expect(within(llama).queryByRole('button')).not.toBeInTheDocument();
 	});
 
 	it('names the voice slot a voice model serves', async () => {

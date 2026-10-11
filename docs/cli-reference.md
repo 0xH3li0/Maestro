@@ -1868,7 +1868,27 @@ List the local model catalog grouped by kind, with install status, size, and wha
 
 ## `maestro-cli models install <model-id>`
 
-Download and verify a local model, resuming a paused download; waits until it finishes (requires the desktop app)
+Download and verify a local model and the engine it runs on, resuming a paused download; waits until it finishes (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models runtimes`
+
+The native engines local models run on (ONNX Runtime, llama.cpp)
+
+## `maestro-cli models runtimes list`
+
+List the engines with install state, size, and the models each runs (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models runtimes install <runtime-id>`
+
+Download, verify and install one engine (onnx \| llama), or update a stale one; waits until it is usable (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

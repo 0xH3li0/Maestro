@@ -41,10 +41,25 @@ Every file comes from a pinned revision and is checked against a SHA-256 recorde
 **Removing a model a task uses warns first.** The warning names the tasks that would stop working, and you choose **Remove anyway** or **Keep it**.
 
 <Warning>
-	Two entries are listed but not usable yet: **Qwen3 1.7B** needs a llama.cpp runtime and **Kokoro
-	82M** needs a phoneme front end, and neither is part of this build. Their rows say so. Until they
-	ship, use an [endpoint](#endpoints) for text generation.
+	One entry is listed but not usable yet: **Kokoro 82M** needs a phoneme front end that is not part
+	of this build. Its row says so, and replies use your computer's own voice.
 </Warning>
+
+### The text model
+
+**Qwen3 1.7B** is the one text model Maestro runs itself. It is small and fast (a tab name in about a quarter of a second on Apple Silicon), and that size decides what it is offered for:
+
+- **Offered for:** tab naming, summaries, the Cue gate, pull request drafts, spoken notices, tab cleanup suggestions, and the token proxy's digest.
+- **Not offered for AI command mode.** In testing it wrote a wrong command for one request, and a command that kills a process for a request to find it.
+- **Not offered for voice routing.** It sent requests that named an agent to the Conductor instead of to that agent.
+
+The Assignments picker leaves it out of those two tasks. For them, use an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
+
+### Engines
+
+A model is a file of weights. An **engine** is the library that reads it: ONNX Runtime for the speech, embedding, classifier, and wake word models, and llama.cpp for the text model. Engines are not bundled in the installer. A model's **Download** button fetches its engine with it when that is missing, and says so on the button ("Download (1.1 GB + 41 MB engine)").
+
+The **Engines** card above the catalog shows each engine on its own: installed, not installed, needs update (a newer build expects a newer engine), or not available on this platform. Press **Install** or **Update** there if an engine did not arrive with its model.
 
 The speech and wake word models are the same files A Cappella uses. Installing them here or from [Voice Setup](./voice-mode#downloading-the-models) is the same install, and either page shows it.
 
@@ -247,9 +262,9 @@ An endpoint at any other address is a network service. Text sent to it leaves th
 
 Models install under `models` inside Maestro's user data directory. The Models section shows the total, and removing a model gives the space back.
 
-The models also need an engine to run. ONNX Runtime runs the embedding, classifier, speech, and wake word models. It is about 100 MB, it is not bundled in the installer, and it is downloaded from a pinned release checked against a hash recorded in the app. [Voice Setup](./voice-mode#downloading-the-models) downloads it together with the speech models.
+The models also need an [engine](#engines) to run. ONNX Runtime (about 100 MB) runs the embedding, classifier, speech, and wake word models, and llama.cpp (about 41 MB) runs the text model. Neither is bundled in the installer. Each is downloaded from a pinned release and checked against a hash recorded in the app, either with the first model that needs it or from the Engines card. [Voice Setup](./voice-mode#downloading-the-models) downloads ONNX Runtime together with the speech models.
 
-A model uses memory only while it works. It loads the first time a task needs it and unloads after five minutes without use. While loaded, a model uses about as much memory as its size on disk: tens of megabytes for BGE Small and Prompt Guard, several hundred for Parakeet or DeBERTa. An endpoint uses the memory of the server you run, not Maestro's.
+A model uses memory only while it works. It loads the first time a task needs it and unloads after five minutes without use. While loaded, a model uses about as much memory as its size on disk: tens of megabytes for BGE Small and Prompt Guard, several hundred for Parakeet or DeBERTa, and about 1.5 GB for Qwen3 1.7B. An endpoint uses the memory of the server you run, not Maestro's.
 
 ## Licenses
 
@@ -267,11 +282,13 @@ Everything in the tab has a `maestro-cli models` verb, so an agent can set this 
 
 ```bash
 maestro-cli models list [--kind <kind>]          # catalog by kind, with status and what uses each model
-maestro-cli models install <model-id>            # download and verify; waits until done; resumes a paused download
+maestro-cli models install <model-id>            # download and verify, with its engine; waits until done; resumes a paused download
 maestro-cli models pause <model-id>              # stop a running download, keep what arrived
 maestro-cli models cancel <model-id>             # stop a download and delete its partial files
 maestro-cli models verify <model-id>             # re-hash; never deletes or re-downloads
 maestro-cli models remove <model-id> [--force]   # refuses a model a task uses, unless --force
+maestro-cli models runtimes list                 # the engines: state, size, and the models each runs
+maestro-cli models runtimes install <onnx|llama> # install or update one engine on its own
 
 maestro-cli models endpoints list
 maestro-cli models endpoints detect              # probe for Ollama and LM Studio; adds nothing

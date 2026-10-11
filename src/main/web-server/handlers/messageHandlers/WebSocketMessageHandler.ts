@@ -97,6 +97,8 @@ import {
 	handleLocalModelsTranscribe,
 	handleLocalModelsList,
 	handleLocalModelsPause,
+	handleLocalModelsRuntimeInstall,
+	handleLocalModelsRuntimesList,
 	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
@@ -716,6 +718,14 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_download':
 				void handleLocalModelsDownload(this.ctx, client, message);
+				break;
+
+			case 'local_models_runtimes_list':
+				void handleLocalModelsRuntimesList(this.ctx, client, message);
+				break;
+
+			case 'local_models_runtime_install':
+				void handleLocalModelsRuntimeInstall(this.ctx, client, message);
 				break;
 
 			case 'local_models_pause':

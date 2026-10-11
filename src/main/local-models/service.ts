@@ -240,6 +240,73 @@ export async function installLocalRuntime(rawId: unknown): Promise<void> {
 	return install;
 }
 
+/**
+ * What happened to the runtime a model needs when the model was installed.
+ *
+ * - `ready`: it was already on disk and current.
+ * - `installed`: it was fetched now.
+ * - `unavailable`: this platform has no published build, so the model cannot
+ *   run here whatever is downloaded.
+ * - `failed`: the install threw. `error` carries why.
+ */
+export interface LocalRuntimeEnsureResult {
+	runtimeId: NativeRuntimeId;
+	status: 'ready' | 'installed' | 'unavailable' | 'failed';
+	error?: string;
+}
+
+/** A model download plus the state of the runtime that reads it. */
+export interface LocalModelInstallResult extends DownloadResult {
+	runtime: LocalRuntimeEnsureResult;
+}
+
+/**
+ * Make sure the runtime a model needs is on disk, installing it when it is
+ * missing or stale. Never throws: a model whose weights arrived is a real
+ * result even when its engine did not, and the caller has to be able to say
+ * both.
+ */
+export async function ensureLocalRuntimeForModel(
+	rawId: unknown
+): Promise<LocalRuntimeEnsureResult> {
+	const entry = getLocalModel(requireLocalModelId(rawId));
+	// `requireLocalModelId` already refused an unknown id.
+	const runtimeId = entry!.runtime;
+	try {
+		if ((await isRuntimeInstalled(runtimeId)) && !(await isRuntimeStale(runtimeId))) {
+			return { runtimeId, status: 'ready' };
+		}
+		if (artifactForThisPlatform(runtimeId) === null) return { runtimeId, status: 'unavailable' };
+		await installLocalRuntime(runtimeId);
+		return { runtimeId, status: 'installed' };
+	} catch (error) {
+		return {
+			runtimeId,
+			status: 'failed',
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
+/**
+ * Download a model AND the runtime that reads it: the one call that leaves a
+ * model usable.
+ *
+ * The Local Models tab's Download button and `maestro-cli models install` both
+ * mean "make this model work", and weights without their engine do not. Before
+ * this, a runtime could only be installed from Voice Setup, so a text model
+ * fetched from the tab verified clean and then reported `runtime-unavailable`
+ * with nothing in the tab or the CLI that could fix it. The two run side by
+ * side; the button that calls this states both sizes.
+ */
+export async function installLocalModel(rawId: unknown): Promise<LocalModelInstallResult> {
+	const [download, runtime] = await Promise.all([
+		downloadLocalModel(rawId),
+		ensureLocalRuntimeForModel(rawId),
+	]);
+	return { ...download, runtime };
+}
+
 export function localRuntimesFootprint(): Promise<number> {
 	return runtimesFootprint();
 }

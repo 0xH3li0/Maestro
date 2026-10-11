@@ -5,7 +5,8 @@
  * A task is offered only sources that can do its job:
  * - Off, always.
  * - Utility Agent, only when the task has an agent path to fall back on.
- * - Installed local models of exactly the kind the task `needs`.
+ * - Installed local models of exactly the kind the task `needs`, except one
+ *   the task records as measured-unfit (`unofferedLocalModels`).
  * - Models of enabled endpoints, only when an endpoint can serve that need
  *   (`endpointServesNeed`). Endpoints do not report a model's kind, so every
  *   listed model is offered and readiness names a wrong pick.
@@ -25,6 +26,7 @@ import { getLocalModel } from '../../../../../shared/local-models/model-catalog'
 import {
 	endpointServesNeed,
 	formatLocalModelAssignmentSpec,
+	isLocalModelOfferedForTask,
 	localModelAssignmentSourceLabel,
 	type LocalModelAssignment,
 	type LocalModelTaskDefinition,
@@ -61,10 +63,12 @@ function listedModelIds(state: EndpointModelsState | undefined): string[] {
 /** How a current assignment no option covers is labeled, so the reason is visible in the picker. */
 function unlistedLabel(
 	assignment: LocalModelAssignment,
-	endpoints: readonly LocalModelEndpoint[]
+	endpoints: readonly LocalModelEndpoint[],
+	installedModelIds: ReadonlySet<string>
 ): string {
 	const source = localModelAssignmentSourceLabel(assignment, endpoints);
 	if (assignment.type === 'local') {
+		if (installedModelIds.has(assignment.modelId)) return `${source} (not recommended)`;
 		return `${source} (${getLocalModel(assignment.modelId) ? 'not installed' : 'not in catalog'})`;
 	}
 	if (assignment.type === 'endpoint') {
@@ -86,8 +90,11 @@ export function buildAssignmentOptionGroups(
 	if (task.allowsUtilityAgent) head.push({ value: 'utility-agent', label: 'Utility Agent' });
 	const groups: AssignmentOptionGroup[] = [{ label: null, options: head }];
 
-	const localOptions = sources.listings
-		.filter((listing) => listing.entry.kind === task.needs && listing.status.status === 'installed')
+	const installed = sources.listings.filter(
+		(listing) => listing.entry.kind === task.needs && listing.status.status === 'installed'
+	);
+	const localOptions = installed
+		.filter((listing) => isLocalModelOfferedForTask(task.id, listing.entry.id))
 		.map((listing) => ({
 			value: formatLocalModelAssignmentSpec({ type: 'local', modelId: listing.entry.id }),
 			label: listing.entry.displayName,
@@ -116,7 +123,11 @@ export function buildAssignmentOptionGroups(
 		group.options.some((option) => option.value === currentValue)
 	);
 	if (!covered) {
-		head.push({ value: currentValue, label: unlistedLabel(current, sources.endpoints) });
+		const installedIds = new Set(installed.map((listing) => listing.entry.id));
+		head.push({
+			value: currentValue,
+			label: unlistedLabel(current, sources.endpoints, installedIds),
+		});
 	}
 	return groups;
 }

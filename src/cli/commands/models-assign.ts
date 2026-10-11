@@ -28,6 +28,7 @@ import {
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
+	localModelAssignmentCaution,
 	localModelAssignmentProblem,
 	parseLocalModelAssignmentSpec,
 	resolveLocalModelAssignments,
@@ -85,11 +86,23 @@ export function modelsAssign(taskId: string, spec: string, options: JsonOption):
 
 	const task = LOCAL_MODEL_TASKS[taskId];
 	const stored = formatLocalModelAssignmentSpec(assignment);
+	// A caution is not a refusal: the picker would not have offered this model
+	// for the task, so the reason it would not is said next to the result.
+	const caution = localModelAssignmentCaution(taskId, assignment);
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, taskId, assignment, spec: stored }));
+		console.log(
+			JSON.stringify({
+				success: true,
+				taskId,
+				assignment,
+				spec: stored,
+				...(caution ? { caution } : {}),
+			})
+		);
 		return;
 	}
 	console.log(formatSuccess(`${task.label} -> ${stored}`));
+	if (caution) console.log(formatWarning(`Not recommended for this task: ${caution}`));
 	if (!endpointEnabled) {
 		console.log(formatWarning('That endpoint is disabled. Enable it before the task can run.'));
 	}

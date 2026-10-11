@@ -284,6 +284,53 @@ so the second turn on a loaded model failed with `No sequences left`. The chat s
 `autoDisposeSequence: true`, and the unit-test mock models a one-sequence context so the regression
 is caught without hardware.
 
+### Result: 2026-10-11, the same machine, housekeeping tasks
+
+The routing result says what Qwen3 1.7B is bad at. This run asks the opposite question, which
+decides whether the model may be offered for download at all: is it good enough for the small jobs?
+`src/__tests__/main/local-models/llama-housekeeping-e2e.test.ts` (same switch,
+`MAESTRO_LOCAL_MODEL_E2E=1`) runs the shipped `*-local` prompts and reply schemas through the real
+runtime and model, and reads each reply with the parser its consumer uses. Results go to
+`llama-housekeeping-e2e-results.json` in the scratch dir.
+
+| Task               | Cases | Result                                                          | Warm turn     |
+| ------------------ | ----- | --------------------------------------------------------------- | ------------- |
+| Tab naming         | 5     | 5 of 5 short, on topic, IDs kept ("PR 1653 Watchdog Change")    | 200 to 257 ms |
+| Cue gate           | 4     | 4 of 4 correct (bug report, praise, change request, emoji only) | 349 to 463 ms |
+| Pull request draft | 1     | Title and body on topic, nothing invented                       | 783 ms        |
+| Spoken notice      | 3     | 3 of 3 one clause; the "needs input" case is weak (see below)   | 294 to 334 ms |
+| Tool-output digest | 1     | 2285 to 626 characters; error, path and line number kept        | 2326 ms       |
+| Shell command      | 4     | 3 of 4 use a plausible tool; **1 wrong, 1 destructive**         | 673 to 848 ms |
+
+**It is offered for the first five and not for shell commands.** The two failures:
+
+- "count the lines in every typescript file under src" came back as
+  `grep -c --include='*.ts' '^[a-zA-Z0-9_]/+.*' src`, which counts nothing useful.
+- "find which process is listening on port 8080" came back as `lsof -ti tcp:8080 | xargs kill -9`: it
+  lifted the kill pipeline from the prompt's own example. The user reviews a command before it runs,
+  but a model that turns "find" into "kill" is not one to invite.
+
+So `ai-command` joins `voice-routing` in recording Qwen3 1.7B under `unofferedLocalModels`
+(`src/shared/local-models/tasks.ts`). That field is the rule this run produced: a model is the right
+KIND for a task long before it is good at it, so a failed check is written on the TASK, with its
+reason, and the model stays installable for the tasks it does well. A picker does not offer an
+unoffered model; an assignment made anyway (the CLI) is honored and answered with the reason.
+
+**Weak, not failed: the spoken notice that should say "needs input".** The agent asked which of two
+migration methods to use, and the line was "Backend finished: choosing between two migration methods". True, but it does not
+say the agent is waiting. Recorded, and left offered: the line is spoken beside a visible tab.
+
+**Bug this run found: free-text turns came back empty.** Qwen3 is a thinking model. Without a
+grammar it opens its reply with a thought, the chat session strips thoughts from what it returns,
+and the thought is charged against `maxTokens`: the 400-token tool-output digest returned an EMPTY
+string after 2 s. Every free-text consumer (the token proxy's digest, context summaries, the group
+chat participant summary) would have got nothing. `LocalTextEngine.runTurn` now passes
+`budgets: { thoughtTokens: 0 }` on every turn. Grammar turns never thought (their first token is
+already constrained), which is why the routing run did not see it.
+
+**Not measured:** tab cleanup suggestions (its deterministic guard runs after the model whatever it
+says), context summaries of a long transcript, and any of this on Windows, Linux, or an Intel Mac.
+
 ## Text generation
 
 `generateText({ source, prompt, system?, maxTokens, temperature?, jsonSchema?, signal? })` in

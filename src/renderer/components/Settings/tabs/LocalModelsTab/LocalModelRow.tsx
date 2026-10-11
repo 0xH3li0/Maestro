@@ -48,6 +48,12 @@ export interface LocalModelRowProps {
 	 * speech-to-text"). Shown as a line under the description; omitted when empty.
 	 */
 	usedBy?: readonly string[];
+	/**
+	 * Bytes of engine the Download button fetches along with the model, when the
+	 * runtime that reads it is not installed yet. Stated on the button, because
+	 * a download the label did not name is one the user did not agree to.
+	 */
+	engineBytes?: number;
 }
 
 /** A download is "in flight" while queued, transferring, or verifying (not paused, not finished). */
@@ -80,6 +86,7 @@ function LocalModelRowInner({
 	onVerify,
 	onRemove,
 	usedBy,
+	engineBytes = 0,
 }: LocalModelRowProps) {
 	const { entry, status, installPaths } = listing;
 	const active = isActive(progress);
@@ -185,7 +192,11 @@ function LocalModelRowInner({
 					<RowButton
 						theme={theme}
 						icon={Download}
-						label={`Download (${formatSize(entry.bytes)})`}
+						label={
+							engineBytes > 0
+								? `Download (${formatSize(entry.bytes)} + ${formatSize(engineBytes)} engine)`
+								: `Download (${formatSize(entry.bytes)})`
+						}
 						primary
 						onClick={() => onDownload(entry.id)}
 					/>

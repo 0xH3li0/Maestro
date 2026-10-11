@@ -29,7 +29,7 @@ import {
 import { tasksUsingLocalModel } from '../../shared/local-models/tasks';
 import type { LocalModelEntry, LocalModelKind } from '../../shared/local-models/types';
 import { voiceModelUsageLabel } from '../../shared/acappella/voice-models';
-import type { LocalModelListing } from '../../main/local-models/service';
+import type { LocalModelListing, LocalRuntimeEnsureResult } from '../../main/local-models/service';
 import type { DownloadResult } from '../../main/local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../main/local-models/model-store';
 
@@ -193,10 +193,14 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 
 	if (!options.json) {
 		console.log(
-			`Downloading ${entry.displayName} (${formatSize(entry.bytes)}). Progress shows in Settings -> Local Models.`
+			`Downloading ${entry.displayName} (${formatSize(entry.bytes)}), and its engine if that is missing. Progress shows in Settings -> Local Models.`
 		);
 	}
-	const reply = await send<{ success: boolean; error?: string; result?: DownloadResult }>(
+	const reply = await send<{
+		success: boolean;
+		error?: string;
+		result?: DownloadResult & { runtime?: LocalRuntimeEnsureResult };
+	}>(
 		{ type: 'local_models_download', modelId },
 		'local_models_download_result',
 		options.json,
@@ -220,11 +224,35 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 		fail(`${why}${mismatch}`, false);
 	}
 
+	// The model arrived. Whether it can RUN also depends on its engine, which the
+	// same call installs; a model reported as installed while its engine is
+	// missing would send the caller to `models status` to find out why nothing works.
+	const runtime = result.runtime;
+	const runtimeFailed = runtime?.status === 'failed' || runtime?.status === 'unavailable';
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, modelId, status: result.status }));
+		console.log(
+			JSON.stringify({
+				success: true,
+				modelId,
+				status: result.status,
+				...(runtime ? { runtime } : {}),
+			})
+		);
 		return;
 	}
 	console.log(formatSuccess(`Installed ${entry.displayName}`));
+	if (runtime?.status === 'installed') {
+		console.log(`  Installed its engine too (${runtime.runtimeId}).`);
+	}
+	if (runtimeFailed && runtime) {
+		console.log(
+			formatWarning(
+				runtime.status === 'unavailable'
+					? `Its engine (${runtime.runtimeId}) has no build for this platform, so the model cannot run here.`
+					: `Its engine (${runtime.runtimeId}) did not install: ${runtime.error ?? 'unknown error'}. Retry: maestro-cli models runtimes install ${runtime.runtimeId}`
+			)
+		);
+	}
 }
 
 /**

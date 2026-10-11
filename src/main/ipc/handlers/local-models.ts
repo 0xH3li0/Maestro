@@ -82,7 +82,7 @@ import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
 import type { TabCleanupResult } from '../../../shared/tabCleanup';
 import {
 	cancelLocalModel,
-	downloadLocalModel,
+	installLocalModel,
 	installLocalRuntime,
 	listLocalModels,
 	listLocalRuntimes,
@@ -97,6 +97,7 @@ import {
 	resumeLocalModel,
 	verifyLocalModel,
 	type LocalModelListing,
+	type LocalModelInstallResult,
 	type LocalRuntimeListing,
 } from '../../local-models/service';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
@@ -211,7 +212,9 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		'localModels:download',
 		withIpcErrorLogging(
 			handlerOpts('download'),
-			async (id: unknown): Promise<DownloadResult> => downloadLocalModel(id)
+			// The model AND the runtime that reads it: this channel is the Local
+			// Models tab's Download button, which means "make this model work".
+			async (id: unknown): Promise<LocalModelInstallResult> => installLocalModel(id)
 		)
 	);
 	ipcMain.handle(

@@ -22,8 +22,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { LocalModelsApi } from '../../../main/preload/localModels';
-import type { LocalModelListing } from '../../../main/local-models/service';
-import type { DownloadProgress } from '../../../main/local-models/model-downloader';
+import type {
+	LocalModelInstallResult,
+	LocalModelListing,
+} from '../../../main/local-models/service';
+import type { DownloadProgress, DownloadResult } from '../../../main/local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../../main/local-models/model-store';
 import { useThrottledProgressMap } from './useThrottledProgressMap';
 
@@ -33,17 +36,15 @@ import { useThrottledProgressMap } from './useThrottledProgressMap';
  */
 export type LocalModelsSource<L extends LocalModelListing = LocalModelListing> = Pick<
 	LocalModelsApi,
-	| 'download'
-	| 'pause'
-	| 'resume'
-	| 'cancel'
-	| 'verify'
-	| 'remove'
-	| 'removeAll'
-	| 'footprint'
-	| 'onProgress'
+	'pause' | 'resume' | 'cancel' | 'verify' | 'remove' | 'removeAll' | 'footprint' | 'onProgress'
 > & {
 	list: () => Promise<L[]>;
+	/**
+	 * The core channel also installs the model's runtime and reports it
+	 * (`LocalModelInstallResult`); a consumer namespace that manages runtimes
+	 * itself (voice) answers with the bare download result.
+	 */
+	download: (modelId: string) => Promise<DownloadResult | LocalModelInstallResult>;
 };
 
 export interface UseLocalModelsOptions<L extends LocalModelListing, X> {
@@ -178,7 +179,19 @@ export function useLocalModels<L extends LocalModelListing = LocalModelListing, 
 	);
 
 	const download = useCallback(
-		(modelId: string) => runAction(() => source.download(modelId)),
+		(modelId: string) =>
+			runAction(async () => {
+				// The core channel installs the model's runtime alongside it and
+				// reports both. Weights that arrived without their engine are not a
+				// success the row can show as "Installed" and leave at that.
+				const result = await source.download(modelId);
+				const runtime = result && 'runtime' in result ? result.runtime : undefined;
+				if (runtime?.status === 'failed') {
+					throw new Error(
+						`The model downloaded, but its engine did not install: ${runtime.error ?? 'unknown error'}`
+					);
+				}
+			}),
 		[source, runAction]
 	);
 

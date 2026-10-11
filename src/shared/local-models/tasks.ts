@@ -18,7 +18,7 @@
  */
 
 import type { LocalModelEndpoint } from './endpoints';
-import { getLocalModel } from './model-catalog';
+import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
 import type { LocalModelKind } from './types';
 
 /** What a task asks its assigned source to do. A subset of {@link LocalModelKind}. */
@@ -127,6 +127,18 @@ export interface LocalModelTaskDefinition {
 	readonly allowsUtilityAgent: boolean;
 	/** The assignment a task has until the user picks one. */
 	readonly defaultAssignment: LocalModelAssignment;
+	/**
+	 * Catalog models of the right kind that a picker must NOT offer for this
+	 * task, each with the measured reason, keyed by model id.
+	 *
+	 * A model is the right KIND for a task long before it is good at it, and the
+	 * picker cannot tell the two apart from the catalog. This is where a failed
+	 * check is written down, so the model stays installable for the tasks it
+	 * does well instead of being hidden from all of them. An assignment made
+	 * anyway (from the CLI, or before the entry existed) is still honored: the
+	 * entry removes an invitation, it does not break a choice.
+	 */
+	readonly unofferedLocalModels?: Readonly<Record<string, string>>;
 }
 
 function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
@@ -136,6 +148,9 @@ function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
 	return Object.freeze({
 		...task,
 		...(task.alsoNeeds ? { alsoNeeds: Object.freeze([...task.alsoNeeds]) } : {}),
+		...(task.unofferedLocalModels
+			? { unofferedLocalModels: Object.freeze({ ...task.unofferedLocalModels }) }
+			: {}),
 	});
 }
 
@@ -180,6 +195,16 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'text-gen',
 			allowsUtilityAgent: true,
 			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			// Measured on 2026-10-11 (`llama-housekeeping-e2e.test.ts`, recorded in
+			// docs/architecture/local-models.md): of four plain requests, Qwen3 1.7B
+			// wrote one command that does not do what was asked, and for "find which
+			// process is listening on port 8080" it wrote `lsof ... | xargs kill -9`,
+			// lifted from the prompt's own example. The user reviews a command before
+			// it runs, but a model that turns "find" into "kill" is not one to invite.
+			unofferedLocalModels: {
+				[QWEN3_1_7B_ID]:
+					'It wrote a wrong command for one of four plain requests, and a command that kills a process for a request to find it, so it is not offered for shell commands.',
+			},
 		}),
 		'git-drafts': defineTask({
 			id: 'git-drafts',
@@ -250,6 +275,15 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
+			// Measured on 2026-10-11 (docs/architecture/local-models.md, "Result:
+			// routing only"): asked to route six utterances under seven shapes of the
+			// reply schema, Qwen3 1.7B sent every request that named an agent to the
+			// Conductor under six of them. The rest of each decision was right, so
+			// this is the model's choice, not a malformed reply.
+			unofferedLocalModels: {
+				[QWEN3_1_7B_ID]:
+					'It sends requests that name an agent to the Conductor, so it is not offered for voice routing.',
+			},
 		}),
 		'token-proxy': defineTask({
 			id: 'token-proxy',
@@ -406,6 +440,26 @@ export function localModelAssignmentProblem(
 		return `${task.label} needs a ${task.needs} model, which an endpoint cannot serve. Choose off or a local model.`;
 	}
 	return null;
+}
+
+/**
+ * Why a VALID assignment is one this task does not recommend, or `null`. A
+ * caution is not a refusal: the assignment saves and runs. Every surface that
+ * lets a user make the choice says this next to it (the picker's label, the
+ * CLI's reply), so a model that is known to do the job badly is never picked
+ * without the reason on screen.
+ */
+export function localModelAssignmentCaution(
+	taskId: LocalModelTaskId,
+	assignment: LocalModelAssignment
+): string | null {
+	if (assignment.type !== 'local') return null;
+	return LOCAL_MODEL_TASKS[taskId].unofferedLocalModels?.[assignment.modelId] ?? null;
+}
+
+/** Whether a picker should offer this catalog model for a task as a fresh choice. */
+export function isLocalModelOfferedForTask(taskId: LocalModelTaskId, modelId: string): boolean {
+	return LOCAL_MODEL_TASKS[taskId].unofferedLocalModels?.[modelId] === undefined;
 }
 
 /**

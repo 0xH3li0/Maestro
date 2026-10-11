@@ -222,10 +222,15 @@ import {
 	ACAPPELLA_RUNTIME_PROGRESS_CHANNEL,
 } from '../../../../main/ipc/handlers/acappella-models';
 import type { LocalRuntimeListing } from '../../../../main/local-models/service';
-import { LOCAL_MODEL_CATALOG } from '../../../../shared/local-models/model-catalog';
+import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../../shared/local-models/model-catalog';
 import { remove, removeAll, verify } from '../../../../main/local-models/model-store';
 import { installNativeRuntime } from '../../../../main/local-models/runtime/runtime-installer';
-import { removeAllRuntimes } from '../../../../main/local-models/runtime/runtime-store';
+import {
+	artifactForThisPlatform,
+	isRuntimeInstalled,
+	isRuntimeStale,
+	removeAllRuntimes,
+} from '../../../../main/local-models/runtime/runtime-store';
 import { resetNativeRuntimes } from '../../../../main/local-models/runtime/native-loader';
 import {
 	listLocalModelEndpointModels,
@@ -305,6 +310,71 @@ describe('Local Models IPC handlers', () => {
 		expect(downloader.resume).toHaveBeenCalledWith(MODEL_ID);
 		expect(downloader.cancel).toHaveBeenCalledWith(MODEL_ID);
 		expect(verify).toHaveBeenCalledWith(MODEL_ID);
+	});
+
+	describe('download installs the engine the model runs on', () => {
+		const runtimeId = getLocalModel(MODEL_ID)!.runtime;
+
+		it('fetches a missing engine alongside the model and reports both', async () => {
+			vi.mocked(installNativeRuntime).mockResolvedValue({} as never);
+			vi.mocked(isRuntimeInstalled).mockResolvedValue(false);
+
+			const result = await handlerFor('localModels:download')({}, MODEL_ID);
+
+			expect(downloader.download).toHaveBeenCalledWith(MODEL_ID);
+			expect(vi.mocked(installNativeRuntime).mock.calls[0][0]).toBe(runtimeId);
+			expect(resetNativeRuntimes).toHaveBeenCalled();
+			expect(result).toMatchObject({
+				modelId: MODEL_ID,
+				status: 'complete',
+				runtime: { runtimeId, status: 'installed' },
+			});
+		});
+
+		it('leaves an engine that is installed and current alone', async () => {
+			vi.mocked(isRuntimeInstalled).mockResolvedValue(true);
+			vi.mocked(isRuntimeStale).mockResolvedValue(false);
+
+			const result = await handlerFor('localModels:download')({}, MODEL_ID);
+
+			expect(installNativeRuntime).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ runtime: { runtimeId, status: 'ready' } });
+		});
+
+		it('replaces an engine this build no longer expects', async () => {
+			vi.mocked(installNativeRuntime).mockResolvedValue({} as never);
+			vi.mocked(isRuntimeInstalled).mockResolvedValue(true);
+			vi.mocked(isRuntimeStale).mockResolvedValue(true);
+
+			const result = await handlerFor('localModels:download')({}, MODEL_ID);
+
+			expect(installNativeRuntime).toHaveBeenCalledTimes(1);
+			expect(result).toMatchObject({ runtime: { status: 'installed' } });
+		});
+
+		it('says the platform has no build without calling the installer', async () => {
+			vi.mocked(isRuntimeInstalled).mockResolvedValue(false);
+			vi.mocked(artifactForThisPlatform).mockReturnValueOnce(null);
+
+			const result = await handlerFor('localModels:download')({}, MODEL_ID);
+
+			expect(installNativeRuntime).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ status: 'complete', runtime: { status: 'unavailable' } });
+		});
+
+		it('reports a failed engine install beside a model that did arrive', async () => {
+			vi.mocked(isRuntimeInstalled).mockResolvedValue(false);
+			vi.mocked(installNativeRuntime).mockRejectedValue(new Error('hash mismatch'));
+
+			const result = await handlerFor('localModels:download')({}, MODEL_ID);
+
+			// Not a rejection: the weights are on disk, and the caller has to be able
+			// to say both things.
+			expect(result).toMatchObject({
+				status: 'complete',
+				runtime: { runtimeId, status: 'failed', error: 'hash mismatch' },
+			});
+		});
 	});
 
 	it('rejects an id that is not in the catalog before it reaches a path join', async () => {

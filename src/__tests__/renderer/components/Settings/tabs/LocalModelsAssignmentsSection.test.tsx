@@ -218,6 +218,30 @@ describe('buildAssignmentOptionGroups', () => {
 		]);
 	});
 
+	it('does not offer a model the task records as measured-unfit', () => {
+		const qwen = `local:${QWEN3_1_7B_ID}`;
+		const values = (taskId: 'tab-naming' | 'voice-routing') =>
+			buildAssignmentOptionGroups(LOCAL_MODEL_TASKS[taskId], { type: 'off' }, sources).flatMap(
+				(group) => group.options.map((option) => option.value)
+			);
+		// The same installed text model: offered to name tabs, not to route voice.
+		expect(values('tab-naming')).toContain(qwen);
+		expect(values('voice-routing')).not.toContain(qwen);
+	});
+
+	it('shows an unfit model that is already assigned, and says it is not recommended', () => {
+		const groups = buildAssignmentOptionGroups(
+			LOCAL_MODEL_TASKS['voice-routing'],
+			{ type: 'local', modelId: QWEN3_1_7B_ID },
+			sources
+		);
+		expect(groups[0].options).toContainEqual({
+			value: `local:${QWEN3_1_7B_ID}`,
+			label: `${getLocalModel(QWEN3_1_7B_ID)!.displayName} (not recommended)`,
+		});
+		expect(groups.find((group) => group.label === 'Local models')).toBeUndefined();
+	});
+
 	it('keeps a current assignment no option covers, named by why', () => {
 		const groups = buildAssignmentOptionGroups(
 			LOCAL_MODEL_TASKS['tab-naming'],

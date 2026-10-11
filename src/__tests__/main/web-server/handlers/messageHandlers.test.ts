@@ -215,9 +215,23 @@ import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
 vi.mock('../../../../main/local-models/service', () => ({
 	listLocalModels: vi.fn().mockResolvedValue([{ entry: { id: 'bge-small-en-v1.5' } }]),
 	localModelsFootprint: vi.fn().mockResolvedValue({ bytes: 42, models: [] }),
-	downloadLocalModel: vi
-		.fn()
-		.mockResolvedValue({ modelId: 'bge-small-en-v1.5', status: 'complete' }),
+	installLocalModel: vi.fn().mockResolvedValue({
+		modelId: 'bge-small-en-v1.5',
+		status: 'complete',
+		runtime: { runtimeId: 'onnx', status: 'installed' },
+	}),
+	listLocalRuntimes: vi.fn().mockResolvedValue([
+		{
+			id: 'llama',
+			label: 'llama.cpp',
+			models: ['qwen3-1.7b-instruct-q4km'],
+			installed: true,
+			stale: false,
+			downloadable: true,
+			bytes: 1000,
+		},
+	]),
+	installLocalRuntime: vi.fn().mockResolvedValue(undefined),
 	verifyLocalModel: vi
 		.fn()
 		.mockResolvedValue({ id: 'bge-small-en-v1.5', ok: true, status: 'installed' }),
@@ -228,8 +242,10 @@ vi.mock('../../../../main/local-models/service', () => ({
 
 import {
 	cancelLocalModel,
-	downloadLocalModel,
+	installLocalModel,
+	installLocalRuntime,
 	listLocalModels,
+	listLocalRuntimes,
 	pauseLocalModel,
 	removeLocalModel,
 	verifyLocalModel,
@@ -5676,11 +5692,57 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				modelId: 'bge-small-en-v1.5',
 			});
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_download_result'));
-			expect(downloadLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			// The model AND its engine: the same call the Settings button makes.
+			expect(installLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
 			expect(lastResponse()).toMatchObject({
 				success: true,
 				requestId: 'dl1',
-				result: { status: 'complete' },
+				result: { status: 'complete', runtime: { runtimeId: 'onnx', status: 'installed' } },
+			});
+		});
+
+		it('local_models_runtimes_list returns every engine', async () => {
+			handler.handleMessage(client, { type: 'local_models_runtimes_list', requestId: 'rl1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_runtimes_list_result'));
+			expect(listLocalRuntimes).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'rl1',
+				runtimes: [{ id: 'llama', installed: true }],
+			});
+		});
+
+		it('local_models_runtime_install installs one engine and answers with its listing', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_runtime_install',
+				requestId: 'ri1',
+				runtimeId: 'llama',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_runtime_install_result')
+			);
+			expect(installLocalRuntime).toHaveBeenCalledWith('llama');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'ri1',
+				runtime: { id: 'llama', installed: true },
+			});
+		});
+
+		it('local_models_runtime_install reports a refused install as a failure', async () => {
+			vi.mocked(installLocalRuntime).mockRejectedValueOnce(new Error('UnknownLocalRuntime'));
+			handler.handleMessage(client, {
+				type: 'local_models_runtime_install',
+				requestId: 'ri2',
+				runtimeId: 'nope',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_runtime_install_result')
+			);
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				requestId: 'ri2',
+				error: 'UnknownLocalRuntime',
 			});
 		});
 

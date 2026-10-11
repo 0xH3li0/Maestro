@@ -21,8 +21,9 @@
  *     button that frees 1.4 GB the moment you stop wanting the feature is a
  *     feature that keeps your disk hostage. `models:remove-all` and
  *     `models:footprint` are scoped by `isVoiceReclaimableModelDir`, so the
- *     models another consumer runs (embeddings, the injection classifier)
- *     survive voice being switched off.
+ *     models another consumer runs (embeddings, the injection classifier, and
+ *     any model a task other than voice routing is assigned to) survive voice
+ *     being switched off.
  *
  * Progress is BROADCAST on `models:progress`, matching the multi-window
  * invariant in `src/main/utils/safe-send.ts`. Throttling happens at the source
@@ -60,8 +61,10 @@ import {
 } from '../../local-models/service';
 import {
 	isVoiceReclaimableModelDir,
+	modelsAssignedOutsideVoice,
 	voiceSlotsForRuntime,
 } from '../../../shared/acappella/voice-models';
+import type { LocalModelAssignments } from '../../../shared/local-models/tasks';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 
@@ -112,6 +115,22 @@ export async function readVoiceReadiness(
 		settings: readVoiceProviderSettings(settingsStore),
 		handsFreeEnabled: stored.handsFree === true,
 	});
+}
+
+/**
+ * Which model directories "Remove All" and the footprint count as voice's.
+ *
+ * Read per call, because the answer depends on the task assignments as they
+ * are right now: a model another task is assigned to is not voice's to delete
+ * (see `isVoiceReclaimableModelDir`).
+ */
+function voiceReclaimFilter(
+	settingsStore: ACappellaModelsHandlerDependencies['settingsStore']
+): (id: string) => boolean {
+	const assignedElsewhere = modelsAssignedOutsideVoice(
+		settingsStore.get('localModelAssignments', {}) as LocalModelAssignments | undefined
+	);
+	return (id) => isVoiceReclaimableModelDir(id, assignedElsewhere);
 }
 
 /**
@@ -188,11 +207,11 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 	);
 	const wrappedRemoveAll = withIpcErrorLogging(
 		handlerOpts('removeAll'),
-		async (): Promise<number> => removeAllLocalModels(isVoiceReclaimableModelDir)
+		async (): Promise<number> => removeAllLocalModels(voiceReclaimFilter(settingsStore))
 	);
 	const wrappedFootprint = withIpcErrorLogging(
 		handlerOpts('footprint'),
-		async (): Promise<ModelFootprint> => localModelsFootprint(isVoiceReclaimableModelDir)
+		async (): Promise<ModelFootprint> => localModelsFootprint(voiceReclaimFilter(settingsStore))
 	);
 	const wrappedReadiness = withIpcErrorLogging(
 		handlerOpts('readiness'),

@@ -92,11 +92,19 @@ describe('buildBrainOptionGroups', () => {
 			endpointModels: {},
 		});
 
+		// Installed and assigned, but voice routing records it as measured-unfit
+		// (`unofferedLocalModels`), so it is shown as the current choice with the
+		// reason in its label rather than in a group that reads as a recommendation.
 		expect(groups).toEqual([
-			{ label: null, options: PROVIDER_ROWS },
 			{
-				label: 'Local models',
-				options: [{ value: `local:${QWEN3_1_7B_ID}`, label: 'Qwen3 1.7B Instruct (Q4_K_M)' }],
+				label: null,
+				options: [
+					...PROVIDER_ROWS,
+					{
+						value: `local:${QWEN3_1_7B_ID}`,
+						label: 'Qwen3 1.7B Instruct (Q4_K_M) (not recommended)',
+					},
+				],
 			},
 		]);
 	});

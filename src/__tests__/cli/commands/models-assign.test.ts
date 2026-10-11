@@ -28,7 +28,7 @@ import {
 } from '../../../cli/services/storage';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
-import { BGE_SMALL_EN_ID } from '../../../shared/local-models/model-catalog';
+import { BGE_SMALL_EN_ID, QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
 import { LOCAL_MODEL_TASK_IDS } from '../../../shared/local-models/tasks';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
@@ -77,6 +77,31 @@ describe('models assign / tasks commands', () => {
 			});
 			expect(logSpy.mock.calls[0][0]).toMatch(/Semantic search -> local:bge-small-en-v1\.5/);
 			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('stores a model the task does not recommend, and says why', () => {
+			modelsAssign('voice-routing', `local:${QWEN3_1_7B_ID}`, {});
+
+			// A caution, not a refusal: the picker would not have offered it, so the
+			// reason it would not is printed beside the result.
+			expect(writeLocalModelAssignments).toHaveBeenCalledWith({
+				'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID },
+			});
+			const printed = logSpy.mock.calls.map(([line]) => String(line)).join('\n');
+			expect(printed).toMatch(/Not recommended for this task/);
+			expect(printed).toMatch(/Conductor/);
+			expect(exitSpy).not.toHaveBeenCalled();
+
+			logSpy.mockClear();
+			modelsAssign('voice-routing', `local:${QWEN3_1_7B_ID}`, { json: true });
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toMatchObject({
+				success: true,
+				caution: expect.stringMatching(/Conductor/),
+			});
+
+			logSpy.mockClear();
+			modelsAssign('tab-naming', `local:${QWEN3_1_7B_ID}`, { json: true });
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).not.toHaveProperty('caution');
 		});
 
 		it('refuses a model of the wrong kind without writing', () => {

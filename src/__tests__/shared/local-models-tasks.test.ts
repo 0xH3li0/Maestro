@@ -7,8 +7,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
+	isLocalModelOfferedForTask,
 	isLocalModelTaskId,
 	isSameLocalModelAssignment,
+	localModelAssignmentCaution,
 	localModelAssignmentProblem,
 	localModelAssignmentSourceLabel,
 	endpointServesNeed,
@@ -422,5 +424,42 @@ describe('assignment spec', () => {
 		for (const spec of ['', 'on', 'local:', 'endpoint:ep-1', 'endpoint::m', 'endpoint:ep-1:']) {
 			expect(parseLocalModelAssignmentSpec(spec)).toBeNull();
 		}
+	});
+});
+
+describe('models a task does not offer', () => {
+	it('keeps Qwen3 1.7B out of the two pickers it measured badly on, and no others', () => {
+		// Voice routing (it never reaches a named agent) and shell commands (it
+		// turned "find the process" into "kill the process").
+		const unoffered: LocalModelTaskId[] = ['voice-routing', 'ai-command'];
+		for (const taskId of LOCAL_MODEL_TASK_IDS) {
+			expect(isLocalModelOfferedForTask(taskId, QWEN3_1_7B_ID)).toBe(!unoffered.includes(taskId));
+		}
+	});
+
+	it('names only catalog models of the kind the task needs', () => {
+		for (const taskId of LOCAL_MODEL_TASK_IDS) {
+			const task = LOCAL_MODEL_TASKS[taskId];
+			for (const modelId of Object.keys(task.unofferedLocalModels ?? {})) {
+				// An entry for a model that could never be picked is dead text.
+				expect(getLocalModel(modelId)?.kind).toBe(task.needs);
+			}
+		}
+	});
+
+	it('still accepts the assignment, and says why it is not recommended', () => {
+		const assignment = { type: 'local' as const, modelId: QWEN3_1_7B_ID };
+		// A caution is not a refusal: a choice made from the CLI keeps working.
+		expect(localModelAssignmentProblem('voice-routing', assignment)).toBeNull();
+		expect(localModelAssignmentCaution('voice-routing', assignment)).toMatch(/Conductor/);
+		expect(localModelAssignmentCaution('tab-naming', assignment)).toBeNull();
+		expect(localModelAssignmentCaution('voice-routing', { type: 'off' })).toBeNull();
+		expect(
+			localModelAssignmentCaution('voice-routing', {
+				type: 'endpoint',
+				endpointId: 'e',
+				model: 'qwen3:latest',
+			})
+		).toBeNull();
 	});
 });

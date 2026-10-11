@@ -432,6 +432,15 @@ export class LocalTextEngine {
 			const text = await session.prompt(options.prompt, {
 				temperature: options.temperature,
 				maxTokens: options.maxTokens,
+				// No reasoning segment. A thinking model (Qwen3 is one) opens a
+				// free-text reply with a thought the chat session strips from what it
+				// returns, and that thought is charged against `maxTokens`: on real
+				// hardware a 400-token summary turn came back as an EMPTY string,
+				// because every token went to thinking. A grammar turn never thinks
+				// (its first token is already constrained), so this only changes
+				// free-text turns, and every consumer here wants the answer, not the
+				// deliberation.
+				budgets: { thoughtTokens: 0 },
 				...(grammar ? { grammar } : {}),
 				...(options.signal ? { signal: options.signal } : {}),
 			});

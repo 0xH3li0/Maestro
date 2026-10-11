@@ -34,6 +34,7 @@ import {
 	formatModelSetSize,
 	getModelSetEntries,
 	isVoiceReclaimableModelDir,
+	modelsAssignedOutsideVoice,
 	normalizeWakePhrase,
 	runtimesForSlot,
 	voiceModelCapability,
@@ -43,6 +44,42 @@ import {
 } from '../../shared/acappella/voice-models';
 import { DEFAULT_WAKE_PHRASE } from '../../shared/acappella/voice-controls';
 import { formatSize } from '../../shared/formatters';
+
+describe('a model voice shares with another consumer', () => {
+	it('spares a voice-capable model a non-voice task is assigned to', () => {
+		const assigned = modelsAssignedOutsideVoice({
+			dictation: { type: 'local', modelId: PARAKEET_TDT_V2_ID },
+			'tab-naming': { type: 'local', modelId: QWEN3_1_7B_ID },
+			// Voice routing is voice's own use, so it protects nothing here.
+			'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID },
+			'cue-gate': { type: 'endpoint', endpointId: 'e', model: 'qwen3:latest' },
+		});
+		expect([...assigned].sort()).toEqual([PARAKEET_TDT_V2_ID, QWEN3_1_7B_ID].sort());
+
+		// Switching voice off and reclaiming its disk must not break dictation or
+		// tab naming.
+		expect(isVoiceReclaimableModelDir(PARAKEET_TDT_V2_ID, assigned)).toBe(false);
+		expect(isVoiceReclaimableModelDir(QWEN3_1_7B_ID, assigned)).toBe(false);
+		expect(isVoiceReclaimableModelDir(WHISPER_BASE_EN_ID, assigned)).toBe(true);
+	});
+
+	it('protects nothing when only voice routing uses the text model', () => {
+		const assigned = modelsAssignedOutsideVoice({
+			'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID },
+		});
+		expect(assigned.size).toBe(0);
+		expect(isVoiceReclaimableModelDir(QWEN3_1_7B_ID, assigned)).toBe(true);
+		expect(modelsAssignedOutsideVoice(undefined).size).toBe(0);
+	});
+
+	it('does not name voice as the user of a text model nothing routes with', () => {
+		// Voice reaches a text model only through the voice-routing assignment,
+		// which the task list already names beside the model.
+		expect(voiceModelUsageLabel(QWEN3_1_7B_ID)).toBeUndefined();
+		expect(voiceModelUsageLabel(PARAKEET_TDT_V2_ID)).toBe('Voice (speech-to-text)');
+		expect(voiceModelUsageLabel(KOKORO_82M_ID)).toBeUndefined();
+	});
+});
 
 describe('voice models', () => {
 	it('tags every voice-kind catalog model with the voice capability it unlocks', () => {

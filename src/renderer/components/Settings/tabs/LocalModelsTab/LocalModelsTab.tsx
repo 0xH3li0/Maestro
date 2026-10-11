@@ -18,7 +18,11 @@
  */
 
 import { HardDrive, ListChecks, Router, Server } from 'lucide-react';
-import { useLocalModelEndpoints, useLocalModels } from '../../../../hooks/localModels';
+import {
+	useLocalModelEndpoints,
+	useLocalModels,
+	useLocalRuntimes,
+} from '../../../../hooks/localModels';
 import type { Theme } from '../../../../types';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
@@ -33,6 +37,7 @@ export interface LocalModelsTabProps {
 export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 	const models = useLocalModels();
 	const endpoints = useLocalModelEndpoints();
+	const runtimes = useLocalRuntimes();
 	return (
 		<div className="space-y-5" data-testid="local-models-tab">
 			<div data-setting-id="local-models-models">
@@ -42,7 +47,7 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 				>
 					Models
 				</SettingsSectionHeading>
-				<LocalModelsModelsSection theme={theme} models={models} />
+				<LocalModelsModelsSection theme={theme} models={models} runtimes={runtimes} />
 			</div>
 
 			<div data-setting-id="local-models-endpoints">

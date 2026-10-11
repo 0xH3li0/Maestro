@@ -6,7 +6,10 @@
  * the cost of what is installed is read before the list of what could be.
  *
  * Mounting reads the listing and the footprint and nothing else: a download
- * starts only from the row's Download button.
+ * starts only from the row's Download button, which also fetches the engine
+ * the model runs on when that is missing (the button states both sizes). The
+ * Engines card between the totals and the list shows those engines on their
+ * own, for the cases a model download does not cover.
  *
  * "In use by" is answered from two sources. Tasks come from the effective
  * `localModelAssignments` (defaults included), and voice from its own
@@ -26,21 +29,28 @@ import {
 import { tasksNeedingKind, tasksUsingLocalModel } from '../../../../../shared/local-models/tasks';
 import { voiceModelUsageLabel } from '../../../../../shared/acappella/voice-models';
 import { formatSize } from '../../../../../shared/formatters';
-import type { LocalModelsState } from '../../../../hooks/localModels';
+import type { LocalModelsState, LocalRuntimesState } from '../../../../hooks/localModels';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Theme } from '../../../../types';
 import { StatCardGrid, type StatCardDatum } from '../../../widgets';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelRow } from './LocalModelRow';
+import { LocalModelsEnginesCard } from './LocalModelsEnginesCard';
 import { RemoveInUseWarning } from './RemoveInUseWarning';
 
 export interface LocalModelsModelsSectionProps {
 	theme: Theme;
 	/** The tab's one `useLocalModels()` instance, shared with Assignments. */
 	models: LocalModelsState;
+	/** The tab's one `useLocalRuntimes()` instance: the engines the models run on. */
+	runtimes: LocalRuntimesState;
 }
 
-export function LocalModelsModelsSection({ theme, models }: LocalModelsModelsSectionProps) {
+export function LocalModelsModelsSection({
+	theme,
+	models,
+	runtimes,
+}: LocalModelsModelsSectionProps) {
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
 	// The model whose removal is waiting on the in-use warning, if any.
 	const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);
@@ -79,6 +89,29 @@ export function LocalModelsModelsSection({ theme, models }: LocalModelsModelsSec
 		];
 	}, [models.footprint, models.listings, theme.colors.warning]);
 
+	// Bytes of engine each runtime still needs, so a model row can state what its
+	// Download button fetches. Zero once the engine is installed and current, and
+	// zero where no build exists (the Engines card says that; the row cannot fix it).
+	const engineBytesByRuntime = useMemo(() => {
+		const bytes: Record<string, number> = {};
+		for (const runtime of runtimes.listings) {
+			const needed = runtime.downloadable && (!runtime.installed || runtime.stale);
+			bytes[runtime.id] = needed ? runtime.bytes : 0;
+		}
+		return bytes;
+	}, [runtimes.listings]);
+
+	const { download: downloadModel } = models;
+	const { refresh: refreshRuntimes } = runtimes;
+	const handleDownload = useCallback(
+		(modelId: string) => {
+			// The download installs the engine too (main does both), so the engine
+			// listing is re-read when it settles.
+			void downloadModel(modelId).then(() => refreshRuntimes());
+		},
+		[downloadModel, refreshRuntimes]
+	);
+
 	const handleRemove = useCallback(
 		(modelId: string) => {
 			if ((tasksByModel[modelId] ?? []).length > 0) {
@@ -112,6 +145,8 @@ export function LocalModelsModelsSection({ theme, models }: LocalModelsModelsSec
 					</div>
 				)}
 			</SectionCard>
+
+			<LocalModelsEnginesCard theme={theme} runtimes={runtimes} />
 
 			{groups.map(({ kind, items: entries }) => {
 				const usedBy = tasksNeedingKind(kind).map((task) => task.label);
@@ -153,7 +188,8 @@ export function LocalModelsModelsSection({ theme, models }: LocalModelsModelsSec
 										progress={models.progress[id]}
 										verifyResult={models.verifyResults[id]}
 										usedBy={rowUsedBy}
-										onDownload={(modelId) => void models.download(modelId)}
+										engineBytes={engineBytesByRuntime[listing.entry.runtime] ?? 0}
+										onDownload={handleDownload}
 										onPause={(modelId) => void models.pause(modelId)}
 										onResume={(modelId) => void models.resume(modelId)}
 										onCancel={(modelId) => void models.cancel(modelId)}

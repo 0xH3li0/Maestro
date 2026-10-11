@@ -366,6 +366,8 @@ maestro-cli models install <model-id> [--json]
 maestro-cli models pause <model-id> [--json]
 maestro-cli models cancel <model-id> [--json]
 maestro-cli models remove <model-id> [--force] [--json]
+maestro-cli models runtimes list [--json]
+maestro-cli models runtimes install <onnx|llama> [--json]
 maestro-cli models verify <model-id> [--json]
 ```
 

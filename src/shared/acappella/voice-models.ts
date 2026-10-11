@@ -28,6 +28,11 @@ import {
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
 } from '../local-models/native-runtimes';
+import {
+	LOCAL_MODEL_TASK_IDS,
+	resolveLocalModelAssignment,
+	type LocalModelAssignments,
+} from '../local-models/tasks';
 import type { LocalModelEntry, LocalModelKind } from '../local-models/types';
 import type { VoiceSlot } from './readiness';
 
@@ -76,13 +81,33 @@ const VOICE_USAGE_LABELS: Readonly<Record<VoiceModelCapability, string>> = Objec
 
 /**
  * The words a shared surface (the Local Models tab) uses to say voice relies on
- * a model, or undefined when voice does not. A pending model is excluded: voice
- * cannot run it in this build, so naming voice as its user would be untrue.
+ * a model, or undefined when voice does not.
+ *
+ * Two exclusions, both because naming voice as the user would be untrue:
+ * - A pending model, which voice cannot run in this build.
+ * - A Conductor Brain model. Voice reaches a text model ONLY through the
+ *   `voice-routing` assignment, and an assigned task is already named beside
+ *   the model by the task list. Saying "Voice (Conductor)" for a model nothing
+ *   routes with would claim a use that does not exist.
  */
 export function voiceModelUsageLabel(modelId: string): string | undefined {
 	const capability = voiceModelCapability(modelId);
-	if (!capability || getLocalModel(modelId)?.pending) return undefined;
+	if (!capability || capability === 'local-conductor-brain') return undefined;
+	if (getLocalModel(modelId)?.pending) return undefined;
 	return VOICE_USAGE_LABELS[capability];
+}
+
+/** The model ids a task other than voice routing is assigned to run on this machine. */
+export function modelsAssignedOutsideVoice(
+	assignments: LocalModelAssignments | undefined
+): Set<string> {
+	const ids = new Set<string>();
+	for (const taskId of LOCAL_MODEL_TASK_IDS) {
+		if (taskId === 'voice-routing') continue;
+		const assignment = resolveLocalModelAssignment(assignments, taskId);
+		if (assignment.type === 'local') ids.add(assignment.modelId);
+	}
+	return ids;
 }
 
 /**
@@ -90,11 +115,20 @@ export function voiceModelUsageLabel(modelId: string): string | undefined {
  * after switching voice off.
  *
  * Voice models, plus directories no catalog entry claims any more (a model since
- * dropped from the catalog has no other owner to keep it). A catalog model that
- * voice does not use (an embedding model, the injection classifier) belongs to
- * another consumer and is spared.
+ * dropped from the catalog has no other owner to keep it). Two kinds of model
+ * are spared, because another consumer still runs them:
+ * - A catalog model voice does not use (an embedding model, the injection
+ *   classifier).
+ * - A voice-capable model that a task other than voice routing is ASSIGNED to
+ *   (`assignedElsewhere`): the recogniser dictation uses, the text model that
+ *   names tabs. Without this, switching voice off and reclaiming its disk
+ *   silently broke every other task that shared a model with it.
  */
-export function isVoiceReclaimableModelDir(id: string): boolean {
+export function isVoiceReclaimableModelDir(
+	id: string,
+	assignedElsewhere: ReadonlySet<string> = new Set()
+): boolean {
+	if (assignedElsewhere.has(id)) return false;
 	return voiceModelCapability(id) !== undefined || getLocalModel(id) === undefined;
 }
 
@@ -181,10 +215,11 @@ function defineSet(
  * One set, and it is exactly the downloads the local trio needs: the recogniser
  * and the wake word. The voice is the operating system's own and the router is
  * built in, so neither costs a download. Kokoro and Qwen3 are deliberately NOT
- * in it - they are in the catalog so an existing download can be seen and
- * removed, but neither can run in this build (see their `pending` notes), and a
- * bundle that fetched a gigabyte of weights nothing can read would be a lie on
- * the Download button.
+ * in it. Kokoro cannot run in this build (see its `pending` note). Qwen3 runs,
+ * but it is not offered for voice routing (see `unofferedLocalModels` on that
+ * task), so a voice bundle that fetched a gigabyte of weights voice would not
+ * use would be a lie on the Download button. It is installed from the Local
+ * Models tab, for the tasks it is good at.
  */
 export const MODEL_SETS: Readonly<Record<VoiceModelSetId, VoiceModelSet>> = Object.freeze({
 	'hands-free-local': defineSet(

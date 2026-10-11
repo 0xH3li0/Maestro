@@ -7,7 +7,8 @@
  * local_models_endpoint_test, local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
  * local_models_tab_cleanup, local_models_transcribe, local_models_proxy_status,
- * local_models_proxy_block, notify_speak.
+ * local_models_proxy_block, local_models_runtimes_list,
+ * local_models_runtime_install, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -30,7 +31,9 @@ import {
 } from '../../../local-models/endpoint-service';
 import {
 	cancelLocalModel,
-	downloadLocalModel,
+	installLocalModel,
+	installLocalRuntime,
+	listLocalRuntimes,
 	listLocalModels,
 	localModelsFootprint,
 	pauseLocalModel,
@@ -97,8 +100,40 @@ export function handleLocalModelsDownload(
 	message: WebClientMessage
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_download_result', async () => ({
-		result: await downloadLocalModel(message.modelId),
+		// The model and the runtime that reads it, exactly as the Settings button.
+		result: await installLocalModel(message.modelId),
 	}));
+}
+
+/**
+ * Handle local_models_runtimes_list - every native runtime joined to what is on
+ * disk (`maestro-cli models runtimes list`). A disk read; no network.
+ */
+export function handleLocalModelsRuntimesList(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_runtimes_list_result', async () => ({
+		runtimes: await listLocalRuntimes(),
+	}));
+}
+
+/**
+ * Handle local_models_runtime_install - download, verify and install one
+ * runtime, answering with its listing afterwards (`maestro-cli models runtimes
+ * install`). Joins an install already running from the app.
+ */
+export function handleLocalModelsRuntimeInstall(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_runtime_install_result', async () => {
+		await installLocalRuntime(message.runtimeId);
+		const runtimes = await listLocalRuntimes();
+		return { runtime: runtimes.find((runtime) => runtime.id === message.runtimeId) };
+	});
 }
 
 /**

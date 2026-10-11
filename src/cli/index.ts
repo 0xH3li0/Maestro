@@ -124,6 +124,7 @@ import {
 	modelsVerify,
 } from './commands/models-manage';
 import { modelsRun } from './commands/models-run';
+import { modelsRuntimesInstall, modelsRuntimesList } from './commands/models-runtimes';
 import { modelsIndex } from './commands/models-index';
 import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
 import { modelsStatus } from './commands/models-status';
@@ -2295,10 +2296,30 @@ models
 models
 	.command('install <model-id>')
 	.description(
-		'Download and verify a local model, resuming a paused download; waits until it finishes (requires the desktop app)'
+		'Download and verify a local model and the engine it runs on, resuming a paused download; waits until it finishes (requires the desktop app)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsInstall);
+
+const modelRuntimes = models
+	.command('runtimes')
+	.description('The native engines local models run on (ONNX Runtime, llama.cpp)');
+
+modelRuntimes
+	.command('list')
+	.description(
+		'List the engines with install state, size, and the models each runs (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRuntimesList);
+
+modelRuntimes
+	.command('install <runtime-id>')
+	.description(
+		'Download, verify and install one engine (onnx | llama), or update a stale one; waits until it is usable (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRuntimesInstall);
 
 models
 	.command('pause <model-id>')

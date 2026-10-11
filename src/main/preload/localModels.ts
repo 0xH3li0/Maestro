@@ -19,7 +19,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { LocalModelListing, LocalRuntimeListing } from '../local-models/service';
+import type {
+	LocalModelInstallResult,
+	LocalModelListing,
+	LocalRuntimeListing,
+} from '../local-models/service';
 import type {
 	DetectedEndpoint,
 	EndpointModelsResult,
@@ -210,7 +214,7 @@ export function createLocalModelsApi() {
 		 * Start or resume a download. Resolves when the model is installed, paused,
 		 * cancelled, or has failed; watch {@link onProgress} for the detail.
 		 */
-		download: (modelId: string): Promise<DownloadResult> =>
+		download: (modelId: string): Promise<LocalModelInstallResult> =>
 			ipcRenderer.invoke('localModels:download', modelId),
 
 		/** Abort the transfer, keep the partial file. */

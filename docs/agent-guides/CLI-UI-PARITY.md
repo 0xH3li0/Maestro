@@ -280,6 +280,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Playbook Exchange: browse, README, install           | `marketplace list`, `marketplace show <id>`, `marketplace import`                                 |
 | Local Models catalog: list, Download, Verify, Remove | `models list [--kind]`, `models install`, `models verify`, `models remove [--force] <model-id>`   |
 | Local Models download: Pause, Resume, Cancel         | `models pause <model-id>`, `models install <model-id>` (resumes), `models cancel <model-id>`      |
+| Local Models Engines card: list, Install, Update     | `models runtimes list`, `models runtimes install <onnx\|llama>` (`models install` fetches both)   |
 | Local Models Assignments picker                      | `models assign <task-id> <off\|utility-agent\|local:<id>\|endpoint:<ep>:<model>>`, `models tasks` |
 | A Cappella Conductor Brain picker: an endpoint model | `models assign voice-routing endpoint:<ep>:<model>` (`off` returns to the voice-specific Brain)   |
 | Local Models endpoints: add, remove, test, detect    | `models endpoints list\|add\|remove\|test\|detect`                                                |
@@ -373,16 +374,14 @@ a design constraint; they are simply not built yet.
     `acappella:wake-test`). The feature is an Encore Feature still being made
     to work end to end; a `maestro-cli voice` group belongs with it once the
     session surface is stable, and reads back through `acappella:get-state`.
-15. **Local Models: install a native runtime, and Remove All.** The llama.cpp
-    and ONNX Runtime downloads (`localModels:runtimes:install`) are offered only
-    in Voice Setup and A Cappella's Models page; Settings -> Local Models has no
-    control for them either, so a task whose runtime is missing reports
-    `runtime-unavailable` in `models status` with no verb to fix it. The control
-    and a `models runtimes list|install` pair belong in one change, over
-    `listLocalRuntimes()` / `installLocalRuntime()`. "Remove All" on the same
-    voice page (`localModels:remove-all`) is left out on purpose: unfiltered, it
-    deletes every consumer's models, and `models remove <model-id>` reaches each
-    one by name.
+15. **Local Models: Remove All.** "Remove All" on A Cappella's Models page
+    (`models:remove-all`) has no verb on purpose: unfiltered it would delete
+    every consumer's models, and `models remove <model-id>` reaches each one by
+    name. (The other half of this gap, installing a native runtime, is closed:
+    the Engines card and `models runtimes list|install` share
+    `listLocalRuntimes()` / `installLocalRuntime()`, and a model's Download
+    button and `models install` fetch its runtime with it through
+    `installLocalModel()`.)
 
 ### Audit backlog (2026-09-27)
 

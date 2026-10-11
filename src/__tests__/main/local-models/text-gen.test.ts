@@ -209,6 +209,12 @@ describe('LocalTextEngine', () => {
 		expect(llama.promptCalls[0].options.grammar).toEqual({ schema });
 		expect(llama.promptCalls[1].options.grammar).toEqual({ schema });
 		expect(llama.promptCalls[2].options).not.toHaveProperty('grammar');
+		// Every turn, grammar or not, is asked for the answer and no reasoning
+		// segment. On real hardware a thinking model spent a whole free-text
+		// budget on a thought the session strips, and the reply came back empty.
+		for (const call of llama.promptCalls) {
+			expect(call.options.budgets).toEqual({ thoughtTokens: 0 });
+		}
 	});
 
 	it('still generates, unconstrained, on a build that cannot compile grammars', async () => {
