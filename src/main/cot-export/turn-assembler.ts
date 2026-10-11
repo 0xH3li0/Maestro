@@ -196,6 +196,9 @@ const PROMPT_NOT_CAPTURED_REASON = 'prompt-not-captured';
 /** Reason of the gap written when the turn's provider has no output parser. */
 const OUTPUT_NOT_PARSED_REASON = 'output-not-captured:no-parser';
 
+/** Reason of the gap written for a turn that ran outside the app. */
+const OUTPUT_OUTSIDE_APP_REASON = 'output-not-captured:outside-app';
+
 type ProseBlock = CotThinkingPayload | CotTextPayload;
 
 function isProse(block: CotBlock): block is ProseBlock {
@@ -369,11 +372,14 @@ function buildTurnStart(
 	target: CotTarget
 ): { start: CotTurnStartPayload; startGaps: string[] } {
 	const ssh = runsOverSsh(config);
-	// A Cue run hands over the prompt the subscription wrote, from before any
-	// system prompt is put in front of it for the provider, so a marker in it
-	// can only be the writer's own text.
+	// A Cue run hands over the prompt the subscription wrote, and a run of the
+	// command line the prompt it was given: both from before any system prompt
+	// is put in front for the provider, so a marker in either can only be the
+	// writer's own text.
 	const { prompt, systemPromptSha256 } =
-		target.origin === 'cue' ? { prompt: config.prompt ?? '' } : splitSystemPrompt(config);
+		target.origin === 'cue' || target.origin === 'cli'
+			? { prompt: config.prompt ?? '' }
+			: splitSystemPrompt(config);
 	const origin: CotTurnOrigin = target.origin;
 	const start: CotTurnStartPayload = {
 		kind: 'turn-start',
@@ -381,6 +387,7 @@ function buildTurnStart(
 		toolType: config.toolType as ToolType,
 		origin,
 		...(target.tabId ? { tabId: target.tabId } : {}),
+		...(target.consultedBy ? { consultedBy: target.consultedBy } : {}),
 		...(config.agentSessionId ? { providerSessionId: config.agentSessionId } : {}),
 		cwd: ssh && config.projectPath ? config.projectPath : config.cwd,
 		...(config.sshRemoteId ? { sshRemoteId: config.sshRemoteId } : {}),
@@ -671,15 +678,24 @@ export interface CotCueRunDecision {
 	folder: string;
 }
 
-/** What is known of a Cue run that has finished. */
+/** What is known of a run that has finished: a Cue run, or a run of the command line. */
 export interface CotCompletedRun {
+	/** What started the run. Defaults to `cue`. */
+	origin?: Extract<CotTurnOrigin, 'cue' | 'cli'>;
 	toolType: string;
 	/** The agent's own directory (the remote path, for a run over SSH). */
 	cwd: string;
-	/** The prompt after variable substitution, as it was sent. */
-	prompt: string;
-	/** The run's stdout byte for byte, before any cleaning. */
-	rawStdout: string;
+	/**
+	 * The prompt after variable substitution, as it was sent. Undefined when it
+	 * is not known, and then a `capture-gap` says so.
+	 */
+	prompt: string | undefined;
+	/**
+	 * The run's stdout byte for byte, before any cleaning. Null when the run
+	 * happened outside the app and its output never reached Maestro: the turn
+	 * is then written with a `capture-gap` in place of its output.
+	 */
+	rawStdout: string | null;
 	/** When the run started, in epoch milliseconds. */
 	startTime: number;
 	/** How long it ran, as Cue measured it (sleep time is not counted). */
@@ -774,13 +790,15 @@ function parseRunStdout(
 }
 
 /**
- * Writes one complete turn for a Cue run that has finished, with
- * `origin: 'cue'`. It resolves when the turn is handed to the writer, and it
- * never rejects: a failure goes to `onError`.
+ * Writes one complete turn for a run that has finished: a Cue run
+ * (`origin: 'cue'`), or a run of the command line (`origin: 'cli'`). It
+ * resolves when the turn is handed to the writer, and it never rejects: a
+ * failure goes to `onError`.
  *
- * `decision` is what `decideCueRun` answered at dispatch. The run is parsed and
- * normalized exactly as a live turn is, so a Cue turn and an interactive one
- * hold the same kinds of record for the same output.
+ * `decision` is what `decideCueRun` answered at dispatch. A run that comes
+ * with its output is parsed and normalized exactly as a live turn is, so a
+ * Cue turn and an interactive one hold the same kinds of record for the same
+ * output. A run with no output is written as its start, a gap, and its end.
  */
 export async function recordCompletedRun(
 	decision: CotCueRunDecision,
@@ -788,6 +806,7 @@ export async function recordCompletedRun(
 	deps: Pick<CotCueRecorderDeps, 'writer' | 'onError' | 'newTurnId'>
 ): Promise<void> {
 	const { agentId, folder } = decision;
+	const origin = run.origin ?? 'cue';
 	try {
 		const turnId = (deps.newTurnId ?? randomUUID)();
 		const filePath = turnFilePath(folder, new Date(run.startTime), undefined, turnId);
@@ -796,16 +815,17 @@ export async function recordCompletedRun(
 				toolType: run.toolType as ToolType,
 				cwd: run.cwd,
 				prompt: run.prompt,
-				querySource: 'cue',
+				...(origin === 'cue' ? { querySource: 'cue' } : {}),
 				...(run.providerSessionId ? { agentSessionId: run.providerSessionId } : {}),
 				...(run.sshRemoteId ? { sshRemoteId: run.sshRemoteId } : {}),
 			},
-			{ agentId, origin: 'cue' }
+			{ agentId, origin }
 		);
 
-		const parsed = parseRunStdout(run.toolType, run.rawStdout);
+		const parsed = run.rawStdout === null ? undefined : parseRunStdout(run.toolType, run.rawStdout);
 		const gaps = [...startGaps];
-		if (parsed === null) gaps.push(OUTPUT_NOT_PARSED_REASON);
+		if (parsed === undefined) gaps.push(OUTPUT_OUTSIDE_APP_REASON);
+		else if (parsed === null) gaps.push(OUTPUT_NOT_PARSED_REASON);
 		else if (parsed.failedLines > 0) {
 			gaps.push(`${UNPARSED_LINES_REASON}:${parsed.failedLines}`);
 		}

@@ -768,8 +768,10 @@ describe('cot-export IPC handlers', () => {
 		});
 
 		it('checks the stored head against the disk first, so a hard stop is not read as tampering', async () => {
-			// Only the timers are faked, so the save of the head stays waiting.
-			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			// Only the timers are faked, so the clock that saves the head never beats.
+			vi.useFakeTimers({
+				toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+			});
 			const logs = logFolder('logs');
 			await turnOn(AGENT, logs);
 			await writeRecord(AGENT, logs, 'turn-a', 'one');

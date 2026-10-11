@@ -11,10 +11,14 @@
  * `src/shared/cotExport/types.ts` before you change or expose anything here.
  */
 
+import type { AgentRun } from '../../shared/agent-run';
 import type { CueRunTranscript } from '../cue/cue-executor';
+import { getSessionsStore } from '../stores/getters';
 import { getCotConfigStore } from './config-store';
 import { createCueRunCapture } from './cue-capture';
 import type { CotCueRunCapture } from './cue-capture';
+import { createCotLedgerRecorder } from './ledger-runs';
+import type { CotLedgerRecorder } from './ledger-runs';
 import { createCotWriter } from './writer';
 import type { CotWriter } from './writer';
 
@@ -49,6 +53,7 @@ export function getCotWriter(): CotWriter {
 export function __resetCotWriterForTests(): void {
 	_writer = null;
 	_cueCapture = null;
+	_ledgerRecorder = null;
 }
 
 let _cueCapture: CotCueRunCapture | null = null;
@@ -81,5 +86,53 @@ export function beginCueRunCapture(agentId: string): ((run: CueRunTranscript) =>
 		return getCueRunCapture().begin(agentId);
 	} catch {
 		return undefined;
+	}
+}
+
+let _ledgerRecorder: CotLedgerRecorder | null = null;
+
+/** The provider an agent runs, from the agent list, or null for an agent that is gone. */
+function toolTypeOf(agentId: string): string | null {
+	const sessions: unknown = getSessionsStore().get('sessions', []);
+	if (!Array.isArray(sessions)) return null;
+	for (const session of sessions as Array<{ id?: unknown; toolType?: unknown } | null>) {
+		if (session?.id === agentId) {
+			return typeof session.toolType === 'string' ? session.toolType : null;
+		}
+	}
+	return null;
+}
+
+/** The ledger recorder bound to the app's store and its one writer, made at first use. */
+function getLedgerRecorder(): CotLedgerRecorder {
+	if (_ledgerRecorder === null) {
+		const store = getCotConfigStore();
+		_ledgerRecorder = createCotLedgerRecorder({
+			listEnabledAgents: () => store.listEnabledAgents(),
+			getFolder: (agentId) => store.getAgentConfig(agentId).folder,
+			getToolType: toolTypeOf,
+			getCursor: (agentId) => store.getLedgerCursor(agentId),
+			setCursor: (agentId, cursor) => store.setLedgerCursor(agentId, cursor),
+			writer: getCotWriter(),
+			onError: (agentId, error) => {
+				if (agentId !== null) store.recordError(agentId, error.message, Date.now());
+			},
+		});
+	}
+	return _ledgerRecorder;
+}
+
+/**
+ * Takes into the log the turns the command line ran outside the app (see
+ * `ledger-runs.ts`). Call it when the run ledger changed, and once after the
+ * app has started. `readRuns` gives the ledger, and is called only when some
+ * agent is recorded. It never throws, and the work is not waited for. Do not
+ * call it before the app's `ready` event.
+ */
+export function recordCommandLineRuns(readRuns: () => AgentRun[]): void {
+	try {
+		void getLedgerRecorder().recordPending(readRuns);
+	} catch {
+		// The store could not be made. A turn goes on without its record.
 	}
 }

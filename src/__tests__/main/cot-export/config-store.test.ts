@@ -68,6 +68,7 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 import {
 	COT_CONFIG_STORE_NAME,
 	COT_STATE_ANCHOR_SERVICE,
+	PERSIST_INTERVAL_MS,
 	__resetCotConfigStoreForTests,
 	cotStateAnchorAccount,
 	createCotConfigStore,
@@ -105,8 +106,13 @@ describe('cot-export/config-store', () => {
 	/** A log folder outside every workspace. `setAgentConfig` creates it. */
 	const logFolder = (name: string): string => path.join(root, name);
 
-	/** A store over the temp data dir, as the app would make it after a restart. */
+	/**
+	 * A store over the temp data dir, as the app would make it after a restart.
+	 * The stores made before it stop their clocks, as a process that is gone
+	 * does: two stores that both save by the clock would write over each other.
+	 */
 	const makeStore = (extra: Partial<CotConfigStoreDeps> = {}): CotConfigStore => {
+		for (const earlier of stores) earlier.dispose();
 		const store = createCotConfigStore({
 			cwd: dataDir,
 			seal: safeStorageSeal(electronMock.safeStorage),
@@ -116,6 +122,21 @@ describe('cot-export/config-store', () => {
 		});
 		stores.push(store);
 		return store;
+	};
+
+	/**
+	 * What a start of the app would read from disk right now, with the stores
+	 * that are running left as they are. The store that reads never saves.
+	 */
+	const readDisk = <T>(read: (store: CotConfigStore) => T): T => {
+		const reader = createCotConfigStore({
+			cwd: dataDir,
+			seal: safeStorageSeal(electronMock.safeStorage),
+			getFolderContext: () => ({ agentDirs, userDataPath: dataDir, homeDir }),
+			now: () => clock,
+		});
+		reader.dispose();
+		return read(reader);
 	};
 
 	beforeEach(() => {
@@ -140,9 +161,8 @@ describe('cot-export/config-store', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
-		// Nothing may be left waiting on a timer that fires after the temp dir
-		// is gone: the save would bring the directory back.
-		for (const store of stores) store.flushSync();
+		// No clock may beat after the temp dir is gone.
+		for (const store of stores) store.dispose();
 		flushCotConfigStoreSync();
 		__resetCotConfigStoreForTests();
 		fs.rmSync(root, { recursive: true, force: true });
@@ -201,18 +221,16 @@ describe('cot-export/config-store', () => {
 			electronMock.state.available = false;
 		});
 
-		it('stores the state in the clear, says so, and reads it back', async () => {
-			const logs = logFolder('logs');
+		it('never writes the state as readable text, says so, and reads it back', async () => {
+			const logs = logFolder('audit-trail-folder');
 			const store = makeStore();
 			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logs }).ok).toBe(true);
 
-			const file = readFile() as { plain: { agents: Record<string, { config: unknown }> } };
-			expect(Object.keys(file)).toEqual(['plain']);
-			expect(file.plain.agents[AGENT].config).toEqual({
-				enabled: true,
-				folder: logs,
-				updatedAt: START,
-			});
+			expect(Object.keys(readFile())).toEqual(['obscured']);
+			const onDisk = fs.readFileSync(storeFile(), 'utf8');
+			for (const word of ['audit-trail-folder', AGENT, 'enabled', 'agents', 'folder']) {
+				expect(onDisk, word).not.toContain(word);
+			}
 			expect((await store.getStatus(AGENT)).unencrypted).toBe(true);
 
 			const again = makeStore();
@@ -225,18 +243,64 @@ describe('cot-export/config-store', () => {
 			expect((await again.getStatus(AGENT)).unencrypted).toBe(true);
 		});
 
-		it('seals a plain file as soon as encryption is there', async () => {
-			const logs = logFolder('audit-trail-folder');
+		it('does not open an obscured file that was edited by hand', () => {
+			makeStore().setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+			const bytes = Buffer.from((readFile() as { obscured: string }).obscured, 'base64');
+			bytes[bytes.length - 1] ^= 0x01;
+			fs.writeFileSync(storeFile(), JSON.stringify({ obscured: bytes.toString('base64') }));
+
+			const store = makeStore();
+
+			expect(store.isEnabled(AGENT)).toBe(false);
+			expect(store.getStateProblem()).toMatchObject({ kind: 'unreadable' });
+		});
+
+		it('takes no state from readable text someone put in the file', () => {
+			// A file written by hand, in the shape the state has inside the seal.
+			fs.writeFileSync(
+				storeFile(),
+				JSON.stringify({
+					plain: {
+						agents: {
+							[AGENT]: {
+								config: { enabled: true, folder: logFolder('logs'), updatedAt: START },
+								chain: { folder: logFolder('logs'), head: HASH_A, chainSeq: 3 },
+							},
+						},
+					},
+					agents: { [AGENT]: { config: { enabled: true, folder: logFolder('logs') } } },
+				})
+			);
+
+			const store = makeStore();
+
+			expect(store.isEnabled(AGENT)).toBe(false);
+			expect(store.getAgentConfig(AGENT)).toEqual({ enabled: false, folder: null, updatedAt: 0 });
+		});
+
+		it('seals an obscured file as soon as encryption is there', async () => {
+			const logs = logFolder('logs');
 			makeStore().setAgentConfig(AGENT, { enabled: true, folder: logs });
-			expect(fs.readFileSync(storeFile(), 'utf8')).toContain('audit-trail-folder');
+			expect(Object.keys(readFile())).toEqual(['obscured']);
 
 			electronMock.state.available = true;
 			const sealed = makeStore();
 
 			expect(Object.keys(readFile())).toEqual(['blob']);
-			expect(fs.readFileSync(storeFile(), 'utf8')).not.toContain('audit-trail-folder');
 			expect(sealed.getAgentConfig(AGENT).folder).toBe(logs);
+			expect(sealed.isEnabled(AGENT)).toBe(true);
 			expect((await sealed.getStatus(AGENT)).unencrypted).toBe(false);
+		});
+
+		it('cannot open a sealed file once encryption is gone, and says so', () => {
+			electronMock.state.available = true;
+			makeStore().setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+			electronMock.state.available = false;
+
+			const store = makeStore();
+
+			expect(store.isEnabled(AGENT)).toBe(false);
+			expect(store.getStateProblem()).toMatchObject({ kind: 'unreadable' });
 		});
 	});
 
@@ -604,7 +668,42 @@ describe('cot-export/config-store', () => {
 		});
 	});
 
+	describe('what is inside the seal', () => {
+		it('opens with a nonce that is new at every save', () => {
+			const store = makeStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+			const unsealed = (): Record<string, unknown> =>
+				JSON.parse(
+					electronMock.safeStorage.decryptString(
+						Buffer.from((readFile() as { blob: string }).blob, 'base64')
+					)
+				);
+
+			const first = unsealed();
+			store.flushSync();
+			const second = unsealed();
+
+			// First, so that it changes every block of a seal that chains them.
+			expect(Object.keys(first)[0]).toBe('nonce');
+			expect(first.nonce).toMatch(/^[0-9a-f]{32}$/);
+			expect(second.nonce).not.toBe(first.nonce);
+			expect(second.agents).toEqual(first.agents);
+		});
+	});
+
 	describe('for someone who never turned it on', () => {
+		it('never starts the clock, and never makes a file', () => {
+			vi.useFakeTimers();
+			const store = makeStore();
+			store.isEnabled(AGENT);
+			store.recordWrite(AGENT, START);
+
+			vi.advanceTimersByTime(10 * PERSIST_INTERVAL_MS);
+			store.flushSync();
+
+			expect(fs.readdirSync(dataDir)).toEqual([]);
+		});
+
 		it('asks the OS key store for nothing, and writes nothing', () => {
 			// On macOS the first use of the key can raise a keychain prompt. A
 			// start, and every turn of every agent, must not cause one.
@@ -922,7 +1021,7 @@ describe('cot-export/config-store', () => {
 		});
 	});
 
-	describe('saving the head and the status', () => {
+	describe('saving by the clock', () => {
 		let logs: string;
 		let store: CotConfigStore;
 
@@ -933,58 +1032,83 @@ describe('cot-export/config-store', () => {
 			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
 		});
 
-		/** The head a store made now would read from disk. */
-		const headOnDisk = (): string | undefined => makeStore().getChainState(AGENT, logs)?.head;
+		/** The head a start of the app would read from disk. */
+		const headOnDisk = (): string | undefined =>
+			readDisk((reader) => reader.getChainState(AGENT, logs)?.head);
 
-		it('waits 500 ms after the last change, then saves', () => {
+		it('saves a new head at the next beat, and not before', () => {
 			store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: 0 });
-			vi.advanceTimersByTime(400);
-			store.setChainHead(AGENT, { folder: logs, head: HASH_B, chainSeq: 1 });
-			vi.advanceTimersByTime(499);
+			vi.advanceTimersByTime(PERSIST_INTERVAL_MS - 1);
 			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
 
 			vi.advanceTimersByTime(1);
-			expect(headOnDisk()).toBe(HASH_B);
+			expect(headOnDisk()).toBe(HASH_A);
+			expect(PERSIST_INTERVAL_MS).toBe(2000);
 		});
 
-		it('saves within 2 s, however fast the changes keep coming', () => {
-			// A record every 300 ms: the 500 ms pause never comes.
-			for (let position = 0; position < 6; position++) {
-				store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: position });
-				vi.advanceTimersByTime(300);
-			}
-			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
+		it('saves at every beat whether or not anything changed, and never the same bytes twice', () => {
+			const seen = new Set([fs.readFileSync(storeFile(), 'utf8')]);
 
-			store.setChainHead(AGENT, { folder: logs, head: HASH_B, chainSeq: 6 });
-			vi.advanceTimersByTime(199);
+			for (let beat = 0; beat < 4; beat++) {
+				// Removed, so that a file here after the beat is a file it wrote.
+				fs.rmSync(storeFile());
+				vi.advanceTimersByTime(PERSIST_INTERVAL_MS);
+				expect(fs.existsSync(storeFile())).toBe(true);
+				seen.add(fs.readFileSync(storeFile(), 'utf8'));
+			}
+
+			// Nothing changed in between, and yet no two saves are alike.
+			expect(seen.size).toBe(5);
 			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
-			vi.advanceTimersByTime(1);
-			expect(headOnDisk()).toBe(HASH_B);
+		});
+
+		it('beats the same for an agent that is switched off', () => {
+			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			fs.rmSync(storeFile());
+
+			vi.advanceTimersByTime(PERSIST_INTERVAL_MS);
+
+			expect(fs.existsSync(storeFile())).toBe(true);
+			expect(readDisk((reader) => reader.isEnabled(AGENT))).toBe(false);
 		});
 
 		it('saves a write time and a failure the same way', async () => {
 			store.recordWrite(AGENT, START + 5);
 			store.recordError(AGENT, 'The folder is gone.', START + 6);
-			expect((await makeStore().getStatus(AGENT)).lastWriteAt).toBeUndefined();
+			expect((await readDisk((reader) => reader.getStatus(AGENT))).lastWriteAt).toBeUndefined();
 
-			vi.advanceTimersByTime(500);
-			const status = await makeStore().getStatus(AGENT);
+			vi.advanceTimersByTime(PERSIST_INTERVAL_MS);
+			const status = await readDisk((reader) => reader.getStatus(AGENT));
 			expect(status.lastWriteAt).toBe(START + 5);
 			expect(status.lastError).toEqual({ message: 'The folder is gone.', at: START + 6 });
 		});
 
-		it('flushSync saves at once and leaves nothing waiting', () => {
+		it('flushSync saves at once', () => {
 			store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: 0 });
 			store.flushSync();
 			expect(headOnDisk()).toBe(HASH_A);
+		});
 
-			const saved = fs.readFileSync(storeFile());
+		it('stops beating once it is disposed, and can still be flushed', () => {
+			store.dispose();
+			store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: 0 });
 			fs.rmSync(storeFile());
-			vi.advanceTimersByTime(1000);
-			store.flushSync();
-			// No second save came: the file stayed removed.
+
+			vi.advanceTimersByTime(10 * PERSIST_INTERVAL_MS);
 			expect(fs.existsSync(storeFile())).toBe(false);
-			fs.writeFileSync(storeFile(), saved);
+
+			store.flushSync();
+			expect(headOnDisk()).toBe(HASH_A);
+		});
+
+		it('does not bring back a data folder that is gone', () => {
+			fs.rmSync(dataDir, { recursive: true, force: true });
+
+			vi.advanceTimersByTime(PERSIST_INTERVAL_MS);
+			store.flushSync();
+
+			expect(fs.existsSync(dataDir)).toBe(false);
+			fs.mkdirSync(dataDir);
 		});
 
 		it('ignores a head or a status for an agent or a folder it does not know', async () => {
@@ -992,7 +1116,7 @@ describe('cot-export/config-store', () => {
 			store.setChainHead(AGENT, { folder: logFolder('elsewhere'), head: HASH_A, chainSeq: 0 });
 			store.recordWrite(OTHER_AGENT, START);
 			store.recordError(OTHER_AGENT, 'nothing', START);
-			vi.advanceTimersByTime(500);
+			vi.advanceTimersByTime(PERSIST_INTERVAL_MS);
 
 			expect(store.getChains(OTHER_AGENT)).toEqual({ current: null, past: [] });
 			expect(store.getChains(AGENT).current?.head).toBe(COT_GENESIS_HASH);
@@ -1005,17 +1129,109 @@ describe('cot-export/config-store', () => {
 			});
 		});
 
-		it('keeps a change in memory when the save fails, and saves it with the next one', () => {
+		it('keeps a change in memory when the save fails, and saves it at the next beat', () => {
 			electronMock.state.encryptThrows = true;
 			store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: 0 });
-			expect(() => vi.advanceTimersByTime(500)).not.toThrow();
-			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
+			expect(() => vi.advanceTimersByTime(PERSIST_INTERVAL_MS)).not.toThrow();
 			expect(store.getChainState(AGENT, logs)?.head).toBe(HASH_A);
 
 			electronMock.state.encryptThrows = false;
-			store.recordWrite(AGENT, START);
-			vi.advanceTimersByTime(500);
+			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
+			vi.advanceTimersByTime(PERSIST_INTERVAL_MS);
 			expect(headOnDisk()).toBe(HASH_A);
+		});
+	});
+
+	describe('the mark of the command line runs that were recorded', () => {
+		let logs: string;
+
+		beforeEach(() => {
+			logs = logFolder('logs');
+		});
+
+		it('has none for an agent that was never turned on', () => {
+			const store = makeStore();
+			expect(store.getLedgerCursor(AGENT)).toBeNull();
+
+			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			expect(store.getLedgerCursor(AGENT)).toBeNull();
+			// A mark is never made by moving it.
+			store.setLedgerCursor(AGENT, { at: START + 5, ids: ['run-1'] });
+			expect(store.getLedgerCursor(AGENT)).toBeNull();
+		});
+
+		it('starts at the moment export is turned on', () => {
+			const store = makeStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			expect(store.getLedgerCursor(AGENT)).toEqual({ since: START, at: START, ids: [] });
+		});
+
+		it('moves forward, keeps when export was turned on, and is saved', () => {
+			const store = makeStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			store.setLedgerCursor(AGENT, { at: START + 9000, ids: ['run-1', 'run-2'] });
+			expect(store.getLedgerCursor(AGENT)).toEqual({
+				since: START,
+				at: START + 9000,
+				ids: ['run-1', 'run-2'],
+			});
+
+			store.flushSync();
+			expect(makeStore().getLedgerCursor(AGENT)).toEqual({
+				since: START,
+				at: START + 9000,
+				ids: ['run-1', 'run-2'],
+			});
+		});
+
+		it('hands out a copy, so a caller cannot move the mark by accident', () => {
+			const store = makeStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			store.getLedgerCursor(AGENT)?.ids.push('run-x');
+
+			expect(store.getLedgerCursor(AGENT)?.ids).toEqual([]);
+		});
+
+		it('is kept through a change of folder, and through being turned off', () => {
+			const store = makeStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			store.setLedgerCursor(AGENT, { at: START + 9000, ids: ['run-1'] });
+			clock = START + 60_000;
+
+			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('other-logs') });
+			expect(store.getLedgerCursor(AGENT)).toMatchObject({ since: START, at: START + 9000 });
+
+			store.setAgentConfig(AGENT, { enabled: false, folder: logFolder('other-logs') });
+			expect(store.getLedgerCursor(AGENT)).toMatchObject({ since: START, at: START + 9000 });
+		});
+
+		it('starts anew when export is turned on again, so a run from the time it was off is left out', () => {
+			const store = makeStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			store.setLedgerCursor(AGENT, { at: START + 9000, ids: ['run-1'] });
+			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			clock = START + 60_000;
+
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			expect(store.getLedgerCursor(AGENT)).toEqual({
+				since: START + 60_000,
+				at: START + 60_000,
+				ids: [],
+			});
+		});
+
+		it('lists the agents that are recorded right now', () => {
+			const store = makeStore();
+			expect(store.listEnabledAgents()).toEqual([]);
+
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			store.setAgentConfig(OTHER_AGENT, { enabled: false, folder: logFolder('other-logs') });
+
+			expect(store.listEnabledAgents()).toEqual([AGENT]);
 		});
 	});
 

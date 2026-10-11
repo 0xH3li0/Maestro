@@ -644,6 +644,7 @@ export async function* runPlaybook(
 
 					const result = await captureCliRun(
 						{
+							agentId: session.id,
 							sessionId: session.id,
 							toolType: session.toolType,
 							cwd: session.cwd,
@@ -725,6 +726,7 @@ export async function* runPlaybook(
 						// Request synopsis from the agent
 						const synopsisResult = await captureCliRun(
 							{
+								agentId: session.id,
 								sessionId: result.agentSessionId ?? session.id,
 								toolType: session.toolType,
 								cwd: session.cwd,

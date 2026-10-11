@@ -12,13 +12,15 @@
  * operating system offers encryption, the file holds one field, `blob`: the
  * whole state, sealed with the key the OS keeps for this app. The folder
  * paths, the agent ids, and the field names are all inside the seal. When the
- * OS offers none (a Linux machine with no keyring), the file holds `plain`,
- * the state as readable JSON, and every status says `unencrypted` so the
- * person can be told.
+ * OS offers none (a Linux machine with no keyring), the file holds `obscured`:
+ * the same state under a key that is built into the app (`obscuringSeal`). It
+ * is never written as readable text. Every status then says `unencrypted`, so
+ * the person can be told that the file is obscured and not encrypted.
  *
  * The limit, stated plainly: Maestro and its agents run as the same OS user.
  * The seal keeps a search of the disk from turning up a log folder. It does
- * not stop a process that sets out to get the same key from the OS.
+ * not stop a process that sets out to get the same key from the OS, and the
+ * obscured form does not stop anything that has read this app.
  *
  * For someone who never turned this on there is no file, and nothing is ever
  * written to the OS key store. It is read once, a few seconds after the app
@@ -59,10 +61,21 @@
  *
  * WHEN IT SAVES
  * A change the person makes (`setAgentConfig`) is saved before the call
- * returns. The head and the status change with every record, so they are saved
- * a moment later, and once more on the way out of the app (`flushSync`). An
- * app that stops hard in between loses nothing for good: the writer finds the
- * records past the stored head at its next write and takes them up.
+ * returns. Everything else (a head, a write time, a failure) is kept in memory
+ * and saved by a clock: the whole file is written again every
+ * `PERSIST_INTERVAL_MS`, whether or not anything changed, from the moment the
+ * store holds its first agent until the app quits, and once more on the way
+ * out (`flushSync`). An app that stops hard in between loses nothing for good:
+ * the writer finds the records past the stored head at its next write and
+ * takes them up.
+ *
+ * The clock is the point. A file saved when a record lands would change, and
+ * show a new time, only while a turn is being recorded, and anything that can
+ * list the data folder could read that. Saved by the clock, the file says the
+ * same thing whether an agent is recorded, idle, or switched off. Each save
+ * also carries a new random `nonce`, so the bytes differ every time (the OS
+ * seal alone gives the same bytes for the same state). Two limits: a save the
+ * person makes lands off the beat, and a busy app can be late for one.
  *
  * This feature is hidden from agents on purpose. Read the header of
  * `src/shared/cotExport/types.ts` before you change or expose anything here.
@@ -85,11 +98,10 @@ import type {
 } from '../../shared/cotExport/types';
 import { corruptStorePath, createStoreDeserializer } from '../stores/corrupt-store-recovery';
 import { getSessionsStore, getSyncPath } from '../stores/getters';
-import { debounce } from '../utils/debounce';
 import { createKeyringAnchor, noAnchor } from '../utils/keyring-anchor';
 import type { AnchorStore } from '../utils/keyring-anchor';
 import { logger } from '../utils/logger';
-import { safeStorageSeal } from '../utils/safe-storage-seal';
+import { obscuringSeal, safeStorageSeal } from '../utils/safe-storage-seal';
 import type { SealProvider } from '../utils/safe-storage-seal';
 import { countTurnFilesOnDay, isSameFolder, validateAgentFolder } from './layout';
 import type { AgentFolderContext } from './layout';
@@ -107,19 +119,12 @@ import type { AgentFolderContext } from './layout';
 export const COT_CONFIG_STORE_NAME = 'maestro-device-state';
 
 /**
- * How long a new head or a new status waits before it is saved. They change
- * with every record of a turn, and one save covers them all.
+ * How often the whole file is saved, by the clock (see "When it saves" in the
+ * header). It is also the longest a new head waits: the head kept here is what
+ * shows that the end of a log was removed, and after a hard stop nothing past
+ * the saved head can be told from a record that was never written.
  */
-const PERSIST_DEBOUNCE_MS = 500;
-
-/**
- * The longest a new head waits, however fast records keep coming. A stream
- * with no pause of `PERSIST_DEBOUNCE_MS` would otherwise never save one, and
- * the head kept here is what shows that the end of a log was removed: after a
- * hard stop, nothing past the saved head can be told from a record that was
- * never written.
- */
-const PERSIST_MAX_WAIT_MS = 2000;
+export const PERSIST_INTERVAL_MS = 2000;
 
 const LOG_CONTEXT = 'Stores';
 
@@ -159,10 +164,27 @@ interface CotAgentEntry {
 	/** Chains in folders the agent used before. Kept so they can be verified. */
 	pastChains: CotPastChain[];
 	status: { lastWriteAt?: number; lastError?: CotLastError };
+	/** Which runs of the command line were taken into the log. Set when export is turned on. */
+	ledger?: CotLedgerCursor;
 }
 
-/** The state as it is sealed, or written under `plain`. */
+/**
+ * How far the log has followed the runs the command line reports for one
+ * agent (see `ledger-runs.ts`).
+ */
+export interface CotLedgerCursor {
+	/** When export was last turned on. A run that started before it is not recorded. */
+	since: number;
+	/** When the newest recorded run ended. A run that ended before it is not recorded again. */
+	at: number;
+	/** The runs recorded that ended exactly at `at`, so that a tie is not taken twice. */
+	ids: string[];
+}
+
+/** The state as it is sealed. */
 interface CotStoreState {
+	/** Random, and new at every save, so that no two saves give the same bytes. First on purpose. */
+	nonce?: string;
 	agents: Record<string, CotAgentEntry>;
 	/**
 	 * How many changes the person has made. The same number is kept in the OS
@@ -175,10 +197,10 @@ interface CotStoreState {
 
 /** The store file: one of the two fields, never both. */
 interface CotStoreFile {
-	/** Base64 of the sealed state. */
+	/** Base64 of the state, sealed with the key the OS holds. */
 	blob?: string;
-	/** The state in the clear, on a system that offers no encryption. */
-	plain?: unknown;
+	/** Base64 of the state under the app's own key, on a system that offers no encryption. */
+	obscured?: string;
 }
 
 /**
@@ -219,6 +241,11 @@ export interface CotConfigStoreDeps {
 	isFreshProfile?: () => boolean;
 	/** A new install secret. Defaults to 32 random bytes as hex. */
 	newSecret?: () => string;
+	/**
+	 * What the state is written under when `seal` is not available, so that it
+	 * is never readable text. Defaults to `obscuringSeal()`.
+	 */
+	fallbackSeal?: SealProvider;
 	/** The clock, in epoch milliseconds. Defaults to `Date.now`. */
 	now?: () => number;
 }
@@ -289,8 +316,19 @@ export interface CotConfigStore {
 	 * last two are known only after `checkStateAnchor`.
 	 */
 	getStateProblem(): CotStateProblem | null;
-	/** Saves now whatever is still waiting. For the way out of the app. */
+	/** The agents whose turns are recorded right now. */
+	listEnabledAgents(): string[];
+	/**
+	 * How far the log has followed the command line's runs for the agent, or
+	 * null for an agent that was never turned on.
+	 */
+	getLedgerCursor(agentId: string): CotLedgerCursor | null;
+	/** Moves that mark forward. `since` is kept. Ignored for an agent with no mark. */
+	setLedgerCursor(agentId: string, cursor: Pick<CotLedgerCursor, 'at' | 'ids'>): void;
+	/** Saves now, without waiting for the clock. For the way out of the app. */
 	flushSync(): void;
+	/** Stops the clock that saves the file. `flushSync` still saves. For tests. */
+	dispose(): void;
 }
 
 // ============================================================================
@@ -322,7 +360,7 @@ function readLastError(raw: unknown): CotLastError | undefined {
 /**
  * One agent's entry, with the rules the rest of this module relies on put
  * back in force: a chain only in the chosen folder, and no agent on without a
- * chain. Maestro writes no other shape itself. The `plain` form is a file a
+ * chain. Maestro writes no other shape itself. The obscured form is a file a
  * person can edit, and a newer or older build can have written it.
  *
  * A chain is never dropped: one that does not belong to the chosen folder is
@@ -353,12 +391,23 @@ function readEntry(raw: unknown): CotAgentEntry | null {
 		if (lastError) status.lastError = lastError;
 	}
 
-	return {
+	const entry: CotAgentEntry = {
 		config: { enabled: config.enabled === true && chain !== null, folder, updatedAt },
 		chain,
 		pastChains,
 		status,
 	};
+	if (isRecord(raw.ledger)) {
+		const { since, at, ids } = raw.ledger;
+		if (typeof since === 'number' && typeof at === 'number') {
+			entry.ledger = {
+				since,
+				at,
+				ids: Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [],
+			};
+		}
+	}
+	return entry;
 }
 
 /** The agents of a stored state. Throws when `raw` is not a state at all. */
@@ -401,6 +450,7 @@ function describeSaveError(error: unknown): string {
 export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 	const now = deps.now ?? Date.now;
 	const anchor = deps.anchor ?? noAnchor();
+	const fallbackSeal = deps.fallbackSeal ?? obscuringSeal();
 	const newSecret = deps.newSecret ?? ((): string => randomBytes(32).toString('hex'));
 	const storePath = path.resolve(deps.cwd, `${COT_CONFIG_STORE_NAME}.json`);
 	const store = new Store<CotStoreFile>({
@@ -447,8 +497,9 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 	}
 
 	/**
-	 * Writes `next` to disk, sealed when the OS can seal. It throws when the
-	 * state could not be saved, and then the file on disk is as it was.
+	 * Writes `next` to disk: sealed when the OS can seal, and under the app's
+	 * own key when it cannot. It throws when the state could not be saved, and
+	 * then the file on disk is as it was.
 	 */
 	function write(
 		next: Map<string, CotAgentEntry>,
@@ -463,34 +514,54 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			}
 			unreadableOnDisk = false;
 		}
-		const state: CotStoreState = { agents: Object.fromEntries(next), epoch: freshness.epoch };
+		const state: CotStoreState = {
+			// First, so that it changes every block of a seal that chains its blocks.
+			nonce: randomBytes(16).toString('hex'),
+			agents: Object.fromEntries(next),
+			epoch: freshness.epoch,
+		};
 		if (freshness.installSecret !== null) state.installSecret = freshness.installSecret;
-		// Assigning the whole document replaces it, so a `plain` left from a
+		const text = JSON.stringify(state);
+		// Assigning the whole document replaces it, so an `obscured` left from a
 		// time without encryption does not stay beside a new `blob`.
 		store.store = deps.seal.available()
-			? { blob: deps.seal.seal(JSON.stringify(state)).toString('base64') }
-			: { plain: state };
+			? { blob: deps.seal.seal(text).toString('base64') }
+			: { obscured: fallbackSeal.seal(text).toString('base64') };
 	}
 
-	const persistSoon = debounce(
-		() => {
-			try {
-				write(agents);
-				saveFailing = false;
-			} catch (error) {
-				// The change is still in memory, and the next one tries the save
-				// again. Logged once per run of failures, under the file's own bland
-				// name, so a full disk does not fill the log as well.
-				if (!saveFailing) {
-					const code = (error as NodeJS.ErrnoException | null)?.code ?? 'unknown error';
-					logger.warn(`Could not save ${COT_CONFIG_STORE_NAME}.json (${code}).`, LOG_CONTEXT);
-				}
-				saveFailing = true;
+	/**
+	 * Saves the whole state now. It does nothing while the store holds no
+	 * agent (someone who never turned this on gets no file), and nothing once
+	 * the data folder is gone (a folder that was removed is not brought back).
+	 */
+	function save(): void {
+		if (agents.size === 0) return;
+		try {
+			if (!fs.existsSync(deps.cwd)) return;
+			write(agents);
+			saveFailing = false;
+		} catch (error) {
+			// The state is still in memory, and the next beat tries again. Logged
+			// once per run of failures, under the file's own bland name, so a full
+			// disk does not fill the log as well.
+			if (!saveFailing) {
+				const code = (error as NodeJS.ErrnoException | null)?.code ?? 'unknown error';
+				logger.warn(`Could not save ${COT_CONFIG_STORE_NAME}.json (${code}).`, LOG_CONTEXT);
 			}
-		},
-		PERSIST_DEBOUNCE_MS,
-		{ maxWaitMs: PERSIST_MAX_WAIT_MS }
-	);
+			saveFailing = true;
+		}
+	}
+
+	let beat: ReturnType<typeof setInterval> | null = null;
+	let disposed = false;
+
+	/** Starts the clock that saves the file, once the store holds an agent. */
+	function startBeat(): void {
+		if (beat !== null || disposed || agents.size === 0) return;
+		beat = setInterval(save, PERSIST_INTERVAL_MS);
+		// The clock must not keep the app from quitting.
+		beat.unref?.();
+	}
 
 	function load(): void {
 		let file: CotStoreFile;
@@ -512,25 +583,26 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			}
 			return;
 		}
-		if (file.plain === undefined) {
+		if (typeof file.obscured !== 'string') {
 			// A first start, or a file that was removed. The anchor tells them apart.
 			nothingOnDisk = true;
 			return;
 		}
 		try {
-			agents = readAgents(file.plain);
-			({ epoch, installSecret } = readFreshness(file.plain));
+			const state: unknown = JSON.parse(fallbackSeal.unseal(Buffer.from(file.obscured, 'base64')));
+			agents = readAgents(state);
+			({ epoch, installSecret } = readFreshness(state));
 		} catch {
 			markUnreadable();
 			return;
 		}
-		// The state lay in the clear because there was no key then. There is one
+		// The state was only obscured because there was no key then. There is one
 		// now, so seal it. If that fails it stays as it is until the next save.
 		if (deps.seal.available()) {
 			try {
 				write(agents);
 			} catch {
-				// Nothing is lost: the readable file is still the whole state.
+				// Nothing is lost: the file on disk is still the whole state.
 			}
 		}
 	}
@@ -567,9 +639,9 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 				// State from before there was an anchor, or an anchor that was
 				// removed while the file was left. Vouch for the file as it is.
 				if (agents.size > 0) {
+					// The next save by the clock puts the secret into the file too.
 					installSecret ??= newSecret();
 					anchor.write({ installSecret, epoch });
-					persistSoon();
 				}
 				return;
 			}
@@ -631,6 +703,7 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 
 	load();
 	refreshEnabled();
+	startBeat();
 
 	return {
 		getAgentConfig(agentId) {
@@ -711,6 +784,10 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 				pastChains,
 				status,
 			};
+			// Turning export on starts the mark anew: a run of the command line
+			// that began before this moment is not recorded.
+			if (enabled && !entry.config.enabled) nextEntry.ledger = { since: at, at, ids: [] };
+			else if (entry.ledger) nextEntry.ledger = entry.ledger;
 			// Save first, and take the change into memory only once it is on
 			// disk: a switch that reads as on and is gone after a restart is
 			// worse than one that says it could not be changed.
@@ -752,9 +829,8 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 				}
 			}
 			saveFailing = false;
-			// That save held every head and status as well, so nothing is waiting.
-			persistSoon.cancel();
 			refreshEnabled();
+			startBeat();
 			return { ok: true, config: { ...nextEntry.config } };
 		},
 
@@ -794,21 +870,18 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 					chainSeq: state.chainSeq,
 				};
 			}
-			persistSoon();
 		},
 
 		recordWrite(agentId, at) {
 			const entry = agents.get(agentId);
 			if (!entry) return;
 			entry.status.lastWriteAt = at;
-			persistSoon();
 		},
 
 		recordError(agentId, message, at) {
 			const entry = agents.get(agentId);
 			if (!entry) return;
 			entry.status.lastError = { message, at };
-			persistSoon();
 			try {
 				deps.onError?.(agentId, { message, at });
 			} catch {
@@ -855,8 +928,29 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			return problem ? { ...problem } : null;
 		},
 
+		listEnabledAgents() {
+			return [...enabledAgents];
+		},
+
+		getLedgerCursor(agentId) {
+			const cursor = agents.get(agentId)?.ledger;
+			return cursor ? { since: cursor.since, at: cursor.at, ids: [...cursor.ids] } : null;
+		},
+
+		setLedgerCursor(agentId, cursor) {
+			const entry = agents.get(agentId);
+			if (!entry?.ledger) return;
+			entry.ledger = { since: entry.ledger.since, at: cursor.at, ids: [...cursor.ids] };
+		},
+
 		flushSync() {
-			persistSoon.flush();
+			save();
+		},
+
+		dispose() {
+			disposed = true;
+			if (beat !== null) clearInterval(beat);
+			beat = null;
 		},
 	};
 }
@@ -1011,9 +1105,9 @@ export function getCotConfigStore(): CotConfigStore {
 }
 
 /**
- * Saves whatever the app's store still has waiting. For the quit path, where
- * no later timer tick can be relied on. It does nothing when the store was
- * never made, and it never makes one.
+ * Saves the app's store now. For the quit path, where no later beat of the
+ * clock can be relied on. It does nothing when the store was never made, and
+ * it never makes one.
  */
 export function flushCotConfigStoreSync(): void {
 	_store?.flushSync();
@@ -1021,6 +1115,7 @@ export function flushCotConfigStoreSync(): void {
 
 /** Drops the app's store and its listener so the next call starts new. For tests. */
 export function __resetCotConfigStoreForTests(): void {
+	_store?.dispose();
 	_store = null;
 	_failureListener = null;
 	_stateAnchor = null;

@@ -297,10 +297,13 @@ describe('AgentCotExportSection', () => {
 
 			const scope = screen.getByTestId('cot-export-scope');
 			expect(scope).toHaveTextContent(
-				'Recorded: messages sent in this app, Auto Run tasks, Group Chat replies, and Cue runs.'
+				"Recorded: messages sent in this app, Auto Run tasks, Group Chat replies, Cue runs, and answers to another agent's question."
 			);
 			expect(scope).toHaveTextContent(
-				"Not recorded: a turn started from the command line, an answer to another agent's question, and anything a program the agent starts does on its own."
+				'A turn started from the command line is recorded with its prompt and how it ended, without its output.'
+			);
+			expect(scope).toHaveTextContent(
+				'Not recorded: anything a program the agent starts does on its own.'
 			);
 		});
 
@@ -369,12 +372,12 @@ describe('AgentCotExportSection', () => {
 			expect(screen.queryByTestId('cot-export-status')).not.toBeInTheDocument();
 		});
 
-		it('warns when the settings are stored unencrypted', async () => {
+		it('warns when the settings are only obscured, on a system with no key store', async () => {
 			await renderLoaded(createApi(statusOf({ unencrypted: true })));
 
 			const warning = screen.getByTestId('cot-export-unencrypted');
 			expect(warning).toHaveTextContent(
-				'Settings for this feature are stored unencrypted on this system.'
+				'This system has no key store, so the settings for this feature are obscured, not encrypted.'
 			);
 			expect(warning).toHaveStyle({ color: mockTheme.colors.warning });
 		});

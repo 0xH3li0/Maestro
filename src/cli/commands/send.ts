@@ -145,6 +145,7 @@ export async function send(
 	try {
 		result = await captureCliRun(
 			{
+				agentId,
 				sessionId: agentSessionId ?? agentId,
 				toolType: agent.toolType,
 				cwd: agent.cwd,

@@ -25,6 +25,7 @@ import { getCotConfigStore } from '../cot-export/config-store';
 import { peekCotAgentId, resolveCotTarget } from '../cot-export/resolve-agent';
 import type { CotResolverDeps } from '../cot-export/resolve-agent';
 import { getCotWriter } from '../cot-export/runtime';
+import { getCrossAgentConsultParties } from '../cross-agent/cross-agent-router';
 import { getSessionsStore } from '../stores/getters';
 import { powerManager } from '../power-manager';
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -177,6 +178,7 @@ function wireCotExportListener(processManager: ProcessManager): void {
 		const resolverDeps: CotResolverDeps = {
 			getSessions: () => getSessionsStore().get('sessions', []),
 			getGroupChatParticipant: getParticipant,
+			getConsultParties: getCrossAgentConsultParties,
 		};
 		setupCotExportListener(processManager, {
 			store: getCotConfigStore(),

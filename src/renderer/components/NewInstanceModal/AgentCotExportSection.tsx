@@ -204,9 +204,10 @@ function CotExportControls({
 				prompt, the reasoning, each tool call and its result, the replies, and the usage.
 			</p>
 			<p className="text-xs mb-2" style={{ color: colors.textDim }} data-testid="cot-export-scope">
-				Recorded: messages sent in this app, Auto Run tasks, Group Chat replies, and Cue runs. Not
-				recorded: a turn started from the command line, an answer to another agent's question, and
-				anything a program the agent starts does on its own.
+				Recorded: messages sent in this app, Auto Run tasks, Group Chat replies, Cue runs, and
+				answers to another agent's question. A turn started from the command line is recorded with
+				its prompt and how it ended, without its output. Not recorded: anything a program the agent
+				starts does on its own.
 			</p>
 			<p
 				className="text-xs mb-2"
@@ -224,7 +225,10 @@ function CotExportControls({
 					data-testid="cot-export-unencrypted"
 				>
 					<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-					<span>Settings for this feature are stored unencrypted on this system.</span>
+					<span>
+						This system has no key store, so the settings for this feature are obscured, not
+						encrypted.
+					</span>
 				</div>
 			)}
 

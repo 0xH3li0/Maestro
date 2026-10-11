@@ -93,8 +93,16 @@ export const COT_TOOL_OUTPUT_CAP_BYTES = 256 * 1024;
  * - `auto-run`: an Auto Run task
  * - `group-chat`: the agent answering as a Group Chat participant
  * - `cue`: a Cue subscription firing
+ * - `consult`: the agent answering another agent's question (an @mention, or
+ *   an ask from that agent's shell). `consultedBy` names the agent that asked.
+ * - `cli`: a turn the command line ran outside the app. Maestro did not see
+ *   that turn. The record is built from the run ledger the command line
+ *   writes, so it holds the prompt and how the run ended and never the
+ *   output, and a `capture-gap` right after `turn-start` says so. Read it as
+ *   a report, not as an observation: the ledger is a file the command line
+ *   wrote.
  */
-export type CotTurnOrigin = 'interactive' | 'auto-run' | 'group-chat' | 'cue';
+export type CotTurnOrigin = 'interactive' | 'auto-run' | 'group-chat' | 'cue' | 'consult' | 'cli';
 
 /** Discriminant of a record. Each kind has its own payload shape below. */
 export type CotRecordKind =
@@ -162,6 +170,11 @@ export interface CotTurnStartPayload {
 	origin: CotTurnOrigin;
 	/** The AI tab the turn ran in, when it ran in one. */
 	tabId?: string;
+	/**
+	 * Maestro's id for the agent whose question this turn answers. Present
+	 * only when `origin` is `consult`.
+	 */
+	consultedBy?: string;
 	/**
 	 * The provider conversation the turn continues, when one was known at
 	 * spawn. A turn that opens a new provider conversation has none yet.
@@ -343,8 +356,9 @@ export interface CotCaptureGapPayload {
 	 * `unrecognized-block:<block type>` (the provider sent a kind of content
 	 * this version of Maestro cannot record), `output-not-captured:no-parser`
 	 * (the provider has no output parser, so its stream could not be read),
-	 * `unparsed-lines:<count>` (a Cue run whose parser threw on that many
-	 * lines), and
+	 * `output-not-captured:outside-app` (the turn ran outside the app, so
+	 * Maestro never had its output), `unparsed-lines:<count>` (a Cue run whose
+	 * parser threw on that many lines), and
 	 * `prompt-not-captured` or `prompt-not-captured:ssh-remote` (written right
 	 * after a `turn-start` whose `prompt` is empty because the prompt did not
 	 * reach Maestro's recorder, as on an SSH remote, where it travels inside

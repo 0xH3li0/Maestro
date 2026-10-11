@@ -109,7 +109,6 @@ describe('classifyCotSessionId', () => {
 		['the wizard document generation', 'wizard-gen-1767225600000-k3j2h1g0f'],
 		['the inline wizard conversation', 'inline-wizard-1767225600000-k3j2h1g0f'],
 		['the inline wizard document generation', 'inline-wizard-gen-1767225600000-k3j2h1g0f'],
-		['a consult', `cross-agent-${UUID_TAIL}`],
 		['a Cue run listing', 'cue-run-8f14e45f-ceea-467a-9575-1d5b0c7a5a2e'],
 		['the terminal', `${AGENT}-terminal`],
 		['a terminal tab', `${AGENT}-terminal-${TAB}`],
@@ -182,7 +181,6 @@ describe('resolveCotTarget', () => {
 			'wizard-gen-1767225600000-k3j2h1g0f',
 			'inline-wizard-1767225600000-k3j2h1g0f',
 			'inline-wizard-gen-1767225600000-k3j2h1g0f',
-			`cross-agent-${UUID_TAIL}`,
 			`cue-run-${UUID_TAIL}`,
 			`${AGENT}-terminal`,
 			`${AGENT}-terminal-${TAB}`,
@@ -385,7 +383,8 @@ describe('peekCotAgentId', () => {
 		{ name: 'an exit synopsis', id: `${AGENT}-synopsis-1767225600000`, agentId: null },
 		{ name: 'a terminal tab', id: `${AGENT}-terminal-${TAB}`, agentId: null },
 		{ name: 'a tab naming run', id: `tab-naming-${UUID_TAIL}`, agentId: null },
-		{ name: 'a consult', id: `cross-agent-${UUID_TAIL}`, agentId: null },
+		// No consult router is given here, so nothing vouches for the consult.
+		{ name: 'a consult nobody lists', id: `cross-agent-${UUID_TAIL}`, agentId: null },
 		{ name: 'a shape nobody listed', id: 'mystery-1767225600000', agentId: null },
 	];
 
@@ -435,5 +434,66 @@ describe('peekCotAgentId', () => {
 		await resolveCotTarget('mystery-1767225600001', makeDeps());
 		expect(loggerMock.debug).toHaveBeenCalledTimes(1);
 		expect(loggerMock.debug.mock.calls[0][0]).toContain('mystery-<n>');
+	});
+});
+
+describe('a consult', () => {
+	const REQUEST = UUID_TAIL;
+	const ID = `cross-agent-${REQUEST}`;
+	const ASKING = 'aaaaaaaa-1111-4222-8333-444444444444';
+
+	/** A consult router that lists one consult: `ASKING` asks `answering`. */
+	const withConsult = (answering: string = AGENT) =>
+		makeDeps({
+			getConsultParties: (requestId) =>
+				requestId === REQUEST ? { sourceSessionId: ASKING, targetSessionId: answering } : null,
+		});
+
+	it('is read by its request id', () => {
+		expect(classifyCotSessionId(ID)).toEqual({ kind: 'consult', requestId: REQUEST });
+		expect(classifyCotSessionId('cross-agent-')).toEqual({ kind: 'unknown' });
+	});
+
+	it('is a turn of the agent that answers, and names the agent that asked', async () => {
+		expect(peekCotAgentId(ID, withConsult())).toBe(AGENT);
+		await expect(resolveCotTarget(ID, withConsult())).resolves.toEqual({
+			agentId: AGENT,
+			origin: 'consult',
+			consultedBy: ASKING,
+		});
+		expect(loggerMock.debug).not.toHaveBeenCalled();
+	});
+
+	it('is answered from memory, with no read of a group chat', async () => {
+		const getGroupChatParticipant = vi.fn();
+		const deps = { ...withConsult(), getGroupChatParticipant };
+
+		await resolveCotTarget(ID, deps);
+
+		expect(getGroupChatParticipant).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['a consult the router no longer lists', makeDeps({ getConsultParties: () => null })],
+		['a caller that has no consult router', makeDeps()],
+		['an answering agent Maestro no longer has', withConsult('gone-agent')],
+	])('is nothing for %s', async (_name, deps) => {
+		expect(peekCotAgentId(ID, deps)).toBeNull();
+		await expect(resolveCotTarget(ID, deps)).resolves.toBeNull();
+	});
+
+	it('is nothing when the consult settled between the two lookups', async () => {
+		let listed = true;
+		const deps = makeDeps({
+			getConsultParties: () =>
+				listed ? { sourceSessionId: ASKING, targetSessionId: AGENT } : null,
+			// The agent list is read after the first lookup of the consult.
+			getSessions: () => {
+				listed = false;
+				return SESSIONS;
+			},
+		});
+
+		await expect(resolveCotTarget(ID, deps)).resolves.toBeNull();
 	});
 });

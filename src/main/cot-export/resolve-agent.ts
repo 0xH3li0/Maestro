@@ -33,7 +33,7 @@
  *   wizard-<ts>-<rand>, wizard-gen-<ts>-<rand>    Wizard conversationManager,        null (Maestro prompt)
  *   inline-wizard-<ts>-<rand>,                    phaseGenerator, inline wizard
  *   inline-wizard-gen-<ts>-<rand>                 conversation and generation
- *   cross-agent-<requestId>                       cross-agent-router (a consult)     null (see below)
+ *   cross-agent-<requestId>                       cross-agent-router (a consult)     consult (see below)
  *   <agent>-terminal, <agent>-terminal-<tab>      terminal tabs (a PTY, not a turn)  null
  *   cue-run-<runId>                               listed by process:getActive only;  null (Cue hook)
  *                                                 Cue runs never go through
@@ -41,11 +41,12 @@
  *
  * Three decisions in that table need a reason:
  *
- * - A consult (`cross-agent-*`) is null. The prompt is Maestro's own wording
- *   around another agent's question, and `CotTurnOrigin` has no member that
- *   says "consult". The consulted agent's reasoning for that prompt is
- *   therefore not recorded. Adding it needs a new origin in the Phase 01
- *   format, which is a decision for the human, not for this resolver.
+ * - A consult (`cross-agent-*`) is a turn of the agent that ANSWERS. Its
+ *   process id carries no agent id, only the request id, so the two agents
+ *   come from the consult router's list of consults in flight
+ *   (`getConsultParties`). The turn is recorded under the answering agent
+ *   with `origin: 'consult'`, and `consultedBy` names the agent that asked.
+ *   A consult the router no longer lists resolves to null.
  * - A group chat participant is matched to its agent BY NAME, with the same
  *   conservative rule the router uses to pick the agent the participant runs
  *   as (`findSessionForParticipantName`). The participant record's `agentId`
@@ -72,6 +73,7 @@ import {
 	REGEX_SYNOPSIS_SESSION,
 } from '../constants';
 import { parseParticipantSessionId } from '../group-chat/session-parser';
+import { CROSS_AGENT_SESSION_PREFIX } from '../../shared/crossAgentTypes';
 import { findSessionForParticipantName } from '../../shared/group-chat-types';
 import type { CotTurnOrigin } from '../../shared/cotExport/types';
 import { logger } from '../utils/logger';
@@ -89,6 +91,8 @@ export interface CotTarget {
 	origin: CotTurnOrigin;
 	/** The AI tab the turn belongs to. Only an interactive turn has one. */
 	tabId?: string;
+	/** The agent whose question the turn answers. Only a consult has one. */
+	consultedBy?: string;
 }
 
 /** The fields of an agent this module reads. */
@@ -121,6 +125,14 @@ export interface CotResolverDeps {
 		| CotResolverParticipant
 		| null
 		| undefined;
+	/**
+	 * The agent that asks and the agent that answers in a consult that is in
+	 * flight, by the consult's request id; or null when there is none. Answered
+	 * from memory, with no wait. Without it no consult is recorded.
+	 */
+	getConsultParties?: (
+		requestId: string
+	) => { sourceSessionId: string; targetSessionId: string } | null;
 }
 
 /** What a session id says about the process, before any lookup. */
@@ -128,6 +140,7 @@ export type CotSessionShape =
 	| { kind: 'agent-turn'; origin: 'interactive'; agentId: string; tabId?: string }
 	| { kind: 'agent-turn'; origin: 'auto-run'; agentId: string }
 	| { kind: 'group-chat-participant'; groupChatId: string; participantName: string }
+	| { kind: 'consult'; requestId: string }
 	/** Known, and not an agent turn the person asked for. */
 	| { kind: 'internal' }
 	/** Not in the table in the module header. */
@@ -142,7 +155,6 @@ export type CotSessionShape =
  * agent id: agent ids are generated UUIDs.
  */
 const INTERNAL_PREFIXES = [
-	'cross-agent-',
 	'groomer-',
 	'tab-naming-',
 	'feedback-',
@@ -173,6 +185,11 @@ export function classifyCotSessionId(processSessionId: string): CotSessionShape 
 		return REGEX_MODERATOR_SESSION.test(processSessionId)
 			? { kind: 'internal' }
 			: { kind: 'unknown' };
+	}
+
+	if (processSessionId.startsWith(CROSS_AGENT_SESSION_PREFIX)) {
+		const requestId = processSessionId.slice(CROSS_AGENT_SESSION_PREFIX.length);
+		return requestId === '' ? { kind: 'unknown' } : { kind: 'consult', requestId };
 	}
 
 	if (INTERNAL_PREFIXES.some((prefix) => processSessionId.startsWith(prefix))) {
@@ -255,13 +272,17 @@ export function __resetCotResolverLogForTests(): void {
  */
 function agentOfShape(
 	shape: CotSessionShape,
-	getSessions: CotResolverDeps['getSessions']
+	deps: Pick<CotResolverDeps, 'getSessions' | 'getConsultParties'>
 ): CotResolverSession | undefined {
 	switch (shape.kind) {
 		case 'agent-turn':
-			return getSessions().find((session) => session.id === shape.agentId);
+			return deps.getSessions().find((session) => session.id === shape.agentId);
 		case 'group-chat-participant':
-			return findSessionForParticipantName(shape.participantName, getSessions());
+			return findSessionForParticipantName(shape.participantName, deps.getSessions());
+		case 'consult': {
+			const answering = deps.getConsultParties?.(shape.requestId)?.targetSessionId;
+			return answering ? deps.getSessions().find((session) => session.id === answering) : undefined;
+		}
 		default:
 			return undefined;
 	}
@@ -282,11 +303,11 @@ function agentOfShape(
  */
 export function peekCotAgentId(
 	processSessionId: string,
-	deps: Pick<CotResolverDeps, 'getSessions'>
+	deps: Pick<CotResolverDeps, 'getSessions' | 'getConsultParties'>
 ): string | null {
 	const shape = classifyCotSessionId(processSessionId);
 	if (shape.kind === 'unknown') noteUnknownShape(processSessionId);
-	return agentOfShape(shape, deps.getSessions)?.id ?? null;
+	return agentOfShape(shape, deps)?.id ?? null;
 }
 
 /**
@@ -308,7 +329,7 @@ export async function resolveCotTarget(
 	const shape = classifyCotSessionId(processSessionId);
 	if (shape.kind === 'unknown') noteUnknownShape(processSessionId);
 
-	const agent = agentOfShape(shape, deps.getSessions);
+	const agent = agentOfShape(shape, deps);
 	if (!agent) return null;
 
 	switch (shape.kind) {
@@ -324,6 +345,13 @@ export async function resolveCotTarget(
 			);
 			if (!participant || participant.agentId !== agent.toolType) return null;
 			return { agentId: agent.id, origin: 'group-chat' };
+		}
+
+		case 'consult': {
+			// Asked again: the consult can have settled since `agentOfShape` looked.
+			const parties = deps.getConsultParties?.(shape.requestId);
+			if (!parties || parties.targetSessionId !== agent.id) return null;
+			return { agentId: agent.id, origin: 'consult', consultedBy: parties.sourceSessionId };
 		}
 
 		default:

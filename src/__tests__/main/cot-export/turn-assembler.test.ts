@@ -797,6 +797,25 @@ describe('cot-export turn assembler', () => {
 			expect(records[0]).not.toHaveProperty('systemPromptSha256');
 		});
 
+		it('names the agent that asked, for a turn that answers a consult', async () => {
+			const assembler = makeAssembler({
+				peekAgentId: () => AGENT,
+				resolveTarget: async () => ({ agentId: AGENT, origin: 'consult', consultedBy: 'asker-1' }),
+			});
+			await runTurn(assembler, [], spawnConfig({ sessionId: 'cross-agent-req-1' }));
+
+			const [records] = await readTurns();
+			expect(records[0]).toMatchObject({ origin: 'consult', consultedBy: 'asker-1' });
+			expect(records[0]).not.toHaveProperty('tabId');
+		});
+
+		it('names no asking agent for any other turn', async () => {
+			await runTurn(makeAssembler(), [], spawnConfig());
+
+			const [records] = await readTurns();
+			expect(records[0]).not.toHaveProperty('consultedBy');
+		});
+
 		it('says so when the provider has no output parser, so no line of the turn can be read', async () => {
 			// `terminal` stands for any provider Maestro has no parser for: its
 			// output is passed on as raw text and never arrives here as an event.
