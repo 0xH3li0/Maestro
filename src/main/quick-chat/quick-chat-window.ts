@@ -11,13 +11,32 @@
  * On macOS it is a `panel`: it floats over full-screen apps and shows without
  * activating Maestro, so summoning it from another app does not pull the main
  * Maestro window forward.
+ *
+ * The user can resize it and move it, and both survive a restart (see
+ * `QuickChatWindowBounds`). Width resizes in both shapes; height only in the
+ * conversation shape, because the composer-only shape is exactly the composer.
  */
 
 import { BrowserWindow, screen } from 'electron';
 import { isMacOS } from '../../shared/platformDetection';
-import type { QuickChatLayout } from '../../shared/quickChat';
+import {
+	QUICK_CHAT_MIN_EXPANDED_HEIGHT as MIN_EXPANDED_HEIGHT,
+	QUICK_CHAT_MIN_WIDTH as MIN_WIDTH,
+	type QuickChatBoundsRequest,
+	type QuickChatLayout,
+	type QuickChatWindowBounds,
+} from '../../shared/quickChat';
+import { resolveVisibleWindowPosition } from '../app-lifecycle/window-position';
+import { debounce, type DebouncedFunction } from '../utils/debounce';
 import { logger } from '../utils/logger';
 import type { WindowRegistry } from '../window-registry';
+import { WINDOW_STATE_SAVE_DEBOUNCE_MS } from '../window-state-persistence';
+
+/** Where the window's bounds persist (the per-device window-state store). */
+export interface QuickChatBoundsStore {
+	get(): QuickChatWindowBounds | undefined;
+	set(bounds: QuickChatWindowBounds): void;
+}
 
 export interface QuickChatWindowDeps {
 	isDevelopment: boolean;
@@ -27,25 +46,37 @@ export interface QuickChatWindowDeps {
 	/** Development server URL. */
 	devServerUrl: string;
 	windowRegistry: WindowRegistry;
+	boundsStore: QuickChatBoundsStore;
 }
 
-const WIDTH = 560;
-/** Composer only. */
+const DEFAULT_WIDTH = 560;
+/** Composer only. Fixed: the user cannot resize this shape's height. */
 const COMPACT_HEIGHT = 148;
-/** Composer plus conversation. */
-const EXPANDED_HEIGHT = 600;
+/** Composer plus conversation, before the user resizes it. */
+const DEFAULT_EXPANDED_HEIGHT = 600;
 /** The window's top edge sits this far down the work area on first show. */
 const TOP_OFFSET_RATIO = 0.2;
 /** How long after the page loads a fresh window waits for its first paint. */
 const FIRST_SHOW_FALLBACK_MS = 150;
+/**
+ * The "no limit" maximum. Electron's own unbounded value (0) is not used: a
+ * mixed maximum (0 wide, 148 tall) and a later switch back to (0, 0) are not
+ * reliably applied by the native window, and a stale 148 cap would stop the
+ * user from dragging the conversation taller. A large finite limit always is.
+ */
+const NO_LIMIT = 10_000;
 
 let quickWindow: BrowserWindow | null = null;
 let quickWindowId: string | null = null;
 let layout: QuickChatLayout = 'compact';
-/** Set once the user drags the window, so later shows keep their spot. */
+/** Set once the user drags the window (or a saved spot was restored). */
 let userPlaced = false;
 /** A show was asked for while a fresh window has not painted yet. */
 let revealPending = false;
+/** The remembered size and spot, loaded once from the bounds store. */
+let saved: QuickChatWindowBounds | null = null;
+/** The live window's pending bounds save, flushed before the shape changes. */
+let pendingSave: DebouncedFunction<[Electron.Rectangle, QuickChatLayout, boolean]> | null = null;
 
 /** The Quick Chat window, or null when it has not been created (or was closed). */
 export function getQuickChatWindow(): BrowserWindow | null {
@@ -62,20 +93,130 @@ export function isQuickChatWindowVisible(): boolean {
 	return !!win && (win.isVisible() || revealPending);
 }
 
+/** A positive finite number, or undefined: a hand-edited store must not size the window to NaN. */
+function positive(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function loadSaved(deps: QuickChatWindowDeps): QuickChatWindowBounds {
+	if (saved) return saved;
+	const raw = deps.boundsStore.get() ?? {};
+	saved = {
+		x: typeof raw.x === 'number' && Number.isFinite(raw.x) ? raw.x : undefined,
+		y: typeof raw.y === 'number' && Number.isFinite(raw.y) ? raw.y : undefined,
+		width: positive(raw.width),
+		expandedHeight: positive(raw.expandedHeight),
+	};
+	if (saved.x !== undefined && saved.y !== undefined) userPlaced = true;
+	return saved;
+}
+
+function widthNow(): number {
+	return Math.max(MIN_WIDTH, Math.round(saved?.width ?? DEFAULT_WIDTH));
+}
+
 function heightFor(next: QuickChatLayout): number {
-	return next === 'expanded' ? EXPANDED_HEIGHT : COMPACT_HEIGHT;
+	if (next === 'compact') return COMPACT_HEIGHT;
+	return Math.max(
+		MIN_EXPANDED_HEIGHT,
+		Math.round(saved?.expandedHeight ?? DEFAULT_EXPANDED_HEIGHT)
+	);
 }
 
 /** Centered on the display under the cursor, near the top of its work area. */
 function defaultBounds(height: number): Electron.Rectangle {
 	const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
 	const area = display.workArea;
+	const width = Math.min(widthNow(), area.width);
 	return {
-		x: Math.round(area.x + (area.width - WIDTH) / 2),
+		x: Math.round(area.x + (area.width - width) / 2),
 		y: Math.round(area.y + area.height * TOP_OFFSET_RATIO),
-		width: WIDTH,
-		height,
+		width,
+		height: Math.min(height, area.height),
 	};
+}
+
+/**
+ * Where the window opens: the spot the user left it, when that spot is still
+ * on a connected display, otherwise the default. The saved spot goes through
+ * the same visibility check the app windows use, so an unplugged monitor
+ * cannot leave the window off screen.
+ */
+function boundsFor(next: QuickChatLayout): Electron.Rectangle {
+	const height = heightFor(next);
+	if (!userPlaced || saved?.x === undefined || saved?.y === undefined) {
+		return defaultBounds(height);
+	}
+	const width = widthNow();
+	const position = resolveVisibleWindowPosition({ x: saved.x, y: saved.y, width, height });
+	const area = screen.getDisplayMatching({
+		x: position.x ?? saved.x,
+		y: position.y ?? saved.y,
+		width,
+		height,
+	}).workArea;
+	return {
+		x: Math.round(position.x ?? saved.x),
+		y: Math.round(position.y ?? saved.y),
+		width: Math.min(width, area.width),
+		height: Math.min(height, area.height),
+	};
+}
+
+/**
+ * Resize limits per shape. The composer-only shape pins its height (min and
+ * max both the composer); the conversation shape takes any height above a
+ * floor. Loosen before moving to the new size and tighten after, or the
+ * outgoing shape's limits clamp the incoming size.
+ */
+function applyLayout(win: BrowserWindow, next: QuickChatLayout, bounds: Electron.Rectangle): void {
+	win.setMinimumSize(MIN_WIDTH, Math.min(COMPACT_HEIGHT, MIN_EXPANDED_HEIGHT));
+	win.setMaximumSize(NO_LIMIT, NO_LIMIT);
+	win.setBounds(bounds);
+	if (next === 'compact') {
+		win.setMinimumSize(MIN_WIDTH, COMPACT_HEIGHT);
+		win.setMaximumSize(NO_LIMIT, COMPACT_HEIGHT);
+	} else {
+		win.setMinimumSize(MIN_WIDTH, MIN_EXPANDED_HEIGHT);
+	}
+}
+
+/**
+ * Record the window's size (and its spot, once the user has placed it). The
+ * height is recorded only in the conversation shape: the composer shape's
+ * height is fixed, and saving it would shrink the next conversation to it.
+ *
+ * Takes the bounds and shape as they were when the event fired, not when the
+ * debounced save runs: by the time a save is flushed on close, the window is
+ * being torn down and reports geometry nobody chose (a 0-wide frame was seen),
+ * which would overwrite the size the user left it at. Anything smaller than
+ * the window's own minimums is that kind of geometry, and is dropped.
+ */
+function recordBounds(
+	b: Electron.Rectangle,
+	shape: QuickChatLayout,
+	placed: boolean,
+	deps: QuickChatWindowDeps
+): void {
+	if (b.width < MIN_WIDTH || b.height < COMPACT_HEIGHT) return;
+	if (shape === 'expanded' && b.height < MIN_EXPANDED_HEIGHT) return;
+	const next: QuickChatWindowBounds = {
+		...saved,
+		width: b.width,
+		...(shape === 'expanded' ? { expandedHeight: b.height } : {}),
+		...(placed ? { x: b.x, y: b.y } : {}),
+	};
+	if (
+		saved &&
+		saved.x === next.x &&
+		saved.y === next.y &&
+		saved.width === next.width &&
+		saved.expandedHeight === next.expandedHeight
+	) {
+		return;
+	}
+	saved = next;
+	deps.boundsStore.set(next);
 }
 
 function withQuickChatFlag(url: string): string {
@@ -83,15 +224,16 @@ function withQuickChatFlag(url: string): string {
 }
 
 function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
+	loadSaved(deps);
 	const win = new BrowserWindow({
-		...defaultBounds(heightFor(layout)),
+		...boundsFor(layout),
 		// Non-activating floating panel on macOS (see file header).
 		...(isMacOS() ? { type: 'panel' } : {}),
 		frame: false,
 		transparent: true,
 		backgroundColor: '#00000000',
 		hasShadow: true,
-		resizable: false,
+		resizable: true,
 		minimizable: false,
 		maximizable: false,
 		fullscreenable: false,
@@ -115,26 +257,56 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 
 	win.setAlwaysOnTop(true, 'floating');
 	win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+	applyLayout(win, layout, win.getBounds());
 
 	const url = withQuickChatFlag(
 		deps.isDevelopment ? deps.devServerUrl : deps.rendererProductionUrl
 	);
 	win.loadURL(url);
 
+	// Once the window starts closing, its moves and resizes are teardown, not
+	// the user, and must not reach the store (see recordBounds).
+	let closing = false;
+
 	// `will-move` fires only for a move the user makes, never for setBounds.
 	win.on('will-move', () => {
-		userPlaced = true;
+		if (!closing) userPlaced = true;
 	});
 
+	// A live drag or resize fires a flood of events; save once it settles, and
+	// right away when the window is put away or closed so a quit cannot drop it.
+	const persist = debounce(
+		(b: Electron.Rectangle, shape: QuickChatLayout, placed: boolean) =>
+			recordBounds(b, shape, placed, deps),
+		WINDOW_STATE_SAVE_DEBOUNCE_MS
+	);
+	const capture = () => {
+		if (closing || win.isDestroyed()) return;
+		persist(win.getBounds(), layout, userPlaced);
+	};
+	win.on('move', capture);
+	win.on('resize', capture);
+	win.on('hide', () => persist.flush());
+	win.on('close', () => {
+		closing = true;
+		persist.flush();
+	});
+	pendingSave = persist;
+
 	win.on('closed', () => {
+		persist.cancel();
+		if (pendingSave === persist) pendingSave = null;
 		if (quickWindow !== win) return;
 		if (quickWindowId) {
 			deps.windowRegistry.remove(quickWindowId);
 			quickWindowId = null;
 		}
 		quickWindow = null;
-		userPlaced = false;
 		revealPending = false;
+		// The next window reloads the store, so a spot the user chose survives a
+		// close (feature toggled off and on) the same way it survives a restart.
+		saved = null;
+		userPlaced = false;
 	});
 
 	// The window only ever shows its own bundle: deny popups and navigation away.
@@ -153,7 +325,8 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 export function showQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	const existing = getQuickChatWindow();
 	const win = existing ?? createQuickChatWindow(deps);
-	if (!userPlaced) win.setBounds(defaultBounds(heightFor(layout)));
+	// Follow the cursor's display until the user places the window themselves.
+	if (!userPlaced) win.setBounds(boundsFor(layout));
 	const reveal = () => {
 		revealPending = false;
 		if (win.isDestroyed()) return;
@@ -200,15 +373,51 @@ export function toggleQuickChatWindow(deps: QuickChatWindowDeps): void {
 	showQuickChatWindow(deps);
 }
 
-/** Grow to show the conversation, or shrink back to the composer, keeping the top edge. */
+/**
+ * Grow to show the conversation, or shrink back to the composer, keeping the
+ * top edge and the width the user chose.
+ */
 export function setQuickChatLayout(next: QuickChatLayout): void {
+	if (next === layout) return;
+	// Save a resize still settling under the outgoing shape first, or the
+	// conversation height the user just dragged to is read back as the composer's.
+	pendingSave?.flush();
 	layout = next;
 	const win = getQuickChatWindow();
 	if (!win) return;
 	const bounds = win.getBounds();
-	const height = heightFor(next);
-	if (bounds.height === height) return;
-	win.setBounds({ ...bounds, height });
+	applyLayout(win, next, { ...bounds, height: heightFor(next) });
+}
+
+/**
+ * Move or resize the window the way a drag would, and remember it: the
+ * CLI's `quick-chat bounds`. Validate first (validateQuickChatBoundsRequest).
+ * `height` is the conversation shape's, so in the composer-only shape it is
+ * remembered for the next conversation rather than applied now. A spot off
+ * every display is brought back on screen, exactly as a restored one is.
+ */
+export function setQuickChatWindowBounds(
+	request: QuickChatBoundsRequest,
+	deps: QuickChatWindowDeps
+): void {
+	pendingSave?.flush();
+	const next: QuickChatWindowBounds = { ...loadSaved(deps) };
+	if (request.width !== undefined) next.width = Math.round(request.width);
+	if (request.height !== undefined) next.expandedHeight = Math.round(request.height);
+	if (request.x !== undefined && request.y !== undefined) {
+		next.x = Math.round(request.x);
+		next.y = Math.round(request.y);
+		userPlaced = true;
+	}
+	saved = next;
+	deps.boundsStore.set(next);
+	const win = getQuickChatWindow();
+	if (win) applyLayout(win, layout, boundsFor(layout));
+}
+
+/** The window's current bounds, for `quick-chat status`. */
+export function getQuickChatWindowBounds(): Electron.Rectangle | null {
+	return getQuickChatWindow()?.getBounds() ?? null;
 }
 
 /** Destroy the window outright (feature switched off, primary window closing). */

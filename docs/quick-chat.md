@@ -23,7 +23,9 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 
-The window floats above other apps and on every desktop, including over full-screen apps. Drag it by its header to move it; it remembers the spot until you quit.
+The window floats above other apps and on every desktop, including over full-screen apps. Drag it by its header to move it, and drag an edge or corner to resize it. Maestro remembers the size and the spot across restarts. Until you move the window yourself, it opens centered on the screen under your pointer.
+
+Before your first message the window is just the composer, so only its width changes. Once a conversation is showing, you can make it taller or shorter too, and that height is kept for the next conversation. If the screen the window was on is no longer connected, it opens on your main screen instead.
 
 ## Where the conversation lives
 
@@ -66,7 +68,10 @@ maestro-cli quick-chat keep                # keep the current chat as a tab ("ke
 maestro-cli quick-chat agent <agent-id>    # switch agents and start a new chat
 maestro-cli quick-chat reveal              # open the chat as a tab in Maestro
 maestro-cli quick-chat stop                # stop the reply
+maestro-cli quick-chat bounds --x 200 --y 120 --width 640 --height 520   # move or resize, as dragging does
 ```
+
+`bounds` takes any of the four flags (`--x` and `--y` together). `--height` is the conversation height, so before the first message it is remembered rather than applied. `quick-chat status` reports the current size and spot.
 
 The settings live in `quickChatSettings` (`hotkey`, `agentId`, `persistent`, `ephemeralHistory`), readable and writable with `maestro-cli settings get` / `settings set`. Turn the feature off or on with `maestro-cli encore disable quickChat` / `encore enable quickChat`.
 

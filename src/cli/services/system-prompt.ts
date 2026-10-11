@@ -10,6 +10,7 @@
 import type { SessionInfo } from '../../shared/types';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { computerHistoryDir } from '../../shared/computer-history/paths';
+import { readMaestroRunReadyPath } from '../../shared/maestro-run/state-file';
 import {
 	assembleMaestroSystemPrompt,
 	systemPromptSectionsFor,
@@ -90,8 +91,14 @@ export async function prepareMaestroSystemPromptCli(
 
 	// Same role and plugin sections the desktop appends (see spawnHelpers.ts).
 	const roleSections = session.isPianola ? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	// The app owns the MaestroRun check and records its answer on disk; the CLI
+	// has no service to ask. An SSH agent is never told about a local launcher.
+	const maestroRunPath = isSsh ? undefined : readMaestroRunReadyPath(getConfigDirectory());
 	const pluginSections: Array<string | undefined> = [];
-	for (const ref of systemPromptSectionsFor(readSettingValue('encoreFeatures'), { isSsh })) {
+	for (const ref of systemPromptSectionsFor(readSettingValue('encoreFeatures'), {
+		isSsh,
+		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+	})) {
 		pluginSections.push(await loadSection(ref.promptId));
 	}
 
@@ -114,6 +121,7 @@ export async function prepareMaestroSystemPromptCli(
 			historyFilePath,
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
+			maestroRunPath,
 		},
 		roleSections,
 		pluginSections,

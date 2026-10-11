@@ -24,6 +24,7 @@ import type { StoredSession } from '../stores/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
+import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
 import { logger } from './logger';
@@ -122,9 +123,32 @@ async function localHistoryFilePath(sessionId: string): Promise<string | undefin
 	}
 }
 
+/**
+ * The MaestroRun launcher while it is installed, verified, and granted on this
+ * Mac, else undefined. Never throws: a failed check reads as "not ready", which
+ * leaves the section out rather than advertising a tool that may not work.
+ */
+async function localMaestroRunPath(): Promise<string | undefined> {
+	try {
+		return await getMaestroRunService()?.readyBinaryPath();
+	} catch (err) {
+		logger.warn('MaestroRun readiness check failed; leaving its section out', LOG_CONTEXT, {
+			error: err instanceof Error ? err.message : String(err),
+		});
+		return undefined;
+	}
+}
+
 /** Load the plugin section texts that apply right now (blank or missing ones dropped). */
-function loadPluginSections(encoreFeatures: unknown, isSsh: boolean): string[] {
-	return systemPromptSectionsFor(encoreFeatures, { isSsh })
+function loadPluginSections(
+	encoreFeatures: unknown,
+	isSsh: boolean,
+	maestroRunPath: string | undefined
+): string[] {
+	return systemPromptSectionsFor(encoreFeatures, {
+		isSsh,
+		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+	})
 		.map((ref) => loadPrompt(ref.promptId))
 		.filter((text): text is string => !!text && !!text.trim());
 }
@@ -161,6 +185,8 @@ export async function buildMaestroSystemPromptForSession(
 	// neither: the values would describe the wrong host.
 	const gitBranch = !isSsh && record.isGitRepo && cwd ? await localGitBranch(cwd) : undefined;
 	const historyFilePath = isSsh ? undefined : await localHistoryFilePath(record.id);
+	// The launcher is on this Mac, so an SSH agent is never told about it.
+	const maestroRunPath = isSsh ? undefined : await localMaestroRunPath();
 
 	const context: TemplateContext = {
 		session: {
@@ -181,6 +207,7 @@ export async function buildMaestroSystemPromptForSession(
 		historyFilePath,
 		conductorProfile,
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
+		maestroRunPath,
 		maestroCliPath: resolvedCliPath(),
 	};
 
@@ -190,7 +217,7 @@ export async function buildMaestroSystemPromptForSession(
 		template,
 		context,
 		roleSections,
-		pluginSections: loadPluginSections(encoreFeatures, isSsh),
+		pluginSections: loadPluginSections(encoreFeatures, isSsh, maestroRunPath),
 	});
 }
 
@@ -202,7 +229,9 @@ export async function buildMaestroSystemPromptForSession(
  */
 export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): string | undefined {
 	const { encoreFeatures, conductorProfile } = readSettings();
-	const sections = loadPluginSections(encoreFeatures, opts.isSsh);
+	// Synchronous by contract, so this reads the last inspection as it stands.
+	const maestroRunPath = opts.isSsh ? undefined : getMaestroRunService()?.readyBinaryPathCached();
+	const sections = loadPluginSections(encoreFeatures, opts.isSsh, maestroRunPath);
 	if (sections.length === 0) return undefined;
 	const [first, ...rest] = sections;
 	return assembleMaestroSystemPrompt({
@@ -211,6 +240,7 @@ export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): strin
 			session: { id: '', name: '', toolType: '', cwd: '' },
 			conductorProfile,
 			computerHistoryDir: opts.isSsh ? undefined : localComputerHistoryDir(),
+			maestroRunPath,
 			maestroCliPath: resolvedCliPath(),
 		},
 		pluginSections: rest,

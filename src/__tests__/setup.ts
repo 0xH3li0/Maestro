@@ -845,6 +845,16 @@ const mockMaestro = {
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
 	},
+	// MaestroRun (macOS launcher install + Full Disk Access walkthrough). Not
+	// ready by default, so no spawn test picks up its system-prompt section.
+	maestroRun: {
+		status: vi.fn().mockResolvedValue(null),
+		refresh: vi.fn().mockResolvedValue(null),
+		install: vi.fn().mockResolvedValue(null),
+		requestAccess: vi.fn().mockResolvedValue(null),
+		readyPath: vi.fn().mockResolvedValue(null),
+		onStatusChanged: vi.fn(() => () => {}),
+	},
 	// Quick Chat (floating window + its engine). Subscriptions return a no-op
 	// unsubscribe so App's engine hook mounts and cleans up in every render test.
 	quickChat: {

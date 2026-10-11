@@ -30,6 +30,21 @@ async function getComputerHistoryDir(): Promise<string | undefined> {
 	return dir;
 }
 
+/**
+ * The MaestroRun launcher while it is installed, verified, and granted on the
+ * Maestro machine, else undefined. Asked on every spawn (never cached here):
+ * main owns the answer and re-inspects it when it is stale, so a grant the user
+ * just switched on, or just revoked, is reflected in the next agent's prompt.
+ */
+async function getMaestroRunReadyPath(): Promise<string | undefined> {
+	try {
+		return (await window.maestro.maestroRun.readyPath()) || undefined;
+	} catch {
+		// Older preload or main not ready: not ready, so the section stays out.
+		return undefined;
+	}
+}
+
 /** A core prompt's text, or undefined when it cannot be loaded. */
 async function loadPrompt(id: string): Promise<string | undefined> {
 	try {
@@ -103,7 +118,13 @@ export async function prepareMaestroSystemPrompt(opts: {
 	// prompt references them as shell variables, not template variables.
 	const roleSections = opts.session.isPianola ? [await loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
 
-	const sectionRefs = systemPromptSectionsFor(encoreFeatures, { isSsh });
+	// Only asked when the feature is on, so every other spawn skips the round trip.
+	const maestroRunPath =
+		!isSsh && encoreFeatures?.maestroRun === true ? await getMaestroRunReadyPath() : undefined;
+	const sectionRefs = systemPromptSectionsFor(encoreFeatures, {
+		isSsh,
+		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+	});
 	const pluginSections = await Promise.all(sectionRefs.map((ref) => loadPrompt(ref.promptId)));
 	// Only a local agent's shell can reach the store on this machine.
 	const computerHistoryDir = isSsh ? undefined : await getComputerHistoryDir();
@@ -118,6 +139,7 @@ export async function prepareMaestroSystemPrompt(opts: {
 			historyFilePath,
 			conductorProfile,
 			computerHistoryDir,
+			maestroRunPath,
 		},
 		roleSections,
 		pluginSections,

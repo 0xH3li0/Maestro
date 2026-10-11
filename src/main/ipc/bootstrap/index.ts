@@ -39,6 +39,7 @@ import {
 	registerWebHandlers,
 	registerWebLoginHandlers,
 	registerComputerHistoryHandlers,
+	registerMaestroRunHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
@@ -111,6 +112,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Computer History - desktop-only, the bridge refuses every
 	// `computerHistory:*` channel (D15). See src/main/ipc/handlers/computerHistory.ts.
 	registerComputerHistoryHandlers();
+
+	// MaestroRun - install, grant walkthrough, and the readiness that gates its
+	// system-prompt section. See src/main/ipc/handlers/maestroRun.ts.
+	registerMaestroRunHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({

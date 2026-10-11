@@ -18,7 +18,7 @@
  */
 
 import { resolveEncoreFeatures } from './encoreFeatureDefaults';
-import { FIRST_PARTY_PLUGIN_DEFINITIONS } from './plugins/first-party';
+import { FIRST_PARTY_PLUGIN_DEFINITIONS, type FirstPartyEncoreFlag } from './plugins/first-party';
 import { substituteTemplateVariables, type TemplateContext } from './templateVariables';
 
 /** Separator placed between the base prompt and each appended section. */
@@ -39,10 +39,15 @@ export interface SystemPromptSectionRef {
  * the Maestro machine. `encoreFeatures` is whatever the caller has (the raw
  * settings value is fine): it goes through `resolveEncoreFeatures`, so a key
  * that was never persisted falls back to its default instead of reading as off.
+ *
+ * A `requiresReady` section also needs its flag in `readyFlags`: the builder
+ * names the features whose setup it has confirmed is complete. Leaving the list
+ * out drops every such section, so a builder that cannot tell never advertises
+ * a tool that may not work.
  */
 export function systemPromptSectionsFor(
 	encoreFeatures: unknown,
-	opts: { isSsh: boolean }
+	opts: { isSsh: boolean; readyFlags?: readonly FirstPartyEncoreFlag[] }
 ): SystemPromptSectionRef[] {
 	const flags = resolveEncoreFeatures(encoreFeatures);
 	const refs: SystemPromptSectionRef[] = [];
@@ -51,6 +56,7 @@ export function systemPromptSectionsFor(
 		if (!section) continue;
 		if (!flags[def.encoreFlag]) continue;
 		if (section.localOnly && opts.isSsh) continue;
+		if (section.requiresReady && !opts.readyFlags?.includes(def.encoreFlag)) continue;
 		refs.push({ pluginId: def.id, promptId: section.promptId });
 	}
 	return refs;

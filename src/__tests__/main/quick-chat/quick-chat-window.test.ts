@@ -1,11 +1,17 @@
 /**
- * Quick Chat window reveal tests.
+ * Quick Chat window tests.
  *
- * Contract: the first show creates the window hidden and reveals it on the
+ * Reveal: the first show creates the window hidden and reveals it on the
  * FIRST of `ready-to-show` or a short delay after the page finishes loading.
  * `ready-to-show` alone left the first hotkey press after launch doing nothing,
  * because the transparent panel never emitted it. A hide that lands while the
  * reveal is pending cancels it, and status reports a pending show as visible.
+ *
+ * Bounds: the user resizes and moves the window, and both persist through the
+ * bounds store. Width is the user's in both shapes; height only in the
+ * conversation shape, because the composer-only shape is pinned to the
+ * composer. Position persists only once the user drags the window, and a saved
+ * spot that no longer lands on a display falls back on screen.
  *
  * The window lives in module state, so each test imports a fresh module.
  */
@@ -13,7 +19,10 @@
 import { EventEmitter } from 'events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { created } = vi.hoisted(() => ({ created: [] as unknown[] }));
+const { created, WORK_AREA } = vi.hoisted(() => ({
+	created: [] as unknown[],
+	WORK_AREA: { x: 0, y: 0, width: 1600, height: 1000 },
+}));
 
 vi.mock('electron', async () => {
 	// vi.mock is hoisted above the file's imports, so the factory imports its own.
@@ -21,7 +30,9 @@ vi.mock('electron', async () => {
 	class MockBrowserWindow extends EventEmitter {
 		visible = false;
 		destroyed = false;
-		bounds = { x: 0, y: 0, width: 560, height: 148 };
+		bounds: { x: number; y: number; width: number; height: number };
+		minimumSize = [0, 0];
+		maximumSize = [0, 0];
 		webContents = Object.assign(new EventEmitter(), {
 			send: vi.fn(),
 			setWindowOpenHandler: vi.fn(),
@@ -31,24 +42,36 @@ vi.mock('electron', async () => {
 		});
 		hide = vi.fn(() => {
 			this.visible = false;
+			this.emit('hide');
 		});
 		focus = vi.fn();
 		loadURL = vi.fn();
 		setAlwaysOnTop = vi.fn();
 		setVisibleOnAllWorkspaces = vi.fn();
-		setBounds = vi.fn((b) => {
-			this.bounds = b;
+		setMinimumSize = vi.fn((w: number, h: number) => {
+			this.minimumSize = [w, h];
 		});
-		getBounds = () => this.bounds;
+		setMaximumSize = vi.fn((w: number, h: number) => {
+			this.maximumSize = [w, h];
+		});
+		// Like Electron, a programmatic setBounds fires move and resize (never will-move).
+		setBounds = vi.fn((b) => {
+			this.bounds = { ...b };
+			this.emit('move');
+			this.emit('resize');
+		});
+		getBounds = () => ({ ...this.bounds });
 		isVisible = () => this.visible;
 		isFocused = () => this.visible;
 		isDestroyed = () => this.destroyed;
 		close = () => {
+			this.emit('close');
 			this.destroyed = true;
 			this.emit('closed');
 		};
-		constructor() {
+		constructor(opts: { x: number; y: number; width: number; height: number }) {
 			super();
+			this.bounds = { x: opts.x, y: opts.y, width: opts.width, height: opts.height };
 			created.push(this);
 		}
 	}
@@ -56,7 +79,9 @@ vi.mock('electron', async () => {
 		BrowserWindow: MockBrowserWindow,
 		screen: {
 			getCursorScreenPoint: () => ({ x: 0, y: 0 }),
-			getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1600, height: 1000 } }),
+			getDisplayNearestPoint: () => ({ workArea: WORK_AREA }),
+			getDisplayMatching: () => ({ workArea: WORK_AREA }),
+			getPrimaryDisplay: () => ({ workArea: WORK_AREA }),
 		},
 	};
 });
@@ -72,19 +97,39 @@ vi.mock('../../../shared/platformDetection', () => ({
 }));
 
 type WindowModule = typeof import('../../../main/quick-chat/quick-chat-window');
+type Bounds = { x: number; y: number; width: number; height: number };
 type MockWindow = EventEmitter & {
 	show: ReturnType<typeof vi.fn>;
+	setBounds: (b: Bounds) => void;
+	getBounds: () => Bounds;
 	webContents: EventEmitter;
 	isVisible: () => boolean;
+	minimumSize: number[];
+	maximumSize: number[];
+	close: () => void;
 };
+type SavedBounds = { x?: number; y?: number; width?: number; expandedHeight?: number };
 
-const deps = {
-	isDevelopment: true,
-	preloadPath: '/preload.js',
-	rendererProductionUrl: 'app://renderer/index.html',
-	devServerUrl: 'http://localhost:5173/',
-	windowRegistry: { create: vi.fn(() => 'quick-window'), remove: vi.fn() },
-} as unknown as Parameters<WindowModule['showQuickChatWindow']>[0];
+/** An in-memory bounds store, standing in for the window-state store. */
+function makeDeps(initial?: SavedBounds) {
+	const store = { value: initial };
+	const deps = {
+		isDevelopment: true,
+		preloadPath: '/preload.js',
+		rendererProductionUrl: 'app://renderer/index.html',
+		devServerUrl: 'http://localhost:5173/',
+		windowRegistry: { create: vi.fn(() => 'quick-window'), remove: vi.fn() },
+		boundsStore: {
+			get: () => store.value,
+			set: (b: SavedBounds) => {
+				store.value = b;
+			},
+		},
+	} as unknown as Parameters<WindowModule['showQuickChatWindow']>[0];
+	return { deps, store };
+}
+
+const { deps } = makeDeps();
 
 async function freshModule(): Promise<WindowModule> {
 	vi.resetModules();
@@ -159,5 +204,193 @@ describe('Quick Chat window reveal', () => {
 		expect(created).toHaveLength(1);
 		expect(win.show).toHaveBeenCalledTimes(2);
 		expect(mod.isQuickChatWindowVisible()).toBe(true);
+	});
+});
+
+describe('Quick Chat window bounds', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** A user drag of the edges: Electron fires resize, never will-move. */
+	function userResize(win: MockWindow, width: number, height: number) {
+		win.setBounds({ ...win.getBounds(), width, height });
+	}
+
+	/** A user drag of the window: will-move first, then the move itself. */
+	function userMove(win: MockWindow, x: number, y: number) {
+		win.emit('will-move');
+		win.setBounds({ ...win.getBounds(), x, y });
+	}
+
+	it('opens at the remembered size and spot', async () => {
+		const { deps: d } = makeDeps({ x: 100, y: 120, width: 700, expandedHeight: 500 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+
+		mod.setQuickChatLayout('expanded');
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 500 });
+	});
+
+	it('remembers a resize of the conversation, but not its position until the user moves it', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatLayout('expanded');
+
+		userResize(win, 720, 540);
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value).toEqual({ width: 720, expandedHeight: 540 });
+
+		userMove(win, 300, 40);
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toEqual({ x: 300, y: 40, width: 720, expandedHeight: 540 });
+	});
+
+	it('keeps the conversation height when the composer-only shape is resized', async () => {
+		const { deps: d, store } = makeDeps({ width: 600, expandedHeight: 520 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		userResize(win, 640, 148);
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value).toEqual({ width: 640, expandedHeight: 520 });
+	});
+
+	it('pins the composer-only height and frees it in the conversation shape', async () => {
+		const mod = await freshModule();
+		mod.showQuickChatWindow(makeDeps().deps);
+		const win = lastWindow();
+
+		expect(win.minimumSize[1]).toBe(148);
+		expect(win.maximumSize[1]).toBe(148);
+
+		mod.setQuickChatLayout('expanded');
+		// A finite limit, never Electron's 0: see NO_LIMIT.
+		expect(win.maximumSize[0]).toBeGreaterThan(1000);
+		expect(win.maximumSize[1]).toBeGreaterThan(1000);
+		expect(win.minimumSize[1]).toBeGreaterThan(148);
+	});
+
+	it('saves a resize still settling when the shape changes', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatLayout('expanded');
+
+		userResize(win, 560, 480);
+		mod.setQuickChatLayout('compact');
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value?.expandedHeight).toBe(480);
+	});
+
+	it('saves immediately when the window is put away', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		win.emit('ready-to-show');
+
+		userMove(win, 50, 60);
+		mod.hideQuickChatWindow();
+
+		expect(store.value).toMatchObject({ x: 50, y: 60 });
+	});
+
+	it('brings a remembered spot that is no longer on a display back on screen', async () => {
+		const { deps: d } = makeDeps({ x: 5000, y: 4000, width: 560 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const b = lastWindow().getBounds();
+
+		expect(b.x).toBeGreaterThanOrEqual(0);
+		expect(b.x + b.width).toBeLessThanOrEqual(WORK_AREA.width);
+		expect(b.y).toBeLessThan(WORK_AREA.height);
+	});
+
+	it('ignores a corrupt saved size', async () => {
+		const { deps: d } = makeDeps({ width: Number.NaN, expandedHeight: -5 } as SavedBounds);
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatLayout('expanded');
+
+		expect(win.getBounds().width).toBe(560);
+		expect(win.getBounds().height).toBe(600);
+	});
+
+	it('keeps the size the user left when the window is torn down', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow() as MockWindow & { bounds: Bounds };
+		mod.setQuickChatLayout('expanded');
+
+		// The user's last resize is still settling when the app quits.
+		userResize(win, 700, 500);
+		// Teardown: the closing window reports geometry nobody chose, then fires
+		// its own resize on the way out.
+		win.close();
+		win.bounds = { x: 1619, y: 592, width: 0, height: 148 };
+		win.emit('resize');
+		win.emit('will-move');
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value).toEqual({ width: 700, expandedHeight: 500 });
+	});
+
+	it('drops geometry smaller than the window can be', async () => {
+		const { deps: d, store } = makeDeps({ width: 640, expandedHeight: 520 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatLayout('expanded');
+		vi.advanceTimersByTime(1000);
+
+		win.setBounds({ ...win.getBounds(), width: 0, height: 148 });
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value).toEqual({ width: 640, expandedHeight: 520 });
+	});
+
+	it('applies and remembers a size and spot set from the CLI', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		mod.setQuickChatWindowBounds({ x: 250, y: 90, width: 640, height: 450 }, d);
+
+		// Composer-only shape: the conversation height is remembered, not applied.
+		expect(win.getBounds()).toEqual({ x: 250, y: 90, width: 640, height: 148 });
+		expect(store.value).toEqual({ x: 250, y: 90, width: 640, expandedHeight: 450 });
+
+		mod.setQuickChatLayout('expanded');
+		expect(win.getBounds()).toEqual({ x: 250, y: 90, width: 640, height: 450 });
+	});
+
+	it('remembers bounds set from the CLI before the window ever opened', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+
+		mod.setQuickChatWindowBounds({ width: 620 }, d);
+		expect(store.value).toEqual({ width: 620 });
+
+		mod.showQuickChatWindow(d);
+		expect(lastWindow().getBounds().width).toBe(620);
 	});
 });
