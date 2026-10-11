@@ -27,9 +27,10 @@ import type { QueueSteerResult, SteeringResultFrame } from '../../shared/chatSte
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
-import { getSteerEligibility } from '../utils/executionQueue';
+import { describeSteerBlocked, getSteerEligibility } from '../utils/executionQueue';
 
 /**
  * Steers whose socket answer has not come back yet, keyed `sessionId:itemId`. The
@@ -353,6 +354,92 @@ export async function steerQueuedItem(
 	} finally {
 		noteAwaitingReply(processKey, -1);
 	}
+}
+
+/**
+ * Window event that runs Steer Running Turn. The composer owns the behavior (it
+ * holds the draft and `processInput`, see `runSteerSend` in useInputKeyDown), so
+ * the window keyboard handler and the command palette ask for it by name rather
+ * than each deciding what an empty draft means.
+ */
+export const STEER_SEND_EVENT = 'maestro:steerSend';
+
+/** Ask the composer to run Steer Running Turn on the active tab. */
+export function requestSteerSend(): void {
+	window.dispatchEvent(new CustomEvent(STEER_SEND_EVENT));
+}
+
+/**
+ * Say why a steer nobody clicked a button for did nothing. The Steer button is
+ * hidden for every blocked reason, so it never needs this; a chord has no control
+ * to hide and would otherwise look dead.
+ */
+function notifySteerBlocked(sessionId: string, tabId: string | undefined, reason?: string): void {
+	// A message with a steer already in flight is parked, not queued.
+	const stays = reason === 'steer-in-flight' ? '' : ' The message stays queued.';
+	notifyToast({
+		color: 'yellow',
+		title: 'Could not steer this turn',
+		message: `${describeSteerBlocked(reason)}${stays}`,
+		sessionId,
+		tabId,
+	});
+}
+
+/**
+ * {@link steerQueuedItem} for a caller with no Steer button in front of it: the
+ * same steer, plus the reason when the message cannot be steered.
+ */
+export async function steerQueuedItemOrExplain(
+	sessionId: string,
+	itemId: string
+): Promise<QueueSteerResult> {
+	const tabId = useSessionStore
+		.getState()
+		.sessions.find((s) => s.id === sessionId)
+		?.executionQueue?.find((i) => i.id === itemId)?.tabId;
+	const result = await steerQueuedItem(sessionId, itemId);
+	if (result.outcome === 'not-steerable') {
+		notifySteerBlocked(sessionId, tabId, result.blockedReason);
+	}
+	return result;
+}
+
+/**
+ * Steer the newest steerable message queued on `tabId`: what Steer Running Turn
+ * does on an empty draft, and the keyboard equivalent of clicking that card's
+ * Steer button. Newest first, like the Force Send chord, because the message the
+ * user just queued is the one they are reaching for.
+ *
+ * Commands are skipped for the same reason the card offers them no Steer button:
+ * a slash command is a prompt template Maestro expands, not text to type.
+ */
+export async function steerNewestQueuedMessage(
+	sessionId: string,
+	tabId: string
+): Promise<QueueSteerResult> {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const queued = (session?.executionQueue ?? []).filter(
+		(item) => item.tabId === tabId && item.type !== 'command'
+	);
+	if (!session || queued.length === 0) {
+		notifyCenterFlash({ message: 'Nothing queued to steer on this tab', color: 'yellow' });
+		return { outcome: 'not-found', detail: `no queued message on tab ${tabId}` };
+	}
+	const steerable = [...queued]
+		.reverse()
+		.find((item) => getSteerEligibility(session, item).canSteer);
+	if (steerable) return steerQueuedItemOrExplain(sessionId, steerable.id);
+
+	// Nothing here can be steered. Report the newest message's reason: it is the
+	// one the chord would have picked.
+	const blockedReason = getSteerEligibility(session, queued[queued.length - 1]).blockedReason;
+	notifySteerBlocked(sessionId, tabId, blockedReason);
+	return {
+		outcome: 'not-steerable',
+		blockedReason,
+		detail: 'the message stays queued and sends when the current turn ends',
+	};
 }
 
 /**

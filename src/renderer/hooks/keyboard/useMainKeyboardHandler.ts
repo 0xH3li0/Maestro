@@ -35,6 +35,7 @@ import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
@@ -1100,6 +1101,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
 					e.preventDefault();
 					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+				}
+			} else if (ctx.isShortcut(e, 'steerSend')) {
+				// Same split as forcedParallelSend above: the composer answers the chord
+				// itself while the caret is in it, and everywhere else the chord still
+				// has to work, because the queued message it steers is drawn in the
+				// transcript. A group chat has no running turn of this agent on screen.
+				const cameFromComposer = !!ctx.inputRef?.current && e.target === ctx.inputRef.current;
+				if (!cameFromComposer && !ctx.activeGroupChatId) {
+					e.preventDefault();
+					requestSteerSend();
 				}
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();

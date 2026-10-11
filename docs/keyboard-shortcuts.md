@@ -78,6 +78,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
+| Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 

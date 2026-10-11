@@ -799,6 +799,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				openMemoryViewer: shortcuts.openMemoryViewer,
 				executionQueue: shortcuts.executionQueue,
 				editLastQueuedMessage: shortcuts.editLastQueuedMessage,
+				steerSend: shortcuts.steerSend,
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,

@@ -32,6 +32,7 @@ import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../utils/useEventListener';
+import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
 
 /**
  * Window event that runs Forced Parallel Send from outside the composer.
@@ -66,7 +67,10 @@ export interface InputKeyDownDeps {
 	/** Sync file tree to highlight the tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 	/** Process and send the current input */
-	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
+	processInput: (
+		overrideInputValue?: string,
+		options?: { forceParallel?: boolean; steer?: boolean }
+	) => void;
 	/** Get tab completion suggestions for a given input */
 	getTabCompletionSuggestions: (
 		input: string,
@@ -169,6 +173,30 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	}, [getInputValue, processInput]);
 
 	useEventListener(FORCED_PARALLEL_SEND_EVENT, runForcedParallelSend);
+
+	/**
+	 * Steer Running Turn, from wherever the user pressed it (the composer, the
+	 * window handler, the command palette - the last two via
+	 * {@link STEER_SEND_EVENT}). Force Send's counterpart for a tab that is BUSY.
+	 *
+	 * With a draft, send it flagged to steer: `processInput` queues it behind the
+	 * running turn as usual and then steers that item, so a message that cannot be
+	 * steered is still queued rather than lost. With an empty draft, steer the
+	 * newest queued message on this tab. No confirmation, matching the Steer button.
+	 */
+	const runSteerSend = useCallback(() => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (activeSession?.inputMode !== 'ai') return;
+
+		trackShortcutUsage('steerSend');
+		if (getInputValue().trim().length === 0) {
+			void steerNewestQueuedMessage(activeSession.id, activeSession.activeTabId);
+			return;
+		}
+		processInput(undefined, { steer: true });
+	}, [getInputValue, processInput]);
+
+	useEventListener(STEER_SEND_EVENT, runSteerSend);
 
 	const handleInputKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -465,6 +493,18 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);
 			const enterToSendAI = activeTab?.enterToSend ?? settings.enterToSendAI;
 
+			// Steer Running Turn. Checked ahead of the Enter rules because its default
+			// chord contains Enter, and they would read it as a plain send. Not inside
+			// the Enter guard, so a rebind to any other key still works here.
+			if (
+				activeSession?.inputMode === 'ai' &&
+				eventMatchesShortcutKeys(e, settings.shortcuts.steerSend?.keys)
+			) {
+				e.preventDefault();
+				runSteerSend();
+				return;
+			}
+
 			if (e.key === 'Enter') {
 				// Check for forced parallel send shortcut (only in AI mode, only when feature enabled)
 				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's
@@ -525,6 +565,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			allSlashCommands,
 			syncFileTreeToTabCompletion,
 			processInput,
+			runSteerSend,
 			getTabCompletionSuggestions,
 			getCommandMode,
 			setCommandMode,
