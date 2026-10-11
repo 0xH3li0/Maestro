@@ -256,6 +256,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()`, `formatMetaKey()`, `formatMetaKeyName()`, `formatAltKeyName()` in `src/renderer/utils/shortcutFormatter.ts`; outside the renderer `formatShortcutKeysFor()` in `src/shared/shortcutKeys.ts`
 - **Advertising a shortcut next to the control that fires it:** `<ShortcutHint>`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx` (also the tab overlay-menu badge)
 - **Keyboard-shortcut hint / kbd pill:** `<Keycap>` and `<KeycapHint>` in `src/renderer/components/ui/Keycap.tsx`
+- **A system-wide (OS-level) hotkey:** `setNamedGlobalHotkey(id, keys, onPress)`, `keysToAccelerator(keys)` in `src/main/global-hotkey-manager.ts`
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)` in `src/shared/shortcutKeys.ts`
 - **Whether a keystroke belongs to a text field (guard before `preventDefault`):** `isTextInputTarget()`, `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts`; `isEditingTextTarget()`, `isEditingTextFocused()` in `src/renderer/utils/editableTarget.ts`
 - **How much of the keyboard the user has mastered:** `collectBoundShortcuts()`, `countUsedBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`
@@ -325,6 +326,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Event listeners:** `useEventListener()` in `src/renderer/hooks/utils/useEventListener.ts` (do NOT pair raw `addEventListener`/`removeEventListener` inside useEffect)
 - **Debounce/throttle:** `useDebouncedValue()`, `useDebouncedCallback()`, `useThrottledCallback()` in `src/renderer/hooks/utils/useThrottle.ts` (filename is misleading - all three live here)
 - **Identity-stable callback:** `useStableCallback()` in `src/renderer/hooks/utils/useStableCallback.ts`
+- **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
 
 #### Phone and touch (web-desktop)
 

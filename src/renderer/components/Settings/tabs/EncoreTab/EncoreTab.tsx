@@ -7,6 +7,7 @@ import {
 	ComputerHistorySection,
 	CueSettingsSection,
 	DirectorNotesSection,
+	QuickChatSection,
 	SymphonyRegistrySection,
 	UsageStatsSection,
 } from './components';
@@ -91,6 +92,13 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			</div>
 		),
 		computerHistory: <ComputerHistorySection theme={theme} />,
+		quickChat: (
+			<QuickChatSection
+				theme={theme}
+				quickChatSettings={settings.quickChatSettings}
+				setQuickChatSettings={settings.setQuickChatSettings}
+			/>
+		),
 	};
 
 	return (

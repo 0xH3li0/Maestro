@@ -69,7 +69,7 @@ describe('encore commands', () => {
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 		// rc's CLI also exposes Pianola and Computer History, which have not
-		// graduated and ship off.
+		// graduated and ship off, and Quick Chat, which ships on.
 		expect(parsed.features).toEqual({
 			directorNotes: true,
 			usageStats: true,
@@ -77,6 +77,7 @@ describe('encore commands', () => {
 			maestroCue: true,
 			pianola: false,
 			computerHistory: false,
+			quickChat: true,
 		});
 	});
 

@@ -24,6 +24,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	groupsPlus: false,
 	webLogin: false,
 	computerHistory: false,
+	quickChat: true,
 } as const satisfies Readonly<Record<string, boolean>>;
 
 /** The flag shape these defaults describe, derived so the two cannot drift. */

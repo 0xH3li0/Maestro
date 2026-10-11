@@ -233,6 +233,7 @@ of taking a second round trip or trusting a value the caller guessed.
 
 | Point-and-click action                                                                      | CLI                                                                                                                                                |
 | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quick Chat window: hotkey, send, new, pin, agent, open in Maestro, stop                     | `quick-chat toggle\|show\|hide\|send\|new\|keep\|agent\|reveal\|stop`, read with `quick-chat status`; `open quick-chat`                            |
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                            |
 | Create / rename / remove an agent                                                           | `create-agent`, `rename-agent`, `remove-agent`                                                                                                     |
 | Edit Agent modal fields                                                                     | `update-agent`, `settings agent set`                                                                                                               |

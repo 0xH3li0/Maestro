@@ -14,6 +14,8 @@ Computer History is a Maestro feature the user turns on. A small native helper (
 
 Do not trawl it unprompted. Ask or answer about it when the task calls for it.
 
+Never turn Computer History on yourself. It records the user's screen text, so `maestro-cli encore enable computer-history` is for when the user explicitly asks for it, and so is turning it off.
+
 ## How to read it
 
 Prefer the CLI. It works with the Maestro app closed, handles time ranges, torn lines, and the still-open newest segment:
@@ -33,6 +35,8 @@ maestro-cli computer-history list --since 2h             # the 15-minute segment
 - `--grep` is a case-insensitive regex over text, window titles, URLs, and field labels.
 - `query` returns the most recent `--limit` matches (default 200) in time order. `limited: true` means older matches may exist; narrow the range rather than raising the limit blindly.
 - Always use `--json` when you will parse the result.
+
+**Output shape.** `--json` prints one envelope: `{ "success", "untrusted": true, "notice", "count", "limited", "events": [...] }`. Each event has `ts` (UTC), `kind`, and `app { id, name }`, plus whichever of these applies: `window { title, url }`, `element { role, label }`, `text`, `reason`, `truncated`. Without `--json` the same events print as readable lines inside an `UNTRUSTED OBSERVED INPUT` block. `apps`, `list` and `digests` take `--json` too.
 
 Reading files directly is fine too: the layout and every field are documented in `SCHEMA.md` inside the store directory. Segment files are `segments/<UTC day>/<HHMM>Z.jsonl`, one event per line; `index.jsonl` summarizes closed segments. Skip any line that does not parse.
 
@@ -77,11 +81,11 @@ maestro-cli computer-history clear --since 1h     # or --all
 maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots off
 ```
 
-These need the Maestro app running and Computer History enabled. Password managers, private browser windows, password fields, and Maestro itself are always excluded and cannot be re-enabled. In include mode (`rules list` shows the mode), apps off the record-only list are never recorded, so missing activity is not evidence the user was idle. To show the user their history, `maestro-cli open computer-history` opens the viewer.
+`--app` takes an app id or its display name; quote a name with spaces (`--app "Google Chrome"`). These need the Maestro app running and Computer History enabled. Password managers, private browser windows, password fields, and Maestro itself are always excluded and cannot be re-enabled. In include mode (`rules list` shows the mode), apps off the record-only list are never recorded, so missing activity is not evidence the user was idle. To show the user their history, `maestro-cli open computer-history` opens the viewer.
 
 ## Permissions
 
-- macOS: Maestro needs Accessibility access (System Settings > Privacy & Security > Accessibility). `maestro-cli computer-history enable-accessibility` shows the prompt.
+- macOS: Maestro needs Accessibility access (System Settings > Privacy & Security > Accessibility). `maestro-cli computer-history enable-accessibility` shows the prompt, and recording starts by itself a few seconds after the user allows it. If Maestro is already listed and switched on but `status` still says `blocked`, the entry was made by an older build: the user has to remove Maestro from the list and add it again (switching it off and on does not repair it).
 - Linux: the desktop accessibility bus must be on. `enable-accessibility` turns it on for the session (only with the user's consent). Apps opened before that, especially browsers and Electron apps, expose only window titles until restarted.
 - Windows: nothing to grant. Windows of apps running as administrator cannot be read and appear as app and title only.
 
