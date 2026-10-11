@@ -11,6 +11,7 @@
  */
 
 import {
+	findLocalModelEndpoint,
 	parseLocalModelEndpoints,
 	validateLocalModelEndpoint,
 	type LocalModelEndpoint,
@@ -36,18 +37,17 @@ function shellEnvVars(): Record<string, string> {
 }
 
 /**
- * Turn what a caller handed in into an endpoint. A string is the id of a saved
- * endpoint (the CLI's `test <id>`); an object is a record that may not be saved
- * yet (Settings' Test button runs before the user commits the form).
+ * Turn what a caller handed in into an endpoint. A string names a saved
+ * endpoint by id, id prefix, or name (the CLI's `test <ref>`, resolved by the
+ * same lookup `remove` uses); an object is a record that may not be saved yet
+ * (Settings' Test button runs before the user commits the form).
  */
 function resolveEndpointRef(
 	ref: unknown
 ): { ok: true; endpoint: LocalModelEndpoint } | { ok: false; error: EndpointFailure } {
 	if (typeof ref === 'string') {
-		const endpoint = getConfiguredLocalModelEndpoints().find((candidate) => candidate.id === ref);
-		return endpoint
-			? { ok: true, endpoint }
-			: { ok: false, error: { kind: 'invalid', message: `No endpoint with id "${ref}".` } };
+		const found = findLocalModelEndpoint(getConfiguredLocalModelEndpoints(), ref);
+		return found.ok ? found : { ok: false, error: { kind: 'invalid', message: found.message } };
 	}
 	const validation = validateLocalModelEndpoint(ref);
 	if (validation.ok) return validation;

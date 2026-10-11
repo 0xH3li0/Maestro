@@ -72,6 +72,20 @@ describe('endpoint-service', () => {
 		});
 	});
 
+	it('resolves a saved endpoint by name or id prefix, as the CLI names one', async () => {
+		await testLocalModelEndpoint('gateway');
+		await listLocalModelEndpointModels('ep-');
+
+		expect(client.testEndpoint).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'ep-1' }),
+			expect.anything()
+		);
+		expect(client.listEndpointModelsResult).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'ep-1' }),
+			expect.anything()
+		);
+	});
+
 	it('tests an unsaved record without a model, letting the client pick one', async () => {
 		const draft = { ...saved, id: 'draft', baseUrl: 'http://127.0.0.1:1234' };
 
@@ -88,7 +102,7 @@ describe('endpoint-service', () => {
 
 		expect(result).toEqual({
 			ok: false,
-			error: { kind: 'invalid', message: 'No endpoint with id "nope".' },
+			error: { kind: 'invalid', message: 'No endpoint matches "nope".' },
 		});
 		expect(client.listEndpointModelsResult).not.toHaveBeenCalled();
 	});

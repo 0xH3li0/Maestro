@@ -69,6 +69,22 @@ import {
 } from '../../../../main/feedback';
 import { generateDebugPackage } from '../../../../main/debug-package';
 
+// The endpoint service reads settings and dials model servers; the handler
+// tests only care that the CLI's message reaches it and the verdict comes back.
+vi.mock('../../../../main/local-models/endpoint-service', () => ({
+	detectNewLocalModelEndpoints: vi
+		.fn()
+		.mockResolvedValue([
+			{ kind: 'ollama', name: 'Ollama', baseUrl: 'http://127.0.0.1:11434', models: [] },
+		]),
+	testLocalModelEndpoint: vi.fn().mockResolvedValue({ ok: true, model: 'qwen3', latencyMs: 42 }),
+}));
+
+import {
+	detectNewLocalModelEndpoints,
+	testLocalModelEndpoint,
+} from '../../../../main/local-models/endpoint-service';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -4888,6 +4904,53 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		expect(res.result).toEqual({ done: true });
 		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 });
 	});
+	describe('Local Models endpoints (maestro-cli models endpoints)', () => {
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('local_models_endpoints_detect answers with the detected servers', async () => {
+			handler.handleMessage(client, { type: 'local_models_endpoints_detect', requestId: 'd1' });
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_endpoints_detect_result')
+			);
+			expect(detectNewLocalModelEndpoints).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'd1',
+				detected: [{ kind: 'ollama', baseUrl: 'http://127.0.0.1:11434' }],
+			});
+		});
+
+		it('local_models_endpoint_test passes the reference and model through', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_test',
+				requestId: 't1',
+				endpoint: 'ollama',
+				model: 'qwen3',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_endpoint_test_result'));
+			expect(testLocalModelEndpoint).toHaveBeenCalledWith('ollama', 'qwen3');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 't1',
+				result: { ok: true, model: 'qwen3', latencyMs: 42 },
+			});
+		});
+
+		it('local_models_endpoint_test reports a thrown failure as success: false', async () => {
+			vi.mocked(testLocalModelEndpoint).mockRejectedValueOnce(new Error('store gone'));
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_test',
+				requestId: 't2',
+				endpoint: 'x',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_endpoint_test_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'store gone' });
+		});
+	});
+
 	describe('Feedback and support package (maestro-cli feedback / support-package)', () => {
 		const lastResponse = () => {
 			const calls = (client.socket.send as any).mock.calls;

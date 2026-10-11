@@ -5,7 +5,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	addLocalModelEndpoint,
 	DEFAULT_ENDPOINT_BASE_URLS,
+	findLocalModelEndpoint,
+	removeLocalModelEndpoint,
 	endpointBaseUrlProblem,
 	LOCAL_MODEL_ENDPOINT_KINDS,
 	LOCAL_MODEL_ENDPOINT_KIND_LABELS,
@@ -216,5 +219,84 @@ describe('LOCAL_MODEL_ENDPOINT_KIND_LABELS', () => {
 		for (const kind of LOCAL_MODEL_ENDPOINT_KINDS) {
 			expect(LOCAL_MODEL_ENDPOINT_KIND_LABELS[kind]).not.toBe('');
 		}
+	});
+});
+
+describe('endpoint list editing (add / remove / find)', () => {
+	const ollama: LocalModelEndpoint = {
+		id: 'aaaa-1111',
+		name: 'Ollama',
+		kind: 'ollama',
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const gateway: LocalModelEndpoint = {
+		id: 'abcd-2222',
+		name: 'Gateway',
+		kind: 'openai-compatible',
+		baseUrl: 'https://llm.example.com/v1',
+		enabled: true,
+	};
+	const list = [ollama, gateway];
+
+	it('finds by exact id, unique id prefix, or case-insensitive name', () => {
+		expect(findLocalModelEndpoint(list, 'abcd-2222')).toEqual({ ok: true, endpoint: gateway });
+		expect(findLocalModelEndpoint(list, 'aaaa')).toEqual({ ok: true, endpoint: ollama });
+		expect(findLocalModelEndpoint(list, ' gateway ')).toEqual({ ok: true, endpoint: gateway });
+	});
+
+	it('refuses an ambiguous or unknown reference and names the candidates', () => {
+		const ambiguous = findLocalModelEndpoint(list, 'a');
+		expect(ambiguous.ok).toBe(false);
+		if (!ambiguous.ok) {
+			expect(ambiguous.message).toContain('matches 2 endpoints');
+			expect(ambiguous.message).toContain('Gateway (abcd-2222)');
+		}
+		expect(findLocalModelEndpoint(list, 'zzz')).toEqual({
+			ok: false,
+			message: 'No endpoint matches "zzz".',
+		});
+		expect(findLocalModelEndpoint(list, '  ').ok).toBe(false);
+	});
+
+	it('adds a valid endpoint in normalized form without mutating the input', () => {
+		const before = [ollama];
+		const change = addLocalModelEndpoint(before, {
+			...gateway,
+			baseUrl: 'https://llm.example.com/v1/',
+		});
+		expect(change.ok).toBe(true);
+		if (!change.ok) return;
+		expect(change.endpoint.baseUrl).toBe('https://llm.example.com/v1');
+		expect(change.endpoints).toEqual([ollama, change.endpoint]);
+		expect(before).toEqual([ollama]);
+	});
+
+	it('refuses an invalid record, a taken id, and a server already configured', () => {
+		const invalid = addLocalModelEndpoint([], { ...gateway, baseUrl: 'http://u:p@host' });
+		expect(invalid.ok).toBe(false);
+		if (!invalid.ok) expect(invalid.message).toContain('credentials');
+
+		expect(
+			addLocalModelEndpoint(list, { ...gateway, baseUrl: 'https://other.example.com' })
+		).toEqual({
+			ok: false,
+			message: 'An endpoint with id "abcd-2222" already exists.',
+		});
+
+		const sameServer = addLocalModelEndpoint(list, {
+			...ollama,
+			id: 'new',
+			name: 'Mine',
+			baseUrl: 'http://localhost:11434/',
+		});
+		expect(sameServer.ok).toBe(false);
+		if (!sameServer.ok) expect(sameServer.message).toContain('already configured as "Ollama"');
+	});
+
+	it('removes the resolved endpoint and reports which one', () => {
+		const change = removeLocalModelEndpoint(list, 'gateway');
+		expect(change).toEqual({ ok: true, endpoints: [ollama], endpoint: gateway });
+		expect(removeLocalModelEndpoint(list, 'nope').ok).toBe(false);
 	});
 });

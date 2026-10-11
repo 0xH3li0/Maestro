@@ -1797,6 +1797,60 @@ Show a center-screen flash (momentary, exclusive - replaces any active flash)
 | `-t, --timeout <seconds>` | Auto-dismiss after N seconds (range: (0, 5]; default 1.5)  | -       |
 | `--json`                  | Output as JSON (for scripting)                             | -       |
 
+## `maestro-cli models`
+
+Local Models: model sources Maestro can use
+
+## `maestro-cli models endpoints`
+
+Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL
+
+## `maestro-cli models endpoints list`
+
+List configured endpoints (flags an API key variable that is not set)
+
+| Option   | Description                          | Default |
+| -------- | ------------------------------------ | ------- |
+| `--json` | Output as JSON lines (for scripting) | -       |
+
+## `maestro-cli models endpoints add`
+
+Add an endpoint. Ollama and LM Studio default to their standard local port
+
+| Option                 | Description                                                                                       | Default |
+| ---------------------- | ------------------------------------------------------------------------------------------------- | ------- |
+| `--kind <kind>`        | ollama \| lmstudio \| openai-compatible                                                           | -       |
+| `--url <url>`          | Base URL (http/https, no credentials); required for openai-compatible                             | -       |
+| `--name <name>`        | Display name (default: the kind, e.g. "Ollama")                                                   | -       |
+| `--api-key-env <name>` | NAME of the Settings -> Environment variable holding the API key (the key itself is never stored) | -       |
+| `--disabled`           | Add it switched off                                                                               | -       |
+| `--json`               | Output as JSON (for scripting)                                                                    | -       |
+
+## `maestro-cli models endpoints remove <endpoint>`
+
+Remove an endpoint, named by id, id prefix, or name
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models endpoints test <endpoint>`
+
+Send a one-token chat and report latency (requires the desktop app)
+
+| Option                | Description                                             | Default |
+| --------------------- | ------------------------------------------------------- | ------- |
+| `-m, --model <model>` | Model to test (default: the first one the server lists) | -       |
+| `--json`              | Output as JSON (for scripting)                          | -       |
+
+## `maestro-cli models endpoints detect`
+
+Probe this machine for Ollama and LM Studio not yet configured; adds nothing (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli profiling`
 
 Start/stop a Chromium performance capture in the desktop app (for perf iteration)

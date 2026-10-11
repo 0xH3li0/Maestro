@@ -18,6 +18,10 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 } from '../../shared/history';
+import {
+	parseLocalModelEndpoints,
+	type LocalModelEndpoint,
+} from '../../shared/local-models/endpoints';
 
 // Get the Maestro config directory path. Delegates to the shared resolver
 // (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
@@ -673,6 +677,23 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 			`[WARNING] Failed to write history entry: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
+}
+
+// ============================================================================
+// Local Models Endpoint Helpers
+// ============================================================================
+
+/**
+ * The configured model-server endpoints, read through the same validator the
+ * desktop reads them with, so the CLI never lists a record the app would drop.
+ */
+export function readLocalModelEndpoints(): LocalModelEndpoint[] {
+	return parseLocalModelEndpoints(readSettings().localModelEndpoints);
+}
+
+/** Write the endpoint list back; the settings watcher reloads every window. */
+export function writeLocalModelEndpoints(endpoints: LocalModelEndpoint[]): void {
+	writeSettingValue('localModelEndpoints', endpoints);
 }
 
 // ============================================================================

@@ -874,6 +874,43 @@ export function formatSshRemotes(remotes: SshRemoteDisplay[]): string {
 	return lines.join('\n');
 }
 
+export interface LocalModelEndpointDisplay {
+	id: string;
+	name: string;
+	kindLabel: string;
+	baseUrl: string;
+	enabled: boolean;
+	apiKeyEnvVar?: string;
+	/** False when `apiKeyEnvVar` names a variable Settings -> Environment does not set. */
+	apiKeyResolved?: boolean;
+}
+
+export function formatLocalModelEndpoints(endpoints: LocalModelEndpointDisplay[]): string {
+	if (endpoints.length === 0) {
+		return dim('No model endpoints configured.');
+	}
+
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'MODEL ENDPOINTS')) + dim(` (${endpoints.length})`));
+	lines.push('');
+
+	for (const endpoint of endpoints) {
+		const status = endpoint.enabled ? c('green', 'enabled') : c('red', 'disabled');
+		lines.push(`  ${c('white', endpoint.name)} ${status} ${c('blue', `[${endpoint.kindLabel}]`)}`);
+		lines.push(`      ${dim(endpoint.baseUrl)}`);
+		if (endpoint.apiKeyEnvVar) {
+			const key =
+				endpoint.apiKeyResolved === false
+					? c('yellow', `key: $${endpoint.apiKeyEnvVar} (not set in Settings -> Environment)`)
+					: dim(`key: $${endpoint.apiKeyEnvVar}`);
+			lines.push(`      ${key}`);
+		}
+		lines.push(`      ${dim(endpoint.id)}`);
+	}
+
+	return lines.join('\n');
+}
+
 // Director's Notes History formatting
 export interface DirectorNotesHistoryDisplay {
 	stats: {

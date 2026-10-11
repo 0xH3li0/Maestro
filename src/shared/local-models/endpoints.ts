@@ -271,3 +271,86 @@ export function isSameEndpointServer(a: string, b: string): boolean {
 		pathOf(left) === pathOf(right)
 	);
 }
+
+export type LocalModelEndpointLookup =
+	| { ok: true; endpoint: LocalModelEndpoint }
+	| { ok: false; message: string };
+
+/**
+ * Find a configured endpoint the way a person names one: an exact id, a unique
+ * id prefix (the CLI prints ids in full but nobody retypes a UUID), or a unique
+ * name, case-insensitively. An ambiguous reference is refused with the
+ * candidates listed rather than resolved to whichever came first, because the
+ * callers remove and test endpoints, and the wrong one is a silent mistake.
+ */
+export function findLocalModelEndpoint(
+	endpoints: readonly LocalModelEndpoint[],
+	ref: string
+): LocalModelEndpointLookup {
+	const needle = ref.trim();
+	if (needle === '') return { ok: false, message: 'Name an endpoint by id or name.' };
+	const exact = endpoints.find((endpoint) => endpoint.id === needle);
+	if (exact) return { ok: true, endpoint: exact };
+
+	const byPrefix = endpoints.filter((endpoint) => endpoint.id.startsWith(needle));
+	const lowered = needle.toLowerCase();
+	const byName = endpoints.filter((endpoint) => endpoint.name.toLowerCase() === lowered);
+	const matches = [...new Set([...byPrefix, ...byName])];
+	if (matches.length === 1) return { ok: true, endpoint: matches[0] };
+	if (matches.length === 0) return { ok: false, message: `No endpoint matches "${needle}".` };
+	return {
+		ok: false,
+		message: `"${needle}" matches ${matches.length} endpoints: ${matches
+			.map((endpoint) => `${endpoint.name} (${endpoint.id})`)
+			.join(', ')}. Use the full id.`,
+	};
+}
+
+export type LocalModelEndpointListChange =
+	| { ok: true; endpoints: LocalModelEndpoint[]; endpoint: LocalModelEndpoint }
+	| { ok: false; message: string };
+
+/**
+ * Append an endpoint to the configured list. The candidate goes through the
+ * same validator the setting is read with, and it is refused when its id is
+ * taken or when the same server is already configured under another name
+ * (every loopback spelling counts as one host, see {@link isSameEndpointServer}),
+ * since two records for one server only split its settings in two.
+ */
+export function addLocalModelEndpoint(
+	endpoints: readonly LocalModelEndpoint[],
+	candidate: unknown
+): LocalModelEndpointListChange {
+	const validation = validateLocalModelEndpoint(candidate);
+	if (!validation.ok) {
+		return { ok: false, message: validation.issues.map((issue) => issue.message).join(' ') };
+	}
+	const endpoint = validation.endpoint;
+	if (endpoints.some((existing) => existing.id === endpoint.id)) {
+		return { ok: false, message: `An endpoint with id "${endpoint.id}" already exists.` };
+	}
+	const sameServer = endpoints.find((existing) =>
+		isSameEndpointServer(existing.baseUrl, endpoint.baseUrl)
+	);
+	if (sameServer) {
+		return {
+			ok: false,
+			message: `${endpoint.baseUrl} is already configured as "${sameServer.name}" (${sameServer.id}).`,
+		};
+	}
+	return { ok: true, endpoints: [...endpoints, endpoint], endpoint };
+}
+
+/** Drop one endpoint, named by id, id prefix, or name ({@link findLocalModelEndpoint}). */
+export function removeLocalModelEndpoint(
+	endpoints: readonly LocalModelEndpoint[],
+	ref: string
+): LocalModelEndpointListChange {
+	const found = findLocalModelEndpoint(endpoints, ref);
+	if (!found.ok) return found;
+	return {
+		ok: true,
+		endpoints: endpoints.filter((endpoint) => endpoint.id !== found.endpoint.id),
+		endpoint: found.endpoint,
+	};
+}

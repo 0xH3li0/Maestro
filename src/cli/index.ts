@@ -104,6 +104,13 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import {
+	modelsEndpointsAdd,
+	modelsEndpointsDetect,
+	modelsEndpointsList,
+	modelsEndpointsRemove,
+	modelsEndpointsTest,
+} from './commands/models-endpoints';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -2149,6 +2156,56 @@ notify
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
+
+// Local Models commands - model servers the user runs (Ollama, LM Studio,
+// OpenAI-compatible). list/add/remove edit settings directly; test/detect run
+// in the desktop app.
+const models = program.command('models').description('Local Models: model sources Maestro can use');
+
+const modelEndpoints = models
+	.command('endpoints')
+	.description('Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL');
+
+modelEndpoints
+	.command('list')
+	.description('List configured endpoints (flags an API key variable that is not set)')
+	.option('--json', 'Output as JSON lines (for scripting)')
+	.action(modelsEndpointsList);
+
+modelEndpoints
+	.command('add')
+	.description('Add an endpoint. Ollama and LM Studio default to their standard local port')
+	.requiredOption('--kind <kind>', 'ollama | lmstudio | openai-compatible')
+	.option('--url <url>', 'Base URL (http/https, no credentials); required for openai-compatible')
+	.option('--name <name>', 'Display name (default: the kind, e.g. "Ollama")')
+	.option(
+		'--api-key-env <name>',
+		'NAME of the Settings -> Environment variable holding the API key (the key itself is never stored)'
+	)
+	.option('--disabled', 'Add it switched off')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsAdd);
+
+modelEndpoints
+	.command('remove <endpoint>')
+	.description('Remove an endpoint, named by id, id prefix, or name')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsRemove);
+
+modelEndpoints
+	.command('test <endpoint>')
+	.description('Send a one-token chat and report latency (requires the desktop app)')
+	.option('-m, --model <model>', 'Model to test (default: the first one the server lists)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsTest);
+
+modelEndpoints
+	.command('detect')
+	.description(
+		'Probe this machine for Ollama and LM Studio not yet configured; adds nothing (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsDetect);
 
 const profiling = program
 	.command('profiling')

@@ -355,6 +355,22 @@ maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
 - `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer relocates the agent through `withWorkingDirectory()` (`src/renderer/utils/agentWorkingDirectory.ts`), which moves `cwd`/`fullPath`/`shellCwd`/`projectRoot` together, rebases `autoRunFolderPath` when it lives under the old root, and clears the file tree and git state so they reload from the new directory. Moving `cwd` alone left the Files panel and the Edit dialog on the old folder (#1565). Provider conversations stored under the old path are not carried over.
 - The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
 
+### `models endpoints list|add|remove|test|detect`
+
+Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.
+
+```bash
+maestro-cli models endpoints list [--json]
+maestro-cli models endpoints add --kind <ollama|lmstudio|openai-compatible> [--url <url>] [--name <name>] [--api-key-env <VAR>] [--disabled] [--json]
+maestro-cli models endpoints remove <id|id-prefix|name> [--json]
+maestro-cli models endpoints test <id|id-prefix|name> [-m <model>] [--json]
+maestro-cli models endpoints detect [--json]
+```
+
+- `list` / `add` / `remove` edit the `localModelEndpoints` setting on disk (`readLocalModelEndpoints()` / `writeLocalModelEndpoints()`), like the SSH remote verbs, so they work with the app closed; the settings watcher reloads every window. The list changes go through the shared `addLocalModelEndpoint()` / `removeLocalModelEndpoint()` / `findLocalModelEndpoint()` in `src/shared/local-models/endpoints.ts`, so the CLI cannot save a record the app would drop (bad URL, credentials in the URL, taken id, or a server already configured under another loopback spelling).
+- `--url` defaults to the standard local port for `ollama` and `lmstudio`; `openai-compatible` requires it. `--api-key-env` stores the NAME of a Settings -> Environment variable, never the key. `list` and `add` flag a name that is not set there yet.
+- `test` and `detect` need the network and Settings -> Environment, so they run in the desktop over the WS bridge (`local_models_endpoint_test`, `local_models_endpoints_detect`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `endpoint-service.ts` functions as the `localModels:endpoints:*` IPC channels. A failed test exits non-zero and reports the failure `kind` (`missing-key`, `auth`, `network`, `timeout`, ...) in `--json`. `detect` saves nothing; it prints the `add` command for each server it finds.
+
 ### `list ssh-remotes`
 
 List all configured SSH remotes. Reads directly from `maestro-settings.json` via `readSshRemotes()` - no running app required.
