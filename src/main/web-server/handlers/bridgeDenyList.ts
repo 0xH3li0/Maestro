@@ -10,13 +10,28 @@
  * was meant to constrain. The `webLogin:*` channels also read and write
  * `web-users.json`, which holds every password hash.
  *
+ * The same rule covers `computerHistory:*` (see the list below). Prefix
+ * denial only stops the named channels; argument-level guards for other
+ * channels live in bridgePathGuard.ts.
+ *
  * Matching is by PREFIX rather than by exact channel name on purpose: a
  * channel added to the namespace later is denied the moment it is registered,
  * instead of being exposed until somebody remembers to extend a list.
  */
 
 /** Channel prefixes refused before dispatch. */
-export const BRIDGE_DENIED_CHANNELS: ReadonlySet<string> = new Set(['webLogin:']);
+export const BRIDGE_DENIED_CHANNELS: ReadonlySet<string> = new Set([
+	'webLogin:',
+	// Computer History is the user's screen and typing history. Denying the
+	// namespace keeps a browser off the service's own verbs (status, query,
+	// pause, rules, clear, config). It is NOT the whole wall: the store files
+	// are also reachable through generic handlers such as `fs:readFile`, which
+	// bridgePathGuard.ts covers (protected paths, the CLI discovery file, and
+	// writes that would flip the Computer History flag). maestro-cli reaches
+	// the service through its own `computer_history_command` WS message, which
+	// refuses any socket that did not present the CLI secret.
+	'computerHistory:',
+]);
 
 /** Whether `channel` falls under a denied prefix. */
 export function isBridgeDeniedChannel(channel: string): boolean {

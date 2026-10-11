@@ -41,6 +41,7 @@
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:maestro-lib-run": "node scripts/build-maestro-lib-run.mjs",
 		"build:permission-relay-bridge": "node scripts/build-permission-relay-bridge.mjs",
+		"build:observer": "node scripts/build-maestro-observer.mjs",
 		"build:renderer": "vite build",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
@@ -99,6 +100,7 @@
 		},
 		"files": [
 			"dist/**/*",
+			"!dist/native/**/*",
 			"package.json"
 		],
 		"asarUnpack": [
@@ -181,6 +183,13 @@
 				{
 					"from": "examples/plugins/agent-flow",
 					"to": "plugins/agent-flow"
+				},
+				{
+					"from": "dist/native/darwin-${arch}",
+					"to": "native",
+					"filter": [
+						"maestro-observer"
+					]
 				}
 			]
 		},
@@ -240,6 +249,13 @@
 				{
 					"from": "examples/plugins/agent-flow",
 					"to": "plugins/agent-flow"
+				},
+				{
+					"from": "dist/native/win32-${arch}",
+					"to": "native",
+					"filter": [
+						"maestro-observer.exe"
+					]
 				}
 			]
 		},
@@ -291,6 +307,13 @@
 				{
 					"from": "examples/plugins/agent-flow",
 					"to": "plugins/agent-flow"
+				},
+				{
+					"from": "dist/native/linux-${arch}",
+					"to": "native",
+					"filter": [
+						"maestro-observer"
+					]
 				}
 			]
 		},
@@ -497,6 +520,9 @@
 		],
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [
 			"eslint --fix"
+		],
+		"{CLAUDE.md,docs/agent-guides/CANONICAL-UTILITIES.md}": [
+			"node scripts/verify-docs-paths.mjs"
 		]
 	},
 	"allowScripts": {

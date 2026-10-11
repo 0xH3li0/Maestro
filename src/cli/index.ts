@@ -82,7 +82,7 @@ import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
-import { settingsGet } from './commands/settings-get';
+import { settingsGet, settingsMediaStatus } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
 import {
 	displayFont,
@@ -161,6 +161,22 @@ import { setTheme } from './commands/set-theme';
 import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
+import {
+	computerHistoryApps,
+	computerHistoryClear,
+	computerHistoryConfig,
+	computerHistoryDigests,
+	computerHistoryEnableAccessibility,
+	computerHistoryList,
+	computerHistoryPause,
+	computerHistoryQuery,
+	computerHistoryResume,
+	computerHistoryRulesAdd,
+	computerHistoryRulesList,
+	computerHistoryRulesMode,
+	computerHistoryRulesRemove,
+	computerHistoryStatus,
+} from './commands/computer-history';
 import { setVerbosity } from './output/verbosity';
 import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
 import { pianolaLearn } from './commands/pianola-learn';
@@ -1782,6 +1798,11 @@ settings
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(settingsReset);
 
+settings
+	.command('media-status')
+	.description('Report media tools available to this CLI process and allowed models as JSON')
+	.action(settingsMediaStatus);
+
 // Agent-specific config subcommands
 const agent = settings.command('agent').description('View and manage per-agent configuration');
 
@@ -1881,7 +1902,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
@@ -1891,6 +1912,149 @@ encore
 	.description('Disable an Encore feature')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, false, options));
+
+// Computer History - local record of what the user saw and typed (Encore-gated,
+// off by default). Reads come from disk and work with the app closed; writes go
+// to the running app's ComputerHistoryService. Captured content is untrusted.
+const computerHistory = program
+	.command('computer-history')
+	.description(
+		'Computer History: query what the user saw and typed across apps (local, untrusted content)'
+	);
+
+computerHistory
+	.command('status')
+	.description('Show whether recording is on, permission state, and store size')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryStatus(options));
+
+computerHistory
+	.command('list')
+	.description('List recorded 15-minute segments in a time range')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 2h)')
+	.option('--until <time>', 'End (default now)')
+	.option('--app <id>', 'Only segments that include this app id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryList(options));
+
+computerHistory
+	.command('query')
+	.description('Search recorded events (text, selections, snapshots, app and window changes)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1h)')
+	.option('--until <time>', 'End (default now)')
+	.option(
+		'--app <id>',
+		'App id or name (comma list or repeat)',
+		(val: string, prev: string[]) => [...prev, val],
+		[]
+	)
+	.option(
+		'--kind <kind>',
+		'text | selection | snapshot | app | window (comma list or repeat)',
+		(val: string, prev: string[]) => [...prev, val],
+		[]
+	)
+	.option('--grep <regex>', 'Case-insensitive regex over text, titles, URLs, and labels')
+	.option('--limit <n>', 'Most recent N matches (default 200)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryQuery(options));
+
+computerHistory
+	.command('apps')
+	.description('Apps used in a time range, by foreground time and event count')
+	.option('--since <time>', 'Start (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryApps(options));
+
+computerHistory
+	.command('digests')
+	.description('List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--kind <kind>', '15m | 6h (default both)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryDigests(options));
+
+computerHistory
+	.command('pause')
+	.description('Pause recording (until resumed, or for a duration)')
+	.option('--for <duration>', 'Pause for 30m, 2h, 1d, 1w (default: until resumed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryPause(options));
+
+computerHistory
+	.command('resume')
+	.description('Resume recording')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryResume(options));
+
+const computerHistoryRules = computerHistory
+	.command('rules')
+	.description('Which apps are recorded (exclude or include mode) and domains never recorded');
+
+computerHistoryRules
+	.command('list')
+	.description('Show the app mode and user rules (built-in exclusions always apply)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryRulesList(options));
+
+computerHistoryRules
+	.command('mode [mode]')
+	.description(
+		'Show or set the app mode: exclude (record every app except ignored ones) or include (record only the record-only list)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode, options) => computerHistoryRulesMode(mode, options));
+
+computerHistoryRules
+	.command('add')
+	.description(
+		'Never record an app or a domain (and its subdomains); with --include, add an app to the record-only list'
+	)
+	.option('--app <id>', 'App id or exact name: macOS bundle id, Windows exe name, Linux desktop id')
+	.option('--domain <domain>', 'Domain, e.g. bank.example.com')
+	.option('--include', 'Add the app to the record-only list used in include mode')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryRulesAdd(options));
+
+computerHistoryRules
+	.command('remove <id>')
+	.description('Remove a rule by id (or by its app id / domain)')
+	.option('--include', 'When removing by value, remove it from the record-only list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => computerHistoryRulesRemove(id, options));
+
+computerHistory
+	.command('clear')
+	.description('Delete recorded history: everything since a time, or all of it')
+	.option('--since <time>', 'Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601')
+	.option('--all', 'Delete all recorded history (settings and rules stay)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryClear(options));
+
+computerHistory
+	.command('enable-accessibility')
+	.description(
+		'macOS: show the Accessibility prompt. Linux: turn on the desktop accessibility bus. Windows: not needed'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryEnableAccessibility(options));
+
+computerHistory
+	.command('config')
+	.description('Show settings, or change them with the flags below')
+	.option('--retention-days <n>', 'Keep this many days (default 90)')
+	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
+	.option('--snapshots <on|off>', 'Record visible window text snapshots')
+	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
+	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
+	.option(
+		'--digest-rollup <on|off>',
+		'Also write 6-hour roll-ups from the 15-minute digests (default on)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryConfig(options));
 
 // Pianola - the autonomous manager agent (Encore-gated, off by default).
 const pianola = program

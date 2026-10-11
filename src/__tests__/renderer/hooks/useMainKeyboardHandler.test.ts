@@ -4889,6 +4889,41 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 		expect(setDirectorNotesOpen).toHaveBeenCalledWith(true);
 	});
 
+	describe('Computer History (a Ctrl+Cmd chord)', () => {
+		const withHistory = { usageStats: true, computerHistory: true };
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('computerHistory');
+		});
+
+		it('opens on Ctrl+Cmd+H', () => {
+			// Both matchers accept the full chord; the folded one is what lets it
+			// through the open-modal guard as a destination shortcut.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true, ctrlKey: true },
+				{
+					encoreFeatures: withHistory,
+					isPaneShortcut: (_e: KeyboardEvent, id: string) => id === 'computerHistory',
+				}
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(true);
+		});
+
+		it('does not open on plain Cmd+H, which the general matcher would accept', () => {
+			// isShortcut folds Ctrl and Cmd into one modifier, so it reports this
+			// binding as matched on a bare Cmd+H (macOS Hide) or Ctrl+H.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true },
+				{ encoreFeatures: withHistory, isPaneShortcut: () => false }
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(false);
+		});
+	});
+
 	it('still opens the Usage Dashboard from an open modal', () => {
 		const setUsageDashboardOpen = vi.fn();
 		pressShortcut(

@@ -86,6 +86,7 @@ export type UsageDashboardViewMode =
 	| 'cue'
 	| 'shortcuts';
 export type SettingsTab =
+	| 'environment'
 	| 'general'
 	// SettingsModal has always rendered a Display tab and accepted it as an
 	// `initialTab`; it was simply missing from this union, so nothing could
@@ -1828,6 +1829,10 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Computer History - local accessibility-based record of what the user reads
+	// and types, exposed to every agent. Off by default. Optional so older
+	// fixtures and persisted settings remain valid.
+	computerHistory?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

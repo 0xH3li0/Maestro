@@ -100,6 +100,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	agentPowersPromptSeen: false,
 	hasPriorInstallation: false,
 	customFonts: [],
+	mediaModelDirectory: '',
 	mediaPlaybackRate: 1,
 	mediaPlayerFloatRect: null,
 	mediaPlayerQueue: null,

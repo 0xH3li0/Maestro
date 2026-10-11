@@ -143,13 +143,48 @@ transcripts, private filesystem paths or tokens in diagnostics.
 
 ## Runtime prerequisites
 
+**Before using transcription:** on the computer running Maestro, you must have a
+working local whisper.cpp `whisper-cli`, `ffmpeg` and `ffprobe`, plus at least one
+supported, readable multilingual `ggml-<model-id>.bin` model file (for example,
+`ggml-base.bin`). Maestro does not bundle, download or automatically install these
+binaries or models; you must provide them yourself.
+
 The host resolves existing `ffprobe`, `ffmpeg` and `whisper-cli` using the canonical
 binary discovery at call time. Optional **host-owned** absolute executable overrides
 are `MAESTRO_MEDIA_FFPROBE`, `MAESTRO_MEDIA_FFMPEG`, `MAESTRO_MEDIA_WHISPER_CLI`.
 Windows must resolve native `.exe` files; scripts/interpreters are not profiles.
 
-Set `MAESTRO_MEDIA_MODEL_DIR` in the host launch environment to an existing absolute
-directory containing `ggml-<model-id>.bin`. Model symlinks escaping that directory
-are rejected. Only existing readable files appear in `status().models`.
-`status().missing` reports `ffprobe`, `ffmpeg`, `whisper-cli`, `model-directory`
-without revealing paths.
+In Settings > Environment > Host media tools, enter the existing absolute directory
+containing `ggml-<model-id>.bin` and choose **Save directory**. The host verifies that
+it is a directory and saves its canonical realpath as `mediaModelDirectory` using the
+existing settings store. The broker re-reads the setting at call time, so no host or
+plugin restart is required. Plugins cannot write this host setting through their SDK.
+This configures the model directory only; select an available model in Relay.
+
+A non-empty `mediaModelDirectory` takes precedence over the host launch environment's
+`MAESTRO_MEDIA_MODEL_DIR`. An empty or absent setting uses that environment fallback;
+an invalid non-empty setting fails closed rather than using another directory.
+Global agent/terminal environment variables are not the host launch environment.
+
+**Check status** reads the same runtime resolver and status projection as brokered
+`media.status()`, without executing tools, opening a job or contacting Discord. It
+shows available profiles, available model IDs and the actual missing prerequisites
+(`ffprobe`, `ffmpeg`, `whisper-cli`, `model-directory`). `model-directory` means no
+allowlisted readable model file was found, including an empty or invalid directory.
+Status reveals no executable/model paths or media contents. Plugin grants/signature
+checks still apply to every SDK media operation; the diagnostic does not grant access.
+
+`maestro-cli settings media-status` uses the same resolver in the CLI process's
+PATH and environment. Its result can differ from the running desktop diagnostic
+when their launch environments differ.
+
+Only allowlisted multilingual filenames are considered. Model paths are canonicalized;
+symlinks escaping the approved directory, non-files and unreadable files are rejected.
+If status lists only `base`, Relay must select `base`; selecting `small` requires an
+available `ggml-small.bin`. A ready host profile does not mean every model is available.
+This setting downloads or installs nothing.
+
+End-to-end voice still needs the Relay production adapter, permitted/signed plugin
+identity, model-directory configuration, a valid multilingual model and a voice
+message in an authorized bound thread. A source/unit/native smoke check does not
+prove live Discord delivery.

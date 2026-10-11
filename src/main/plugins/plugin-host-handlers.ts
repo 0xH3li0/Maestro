@@ -18,7 +18,7 @@ import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
-import { PluginMediaTools } from './plugin-media-tools';
+import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -675,6 +675,7 @@ function resolveRealPath(target: string): string {
 
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	const mediaTools = new PluginMediaTools({
+		resolveRuntime: () => resolveMediaRuntime(deps.settingsGet('mediaModelDirectory')),
 		egressGuard: deps.egressGuard,
 		authorize: (pluginId, options) => {
 			assertBrokerAllowed(deps, pluginId, 'media.open', {}, options);
@@ -819,6 +820,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'settings.get', p);
 			if (SECRET_KEY_PATTERN.test(p.key)) throw new Error('access to secret settings is denied');
 			if (/encorefeatures/i.test(p.key)) throw new Error('access to the feature gate is denied');
+			if (p.key === 'mediaModelDirectory') throw new Error('host media configuration is host-only');
 			const ownNamespace = `plugins.${pluginId}.`;
 			if (p.key.startsWith('plugins.') && !p.key.startsWith(ownNamespace)) {
 				throw new Error("access to another plugin's settings is denied");
@@ -1380,7 +1382,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	}
 
 	// ui.openPanel / ui.closePanel / ui.togglePanel: let a plugin summon or dismiss
-	// its OWN modal panel (the hotkey-summoned overlay path). Same own-panels-only
+	// its OWN modal panel, or open its own Settings card. Same own-panels-only
 	// resolution as ui.panelPost, so a plugin can never open, close, or flicker
 	// another plugin's surface, and no new consent is needed: anything that can
 	// contribute a panel at all already holds `ui:panel`. The verbs carry no data -
@@ -1404,10 +1406,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!panel) {
 					throw new Error(`panel "${panelId}" is not declared by this plugin`);
 				}
-				// Only `modal` panels have a summonable host; docked ones are always
-				// mounted and have their own hide control, so this would be a no-op the
-				// plugin could not distinguish from success.
-				if (panel.placement !== 'modal') {
+				// Modal panels support all visibility actions. Settings cards can only
+				// be opened; plugins cannot close or toggle the host Settings modal.
+				// Other docked panels are always mounted, so visibility would be a no-op.
+				if (panel.placement !== 'modal' && !(panel.placement === 'settings' && action === 'open')) {
 					throw new Error(`panel "${panelId}" is not a modal panel`);
 				}
 				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);
