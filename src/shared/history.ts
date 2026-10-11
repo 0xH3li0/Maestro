@@ -127,22 +127,6 @@ export function resolveHistoryEntryLimit(value: unknown): number {
 }
 
 /**
- * Entry count at which an agent's history reads as full, for surfaces that
- * report a count as a floor rather than an exact figure (Director's Notes).
- *
- * Two caps can have trimmed what such a surface holds: the history file's own
- * retention, which is the user's `maxLogBuffer`, and the fixed
- * `MAX_ENTRIES_PER_SESSION` row limit a Cue read is issued with. The lower of
- * the two is where either one may have bitten, so a user who lowered the
- * setting still has a full file recognized as full.
- *
- * @param value - Raw `maxLogBuffer` setting value
- */
-export function historyRetentionCeiling(value: unknown): number {
-	return Math.min(resolveHistoryEntryLimit(value), MAX_ENTRIES_PER_SESSION);
-}
-
-/**
  * Single bucket of the activity graph: counts of each entry type within the
  * bucket's time slice. This is the freshly-computed shape - `agent` is
  * always populated by every producer (director-notes handlers, the history
