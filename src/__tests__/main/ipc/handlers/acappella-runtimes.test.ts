@@ -108,7 +108,11 @@ beforeEach(() => {
 	vi.mocked(isRuntimeInstalled).mockResolvedValue(false);
 	vi.mocked(isRuntimeStale).mockResolvedValue(false);
 	vi.mocked(runtimesFootprint).mockResolvedValue(0);
-	vi.mocked(artifactForThisPlatform).mockReturnValue({ bytes: 100_893_124 } as never);
+	vi.mocked(artifactForThisPlatform).mockReturnValue({
+		url: 'payload.tgz',
+		bytes: 100_893_124,
+		dependencies: [],
+	} as never);
 	registerACappellaModelsHandlers({ settingsStore, safeSend: safeSend as never });
 });
 

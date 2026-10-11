@@ -22,6 +22,7 @@ import {
 	localModelsForRuntime,
 } from '../../shared/local-models/model-catalog';
 import { NATIVE_RUNTIMES, type NativeRuntimeId } from '../../shared/local-models/native-runtimes';
+import { nativeRuntimeArtifactBytes } from '../../shared/local-models/runtime-artifacts';
 import type { LocalModelEntry } from '../../shared/local-models/types';
 import { getModelDownloader, type DownloadProgress, type DownloadResult } from './model-downloader';
 import {
@@ -163,7 +164,8 @@ export async function listLocalRuntimes(): Promise<LocalRuntimeListing[]> {
 				installed: await isRuntimeInstalled(runtime.id),
 				stale: await isRuntimeStale(runtime.id),
 				downloadable: artifact !== null,
-				bytes: artifact?.bytes ?? 0,
+				// Payload plus dependencies: for llama the dependencies are most of it.
+				bytes: artifact ? nativeRuntimeArtifactBytes(artifact) : 0,
 			};
 		})
 	);

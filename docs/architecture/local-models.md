@@ -69,12 +69,13 @@ flowchart TD
 
 ### Shared (`src/shared/local-models/`)
 
-| File                   | Responsibility                                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `types.ts`             | `LocalModelEntry`, `LocalModelFile`, `LocalModelKind` (`wake-word`, `stt`, `tts`, `text-gen`, `embedding`, `classifier`)       |
-| `model-catalog.ts`     | `LOCAL_MODEL_CATALOG`: id, kind, `runtime`, pinned revision, per-file URL + SHA-256 + size, license; `localModelsForRuntime()` |
-| `native-runtimes.ts`   | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                     |
-| `runtime-artifacts.ts` | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                          |
+| File                    | Responsibility                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `types.ts`              | `LocalModelEntry`, `LocalModelFile`, `LocalModelKind` (`wake-word`, `stt`, `tts`, `text-gen`, `embedding`, `classifier`)       |
+| `model-catalog.ts`      | `LOCAL_MODEL_CATALOG`: id, kind, `runtime`, pinned revision, per-file URL + SHA-256 + size, license; `localModelsForRuntime()` |
+| `native-runtimes.ts`    | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                     |
+| `runtime-artifacts.ts`  | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                          |
+| `llama-dependencies.ts` | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload          |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
@@ -150,6 +151,19 @@ A Cappella keeps everything that is about voice and imports everything that is a
 - `src/main/ipc/handlers/acappella-models.ts`: the legacy `models:*` / `runtimes:*` channels. They
   delegate every call to `service.ts` and add only the Encore gate, readiness, and voice `slots`.
 - `useVoiceModels()` / `useVoiceRuntimes()`: thin wrappers over the core hooks.
+
+## The llama runtime layout
+
+The `llama` download is the `@node-llama-cpp/<platform>` binary plus `node-llama-cpp`'s whole
+JavaScript closure (`llama-dependencies.ts`), installed under `userData/runtimes/llama/` exactly as
+`npm install` would lay it out. The entry point is `node_modules/node-llama-cpp/dist/index.js`; the
+payload goes to `node_modules/@node-llama-cpp/<platform>/` so `node-llama-cpp`'s own
+`import('@node-llama-cpp/<platform>')` resolves it. Dependencies can carry a nested `installPath`
+(npm's un-hoisted copies) and a `keep` list (only `node-llama-cpp` uses one, to drop the 33 MB
+llama.cpp source bundle). A manifest whose entry or binary path no longer matches the artifact is
+stale, so an install made before this layout is re-downloaded rather than loaded. How the closure
+was resolved and what was left out (optional `@reflink/reflink`, the `postinstall` script) is
+written at the top of `llama-dependencies.ts`; see [[packaging-notes]] for the background.
 
 ## Related
 

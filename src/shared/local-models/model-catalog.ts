@@ -275,8 +275,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		licenseUrl: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF',
 		description:
 			'The Conductor Brain: decides which agent and tab an utterance is for, and reshapes replies for the ear. The largest download, and the one you can skip if you would rather route with an API model.',
-		// The downloadable llama.cpp payload carries the binary and not the
-		// JavaScript half of node-llama-cpp, so nothing can open this file yet.
+		// The llama runtime now installs node-llama-cpp's JavaScript half as
+		// pinned dependencies, but nobody has proven it loads and generates on a
+		// real machine yet. Hidden until that is recorded in local-models.md.
 		pending:
 			'Not usable yet: the llama.cpp runtime that reads this model is not part of this build. Routing uses the built-in keyword router, or a hosted model, instead.',
 		files: [

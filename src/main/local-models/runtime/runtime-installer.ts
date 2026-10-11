@@ -40,7 +40,12 @@ import { pipeline } from 'stream/promises';
 import * as tar from 'tar';
 
 import type { NativeRuntimeId } from '../../../shared/local-models/native-runtimes';
-import type { NativeRuntimeArtifact } from '../../../shared/local-models/runtime-artifacts';
+import {
+	dependencyInstallPath,
+	nativeRuntimeArtifactBytes,
+	type NativeRuntimeArtifact,
+	type NativeRuntimeDependency,
+} from '../../../shared/local-models/runtime-artifacts';
 import { logger } from '../../utils/logger';
 import {
 	artifactForThisPlatform,
@@ -63,15 +68,55 @@ export type RuntimeInstallPhase = 'downloading' | 'verifying' | 'extracting' | '
 export interface RuntimeInstallProgress {
 	runtimeId: NativeRuntimeId;
 	phase: RuntimeInstallPhase;
-	/** Bytes downloaded so far. Zero outside the download phase. */
+	/** Bytes downloaded so far, across the payload and its dependencies. */
 	bytes: number;
-	/** Total bytes expected, from the catalog. */
+	/** Total bytes expected, from the catalog: the payload plus every dependency. */
 	totalBytes: number;
 }
 
 export type RuntimeProgressListener = (progress: RuntimeInstallProgress) => void;
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * Progress for the whole transaction: the payload and every dependency count
+ * against one total.
+ *
+ * Per-tarball progress would be a bar that refills 117 times for llama, whose
+ * payload is the smallest download of the set; the user is waiting for the sum.
+ */
+interface InstallProgressTracker {
+	readonly totalBytes: number;
+	/** Count downloaded bytes, emitting `downloading` at most every interval. */
+	add(bytes: number): void;
+	/** Emit a phase change immediately, with the running byte count. */
+	phase(phase: RuntimeInstallPhase): void;
+}
+
+function createProgressTracker(
+	artifact: NativeRuntimeArtifact,
+	onProgress: RuntimeProgressListener | undefined
+): InstallProgressTracker {
+	const totalBytes = nativeRuntimeArtifactBytes(artifact);
+	let received = 0;
+	let lastEmit = 0;
+	const emit = (phase: RuntimeInstallPhase) =>
+		onProgress?.({ runtimeId: artifact.runtimeId, phase, bytes: received, totalBytes });
+	return {
+		totalBytes,
+		add(bytes) {
+			received += bytes;
+			const now = Date.now();
+			if (now - lastEmit < RUNTIME_PROGRESS_INTERVAL_MS) return;
+			lastEmit = now;
+			emit('downloading');
+		},
+		phase(phase) {
+			if (phase === 'done') received = totalBytes;
+			emit(phase);
+		},
+	};
+}
 
 export interface RuntimeInstallOptions {
 	/** Injected in tests. Production uses global fetch. */
@@ -172,17 +217,21 @@ export async function installNativeRuntime(
 	await fs.rm(staging, { recursive: true, force: true });
 	await fs.mkdir(staging, { recursive: true });
 
+	const progress = createProgressTracker(artifact, options.onProgress);
 	try {
 		const payload = path.join(staging, PAYLOAD_FILENAME);
-		await downloadPayload(artifact, payload, options);
+		await downloadPayload(artifact, payload, options, progress);
 		await extractPayload(artifact, payload, staging);
 		await fs.rm(payload, { force: true });
 		// Inside the transaction, so a dependency that will not download leaves no
 		// promoted install behind. A runtime without its dependencies extracts
 		// cleanly, verifies cleanly, reports itself installed, and then throws
 		// MODULE_NOT_FOUND on the first import - after the whole download.
-		await installDependencies(artifact, staging, options);
+		await installDependencies(artifact, staging, options, progress);
 
+		// Once, after every tarball: each hash was already checked as it landed,
+		// and a phase flipped per dependency reads as a flickering label for llama.
+		progress.phase('verifying');
 		const binary = path.join(staging, artifact.binary);
 		if (!(await pathExists(binary))) {
 			throw new RuntimeBinaryMissingError(id, artifact.binary);
@@ -208,12 +257,7 @@ export async function installNativeRuntime(
 		};
 		await writeRuntimeManifest(id, manifest);
 
-		options.onProgress?.({
-			runtimeId: id,
-			phase: 'done',
-			bytes: artifact.bytes,
-			totalBytes: artifact.bytes,
-		});
+		progress.phase('done');
 		logger.info(`Installed the ${id} native runtime from ${artifact.url}`, LOG_CONTEXT);
 		return manifest;
 	} catch (error) {
@@ -228,13 +272,15 @@ export async function installNativeRuntime(
 async function downloadPayload(
 	artifact: NativeRuntimeArtifact,
 	destination: string,
-	options: RuntimeInstallOptions
+	options: RuntimeInstallOptions,
+	progress: InstallProgressTracker
 ): Promise<void> {
 	await downloadVerified(
-		{ url: artifact.url, sha256: artifact.sha256, bytes: artifact.bytes },
+		{ url: artifact.url, sha256: artifact.sha256 },
 		artifact.runtimeId,
 		destination,
-		options
+		options,
+		progress
 	);
 }
 
@@ -248,10 +294,11 @@ async function downloadPayload(
  * payload is never on disk in a readable state for longer than the write itself.
  */
 async function downloadVerified(
-	source: { url: string; sha256: string; bytes: number },
+	source: { url: string; sha256: string },
 	runtimeId: NativeRuntimeId,
 	destination: string,
-	options: RuntimeInstallOptions
+	options: RuntimeInstallOptions,
+	progress: InstallProgressTracker
 ): Promise<void> {
 	const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
 	const response = await fetchImpl(source.url, { signal: options.signal });
@@ -260,32 +307,13 @@ async function downloadVerified(
 	}
 
 	const hash = createHash('sha256');
-	let received = 0;
-	let lastEmit = 0;
-
 	const stream = Readable.fromWeb(response.body as never);
 	stream.on('data', (chunk: Buffer) => {
 		hash.update(chunk);
-		received += chunk.length;
-		const now = Date.now();
-		if (now - lastEmit < RUNTIME_PROGRESS_INTERVAL_MS) return;
-		lastEmit = now;
-		options.onProgress?.({
-			runtimeId,
-			phase: 'downloading',
-			bytes: received,
-			totalBytes: source.bytes,
-		});
+		progress.add(chunk.length);
 	});
 
 	await pipeline(stream, createWriteStream(destination));
-
-	options.onProgress?.({
-		runtimeId,
-		phase: 'verifying',
-		bytes: received,
-		totalBytes: source.bytes,
-	});
 
 	const actual = hash.digest('hex');
 	if (actual !== source.sha256) {
@@ -295,30 +323,78 @@ async function downloadVerified(
 }
 
 /**
- * Fetch each declared dependency into `node_modules/<name>` under the staging
- * root.
+ * Resolve a catalog-relative directory under the staging root, refusing one that
+ * climbs out of it.
+ *
+ * The table is ours, so this is a guard against a typo rather than an attacker;
+ * the cost of the typo it catches is a package extracted somewhere outside the
+ * runtime directory, which nothing would ever clean up.
+ */
+function resolveInsideRoot(root: string, relative: string): string {
+	const segments = relative.split('/').filter((segment) => segment.length > 0);
+	if (segments.some((segment) => segment === '..' || segment === '.')) {
+		throw new Error(`Runtime install path escapes the install root: ${relative}`);
+	}
+	return path.join(root, ...segments);
+}
+
+/**
+ * Fetch each declared dependency into its install path under the staging root:
+ * `node_modules/<name>`, or the nested directory npm would have used.
  *
  * Placed there rather than rewritten into the entry point so ordinary node
  * resolution finds them, which means the loader stays a plain dynamic import and
  * the installed tree looks exactly like an `npm install` would have produced.
- * Nothing is filtered out of a dependency archive: these are small pure-JS
- * packages, and guessing which of their files matter is how a lazily-required
- * module goes missing months later.
+ * Nothing is filtered out of a dependency archive unless the catalog says so
+ * (`keep`): these are mostly small pure-JS packages, and guessing which of their
+ * files matter is how a lazily-required module goes missing months later.
+ *
+ * Sequential on purpose. The tarballs are small, so parallelism buys little,
+ * and a strict order is what makes a failure name one package rather than
+ * whichever of several concurrent downloads happened to lose.
  */
 async function installDependencies(
 	artifact: NativeRuntimeArtifact,
 	staging: string,
-	options: RuntimeInstallOptions
+	options: RuntimeInstallOptions,
+	progress: InstallProgressTracker
 ): Promise<void> {
-	for (const dependency of artifact.dependencies) {
-		const target = path.join(staging, 'node_modules', dependency.name);
-		await fs.mkdir(target, { recursive: true });
+	// One download per URL. npm nests the same version under several dependents
+	// (`ansi-regex@5.0.1` three times for llama); each copy is the same bytes.
+	const fetched = new Map<string, string>();
+	try {
+		for (const dependency of artifact.dependencies) {
+			const target = resolveInsideRoot(staging, dependencyInstallPath(dependency));
+			await fs.mkdir(target, { recursive: true });
 
-		const payload = path.join(staging, `${dependency.name.replace(/[^\w.-]/g, '_')}.tgz`);
-		await downloadVerified(dependency, artifact.runtimeId, payload, options);
-		await tar.x({ file: payload, cwd: target, strip: 1 });
-		await fs.rm(payload, { force: true });
+			let payload = fetched.get(dependency.url);
+			if (!payload) {
+				payload = path.join(staging, `dependency-${fetched.size}.tgz`);
+				await downloadVerified(dependency, artifact.runtimeId, payload, options, progress);
+				fetched.set(dependency.url, payload);
+			}
+			await extractDependency(dependency, payload, target);
+		}
+	} finally {
+		await Promise.all([...fetched.values()].map((payload) => fs.rm(payload, { force: true })));
 	}
+}
+
+/** Unpack one verified dependency tarball, honouring its `keep` list if any. */
+async function extractDependency(
+	dependency: NativeRuntimeDependency,
+	payload: string,
+	target: string
+): Promise<void> {
+	const keep = dependency.keep;
+	await tar.x({
+		file: payload,
+		cwd: target,
+		strip: 1,
+		...(keep
+			? { filter: (entryPath: string) => shouldKeepArchiveEntry(entryPath, 1, keep) !== null }
+			: {}),
+	});
 }
 
 /** Unpack the verified tarball, writing only this platform's subtree. */
@@ -327,9 +403,11 @@ async function extractPayload(
 	payload: string,
 	staging: string
 ): Promise<void> {
+	const target = resolveInsideRoot(staging, artifact.installPath);
+	await fs.mkdir(target, { recursive: true });
 	await tar.x({
 		file: payload,
-		cwd: staging,
+		cwd: target,
 		strip: artifact.stripComponents,
 		// node-tar calls this with the archive path, before `strip` is applied,
 		// which is exactly what `shouldKeepArchiveEntry` expects: it does its own

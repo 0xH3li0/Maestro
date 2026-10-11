@@ -65,7 +65,7 @@ vi.mock('../../../../main/local-models/runtime/runtime-installer', () => ({
 }));
 
 vi.mock('../../../../main/local-models/runtime/runtime-store', () => ({
-	artifactForThisPlatform: vi.fn(() => ({ bytes: 100 })),
+	artifactForThisPlatform: vi.fn(() => ({ url: 'payload.tgz', bytes: 100, dependencies: [] })),
 	isRuntimeInstalled: vi.fn(async () => false),
 	isRuntimeStale: vi.fn(async () => false),
 	removeAllRuntimes: vi.fn(async () => {}),

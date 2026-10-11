@@ -45,6 +45,7 @@
  * then own.
  */
 
+import { NODE_LLAMA_CPP_DEPENDENCIES, NODE_LLAMA_CPP_VERSION } from './llama-dependencies';
 import type { NativePlatformKey, NativeRuntimeId } from './native-runtimes';
 
 /**
@@ -67,6 +68,16 @@ export interface NativeRuntimeArtifact {
 	 */
 	readonly stripComponents: number;
 	/**
+	 * Directory the payload is extracted into, relative to the install root. Empty
+	 * for the root itself.
+	 *
+	 * Not empty for llama: `node-llama-cpp` finds its platform binary with
+	 * `import('@node-llama-cpp/<platform>')`, so that payload has to sit at
+	 * `node_modules/@node-llama-cpp/<platform>` for ordinary node resolution to
+	 * reach it from the package that imports it.
+	 */
+	readonly installPath: string;
+	/**
 	 * Path prefixes to keep, relative to the stripped root. Anything else in the
 	 * archive is discarded during extraction.
 	 *
@@ -75,7 +86,8 @@ export interface NativeRuntimeArtifact {
 	 */
 	readonly keep: readonly string[];
 	/**
-	 * The module the loader imports, relative to the install root.
+	 * The module the loader imports, relative to the install ROOT (not to
+	 * {@link installPath}): it may live in a dependency rather than the payload.
 	 *
 	 * Always a JS entry point rather than the `.node` file itself: the addon is
 	 * reached through its package's own resolution, and pointing a loader at raw
@@ -84,7 +96,7 @@ export interface NativeRuntimeArtifact {
 	readonly entry: string;
 	/**
 	 * The native binary that must exist once extraction finishes, relative to the
-	 * install root.
+	 * install root (payload and dependencies both in place).
 	 *
 	 * Checked on install and by the self-test. A payload whose archive extracted
 	 * cleanly but whose binary is absent is a payload that will fail later inside
@@ -101,8 +113,9 @@ export interface NativeRuntimeArtifact {
 	 * imports it - after the user has waited through the whole download.
 	 *
 	 * `onnxruntime-node` requires `onnxruntime-common` (its shared type and backend
-	 * registry) at import time. Empty for a payload that genuinely stands alone,
-	 * which is the case for the `@node-llama-cpp/*` platform packages.
+	 * registry) at import time. llama is the extreme case: the platform payload is
+	 * the binary alone, and everything that calls it (`node-llama-cpp` and its 115
+	 * packages) arrives as dependencies. See `llama-dependencies.ts`.
 	 */
 	readonly dependencies: readonly NativeRuntimeDependency[];
 }
@@ -110,12 +123,12 @@ export interface NativeRuntimeArtifact {
 /**
  * A second tarball that has to land inside the runtime for it to import.
  *
- * Extracted to `node_modules/<name>` under the install root, so ordinary node
- * resolution finds it from the entry point with no loader involvement and no
- * path rewriting.
+ * Extracted to `node_modules/<name>` under the install root (or a nested
+ * `installPath`), so ordinary node resolution finds it from the entry point with
+ * no loader involvement and no path rewriting.
  */
 export interface NativeRuntimeDependency {
-	/** Package name, and the directory it is installed as. */
+	/** Package name. */
 	readonly name: string;
 	/** Fully pinned tarball URL. A version, never a tag or a range. */
 	readonly url: string;
@@ -123,10 +136,33 @@ export interface NativeRuntimeDependency {
 	readonly sha256: string;
 	/** COMPRESSED size in bytes. */
 	readonly bytes: number;
+	/**
+	 * Directory to extract into, relative to the install root. Defaults to
+	 * `node_modules/<name>`. Set for a package npm nests under its dependent
+	 * (`node_modules/ora/node_modules/cli-spinners`) because a sibling needs a
+	 * different version of it.
+	 */
+	readonly installPath?: string;
+	/**
+	 * Path prefixes to keep, relative to the package root, as for a payload.
+	 * Absent means everything: pruning a small package is how a lazily imported
+	 * file goes missing. Set only where a package carries something large that
+	 * nothing on the load path reads.
+	 */
+	readonly keep?: readonly string[];
 }
 
-/** `3.20.0`, matching `versionPin` for the `llama` runtime. */
-const LLAMA_VERSION = '3.20.0';
+/** Where a dependency is extracted, relative to the install root. */
+export function dependencyInstallPath(dependency: NativeRuntimeDependency): string {
+	return dependency.installPath ?? `node_modules/${dependency.name}`;
+}
+
+/**
+ * `3.20.0`, matching `versionPin` for the `llama` runtime. One constant for the
+ * platform payload and `node-llama-cpp` itself: the package refuses a binary
+ * built for another release.
+ */
+const LLAMA_VERSION = NODE_LLAMA_CPP_VERSION;
 /**
  * `1.30.0`, matching `versionPin` for the `onnx` runtime.
  *
@@ -157,6 +193,7 @@ function llamaArtifact(
 	bytes: number
 ): NativeRuntimeArtifact {
 	const pkg = LLAMA_PACKAGE_BY_PLATFORM[platform];
+	const installPath = `node_modules/@node-llama-cpp/${pkg}`;
 	return Object.freeze({
 		runtimeId: 'llama' as const,
 		platform,
@@ -164,14 +201,16 @@ function llamaArtifact(
 		sha256,
 		bytes,
 		stripComponents: 1,
-		// The whole package. It is 4.5 MB to 10.4 MB compressed and carries no
-		// dependencies, so there is nothing to prune and nothing to resolve.
+		// Where `node-llama-cpp` imports it from, so the tree is the one `npm
+		// install` would have produced and nothing in the loader rewrites a path.
+		installPath,
+		// The whole package. It is 4.5 MB to 10.4 MB compressed and is the binary
+		// plus a `getBinsDir()` shim, so there is nothing to prune.
 		keep: Object.freeze(['dist', 'bins', 'package.json']),
-		entry: 'dist/index.js',
-		binary: `bins/${pkg}/llama-addon.node`,
-		// Genuinely standalone: the platform packages carry the binary and nothing
-		// else, with no dependencies of their own to resolve.
-		dependencies: [],
+		// The JavaScript half, not the platform package: `getLlama()` lives there.
+		entry: 'node_modules/node-llama-cpp/dist/index.js',
+		binary: `${installPath}/bins/${pkg}/llama-addon.node`,
+		dependencies: NODE_LLAMA_CPP_DEPENDENCIES,
 	});
 }
 
@@ -224,6 +263,7 @@ function onnxArtifact(platform: NativePlatformKey, binary: string): NativeRuntim
 		sha256: ONNX_TARBALL_SHA256,
 		bytes: ONNX_TARBALL_BYTES,
 		stripComponents: 1,
+		installPath: '',
 		// `dist` is 132 KB of JavaScript; the other four platforms' binaries are
 		// the ~220 MB this list exists to throw away.
 		keep: Object.freeze(['dist', 'package.json', binDir]),
@@ -294,23 +334,50 @@ export function isNativeRuntimeDownloadable(
 }
 
 /**
- * Total download for a set of runtimes on a platform, in bytes.
+ * Total download for a set of runtimes on a platform, in bytes: each payload
+ * plus the dependencies it installs alongside it.
  *
  * Deduplicated by URL, because ONNX Runtime serves several rows from one tarball
  * and a total that counted it twice would promise a wait that never happens. The
- * same property matters more once a second runtime shares a payload.
+ * same property matters more once a second runtime shares a payload. Dependencies
+ * count because they are most of the wait for llama: the platform binary is
+ * 4.5 MB, `node-llama-cpp` alone is 34.8 MB.
  */
 export function nativeRuntimeDownloadBytes(
 	runtimeIds: readonly NativeRuntimeId[],
 	platform: NativePlatformKey
 ): number {
-	const seen = new Set<string>();
-	let total = 0;
+	const sizes = new Map<string, number>();
 	for (const runtimeId of runtimeIds) {
 		const artifact = nativeRuntimeArtifact(runtimeId, platform);
-		if (!artifact || seen.has(artifact.url)) continue;
-		seen.add(artifact.url);
-		total += artifact.bytes;
+		if (artifact) addArtifactSizes(artifact, sizes);
 	}
+	return sumSizes(sizes);
+}
+
+/**
+ * One artifact's download in bytes: its payload plus every distinct dependency
+ * tarball.
+ *
+ * Distinct by URL because npm nests the same version under several dependents
+ * (`ansi-regex@5.0.1` three times for llama) and the installer fetches each URL
+ * once. This is the number the install's progress counts to.
+ */
+export function nativeRuntimeArtifactBytes(artifact: NativeRuntimeArtifact): number {
+	return sumSizes(addArtifactSizes(artifact, new Map()));
+}
+
+function addArtifactSizes(
+	artifact: NativeRuntimeArtifact,
+	sizes: Map<string, number>
+): Map<string, number> {
+	sizes.set(artifact.url, artifact.bytes);
+	for (const dependency of artifact.dependencies) sizes.set(dependency.url, dependency.bytes);
+	return sizes;
+}
+
+function sumSizes(sizes: Map<string, number>): number {
+	let total = 0;
+	for (const bytes of sizes.values()) total += bytes;
 	return total;
 }

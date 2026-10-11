@@ -43,9 +43,18 @@ ONNX Runtime is pinned to 1.30.0, not the 1.27.0 it started on: 1.27 computes op
 
 Neither needs `electron-rebuild`. Both are Node-API addons, and Node-API is ABI-stable across Node and Electron by design, which is why they are absent from the `postinstall` rebuild list that carries `node-pty` and `better-sqlite3`. Adding a non-Node-API addon later means setting `requiresElectronRebuild: true` AND adding it to that list; the registry test fails if the two disagree.
 
-### Open: the llama.cpp payload is only half a runtime
+### The llama.cpp runtime: the JavaScript half rides as dependencies
 
-The `llama` artifact in `runtime-artifacts.ts` fetches the `@node-llama-cpp/<platform>` package, and that package is the native binary alone: its `dist/index.js` exports `getBinsDir()` and nothing else. `LlamaBrainProvider` needs `getLlama()` and `LlamaChatSession` from the main `node-llama-cpp` package, which is 38 MB of ESM JavaScript with 28 runtime dependencies of its own. Pinning and hashing that tree by hand is not a serious option, so until the JavaScript half is either bundled into the app (esbuild, with the platform package left external and resolved from the runtime store) or fetched as a whole `npm` install, the local Brain cannot open its model on any machine. That is why `qwen3-local` is absent from the provider catalog and `Qwen3 1.7B` carries a `pending` note in the model catalog rather than a Download button. Routing defaults to the built-in keyword router, which needs no runtime.
+The `@node-llama-cpp/<platform>` package is the native binary alone: its `dist/index.js` exports `getBinsDir()` and nothing else. `LlamaBrainProvider` needs `getLlama()` and `LlamaChatSession` from the main `node-llama-cpp` package, which brings 115 production dependencies of its own. All of them now ship as pinned, hashed `dependencies` of the `llama` artifact (`src/shared/local-models/llama-dependencies.ts`, 116 packages, ~36.9 MB compressed, 34.8 MB of it `node-llama-cpp` itself), installed inside the same transaction as the platform payload. The runtime directory is laid out exactly as `npm install` would lay it out:
+
+```
+userData/runtimes/llama/
+  node_modules/node-llama-cpp/                 entry: dist/index.js
+  node_modules/@node-llama-cpp/<platform>/     the payload; binary: bins/<platform>/llama-addon.node
+  node_modules/<dep>/ and node_modules/<dep>/node_modules/<nested>/
+```
+
+The payload sits at `node_modules/@node-llama-cpp/<platform>` because `node-llama-cpp` finds its binary with `import('@node-llama-cpp/<platform>')`; anywhere else, node resolution would not reach it. `node-llama-cpp`'s `postinstall` (the only install script in the closure) is not run: it only proves the prebuilt binary loads and falls back to a from-source build, so the runtime self-test does that job. `llama/gitRelease.bundle` (33 MB of llama.cpp source for that from-source build) is dropped at extraction. Whether the runtime actually loads on a real machine is recorded in `docs/architecture/local-models.md`; until it is proven, `qwen3-local` stays out of the provider catalog and `Qwen3 1.7B` keeps its `pending` note.
 
 ### Open: Kokoro needs a phoneme front end
 

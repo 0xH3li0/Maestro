@@ -27,13 +27,50 @@ import {
 } from '../../shared/local-models/native-runtimes';
 import {
 	NATIVE_RUNTIME_ARTIFACTS,
+	dependencyInstallPath,
 	isNativeRuntimeDownloadable,
 	nativeRuntimeArtifact,
 	nativeRuntimeDownloadBytes,
+	type NativeRuntimeArtifact,
 } from '../../shared/local-models/runtime-artifacts';
+import {
+	NODE_LLAMA_CPP_DEPENDENCIES,
+	npmTarballUrl,
+} from '../../shared/local-models/llama-dependencies';
 import { shouldKeepArchiveEntry } from '../../main/local-models/runtime/runtime-installer';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * Would a path relative to the install root survive extraction?
+ *
+ * The path may live in the payload (under its `installPath`) or in any
+ * dependency (under its own), so this finds the tarball that owns it and asks
+ * that tarball's `keep` list. Null when no tarball lands there at all.
+ */
+function keptAt(artifact: NativeRuntimeArtifact, rootRelative: string): string | null {
+	const sources = [
+		{ dir: artifact.installPath, strip: artifact.stripComponents, keep: artifact.keep },
+		...artifact.dependencies.map((dependency) => ({
+			dir: dependencyInstallPath(dependency),
+			strip: 1,
+			keep: dependency.keep ?? [''],
+		})),
+	];
+	// Longest directory first, so a nested package wins over its parent.
+	sources.sort((a, b) => b.dir.length - a.dir.length);
+	for (const source of sources) {
+		const prefix = source.dir ? `${source.dir}/` : '';
+		if (!rootRelative.startsWith(prefix)) continue;
+		const inner = rootRelative.slice(prefix.length);
+		// An absent `keep` keeps everything; `['']` expresses that to the matcher.
+		const kept = source.keep.includes('')
+			? inner
+			: shouldKeepArchiveEntry(`package/${inner}`, source.strip, source.keep);
+		return kept === null ? null : `${prefix}${kept}`;
+	}
+	return null;
+}
 
 describe('native runtime artifacts', () => {
 	it('records a real, full-length SHA-256 for every artifact', () => {
@@ -85,11 +122,7 @@ describe('native runtime artifacts', () => {
 		// The failure this catches: an artifact that extracts successfully and is
 		// then missing the one file the loader needs.
 		for (const artifact of NATIVE_RUNTIME_ARTIFACTS) {
-			const kept = shouldKeepArchiveEntry(
-				`package/${artifact.binary}`,
-				artifact.stripComponents,
-				artifact.keep
-			);
+			const kept = keptAt(artifact, artifact.binary);
 			expect(
 				kept,
 				`${artifact.runtimeId}/${artifact.platform} discards its own binary: ${artifact.binary}`
@@ -99,11 +132,7 @@ describe('native runtime artifacts', () => {
 
 	it('keeps the subtree its own entry point lives in', () => {
 		for (const artifact of NATIVE_RUNTIME_ARTIFACTS) {
-			const kept = shouldKeepArchiveEntry(
-				`package/${artifact.entry}`,
-				artifact.stripComponents,
-				artifact.keep
-			);
+			const kept = keptAt(artifact, artifact.entry);
 			expect(
 				kept,
 				`${artifact.runtimeId}/${artifact.platform} discards its own entry: ${artifact.entry}`
@@ -146,9 +175,69 @@ describe('native runtime artifacts', () => {
 		const onnx = nativeRuntimeArtifact('onnx', 'darwin-arm64');
 		expect(onnx?.dependencies.map((dependency) => dependency.name)).toEqual(['onnxruntime-common']);
 
-		// The llama platform packages genuinely stand alone.
+		// The llama platform package is the binary alone; `getLlama()` lives in
+		// node-llama-cpp, which arrives with its whole production closure.
 		const llama = nativeRuntimeArtifact('llama', 'darwin-arm64');
-		expect(llama?.dependencies).toEqual([]);
+		const names = llama?.dependencies.map((dependency) => dependency.name) ?? [];
+		expect(names[0]).toBe('node-llama-cpp');
+		expect(names).toContain('@huggingface/jinja');
+		expect(names).toContain('lifecycle-utils');
+		expect(llama?.dependencies).toBe(NODE_LLAMA_CPP_DEPENDENCIES);
+	});
+
+	it('lays llama out so node-llama-cpp can import its platform package', () => {
+		// node-llama-cpp finds its binary with `import('@node-llama-cpp/<pkg>')`.
+		// Anywhere but `node_modules/@node-llama-cpp/<pkg>` that import fails, and
+		// the runtime installs cleanly and then cannot open a model.
+		for (const platform of NATIVE_PLATFORM_KEYS) {
+			const llama = nativeRuntimeArtifact('llama', platform)!;
+			const pkg = llama.url.match(/@node-llama-cpp\/([^/]+)\//)![1];
+			expect(llama.installPath).toBe(`node_modules/@node-llama-cpp/${pkg}`);
+			expect(llama.binary.startsWith(`${llama.installPath}/bins/${pkg}/`)).toBe(true);
+			expect(llama.entry).toBe('node_modules/node-llama-cpp/dist/index.js');
+		}
+	});
+
+	it('installs every llama dependency at a distinct path under node_modules', () => {
+		const paths = NODE_LLAMA_CPP_DEPENDENCIES.map(dependencyInstallPath);
+		expect(new Set(paths).size).toBe(paths.length);
+		for (const installPath of paths) {
+			expect(installPath).toMatch(/^node_modules\//);
+			expect(installPath.split('/')).not.toContain('..');
+		}
+	});
+
+	it('nests a llama dependency only under a package that is itself installed', () => {
+		const paths = new Set(NODE_LLAMA_CPP_DEPENDENCIES.map(dependencyInstallPath));
+		for (const installPath of paths) {
+			const parent = installPath.replace(/\/node_modules\/(?:@[^/]+\/)?[^/]+$/, '');
+			if (parent === installPath || parent === 'node_modules') continue;
+			expect(paths.has(parent), `${installPath} is nested under a missing ${parent}`).toBe(true);
+		}
+	});
+
+	it('pins node-llama-cpp to the same version as the platform binary', () => {
+		// node-llama-cpp refuses a binary from another release.
+		const llama = NATIVE_RUNTIMES.find((runtime) => runtime.id === 'llama')!;
+		const pkg = NODE_LLAMA_CPP_DEPENDENCIES.find(
+			(dependency) => dependency.name === 'node-llama-cpp'
+		);
+		expect(pkg?.url).toBe(npmTarballUrl('node-llama-cpp', llama.versionPin));
+	});
+
+	it("drops node-llama-cpp's llama.cpp source bundle and keeps what loads", () => {
+		const pkg = NODE_LLAMA_CPP_DEPENDENCIES.find(
+			(dependency) => dependency.name === 'node-llama-cpp'
+		)!;
+		const keep = pkg.keep!;
+		expect(shouldKeepArchiveEntry('package/llama/gitRelease.bundle', 1, keep)).toBeNull();
+		expect(shouldKeepArchiveEntry('package/dist/index.js', 1, keep)).toBe('dist/index.js');
+		expect(shouldKeepArchiveEntry('package/llama/binariesGithubRelease.json', 1, keep)).toBe(
+			'llama/binariesGithubRelease.json'
+		);
+		expect(shouldKeepArchiveEntry('package/llama/grammars/json.gbnf', 1, keep)).toBe(
+			'llama/grammars/json.gbnf'
+		);
 	});
 
 	it('pins and hashes every dependency exactly as it does a payload', () => {
@@ -212,18 +301,28 @@ describe('native runtime artifacts', () => {
 describe('nativeRuntimeDownloadBytes', () => {
 	const platform: NativePlatformKey = 'darwin-arm64';
 
-	it('sums the payloads a set of runtimes needs', () => {
+	it('sums the payloads a set of runtimes needs, dependencies included', () => {
+		// Each distinct tarball once: npm nests some versions under several
+		// dependents, and the installer fetches each URL a single time.
+		const sum = (artifact: NativeRuntimeArtifact) => {
+			const sizes = new Map([[artifact.url, artifact.bytes]]);
+			for (const dep of artifact.dependencies) sizes.set(dep.url, dep.bytes);
+			return [...sizes.values()].reduce((total, bytes) => total + bytes, 0);
+		};
 		const llama = nativeRuntimeArtifact('llama', platform)!;
 		const onnx = nativeRuntimeArtifact('onnx', platform)!;
-		expect(nativeRuntimeDownloadBytes(['llama', 'onnx'], platform)).toBe(llama.bytes + onnx.bytes);
+		expect(nativeRuntimeDownloadBytes(['llama', 'onnx'], platform)).toBe(sum(llama) + sum(onnx));
+		// node-llama-cpp alone dwarfs the 4.5 MB platform binary.
+		expect(nativeRuntimeDownloadBytes(['llama'], platform)).toBeGreaterThan(30_000_000);
 	});
 
 	it('counts a shared tarball once', () => {
 		// Both ONNX slots come from the same 101 MB download. Counting it twice
 		// would promise a wait that never happens, which reads as a stalled
 		// progress bar when the second half completes instantly.
-		const onnx = nativeRuntimeArtifact('onnx', platform)!;
-		expect(nativeRuntimeDownloadBytes(['onnx', 'onnx'], platform)).toBe(onnx.bytes);
+		expect(nativeRuntimeDownloadBytes(['onnx', 'onnx'], platform)).toBe(
+			nativeRuntimeDownloadBytes(['onnx'], platform)
+		);
 	});
 
 	it('ignores runtimes with no payload rather than throwing', () => {
@@ -232,6 +331,17 @@ describe('nativeRuntimeDownloadBytes', () => {
 
 	it('is zero for an empty selection', () => {
 		expect(nativeRuntimeDownloadBytes([], platform)).toBe(0);
+	});
+});
+
+describe('npmTarballUrl', () => {
+	it('builds the registry tarball URL for plain and scoped packages', () => {
+		expect(npmTarballUrl('chalk', '5.6.2')).toBe(
+			'https://registry.npmjs.org/chalk/-/chalk-5.6.2.tgz'
+		);
+		expect(npmTarballUrl('@huggingface/jinja', '0.5.10')).toBe(
+			'https://registry.npmjs.org/@huggingface/jinja/-/jinja-0.5.10.tgz'
+		);
 	});
 });
 

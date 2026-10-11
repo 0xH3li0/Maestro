@@ -167,7 +167,7 @@ export async function installedRuntimeEntry(id: NativeRuntimeId): Promise<string
 	// anyway is a feature that looks installed and silently does nothing; refusing
 	// it reports "not downloaded", and the Download button fetches the new pin.
 	const artifact = artifactForThisPlatform(id);
-	if (artifact && manifest.sha256 !== artifact.sha256) return null;
+	if (artifact && !manifestMatchesArtifact(manifest, artifact)) return null;
 
 	const entry = path.join(runtimeDir(id), manifest.entry);
 	const binary = path.join(runtimeDir(id), manifest.binary);
@@ -190,7 +190,26 @@ export async function isRuntimeStale(id: NativeRuntimeId): Promise<boolean> {
 
 	const artifact = artifactForThisPlatform(id);
 	if (!artifact) return false;
-	return manifest.sha256 !== artifact.sha256;
+	return !manifestMatchesArtifact(manifest, artifact);
+}
+
+/**
+ * Was this install produced from the artifact this build describes?
+ *
+ * The hash covers the payload; the entry and binary paths cover the LAYOUT. The
+ * llama runtime kept its payload hash when it gained `node-llama-cpp` as
+ * dependencies and moved its entry point into them, so a hash-only check would
+ * keep loading an older install's platform shim, which has no `getLlama()`.
+ */
+function manifestMatchesArtifact(
+	manifest: RuntimeManifest,
+	artifact: NativeRuntimeArtifact
+): boolean {
+	return (
+		manifest.sha256 === artifact.sha256 &&
+		manifest.entry === artifact.entry &&
+		manifest.binary === artifact.binary
+	);
 }
 
 /** Recursive size of a directory in bytes. Missing directories count as zero. */

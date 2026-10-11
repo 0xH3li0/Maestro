@@ -26,6 +26,9 @@
  * opposite of rule 1.
  */
 
+import * as path from 'path';
+import { pathToFileURL } from 'url';
+
 import {
 	getNativeRuntime,
 	nativePlatformKey,
@@ -96,10 +99,20 @@ export type NativeRuntimeResult<T> =
  * always a variable: a literal would make TypeScript try to resolve a package
  * that is deliberately not installed yet.
  */
-const dynamicImport: (specifier: string) => Promise<unknown> = new Function(
+const realImport: (specifier: string) => Promise<unknown> = new Function(
 	'specifier',
 	'return import(specifier);'
 ) as (specifier: string) => Promise<unknown>;
+
+/**
+ * Import a package name or an absolute entry path.
+ *
+ * A downloaded runtime is imported by absolute path, and ESM `import()` takes a
+ * URL: `/Users/...` happens to parse as one, `C:\Users\...` does not (Node
+ * rejects the `c:` scheme), so the path goes through `pathToFileURL` first.
+ */
+const dynamicImport = (specifier: string): Promise<unknown> =>
+	realImport(path.isAbsolute(specifier) ? pathToFileURL(specifier).href : specifier);
 
 /** Injected in tests. Production always uses the real import. */
 let importer: (specifier: string) => Promise<unknown> = dynamicImport;

@@ -56,11 +56,19 @@ const { artifact } = vi.hoisted(() => ({
 		sha256: '',
 		bytes: 0,
 		stripComponents: 1,
+		installPath: '',
 		keep: ['dist', 'package.json', 'bin/napi-v6/darwin/arm64'],
 		entry: 'dist/index.js',
 		binary: 'bin/napi-v6/darwin/arm64/onnxruntime_binding.node',
 		// Overwritten per test by the dependency cases below.
-		dependencies: [] as Array<{ name: string; url: string; sha256: string; bytes: number }>,
+		dependencies: [] as Array<{
+			name: string;
+			url: string;
+			sha256: string;
+			bytes: number;
+			installPath?: string;
+			keep?: string[];
+		}>,
 	},
 }));
 
@@ -72,7 +80,10 @@ let tempRoot: string;
 let tarballBytes: Buffer;
 let tarballSha256: string;
 
-vi.mock('../../../../shared/local-models/runtime-artifacts', () => ({
+vi.mock('../../../../shared/local-models/runtime-artifacts', async (importOriginal) => ({
+	// The pure helpers (install paths, byte totals) are the real ones; only the
+	// table is replaced.
+	...(await importOriginal<object>()),
 	nativeRuntimeArtifact: () => artifact,
 	isNativeRuntimeDownloadable: () => true,
 	nativeRuntimeDownloadBytes: () => artifact.bytes,
@@ -87,6 +98,7 @@ import {
 import {
 	installedRuntimeEntry,
 	isRuntimeInstalled,
+	isRuntimeStale,
 	readRuntimeManifest,
 	removeRuntime,
 	runtimeDir,
@@ -145,6 +157,9 @@ beforeEach(async () => {
 	artifact.sha256 = tarballSha256;
 	artifact.bytes = tarballBytes.length;
 	artifact.dependencies = [];
+	artifact.installPath = '';
+	artifact.entry = ENTRY;
+	artifact.binary = BINARY;
 });
 
 afterEach(async () => {
@@ -284,6 +299,31 @@ describe('installNativeRuntime', () => {
 		expect(phases).toContain('verifying');
 		expect(phases[phases.length - 1]).toBe('done');
 	});
+
+	it('extracts the payload into its install path when it names one', async () => {
+		// llama's platform payload has to sit where `node-llama-cpp` imports it
+		// from, `node_modules/@node-llama-cpp/<platform>`, not at the root.
+		artifact.installPath = 'node_modules/@scope/fake-runtime';
+		artifact.entry = `${artifact.installPath}/${ENTRY}`;
+		artifact.binary = `${artifact.installPath}/${BINARY}`;
+
+		await installNativeRuntime('onnx', { fetchImpl: serve(tarballBytes) });
+		const root = runtimeDir('onnx');
+
+		expect(await exists(path.join(root, artifact.binary))).toBe(true);
+		expect(await exists(path.join(root, ENTRY))).toBe(false);
+		expect(await installedRuntimeEntry('onnx')).toBe(path.join(root, artifact.entry));
+	});
+
+	it('refuses an install path that climbs out of the install root', async () => {
+		artifact.installPath = '../escaped';
+
+		await expect(installNativeRuntime('onnx', { fetchImpl: serve(tarballBytes) })).rejects.toThrow(
+			/escapes the install root/
+		);
+		expect(await isRuntimeInstalled('onnx')).toBe(false);
+		expect(await exists(path.join(path.dirname(runtimeDir('onnx')), 'escaped'))).toBe(false);
+	});
 });
 
 describe('runtime store, after an install', () => {
@@ -320,6 +360,22 @@ describe('runtime store, after an install', () => {
 		await fs.writeFile(manifestPath, JSON.stringify({ ...manifest, sha256: 'f'.repeat(64) }));
 
 		expect(await installedRuntimeEntry('onnx')).toBeNull();
+	});
+
+	it('treats an install whose layout moved as stale, even with the same payload hash', async () => {
+		// llama kept its payload hash when its entry point moved into the
+		// `node-llama-cpp` dependency. A hash-only check would keep loading the old
+		// install's platform shim, which has no getLlama().
+		const manifestPath = path.join(runtimeDir('onnx'), 'manifest.json');
+		const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+		await fs.writeFile(manifestPath, JSON.stringify({ ...manifest, entry: 'old/index.js' }));
+
+		expect(await installedRuntimeEntry('onnx')).toBeNull();
+		expect(await isRuntimeStale('onnx')).toBe(true);
+	});
+
+	it('is not stale when the manifest matches the artifact', async () => {
+		expect(await isRuntimeStale('onnx')).toBe(false);
 	});
 
 	it('uninstalls cleanly', async () => {
@@ -467,12 +523,137 @@ describe('dependency payloads', () => {
 
 		await installNativeRuntime('onnx', { fetchImpl: serveSequence([tarballBytes, dep.bytes]) });
 
-		const stray = path.join(runtimeDir('onnx'), 'onnxruntime-common.tgz');
-		expect(await exists(stray)).toBe(false);
+		const leftovers = (await fs.readdir(runtimeDir('onnx'))).filter((name) =>
+			name.endsWith('.tgz')
+		);
+		expect(leftovers).toEqual([]);
+	});
+
+	it('installs a nested dependency where npm would have put it', async () => {
+		// npm nests a package under its dependent when a sibling needs another
+		// version (`node_modules/ora/node_modules/cli-spinners`); node resolution
+		// only finds the right copy if it lands at that exact path.
+		const parent = await buildDependency('parent-pkg', {
+			'package/package.json': '{"name":"parent-pkg"}',
+		});
+		const nested = await buildDependency('nested-pkg', {
+			'package/package.json': '{"name":"nested-pkg","version":"1.0.0"}',
+		});
+		artifact.dependencies = [
+			{
+				name: 'parent-pkg',
+				url: 'https://registry.npmjs.org/parent-pkg/-/parent-pkg-2.0.0.tgz',
+				sha256: parent.sha256,
+				bytes: parent.bytes.length,
+			},
+			{
+				name: 'nested-pkg',
+				url: 'https://registry.npmjs.org/nested-pkg/-/nested-pkg-1.0.0.tgz',
+				sha256: nested.sha256,
+				bytes: nested.bytes.length,
+				installPath: 'node_modules/parent-pkg/node_modules/nested-pkg',
+			},
+		];
+
+		await installNativeRuntime('onnx', {
+			fetchImpl: serveSequence([tarballBytes, parent.bytes, nested.bytes]),
+		});
+
+		const root = runtimeDir('onnx');
+		expect(await exists(path.join(root, 'node_modules/parent-pkg/package.json'))).toBe(true);
+		expect(
+			await exists(path.join(root, 'node_modules/parent-pkg/node_modules/nested-pkg/package.json'))
+		).toBe(true);
+		expect(await exists(path.join(root, 'node_modules/nested-pkg'))).toBe(false);
+	});
+
+	it('downloads a tarball nested under several dependents once and extracts it everywhere', async () => {
+		// npm nests the same version under each dependent that needs it
+		// (`ansi-regex@5.0.1` three times for llama). Same URL, same bytes: one fetch.
+		const shared = await buildDependency('shared-pkg', {
+			'package/package.json': '{"name":"shared-pkg"}',
+		});
+		const url = 'https://registry.npmjs.org/shared-pkg/-/shared-pkg-5.0.1.tgz';
+		artifact.dependencies = ['a', 'b'].map((parent) => ({
+			name: 'shared-pkg',
+			url,
+			sha256: shared.sha256,
+			bytes: shared.bytes.length,
+			installPath: `node_modules/${parent}/node_modules/shared-pkg`,
+		}));
+		const requested: string[] = [];
+		const inner = serveSequence([tarballBytes, shared.bytes]);
+		const fetchImpl = (async (input: string, init?: RequestInit) => {
+			requested.push(input);
+			return inner(input, init);
+		}) as unknown as typeof globalThis.fetch;
+
+		await installNativeRuntime('onnx', { fetchImpl });
+
+		expect(requested.filter((entry) => entry === url)).toHaveLength(1);
+		const root = runtimeDir('onnx');
+		for (const parent of ['a', 'b']) {
+			expect(
+				await exists(path.join(root, `node_modules/${parent}/node_modules/shared-pkg/package.json`))
+			).toBe(true);
+		}
+	});
+
+	it("honours a dependency's keep list and installs everything when it has none", async () => {
+		// node-llama-cpp carries a 33 MB llama.cpp source bundle nothing on the load
+		// path reads; `keep` is how it stays off disk.
+		const big = await buildDependency('big-pkg', {
+			'package/package.json': '{"name":"big-pkg"}',
+			'package/dist/index.js': 'export {};',
+			'package/llama/gitRelease.bundle': 'SOURCE',
+			'package/llama/grammars/json.gbnf': 'GRAMMAR',
+		});
+		artifact.dependencies = [
+			{
+				name: 'big-pkg',
+				url: 'https://registry.npmjs.org/big-pkg/-/big-pkg-1.0.0.tgz',
+				sha256: big.sha256,
+				bytes: big.bytes.length,
+				keep: ['dist', 'package.json', 'llama/grammars'],
+			},
+		];
+
+		await installNativeRuntime('onnx', { fetchImpl: serveSequence([tarballBytes, big.bytes]) });
+
+		const installed = path.join(runtimeDir('onnx'), 'node_modules', 'big-pkg');
+		expect(await exists(path.join(installed, 'dist/index.js'))).toBe(true);
+		expect(await exists(path.join(installed, 'llama/grammars/json.gbnf'))).toBe(true);
+		expect(await exists(path.join(installed, 'llama/gitRelease.bundle'))).toBe(false);
+	});
+
+	it('reports one running total across the payload and every dependency', async () => {
+		// Per-tarball progress would refill the bar once per dependency, 117 times
+		// for llama, whose payload is the smallest download of the set.
+		const dep = await buildDependency('onnxruntime-common', {
+			'package/package.json': '{"name":"onnxruntime-common"}',
+		});
+		artifact.dependencies = [
+			{
+				name: 'onnxruntime-common',
+				url: 'https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-1.27.0.tgz',
+				sha256: dep.sha256,
+				bytes: dep.bytes.length,
+			},
+		];
+		const updates: Array<{ phase: string; bytes: number; totalBytes: number }> = [];
+
+		await installNativeRuntime('onnx', {
+			fetchImpl: serveSequence([tarballBytes, dep.bytes]),
+			onProgress: (progress) => updates.push(progress),
+		});
+
+		const total = tarballBytes.length + dep.bytes.length;
+		expect(updates.every((update) => update.totalBytes === total)).toBe(true);
+		expect(updates.filter((update) => update.phase === 'verifying')).toHaveLength(1);
+		expect(updates[updates.length - 1]).toMatchObject({ phase: 'done', bytes: total });
 	});
 
 	it('installs nothing extra when a payload declares no dependencies', async () => {
-		// The `@node-llama-cpp/*` platform packages genuinely stand alone.
 		artifact.dependencies = [];
 
 		await installNativeRuntime('onnx', { fetchImpl: serve(tarballBytes) });
