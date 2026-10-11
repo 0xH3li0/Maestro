@@ -121,6 +121,8 @@ export type PaneChatActions = Partial<
 		| 'onForceSendQueuedItem'
 		| 'forcedParallelEnabled'
 		| 'getForceSendContext'
+		| 'getSteerContext'
+		| 'onSteerQueuedItem'
 		| 'onInterrupt'
 		| 'setLightboxImage'
 		| 'setMarkdownEditMode'
