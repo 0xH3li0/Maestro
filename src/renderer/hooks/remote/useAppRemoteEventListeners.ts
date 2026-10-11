@@ -14,6 +14,7 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
@@ -1785,6 +1786,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customPath: undefined,
 				customArgs: undefined,
 				customEnvVars: undefined,
+				// A gateway speaks one provider's API, so it does not carry across.
+				gatewayUrl: undefined,
 				customModel: undefined,
 				customContextWindow: undefined,
 				// Provenance describes the value cleared above and must not outlive
@@ -1924,6 +1927,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customPath',
 			'customArgs',
 			'customEnvVars',
+			// Local Models gateway. Validated below, never written as given.
+			'gatewayUrl',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -1947,6 +1952,25 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
+		}
+
+		// A gateway is validated against THIS agent's provider before it is stored,
+		// with the same function the Edit Agent field uses: the launch refuses a
+		// gateway it cannot use, so storing one would leave the agent unable to
+		// start. `null` (the CLI's `none`) clears it.
+		if ('gatewayUrl' in patch && patch.gatewayUrl !== null) {
+			const edit =
+				typeof patch.gatewayUrl === 'string'
+					? parseGatewayUrlEdit(session.toolType, patch.gatewayUrl)
+					: ({ ok: false, error: 'gatewayUrl must be a URL or null.' } as const);
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.gatewayUrl = edit.gatewayUrl ?? undefined;
 		}
 
 		// Clearing the window clears its provenance too, even when the caller sent

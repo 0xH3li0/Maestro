@@ -115,6 +115,11 @@ beforeEach(() => {
 		process: {
 			kill: vi.fn().mockResolvedValue(undefined),
 		},
+		// A gateway edit flushes the agent to main (see agentGateway.ts).
+		sessions: {
+			setMany: vi.fn().mockResolvedValue(undefined),
+			setActiveSessionId: vi.fn().mockResolvedValue(undefined),
+		},
 		stats: {
 			recordSessionClosed: vi.fn(),
 		},
@@ -278,6 +283,92 @@ describe('useSessionLifecycle', () => {
 			expect(updated.nudgeMessage).toBeUndefined();
 			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
+		});
+
+		describe('Local Models gateway', () => {
+			const saveWithGateway = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				gatewayUrl: string | undefined,
+				toolType?: Parameters<typeof save>[2]
+			) => {
+				// `gatewayUrl` is the 23rd argument; everything between is left unset.
+				const args = new Array(23).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[2] = toolType;
+				args[22] = gatewayUrl;
+				return (save as (...all: unknown[]) => void)(...args);
+			};
+
+			it('stores the gateway and flushes the agent to main at once', async () => {
+				// The desktop spawn reads the gateway from main's store, which the
+				// debounced persistence would leave stale for two seconds.
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:8787');
+				});
+
+				expect(useSessionStore.getState().sessions[0].gatewayUrl).toBe('http://127.0.0.1:8787');
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' })],
+					[]
+				);
+			});
+
+			it('clears the gateway and flushes that too', async () => {
+				const session = createMockSession({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, undefined);
+				});
+
+				expect(useSessionStore.getState().sessions[0].gatewayUrl).toBeUndefined();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not flush a save that left the gateway alone', async () => {
+				const session = createMockSession({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:8787');
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+			});
+
+			it('keeps a gateway entered for the NEW provider across a provider switch', async () => {
+				// The dialog empties its gateway field on a switch and validates what
+				// is typed afterwards against the new provider, so the switch must
+				// not clear it the way it clears the old provider's overrides.
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					customPath: '/old/claude',
+					gatewayUrl: 'http://127.0.0.1:8787/anthropic',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(
+						result.current.handleSaveEditAgent,
+						'http://127.0.0.1:8787/openai',
+						'codex'
+					);
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.toolType).toBe('codex');
+				expect(updated.customPath).toBeUndefined();
+				expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787/openai');
+			});
 		});
 
 		const saveWithWorkingDirectory = (

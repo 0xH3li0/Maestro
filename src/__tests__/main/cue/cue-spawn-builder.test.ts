@@ -334,6 +334,53 @@ describe('cue-spawn-builder', () => {
 			}
 		});
 
+		describe("the agent's Local Models gateway", () => {
+			it('sets the base-URL variable on a local run', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8787/anthropic');
+				}
+			});
+
+			it("leaves the variable to the agent's own value", async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						gatewayUrl: 'http://127.0.0.1:8787',
+						customEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+					}),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.ANTHROPIC_BASE_URL).toBe('https://mine.example.com');
+				}
+			});
+
+			it('fails a run on an SSH remote whose gateway is loopback, without wrapping', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						gatewayUrl: 'http://127.0.0.1:8787',
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: sshStoreWithRemotes(),
+					}),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('http://127.0.0.1:8787');
+					expect(result.message).toContain('"Remote r1"');
+				}
+				expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			});
+		});
+
 		describe('SSH execution', () => {
 			it('calls wrapSpawnWithSsh when SSH is enabled', async () => {
 				const mockSshStore = sshStoreWithRemotes();

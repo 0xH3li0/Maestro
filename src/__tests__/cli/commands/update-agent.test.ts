@@ -336,6 +336,81 @@ describe('update-agent command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
+	describe('--gateway-url', () => {
+		function mockAgent(toolType: string) {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({ id: 'full-session-id', toolType } as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		it('sends the normalized URL in the config patch', async () => {
+			const sendCommand = mockAgent('claude-code');
+
+			await updateAgent('agent-1', { gatewayUrl: ' http://127.0.0.1:8787/anthropic/ ' });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				{
+					type: 'update_session_config',
+					sessionId: 'full-session-id',
+					configPatch: { gatewayUrl: 'http://127.0.0.1:8787/anthropic' },
+				},
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith('  Gateway URL: http://127.0.0.1:8787/anthropic');
+		});
+
+		it.each(['none', 'NONE', ''])('clears the gateway for %j', async (value) => {
+			const sendCommand = mockAgent('claude-code');
+
+			await updateAgent('agent-1', { gatewayUrl: value });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ configPatch: { gatewayUrl: null } }),
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith('  Gateway URL: (cleared)');
+		});
+
+		it('refuses a provider that cannot use a gateway, with the reason', async () => {
+			mockAgent('copilot-cli');
+
+			await updateAgent('agent-1', { gatewayUrl: 'http://127.0.0.1:8787' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('ignores base-URL variables')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a value that is not a URL', async () => {
+			mockAgent('codex');
+
+			await updateAgent('agent-1', { gatewayUrl: 'nope' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--gateway-url:'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('still clears a gateway left on a provider that cannot use one', async () => {
+			const sendCommand = mockAgent('copilot-cli');
+
+			await updateAgent('agent-1', { gatewayUrl: 'none' });
+
+			expect(formatError).not.toHaveBeenCalled();
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ configPatch: { gatewayUrl: null } }),
+				'update_session_config_result'
+			);
+		});
+	});
+
 	it('refuses --provider without --force', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({

@@ -311,6 +311,8 @@ maestro-cli create-agent "Reviewer" --env ANTHROPIC_BASE_URL=https://proxy.inter
 maestro-cli update-agent <agent-id> --clear-env   # remove all per-agent variables
 ```
 
+To send an agent's provider traffic through a proxy, prefer the agent's [Local Models gateway](/local-models#gateway) over setting a base-URL variable by hand: it picks the right variable for the provider and refuses a URL the agent could not reach. A base-URL variable you set here still wins over the gateway.
+
 The eye button parks a variable here too: the row keeps its key and value and stays editable, but the variable is not passed to the agent. Parked variables are stored separately and are never merged into a spawned process.
 
 Here the name suggestions are narrowed to the agent's provider: a Claude agent leads with `CLAUDE_CONFIG_DIR` and the `ANTHROPIC_*` variables, a Codex agent with `CODEX_HOME`. Names you have set before are offered too, which matters most for the ones no catalog can know about, like a company proxy or an internal token.

@@ -11,6 +11,7 @@ import {
 	resolveAgentEnvironment,
 	isBlankEnvValue,
 	isBlankEnvKey,
+	isEnvVarSet,
 	isValidEnvVarName,
 	stripBlankEnvVars,
 } from '../../shared/agentEnvironment';
@@ -131,9 +132,67 @@ describe('maskEnvValue', () => {
 
 describe('envSourceLabel', () => {
 	it('names each layer distinctly', () => {
-		const labels = (['global', 'agent', 'session'] as const).map(envSourceLabel);
-		expect(new Set(labels).size).toBe(3);
-		expect(labels).toEqual(['Global', 'Provider', 'This agent']);
+		const labels = (['global', 'agent', 'session', 'gateway'] as const).map(envSourceLabel);
+		expect(new Set(labels).size).toBe(4);
+		expect(labels).toEqual(['Global', 'Provider', 'This agent', 'Local Models gateway']);
+	});
+});
+
+describe('resolveAgentEnvironment: the gateway layer', () => {
+	const gateway = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8787' };
+
+	it('reports the gateway as the source, over a global value it shadows', () => {
+		const resolved = resolveAgentEnvironment({
+			global: { ANTHROPIC_BASE_URL: 'https://global.example.com' },
+			session: { OTHER: 'x' },
+			gateway,
+		});
+
+		expect(resolved.find((entry) => entry.key === 'ANTHROPIC_BASE_URL')).toEqual({
+			key: 'ANTHROPIC_BASE_URL',
+			value: 'http://127.0.0.1:8787',
+			source: 'gateway',
+			shadowedBy: ['global'],
+		});
+	});
+
+	it("leaves the variable to the agent's own value when it sets one", () => {
+		const resolved = resolveAgentEnvironment({
+			session: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+			gateway,
+		});
+
+		expect(resolved).toEqual([
+			{
+				key: 'ANTHROPIC_BASE_URL',
+				value: 'https://mine.example.com',
+				source: 'session',
+				shadowedBy: [],
+			},
+		]);
+	});
+
+	it('yields to the provider-level value only while the agent has no vars of its own', () => {
+		const agent = { ANTHROPIC_BASE_URL: 'https://provider.example.com' };
+
+		expect(resolveAgentEnvironment({ agent, gateway })[0].source).toBe('agent');
+		// An agent record, even an empty one, replaces the provider-level set.
+		expect(resolveAgentEnvironment({ agent, session: {}, gateway })[0].source).toBe('gateway');
+	});
+
+	it('applies over a blank value, which is an absence and not a choice', () => {
+		const resolved = resolveAgentEnvironment({ session: { ANTHROPIC_BASE_URL: ' ' }, gateway });
+
+		expect(resolved[0]).toMatchObject({ source: 'gateway', shadowedBy: ['session'] });
+	});
+});
+
+describe('isEnvVarSet', () => {
+	it('is true only for a real value', () => {
+		expect(isEnvVarSet({ A: 'x' }, 'A')).toBe(true);
+		expect(isEnvVarSet({ A: '  ' }, 'A')).toBe(false);
+		expect(isEnvVarSet({ A: 'x' }, 'B')).toBe(false);
+		expect(isEnvVarSet(undefined, 'A')).toBe(false);
 	});
 });
 

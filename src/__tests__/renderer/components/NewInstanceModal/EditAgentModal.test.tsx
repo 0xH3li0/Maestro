@@ -72,6 +72,16 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	}) as Session;
 
+/**
+ * Positions in `onSave`'s argument list that tests read by slot. Named here so
+ * an argument appended later does not shift what a test thought was "last".
+ */
+const SAVE_ARG = {
+	workingDirectory: 20,
+	codexAutoResetOnExhaustion: 21,
+	gatewayUrl: 22,
+} as const;
+
 describe('EditAgentModal', () => {
 	let theme: Theme;
 	let onClose: ReturnType<typeof vi.fn>;
@@ -223,9 +233,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBe('/home/user/moved-project');
+		// Anchored on the slot, not on distance from the end: arguments keep
+		// being appended after it.
+		expect(args[SAVE_ARG.workingDirectory]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -310,9 +320,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBeUndefined(); // workingDirectory unchanged
+		// Anchored on the slot, not on distance from the end: arguments keep
+		// being appended after it.
+		expect(args[SAVE_ARG.workingDirectory]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -520,7 +530,8 @@ describe('EditAgentModal', () => {
 				// provenance is recorded and P1 precedence stands (finding AD1)
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
-				false // codexAutoResetOnExhaustion: off by default
+				false, // codexAutoResetOnExhaustion: off by default
+				undefined // gatewayUrl: no Local Models gateway set
 			);
 		});
 
@@ -620,7 +631,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			undefined // gatewayUrl: no Local Models gateway set
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -857,7 +869,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			undefined // gatewayUrl: no Local Models gateway set
 		);
 	});
 
@@ -934,7 +947,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			undefined // gatewayUrl: no Local Models gateway set
 		);
 	});
 
@@ -1017,7 +1031,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			undefined // gatewayUrl: no Local Models gateway set
 		);
 	});
 
@@ -1443,7 +1458,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(true);
+			expect(args[SAVE_ARG.codexAutoResetOnExhaustion]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1456,7 +1471,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(false);
+			expect(args[SAVE_ARG.codexAutoResetOnExhaustion]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {
@@ -1473,6 +1488,107 @@ describe('EditAgentModal', () => {
 
 			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Local Models gateway', () => {
+		function renderWith(session: Session) {
+			return render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+		}
+
+		const field = () =>
+			screen.getByTestId('edit-agent-gateway').querySelector('input') as HTMLInputElement;
+
+		it("shows the agent's stored gateway and saves it unchanged", async () => {
+			renderWith(createSession({ gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(field().value).toBe('http://127.0.0.1:8787'));
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe('http://127.0.0.1:8787');
+		});
+
+		it('saves a typed gateway in its normalized form', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(field()).toBeInTheDocument());
+			fireEvent.change(field(), { target: { value: ' http://localhost:4000/anthropic/ ' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe('http://localhost:4000/anthropic');
+		});
+
+		it('clears the gateway when the field is emptied', async () => {
+			renderWith(createSession({ gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(field().value).toBe('http://127.0.0.1:8787'));
+			fireEvent.change(field(), { target: { value: '' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBeUndefined();
+		});
+
+		it('refuses to save a value that is not a URL, and says why', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(field()).toBeInTheDocument());
+			fireEvent.change(field(), { target: { value: 'nope' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent('not a URL');
+		});
+
+		it("says the gateway is not applied when the agent's own variable sets the base URL", async () => {
+			renderWith(
+				createSession({
+					gatewayUrl: 'http://127.0.0.1:8787',
+					customEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				})
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+					'Not applied: ANTHROPIC_BASE_URL'
+				)
+			);
+		});
+
+		it('disables the field for Copilot CLI with the reason', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'copilot-cli',
+					name: 'Copilot CLI',
+					available: true,
+					path: '/usr/local/bin/copilot',
+					binaryName: 'copilot',
+					hidden: false,
+				} as AgentConfig,
+			]);
+			renderWith(
+				createSession({
+					toolType: 'copilot-cli',
+					customPath: undefined,
+					customModel: undefined,
+					customEnvVars: undefined,
+				})
+			);
+
+			await waitFor(() => expect(field()).toBeDisabled());
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+				'ignores base-URL variables'
+			);
 		});
 	});
 });

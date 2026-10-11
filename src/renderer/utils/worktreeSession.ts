@@ -124,6 +124,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// Parked vars come along too, or the worktree agent silently loses the
 		// switched-off entries the user is keeping for later.
 		customEnvVarsDisabled: params.parentSession.customEnvVarsDisabled,
+		// Same provider, same environment, so the same gateway: a worktree agent
+		// that went direct while its parent was proxied would be a silent change.
+		gatewayUrl: params.parentSession.gatewayUrl,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,

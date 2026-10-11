@@ -44,6 +44,8 @@ export interface CueExecutionConfig {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** The agent's Local Models gateway URL, applied by the launch plan. */
+	gatewayUrl?: string;
 	customModel?: string;
 	customEffort?: string;
 	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */

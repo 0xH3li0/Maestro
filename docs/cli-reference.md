@@ -1065,6 +1065,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                       | -       |
 | `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                 | `[]`    |
 | `--clear-env`                     | Clear all per-agent environment variables                                                      | -       |
+| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                | -       |
 | `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                        | -       |
 | `--effort <level>`                | Effort/reasoning level override (empty string clears)                                          | -       |
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |

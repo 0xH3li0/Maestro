@@ -537,6 +537,7 @@ export interface AgentDetailDisplay {
 	customPath?: string | null;
 	customArgs?: string | null;
 	customEnvVars?: Record<string, string> | null;
+	gatewayUrl?: string | null;
 	customModel?: string | null;
 	customEffort?: string | null;
 	customContextWindow?: number | null;
@@ -629,6 +630,7 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	if (agent.customEnvVars && Object.keys(agent.customEnvVars).length > 0) {
 		addConfig('Env vars', Object.keys(agent.customEnvVars).join(', '));
 	}
+	addConfig('Gateway URL', agent.gatewayUrl ? dim(agent.gatewayUrl) : undefined);
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);
 	}

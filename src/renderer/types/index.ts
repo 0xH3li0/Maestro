@@ -1578,6 +1578,10 @@ export interface Session {
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
 	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
 	customEnvVarsDisabled?: Record<string, string>;
+	// Local Models gateway: an HTTP proxy this agent's provider traffic goes
+	// through. Applied at launch as the provider's base-URL variable unless the
+	// agent's own env vars already set it. See shared/local-models/gateway.ts.
+	gatewayUrl?: string;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

@@ -1,10 +1,11 @@
 /**
  * LocalModelsTab - the core Local Models settings tab.
  *
- * Three sections, each owning one half of "what runs where":
+ * Four sections. The first three each own one half of "what runs where":
  * - Models: what is installed on this machine (and what the catalog offers).
  * - Endpoints: model servers Maestro can call instead of loading a model itself.
  * - Assignments: which source runs each housekeeping task in `LOCAL_MODEL_TASKS`.
+ * - Gateway: the proxy each agent's own provider traffic goes through, if any.
  *
  * It is a CORE tab, not an Encore Feature, and it starts empty: opening it
  * reads what is on disk and downloads nothing. Every download, detection, and test
@@ -16,12 +17,13 @@
  * an enabled endpoint is listed once rather than once per section.
  */
 
-import { HardDrive, ListChecks, Server } from 'lucide-react';
+import { HardDrive, ListChecks, Router, Server } from 'lucide-react';
 import { useLocalModelEndpoints, useLocalModels } from '../../../../hooks/localModels';
 import type { Theme } from '../../../../types';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
+import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 
 export interface LocalModelsTabProps {
@@ -61,6 +63,16 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 					Assignments
 				</SettingsSectionHeading>
 				<LocalModelsAssignmentsSection theme={theme} models={models} endpoints={endpoints} />
+			</div>
+
+			<div data-setting-id="local-models-gateway">
+				<SettingsSectionHeading
+					icon={Router}
+					description="Send an agent's provider traffic through a proxy such as Headroom or LiteLLM."
+				>
+					Gateway
+				</SettingsSectionHeading>
+				<LocalModelsGatewaySection theme={theme} />
 			</div>
 		</div>
 	);

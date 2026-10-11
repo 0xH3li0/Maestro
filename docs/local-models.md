@@ -170,6 +170,39 @@ The **Secret screen** task adds a model pass on top of the pattern check. It is 
 
 The check is a safety net. It does not find every secret, and a clean result is not a guarantee. Read what you publish.
 
+## Gateway
+
+A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
+
+A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro sets the provider's base-URL variable to that URL:
+
+| Provider    | Variable                                                                |
+| ----------- | ----------------------------------------------------------------------- |
+| Claude Code | `ANTHROPIC_BASE_URL`                                                    |
+| Codex       | `OPENAI_BASE_URL`                                                       |
+| Copilot CLI | None. Copilot CLI ignores base-URL variables, so the field is disabled. |
+| OpenCode    | None. It sets a base URL per model provider in its own config file.     |
+| Others      | None known to Maestro. The field is disabled and says so.               |
+
+Four rules:
+
+- **Your own variable wins.** If the agent's environment variables already set the base-URL variable, Maestro leaves your value alone and the gateway is not applied. The field says so. The gateway does win over a value set for every agent in Settings -> Environment, because a gateway on one agent is the more specific choice.
+- **A gateway that cannot be used stops the agent.** The agent does not start, and the message names the gateway. Maestro never sends the turn to a different endpoint than the one you chose. If the proxy is not running, the agent's own connection error is what you see.
+- **A loopback gateway does not work for an SSH remote agent.** `http://127.0.0.1:8787` on this machine is a different machine from the remote host's point of view, so the agent is refused at launch. Give it a URL the remote host can reach.
+- **It covers the agent's own turns.** Chat, Auto Run, Cue runs, and `maestro-cli send` go through the gateway. Housekeeping that Maestro runs for an agent (tab naming, context grooming, a Group Chat turn) does not.
+
+Each row with a gateway has **Show environment**, which lists the agent's effective environment variables and where each came from. The base-URL variable is marked **Local Models gateway**, or marked with the layer that beat it.
+
+An agent on a subscription login (Claude or Codex) saves quota, not dollars. Sending its traffic through a proxy is your choice for each agent, and you are responsible for your provider's terms.
+
+From the command line:
+
+```bash
+maestro-cli update-agent <agent-id> --gateway-url http://127.0.0.1:8787
+maestro-cli update-agent <agent-id> --gateway-url none
+maestro-cli show agent <agent-id> --json   # gatewayUrl
+```
+
 ## Privacy
 
 A downloaded model runs inside Maestro, so the text it reads never leaves your machine. An endpoint at a loopback address (`127.0.0.1`, `localhost`, `::1`) is also on your machine.

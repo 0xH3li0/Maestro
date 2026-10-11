@@ -129,4 +129,26 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'progress',
 		],
 	},
+	{
+		id: 'local-models-gateway',
+		tab: TAB,
+		tabLabel: TAB_LABEL,
+		label: 'Gateway',
+		description:
+			"Send an agent's provider traffic through a proxy such as Headroom or LiteLLM, set per agent",
+		keywords: [
+			'gateway',
+			'proxy',
+			'base url',
+			'ANTHROPIC_BASE_URL',
+			'OPENAI_BASE_URL',
+			'headroom',
+			'litellm',
+			'token',
+			'tokens',
+			'compression',
+			'conservation',
+			'agent',
+		],
+	},
 ];

@@ -1538,6 +1538,7 @@ app
 					customPath: resolvedAgentPath,
 					customArgs: storedSession.customArgs,
 					customEnvVars: storedSession.customEnvVars,
+					gatewayUrl: storedSession.gatewayUrl,
 					customModel: storedSession.customModel,
 					customEffort: storedSession.customEffort,
 					// Claude token-source selection (TUI / API / dynamic), read from

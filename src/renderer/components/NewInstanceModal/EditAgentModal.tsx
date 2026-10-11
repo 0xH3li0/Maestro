@@ -23,6 +23,8 @@ import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSec
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
+import { GatewayUrlField } from '../shared/GatewayUrlField';
+import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
@@ -72,6 +74,9 @@ export function EditAgentModal({
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
 	// Vars the user switched off: listed and editable, never passed to the agent.
 	const [customEnvVarsDisabled, setCustomEnvVarsDisabled] = useState<Record<string, string>>({});
+	// Local Models gateway URL, and the reason the last save refused it.
+	const [gatewayUrl, setGatewayUrl] = useState('');
+	const [gatewayUrlError, setGatewayUrlError] = useState<string | undefined>(undefined);
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
 	// SSH default - TUI - applies), false = explicit API, true = explicit
 	// maestro-p. Coercing undefined->false here (or false->undefined on save)
@@ -307,6 +312,9 @@ export function EditAgentModal({
 			setCustomArgs('');
 			setCustomEnvVars({});
 			setCustomEnvVarsDisabled({});
+			// A gateway URL is provider-specific (it names a proxy that speaks one
+			// provider's API), so it does not carry across a switch.
+			setGatewayUrl('');
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -317,6 +325,7 @@ export function EditAgentModal({
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
 			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
+			setGatewayUrl(session.gatewayUrl ?? '');
 			// Preserve the tri-state (undefined stays undefined) so an unconfigured
 			// SSH agent keeps its "unset" signal instead of looking like explicit API.
 			setEnableMaestroP(session.enableMaestroP);
@@ -485,6 +494,14 @@ export function EditAgentModal({
 		const result = validateEditSession(name, session.id, existingSessions);
 		if (!result.valid || workingDirError || newWorkingDirUnverified) return;
 
+		// A gateway the launch would refuse is refused here instead, where the
+		// user can still fix it. Blank clears the gateway.
+		const gatewayEdit = parseGatewayUrlEdit(selectedToolType, gatewayUrl);
+		if (!gatewayEdit.ok) {
+			setGatewayUrlError(gatewayEdit.error);
+			return;
+		}
+
 		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
 		const modelValue = agentConfig.model?.trim() ?? undefined;
@@ -556,7 +573,8 @@ export function EditAgentModal({
 			contextWindowSource,
 			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
 			workingDirChanged ? trimmedWorkingDir : undefined,
-			codexAutoReset
+			codexAutoReset,
+			gatewayEdit.gatewayUrl ?? undefined
 		);
 		onClose();
 	}, [
@@ -574,6 +592,7 @@ export function EditAgentModal({
 		customArgs,
 		customEnvVars,
 		customEnvVarsDisabled,
+		gatewayUrl,
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
@@ -964,6 +983,37 @@ export function EditAgentModal({
 						/>
 					</div>
 				)}
+
+				{/* Local Models gateway. Rendered for every provider: one that cannot
+				    use a gateway shows the field disabled with the reason. */}
+				<div data-testid="edit-agent-gateway">
+					<GatewayUrlField
+						theme={theme}
+						label="Local Models Gateway"
+						toolType={selectedToolType}
+						value={gatewayUrl}
+						onChange={(value) => {
+							setGatewayUrl(value);
+							setGatewayUrlError(undefined);
+						}}
+						// The agent's own vars replace the provider-level set, so the
+						// provider-level set only counts when the agent has none.
+						userEnvVars={
+							Object.keys(customEnvVars).length > 0
+								? customEnvVars
+								: (globalConfigRef.current.customEnvVars as Record<string, string> | undefined)
+						}
+						sshRemoteName={
+							isSshEnabled
+								? (sshRemotes.find((r) => r.id === sshRemoteConfig?.remoteId)?.name ??
+									sshRemoteConfig?.remoteId ??
+									undefined)
+								: undefined
+						}
+						error={gatewayUrlError}
+						testId="edit-agent-gateway-url"
+					/>
+				</div>
 
 				{/* SSH Remote Execution - Top Level.
 				    Always rendered (not gated on sshRemotes.length) because the

@@ -377,6 +377,30 @@ describe('show-agent command', () => {
 			expect(parsed.worktreeBasePath).toBe('/project-worktrees');
 		});
 
+		it("reports the agent's Local Models gateway, the read for update-agent --gateway-url", () => {
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' })
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBe(
+				'http://127.0.0.1:8787/anthropic'
+			);
+		});
+
+		it('reports gatewayUrl as null for an agent with no gateway', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBeNull();
+		});
+
 		it('should report worktreeBasePath as null when no worktree directory is configured', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession({ worktreeConfig: undefined }));
 			vi.mocked(readGroups).mockReturnValue([]);

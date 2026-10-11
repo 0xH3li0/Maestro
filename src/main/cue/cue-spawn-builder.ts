@@ -84,6 +84,7 @@ export async function buildSpawnSpec(
 		customPath,
 		customArgs,
 		customEnvVars,
+		gatewayUrl,
 		customModel,
 		customEffort,
 		sshStore,
@@ -158,6 +159,9 @@ export async function buildSpawnSpec(
 				| undefined
 		),
 		sessionCustomEnvVars: sanitizeLayer(customEnvVars),
+		// The agent's Local Models gateway. A gateway that cannot be used (a
+		// loopback URL for an SSH remote) fails the run by name below.
+		gateway: { toolType, url: gatewayUrl },
 		// A Cue run is a Cue run no matter what the agent's env overrides say.
 		// Without this every downstream consumer of the spawned process (Claude
 		// Code hooks, telemetry sidecars) sees a turn indistinguishable from one

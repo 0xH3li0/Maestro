@@ -98,7 +98,9 @@ export interface EditAgentModalProps {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Local Models gateway URL, already validated; `undefined` clears it. */
+		gatewayUrl?: string
 	) => void;
 	theme: Theme;
 	session: Session | null;

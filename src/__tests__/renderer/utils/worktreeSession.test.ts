@@ -28,6 +28,7 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		customArgs: ['--verbose'],
 		customEnvVars: { KEY: 'val' },
 		customEnvVarsDisabled: { PARKED: 'later' },
+		gatewayUrl: 'http://127.0.0.1:8787',
 		customModel: 'opus',
 		customContextWindow: 200000,
 		contextWindowSource: 'user-edited' as const,
@@ -74,6 +75,9 @@ describe('buildWorktreeSession', () => {
 		// Parked vars come along too, or the worktree agent silently loses the
 		// switched-off entries the user is keeping for later.
 		expect(session.customEnvVarsDisabled).toEqual({ PARKED: 'later' });
+		// The gateway too: a worktree agent that went direct while its parent
+		// was proxied would be a silent change of endpoint.
+		expect(session.gatewayUrl).toBe('http://127.0.0.1:8787');
 		expect(session.customModel).toBe('opus');
 		expect(session.customContextWindow).toBe(200000);
 		// Provenance travels with the value (finding AD1): inheriting the number

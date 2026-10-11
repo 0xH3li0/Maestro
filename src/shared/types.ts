@@ -289,6 +289,12 @@ export interface SessionInfo {
 	 * can be turned back on without retyping its value.
 	 */
 	customEnvVarsDisabled?: Record<string, string>;
+	/**
+	 * Local Models gateway: an HTTP proxy this agent's provider traffic goes
+	 * through, set at launch as the provider's base-URL variable unless the
+	 * agent's own vars already set it (see `shared/local-models/gateway.ts`).
+	 */
+	gatewayUrl?: string;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

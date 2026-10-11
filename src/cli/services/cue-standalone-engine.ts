@@ -257,6 +257,7 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			customPath: getAgentCustomPath(storedSession.toolType),
 			customArgs: storedSession.customArgs,
 			customEnvVars: storedSession.customEnvVars,
+			gatewayUrl: storedSession.gatewayUrl,
 			customModel: storedSession.customModel,
 			customEffort: storedSession.customEffort,
 			enableMaestroP: storedSession.enableMaestroP,

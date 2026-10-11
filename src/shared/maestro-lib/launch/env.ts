@@ -413,6 +413,15 @@ export interface AgentEnvLayers {
 	 */
 	sessionCustomEnvVars?: Record<string, string>;
 	/**
+	 * The base-URL variable the agent's Local Models gateway sets
+	 * (`resolveAgentGateway`). The launch plan passes it ONLY when the user
+	 * layer above does not set that variable itself, so where it sits relative
+	 * to that layer never decides a value; it sits above the provider defaults,
+	 * the global Settings vars and the inherited environment, because a gateway
+	 * chosen for one agent is more specific than any of them.
+	 */
+	gatewayEnvVars?: Record<string, string>;
+	/**
 	 * The provider's `readOnlyEnvOverrides`, passed only for a read-only turn.
 	 * Applied over everything the user set: read-only enforcement must not be
 	 * undone by a per-agent var.
@@ -425,7 +434,8 @@ export interface AgentEnvLayers {
  * first:
  *
  *   defaultEnvVars < batchModeEnvVars
- *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
+ *     < readOnlyEnvOverrides
  *
  * The same on every surface. This is the record that crosses to an SSH remote,
  * where `process.env` does not exist, and the one Process Details shows. The
@@ -442,6 +452,7 @@ export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, stri
 		...(layers.defaultEnvVars ?? {}),
 		...(layers.batchModeEnvVars ?? {}),
 		...(userEnvVars ?? {}),
+		...(layers.gatewayEnvVars ?? {}),
 		...(layers.readOnlyEnvOverrides ?? {}),
 	};
 	for (const key of Object.keys(merged)) {
@@ -487,8 +498,8 @@ export function buildAgentEnvironment(options: BuildAgentEnvironmentOptions): No
  * Desktop chat:
  *
  *   process.env < globalShellEnvVars < defaultEnvVars
- *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
- *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
+ *     < readOnlyEnvOverrides < maestroEnvVars < MAESTRO_QUERY_SOURCE
  *
  * `process.env` is inherited with the Electron/IDE/caller-identity vars in
  * `STRIPPED_ENV_VARS` removed, PATH rebuilt, and BROWSER disarmed (see
@@ -512,12 +523,13 @@ function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): No
  * The CLI (`maestro-cli send`, Auto Run, playbooks):
  *
  *   defaultEnvVars and batchModeEnvVars fill only what the shell has NOT set
- *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
- *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
+ *     < readOnlyEnvOverrides < maestroEnvVars < MAESTRO_QUERY_SOURCE
  *
  * The shell wins over the provider defaults, so a value exported in the shell
  * that runs the command survives; the user's own vars override it, because the
- * user explicitly opted into them. `process.env` is inherited as it is, with
+ * user explicitly opted into them, and so does the agent's gateway, which the
+ * user set on this one agent. `process.env` is inherited as it is, with
  * PATH expanded. Values are written as given: no `~/` expansion, and a blank
  * value is exported blank. MAESTRO_SESSION_RESUMED is set for a resumed turn
  * and cleared otherwise, as on desktop, so a marker inherited from the shell
@@ -539,6 +551,7 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 		if (!env[key]) env[key] = value;
 	}
 	Object.assign(env, options.sessionCustomEnvVars ?? options.agentCustomEnvVars ?? {});
+	Object.assign(env, options.gatewayEnvVars ?? {});
 	Object.assign(env, options.readOnlyEnvOverrides ?? {});
 	Object.assign(env, options.maestroEnvVars ?? {});
 	env[QUERY_SOURCE_ENV_VAR] = options.querySource ?? DEFAULT_QUERY_SOURCE;
@@ -549,7 +562,8 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
  * Cue:
  *
  *   process.env < defaultEnvVars < (sessionCustomEnvVars ?? agentCustomEnvVars)
- *     < readOnlyEnvOverrides < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *     < gatewayEnvVars < readOnlyEnvOverrides < maestroEnvVars
+ *     < MAESTRO_QUERY_SOURCE
  *
  * `process.env` is inherited as it is, with PATH rebuilt the way the desktop
  * agent spawn rebuilds it (a Dock or Finder launch hands Maestro launchd's bare

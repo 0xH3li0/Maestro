@@ -253,6 +253,21 @@ export async function handleProcessSpawn(
 	// the FINAL prompt (system prompt and preambles folded in), with the same
 	// shared function.
 	// ========================================================================
+	// The agent's stored record. Read once here for the two things only it can
+	// say: its Local Models gateway (below) and whether it is Pianola (further
+	// down). The gateway is read from the store, not from the renderer's spawn
+	// request, because a dozen-odd renderer call sites build that request and
+	// one that forgot the field would send the agent's traffic direct with
+	// nothing to show for it. Every surface that edits a gateway flushes the
+	// agent to this store before reporting success.
+	const storedAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			isPianola?: boolean;
+			gatewayUrl?: string;
+		}>
+	).find((s) => s?.id === baseSessionId);
+
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
 	if (config.toolType !== 'terminal') {
 		const planResult = buildAgentLaunchPlan({
@@ -267,11 +282,15 @@ export async function handleProcessSpawn(
 			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
 			readOnlyMode: isReadOnly,
+			gateway: { toolType: config.toolType, url: storedAgent?.gatewayUrl },
 			sshRemoteConfig: config.sessionSshRemoteConfig,
 			sshStore: createSshRemoteStoreAdapter(settingsStore),
 		});
 		if (!planResult.ok) {
-			logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
+			// Either the SSH remote could not be resolved or the agent's gateway
+			// cannot be used; `reason` says which. Both refuse the spawn rather
+			// than run the turn somewhere the user did not choose.
+			logger.error('Launch plan refused; not spawning', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				remoteId: config.sessionSshRemoteConfig?.remoteId,
 				reason: planResult.reason,
@@ -280,6 +299,13 @@ export async function handleProcessSpawn(
 			return { success: false, pid: 0 };
 		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
+		if (planResult.plan.gateway) {
+			logger.info(`Routing ${config.toolType} through its Local Models gateway`, LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				envVar: planResult.plan.gateway.envVar,
+				gatewayUrl: planResult.plan.gateway.url,
+			});
+		}
 	} else {
 		effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
 	}
@@ -297,9 +323,7 @@ export async function handleProcessSpawn(
 	// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
 	// Injected into effectiveCustomEnvVars so it flows through both the local
 	// and SSH env-merge paths below.
-	const isPianolaSession = (
-		deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>
-	).some((s) => s?.id === baseSessionId && s?.isPianola === true);
+	const isPianolaSession = storedAgent?.isPianola === true;
 	if (isPianolaSession) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),

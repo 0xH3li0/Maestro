@@ -229,4 +229,132 @@ describe('buildAgentLaunchPlan', () => {
 		expect(readOnly.plan.envVars).toEqual({ A: 'read-only' });
 		expect(plain.plan.envVars).toEqual({ A: 'default' });
 	});
+
+	describe("the agent's Local Models gateway", () => {
+		const url = 'http://127.0.0.1:8787';
+
+		it.each([
+			['claude-code', 'ANTHROPIC_BASE_URL'],
+			['codex', 'OPENAI_BASE_URL'],
+		])('sets the base-URL variable for %s on every surface', (toolType, envVar) => {
+			for (const surface of ['desktop', 'cli', 'cue'] as const) {
+				const result = buildAgentLaunchPlan(input({ surface, gateway: { toolType, url } }));
+
+				if (!result.ok) throw new Error(result.error);
+				expect(result.plan.gateway).toEqual({ envVar, url });
+				expect(result.plan.envVars).toMatchObject({ [envVar]: url });
+				expect(result.plan.env?.[envVar]).toBe(url);
+			}
+		});
+
+		it('beats the provider defaults, the global Settings vars and the inherited value', () => {
+			process.env.OPENAI_BASE_URL = 'https://from-the-shell.example.com';
+			for (const surface of ['desktop', 'cli', 'cue'] as const) {
+				const result = buildAgentLaunchPlan(
+					input({
+						surface,
+						agent: { defaultEnvVars: { OPENAI_BASE_URL: 'https://default.example.com' } },
+						globalShellEnvVars: { OPENAI_BASE_URL: 'https://global.example.com' },
+						gateway: { toolType: 'codex', url },
+					})
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				expect(result.plan.env?.OPENAI_BASE_URL).toBe(url);
+			}
+		});
+
+		it("yields to the variable in the agent's own vars", () => {
+			for (const surface of ['desktop', 'cli', 'cue'] as const) {
+				const result = buildAgentLaunchPlan(
+					input({
+						surface,
+						sessionCustomEnvVars: { OPENAI_BASE_URL: 'https://mine.example.com' },
+						gateway: { toolType: 'codex', url },
+					})
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				expect(result.plan.gateway).toBeUndefined();
+				expect(result.plan.envVars?.OPENAI_BASE_URL).toBe('https://mine.example.com');
+				expect(result.plan.env?.OPENAI_BASE_URL).toBe('https://mine.example.com');
+			}
+		});
+
+		it('yields to the provider-level var only when the agent has no vars of its own', () => {
+			const providerLevel = { OPENAI_BASE_URL: 'https://provider.example.com' };
+
+			const inherited = buildAgentLaunchPlan(
+				input({ agentCustomEnvVars: providerLevel, gateway: { toolType: 'codex', url } })
+			);
+			// The agent's own record replaces the provider-level set, so that
+			// set's base URL never reaches the process and cannot win.
+			const replaced = buildAgentLaunchPlan(
+				input({
+					agentCustomEnvVars: providerLevel,
+					sessionCustomEnvVars: { OTHER: 'x' },
+					gateway: { toolType: 'codex', url },
+				})
+			);
+
+			if (!inherited.ok || !replaced.ok) throw new Error('plan failed');
+			expect(inherited.plan.envVars?.OPENAI_BASE_URL).toBe('https://provider.example.com');
+			expect(replaced.plan.envVars?.OPENAI_BASE_URL).toBe(url);
+		});
+
+		it('leaves an agent with no gateway alone', () => {
+			const result = buildAgentLaunchPlan(input({ gateway: { toolType: 'codex', url: '' } }));
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.gateway).toBeUndefined();
+			expect(result.plan.envVars).toBeUndefined();
+		});
+
+		it('refuses a loopback gateway for an SSH remote, by name, instead of running without it', () => {
+			const result = buildAgentLaunchPlan(
+				input({
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: storeWith(remote()),
+					gateway: { toolType: 'codex', url },
+				})
+			);
+
+			expect(result).toMatchObject({ ok: false, reason: 'gateway-loopback-on-remote' });
+			if (result.ok) throw new Error('expected failure');
+			expect(result.error).toContain(url);
+			expect(result.error).toContain('"Build Box"');
+		});
+
+		it('carries a reachable gateway to an SSH remote in the remote env record', () => {
+			const result = buildAgentLaunchPlan(
+				input({
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: storeWith(remote()),
+					gateway: { toolType: 'codex', url: 'https://proxy.example.com' },
+				})
+			);
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.target.kind).toBe('remote');
+			expect(result.plan.envVars).toEqual({ OPENAI_BASE_URL: 'https://proxy.example.com' });
+		});
+
+		it('refuses a gateway on a provider that cannot use one', () => {
+			const result = buildAgentLaunchPlan(input({ gateway: { toolType: 'copilot-cli', url } }));
+
+			expect(result).toMatchObject({ ok: false, reason: 'gateway-unsupported-provider' });
+		});
+
+		it('reports an unresolvable SSH remote before it looks at the gateway', () => {
+			const result = buildAgentLaunchPlan(
+				input({
+					sshRemoteConfig: { enabled: true, remoteId: 'gone' },
+					sshStore: storeWith(),
+					gateway: { toolType: 'codex', url },
+				})
+			);
+
+			expect(result).toMatchObject({ ok: false, reason: 'remote-not-found' });
+		});
+	});
 });

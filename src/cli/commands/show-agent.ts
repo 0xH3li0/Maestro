@@ -85,6 +85,8 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			customPath: agent.customPath ?? null,
 			customArgs: agent.customArgs ?? null,
 			customEnvVars: agent.customEnvVars ?? null,
+			// Local Models gateway (settable with `update-agent --gateway-url`).
+			gatewayUrl: agent.gatewayUrl ?? null,
 			customModel: agent.customModel ?? null,
 			customEffort: agent.customEffort ?? null,
 			customContextWindow: agent.customContextWindow ?? null,

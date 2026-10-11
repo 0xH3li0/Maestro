@@ -15,6 +15,12 @@
  * SSH remote that cannot be resolved: that fails on every surface, where
  * desktop and Cue used to run the agent LOCALLY against the remote's path.
  *
+ * An agent's Local Models gateway is applied here too, the same way on every
+ * surface: its base-URL variable is set unless the agent's own vars already
+ * set it, and a gateway that cannot work (a loopback URL for an SSH remote, a
+ * provider with no base-URL variable) fails the launch by name rather than
+ * sending the turn to another endpoint.
+ *
  * Pure apart from reading `process.env` (through `buildAgentEnvironment`): no
  * spawning, no I/O. A plan for an SSH remote describes the remote invocation;
  * the caller hands it to the SSH wrapper, which owns building the ssh command.
@@ -23,6 +29,7 @@
 import { isWindows } from '../../platformDetection';
 import type { QuerySource } from '../../querySource';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../types';
+import { resolveAgentGateway, type AgentGatewayRefusalCode } from '../../local-models/gateway';
 import { buildAgentEnvironment, resolveAgentEnvVars, type AgentEnvSurface } from './env';
 import {
 	resolvePromptDelivery,
@@ -82,6 +89,11 @@ export interface AgentLaunchInput {
 	querySource?: QuerySource;
 	/** Local only: directories to put in front of PATH. */
 	extraPathDirs?: string[];
+	/**
+	 * The agent's Local Models gateway: its provider and its stored URL. Omit
+	 * (or leave the URL blank) for an agent with none.
+	 */
+	gateway?: { toolType: string; url?: string | null };
 
 	/** The agent's SSH setting, and where to look its remote up. */
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
@@ -108,6 +120,11 @@ interface LaunchPlanCommon {
 	 * Process Details shows as "set by Maestro".
 	 */
 	envVars: Record<string, string> | undefined;
+	/**
+	 * The gateway this launch goes through, when `envVars` carries its base-URL
+	 * variable. Undefined when the agent has none or sets the variable itself.
+	 */
+	gateway: { envVar: string; url: string } | undefined;
 }
 
 export type AgentLaunchPlan =
@@ -126,13 +143,15 @@ export type AgentLaunchPlanResult =
 	| { ok: true; plan: AgentLaunchPlan }
 	| {
 			ok: false;
-			reason: Extract<SshLaunchTarget, { kind: 'unresolved' }>['reason'];
+			reason: Extract<SshLaunchTarget, { kind: 'unresolved' }>['reason'] | AgentGatewayRefusalCode;
 			error: string;
 	  };
 
 /**
  * Plan an agent launch. Fails, before anything is spawned, when SSH is on and
- * no usable remote is configured; never falls back to running locally.
+ * no usable remote is configured (it never falls back to running locally), and
+ * when the agent's gateway cannot be used (it never falls back to running
+ * without it).
  */
 export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanResult {
 	const target = resolveSshLaunchTarget(input.sshStore, input.sshRemoteConfig);
@@ -141,12 +160,25 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 	}
 
 	const agent = input.agent;
+	const gateway = resolveAgentGateway({
+		toolType: input.gateway?.toolType ?? '',
+		gatewayUrl: input.gateway?.url,
+		// The same "own vars replace the provider-level set" rule the layers use.
+		userEnvVars: input.sessionCustomEnvVars ?? input.agentCustomEnvVars,
+		remote: target.kind === 'remote' ? { name: target.remote.name } : null,
+	});
+	if (gateway.kind === 'refused') {
+		return { ok: false, reason: gateway.code, error: gateway.message };
+	}
+	const planGateway =
+		gateway.kind === 'inject' ? { envVar: gateway.envVar, url: gateway.url } : undefined;
 	const layers = {
 		defaultEnvVars: agent?.defaultEnvVars,
 		batchModeEnvVars: input.batchMode ? agent?.batchModeEnvVars : undefined,
 		globalShellEnvVars: input.globalShellEnvVars,
 		agentCustomEnvVars: input.agentCustomEnvVars,
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
+		gatewayEnvVars: gateway.kind === 'inject' ? gateway.envVars : undefined,
 		readOnlyEnvOverrides: input.readOnlyMode ? agent?.readOnlyEnvOverrides : undefined,
 	};
 	const layered = resolveAgentEnvVars(layers);
@@ -177,6 +209,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 				prompt,
 				stdin: undefined,
 				envVars,
+				gateway: planGateway,
 				env: undefined,
 			},
 		};
@@ -196,6 +229,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			prompt,
 			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? input.prompt : undefined,
 			envVars,
+			gateway: planGateway,
 			env: buildAgentEnvironment({
 				...layers,
 				surface: input.surface,

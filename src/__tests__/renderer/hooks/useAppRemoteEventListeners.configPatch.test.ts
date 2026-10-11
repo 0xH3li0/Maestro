@@ -79,6 +79,67 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
+/** Dispatch a patch the handler is expected to refuse; returns its reply. */
+async function refusePatch(session: Session, configPatch: Record<string, unknown>) {
+	const deps = makeDeps(session);
+	renderHook(() => useAppRemoteEventListeners(deps));
+
+	await act(async () => {
+		window.dispatchEvent(
+			new CustomEvent('maestro:remoteUpdateSessionConfig', {
+				detail: { sessionId: session.id, configPatch, responseChannel: RESPONSE_CHANNEL },
+			})
+		);
+		await Promise.resolve();
+	});
+
+	expect(
+		(deps as unknown as { setSessions: ReturnType<typeof vi.fn> }).setSessions
+	).not.toHaveBeenCalled();
+	const respond = (window.maestro.process as unknown as Record<string, ReturnType<typeof vi.fn>>)
+		.sendRemoteUpdateSessionConfigResponse;
+	return respond.mock.calls[0][1] as { success: boolean; error?: string };
+}
+
+describe('remoteUpdateSessionConfig - Local Models gateway', () => {
+	it('stores a gateway URL in its normalized form and flushes it to main', async () => {
+		const session = makeSession();
+		const updated = await applyPatch(session, { gatewayUrl: 'http://127.0.0.1:8787/anthropic/' });
+
+		expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787/anthropic');
+		// The desktop spawn reads the gateway from main's store, so the write
+		// must not wait on the debounced persistence.
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: session.id, gatewayUrl: 'http://127.0.0.1:8787/anthropic' })],
+			[]
+		);
+	});
+
+	it('clears the gateway on null', async () => {
+		const updated = await applyPatch(makeSession({ gatewayUrl: 'http://127.0.0.1:8787' }), {
+			gatewayUrl: null,
+		});
+
+		expect(updated.gatewayUrl).toBeUndefined();
+	});
+
+	it('refuses a gateway for a provider that cannot use one, and writes nothing', async () => {
+		const reply = await refusePatch(makeSession({ toolType: 'copilot-cli' }), {
+			gatewayUrl: 'http://127.0.0.1:8787',
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('ignores base-URL variables');
+	});
+
+	it('refuses a value that is not a URL, even beside a valid field', async () => {
+		const reply = await refusePatch(makeSession(), { gatewayUrl: 'nope', customModel: 'opus' });
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('not a URL');
+	});
+});
+
 describe('remoteUpdateSessionConfig - context window provenance (finding AD1)', () => {
 	it('writes contextWindowSource through the editable-key allowlist', async () => {
 		// Without the allowlist entry the CLI writes the number but not its

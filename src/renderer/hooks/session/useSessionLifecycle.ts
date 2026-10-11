@@ -41,6 +41,7 @@ import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
+import { flushAgentToStore } from '../../services/agentGateway';
 import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -97,7 +98,9 @@ export interface SessionLifecycleReturn {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Local Models gateway URL, already validated; `undefined` clears it. */
+		gatewayUrl?: string
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -188,7 +191,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** New working directory; `undefined` when the user left it unchanged. */
 			workingDirectory?: string,
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-			codexAutoResetOnExhaustion?: boolean
+			codexAutoResetOnExhaustion?: boolean,
+			/** Local Models gateway URL, already validated; `undefined` clears it. */
+			gatewayUrl?: string
 		) => {
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
@@ -218,6 +223,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					customArgs,
 					customEnvVars,
 					customEnvVarsDisabled,
+					gatewayUrl,
 					customModel,
 					customEffort,
 					customContextWindow,
@@ -253,6 +259,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customArgs: undefined,
 						customEnvVars: undefined,
 						customEnvVarsDisabled: undefined,
+						// `gatewayUrl` is NOT cleared here: the dialog empties its
+						// gateway field on a provider switch and validates whatever is
+						// typed afterwards against the NEW provider, so the value in
+						// `updatedFields` is already the right one.
 						customModel: undefined,
 						customEffort: undefined,
 						customContextWindow: undefined,
@@ -275,6 +285,14 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				const next = { ...s, ...updatedFields };
 				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 			});
+
+			// The desktop spawn reads the gateway from the main-process store, which
+			// the debounced persistence would not reach for two seconds. Flush now
+			// so a message sent straight after this save goes where the user just
+			// said it should.
+			if ((current?.gatewayUrl ?? undefined) !== gatewayUrl) {
+				void flushAgentToStore(sessionId);
+			}
 		},
 		[]
 	);

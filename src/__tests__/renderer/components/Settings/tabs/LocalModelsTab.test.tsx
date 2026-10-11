@@ -23,12 +23,14 @@ const theme = {
 } as unknown as Theme;
 
 describe('LocalModelsTab', () => {
-	it('renders the Models, Endpoints, and Assignments sections', () => {
+	it('renders the Models, Endpoints, Assignments, and Gateway sections', () => {
 		render(<LocalModelsTab theme={theme} />);
 		expect(screen.getByTestId('local-models-tab')).toBeInTheDocument();
 		expect(screen.getByText('Models')).toBeInTheDocument();
 		expect(screen.getByText('Endpoints')).toBeInTheDocument();
 		expect(screen.getByText('Assignments')).toBeInTheDocument();
+		expect(screen.getByText('Gateway')).toBeInTheDocument();
+		expect(screen.getByTestId('local-models-gateway-section')).toBeInTheDocument();
 	});
 
 	it('renders a section for every searchable-settings entry on the tab', () => {

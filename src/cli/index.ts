@@ -1486,6 +1486,10 @@ program
 		[] as string[]
 	)
 	.option('--clear-env', 'Clear all per-agent environment variables')
+	.option(
+		'--gateway-url <url|none>',
+		'Local Models gateway: an HTTP proxy this agent\'s provider traffic goes through, set as its base-URL variable at launch ("none" clears)'
+	)
 	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
 	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')

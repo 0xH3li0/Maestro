@@ -532,6 +532,10 @@ maestro-cli update-agent <agent-id> --custom-path /usr/local/bin/claude --custom
 maestro-cli update-agent <agent-id> --nudge ""
 maestro-cli update-agent <agent-id> --clear-env
 
+# Send the agent's provider traffic through a proxy (Headroom, LiteLLM); "none" clears it
+maestro-cli update-agent <agent-id> --gateway-url http://127.0.0.1:8787
+maestro-cli update-agent <agent-id> --gateway-url none
+
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
@@ -545,7 +549,7 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
-For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api).
+For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--gateway-url` sets the agent's [Local Models gateway](/local-models#gateway): the URL becomes the provider's base-URL variable (`ANTHROPIC_BASE_URL` for Claude Code, `OPENAI_BASE_URL` for Codex) the next time the agent starts, unless the agent's own environment variables already set that variable. It is refused for a provider that cannot use a gateway (Copilot CLI ignores base-URL variables), and an agent on an SSH remote does not start with a loopback gateway, because the remote host cannot reach it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api).
 
 | Flag                              | Description                                                                                                                                        | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -560,6 +564,7 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 | `--custom-args <args>`            | Custom CLI arguments. Empty string clears                                                                                                          | -       |
 | `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                                                     | -       |
 | `--clear-env`                     | Clear all per-agent environment variables                                                                                                          | -       |
+| `--gateway-url <url\|none>`       | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                            | -       |
 | `--model <model>`                 | Model override (e.g. sonnet, opus). Empty string clears                                                                                            | -       |
 | `--effort <level>`                | Effort/reasoning level override. Empty string clears                                                                                               | -       |
 | `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |

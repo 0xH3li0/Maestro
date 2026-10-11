@@ -146,6 +146,7 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'gatewayUrl'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -221,6 +222,7 @@ function planCliLaunch(
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
+		gatewayUrl?: string;
 	}
 ): AgentLaunchPlanResult {
 	return buildAgentLaunchPlan({
@@ -236,6 +238,7 @@ function planCliLaunch(
 		batchMode: true,
 		isResuming: input.isResuming,
 		querySource: input.querySource,
+		gateway: { toolType, url: input.gatewayUrl },
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
@@ -613,6 +616,7 @@ async function spawnClaudeAgent(
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		gatewayUrl: overrides.gatewayUrl,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1024,6 +1028,7 @@ async function spawnJsonLineAgent(
 		isResuming: isResume,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		gatewayUrl: overrides.gatewayUrl,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1153,6 +1158,12 @@ export interface SpawnAgentOptions {
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
 	/**
+	 * The agent's Local Models gateway URL. The launch plan sets the provider's
+	 * base-URL variable from it unless `customEnvVars` already sets that variable,
+	 * and fails the spawn when the gateway cannot be used.
+	 */
+	gatewayUrl?: string;
+	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
@@ -1221,6 +1232,7 @@ export async function spawnAgent(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		gatewayUrl: options?.gatewayUrl,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

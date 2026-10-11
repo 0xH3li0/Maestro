@@ -1296,6 +1296,95 @@ line is spoken on the host), only while the setting is not `off`, and with the r
 `<SpokenNoticesSetting>` in the Notifications tab, with a Test button and a line that says what a
 notice will say given the task's readiness.
 
+## Token conservation: the per-agent gateway
+
+The goal is to cut the tokens an agent sends to a cloud model, mostly large tool results. The
+provider-agnostic way to do that is an HTTP proxy reached through the provider's base-URL variable.
+The first step is the setting that points an agent at ANY such proxy (Headroom, LiteLLM, or the
+Maestro proxy that later phases add): `Session.gatewayUrl`.
+
+```mermaid
+flowchart LR
+	UI["Edit Agent field<br/>Local Models -> Gateway table"] --> SVC["setAgentGatewayUrl()<br/>validate, store, flush to main"]
+	CLI["maestro-cli update-agent<br/>--gateway-url"] --> BR["update_session_config<br/>validate, store, setMany"]
+	SVC --> STORE[("sessions store<br/>gatewayUrl")]
+	BR --> STORE
+	STORE --> D["desktop process:spawn"]
+	STORE --> C["Cue run"]
+	STORE --> L["CLI send / playbook"]
+	D --> PLAN["buildAgentLaunchPlan()<br/>resolveAgentGateway()"]
+	C --> PLAN
+	L --> PLAN
+	PLAN -->|inject| ENV["base-URL variable in the agent env"]
+	PLAN -->|user-override| OWN["agent's own value stands"]
+	PLAN -->|refused| FAIL["launch fails, error names the gateway"]
+```
+
+One pure module, `src/shared/local-models/gateway.ts`, holds every decision:
+
+| Function                             | Answers                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------- |
+| `agentGatewaySupport(toolType)`      | Which base-URL variable a provider reads, or the reason it has none                   |
+| `parseGatewayUrl(raw)`               | Whether a value is a usable `http(s)` base URL; the stored form has no trailing slash |
+| `isLoopbackGatewayUrl(url)`          | Whether a URL names the machine it is resolved on                                     |
+| `resolveAgentGateway(input)`         | What one launch does: `none`, `inject`, `user-override`, or `refused`                 |
+| `gatewayEnvVarsFor(toolType, url)`   | The variable a usable gateway sets, for the env provenance view                       |
+| `parseGatewayUrlEdit(toolType, raw)` | What to store for a typed value; blank and `none` clear                               |
+
+The rules, and why each is a rule:
+
+1. **An explicit user variable wins.** When the agent's effective custom vars (its own, or the
+   provider-level set when it has none; the "replace, never layer" rule of
+   `effectiveAgentCustomEnvVars`) set the base-URL variable to a non-blank value, the gateway is not
+   applied. The gateway layer sits in `resolveAgentEnvVars()` as
+   `defaults < batch < (session ?? provider-level) < gateway < read-only`, and the plan only passes
+   it when the user layer leaves the variable unset, so its position never decides between the two.
+   It does beat the provider defaults, Settings -> Environment, and (on the CLI) a value exported in
+   the shell: a gateway on one agent is more specific than any of them.
+2. **Only verified variables.** `GATEWAY_SUPPORT` is keyed by `AgentId`, so a new provider does not
+   compile until it has a variable or a reason. Claude Code (`ANTHROPIC_BASE_URL`) and Codex
+   (`OPENAI_BASE_URL`) are mapped. Copilot CLI ignores base-URL variables. OpenCode and Factory
+   Droid set a base URL per model provider in their own config files, so no single variable routes
+   them. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
+   says it is proxied.
+3. **Never silent.** A gateway that cannot work is a launch failure whose message names the
+   gateway: a loopback URL for an agent on an SSH remote (`gateway-loopback-on-remote`, since the
+   remote host cannot reach this machine's loopback), a stored URL on a provider that cannot use one
+   (`gateway-unsupported-provider`), or a stored value that is not a URL (`gateway-invalid-url`).
+   `buildAgentLaunchPlan()` returns these as `{ ok: false, reason, error }` beside the SSH
+   refusals, before anything with a side effect, and every surface already reports that result.
+   Maestro does not probe the proxy: when it is down, the agent's own connection error to the
+   gateway URL is the failure the user sees.
+4. **The gateway is not the agent's credential.** It is injected at launch and never written into
+   `customEnvVars`, so `classifyCredentialKind()`, `resolveAgentBillingCredential()` and the
+   account attribution built on them still see the agent's login. A proxy that passes auth headers
+   through does not change whose plan a turn bills.
+
+How the URL reaches a launch differs per surface, and the desktop path is the one with a trap.
+Cue (`CueExecutionConfig.gatewayUrl`) and the CLI (`SpawnAgentOptions.gatewayUrl`) read the stored
+agent record they already hold. Desktop `process:spawn` reads it from the main-process sessions
+store by agent id (the same lookup that answers `isPianola`), NOT from the renderer's spawn
+request: about twenty renderer call sites build that request, and one that forgot the field would
+send the agent direct with nothing to show for it. The cost is that the store must be current, and
+the renderer's persistence is debounced by two seconds. So every write path flushes:
+`setAgentGatewayUrl()` and `flushAgentToStore()` in `src/renderer/services/agentGateway.ts` for the
+table and the Edit Agent save, and the `update_session_config` handler's own `setMany` for the CLI.
+Do not add a gateway write that only touches the renderer store.
+
+Scope: the launch plan's four callers, which are the agent's own turns (desktop chat and Auto Run,
+Cue, `maestro-cli send` and playbooks). Spawns that do not go through the plan (tab naming, context
+grooming, Group Chat participants, cross-agent consults, Director's Notes) run direct. A terminal
+tab and the ReauthModal login shell never get the variable. `planSessionTurn()` (`maestro-lib-run`)
+has no stored agent and takes none; a caller passes the variable in `envVars`.
+
+The UI is one control, `<GatewayUrlField>` (`src/renderer/components/shared/`), used by the Edit
+Agent dialog and by each row of `<LocalModelsGatewaySection>`. Its status line is
+`describeGatewayStatus(resolveAgentGateway(...))`, the function the plan runs, so the field cannot
+describe a launch that will not happen. A provider switch clears the gateway (a proxy speaks one
+provider's API), and a worktree agent inherits its parent's. Provenance is a fourth
+`EnvVarSource`, `gateway` ("Local Models gateway"), in `resolveAgentEnvironment()`; the gateway
+table's **Show environment** draws it with `<EnvVarList>`.
+
 ## Related
 
 - [[model-manager]] - download, verification, and disk rules, and voice's capability gate.

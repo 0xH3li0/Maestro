@@ -18,6 +18,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
+import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -39,6 +40,7 @@ interface UpdateAgentOptions {
 	customArgs?: string;
 	env?: string[];
 	clearEnv?: boolean;
+	gatewayUrl?: string;
 	model?: string;
 	effort?: string;
 	contextWindow?: string;
@@ -103,6 +105,14 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		patch.customEnvVars = parseEnvVars(options.env);
 	}
 
+	// `--gateway-url <url|none>`. Only the clear is decided here; a URL is
+	// validated against the agent's provider once the agent has been read (see
+	// updateAgent), because which providers can use a gateway is per provider.
+	if (options.gatewayUrl !== undefined) {
+		const raw = options.gatewayUrl.trim();
+		patch.gatewayUrl = raw === '' || raw.toLowerCase() === 'none' ? null : raw;
+	}
+
 	if (options.contextWindow !== undefined) {
 		const raw = options.contextWindow.trim().toLowerCase();
 		if (raw === '' || raw === 'none' || raw === '0') {
@@ -163,7 +173,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env, --gateway-url). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -192,6 +202,19 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			`--token-source only applies to Claude Code agents; "${sessionId}" is a ${currentToolType} agent.`,
 			options
 		);
+	}
+
+	// Guard: a gateway is refused for a provider that cannot use one and for a
+	// value that is not a URL, with the same function the desktop field uses, so
+	// the CLI cannot store what the launch would then refuse. The stored form is
+	// the normalized one. When the agent's record cannot be read here, the app
+	// runs the same check before it writes.
+	if (typeof configPatch?.gatewayUrl === 'string' && currentToolType !== undefined) {
+		const edit = parseGatewayUrlEdit(currentToolType, configPatch.gatewayUrl);
+		if (!edit.ok) {
+			emitError(`--gateway-url: ${edit.error}`, options);
+		}
+		configPatch.gatewayUrl = edit.gatewayUrl;
 	}
 
 	// Provider switch is destructive (resets tabs, clears provider config, kills
@@ -428,6 +451,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			customPath: 'Binary path',
 			customArgs: 'Custom args',
 			customEnvVars: 'Env vars',
+			gatewayUrl: 'Gateway URL',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',

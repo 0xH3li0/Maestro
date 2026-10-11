@@ -541,6 +541,100 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
+		describe("the agent's Local Models gateway", () => {
+			const gatewayUrl = 'http://127.0.0.1:8787';
+
+			/** Give the stored agent record a gateway, as an edit flushed to main would. */
+			function storeAgent(agent: Record<string, unknown>) {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [agent] : defaultValue
+				);
+			}
+
+			function spawnClaude(extra: Record<string, unknown> = {}) {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 3100, success: true });
+				return handlers.get('process:spawn')!({} as any, {
+					// The tab suffix is stripped to find the agent's record.
+					sessionId: 'agent-gw-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: [],
+					...extra,
+				});
+			}
+
+			it('reads the gateway from the stored agent and sets its base-URL variable', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude();
+
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ ANTHROPIC_BASE_URL: gatewayUrl }),
+					})
+				);
+			});
+
+			it('sets nothing for an agent with no gateway', async () => {
+				storeAgent({ id: 'agent-gw' });
+
+				await spawnClaude();
+
+				const spawned = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawned.customEnvVars ?? {}).not.toHaveProperty('ANTHROPIC_BASE_URL');
+			});
+
+			it("leaves the variable to the agent's own value", async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude({
+					sessionCustomEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				});
+
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({
+							ANTHROPIC_BASE_URL: 'https://mine.example.com',
+						}),
+					})
+				);
+			});
+
+			it('refuses to spawn on an SSH remote with a loopback gateway, and says so in the tab', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sshRemotes'
+						? [
+								{
+									id: 'remote-1',
+									name: 'Dev Server',
+									host: 'dev.example.com',
+									port: 22,
+									username: 'devuser',
+									privateKeyPath: '~/.ssh/id_ed25519',
+									enabled: true,
+								},
+							]
+						: defaultValue
+				);
+
+				const result = await spawnClaude({
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				});
+
+				// Never run without the gateway the user chose, on either machine.
+				expect(result).toEqual({ success: false, pid: 0 });
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+					'process:data',
+					'agent-gw-ai-tab-1',
+					expect.stringContaining(`gateway (${gatewayUrl}) is a loopback address`)
+				);
+			});
+		});
+
 		it('primes the omp model catalog with an expanded env whose PATH lists the binary dir first', async () => {
 			// The bun-based `omp` binary lives next to a co-located `bun` runtime;
 			// in a packaged Electron app the shell PATH is not inherited, so the
