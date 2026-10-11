@@ -6,7 +6,9 @@ import * as path from 'path';
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import {
+	ACCESS_RECHECK_MS,
 	ComputerHistoryService,
+	MAX_ACCESS_RESTARTS,
 	type ObserverSupervisorLike,
 } from '../../../main/computer-history/computer-history-service';
 import { parseSegmentText } from '../../../shared/computer-history/reader';
@@ -19,6 +21,7 @@ let now: number;
 let sent: HelperCommand[];
 let supervisorDeps: ObserverSupervisorDeps | null;
 let running: boolean;
+let restarts: number;
 
 const T0 = Date.parse('2026-10-03T14:15:00.000Z');
 
@@ -31,6 +34,11 @@ function fakeSupervisor(deps: ObserverSupervisorDeps): ObserverSupervisorLike {
 		}),
 		stop: vi.fn(() => {
 			running = false;
+		}),
+		restart: vi.fn(() => {
+			restarts += 1;
+			running = true;
+			deps.onSpawned?.();
 		}),
 		send: vi.fn((cmd: HelperCommand) => {
 			if (!running) return false;
@@ -90,6 +98,7 @@ beforeEach(() => {
 	sent = [];
 	supervisorDeps = null;
 	running = false;
+	restarts = 0;
 });
 afterEach(() => {
 	vi.useRealTimers();
@@ -226,6 +235,96 @@ describe('ingest pipeline', () => {
 	it('ignores everything while stopped', async () => {
 		const service = makeService();
 		expect(await service.ingest(textEvent('x'))).toBe(false);
+	});
+});
+
+describe('macOS Accessibility granted after the helper started', () => {
+	const FAKED = ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] as const;
+
+	function helperStatus(state: 'running' | 'blocked', permission: 'granted' | 'denied') {
+		return {
+			v: 1,
+			ts: new Date(now).toISOString(),
+			kind: 'helper.status',
+			status: { version: '0.1.0', platform: 'macos', state, permission },
+		};
+	}
+
+	it('restarts the blocked helper once the app itself reads as trusted', async () => {
+		vi.useFakeTimers({ toFake: [...FAKED] });
+		let trusted = false;
+		const service = makeService({ isMacAccessibilityTrusted: () => trusted });
+		await service.start();
+		await service.ingest(helperStatus('blocked', 'denied'));
+
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS * 3);
+		expect(restarts).toBe(0);
+
+		trusted = true;
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS);
+		expect(restarts).toBe(1);
+		// The stale "denied" is dropped until the fresh helper reports in.
+		expect(service.status().helperStatus).toBeNull();
+		expect(sent.at(-1)).toMatchObject({ cmd: 'configure' });
+
+		await service.ingest(helperStatus('running', 'granted'));
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS * 4);
+		expect(restarts).toBe(1);
+		expect(service.status().state).toBe('recording');
+		await service.stop();
+	});
+
+	it('never passes the prompt flag: the check must not raise the system dialog', async () => {
+		vi.useFakeTimers({ toFake: [...FAKED] });
+		const check = vi.fn(() => false);
+		const service = makeService({ isMacAccessibilityTrusted: check });
+		await service.start();
+		await service.ingest(helperStatus('blocked', 'denied'));
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS * 2);
+
+		expect(check).toHaveBeenCalled();
+		expect(check.mock.calls.every(([prompt]) => prompt === false)).toBe(true);
+		await service.stop();
+	});
+
+	it('gives up when a fresh helper keeps reading denied, instead of restarting forever', async () => {
+		vi.useFakeTimers({ toFake: [...FAKED] });
+		const service = makeService({ isMacAccessibilityTrusted: () => true });
+		await service.start();
+
+		for (let i = 1; i <= MAX_ACCESS_RESTARTS; i++) {
+			await service.ingest(helperStatus('blocked', 'denied'));
+			await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS);
+			expect(restarts).toBe(i);
+		}
+		await service.ingest(helperStatus('blocked', 'denied'));
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS * 6);
+		expect(restarts).toBe(MAX_ACCESS_RESTARTS);
+		await service.stop();
+	});
+
+	it('stops checking when the service stops', async () => {
+		vi.useFakeTimers({ toFake: [...FAKED] });
+		let trusted = false;
+		const service = makeService({ isMacAccessibilityTrusted: () => trusted });
+		await service.start();
+		await service.ingest(helperStatus('blocked', 'denied'));
+		await service.stop();
+
+		trusted = true;
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS * 4);
+		expect(restarts).toBe(0);
+	});
+
+	it('leaves other platforms alone: their helper re-reads its own access', async () => {
+		vi.useFakeTimers({ toFake: [...FAKED] });
+		const service = makeService({ platform: 'linux', isMacAccessibilityTrusted: () => true });
+		await service.start();
+		await service.ingest(helperStatus('blocked', 'denied'));
+		await vi.advanceTimersByTimeAsync(ACCESS_RECHECK_MS * 4);
+
+		expect(restarts).toBe(0);
+		await service.stop();
 	});
 });
 

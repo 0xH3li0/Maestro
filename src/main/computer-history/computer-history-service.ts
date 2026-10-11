@@ -95,6 +95,7 @@ import type { ObserverSupervisorDeps } from './observer-supervisor';
 export interface ObserverSupervisorLike {
 	start(): void;
 	stop(): void;
+	restart(): void;
 	send(command: HelperCommand): boolean;
 	isRunning(): boolean;
 	status(): ObserverProcessStatus;
@@ -140,6 +141,10 @@ const RULE_PREVIEW_DAYS = 14;
 /** How far back the capture app list looks for apps to offer. */
 const KNOWN_APPS_DAYS = 30;
 const MAX_DIGEST_LIMIT = 200;
+/** How often a helper blocked on macOS Accessibility is checked against the app's own trust state. */
+export const ACCESS_RECHECK_MS = 5000;
+/** Helper restarts allowed while the app reads as trusted and the helper still does not. */
+export const MAX_ACCESS_RESTARTS = 3;
 
 export class ComputerHistoryService {
 	readonly storeDir: string;
@@ -159,6 +164,8 @@ export class ComputerHistoryService {
 	private rolloverTimer: ReturnType<typeof setInterval> | undefined;
 	private retentionTimer: ReturnType<typeof setInterval> | undefined;
 	private pauseTimer: ReturnType<typeof setTimeout> | undefined;
+	private accessRecheckTimer: ReturnType<typeof setInterval> | undefined;
+	private accessRestarts = 0;
 	private lastNotifiedState: RecorderState | null = null;
 	/** Recently seen app id -> name (insertion order = recency), bounded. */
 	private readonly seenApps = new Map<string, string>();
@@ -259,7 +266,56 @@ export class ComputerHistoryService {
 		this.rolloverTimer = this.retentionTimer = this.pauseTimer = undefined;
 		this.digests.stop();
 		this.helperStatus = null;
+		this.accessRestarts = 0;
+		this.syncAccessRecheck();
 		await this.writer.close();
+		this.notify(true);
+	}
+
+	/**
+	 * macOS: a helper that started without Accessibility never learns it was
+	 * granted. The helper only runs its run loop while it is observing, and that
+	 * run loop is what refreshes the process's cached trust state, so a blocked
+	 * helper went on reporting `denied` for as long as it lived and recording
+	 * never started after the user allowed it. The app's own process does see
+	 * the change, so while the helper is blocked on the permission the app's
+	 * answer is polled, and a fresh helper is started once it turns true.
+	 */
+	private syncAccessRecheck(): void {
+		const status = this.helperStatus;
+		if (status && status.permission !== 'denied') this.accessRestarts = 0;
+		const waiting =
+			this.running &&
+			this.platform === 'macos' &&
+			!!this.deps.isMacAccessibilityTrusted &&
+			status?.state === 'blocked' &&
+			status.permission === 'denied';
+		if (!waiting || this.accessRestarts >= MAX_ACCESS_RESTARTS) {
+			if (waiting) {
+				this.deps.log?.(
+					'warn',
+					'maestro-observer still reports Accessibility as denied after restarts; not retrying'
+				);
+			}
+			if (this.accessRecheckTimer) clearInterval(this.accessRecheckTimer);
+			this.accessRecheckTimer = undefined;
+			return;
+		}
+		if (this.accessRecheckTimer) return;
+		this.accessRecheckTimer = setInterval(() => this.recheckAccess(), ACCESS_RECHECK_MS);
+		this.accessRecheckTimer.unref?.();
+	}
+
+	private recheckAccess(): void {
+		if (!this.deps.isMacAccessibilityTrusted?.(false)) return;
+		// One restart per grant: the fresh helper's first status re-arms the
+		// check if it still reads as denied.
+		if (this.accessRecheckTimer) clearInterval(this.accessRecheckTimer);
+		this.accessRecheckTimer = undefined;
+		this.accessRestarts += 1;
+		this.deps.log?.('info', 'Accessibility was granted; restarting maestro-observer to pick it up');
+		this.helperStatus = null;
+		this.supervisor.restart();
 		this.notify(true);
 	}
 
@@ -283,6 +339,7 @@ export class ComputerHistoryService {
 		}
 		if (event.kind === 'helper.status') {
 			this.helperStatus = event.status ?? null;
+			this.syncAccessRecheck();
 			this.notify(true);
 			return false;
 		}

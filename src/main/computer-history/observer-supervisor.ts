@@ -169,6 +169,15 @@ export class ObserverSupervisor {
 		this.setState('stopped');
 	}
 
+	/**
+	 * Replace the running helper with a fresh process. For state a process
+	 * reads once and cannot refresh, such as a macOS privacy grant.
+	 */
+	restart(): void {
+		this.stop();
+		this.start();
+	}
+
 	/** Write one command to the helper. False when it is not running. */
 	send(command: HelperCommand): boolean {
 		const stdin = this.child?.stdin;

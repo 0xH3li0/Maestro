@@ -134,6 +134,23 @@ describe('ObserverSupervisor', () => {
 		expect(onStateChange).toHaveBeenCalled();
 	});
 
+	it('restart() replaces the helper with a fresh process and ignores the old exit', () => {
+		const { supervisor } = makeSupervisor();
+		supervisor.start();
+		const first = children[0];
+
+		supervisor.restart();
+
+		expect(first.written.join('')).toContain('"cmd":"shutdown"');
+		expect(spawnChild).toHaveBeenCalledTimes(2);
+		expect(supervisor.status().state).toBe('running');
+		// The old process exiting afterwards must not count as a crash of the new one.
+		first.exit(0);
+		vi.advanceTimersByTime(60_000);
+		expect(spawnChild).toHaveBeenCalledTimes(2);
+		expect(supervisor.status()).toMatchObject({ state: 'running', restarts: 0 });
+	});
+
 	it('keeps a bounded stderr tail', () => {
 		const { supervisor } = makeSupervisor();
 		supervisor.start();

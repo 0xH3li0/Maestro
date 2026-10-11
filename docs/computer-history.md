@@ -40,7 +40,9 @@ Nothing is uploaded. Maestro never sends Computer History anywhere. An agent you
 
 Maestro needs **Accessibility** access (System Settings > Privacy & Security > Accessibility). The tile's **Request Accessibility access** button, or `maestro-cli computer-history enable-accessibility`, opens the system prompt. The helper runs as part of Maestro, so the grant is for Maestro. Recording starts on its own a few seconds after you allow it.
 
-A development build and the signed release are different apps to macOS and each needs its own grant.
+macOS gives the grant to the app that launched the recorder. A development build started from a terminal needs the grant on that terminal app; one started by an agent inside Maestro uses Maestro's own grant.
+
+If Maestro is listed and switched on but the tile still says it is waiting for permission, remove Maestro from the list with the minus button and add it again. An entry created by an older build can stop matching the app after an update, and switching it off and on does not repair it.
 
 ### Windows
 
@@ -163,4 +165,5 @@ Reads work with the Maestro app closed. Changes need the app running and Compute
 - The record is plaintext on disk, including messages from chat apps you had open. Exclude apps whose content you never want kept.
 - Anyone who can read your user account's files can read it, the same as your browser history.
 - Turning the feature off stops recording immediately. It does not delete what was recorded; use **Clear all history** for that.
+- On macOS, Accessibility access belongs to Maestro as a whole, so the agents Maestro runs can use it as well. Grant it only if you are comfortable with that.
 - The web interface cannot read, pause, or clear Computer History, even when signed in. Only the desktop app and `maestro-cli` on this machine can.
