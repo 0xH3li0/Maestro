@@ -1,0 +1,152 @@
+// `maestro-cli models assign <task-id> <spec>` and `models tasks` - which
+// source each Local Models task runs on.
+//
+// `assign` edits the `localModelAssignments` setting in the settings file, as
+// the endpoint verbs do, so it works with Maestro closed and the settings
+// watcher reloads every window. It validates and stores through the SAME shared
+// helpers the Assignments picker in Settings uses (`parseLocalModelAssignmentSpec`,
+// `localModelAssignmentProblem`, `withLocalModelAssignment`), so the CLI cannot
+// save a pick the picker would refuse, and choosing a task's default removes its
+// entry exactly as the picker does.
+//
+// `tasks` reads the assignments from the same file and asks the desktop for
+// readiness over the WS bridge (the same resolver as `models status`). When the
+// desktop cannot be asked it still lists the assignments, and says why the
+// readiness column is empty.
+
+import { withMaestroClient } from '../services/maestro-client';
+import {
+	readLocalModelAssignments,
+	readLocalModelEndpoints,
+	writeLocalModelAssignments,
+} from '../services/storage';
+import { ExitCode, exitWith } from '../exit-codes';
+import { formatLocalModelTasks, formatSuccess, formatWarning } from '../output/formatter';
+import { findLocalModelEndpoint } from '../../shared/local-models/endpoints';
+import {
+	formatLocalModelAssignmentSpec,
+	isLocalModelTaskId,
+	LOCAL_MODEL_TASK_IDS,
+	LOCAL_MODEL_TASKS,
+	localModelAssignmentProblem,
+	parseLocalModelAssignmentSpec,
+	resolveLocalModelAssignments,
+	withLocalModelAssignment,
+	type LocalModelAssignment,
+} from '../../shared/local-models/tasks';
+import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
+
+/** Matches `models status`: above the app's endpoint list budget. */
+const READINESS_TIMEOUT_MS = 15_000;
+
+interface JsonOption {
+	json?: boolean;
+}
+
+const SPEC_FORMS = 'off, utility-agent, local:<model-id>, or endpoint:<endpoint>:<model>';
+
+function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
+	if (json) console.log(JSON.stringify({ success: false, error: message }));
+	else console.error(`Error: ${message}`);
+	return exitWith(code);
+}
+
+export function modelsAssign(taskId: string, spec: string, options: JsonOption): void {
+	if (!isLocalModelTaskId(taskId)) {
+		fail(
+			`Unknown task "${taskId}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`,
+			options.json,
+			ExitCode.InvalidUsage
+		);
+	}
+	const parsed = parseLocalModelAssignmentSpec(spec);
+	if (!parsed) {
+		fail(`Assignment must be ${SPEC_FORMS}. Got "${spec}".`, options.json, ExitCode.InvalidUsage);
+	}
+
+	// The picker only offers saved endpoints, so the CLI only accepts one. It
+	// also takes an endpoint the way the endpoint verbs do (id prefix or name)
+	// and stores the full id, which is what the router looks up.
+	let assignment: LocalModelAssignment = parsed;
+	let endpointEnabled = true;
+	if (parsed.type === 'endpoint') {
+		const lookup = findLocalModelEndpoint(readLocalModelEndpoints(), parsed.endpointId);
+		if (!lookup.ok) fail(lookup.message, options.json, ExitCode.InvalidUsage);
+		assignment = { ...parsed, endpointId: lookup.endpoint.id };
+		endpointEnabled = lookup.endpoint.enabled;
+	}
+
+	const problem = localModelAssignmentProblem(taskId, assignment);
+	if (problem) fail(problem, options.json, ExitCode.InvalidUsage);
+
+	writeLocalModelAssignments(
+		withLocalModelAssignment(readLocalModelAssignments(), taskId, assignment)
+	);
+
+	const task = LOCAL_MODEL_TASKS[taskId];
+	const stored = formatLocalModelAssignmentSpec(assignment);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, taskId, assignment, spec: stored }));
+		return;
+	}
+	console.log(formatSuccess(`${task.label} -> ${stored}`));
+	if (!endpointEnabled) {
+		console.log(formatWarning('That endpoint is disabled. Enable it before the task can run.'));
+	}
+	if (assignment.type === 'local' || assignment.type === 'endpoint') {
+		console.log(`  Check it would run: maestro-cli models status ${taskId}`);
+	}
+}
+
+export async function modelsTasks(options: JsonOption): Promise<void> {
+	const assignments = resolveLocalModelAssignments(readLocalModelAssignments());
+
+	// Readiness needs the model store and the network, so it comes from the
+	// desktop. Its absence is not a failure here: the assignments are the
+	// answer to "what is each task on", and they live in the settings file.
+	let readiness: LocalModelTaskReadiness[] | undefined;
+	let readinessError: string | undefined;
+	try {
+		const reply = await withMaestroClient((client) =>
+			client.sendCommand<{
+				success: boolean;
+				readiness?: LocalModelTaskReadiness[];
+				error?: string;
+			}>(
+				{ type: 'local_models_task_readiness' },
+				'local_models_task_readiness_result',
+				READINESS_TIMEOUT_MS
+			)
+		);
+		if (reply.success && reply.readiness) readiness = reply.readiness;
+		else readinessError = reply.error || 'readiness check failed';
+	} catch (error) {
+		readinessError = error instanceof Error ? error.message : String(error);
+	}
+
+	const rows = LOCAL_MODEL_TASK_IDS.map((taskId) => {
+		const task = LOCAL_MODEL_TASKS[taskId];
+		return {
+			taskId,
+			label: task.label,
+			description: task.description,
+			needs: task.needs,
+			allowsUtilityAgent: task.allowsUtilityAgent,
+			assignment: assignments[taskId],
+			spec: formatLocalModelAssignmentSpec(assignments[taskId]),
+			readiness: readiness?.find((row) => row.taskId === taskId),
+		};
+	});
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				tasks: rows,
+				...(readinessError ? { readinessError } : {}),
+			})
+		);
+		return;
+	}
+	console.log(formatLocalModelTasks(rows, readinessError));
+}

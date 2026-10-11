@@ -956,6 +956,117 @@ export function formatLocalModelTaskReadiness(
 	return lines.join('\n');
 }
 
+/**
+ * How a catalog model stands, for a person. `pending` is a model this build
+ * cannot run and so never offers for download; it is only shown once it is
+ * not on disk, since an installed pending model can still be verified and
+ * removed.
+ */
+export type LocalModelDisplayStatus = 'installed' | 'not-installed' | 'corrupt' | 'pending';
+
+export interface LocalModelDisplay {
+	id: string;
+	displayName: string;
+	status: LocalModelDisplayStatus;
+	/** Catalog download size, already formatted. */
+	size: string;
+	/** Tasks (and voice capabilities) that run this model. */
+	usedBy: string[];
+	/** Why the model is corrupt or pending. */
+	detail?: string;
+}
+
+export interface LocalModelKindGroupDisplay {
+	kindLabel: string;
+	models: LocalModelDisplay[];
+}
+
+const LOCAL_MODEL_STATUS: Record<
+	LocalModelDisplayStatus,
+	{ label: string; color: keyof typeof colors }
+> = {
+	installed: { label: 'installed', color: 'green' },
+	'not-installed': { label: 'not installed', color: 'gray' },
+	corrupt: { label: 'corrupt', color: 'red' },
+	pending: { label: 'pending', color: 'yellow' },
+};
+
+/** `maestro-cli models list`: the catalog grouped by kind, with the disk footprint. */
+export function formatLocalModels(groups: LocalModelKindGroupDisplay[], footprint: string): string {
+	const models = groups.flatMap((group) => group.models);
+	if (models.length === 0) return dim('No local models match.');
+
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'LOCAL MODELS')) + dim(` (${models.length}, ${footprint} on disk)`));
+	const idWidth = Math.max(...models.map((model) => model.id.length));
+	const statusWidth = Math.max(
+		...Object.values(LOCAL_MODEL_STATUS).map((status) => status.label.length)
+	);
+	for (const group of groups) {
+		if (group.models.length === 0) continue;
+		lines.push('');
+		lines.push(`  ${bold(group.kindLabel)}`);
+		for (const model of group.models) {
+			const status = LOCAL_MODEL_STATUS[model.status];
+			lines.push(
+				`    ${c('white', model.id.padEnd(idWidth))}  ${c(status.color, status.label.padEnd(statusWidth))}  ${model.size.padStart(9)}  ${model.displayName}`
+			);
+			const indent = ' '.repeat(idWidth + statusWidth + 17);
+			if (model.detail) lines.push(`    ${indent}${dim(model.detail)}`);
+			if (model.usedBy.length > 0) {
+				lines.push(`    ${indent}${dim(`in use by: ${model.usedBy.join(', ')}`)}`);
+			}
+		}
+	}
+	return lines.join('\n');
+}
+
+export interface LocalModelTaskDisplay {
+	taskId: string;
+	label: string;
+	/** The assignment in its `models assign` spelling. */
+	spec: string;
+	/** Absent when the desktop could not be asked. */
+	readiness?: LocalModelTaskReadiness;
+}
+
+/**
+ * `maestro-cli models tasks`: every task with its assignment, and its readiness
+ * when the desktop answered. Without the desktop the assignments still print,
+ * since they are read from the settings file.
+ */
+export function formatLocalModelTasks(
+	rows: LocalModelTaskDisplay[],
+	readinessError?: string
+): string {
+	const lines: string[] = [];
+	lines.push(bold(c('cyan', 'LOCAL MODEL TASKS')) + dim(` (${rows.length})`));
+	lines.push('');
+	const idWidth = Math.max(...rows.map((row) => row.taskId.length));
+	const specWidth = Math.max(...rows.map((row) => row.spec.length));
+	for (const row of rows) {
+		const state = row.readiness ? TASK_READINESS_STATE[row.readiness.state] : undefined;
+		const stateText = state ? c(state.color, state.label) : '';
+		lines.push(
+			`  ${c('white', row.taskId.padEnd(idWidth))}  ${c('blue', row.spec.padEnd(specWidth))}  ${stateText}`
+		);
+		const indent = ' '.repeat(idWidth + 4);
+		lines.push(`${indent}${dim(row.label)}`);
+		if (row.readiness?.state === 'unavailable') {
+			const reason = row.readiness.reason ? ` [${row.readiness.reason}]` : '';
+			lines.push(`${indent}${row.readiness.detail}${dim(reason)}`);
+			if (row.readiness.suggestedAction) {
+				lines.push(`${indent}${dim(`-> ${row.readiness.suggestedAction}`)}`);
+			}
+		}
+	}
+	if (readinessError) {
+		lines.push('');
+		lines.push(dim(`Readiness unavailable (${readinessError}). Assignments are from settings.`));
+	}
+	return lines.join('\n');
+}
+
 // Director's Notes History formatting
 export interface DirectorNotesHistoryDisplay {
 	stats: {

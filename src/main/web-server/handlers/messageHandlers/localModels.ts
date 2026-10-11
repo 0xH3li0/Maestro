@@ -1,41 +1,126 @@
 /**
  * Local Models WebSocket message handlers.
  *
- * Handles: local_models_endpoints_detect, local_models_endpoint_test,
+ * Handles: local_models_list, local_models_download, local_models_verify,
+ * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
  * local_models_run_task, local_models_task_readiness. These are the CLI's route
- * to the same service functions the `localModels:*` IPC channels call, so `maestro-cli models endpoints test`
- * and Settings' Test button use the same record, the same key lookup, and the
- * same budget, and `maestro-cli models run` goes through the same task router
- * (and the same assignment) as an in-app caller.
+ * to the same service functions the `localModels:*` IPC channels call, so
+ * `maestro-cli models install` and Settings' Download button write the same
+ * files through the same downloader, `maestro-cli models endpoints test` and
+ * Settings' Test button use the same record, the same key lookup, and the same
+ * budget, and `maestro-cli models run` goes through the same task router (and
+ * the same assignment) as an in-app caller.
  *
- * Adding and removing an endpoint does NOT come through here: like SSH remotes,
- * the CLI edits `localModelEndpoints` in the settings file through the shared
- * list helpers, and the settings watcher reloads every window. Only the verbs
- * that need the network and Settings -> Environment run in the app.
+ * Adding and removing an endpoint, and assigning a task, do NOT come through
+ * here: like SSH remotes, the CLI edits `localModelEndpoints` and
+ * `localModelAssignments` in the settings file through the shared helpers, and
+ * the settings watcher reloads every window. Only the verbs that need the model
+ * store, the network, or Settings -> Environment run in the app.
  */
 
 import {
 	detectNewLocalModelEndpoints,
 	testLocalModelEndpoint,
 } from '../../../local-models/endpoint-service';
+import {
+	downloadLocalModel,
+	listLocalModels,
+	localModelsFootprint,
+	removeLocalModel,
+	verifyLocalModel,
+} from '../../../local-models/service';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
-/** Handle local_models_endpoints_detect - running loopback servers not configured yet. */
-export async function handleLocalModelsEndpointsDetect(
+/**
+ * Run one service call and answer with its result under `key`, or with
+ * `success: false` and the error message. Every handler here has the same
+ * shape: a verdict the service RETURNS (a failed download, a corrupt verify)
+ * is a successful round trip, and only a thrown error is a failed one.
+ */
+async function respond(
 	ctx: MessageHandlerContext,
 	client: WebClient,
-	message: WebClientMessage
+	message: WebClientMessage,
+	type: string,
+	work: () => Promise<Record<string, unknown>>
 ): Promise<void> {
-	const type = 'local_models_endpoints_detect_result';
 	try {
-		const detected = await detectNewLocalModelEndpoints();
-		ctx.send(client, { type, success: true, detected, requestId: message.requestId });
+		const payload = await work();
+		ctx.send(client, { type, success: true, ...payload, requestId: message.requestId });
 	} catch (error) {
 		const errMsg = error instanceof Error ? error.message : String(error);
 		ctx.send(client, { type, success: false, error: errMsg, requestId: message.requestId });
 	}
+}
+
+/**
+ * Handle local_models_list - every catalog model joined to its install state,
+ * plus the disk footprint (`maestro-cli models list`). A disk read; no network.
+ */
+export function handleLocalModelsList(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_list_result', async () => {
+		const [listings, footprint] = await Promise.all([listLocalModels(), localModelsFootprint()]);
+		return { listings, footprint };
+	});
+}
+
+/**
+ * Handle local_models_download - download (or resume) one model and answer when
+ * the job settles (`maestro-cli models install`). The same downloader as the
+ * Settings button, so a download already running from the app is joined, not
+ * duplicated, and its progress shows in every window.
+ */
+export function handleLocalModelsDownload(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_download_result', async () => ({
+		result: await downloadLocalModel(message.modelId),
+	}));
+}
+
+/** Handle local_models_verify - re-hash one model against the catalog. */
+export function handleLocalModelsVerify(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_verify_result', async () => ({
+		result: await verifyLocalModel(message.modelId),
+	}));
+}
+
+/**
+ * Handle local_models_remove - delete one model, answering with the bytes
+ * reclaimed. The in-use warning is the CLI's job before it sends this, exactly
+ * as the Settings row warns before it calls `localModels:remove`.
+ */
+export function handleLocalModelsRemove(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_remove_result', async () => ({
+		bytes: await removeLocalModel(message.modelId),
+	}));
+}
+
+/** Handle local_models_endpoints_detect - running loopback servers not configured yet. */
+export function handleLocalModelsEndpointsDetect(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_endpoints_detect_result', async () => ({
+		detected: await detectNewLocalModelEndpoints(),
+	}));
 }
 
 /**
@@ -44,21 +129,16 @@ export async function handleLocalModelsEndpointsDetect(
  * still a successful round trip: the verdict rides in `result`, whose `error`
  * keeps its `kind` so the CLI can tell a missing key from a dead server.
  */
-export async function handleLocalModelsEndpointTest(
+export function handleLocalModelsEndpointTest(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): Promise<void> {
-	const type = 'local_models_endpoint_test_result';
 	const ref = typeof message.endpoint === 'string' ? message.endpoint : '';
 	const model = typeof message.model === 'string' ? message.model : undefined;
-	try {
-		const result = await testLocalModelEndpoint(ref, model);
-		ctx.send(client, { type, success: true, result, requestId: message.requestId });
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		ctx.send(client, { type, success: false, error: errMsg, requestId: message.requestId });
-	}
+	return respond(ctx, client, message, 'local_models_endpoint_test_result', async () => ({
+		result: await testLocalModelEndpoint(ref, model),
+	}));
 }
 
 /**
@@ -67,19 +147,14 @@ export async function handleLocalModelsEndpointTest(
  * is a successful round trip and rides in `result`; only a bad request (an
  * unknown task, a non-text task, a malformed input) comes back as an error.
  */
-export async function handleLocalModelsRunTask(
+export function handleLocalModelsRunTask(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): Promise<void> {
-	const type = 'local_models_run_task_result';
-	try {
-		const result = await runLocalTaskRequest(message.taskId, message.input);
-		ctx.send(client, { type, success: true, result, requestId: message.requestId });
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		ctx.send(client, { type, success: false, error: errMsg, requestId: message.requestId });
-	}
+	return respond(ctx, client, message, 'local_models_run_task_result', async () => ({
+		result: await runLocalTaskRequest(message.taskId, message.input),
+	}));
 }
 
 /**
@@ -88,17 +163,12 @@ export async function handleLocalModelsRunTask(
  * successful round trip with the verdict in `readiness`; only an unknown task
  * id comes back as an error.
  */
-export async function handleLocalModelsTaskReadiness(
+export function handleLocalModelsTaskReadiness(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): Promise<void> {
-	const type = 'local_models_task_readiness_result';
-	try {
-		const readiness = await resolveTaskReadinessRequest(message.taskId);
-		ctx.send(client, { type, success: true, readiness, requestId: message.requestId });
-	} catch (error) {
-		const errMsg = error instanceof Error ? error.message : String(error);
-		ctx.send(client, { type, success: false, error: errMsg, requestId: message.requestId });
-	}
+	return respond(ctx, client, message, 'local_models_task_readiness_result', async () => ({
+		readiness: await resolveTaskReadinessRequest(message.taskId),
+	}));
 }

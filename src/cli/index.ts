@@ -111,6 +111,8 @@ import {
 	modelsEndpointsRemove,
 	modelsEndpointsTest,
 } from './commands/models-endpoints';
+import { modelsAssign, modelsTasks } from './commands/models-assign';
+import { modelsInstall, modelsList, modelsRemove, modelsVerify } from './commands/models-manage';
 import { modelsRun } from './commands/models-run';
 import { modelsStatus } from './commands/models-status';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
@@ -2159,10 +2161,64 @@ notify
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
 
-// Local Models commands - model servers the user runs (Ollama, LM Studio,
-// OpenAI-compatible) and the task router. Endpoint list/add/remove edit
-// settings directly; test/detect/run/status run in the desktop app.
+// Local Models commands - the model catalog, model servers the user runs
+// (Ollama, LM Studio, OpenAI-compatible), task assignments, and the task
+// router. Endpoint list/add/remove and assign edit settings directly; the
+// catalog verbs, test/detect, run, status, and readiness run in the desktop app.
 const models = program.command('models').description('Local Models: model sources Maestro can use');
+
+models
+	.command('list')
+	.description(
+		'List the local model catalog grouped by kind, with install status, size, and what uses each model (requires the desktop app)'
+	)
+	.option(
+		'-k, --kind <kind>',
+		'Only one kind: text-gen | embedding | classifier | stt | tts | wake-word'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsList);
+
+models
+	.command('install <model-id>')
+	.description(
+		'Download and verify a local model; waits until it finishes (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsInstall);
+
+models
+	.command('remove <model-id>')
+	.description(
+		'Delete a downloaded model. Refuses a model a task is assigned to unless --force (requires the desktop app)'
+	)
+	.option('-f, --force', 'Remove it even though assigned tasks become unavailable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRemove);
+
+models
+	.command('verify <model-id>')
+	.description(
+		'Re-hash a downloaded model against the catalog; never deletes or re-downloads (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsVerify);
+
+models
+	.command('assign <task-id> <assignment>')
+	.description(
+		'Choose what a task runs on: off | utility-agent | local:<model-id> | endpoint:<endpoint>:<model>'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsAssign);
+
+models
+	.command('tasks')
+	.description(
+		'List every task with its assignment, plus readiness when the desktop app is running'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTasks);
 
 models
 	.command('run <task-id>')

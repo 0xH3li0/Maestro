@@ -22,6 +22,10 @@ import {
 	parseLocalModelEndpoints,
 	type LocalModelEndpoint,
 } from '../../shared/local-models/endpoints';
+import {
+	parseLocalModelAssignments,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
 
 // Get the Maestro config directory path. Delegates to the shared resolver
 // (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
@@ -694,6 +698,20 @@ export function readLocalModelEndpoints(): LocalModelEndpoint[] {
 /** Write the endpoint list back; the settings watcher reloads every window. */
 export function writeLocalModelEndpoints(endpoints: LocalModelEndpoint[]): void {
 	writeSettingValue('localModelEndpoints', endpoints);
+}
+
+/**
+ * The stored task assignments, read through the same parser the desktop reads
+ * them with (unknown tasks and unusable entries dropped, defaults elided), so
+ * the CLI never reports or rewrites an entry the app would ignore.
+ */
+export function readLocalModelAssignments(): LocalModelAssignments {
+	return parseLocalModelAssignments(readSettings().localModelAssignments);
+}
+
+/** Write the assignments back; the settings watcher reloads every window. */
+export function writeLocalModelAssignments(assignments: LocalModelAssignments): void {
+	writeSettingValue('localModelAssignments', assignments);
 }
 
 // ============================================================================

@@ -88,10 +88,14 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import {
+	handleLocalModelsDownload,
 	handleLocalModelsEndpointsDetect,
 	handleLocalModelsEndpointTest,
+	handleLocalModelsList,
+	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
 	handleLocalModelsTaskReadiness,
+	handleLocalModelsVerify,
 } from './localModels';
 import {
 	handleRefreshAutoRunDocs,
@@ -683,6 +687,22 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_accounts':
 				void handleFeedbackAccounts(this.ctx, client, message);
+				break;
+
+			case 'local_models_list':
+				void handleLocalModelsList(this.ctx, client, message);
+				break;
+
+			case 'local_models_download':
+				void handleLocalModelsDownload(this.ctx, client, message);
+				break;
+
+			case 'local_models_verify':
+				void handleLocalModelsVerify(this.ctx, client, message);
+				break;
+
+			case 'local_models_remove':
+				void handleLocalModelsRemove(this.ctx, client, message);
 				break;
 
 			case 'local_models_endpoints_detect':

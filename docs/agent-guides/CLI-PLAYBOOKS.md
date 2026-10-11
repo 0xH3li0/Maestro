@@ -355,6 +355,34 @@ maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
 - `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer relocates the agent through `withWorkingDirectory()` (`src/renderer/utils/agentWorkingDirectory.ts`), which moves `cwd`/`fullPath`/`shellCwd`/`projectRoot` together, rebases `autoRunFolderPath` when it lives under the old root, and clears the file tree and git state so they reload from the new directory. Moving `cwd` alone left the Files panel and the Edit dialog on the old folder (#1565). Provider conversations stored under the old path are not carried over.
 - The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
 
+### `models list|install|remove|verify`
+
+The local model catalog and what is on disk. Implemented in `src/cli/commands/models-manage.ts`.
+
+```bash
+maestro-cli models list [-k <text-gen|embedding|classifier|stt|tts|wake-word>] [--json]
+maestro-cli models install <model-id> [--json]
+maestro-cli models remove <model-id> [--force] [--json]
+maestro-cli models verify <model-id> [--json]
+```
+
+- All four run in the desktop over the WS bridge (`local_models_list`, `local_models_download`, `local_models_remove`, `local_models_verify`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `src/main/local-models/service.ts` functions as the `localModels:*` IPC channels the Settings -> Local Models rows call. A download started from the CLI is the same job the app shows progress for; a second `install` of a running download joins it.
+- Ids are checked against the shared catalog before the bridge opens. `install` refuses a `pending` model (one this build cannot run), matching the Settings row, which offers no Download button for it. It waits up to two hours for the job to settle; if the wait ends, the download keeps running in the app.
+- `remove` refuses a model whose EFFECTIVE assignment (`tasksUsingLocalModel()`) is a task, naming the tasks, until `--force`; Settings shows the same warning inline. Voice usage is reported but does not block, as in Settings.
+- `verify` never deletes or re-downloads; a mismatch exits non-zero and prints the file and both hashes.
+
+### `models assign <task-id> <assignment>` and `models tasks`
+
+Which source each Local Models task runs on. Implemented in `src/cli/commands/models-assign.ts`.
+
+```bash
+maestro-cli models assign <task-id> <off|utility-agent|local:<model-id>|endpoint:<endpoint>:<model>> [--json]
+maestro-cli models tasks [--json]
+```
+
+- `assign` edits the `localModelAssignments` setting on disk (`readLocalModelAssignments()` / `writeLocalModelAssignments()`), so it works with the app closed. It parses with `parseLocalModelAssignmentSpec()`, validates with `localModelAssignmentProblem()`, and stores with `withLocalModelAssignment()` (shared, `src/shared/local-models/tasks.ts`): the same three the Assignments picker uses, so a wrong-kind model or an endpoint for a classifier is refused, and choosing a task's default removes its entry. The endpoint may be named by id, id prefix, or name (`findLocalModelEndpoint()`); the full id is stored. Everything after the endpoint is the model, so `endpoint:ollama:qwen3:latest` keeps the tag.
+- `tasks` lists every task with its stored-or-default assignment, and the readiness verdict from the desktop (`local_models_task_readiness`, the resolver behind `models status`). With the app closed it still lists the assignments and reports `readinessError`. Use `models status` when a script needs an exit code.
+
 ### `models endpoints list|add|remove|test|detect`
 
 Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.

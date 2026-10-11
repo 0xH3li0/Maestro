@@ -1801,6 +1801,56 @@ Show a center-screen flash (momentary, exclusive - replaces any active flash)
 
 Local Models: model sources Maestro can use
 
+## `maestro-cli models list`
+
+List the local model catalog grouped by kind, with install status, size, and what uses each model (requires the desktop app)
+
+| Option              | Description                                                                   | Default |
+| ------------------- | ----------------------------------------------------------------------------- | ------- |
+| `-k, --kind <kind>` | Only one kind: text-gen \| embedding \| classifier \| stt \| tts \| wake-word | -       |
+| `--json`            | Output as JSON (for scripting)                                                | -       |
+
+## `maestro-cli models install <model-id>`
+
+Download and verify a local model; waits until it finishes (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models remove <model-id>`
+
+Delete a downloaded model. Refuses a model a task is assigned to unless --force (requires the desktop app)
+
+| Option        | Description                                             | Default |
+| ------------- | ------------------------------------------------------- | ------- |
+| `-f, --force` | Remove it even though assigned tasks become unavailable | -       |
+| `--json`      | Output as JSON (for scripting)                          | -       |
+
+## `maestro-cli models verify <model-id>`
+
+Re-hash a downloaded model against the catalog; never deletes or re-downloads (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models assign <task-id> <assignment>`
+
+Choose what a task runs on: off \| utility-agent \| local:&lt;model-id> \| endpoint:&lt;endpoint>:&lt;model>
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models tasks`
+
+List every task with its assignment, plus readiness when the desktop app is running
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli models run <task-id>`
 
 Run a text-generation task through its assignment; prints the text, or why it did not run (requires the desktop app)

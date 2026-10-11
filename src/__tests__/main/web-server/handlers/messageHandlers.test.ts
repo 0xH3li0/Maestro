@@ -103,6 +103,28 @@ vi.mock('../../../../main/local-models/task-readiness', () => ({
 
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 
+// The Local Models service reads the model store and runs the downloader; the
+// handler tests only care that `maestro-cli models list|install|verify|remove`
+// reach the same service functions the Settings rows call.
+vi.mock('../../../../main/local-models/service', () => ({
+	listLocalModels: vi.fn().mockResolvedValue([{ entry: { id: 'bge-small-en-v1.5' } }]),
+	localModelsFootprint: vi.fn().mockResolvedValue({ bytes: 42, models: [] }),
+	downloadLocalModel: vi
+		.fn()
+		.mockResolvedValue({ modelId: 'bge-small-en-v1.5', status: 'complete' }),
+	verifyLocalModel: vi
+		.fn()
+		.mockResolvedValue({ id: 'bge-small-en-v1.5', ok: true, status: 'installed' }),
+	removeLocalModel: vi.fn().mockResolvedValue(2048),
+}));
+
+import {
+	downloadLocalModel,
+	listLocalModels,
+	removeLocalModel,
+	verifyLocalModel,
+} from '../../../../main/local-models/service';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -5012,6 +5034,66 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				requestId: 'q1',
 				readiness: [{ taskId: 'injection-screen', state: 'unavailable' }],
 			});
+		});
+
+		it('local_models_list answers with the listings and the footprint', async () => {
+			handler.handleMessage(client, { type: 'local_models_list', requestId: 'l1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_list_result'));
+			expect(listLocalModels).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'l1',
+				listings: [{ entry: { id: 'bge-small-en-v1.5' } }],
+				footprint: { bytes: 42 },
+			});
+		});
+
+		it('local_models_download passes the model id through and returns the result', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_download',
+				requestId: 'dl1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_download_result'));
+			expect(downloadLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'dl1',
+				result: { status: 'complete' },
+			});
+		});
+
+		it('local_models_verify passes the model id through and returns the verdict', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_verify',
+				requestId: 'v1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_verify_result'));
+			expect(verifyLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, result: { ok: true } });
+		});
+
+		it('local_models_remove answers with the bytes reclaimed', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_remove',
+				requestId: 'rm1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_remove_result'));
+			expect(removeLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 'rm1', bytes: 2048 });
+		});
+
+		it('local_models_remove reports an unknown model as success: false', async () => {
+			vi.mocked(removeLocalModel).mockRejectedValueOnce(new Error('UnknownLocalModel'));
+			handler.handleMessage(client, {
+				type: 'local_models_remove',
+				requestId: 'rm2',
+				modelId: 'nope',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_remove_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'UnknownLocalModel' });
 		});
 
 		it('local_models_task_readiness reports an unknown task as success: false', async () => {
