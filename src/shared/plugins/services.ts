@@ -118,6 +118,7 @@ export function isValidServiceCallTarget(target: string): boolean {
 	);
 }
 
+/** Admit any non-null object except arrays; callers still enforce closed fields and domain constraints. */
 function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
