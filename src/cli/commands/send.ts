@@ -5,19 +5,12 @@ import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spa
 import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
 import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
-import { getCliPrompt } from '../services/prompt-loader';
+import { requestCliSynopsis } from '../services/synopsis';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { withMaestroClient } from '../services/maestro-client';
 import { installInterruptHandler } from '../utils/interrupt';
-import { isFailedSynopsisResponse, parseSynopsis } from '../../shared/synopsis';
-import { cheapTurnSettings } from '../../shared/modelTiers';
-import {
-	FALLBACK_CONTEXT_WINDOW,
-	getModelContextWindowOverride,
-} from '../../shared/agentConstants';
-import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { generateUUID } from '../../shared/uuid';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 
@@ -52,65 +45,6 @@ function fallbackSummary(text: string): string {
 	return firstLine.length > FALLBACK_SUMMARY_MAX
 		? `${firstLine.slice(0, FALLBACK_SUMMARY_MAX - 1)}…`
 		: firstLine;
-}
-
-/**
- * Run the cheap synopsis turn for a finished send, resumed on the same
- * provider session. Returns the parsed synopsis, or null when there is
- * nothing usable (the turn failed, printed a provider error, or reported
- * NOTHING_TO_REPORT), in which case the caller keeps the response.
- */
-async function runSendSynopsis(
-	agent: SessionInfo,
-	agentSessionId: string,
-	signal: AbortSignal
-): Promise<{ shortSummary: string; fullSynopsis: string } | null> {
-	const cheap = cheapTurnSettings(agent.toolType);
-	// Same guard as the desktop synopsis (useAgentExecution): resuming replays
-	// the transcript, so never downgrade onto a smaller context window than the
-	// agent's own model, or a long session fails with "Prompt is too long".
-	// Effort still drops to the bottom rung.
-	const shrinksWindow =
-		(getModelContextWindowOverride(agent.customModel) ?? FALLBACK_CONTEXT_WINDOW) >
-		(getModelContextWindowOverride(cheap.model) ?? FALLBACK_CONTEXT_WINDOW);
-	const synopsisModel = shrinksWindow ? agent.customModel : (cheap.model ?? agent.customModel);
-
-	const synopsisResult = await captureCliRun(
-		{
-			sessionId: agentSessionId,
-			toolType: agent.toolType,
-			cwd: agent.cwd,
-			source: 'cli:send-synopsis',
-		},
-		async () =>
-			spawnAgent(
-				agent.toolType,
-				agent.cwd,
-				await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
-				agentSessionId,
-				{
-					signal,
-					customModel: synopsisModel,
-					customEffort: cheap.effort ?? agent.customEffort,
-					customArgs: agent.customArgs,
-					additionalDirectories: agent.additionalDirectories,
-					customEnvVars: agent.customEnvVars,
-					sshRemoteConfig: agent.sessionSshRemoteConfig,
-					querySource: 'auto',
-					enableMaestroP: agent.enableMaestroP,
-					maestroPMode: agent.maestroPMode,
-					maestroPPath: agent.maestroPPath,
-				}
-			),
-		settlementFromAgentResult
-	);
-
-	const text = synopsisResult.response;
-	if (!synopsisResult.success || !text || isFailedSynopsisResponse(text, agent.toolType)) {
-		return null;
-	}
-	const parsed = parseSynopsis(text);
-	return parsed.nothingToReport ? null : parsed;
 }
 
 /**
@@ -149,7 +83,11 @@ async function recordSendHistory(
 			fullResponse = response;
 
 			if (options.synopsis !== false && result.agentSessionId && !signal.aborted) {
-				const synopsis = await runSendSynopsis(agent, result.agentSessionId, signal);
+				const synopsis = await requestCliSynopsis(agent, result.agentSessionId, {
+					source: 'cli:send-synopsis',
+					readOnlyMode: options.readOnly,
+					signal,
+				});
 				if (synopsis) {
 					summary = synopsis.shortSummary;
 					fullResponse = synopsis.fullSynopsis;

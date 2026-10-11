@@ -599,6 +599,31 @@ describe('send command', () => {
 			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ customModel: 'opus[1m]' });
 		});
 
+		it('keeps the synopsis turn read-only after a --read-only send', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Plan', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Planned it.' });
+
+			await send('agent-abc', 'Plan it', { readOnly: true });
+
+			// Both turns run on one session: a synopsis without the flag would hold
+			// full permissions on a conversation the caller asked to keep read-only.
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ readOnlyMode: true });
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ readOnlyMode: true });
+		});
+
+		it('does not make the synopsis turn read-only for an ordinary send', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]?.readOnlyMode).toBeUndefined();
+		});
+
 		it('records a failed turn without a synopsis turn', async () => {
 			ready();
 			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
