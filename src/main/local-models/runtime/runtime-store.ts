@@ -1,7 +1,7 @@
 /**
  * Where a downloaded native runtime lives, and whether it is really there.
  *
- *   userData/runtimes/acappella/<runtime-id>/
+ *   userData/runtimes/<runtime-id>/
  *     manifest.json          - what was installed, from where, and when
  *     dist/ bins/ bin/ ...   - the kept subtree of the payload
  *
@@ -19,7 +19,6 @@
  * the error names a shared library rather than anything a user can act on.
  */
 
-import { app } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -32,9 +31,7 @@ import {
 	nativeRuntimeArtifact,
 	type NativeRuntimeArtifact,
 } from '../../../shared/local-models/runtime-artifacts';
-
-/** Directory under userData. Also what the "remove runtimes" flow deletes. */
-export const ACAPPELLA_RUNTIMES_DIRNAME = path.join('runtimes', 'acappella');
+import { LOCAL_RUNTIMES_DIRNAME, localModelsDataDir } from '../paths';
 
 /** Written last, on success only, so its presence means the install finished. */
 export const RUNTIME_MANIFEST_FILENAME = 'manifest.json';
@@ -69,20 +66,9 @@ export interface RuntimeManifest {
 	bytes: number;
 }
 
-/**
- * Resolve the Maestro data dir the same way every other store does.
- *
- * `MAESTRO_USER_DATA` has to keep working, and it only does if nothing invents a
- * second way to ask this question. See the identical note in `model-store.ts`.
- */
-function dataDir(): string {
-	if (process.env.MAESTRO_USER_DATA) return path.resolve(process.env.MAESTRO_USER_DATA);
-	return app.getPath('userData');
-}
-
-/** Root every downloaded runtime lives under. */
+/** Root every downloaded runtime lives under. Also what the "remove runtimes" flow deletes. */
 export function runtimesRoot(): string {
-	return path.join(dataDir(), ACAPPELLA_RUNTIMES_DIRNAME);
+	return path.join(localModelsDataDir(), LOCAL_RUNTIMES_DIRNAME);
 }
 
 /**

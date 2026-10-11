@@ -42,7 +42,7 @@ function listings(status: 'installed' | 'not-installed') {
 			detail: status === 'installed' ? 'Installed' : 'Not installed',
 			bytesOnDisk: status === 'installed' ? entry.bytes : 0,
 		},
-		installPaths: entry.files.map((file) => `/tmp/models/acappella/${entry.id}/${file.path}`),
+		installPaths: entry.files.map((file) => `/tmp/models/${entry.id}/${file.path}`),
 	}));
 }
 

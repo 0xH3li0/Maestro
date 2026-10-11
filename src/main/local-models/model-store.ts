@@ -3,7 +3,7 @@
  *
  * Install layout, one directory per model:
  *
- *   userData/models/acappella/<model-id>/
+ *   userData/models/<model-id>/
  *     manifest.json          what was installed, from where, and when it was last verified
  *     <file path from the catalog>
  *
@@ -27,7 +27,6 @@
  * store does not get to relearn that lesson.
  */
 
-import { app } from 'electron';
 import { createHash } from 'crypto';
 import * as fs from 'fs/promises';
 import { createReadStream, type Dirent } from 'fs';
@@ -36,9 +35,7 @@ import * as path from 'path';
 import { getLocalModel, LOCAL_MODEL_CATALOG } from '../../shared/local-models/model-catalog';
 import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
-
-/** Directory name under userData. Also the thing the reclaim-disk flow deletes. */
-export const ACAPPELLA_MODELS_DIRNAME = path.join('models', 'acappella');
+import { LOCAL_MODELS_DIRNAME, localModelsDataDir } from './paths';
 
 export const MODEL_MANIFEST_FILENAME = 'manifest.json';
 
@@ -96,19 +93,9 @@ export interface ModelFootprint {
 // Paths
 // ---------------------------------------------------------------------------
 
-/**
- * Resolve the Maestro data dir, matching the pianola / plugin store semantics.
- * A new path constant is deliberately NOT introduced: `MAESTRO_USER_DATA` has to
- * keep working, and it only does if every store asks the same question.
- */
-function dataDir(): string {
-	if (process.env.MAESTRO_USER_DATA) return path.resolve(process.env.MAESTRO_USER_DATA);
-	return app.getPath('userData');
-}
-
-/** Root every A Cappella model lives under. */
+/** Root every local model lives under. Also what the reclaim-disk flow deletes. */
 export function modelsRoot(): string {
-	return path.join(dataDir(), ACAPPELLA_MODELS_DIRNAME);
+	return path.join(localModelsDataDir(), LOCAL_MODELS_DIRNAME);
 }
 
 /**
@@ -431,7 +418,7 @@ export async function remove(id: string): Promise<number> {
 }
 
 /**
- * Disk used by A Cappella models.
+ * Disk used by local models.
  *
  * Walks the models root rather than the catalog, so a directory left behind by a
  * model that has since been dropped from the catalog is still counted and still
@@ -457,9 +444,11 @@ export async function totalFootprint(): Promise<ModelFootprint> {
 }
 
 /**
- * Delete every A Cappella model directory. The reclaim-disk action behind the
- * Encore Feature being switched off; scoped to the A Cappella root so it can
- * never reach another feature's models.
+ * Delete every local model directory. The reclaim-disk action behind the
+ * Encore Feature being switched off; scoped to the models root so it can never
+ * reach anything else in the data dir. Every model in the catalog today is one
+ * voice uses; once a model ships that only another consumer needs, this has to
+ * learn which ids to spare.
  *
  * @returns bytes reclaimed.
  */

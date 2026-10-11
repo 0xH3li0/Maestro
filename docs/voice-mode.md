@@ -110,7 +110,7 @@ Every file is downloaded from a pinned revision and checked against a SHA-256 re
 
 ### Disk usage and getting the space back
 
-Models install under `models/acappella` inside Maestro's user data directory. The **Models** page shows the total footprint, each model's size, when it was installed, and when it was last verified, with **Remove** and **Re-verify** next to each one.
+Models install under `models` inside Maestro's user data directory. The **Models** page shows the total footprint, each model's size, when it was installed, and when it was last verified, with **Remove** and **Re-verify** next to each one.
 
 When you switch A Cappella **off**, the Models page stays visible and offers to reclaim the disk. It deletes only the A Cappella model directory, and it confirms first.
 

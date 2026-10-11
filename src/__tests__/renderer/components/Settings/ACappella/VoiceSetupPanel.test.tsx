@@ -38,7 +38,7 @@ function notInstalledListings() {
 			detail: 'Not installed',
 			bytesOnDisk: 0,
 		},
-		installPaths: entry.files.map((file) => `/tmp/models/acappella/${entry.id}/${file.path}`),
+		installPaths: entry.files.map((file) => `/tmp/models/${entry.id}/${file.path}`),
 	}));
 }
 
@@ -96,7 +96,7 @@ describe('VoiceSetupPanel', () => {
 		// downloaded. That is the consent surface.
 		expect(screen.getAllByText(parakeet.license).length).toBeGreaterThan(0);
 		expect(
-			screen.getByText(`/tmp/models/acappella/${parakeet.id}/${parakeet.files[0].path}`)
+			screen.getByText(`/tmp/models/${parakeet.id}/${parakeet.files[0].path}`)
 		).toBeInTheDocument();
 		// Whisper is selectable, but not the default, so it is not offered here.
 		expect(

@@ -84,7 +84,7 @@ needs a phoneme front end, Qwen3 needs the JavaScript half of `node-llama-cpp`; 
 ## Install layout
 
 ```
-userData/models/acappella/<model-id>/
+userData/models/<model-id>/
   manifest.json          id, revision, sha256, bytes, sourceUrl, license, installedAt, verifiedAt
   <catalog file path>    the model itself
 ```
@@ -139,7 +139,13 @@ see is disk they cannot get back.
 
 `models:remove`, `models:remove-all`, and `models:footprint` stay callable when the Encore Feature
 is OFF, following the `stop-session` precedent. The Models page offers to reclaim the space exactly
-then, with a confirmation step, and deletes only `userData/models/acappella`.
+then, with a confirmation step, and deletes only `userData/models`.
+
+Before the core Local Models service owned these roots, models lived under
+`userData/models/acappella/` and runtimes under `userData/runtimes/acappella/`. At startup,
+`migrateLegacyLocalModelStorage()` (`src/main/local-models/storage-migration.ts`) renames each
+entry up one level, skips (and logs) any whose target already exists, and removes the legacy
+root only once it is empty. Nothing is re-downloaded and no bytes are deleted.
 
 ## Related
 

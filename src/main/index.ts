@@ -178,6 +178,7 @@ import {
 // session, closed here when the Encore Feature is switched off).
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 import { shutdownACappellaForDisable } from './ipc/handlers/acappella';
+import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
@@ -2964,6 +2965,17 @@ app
 			// Stats will be unavailable but the app will still function
 			logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
+		}
+
+		// Move model and runtime installs out of the legacy A Cappella roots before
+		// any IPC handler can read the stores. Runs whether or not voice is enabled:
+		// the stores belong to the core Local Models service. A failure leaves the
+		// installs where they were (nothing is deleted), so startup continues.
+		try {
+			await migrateLegacyLocalModelStorage();
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Local model storage migration failed: ${error}`, 'Migration');
 		}
 
 		// Set up IPC handlers

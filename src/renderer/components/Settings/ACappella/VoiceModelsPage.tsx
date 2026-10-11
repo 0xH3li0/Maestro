@@ -7,8 +7,8 @@
  *
  * The reclaim-disk offer appears when the A Cappella Encore Feature is switched
  * OFF, which is the moment it matters: a feature you have stopped using should
- * not keep 1.4 GB without saying so. It deletes only the A Cappella model root
- * (`userData/models/acappella`) and confirms first, because a one-click delete
+ * not keep 1.4 GB without saying so. It deletes only the Local Models root
+ * (`userData/models`) and confirms first, because a one-click delete
  * of a gigabyte the user might be about to re-enable is not a kindness.
  *
  * Stat rows come from the shared widget library (`StatCardGrid`) rather than a

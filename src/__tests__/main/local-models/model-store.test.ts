@@ -296,7 +296,7 @@ describe('model-store', () => {
 		});
 
 		it('counts directories that are no longer in the catalog', async () => {
-			const orphan = path.join(tempRoot.dir, 'models', 'acappella', 'retired-model');
+			const orphan = path.join(tempRoot.dir, 'models', 'retired-model');
 			await fs.mkdir(orphan, { recursive: true });
 			await fs.writeFile(path.join(orphan, 'weights.bin'), Buffer.alloc(2048));
 
@@ -319,7 +319,7 @@ describe('model-store', () => {
 			);
 			// A directory left by a model the catalog has since dropped. Disk the user
 			// cannot see is disk they cannot get back.
-			const orphan = path.join(tempRoot.dir, 'models', 'acappella', 'retired-model');
+			const orphan = path.join(tempRoot.dir, 'models', 'retired-model');
 			await fs.mkdir(orphan, { recursive: true });
 			await fs.writeFile(path.join(orphan, 'weights.bin'), Buffer.alloc(2048));
 
@@ -332,7 +332,7 @@ describe('model-store', () => {
 			expect(await totalFootprint()).toEqual({ bytes: 0, models: [] });
 		});
 
-		it('removeAll deletes only the A Cappella root', async () => {
+		it('removeAll deletes only the models root', async () => {
 			await writeFilesOfDeclaredLength(wakeWord.id);
 			const neighbour = path.join(tempRoot.dir, 'plugins');
 			await fs.mkdir(neighbour, { recursive: true });
