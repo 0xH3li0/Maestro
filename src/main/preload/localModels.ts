@@ -12,7 +12,8 @@
  * the user runs. `list()` is a disk read against a frozen local catalog.
  * `taskReadiness()` lists an endpoint's models only when a task is assigned to
  * one. `draftPullRequest()` reaches a model only when Git drafts is assigned
- * one. `semanticIndex.*` reads the indexer's in-memory progress.
+ * one, and `suggestTabCleanup()` only when Tab cleanup suggestions is.
+ * `semanticIndex.*` reads the indexer's in-memory progress.
  */
 
 import { ipcRenderer } from 'electron';
@@ -32,6 +33,7 @@ import type { LocalModelTaskReadiness } from '../../shared/local-models/task-rea
 import type { PullRequestDraftRequest, PullRequestDraftResult } from '../../shared/gitDrafts';
 import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
 import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
+import type { TabCleanupResult } from '../../shared/tabCleanup';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -185,6 +187,15 @@ export function createLocalModelsApi() {
 		 */
 		search: (request: WorkSearchRequest): Promise<WorkSearchResult> =>
 			ipcRenderer.invoke('localModels:search', request),
+
+		/**
+		 * Ask the Tab cleanup assignment which tabs could be closed, snoozed, or
+		 * brought back from snooze, across every agent. Read-only: it returns a
+		 * list and changes no tab. A task that is off or unavailable answers
+		 * `success: false` with the reason.
+		 */
+		suggestTabCleanup: (): Promise<TabCleanupResult> =>
+			ipcRenderer.invoke('localModels:suggestTabCleanup'),
 
 		semanticIndex: createSemanticIndexApi(),
 

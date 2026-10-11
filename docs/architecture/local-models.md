@@ -635,6 +635,7 @@ falls back to another source.
 | `tab-summary` | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset | Keeps the agent path        | Compaction fails with the reason; the participant summary skips |
 | `ai-command`  | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                   | Refuses, names the setting  | Fails with the reason in the composer                           |
 | `git-drafts`  | `draftPullRequest()` in `local-models/git-drafts.ts`                                          | Button hidden (the default) | Button disabled with the readiness reason                       |
+| `tab-cleanup` | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                        | Modal says so (the default) | Modal shows the reason in place of the list                     |
 
 `git-drafts` is the one consumer with no agent path. It reads `git log --oneline base..HEAD` and
 `git diff --stat base...HEAD` from a LOCAL checkout (Create Pull Request is local-only), caps both
@@ -642,6 +643,72 @@ falls back to another source.
 returns a title and body the form fills in. Transports: `localModels:draftPullRequest` (the form's
 "Draft with local model" button) and `maestro-cli models run git-drafts --cwd <path>` (WS bridge
 message `local_models_git_draft`), both through `draftPullRequestRequest()`.
+
+### Tab cleanup suggestions: `suggestTabCleanup()`
+
+`tab-cleanup` suggests which tabs to close, snooze, or bring back from snooze. It has no agent path
+either, and it is the one consumer whose output could destroy something, so the design is built
+around never trusting the model.
+
+```mermaid
+flowchart LR
+	S[sessions store] --> C[collectTabCleanupTabs]
+	PM[process manager] --> C
+	C --> SEL[selectTabCleanupCandidates]
+	SEL -->|T1..Tn, no real ids| M[runLocalTask tab-cleanup]
+	M --> P[parseTabCleanupReply]
+	S -->|second read| R[rebindTabCleanupCandidates]
+	P --> G[guardTabCleanupSuggestions]
+	R --> G
+	G -->|TabCleanupResult| UI[modal: live check, user ticks, Apply]
+	G -->|TabCleanupResult| CLI[tab suggest-cleanup: prints only]
+```
+
+| Piece                                     | File                                          |
+| ----------------------------------------- | --------------------------------------------- |
+| Contract, guard, caps, prompt text (pure) | `src/shared/tabCleanup.ts`                    |
+| Reading tabs, calling the model           | `src/main/local-models/tab-cleanup.ts`        |
+| Prompt (`tab-cleanup-local`)              | `src/prompts/tab-cleanup-local.md`            |
+| Live check and apply                      | `src/renderer/services/tabCleanup.ts`         |
+| Modal                                     | `src/renderer/components/TabCleanupModal.tsx` |
+| Closing an AI tab of any agent            | `src/renderer/services/aiTabClose.ts`         |
+| CLI                                       | `src/cli/commands/tab-suggest-cleanup.ts`     |
+
+**What is read.** `collectTabCleanupTabs()` walks the sessions store: every agent's VISIBLE AI tabs
+(a hidden cross-agent consult tab is never listed) and its snoozed tabs of every kind. Per tab:
+label, last activity (newest transcript entry, else creation or park time), messages the user sent,
+the newest thing asked, starred, and whether the composer holds text or staged images. Busy cannot
+come from the store, which is rewritten to idle on its way to disk, so it is asked of the process
+manager per tab (`isAiTabProcessActive`), and every tab of an agent the CLI is running a playbook
+against counts as busy.
+
+**What the model sees.** `selectTabCleanupCandidates()` leaves out every protected tab, keeps at
+most `TAB_CLEANUP_MAX_CANDIDATES` (40, of which at most 10 snoozed), oldest first, and numbers them
+`T1..Tn`. The model never sees a real id: two UUIDs per tab would cost more tokens than every other
+fact on the line, and a small model that miscopies one character names nothing. The reply schema
+(`TAB_CLEANUP_REPLY_SCHEMA`) is ONE fixed schema whose `tab` field is an enum of all forty handles,
+not one built per request, because the llama engine caches a compiled grammar per schema.
+
+**The guard.** `guardTabCleanupSuggestions()` runs after the model and drops a suggestion for a tab
+that is busy, starred, or holding a draft, a handle that names no tab, an action that does not fit
+(`wake` on an open tab, `close` or `snooze` on a parked one), a second suggestion for the same tab,
+and anything past twenty. It runs against a SECOND read of the app taken after the model answered
+(`rebindTabCleanupCandidates()`), because a local model can take a minute and a tab can start a
+turn or gain a draft in that time. `tabCleanupProtection()` is the one rule, and the renderer runs
+it a third and fourth time against the LIVE tab (`resolveTabCleanupLiveState()`): when a row is
+drawn, and the instant before it is applied. The store main reads is a few seconds behind the app,
+and a draft still being typed lives only in the renderer.
+
+**Applying.** Only the modal applies, and only rows the user ticked; no row is pre-ticked.
+`applyTabCleanupSuggestions()` uses three existing paths: `closeAiTabInSession()` (the click path's
+close sequence, extracted so it can name any agent: transcript snapshot before the close, the
+closed-tab history that makes it undoable, wizard handling, the browser build's request to the
+desktop), `snoozeTabWithMirror()`, and `wakeSnoozeNow()`. The CLI verb is read-only by design and
+has no `--apply`; it prints the ordinary verb for each suggestion (`tabCleanupApplyCommand()`).
+
+Transports: `localModels:suggestTabCleanup` (no argument is read) and the WS bridge message
+`local_models_tab_cleanup`, both calling `suggestTabCleanup()`. The stores are handed over once at
+startup by `configureTabCleanup()` in `src/main/index.ts`.
 
 ## Related
 

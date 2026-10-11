@@ -361,6 +361,7 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 describe('every registered action has a handler', () => {
 	const UNBOUND_IDS = [
 		'showSnoozeList',
+		'tabCleanupSuggestions',
 		'openMediaPlayer',
 		'mediaPlayPause',
 		'mediaNext',

@@ -914,6 +914,50 @@ describe('agent-switch window scoping', () => {
 	});
 });
 
+describe('buildTabCommands: Tab Cleanup Suggestions', () => {
+	const args = {
+		activeSession: createMockSession({ id: 's1' }),
+		isAiMode: true,
+		activeTabInfo: {
+			isTerminalMode: false,
+			hasActiveTab: false,
+			activeUnifiedIndex: -1,
+			unifiedTabCount: 0,
+			activeTabType: null,
+		},
+		enterToSendAI: true,
+		shortcuts: {},
+		toggleInputMode: vi.fn(),
+	};
+
+	it('opens the modal and closes the palette', () => {
+		const setQuickActionOpen = vi.fn();
+		const command = buildTabCommands({ ...args, setQuickActionOpen }).find(
+			(a) => a.id === 'tabCleanupSuggestions'
+		);
+
+		expect(command?.label).toBe('Tab Cleanup Suggestions');
+		try {
+			command!.action();
+			expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(useModalStore.getState().isOpen('tabCleanup')).toBe(true);
+		} finally {
+			useModalStore.getState().closeModal('tabCleanup');
+		}
+	});
+
+	it('shows the chord the user bound, and none by default', () => {
+		const bound = { id: 'tabCleanupSuggestions', label: 'Tab Cleanup Suggestions', keys: ['k'] };
+		const find = (shortcuts: Record<string, unknown>) =>
+			buildTabCommands({ ...args, setQuickActionOpen: vi.fn(), shortcuts }).find(
+				(a) => a.id === 'tabCleanupSuggestions'
+			);
+
+		expect(find({})?.shortcut).toBeUndefined();
+		expect(find({ tabCleanupSuggestions: bound })?.shortcut).toBe(bound);
+	});
+});
+
 describe('buildSupportCommands: Local Models settings', () => {
 	it('opens Settings on the Local Models tab and closes the palette', () => {
 		const setQuickActionOpen = vi.fn();

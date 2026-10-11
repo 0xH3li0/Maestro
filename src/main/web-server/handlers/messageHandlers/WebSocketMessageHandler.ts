@@ -97,6 +97,7 @@ import {
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
 	handleLocalModelsSearch,
+	handleLocalModelsTabCleanup,
 	handleLocalModelsTaskReadiness,
 	handleLocalModelsVerify,
 } from './localModels';
@@ -734,6 +735,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_search':
 				void handleLocalModelsSearch(this.ctx, client, message);
+				break;
+
+			case 'local_models_tab_cleanup':
+				void handleLocalModelsTabCleanup(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

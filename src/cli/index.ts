@@ -117,6 +117,7 @@ import { modelsRun } from './commands/models-run';
 import { modelsIndex } from './commands/models-index';
 import { modelsStatus } from './commands/models-status';
 import { search } from './commands/search';
+import { tabSuggestCleanup } from './commands/tab-suggest-cleanup';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -1498,7 +1499,10 @@ program
 
 // Tab commands - manage an agent's AI tabs in the desktop app. Every verb that
 // takes <tab-id> also accepts the literal "active" (with -a to say whose).
-const tab = program.command('tab').description("Manage an agent's tabs in the desktop app");
+const tab = program
+	.command('tab')
+	.alias('tabs')
+	.description("Manage an agent's tabs in the desktop app");
 
 /**
  * Options every tab-targeted verb shares: --agent disambiguates the "active"
@@ -1604,6 +1608,16 @@ tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
 tabTargetOptions(tab.command('move <tab-id> <position>'))
 	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
 	.action((tabId, position, options) => tabMove(tabId, position, options));
+
+// Read-only: the CLI half of the Tab Cleanup Suggestions modal. It prints what
+// the Tab cleanup assignment suggests and the verb that applies each one.
+tab
+	.command('suggest-cleanup')
+	.description(
+		'Suggest tabs to close, snooze, or wake across every agent (read-only; uses the Tab cleanup Local Models assignment)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(tabSuggestCleanup);
 
 // Create SSH remote command - add a new SSH remote configuration
 program

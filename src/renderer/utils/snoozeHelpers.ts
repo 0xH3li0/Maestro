@@ -24,6 +24,7 @@ import {
 	TabGroup,
 	UnifiedTabRef,
 } from '../types';
+import { clampSnoozeLabel, snoozedEntryLabel } from '../../shared/snooze';
 import type { SnoozedTabSummary } from '../../shared/snoozeCommands';
 import { generateId } from './ids';
 import {
@@ -153,7 +154,7 @@ export function resolveSnoozeTarget(
 		const paneRefs = collectLeafTabRefs(group.layout);
 		return {
 			tabId: id,
-			tabLabel: clampLabel(group.name) || 'Tab group',
+			tabLabel: clampSnoozeLabel(group.name) || 'Tab group',
 			canRunWakePrompt: paneRefs.some((ref) => ref.type === 'ai'),
 		};
 	}
@@ -711,12 +712,6 @@ export function buildSnoozeHistoryRecord(
 	};
 }
 
-/** Trim a label to something that fits a list row. */
-function clampLabel(text: string): string {
-	const firstLine = text.trim().split('\n')[0];
-	return firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine;
-}
-
 /** What landing on a tab actually took. */
 export interface FocusAiTabOutcome {
 	session: Session;
@@ -766,30 +761,11 @@ export function focusAiTabWithSnooze(session: Session, tabId: string): FocusAiTa
 }
 
 /**
- * Display label for a snoozed tab.
- *
- * Each kind names itself differently, and the fallbacks matter because the list
- * is read weeks later: an AI tab falls back to its opening message, a browser
- * tab to its URL, a terminal to its working directory. "Untitled tab" is the
- * last resort, not the second one.
+ * Display label for a snoozed tab. The rules live in `shared/snooze.ts`
+ * ({@link snoozedEntryLabel}) because the main process names parked tabs too.
  */
 export function getSnoozedTabLabel(entry: SnoozedTabEntry): string {
-	switch (entry.type) {
-		case 'ai': {
-			if (entry.tab.name) return entry.tab.name;
-			const firstUserLog = entry.tab.logs?.find((log) => log.source === 'user' && log.text?.trim());
-			if (firstUserLog?.text) return clampLabel(firstUserLog.text);
-			return entry.tab.agentSessionId ? entry.tab.agentSessionId.slice(0, 8) : 'Untitled tab';
-		}
-		case 'file':
-			return clampLabel(`${entry.tab.name}${entry.tab.extension}`) || 'Untitled file';
-		case 'browser':
-			return clampLabel(entry.tab.customTitle || entry.tab.title || entry.tab.url) || 'Browser tab';
-		case 'terminal':
-			return entry.tab.name || clampLabel(entry.tab.cwd) || 'Terminal';
-		case 'group':
-			return clampLabel(entry.group.name) || 'Tab group';
-	}
+	return snoozedEntryLabel(entry);
 }
 
 /**

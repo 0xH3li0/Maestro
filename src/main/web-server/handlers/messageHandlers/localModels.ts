@@ -4,7 +4,8 @@
  * Handles: local_models_list, local_models_download, local_models_verify,
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
  * local_models_run_task, local_models_task_readiness, local_models_git_draft,
- * local_models_semantic_index_status, local_models_search.
+ * local_models_semantic_index_status, local_models_search,
+ * local_models_tab_cleanup.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -36,6 +37,7 @@ import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
 import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../../local-models/work-search';
+import { suggestTabCleanup } from '../../../local-models/tab-cleanup';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -226,5 +228,22 @@ export function handleLocalModelsSearch(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_search_result', async () => ({
 		result: await searchPastWorkRequest(message.request),
+	}));
+}
+
+/**
+ * Handle local_models_tab_cleanup - which tabs could be closed, snoozed, or
+ * woken (`maestro-cli tab suggest-cleanup`), through the same function the
+ * Tab Cleanup Suggestions modal calls. Read-only: it answers with a list and
+ * changes no tab. A task that is off or unavailable is a successful round trip
+ * with the reason in `result`.
+ */
+export function handleLocalModelsTabCleanup(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_tab_cleanup_result', async () => ({
+		result: await suggestTabCleanup(),
 	}));
 }

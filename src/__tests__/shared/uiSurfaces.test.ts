@@ -52,6 +52,14 @@ describe('resolveUiSurface', () => {
 		expect(resolveUiSurface('bug-report')?.id).toBe('feedback');
 	});
 
+	it('resolves Tab Cleanup Suggestions so `open tab-cleanup` works', () => {
+		const cleanup = resolveUiSurface('tab-cleanup');
+		expect(cleanup?.modal).toBe('tabCleanup');
+		expect(resolveUiSurface('cleanup')?.id).toBe('tab-cleanup');
+		// Its shortcut ships unbound, but the id must still be a registered one.
+		expect(DEFAULT_SHORTCUTS[cleanup!.shortcutId!].keys).toEqual([]);
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();

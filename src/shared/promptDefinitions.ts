@@ -133,6 +133,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Pull request draft for a small local model or endpoint: writes a title and body from the branch commits and diff summary, as JSON',
 		category: 'commands',
 	},
+	{
+		id: 'tab-cleanup-local',
+		filename: 'tab-cleanup-local.md',
+		description:
+			'Tab cleanup suggestions for a small local model or endpoint: reads one line of facts per tab and suggests which to close, snooze, or wake, as JSON',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -379,6 +386,7 @@ export const PROMPT_IDS = {
 	AI_COMMAND: 'ai-command',
 	AI_COMMAND_LOCAL: 'ai-command-local',
 	GIT_DRAFT_PR_LOCAL: 'git-draft-pr-local',
+	TAB_CLEANUP_LOCAL: 'tab-cleanup-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

@@ -8,9 +8,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -61,6 +63,43 @@ describe('HamburgerMenuContent on a phone', () => {
 		expect(badges.length).toBeGreaterThan(0);
 		for (const badge of badges) {
 			expect(badge).toHaveAttribute('data-shortcut-hint');
+		}
+	});
+});
+
+describe('HamburgerMenuContent Tab Cleanup entry', () => {
+	afterEach(() => {
+		useModalStore.getState().closeModal('tabCleanup');
+	});
+
+	it('opens Tab Cleanup Suggestions and closes the menu', () => {
+		const setMenuOpen = vi.fn();
+		render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={setMenuOpen} />);
+
+		fireEvent.click(screen.getByText('Tab Cleanup'));
+
+		expect(useModalStore.getState().isOpen('tabCleanup')).toBe(true);
+		expect(setMenuOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('draws no chord badge while the shortcut is unbound, and one once it is bound', () => {
+		const row = () => screen.getByText('Tab Cleanup').closest('button')!;
+		const { unmount } = render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
+		expect(row().querySelector('[data-shortcut-hint]')).toBeNull();
+		unmount();
+
+		const original = useSettingsStore.getState().shortcuts;
+		useSettingsStore.setState({
+			shortcuts: {
+				...original,
+				tabCleanupSuggestions: { ...original.tabCleanupSuggestions, keys: ['Alt', 'Meta', 'k'] },
+			},
+		});
+		try {
+			render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
+			expect(row().querySelector('[data-shortcut-hint]')).not.toBeNull();
+		} finally {
+			useSettingsStore.setState({ shortcuts: original });
 		}
 	});
 });

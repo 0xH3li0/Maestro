@@ -15,6 +15,13 @@ import {
 	type WorkSearchHit,
 	type WorkSearchResult,
 } from '../../shared/local-models/work-search';
+import { formatSnoozeTarget } from '../../shared/snooze';
+import {
+	describeTabCleanupCoverage,
+	formatTabCleanupAge,
+	tabCleanupApplyCommand,
+	type TabCleanupResult,
+} from '../../shared/tabCleanup';
 
 // ANSI color codes
 const colors = {
@@ -1289,4 +1296,43 @@ export function formatInfo(message: string): string {
 // Warning message
 export function formatWarning(message: string): string {
 	return `${c('yellow', '⚠')} ${message}`;
+}
+
+const TAB_CLEANUP_ACTION_COLORS = { close: 'red', snooze: 'yellow', wake: 'green' } as const;
+
+/**
+ * Render `maestro-cli tab suggest-cleanup`: one block per suggestion, with the
+ * command that applies it. The verb changes nothing itself, so the last line of
+ * each block is the whole point: what to run if the suggestion is right.
+ */
+export function formatTabCleanupSuggestions(
+	result: Extract<TabCleanupResult, { success: true }>,
+	now: number = Date.now()
+): string {
+	const coverage = describeTabCleanupCoverage(result);
+	const lines = [
+		`${bold(c('cyan', 'TAB CLEANUP'))}  ${result.suggestions.length} ${
+			result.suggestions.length === 1 ? 'suggestion' : 'suggestions'
+		}`,
+		dim(`  ${coverage}${result.producedBy ? `. Suggested by ${result.producedBy}` : ''}.`),
+	];
+	if (result.suggestions.length === 0) {
+		lines.push('', '  Nothing to clean up.');
+		return lines.join('\n');
+	}
+	for (const suggestion of result.suggestions) {
+		const when =
+			suggestion.kind === 'snoozed' && suggestion.wakeAt !== undefined
+				? `snoozed until ${formatSnoozeTarget(suggestion.wakeAt, now)}`
+				: `last active ${formatTabCleanupAge(suggestion.lastActivityAt, now)}`;
+		lines.push(
+			'',
+			`  ${c(TAB_CLEANUP_ACTION_COLORS[suggestion.action], suggestion.action.padEnd(6))}  ${c('white', suggestion.label)}`,
+			dim(`          ${suggestion.agentName} | ${when}`)
+		);
+		if (suggestion.reason) lines.push(`          ${suggestion.reason}`);
+		lines.push(dim(`          -> ${tabCleanupApplyCommand(suggestion)}`));
+	}
+	lines.push('', dim('  Nothing was changed. Run a command above to apply a suggestion.'));
+	return lines.join('\n');
 }

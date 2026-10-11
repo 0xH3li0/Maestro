@@ -168,6 +168,9 @@ export const MODAL_PRIORITIES = {
 	/** Snoozed tabs list modal (shows every agent's snoozed tabs) */
 	SNOOZED_TABS: 703,
 
+	/** Tab Cleanup Suggestions (suggested closes, snoozes, and wakes across every agent) */
+	TAB_CLEANUP: 702,
+
 	/**
 	 * Snooze history log. Must rank ABOVE SNOOZED_TABS: it opens on top of that
 	 * list, and Escape closes the highest-priority layer. Ranked below, Escape

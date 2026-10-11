@@ -44,10 +44,12 @@ import {
 	semanticIndexProgress,
 } from '../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../local-models/work-search';
+import { suggestTabCleanup } from '../../local-models/tab-cleanup';
 import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
 import type { WorkSearchResult } from '../../../shared/local-models/work-search';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
+import type { TabCleanupResult } from '../../../shared/tabCleanup';
 import {
 	cancelLocalModel,
 	downloadLocalModel,
@@ -275,6 +277,14 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('draftPullRequest'),
 			async (request: unknown): Promise<PullRequestDraftResult> => draftPullRequestRequest(request)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:suggestTabCleanup',
+		withIpcErrorLogging(
+			handlerOpts('suggestTabCleanup'),
+			async (): Promise<TabCleanupResult> => suggestTabCleanup()
 		)
 	);
 }

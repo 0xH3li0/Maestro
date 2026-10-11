@@ -136,6 +136,14 @@ vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 	}),
 }));
 
+vi.mock('../../../../main/local-models/tab-cleanup', () => ({
+	suggestTabCleanup: vi.fn(async () => ({
+		success: false,
+		status: 'off',
+		error: 'Tab cleanup suggestions is off.',
+	})),
+}));
+
 vi.mock('../../../../main/local-models/work-search', () => ({
 	searchPastWorkRequest: vi.fn(async () => ({ status: 'off' })),
 }));
@@ -164,6 +172,7 @@ import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
 import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
+import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -381,6 +390,18 @@ describe('task router channel', () => {
 			error: 'Git drafts is off.',
 		});
 		expect(draftPullRequestRequest).toHaveBeenCalledWith(request);
+	});
+
+	it('asks for tab cleanup suggestions with no argument and returns the verdict', async () => {
+		// A renderer cannot steer which tabs are read: whatever it sends is dropped.
+		await expect(
+			handlerFor('localModels:suggestTabCleanup')({}, { sessions: [] })
+		).resolves.toEqual({
+			success: false,
+			status: 'off',
+			error: 'Tab cleanup suggestions is off.',
+		});
+		expect(suggestTabCleanup).toHaveBeenCalledWith();
 	});
 
 	it('hands search its request untouched and returns the verdict', async () => {

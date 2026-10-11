@@ -755,6 +755,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('snoozedTabs');
 				trackShortcut('showSnoozeList');
+			} else if (ctx.isShortcut(e, 'tabCleanupSuggestions')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('tabCleanup');
+				trackShortcut('tabCleanupSuggestions');
 			} else if (ctx.isShortcut(e, 'openLeaderboard')) {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');

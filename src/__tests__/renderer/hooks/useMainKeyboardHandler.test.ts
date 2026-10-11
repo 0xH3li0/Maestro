@@ -255,6 +255,30 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('Tab Cleanup Suggestions shortcut', () => {
+		// The id ships unbound, so nothing fires it by default. This pins that a
+		// chord a user binds to it opens the modal, the same one the palette and
+		// the menu open.
+		it('opens the modal once a chord is bound to it', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tabCleanupSuggestions',
+			});
+
+			try {
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'k', altKey: true, metaKey: true, bubbles: true })
+					);
+				});
+
+				expect(useModalStore.getState().isOpen('tabCleanup')).toBe(true);
+			} finally {
+				useModalStore.getState().closeModal('tabCleanup');
+			}
+		});
+	});
+
 	describe('refresh files, git, history', () => {
 		it('runs the same refresh handler the palette entry uses', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

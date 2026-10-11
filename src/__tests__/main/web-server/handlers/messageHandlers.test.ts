@@ -130,6 +130,30 @@ vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 }));
 import { semanticIndexProgress } from '../../../../main/local-models/semantic-indexer';
 
+vi.mock('../../../../main/local-models/tab-cleanup', () => ({
+	suggestTabCleanup: vi.fn().mockResolvedValue({
+		success: true,
+		suggestions: [
+			{
+				tabId: 'tab-1',
+				agentId: 'agent-1',
+				action: 'close',
+				reason: 'Untouched for a month.',
+				agentName: 'Backend',
+				label: 'Fix login bug',
+				kind: 'open',
+				tabType: 'ai',
+				lastActivityAt: 1,
+				messageCount: 4,
+			},
+		],
+		considered: 3,
+		protectedCount: 1,
+		droppedCount: 0,
+		truncated: false,
+	}),
+}));
+
 vi.mock('../../../../main/local-models/work-search', () => ({
 	searchPastWorkRequest: vi.fn().mockResolvedValue({
 		status: 'ok',
@@ -139,6 +163,7 @@ vi.mock('../../../../main/local-models/work-search', () => ({
 	}),
 }));
 import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
+import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
 
 // The Local Models service reads the model store and runs the downloader; the
 // handler tests only care that `maestro-cli models list|install|verify|remove`
@@ -5098,6 +5123,40 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				success: true,
 				requestId: 'q1',
 				readiness: [{ taskId: 'injection-screen', state: 'unavailable' }],
+			});
+		});
+
+		it('local_models_tab_cleanup answers with the suggestions and takes nothing from the message', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_tab_cleanup',
+				requestId: 'tc-1',
+				sessions: [],
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_tab_cleanup_result'));
+			expect(suggestTabCleanup).toHaveBeenCalledWith();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'tc-1',
+				result: {
+					success: true,
+					considered: 3,
+					suggestions: [{ tabId: 'tab-1', agentId: 'agent-1', action: 'close' }],
+				},
+			});
+		});
+
+		it('local_models_tab_cleanup carries a task that is off as a successful round trip', async () => {
+			vi.mocked(suggestTabCleanup).mockResolvedValueOnce({
+				success: false,
+				status: 'off',
+				error: 'Tab cleanup suggestions is off.',
+			});
+			handler.handleMessage(client, { type: 'local_models_tab_cleanup', requestId: 'tc-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('tc-2'));
+			expect(lastResponse()).toMatchObject({
+				type: 'local_models_tab_cleanup_result',
+				success: true,
+				result: { success: false, status: 'off' },
 			});
 		});
 

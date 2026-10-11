@@ -245,6 +245,17 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Snoozed Tabs',
 	},
 	{
+		id: 'tab-cleanup',
+		label: 'Tab Cleanup Suggestions',
+		aliases: ['tab-cleanup-suggestions', 'cleanup'],
+		modal: 'tabCleanup',
+		description:
+			'Tabs a local model suggests closing, snoozing, or waking. Nothing changes until you tick a row and press Apply.',
+		shortcutId: 'tabCleanupSuggestions',
+		commandPalette: 'Tab Cleanup Suggestions',
+		click: 'the hamburger menu at the top of the Left Bar',
+	},
+	{
 		id: 'quick-actions',
 		label: 'Quick Actions',
 		aliases: ['command-palette', 'palette'],

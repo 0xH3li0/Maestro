@@ -141,6 +141,7 @@ import { initializeStatsDB, closeStatsDB } from './stats';
 import { closeEmbeddingStore } from './local-models/embedding-store';
 import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
 import { startSemanticIndex } from './local-models/semantic-index-startup';
+import { configureTabCleanup } from './local-models/tab-cleanup';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -3196,6 +3197,17 @@ app
 			settingsStore: store,
 			sessionsStore,
 			historyManager: getHistoryManager(),
+		});
+
+		// Tab cleanup suggestions read the tabs from the sessions store and ask
+		// the process manager which of them are running a turn. Wiring it reads
+		// nothing: the task is off until it is assigned a source.
+		configureTabCleanup({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+			processManager: () => processManager,
 		});
 
 		// Start watching for system timezone changes (laptop crossing zones).

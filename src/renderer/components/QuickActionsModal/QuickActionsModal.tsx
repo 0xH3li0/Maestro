@@ -690,6 +690,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
 				showSnoozeList: shortcuts.showSnoozeList,
+				tabCleanupSuggestions: shortcuts.tabCleanupSuggestions,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,

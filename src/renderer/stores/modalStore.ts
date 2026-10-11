@@ -386,6 +386,7 @@ export type ModalId =
 	| 'snoozeTab'
 	| 'modelEffort'
 	| 'snoozedTabs'
+	| 'tabCleanup'
 	// Group Management
 	| 'renameGroup'
 	// Session Operations

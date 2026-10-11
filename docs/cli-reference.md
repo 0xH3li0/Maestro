@@ -1235,6 +1235,14 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 | `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
 | `--json`           | Output as JSON (for scripting)                 | -       |
 
+## `maestro-cli tab suggest-cleanup`
+
+Suggest tabs to close, snooze, or wake across every agent (read-only; uses the Tab cleanup Local Models assignment)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli create-ssh-remote <name>`
 
 Create a new SSH remote configuration

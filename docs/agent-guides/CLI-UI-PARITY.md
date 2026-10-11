@@ -278,6 +278,9 @@ of taking a second round trip or trusting a value the caller guessed.
 | Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                   |
 | Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                         |
 | Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)           |
+| Tab Cleanup Suggestions: the list                    | `tab suggest-cleanup [--json]` (read-only; same `suggestTabCleanup()` as the modal)               |
+| Tab Cleanup Suggestions: Apply a ticked row          | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`          |
+| Open Tab Cleanup Suggestions                         | `open tab-cleanup`                                                                                |
 | Local Models: semantic index status and progress     | `models index` (same record as `localModels:semanticIndex:status`)                                |
 | Local Models: Index Cue runs toggle                  | `settings set semanticIndexCue <true\|false>` (read: `settings get semanticIndexCue`)             |
 | History panel: Semantic toggle (search by meaning)   | `search "<query>" --semantic --source history --agent <id>` (same `searchPastWork()`)             |

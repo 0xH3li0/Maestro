@@ -751,6 +751,11 @@ const mockMaestro = {
 			status: 'off',
 			error: 'Git drafts is off.',
 		}),
+		suggestTabCleanup: vi.fn().mockResolvedValue({
+			success: false,
+			status: 'off',
+			error: 'Tab cleanup suggestions is off.',
+		}),
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),

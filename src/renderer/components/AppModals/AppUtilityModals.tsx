@@ -33,6 +33,7 @@ import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
+import { TabCleanupModal } from '../TabCleanupModal';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
@@ -546,6 +547,9 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozeTabOpen = useModalStore(selectModalOpen('snoozeTab'));
 	const snoozeTabData = useModalStore(selectModalData('snoozeTab'));
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
+	// Tab Cleanup Suggestions asks main for its list itself; it needs the theme.
+	const tabCleanupOpen = useModalStore(selectModalOpen('tabCleanup'));
+	const closeTabCleanup = useCallback(() => useModalStore.getState().closeModal('tabCleanup'), []);
 	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
 	// and option lists itself, so all it needs from here is the theme.
 	// Voice Setup walkthrough. Same deal: it reads the model catalog itself, so
@@ -920,6 +924,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onJumpToTab={onSwitchQueueSession}
 				/>
 			)}
+			{/* --- TAB CLEANUP SUGGESTIONS (Local Models, across all agents) --- */}
+			{tabCleanupOpen && <TabCleanupModal theme={theme} onClose={closeTabCleanup} />}
 			{voiceSetupOpen && (
 				<VoiceSetupModal
 					theme={theme}

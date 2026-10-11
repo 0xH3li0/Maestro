@@ -419,6 +419,15 @@ export const DEFAULT_SHORTCUTS = {
 	// it, which is the whole point of allowing an empty `keys`.
 	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
 
+	// Registered unassigned for the same reason: Tab Cleanup Suggestions is an
+	// occasional chore reached from the menu or the palette, not a chord worth
+	// claiming by default.
+	tabCleanupSuggestions: {
+		id: 'tabCleanupSuggestions',
+		label: 'Tab Cleanup Suggestions',
+		keys: [],
+	},
+
 	// Media player. All four ship unbound: the player is a floating widget most
 	// users reach by opening a file, so claiming four default chords for it would
 	// spend keys nobody asked for. Listing them is what puts them in

@@ -400,6 +400,19 @@ maestro-cli search "<query>" [--semantic] [--source history|notes|transcripts] [
 - `--source` is repeatable or comma-separated. `--agent` goes through `resolveAgentId()` (id, prefix, or exact name) and leaves Director's Notes out, since a synopsis belongs to no agent. `--limit` is 1 to 100, default 20.
 - Each hit prints its rank (a percentage, or a match count in text mode), source, agent, age, title, snippet, and the ids to act on (`agent <id>  entry <id>` or `agent <id>  tab <id>`). `--json` prints the whole `WorkSearchResult`, including `index` (how far the index had got) for a semantic search.
 
+### `tab suggest-cleanup`
+
+The CLI path to the Tab Cleanup Suggestions modal's list. Implemented in `src/cli/commands/tab-suggest-cleanup.ts`. `tabs` is accepted as an alias of the `tab` group, so `maestro-cli tabs suggest-cleanup` works too.
+
+```bash
+maestro-cli tab suggest-cleanup [--json]
+```
+
+- One WS round trip (`local_models_tab_cleanup`) to `suggestTabCleanup()` in `src/main/local-models/tab-cleanup.ts`, the same function the `localModels:suggestTabCleanup` IPC channel calls for the modal, so both read the same tabs (every agent's visible AI tabs plus its snoozed tabs), the same `tab-cleanup` assignment, and the same guard. The request carries nothing: a caller cannot steer which tabs are read.
+- **Read-only, and there is no `--apply`.** It changes no tab. Each suggestion is printed with the ordinary verb that applies it (`tab close <tab-id>`, `snooze tab <tab-id> <when> --agent <id>`, `snooze wake <snooze-id>`), which is the path the modal's Apply button takes. `--json` prints the whole `TabCleanupResult` with that command as `apply` on each suggestion.
+- A tab that is busy, starred, or holding an unsent draft is never suggested (`guardTabCleanupSuggestions()` in `src/shared/tabCleanup.ts`); `protectedCount` says how many were left out. Hidden consult tabs are never read.
+- Exits 0 with a list, including an empty one. Exits non-zero with the reason when the task is off (the default), the assigned model or endpoint is unavailable, the model timed out, or its reply was not usable. It never falls back to an agent.
+
 ### `models run git-drafts --cwd <path>`
 
 The CLI path to the Create Pull Request form's "Draft with local model" button. Implemented in `src/cli/commands/models-run.ts` (`runPullRequestDraft`).
