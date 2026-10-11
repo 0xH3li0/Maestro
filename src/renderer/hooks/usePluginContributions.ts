@@ -60,6 +60,10 @@ export function usePluginContributions(): AggregatedContributions {
 			// A legacy notification without IDs cannot confirm eligibility.
 			setContributions((previous) => ({
 				...EMPTY,
+				// Groupings are presentation-only. A transient empty list makes the
+				// sidebar persist its manual fallback, losing the selected grouping.
+				// Keep them until the authoritative read confirms removal or fails.
+				groupings: previous.groupings,
 				panels: previous.panels.filter((panel) => activePanelIds?.includes(panel.id)),
 			}));
 			void load();

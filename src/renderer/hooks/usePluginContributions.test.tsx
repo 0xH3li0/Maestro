@@ -32,6 +32,9 @@ function Probe() {
 			{contributions.uiItems.map((item) => (
 				<span key={item.id}>{item.label}</span>
 			))}
+			{contributions.groupings.map((grouping) => (
+				<span key={grouping.id}>{grouping.label}</span>
+			))}
 		</>
 	);
 }
@@ -41,6 +44,45 @@ afterEach(() => {
 });
 
 describe('usePluginContributions', () => {
+	it('keeps sidebar groupings during refresh until removal is confirmed', async () => {
+		const active = {
+			...EMPTY,
+			groupings: [
+				{
+					id: 'p/projects',
+					localId: 'projects',
+					pluginId: 'p',
+					pluginName: 'Projects',
+					label: 'Project grouping',
+				},
+			],
+		};
+		let notifyChanged!: (ids?: string[]) => void;
+		let resolveRefresh!: (value: AggregatedContributions) => void;
+		const refresh = new Promise<AggregatedContributions>((resolve) => {
+			resolveRefresh = resolve;
+		});
+		window.maestro.plugins = {
+			contributions: vi
+				.fn()
+				.mockResolvedValueOnce(active)
+				.mockReturnValueOnce(refresh)
+				.mockResolvedValueOnce(EMPTY),
+			onChanged: vi.fn((listener: (ids?: string[]) => void) => {
+				notifyChanged = listener;
+				return () => {};
+			}),
+		} as unknown as typeof window.maestro.plugins;
+		render(<Probe />);
+		expect(await screen.findByText('Project grouping')).toBeInTheDocument();
+		act(() => notifyChanged([]));
+		expect(screen.getByText('Project grouping')).toBeInTheDocument();
+		await act(async () => resolveRefresh(active));
+		expect(screen.getByText('Project grouping')).toBeInTheDocument();
+		act(() => notifyChanged([]));
+		await waitFor(() => expect(screen.queryByText('Project grouping')).not.toBeInTheDocument());
+	});
+
 	it('ignores an older active response after a changed event returns an empty snapshot', async () => {
 		let resolveInitial!: (value: AggregatedContributions) => void;
 		const initial = new Promise<AggregatedContributions>((resolve) => {
