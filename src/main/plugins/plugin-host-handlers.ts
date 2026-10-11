@@ -1606,7 +1606,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						const onProgress = (event: AgentSendProgressEvent): void => {
 							if (controller.signal.aborted) return;
 							if (
-								!deps.broker.authorize(pluginId, 'agents.send', p).allowed ||
+								!deps.broker.authorize(pluginId, 'agents.send', p, { audit: false }).allowed ||
 								!deps.dispatchUnattendedAllowed?.(pluginId, agentId)
 							) {
 								controller.abort();

@@ -298,7 +298,7 @@ grants. `hostSettings: ["media"]` draws a host-owned link to Host media tools;
 it grants no host setting access. Own `ui.openPanel` can navigate to a settings
 card; close/toggle remain modal-only. Identity is the existing namespaced panel ID.
 
-## Host-mediated services (1.25.0)
+## Host-mediated services (1.24.0)
 
 `provides` / pinned `requires` declarations, exact consent scopes and the closed
 transcription contract are documented in [plugin-services.md](docs/plugin-services.md).

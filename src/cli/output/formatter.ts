@@ -882,6 +882,7 @@ export interface DirectorNotesHistoryDisplay {
 		userCount: number;
 		cueCount: number;
 		agentEntryCount: number;
+		relayCount: number;
 		totalCount: number;
 		lookbackDays: number;
 	};
@@ -915,7 +916,7 @@ export function formatDirectorNotesHistory(
 	// Stats
 	const { stats } = data;
 	lines.push(
-		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent)`)}`
+		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent, ${stats.relayCount} relay)`)}`
 	);
 	lines.push(`  ${c('white', 'Showing:')}  ${data.showing} of ${data.total}`);
 	lines.push('');

@@ -163,7 +163,35 @@ describe('PluginSandboxHost.stop onStop hook', () => {
 		expect(onStop).toHaveBeenCalledTimes(1);
 	});
 
-	it('rejects host calls as soon as shutdown begins', async () => {
+	it.each(['fs.write', 'settings.set', 'storage.set', 'storage.delete'] as const)(
+		'allows authorized %s persistence during deactivation, but still denies revoked grants',
+		async (method) => {
+			let allowed = true;
+			const persist = vi.fn(async () => 'persisted');
+			const host = new PluginSandboxHost({
+				broker: { authorize: () => ({ allowed }) } as unknown as PermissionBroker,
+				handlers: { [method]: persist },
+			});
+			host.start('p', dir, 'entry.js');
+			const proc = forkMock.mock.results.at(-1)?.value as { on: ReturnType<typeof vi.fn> };
+			const listener = proc.on.mock.calls.findLast(([name]) => name === 'message')?.[1] as (
+				data: unknown
+			) => void;
+			host.stop('p');
+			listener({ id: 41, method, params: {} });
+			await vi.waitFor(() =>
+				expect(postMessage).toHaveBeenCalledWith({ id: 41, ok: true, result: 'persisted' })
+			);
+			allowed = false;
+			listener({ id: 42, method, params: {} });
+			await vi.waitFor(() =>
+				expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 42, ok: false }))
+			);
+			expect(persist).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it('rejects new agent calls as soon as shutdown begins', async () => {
 		const handler = vi.fn(async () => 'unexpected');
 		const host = new PluginSandboxHost({
 			broker: { authorize: vi.fn(() => ({ allowed: true })) } as unknown as PermissionBroker,

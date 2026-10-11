@@ -799,7 +799,7 @@ deep links, own-panel navigation and the closed `hostSettings: ["media"]` link.
 
 ## Host-mediated plugin services
 
-Host API 1.25.0 adds code-tier `provides`/`requires`, `services:provide` and
+Host API 1.24.0 adds code-tier `provides`/`requires`, `services:provide` and
 `services:call` with exact scopes, and `maestro.services`. Read the concrete
 [service SDK/manifest contract](../plugin-services.md) before implementing a
 provider/consumer. The first example is

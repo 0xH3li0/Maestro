@@ -610,7 +610,11 @@ export class PluginSandboxHost {
 		if (
 			record?.stopping &&
 			!request.method.startsWith('media.') &&
-			!request.method.startsWith('services.')
+			!request.method.startsWith('services.') &&
+			request.method !== 'fs.write' &&
+			request.method !== 'settings.set' &&
+			request.method !== 'storage.set' &&
+			request.method !== 'storage.delete'
 		) {
 			respond({ ok: false, error: 'plugin is stopping' });
 			return;
@@ -735,7 +739,8 @@ export class PluginSandboxHost {
 		let active = true;
 		const onProgress = (event: AgentSendProgressEvent): void => {
 			if (!active || record.stopping || this.running.get(pluginId) !== record) return;
-			if (!this.deps.broker.authorize(pluginId, method, request.params).allowed) return;
+			if (!this.deps.broker.authorize(pluginId, method, request.params, { audit: false }).allowed)
+				return;
 			// Keep the optional public action bounded at the final host -> sandbox
 			// boundary as well. Older callers and events without a summary pass through.
 			const publicEvent =

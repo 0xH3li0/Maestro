@@ -16,6 +16,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 
 export interface PluginKvLimits {
 	/** Max bytes (UTF-8) for a single stored value. */
@@ -203,9 +204,16 @@ export class PluginKvStore {
 		this.hardenPath(this.baseDir, true);
 		this.hardenPath(dir, true);
 		const file = path.join(dir, STORE_FILENAME);
-		const tmp = path.join(dir, `${STORE_FILENAME}.tmp-${process.pid}-${Date.now()}`);
+		const tmp = path.join(dir, `${STORE_FILENAME}.tmp-${process.pid}-${randomUUID()}`);
+		let ownsTemp = false;
 		try {
-			fs.writeFileSync(tmp, JSON.stringify(store), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+			const fd = fs.openSync(tmp, 'wx', 0o600);
+			ownsTemp = true;
+			try {
+				fs.writeFileSync(fd, JSON.stringify(store), { encoding: 'utf8' });
+			} finally {
+				fs.closeSync(fd);
+			}
 			this.hardenPath(tmp, false);
 			fs.renameSync(tmp, file);
 			// Rename is the commit point. Even if the final path check fails,
@@ -213,7 +221,7 @@ export class PluginKvStore {
 			this.cache.set(pluginId, store);
 			this.hardenPath(file, false);
 		} finally {
-			if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+			if (ownsTemp && fs.existsSync(tmp)) fs.unlinkSync(tmp);
 		}
 	}
 

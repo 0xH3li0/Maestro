@@ -96,6 +96,15 @@ describe('historyFilterPersistence', () => {
 			expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO', 'RELAY']));
 		});
 
+		it.each([undefined, null, '2', 'unknown'])(
+			'upgrades an unversioned or invalid legacy version %s without hiding Relay',
+			(v) => {
+				const key = historyPanelFilterKeyForAgent(AGENT_A);
+				localStorage.setItem(key, JSON.stringify({ v, filters: ['USER', 'AUTO'] }));
+				expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO', 'RELAY']));
+			}
+		);
+
 		it('honors an explicit AGENT deselection saved in the current format', () => {
 			const key = historyPanelFilterKeyForAgent(AGENT_A);
 			savePersistedHistoryFilters(key, new Set<HistoryEntryType>(['USER', 'AUTO']));

@@ -1178,6 +1178,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 
 	it('stops a running send when its dispatch grant is revoked during progress', async () => {
 		let grants: PermissionGrant[] = [scopedGrant('agents:dispatch', 'a')];
+		const onDecision = vi.fn();
 		let report: ((event: AgentSendProgressEvent) => void) | undefined;
 		let runSignal: AbortSignal | undefined;
 		const sendAgent = vi.fn(
@@ -1202,7 +1203,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		);
 		const h = buildHostCallHandlers(
 			makeDeps({
-				broker: brokerFor(() => grants),
+				broker: new PermissionBroker({ getGrants: () => grants, onDecision }),
 				dispatchUnattendedAllowed: () => true,
 				sendAgent,
 			})
@@ -1214,9 +1215,11 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			{ onProgress: delivered }
 		);
 		await vi.waitFor(() => expect(report).toBeTypeOf('function'));
+		const initialAudits = onDecision.mock.calls.length;
 		const event = { type: 'activity' as const, text: 'Working', at: '2026-10-02T00:00:00.000Z' };
 		report?.(event);
 		expect(delivered).toHaveBeenCalledWith(event);
+		expect(onDecision).toHaveBeenCalledTimes(initialAudits);
 		grants = [];
 		report?.(event);
 		expect(runSignal?.aborted).toBe(true);

@@ -503,14 +503,19 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		return sessions.map((session) => {
 			const record =
 				origins[projectPath]?.[session.sessionId] ??
-				origins[session.projectPath]?.[session.sessionId];
+				origins[normalizeProjectPath(projectPath)]?.[session.sessionId] ??
+				origins[session.projectPath]?.[session.sessionId] ??
+				origins[normalizeProjectPath(session.projectPath)]?.[session.sessionId];
 			if (!record) return session;
 			const info = typeof record === 'string' ? { origin: record } : record;
 			return {
 				...session,
-				origin: info.origin,
-				...(typeof record === 'object'
-					? { sessionName: record.sessionName, starred: record.starred }
+				...(info.origin !== undefined ? { origin: info.origin } : {}),
+				...(typeof record === 'object' && record.sessionName !== undefined
+					? { sessionName: record.sessionName }
+					: {}),
+				...(typeof record === 'object' && record.starred !== undefined
+					? { starred: record.starred }
 					: {}),
 			};
 		});

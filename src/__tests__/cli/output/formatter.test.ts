@@ -67,6 +67,7 @@ describe('formatter', () => {
 					userCount: 0,
 					cueCount: 0,
 					agentEntryCount: 0,
+					relayCount: 1,
 					totalCount: 1,
 					lookbackDays: 1,
 				},
@@ -85,6 +86,7 @@ describe('formatter', () => {
 			1
 		);
 		expect(result).toContain('[RELAY]');
+		expect(result).toContain('1 relay');
 		expect(result).not.toContain('[USER]');
 	});
 

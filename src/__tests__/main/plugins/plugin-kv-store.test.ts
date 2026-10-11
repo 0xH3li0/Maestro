@@ -10,14 +10,21 @@ import * as os from 'os';
 import * as path from 'path';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 
-const { failRename, failFinalStat } = vi.hoisted(() => ({
+const { failRename, failFinalStat, collideTemp } = vi.hoisted(() => ({
 	failRename: { current: false },
 	failFinalStat: { current: false },
+	collideTemp: { current: false },
 }));
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return {
 		...actual,
+		openSync: (...args: Parameters<typeof actual.openSync>) => {
+			if (collideTemp.current && String(args[0]).includes('.tmp-')) {
+				actual.writeFileSync(args[0], 'unowned temporary file');
+			}
+			return actual.openSync(...args);
+		},
 		renameSync: (...args: Parameters<typeof actual.renameSync>) => {
 			if (failRename.current) throw new Error('simulated rename failure');
 			return actual.renameSync(...args);
@@ -38,6 +45,7 @@ describe('PluginKvStore', () => {
 	beforeEach(() => {
 		failRename.current = false;
 		failFinalStat.current = false;
+		collideTemp.current = false;
 		base = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-kv-'));
 		store = new PluginKvStore({
 			baseDir: base,
@@ -132,6 +140,16 @@ describe('PluginKvStore', () => {
 		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['b', 'c', 'd']);
 		store.set('p', 'e', '5', { evictOldestOnLimit: true });
 		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['c', 'd', 'e']);
+	});
+
+	it('does not delete a temporary file it could not create exclusively', () => {
+		store.set('p', 'a', 'original');
+		collideTemp.current = true;
+		expect(() => store.set('p', 'a', 'replacement')).toThrow(/EEXIST/);
+		expect(store.get('p', 'a')).toBe('original');
+		const dir = path.join(base, 'p');
+		const unowned = fs.readdirSync(dir).find((name) => name.includes('.tmp-'))!;
+		expect(fs.readFileSync(path.join(dir, unowned), 'utf8')).toBe('unowned temporary file');
 	});
 
 	it('persists across instances and leaves no temp file behind', () => {

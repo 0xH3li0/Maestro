@@ -76,7 +76,8 @@ export function loadPersistedHistoryFilters(key: string): Set<HistoryEntryType> 
 			// Current payload: the user's choice is complete - honor it verbatim.
 			const payload = parsed as PersistedFilterPayload;
 			const filters = payload.filters.filter(isHistoryEntryType);
-			return new Set(payload.v < FILTER_PAYLOAD_VERSION ? [...filters, 'RELAY'] : filters);
+			const version = typeof payload.v === 'number' && Number.isFinite(payload.v) ? payload.v : 0;
+			return new Set(version < FILTER_PAYLOAD_VERSION ? [...filters, 'RELAY'] : filters);
 		}
 
 		return null;

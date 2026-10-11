@@ -3,6 +3,7 @@
  * that tool calls are properly parsed with toolUse for ToolCallCard rendering.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 
 // Mock Electron app
 vi.mock('electron', () => ({
@@ -152,34 +153,39 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		vi.clearAllMocks();
 	});
 
-	it('attaches persisted Relay origin to a provider listing without caching it in the transcript', async () => {
-		const project = 'C:\\Users\\test\\project';
-		const sessionId = '019ccb6c-c0fd-7b70-92b7-558f514099c6';
-		const store = {
-			get: vi.fn(() => ({
-				[project]: { [sessionId]: { origin: 'relay', sessionName: 'Named', starred: true } },
-			})),
-		} as unknown as Store<ClaudeSessionOriginsData>;
-		storage = new CodexSessionStorage(store);
-		vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
-			{
-				filePath: '/fake/rollout.jsonl',
-				filename: `rollout-20260308_031029-${sessionId}.jsonl`,
-			},
-		]);
-		vi.mocked(fs.stat).mockResolvedValue({ size: 200, mtimeMs: Date.now() } as any);
-		vi.mocked(fs.readFile).mockImplementation(async (file) => {
-			if (String(file).includes('codex-sessions-cache')) throw new Error('no cache');
-			return createSessionContent();
-		});
-		const [listed] = await storage.listSessions(project);
-		expect(listed).toMatchObject({
-			sessionId,
-			origin: 'relay',
-			sessionName: 'Named',
-			starred: true,
-		});
-	});
+	it.each([false, true])(
+		'attaches persisted Relay origin using normalized keys: %s',
+		async (normalized) => {
+			const project = 'C:\\Users\\test\\project';
+			const sessionId = '019ccb6c-c0fd-7b70-92b7-558f514099c6';
+			const store = {
+				get: vi.fn(() => ({
+					[normalized ? path.resolve(project) : project]: {
+						[sessionId]: { origin: 'relay', sessionName: 'Named', starred: true },
+					},
+				})),
+			} as unknown as Store<ClaudeSessionOriginsData>;
+			storage = new CodexSessionStorage(store);
+			vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+				{
+					filePath: '/fake/rollout.jsonl',
+					filename: `rollout-20260308_031029-${sessionId}.jsonl`,
+				},
+			]);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 200, mtimeMs: Date.now() } as any);
+			vi.mocked(fs.readFile).mockImplementation(async (file) => {
+				if (String(file).includes('codex-sessions-cache')) throw new Error('no cache');
+				return createSessionContent();
+			});
+			const [listed] = await storage.listSessions(project);
+			expect(listed).toMatchObject({
+				sessionId,
+				origin: 'relay',
+				sessionName: 'Named',
+				starred: true,
+			});
+		}
+	);
 
 	it('should parse function_call entries with toolUse', async () => {
 		const content = createSessionContent();
