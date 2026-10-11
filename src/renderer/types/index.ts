@@ -63,6 +63,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { CodexTransport } from '../../shared/codexTransport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1330,6 +1331,19 @@ export interface SnoozedGroupPayload {
 /** The group variant of {@link SnoozedTabEntry}, named so guards can return it. */
 export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
+/** A delivered chat steer awaiting its transcript verdict (see Session.pendingSteers). */
+export interface PendingSteer {
+	/** The steer id the socket answered with; verdicts carry the same id. */
+	steerId: string;
+	/** `{sessionId}-ai-{tabId}`, the process the text was typed into. */
+	processKey: string;
+	tabId: string;
+	/** The queued item exactly as it left the queue, for putting it back. */
+	item: QueuedItem;
+	/** The user log entry the steer appended, removed again if the item goes back. */
+	logEntryId?: string;
+}
+
 export interface Session {
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
@@ -1429,6 +1443,11 @@ export interface Session {
 	// Execution queue for sequential processing within this session
 	// All messages and commands are queued here and processed one at a time
 	executionQueue: QueuedItem[];
+	// Queued messages STEERED into a running turn whose transcript verdict has not
+	// arrived yet. The item left executionQueue on `delivered`, so this is the only
+	// copy until the verdict says it was taken (drop the record) or not (put it back
+	// in the queue). Persisted so a reload cannot lose it. See services/chatSteering.ts.
+	pendingSteers?: PendingSteer[];
 	// Active time tracking - cumulative milliseconds of active use
 	activeTimeMs: number;
 	// Agent slash commands available for this session (fetched per session based on cwd)
@@ -1619,6 +1638,12 @@ export interface Session {
 	// the spawner uses the bundled script (`process.resourcesPath/maestro-p.js`
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).
 	maestroPPath?: string;
+	// Per-session Codex transport (Codex only). 'app-server' runs local
+	// interactive chat turns on `codex app-server` so the Steer button can reach
+	// them mid-turn; SSH, image, Auto Run and Cue turns stay on `codex exec`.
+	// Absent means 'exec'. Experimental. Always read it through
+	// `resolveCodexTransport` in shared/codexTransport, never directly.
+	codexTransport?: CodexTransport;
 
 	// Agent Resilience (auto-retry). Both default ON - `undefined` reads as
 	// enabled via `resilienceEnabled` in shared/agentConstants, so existing

@@ -21,6 +21,7 @@ import {
 } from '../../../renderer/components/Concerto/concertoDesignerBridge';
 import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMentions';
 import { runCrossAgentAsk } from '../../../renderer/services/crossAgentAsk';
+import { steerQueuedItem } from '../../../renderer/services/chatSteering';
 import {
 	clearDesktopAiTabSelections,
 	noteDesktopAiTabSelection,
@@ -37,6 +38,12 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 // forward the request and answer the response channel with whatever it returns.
 vi.mock('../../../renderer/services/crossAgentAsk', () => ({
 	runCrossAgentAsk: vi.fn(),
+}));
+
+// `queue steer` rides the same steerQueuedItem() the Steer button uses; the hook
+// only forwards the request and relays the result on the response channel.
+vi.mock('../../../renderer/services/chatSteering', () => ({
+	steerQueuedItem: vi.fn(),
 }));
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
@@ -143,6 +150,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string | undefined, responseChannel: string) => void)
 		| undefined;
 	let onRemoteRemoveQueueItemHandler:
+		| ((sessionId: string, itemId: string, responseChannel: string) => void)
+		| undefined;
+	let onRemoteSteerQueueItemHandler:
 		| ((sessionId: string, itemId: string, responseChannel: string) => void)
 		| undefined;
 	let onRemoteSetSettingHandler:
@@ -252,6 +262,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteRemoveQueueItemResponse: vi.fn(),
+		onRemoteSteerQueueItem: vi.fn().mockImplementation((handler) => {
+			onRemoteSteerQueueItemHandler = handler;
+			return () => {};
+		}),
+		sendRemoteSteerQueueItemResponse: vi.fn(),
 		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -495,6 +510,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteEnqueueCommandHandler = undefined;
 		onRemoteListQueueHandler = undefined;
 		onRemoteRemoveQueueItemHandler = undefined;
+		onRemoteSteerQueueItemHandler = undefined;
 		onRemoteNotifyToastHandler = undefined;
 		onRemoteMovementHandler = undefined;
 		onRequestMovementDesignerInspectionHandler = undefined;
@@ -1666,7 +1682,7 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
-	describe('remote queue admin (queue list / remove)', () => {
+	describe('remote queue admin (queue list / remove / steer)', () => {
 		it('lists sessions with queued items and acks the snapshot', () => {
 			const tab = createMockTab({ id: 'tab-1', name: 'PR review' });
 			const item = {
@@ -1756,6 +1772,37 @@ describe('useRemoteIntegration', () => {
 				'chan-rm2',
 				expect.objectContaining({ success: true, removed: false })
 			);
+		});
+
+		it('steers a queued item through steerQueuedItem and relays its result', async () => {
+			vi.mocked(steerQueuedItem).mockResolvedValue({ outcome: 'delivered', verdict: 'delivered' });
+			const deps = createDeps({ sessions: [] });
+
+			renderHook(() => useRemoteIntegration(deps));
+			onRemoteSteerQueueItemHandler?.('session-1', 'q1', 'chan-steer');
+
+			await vi.waitFor(() => {
+				expect(mockProcess.sendRemoteSteerQueueItemResponse).toHaveBeenCalledWith('chan-steer', {
+					success: true,
+					result: { outcome: 'delivered', verdict: 'delivered' },
+				});
+			});
+			expect(steerQueuedItem).toHaveBeenCalledWith('session-1', 'q1');
+		});
+
+		it('answers the steer channel with an error rather than leaving the CLI waiting', async () => {
+			vi.mocked(steerQueuedItem).mockRejectedValue(new Error('boom'));
+			const deps = createDeps({ sessions: [] });
+
+			renderHook(() => useRemoteIntegration(deps));
+			onRemoteSteerQueueItemHandler?.('session-1', 'q1', 'chan-steer2');
+
+			await vi.waitFor(() => {
+				expect(mockProcess.sendRemoteSteerQueueItemResponse).toHaveBeenCalledWith('chan-steer2', {
+					success: false,
+					error: 'boom',
+				});
+			});
 		});
 	});
 

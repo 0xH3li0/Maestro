@@ -38,6 +38,13 @@ import {
 	sessionTranscriptPath,
 } from './session-watcher';
 import { installStopSignalHandlers, STOP_EXIT_CODES } from './stop-signals';
+import {
+	classifyQueueOperation,
+	STEERING_SOCKET_ENV_VAR,
+	steeringTextMatches,
+	type SteeringResultFrame,
+} from '../shared/chatSteering';
+import { startSteeringServer, type SteeringServer } from './steering-server';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
@@ -57,6 +64,16 @@ const WATCHDOG_INTERVAL_MS = 1000;
 const RESUBMIT_INTERVAL_MS = 8000;
 // Grace window after an `end_turn` to let trailing tool-result rows flush.
 const END_TURN_GRACE_MS = 600;
+// How long a finished turn is held open for a steer that was delivered but not yet
+// answered. A steer typed just as the turn ends becomes a fresh prompt, and claude
+// can take longer than END_TURN_GRACE_MS to log it: measured, the grace fired
+// 0.5s after delivery and quit the TUI with the user's message unanswered.
+const STEER_VERDICT_HOLD_MS = 5000;
+// How long finalize() waits for a steer that is mid-injection when the turn ends.
+// The driver aborts an injection at its next checkpoint once shutdown begins, so
+// this normally settles in well under a second; the cap only keeps a wedged PTY
+// from holding the exit open.
+const STEER_SETTLE_ON_FINALIZE_MS = 2000;
 // `/usage` panel paints synchronously but trickles bytes for several hundred ms.
 const STATUS_INITIAL_WAIT_MS = 1500;
 // Then debounce on no-new-lines for this long before declaring the panel done.
@@ -353,11 +370,18 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	}
 
 	const childEnv = buildChildEnv();
+	// Steering has to READ the screen before it types (see TuiDriver.inject), and
+	// the check needs a replayed grid, which only the raw stream can produce - the
+	// ANSI-stripped rolling buffer cannot show the editor box's structure. Run mode
+	// otherwise leaves this off, so it is enabled exactly when a steering socket was
+	// named rather than unconditionally: the capture is bounded but not free.
+	const steeringEnabled = !!process.env[STEERING_SOCKET_ENV_VAR]?.trim();
 	const driver = new TuiDriver({
 		binPath,
 		args: passThroughArgs,
 		cwd,
 		env: childEnv,
+		captureScreen: steeringEnabled,
 		acceptWorkspaceTrust: acceptsWorkspaceTrust(),
 		readyTimeoutMs: args.readyTimeoutSeconds * 1000,
 	});
@@ -385,7 +409,13 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	let rotatedTailer: JsonlTailer | null = null;
 	let resolvedSessionId: string = resumeSessionId ?? '';
 	let initEmitted = false;
+	// finalize() has BEGUN: nothing new may start (no steer, no second finalize).
 	let finalized = false;
+	// The one-shot result envelope is out, so nothing more may be written to stdout.
+	// Separate from `finalized` because finalize() can wait (see
+	// STEER_SETTLE_ON_FINALIZE_MS) between beginning and emitting, and the steers it
+	// waits on still have verdicts to report in that window.
+	let resultEmitted = false;
 	let watchdogTimer: NodeJS.Timeout | null = null;
 	let graceTimer: NodeJS.Timeout | null = null;
 	// Fires if no JSONL entry has arrived within firstByteTimeoutSeconds of the
@@ -409,6 +439,77 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// the normal flow (tailer.start() / EOF-skip prevent racing), but keeps
 	// us robust against weird PTY timing.
 	const pendingEntries: unknown[] = [];
+
+	// Chat steering (see steering.ts). Injections delivered into the running turn
+	// and still waiting for the transcript to say what claude did with them, oldest
+	// first - the order matters, because a bare `dequeue` row carries no content and
+	// can only be attributed positionally.
+	const awaitingVerdict: Array<{ id: string; text: string }> = [];
+	let steeringServer: SteeringServer | null = null;
+	// onSteer calls still running. finalize() waits for these so a steer that was
+	// mid-injection when the turn ended still gets its `dropped` verdict on stdout
+	// before the result envelope, instead of a socket `delivered` and then silence.
+	const steersInFlight = new Set<Promise<unknown>>();
+
+	// Report a verdict on stdout. Silently dropped once the result has been
+	// emitted: the `result` envelope is one-shot and a verdict arriving after it
+	// describes a turn already reported, so emitting would throw and take the
+	// process down over an accessory.
+	const reportSteering = (frame: SteeringResultFrame): void => {
+		if (resultEmitted || !initEmitted) return;
+		emitter.emitSteering(frame);
+	};
+
+	// Resolve a delivered injection from a `queue-operation` row. Returns true when
+	// the row settled something, so the caller knows it was consumed.
+	const settleSteeringFromRow = (row: unknown): boolean => {
+		if (awaitingVerdict.length === 0) return false;
+		for (let i = 0; i < awaitingVerdict.length; i += 1) {
+			const pending = awaitingVerdict[i];
+			const classified = classifyQueueOperation(row, pending.text);
+			if (!classified) continue;
+			// A content-matched row names its own injection. A bare `dequeue` does
+			// not, so it is attributed to the OLDEST outstanding one - claude drains
+			// its queue in order, so position is the only evidence available, and
+			// guessing the newest would mislabel the common single-steer case whenever
+			// two are in flight.
+			if (!classified.matchedContent && i !== 0) continue;
+			awaitingVerdict.splice(i, 1);
+			reportSteering({ type: 'steering', id: pending.id, verdict: classified.verdict });
+			return true;
+		}
+		return false;
+	};
+
+	// Resolve a delivered injection from an ordinary `user` entry. A steer that
+	// lands after `end_turn` finds the editor idle, so claude takes it as a fresh
+	// prompt: no queue-operation rows at all, just the message and a follow-up turn
+	// (measured on claude 2.1.296). That is `queued`, not `dropped`.
+	const settleSteeringFromUserText = (text: string): void => {
+		const i = awaitingVerdict.findIndex((pending) => steeringTextMatches(text, pending.text));
+		if (i < 0) return;
+		const [pending] = awaitingVerdict.splice(i, 1);
+		reportSteering({ type: 'steering', id: pending.id, verdict: 'queued' });
+	};
+
+	// Delivery time of the newest steer still awaiting a verdict; see
+	// STEER_VERDICT_HOLD_MS.
+	let lastSteerDeliveredAt = 0;
+
+	// The end_turn grace, held open (bounded) while a delivered steer is still
+	// unanswered. The steer's own `user` entry clears the timer and its follow-up
+	// turn re-arms it, by which point nothing is outstanding.
+	const armEndTurnGrace = (): void => {
+		const onGrace = (): void => {
+			if (finalized) return;
+			if (awaitingVerdict.length > 0 && Date.now() - lastSteerDeliveredAt < STEER_VERDICT_HOLD_MS) {
+				graceTimer = setTimeout(onGrace, END_TURN_GRACE_MS);
+				return;
+			}
+			finalize({ isError: false, exitCode: 0 });
+		};
+		graceTimer = setTimeout(onGrace, END_TURN_GRACE_MS);
+	};
 
 	const cleanupTimers = (): void => {
 		if (watchdogTimer) {
@@ -435,6 +536,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const markFirstEntrySeen = (): void => {
 		if (firstEntrySeen) return;
 		firstEntrySeen = true;
+		// The prompt is in, so send()'s remaining submit taps have nothing left to
+		// submit - and this is also the moment the steer gate opens, after which a
+		// stray tap would land inside a half-typed steer.
+		driver.cancelSubmitRetries();
 		if (firstByteTimer) {
 			clearTimeout(firstByteTimer);
 			firstByteTimer = null;
@@ -489,7 +594,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		}, RESUBMIT_INTERVAL_MS);
 	};
 
-	const finalize = (options: {
+	type FinalizeOptions = {
 		isError: boolean;
 		error?: string;
 		exitCode: number;
@@ -497,10 +602,56 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// the desktop replay the prompt through the API, which is the opposite of
 		// what the user just asked for.
 		stopped?: boolean;
-	}): void => {
+	};
+
+	const finalize = (options: FinalizeOptions): void => {
 		if (finalized) return;
 		finalized = true;
+		// Stop steering first. No new steer may start, and one mid-injection stops
+		// before its Enter, so `/quit` can never be typed into the same composer as
+		// half a steer (see TuiDriver.beginShutdown). The server stops accepting
+		// connections; replies on the ones already open still go out.
+		driver.beginShutdown();
+		steeringServer?.close();
 		cleanupTimers();
+		if (steersInFlight.size === 0) {
+			completeFinalize(options);
+			return;
+		}
+		let capTimer: NodeJS.Timeout | null = null;
+		void Promise.race([
+			Promise.allSettled([...steersInFlight]),
+			new Promise<void>((resolve) => {
+				capTimer = setTimeout(resolve, STEER_SETTLE_ON_FINALIZE_MS);
+			}),
+		]).then(() => {
+			if (capTimer) clearTimeout(capTimer);
+			completeFinalize(options);
+		});
+	};
+
+	const completeFinalize = (options: FinalizeOptions): void => {
+		// Report every still-outstanding steer BEFORE the result envelope, after
+		// which reportSteering is closed. Silence here would be the worst outcome: the
+		// caller is holding these pending an answer, and never hearing back reads as
+		// delivered-and-fine.
+		//
+		// `dropped`, not `queued`: nothing was ever observed resolving these, and the
+		// run is ending regardless, so the text is gone and the caller has to re-send
+		// it. This is the uncommon path - a normally-parked steer resolves itself,
+		// because the dequeued message invalidates the end_turn grace and maestro-p
+		// lives to see it (see SteeringVerdict). What lands here is a run cut short:
+		// the TUI exited, a timeout fired, or the limit drain won the race.
+		for (const pending of awaitingVerdict) {
+			reportSteering({
+				type: 'steering',
+				id: pending.id,
+				verdict: 'dropped',
+				detail: 'the turn ended without claude absorbing this message, so it was not delivered',
+			});
+		}
+		awaitingVerdict.length = 0;
+		resultEmitted = true;
 		tailer?.stop();
 		rotatedTailer?.stop();
 		// Best-effort: synchronous so claude (which has long-since consumed
@@ -622,6 +773,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			}
 		}
 
+		// Steering bookkeeping. These rows are how claude reports what it did with
+		// input typed mid-turn, and they are the ONLY evidence for it - nothing on
+		// the screen distinguishes an absorbed steer from a parked one. They carry no
+		// `message`, so without this they would fall through to the ignore-unknown
+		// branch at the bottom. Never emitted onto the wire as transcript content:
+		// this is claude's own queue bookkeeping, not a turn the user sent.
+		if (e.type === 'queue-operation') {
+			settleSteeringFromRow(e);
+			return;
+		}
+
 		// Synthetic-model bookkeeping rows ("No response requested.") never
 		// reach the wire.
 		if (message && message.model === '<synthetic>') return;
@@ -652,19 +814,20 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				return;
 			}
 
-			if (message.stop_reason === 'end_turn') {
-				graceTimer = setTimeout(() => {
-					if (!finalized) {
-						finalize({ isError: false, exitCode: 0 });
-					}
-				}, END_TURN_GRACE_MS);
-			}
+			if (message.stop_reason === 'end_turn') armEndTurnGrace();
 			return;
 		}
 
 		if (e.type === 'user' && message) {
 			// A user entry after end_turn is typically a tool_result row;
 			// restart the grace so we don't truncate the turn mid-drain.
+			//
+			// Chat steering depends on this clear too, so do not narrow it to
+			// tool_result rows. When claude parks a steer rather than absorbing it, it
+			// drains the queue by writing the message as an ordinary `user` entry after
+			// `end_turn`; this is what keeps the process alive long enough to capture
+			// the follow-up turn instead of quitting the TUI with the user's words
+			// unanswered. See SteeringVerdict's note on `queued`.
 			if (graceTimer) {
 				clearTimeout(graceTimer);
 				graceTimer = null;
@@ -677,7 +840,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// re-emitted, but the first one is proof of what claude actually
 			// received: if the PTY lost part of the prompt on the way in (see
 			// prompt-echo.ts), stop the turn before it acts on a damaged prompt.
-			if (!promptEchoChecked) {
+			if (promptEchoChecked) {
+				const later = promptEchoText(e);
+				if (later !== null) settleSteeringFromUserText(later);
+			} else {
 				const echo = promptEchoText(e);
 				if (echo !== null) {
 					promptEchoChecked = true;
@@ -763,6 +929,89 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		);
 	};
 
+	// One steer, start to finish. See the server registration below.
+	const handleSteer = async (id: string, text: string): Promise<SteeringResultFrame> => {
+		// A turn that has not started cannot be steered, and typing into a
+		// not-yet-submitted prompt would CORRUPT it: the text would land in the
+		// same editor still holding the original prompt and be submitted as one
+		// merged message. The prompt-echo check would then fail the turn as
+		// `prompt_truncated`, which is a confusing way to report "you steered
+		// too early".
+		if (!firstEntrySeen) {
+			return {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: 'not-running',
+				detail: 'the turn has not started yet, so there is nothing to steer',
+			};
+		}
+		if (finalized) {
+			return {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: 'not-running',
+				detail: 'the turn has already finished',
+			};
+		}
+		const outcome = await driver.inject(text);
+		if (outcome.submitted && resultEmitted) {
+			// Typed and submitted, but finalize() stopped waiting (its cap ran out)
+			// and the result is already out, so no verdict can follow on stdout.
+			// Say so here rather than claim a delivery nothing will ever settle.
+			return {
+				type: 'steering',
+				id,
+				verdict: 'dropped',
+				detail: 'the turn ended while this message was being submitted',
+			};
+		}
+		if (!outcome.submitted) {
+			const frame: SteeringResultFrame = {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: outcome.refusal,
+				detail: outcome.detail,
+			};
+			reportSteering(frame);
+			return frame;
+		}
+		// Delivered. What claude DOES with it is only knowable from the
+		// transcript, on a clock this reply cannot wait for (see
+		// SteeringVerdict), so the refinement is emitted on stdout later by
+		// settleSteeringFromRow.
+		// Match on what was TYPED: claude records the normalized text (tabs as
+		// spaces), so the raw request text never matches its own row.
+		awaitingVerdict.push({ id, text: outcome.typed ?? text });
+		lastSteerDeliveredAt = Date.now();
+		const frame: SteeringResultFrame = { type: 'steering', id, verdict: 'delivered' };
+		reportSteering(frame);
+		return frame;
+	};
+
+	// Chat steering: open the control channel only when the caller named a socket.
+	// Absent means this turn is not steerable, which is the default - a channel
+	// nobody asked for is an attack surface and a socket file to clean up.
+	const steeringSocketPath = steeringEnabled
+		? process.env[STEERING_SOCKET_ENV_VAR]?.trim()
+		: undefined;
+	if (steeringSocketPath) {
+		steeringServer = startSteeringServer({
+			socketPath: steeringSocketPath,
+			onSteer: (id, text): Promise<SteeringResultFrame> => {
+				const handling = handleSteer(id, text);
+				steersInFlight.add(handling);
+				const forget = (): void => {
+					steersInFlight.delete(handling);
+				};
+				handling.then(forget, forget);
+				return handling;
+			},
+		});
+	}
+
 	driver.on('limit-hit', markLimitHit);
 	driver.on('exit', () => {
 		if (finalized) return;
@@ -813,6 +1062,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		onForce: (signal) => {
 			driver.kill('SIGKILL');
 			cleanupStreamJsonImages(tempImagePaths);
+			// close() is synchronous, so the socket file is gone before the exit. A
+			// leftover one is not just litter: the next run on this tab has to probe
+			// it before it can reclaim the path (see startSteeringServer).
+			steeringServer?.close();
 			process.exit(STOP_EXIT_CODES[signal]);
 		},
 	});

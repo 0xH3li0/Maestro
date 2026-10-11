@@ -406,6 +406,7 @@ describe('process IPC handlers', () => {
 				'concerto-html:restore',
 				'process:spawn',
 				'process:write',
+				'process:steer',
 				'process:broadcast-user-input',
 				'process:interrupt',
 				'process:kill',
@@ -1056,6 +1057,87 @@ describe('process IPC handlers', () => {
 					promptArgs: undefined,
 				})
 			);
+		});
+
+		// Codex transport: the persisted agent record decides, so a stale renderer
+		// cannot route a turn differently from what is saved.
+		describe('Codex transport', () => {
+			const codexAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/detected/codex',
+				requiresPty: false,
+			};
+
+			const spawnCodex = async (extra: Record<string, unknown> = {}) => {
+				mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 5150, success: true });
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'codex-agent-ai-tab-1',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: ['exec'],
+					prompt: 'hi',
+					...extra,
+				});
+				return mockProcessManager.spawn.mock.calls[0][0];
+			};
+
+			const persist = (records: unknown[]) => {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? records : defaultValue
+				);
+			};
+
+			it('passes app-server when the persisted agent opted in', async () => {
+				persist([{ id: 'codex-agent', codexTransport: 'app-server' }]);
+				const spawnCall = await spawnCodex();
+				expect(spawnCall.codexTransport).toBe('app-server');
+			});
+
+			it('defaults to exec when the persisted agent has no setting', async () => {
+				persist([{ id: 'codex-agent' }]);
+				const spawnCall = await spawnCodex();
+				expect(spawnCall.codexTransport).toBe('exec');
+			});
+
+			it('lets the persisted record outrank a stale inline value', async () => {
+				persist([{ id: 'codex-agent', codexTransport: 'exec' }]);
+				const spawnCall = await spawnCodex({ codexTransport: 'app-server' });
+				expect(spawnCall.codexTransport).toBe('exec');
+			});
+
+			it('falls back to the inline value when no record matches', async () => {
+				persist([]);
+				const spawnCall = await spawnCodex({ codexTransport: 'app-server' });
+				expect(spawnCall.codexTransport).toBe('app-server');
+			});
+
+			it('never resolves app-server for a non-Codex agent', async () => {
+				persist([{ id: 'opencode-agent', codexTransport: 'app-server' }]);
+				mockAgentDetector.getAgent.mockResolvedValue({
+					id: 'opencode',
+					name: 'OpenCode',
+					binaryName: 'opencode',
+					path: '/detected/opencode',
+					requiresPty: false,
+				});
+				mockProcessManager.spawn.mockReturnValue({ pid: 5151, success: true });
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'opencode-agent-ai-tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: ['run'],
+					prompt: 'hi',
+					codexTransport: 'app-server',
+				});
+				expect(mockProcessManager.spawn.mock.calls[0][0].codexTransport).toBe('exec');
+			});
 		});
 
 		// Batch Mode default-off: when `enableMaestroP` isn't set on the spawn

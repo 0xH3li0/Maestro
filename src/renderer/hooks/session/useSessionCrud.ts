@@ -27,6 +27,7 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import type { CodexTransport } from '../../../shared/codexTransport';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
@@ -81,7 +82,9 @@ export interface UseSessionCrudReturn {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -176,7 +179,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			retryOnTokenExhaustion?: boolean,
 			additionalDirectories?: AdditionalDirectory[],
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-			codexAutoResetOnExhaustion?: boolean
+			codexAutoResetOnExhaustion?: boolean,
+			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+			codexTransport?: CodexTransport
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -317,12 +322,18 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// value already means off and storing `false` on every non-Codex
 					// agent would be noise in every session record.
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
+					// Same rule: `exec` is the default, so only the opt-in is stored.
+					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
+				// The first spawn reads its routing (Codex transport, Claude token mode)
+				// from the persisted record, so do not leave the new agent sitting in a
+				// debounce that any streaming agent keeps re-arming.
+				setTimeout(() => flushSessionPersistence(), 0);
 				// Claim the agent for THIS window before any process spawns, so a
 				// secondary window surfaces it immediately and the primary's catch-all
 				// never flashes it. No-op in the primary window / outside a WindowProvider.
@@ -342,7 +353,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				logger.error('Failed to create session:', undefined, error);
 			}
 		},
-		[setSessions, setActiveSessionId, setActiveFocus, inputRef, registerNewSession]
+		[
+			setSessions,
+			setActiveSessionId,
+			setActiveFocus,
+			inputRef,
+			registerNewSession,
+			flushSessionPersistence,
+		]
 	);
 
 	// ========================================================================

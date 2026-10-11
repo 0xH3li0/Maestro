@@ -986,6 +986,19 @@ describe('formatter', () => {
 			expect(result).toContain('My Group');
 		});
 
+		it('should show the Codex transport for a Codex agent only', () => {
+			const codex = formatAgentDetail({
+				...baseAgent,
+				toolType: 'codex',
+				codexTransport: 'app-server',
+			});
+			expect(codex).toContain('Codex transport:');
+			expect(codex).toContain('app-server');
+
+			const claude = formatAgentDetail({ ...baseAgent, codexTransport: 'app-server' });
+			expect(claude).not.toContain('Codex transport:');
+		});
+
 		it('should show auto run folder when provided', () => {
 			const agent: AgentDetailDisplay = {
 				...baseAgent,

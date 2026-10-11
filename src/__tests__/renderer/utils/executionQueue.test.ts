@@ -10,6 +10,8 @@ import {
 	applyQueuedItemRelease,
 	getForceSendEligibility,
 	shouldOfferForceSend,
+	getSteerEligibility,
+	shouldOfferSteer,
 	applyQueuedItemEdit,
 	applyQueuedItemDispatchFailure,
 	isSameQueuedPrompt,
@@ -634,5 +636,340 @@ describe('consult hold', () => {
 		const recovered = applyQueuedItemDispatchFailure(session, failedMention, { hold: false });
 
 		expect(recovered.executionQueue.map((i) => i.id)).toEqual(['q1']);
+	});
+});
+
+// ============================================================================
+// getSteerEligibility / shouldOfferSteer  (chat steering)
+// ============================================================================
+
+describe('getSteerEligibility', () => {
+	function steerableSession(overrides: Partial<Session> = {}): Session {
+		return createMockSession({
+			id: 's1',
+			toolType: 'claude-code',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			activeTabId: 'tab-1',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+			...overrides,
+		} as Partial<Session>);
+	}
+	const item = { tabId: 'tab-1', text: 'change course' };
+
+	it('allows steering a Claude interactive turn that is running', () => {
+		const eligibility = getSteerEligibility(steerableSession(), item);
+		expect(eligibility).toEqual({ canSteer: true });
+		expect(shouldOfferSteer(eligibility)).toBe(true);
+	});
+
+	it('refuses when the target tab is not working', () => {
+		// There is no turn in flight to steer, and this message is about to become
+		// that turn anyway.
+		const session = steerableSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		expect(getSteerEligibility(session, item)).toEqual({
+			canSteer: false,
+			blockedReason: 'tab-not-working',
+		});
+	});
+
+	it('refuses when the API token source is resolved', () => {
+		// `claude --print` closes stdin and holds no writable PTY for the turn, so
+		// there is physically nothing to type into.
+		const session = steerableSession({
+			claudeInteractive: { mode: 'api', modeReason: 'limit' },
+		});
+		expect(getSteerEligibility(session, item)).toEqual({
+			canSteer: false,
+			blockedReason: 'api-token-source',
+		});
+	});
+
+	it('refuses a dynamic agent that has fallen back to API', () => {
+		// The whole reason this reads the RESOLVED mode: a dynamic agent is configured
+		// identically in both states, so only the resolved value knows which shape the
+		// turn in flight actually has.
+		const session = steerableSession({
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			claudeInteractive: { mode: 'api', modeReason: 'limit' },
+		} as Partial<Session>);
+		expect(getSteerEligibility(session, item).blockedReason).toBe('api-token-source');
+	});
+
+	it('allows a dynamic agent currently resolved to interactive', () => {
+		const session = steerableSession({
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+		} as Partial<Session>);
+		expect(getSteerEligibility(session, item).canSteer).toBe(true);
+	});
+
+	it('refuses when no mode has been resolved yet', () => {
+		// Absent until the agent has spawned at least once. Unknown is not interactive.
+		const session = steerableSession({ claudeInteractive: undefined });
+		expect(getSteerEligibility(session, item).blockedReason).toBe('api-token-source');
+	});
+
+	it('refuses a provider that has no steering channel', () => {
+		const session = steerableSession({ toolType: 'opencode' });
+		expect(getSteerEligibility(session, item).blockedReason).toBe('not-claude');
+	});
+
+	it('allows a Codex agent on the app-server transport', () => {
+		// `turn/steer` reaches a running app-server turn; the Claude token-mode check
+		// does not apply to Codex at all.
+		const session = steerableSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			claudeInteractive: undefined,
+		});
+		const eligibility = getSteerEligibility(session, item);
+		expect(eligibility).toEqual({ canSteer: true });
+		expect(shouldOfferSteer(eligibility)).toBe(true);
+	});
+
+	it('refuses a Codex agent on exec with codex-exec', () => {
+		// `codex exec` is the default and accepts nothing once a turn has started.
+		for (const codexTransport of [undefined, 'exec'] as const) {
+			const eligibility = getSteerEligibility(
+				steerableSession({ toolType: 'codex', codexTransport }),
+				item
+			);
+			expect(eligibility).toEqual({ canSteer: false, blockedReason: 'codex-exec' });
+			expect(shouldOfferSteer(eligibility)).toBe(false);
+		}
+	});
+
+	it('applies the item refusals to a Codex app-server agent unchanged', () => {
+		const session = steerableSession({ toolType: 'codex', codexTransport: 'app-server' });
+		expect(
+			getSteerEligibility(session, {
+				tabId: 'tab-1',
+				text: 'use this screenshot',
+				images: ['maestro-image://store/abc.png'],
+			}).blockedReason
+		).toBe('has-images');
+		expect(
+			getSteerEligibility(session, { tabId: 'tab-1', text: 'x'.repeat(8193) }).blockedReason
+		).toBe('too-long');
+	});
+
+	it('refuses a paused item, including one an unconfirmed steer just paused', () => {
+		// Steering it again would type the text a second time.
+		expect(getSteerEligibility(steerableSession(), { ...item, paused: true })).toEqual({
+			canSteer: false,
+			blockedReason: 'paused',
+		});
+	});
+
+	it('refuses a Claude steer the TUI would read as a slash or bash command', () => {
+		for (const text of ['/compact', '  /clear', '!rm -rf build']) {
+			expect(getSteerEligibility(steerableSession(), { tabId: 'tab-1', text }).blockedReason).toBe(
+				'tui-command-prefix'
+			);
+		}
+		// Codex takes turn/steer as plain input.
+		const codex = steerableSession({ toolType: 'codex', codexTransport: 'app-server' });
+		expect(getSteerEligibility(codex, { tabId: 'tab-1', text: '/compact' }).canSteer).toBe(true);
+	});
+
+	it('refuses a read-only message into a turn that started with full access', () => {
+		// Steering cannot narrow the permissions the running turn was spawned with.
+		const fullAccessTurn = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'refactor it' }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(fullAccessTurn, { ...item, readOnlyMode: true }).blockedReason).toBe(
+			'read-only'
+		);
+		// The tab flipped to read-only after the turn started: dispatch would honor it.
+		const flipped = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					readOnlyMode: true,
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'refactor it' }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(flipped, item).blockedReason).toBe('read-only');
+	});
+
+	it('allows a read-only message into a turn known to be read-only', () => {
+		const readOnlyTurn = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					readOnlyMode: true,
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'plan it', readOnly: true }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(readOnlyTurn, { ...item, readOnlyMode: true }).canSteer).toBe(true);
+	});
+
+	it('refuses an item held for a reconnect', () => {
+		expect(
+			getSteerEligibility(steerableSession(), { ...item, waitingForConnection: true }).blockedReason
+		).toBe('waiting-for-connection');
+	});
+
+	it('refuses an SSH agent, whose turn runs on another host', () => {
+		const claude = steerableSession({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>);
+		const codex = steerableSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			sshRemoteId: 'r1',
+		} as Partial<Session>);
+		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
+		expect(getSteerEligibility(codex, item).blockedReason).toBe('ssh-remote');
+	});
+
+	it('refuses when the agent has no tabs at all', () => {
+		const session = steerableSession({ aiTabs: [], activeTabId: undefined });
+		expect(getSteerEligibility(session, item).blockedReason).toBe('no-target-tab');
+	});
+
+	it('refuses an item with nothing to type', () => {
+		// Steering TYPES into the composer, so an empty message has nothing to steer
+		// with.
+		expect(getSteerEligibility(steerableSession(), { tabId: 'tab-1', text: '   ' })).toEqual({
+			canSteer: false,
+			blockedReason: 'nothing-to-type',
+		});
+	});
+
+	it('refuses an item carrying images rather than silently dropping them', () => {
+		// Images reach a maestro-p turn as `@/path` mentions translated from a
+		// stream-json envelope on stdin, and stdin is long closed once a turn is
+		// running - there is no way to attach a file mid-turn. Typing the text alone
+		// would discard what the user attached, so the item stays queued and sends
+		// intact when the turn ends.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'use this screenshot',
+				images: ['maestro-image://store/abc.png'],
+			})
+		).toEqual({ canSteer: false, blockedReason: 'has-images' });
+	});
+
+	it('refuses a consult hold: its text is a placeholder until the reply lands', () => {
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'Waiting',
+				awaitingConsult: {
+					pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+					replies: [],
+				},
+			})
+		).toEqual({ canSteer: false, blockedReason: 'awaiting-consult' });
+	});
+
+	it('refuses an @mention whose consult has not fired yet', () => {
+		// The consult fires when processQueuedItem dispatches the item. Steering
+		// bypasses that, so the mentioned agent would never be asked.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'ask @Backend about the schema',
+				crossAgentMention: true,
+			})
+		).toEqual({ canSteer: false, blockedReason: 'cross-agent-mention' });
+	});
+
+	it('refuses an item carrying agent-only context rather than dropping it', () => {
+		// agentContext holds a consult's replies and is prepended only at spawn.
+		expect(
+			getSteerEligibility(steerableSession(), {
+				tabId: 'tab-1',
+				text: 'continue',
+				agentContext: 'Backend replied: use v2',
+			})
+		).toEqual({ canSteer: false, blockedReason: 'has-agent-context' });
+	});
+
+	it('refuses an item over the steering byte cap', () => {
+		// maestro-p would refuse it; it waits and sends normally instead.
+		expect(
+			getSteerEligibility(steerableSession(), { tabId: 'tab-1', text: 'x'.repeat(8193) })
+		).toEqual({ canSteer: false, blockedReason: 'too-long' });
+	});
+
+	it('is mutually exclusive with Force Send', () => {
+		// Force Send needs the target tab IDLE, steering needs it BUSY, so a queued
+		// card offers exactly one of them and never both.
+		const busy = steerableSession();
+		const idle = steerableSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		const forceOpts = { forcedParallelEnabled: true };
+
+		expect(getSteerEligibility(busy, item).canSteer).toBe(true);
+		expect(getForceSendEligibility(busy, item, forceOpts).canForce).toBe(false);
+
+		expect(getSteerEligibility(idle, item).canSteer).toBe(false);
+		expect(getForceSendEligibility(idle, item, forceOpts).canForce).toBe(true);
+	});
+
+	it('is mutually exclusive with Force Send for a Codex app-server agent', () => {
+		const codex = { toolType: 'codex', codexTransport: 'app-server' } as const;
+		const busy = steerableSession(codex);
+		const idle = steerableSession({
+			...codex,
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'idle' })],
+		});
+		const forceOpts = { forcedParallelEnabled: true };
+
+		expect(getSteerEligibility(busy, item).canSteer).toBe(true);
+		expect(getForceSendEligibility(busy, item, forceOpts).canForce).toBe(false);
+
+		expect(getSteerEligibility(idle, item).canSteer).toBe(false);
+		expect(getForceSendEligibility(idle, item, forceOpts).canForce).toBe(true);
+	});
+});
+
+describe('shouldOfferSteer', () => {
+	it('hides the control for every blocked reason', () => {
+		// None of them is actionable from a queued card, so a dimmed button would just
+		// be a dead control.
+		for (const blockedReason of [
+			'no-target-tab',
+			'tab-not-working',
+			'not-claude',
+			'codex-exec',
+			'api-token-source',
+			'nothing-to-type',
+			'has-images',
+			'awaiting-consult',
+			'cross-agent-mention',
+			'has-agent-context',
+			'too-long',
+			'paused',
+			'waiting-for-connection',
+			'ssh-remote',
+			'steer-in-flight',
+			'tui-command-prefix',
+		] as const) {
+			expect(shouldOfferSteer({ canSteer: false, blockedReason })).toBe(false);
+		}
+	});
+
+	it('handles a missing eligibility', () => {
+		expect(shouldOfferSteer(null)).toBe(false);
+		expect(shouldOfferSteer(undefined)).toBe(false);
 	});
 });

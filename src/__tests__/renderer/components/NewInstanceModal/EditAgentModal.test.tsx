@@ -223,9 +223,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBe('/home/user/moved-project');
+		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
+		// and `codexTransport` trail it - anchor on the slot rather than on "last".
+		expect(args[args.length - 3]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -310,9 +310,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBeUndefined(); // workingDirectory unchanged
+		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
+		// and `codexTransport` trail it - anchor on the slot rather than on "last".
+		expect(args[args.length - 3]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -520,7 +520,8 @@ describe('EditAgentModal', () => {
 				// provenance is recorded and P1 precedence stands (finding AD1)
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
-				false // codexAutoResetOnExhaustion: off by default
+				false, // codexAutoResetOnExhaustion: off by default
+				'exec' // codexTransport: Standard by default
 			);
 		});
 
@@ -620,7 +621,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -857,7 +859,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 	});
 
@@ -934,7 +937,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 	});
 
@@ -1017,7 +1021,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 	});
 
@@ -1443,7 +1448,8 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(true);
+			// `codexTransport` trails it, so the reset flag is second-from-last.
+			expect(args[args.length - 2]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1456,7 +1462,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(false);
+			expect(args[args.length - 2]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {
@@ -1473,6 +1479,58 @@ describe('EditAgentModal', () => {
 
 			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
+		});
+
+		// The transport rides the same Codex-only slot. Load and Save are both
+		// pinned: a Save that dropped the value would silently put an opted-in
+		// agent back on codex exec.
+		describe('Codex transport', () => {
+			const appServerButton = () =>
+				screen.getByText('App server (experimental, enables steering)').closest('button');
+
+			it('loads Standard for an agent that never opted in, and saves exec', async () => {
+				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				expect(appServerButton()?.className).not.toContain('ring-2');
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[args.length - 1]).toBe('exec');
+			});
+
+			it('reflects a stored app-server choice', async () => {
+				renderCodex(codexSession({ codexTransport: 'app-server' }));
+
+				await waitFor(() => expect(appServerButton()?.className).toContain('ring-2'));
+			});
+
+			it('carries a new app-server choice out through Save', async () => {
+				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				fireEvent.click(appServerButton()!);
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[args.length - 1]).toBe('app-server');
+			});
+
+			it('is absent for a non-Codex agent', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={createSession()}
+						existingSessions={[]}
+					/>
+				);
+
+				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+			});
 		});
 	});
 });

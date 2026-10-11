@@ -5,6 +5,11 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import {
+	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
+	type QueueSteerOutcome,
+	type QueueSteerResult,
+} from '../../shared/chatSteering';
 
 interface QueueListItem {
 	id: string;
@@ -30,6 +35,10 @@ export interface QueueListOptions {
 }
 
 export interface QueueRemoveOptions {
+	agent?: string;
+}
+
+export interface QueueSteerOptions {
 	agent?: string;
 }
 
@@ -145,6 +154,76 @@ export async function queueRemove(itemId: string, options: QueueRemoveOptions): 
 		console.log(
 			JSON.stringify({ success: true, agentId: sessionId, itemId, removed: true }, null, 2)
 		);
+	} catch (error) {
+		const mapped = mapQueueError(error);
+		emitError(mapped.error, mapped.code);
+		process.exit(1);
+	}
+}
+
+/**
+ * The error code each non-success steer outcome exits with, so a script can tell
+ * "still queued, try later" from "may have been typed" without parsing prose.
+ */
+const STEER_FAILURE_CODES: Record<Exclude<QueueSteerOutcome, 'delivered' | 'settled'>, string> = {
+	refused: 'STEER_REFUSED',
+	unconfirmed: 'STEER_UNCONFIRMED',
+	'not-found': 'ITEM_NOT_FOUND',
+	'not-steerable': 'NOT_STEERABLE',
+	unavailable: 'STEER_UNAVAILABLE',
+};
+
+/**
+ * `maestro-cli queue steer <item-id> --agent <id>` - hand a queued message to the
+ * turn already running on its tab, exactly like the Steer button on the queued
+ * card: the desktop renderer runs the same steerQueuedItem(), so the item leaves
+ * the queue only once claude has it and returns if claude never takes it.
+ *
+ * Exits 0 on `delivered` (typed and submitted; the transcript verdict follows
+ * asynchronously) and `settled`; every other outcome exits 1 with a code.
+ */
+export async function queueSteer(itemId: string, options: QueueSteerOptions): Promise<void> {
+	if (!options.agent) {
+		emitError('queue steer requires --agent <id>', 'INVALID_OPTIONS');
+		process.exit(1);
+		return;
+	}
+
+	let sessionId: string;
+	try {
+		sessionId = resolveAgentId(options.agent);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : 'Unknown error', 'AGENT_NOT_FOUND');
+		process.exit(1);
+		return;
+	}
+
+	try {
+		const response = await withMaestroClient((client) =>
+			client.sendCommand<{ success?: boolean; result?: QueueSteerResult; error?: string }>(
+				{ type: 'steer_queue_item', sessionId, itemId },
+				'steer_queue_item_result',
+				QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS
+			)
+		);
+		const result = response.result;
+		if (response.success === false || !result) {
+			emitError(response.error ?? 'Steer failed', 'STEER_FAILED');
+			process.exit(1);
+			return;
+		}
+		const ok = result.outcome === 'delivered' || result.outcome === 'settled';
+		const payload = {
+			success: ok,
+			agentId: sessionId,
+			itemId,
+			...result,
+			...(ok
+				? {}
+				: { code: STEER_FAILURE_CODES[result.outcome as keyof typeof STEER_FAILURE_CODES] }),
+		};
+		console.log(JSON.stringify(payload, null, 2));
+		if (!ok) process.exit(1);
 	} catch (error) {
 		const mapped = mapQueueError(error);
 		emitError(mapped.error, mapped.code);
