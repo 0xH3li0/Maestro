@@ -261,6 +261,14 @@ export function steeringTextTooLong(text: string): boolean {
 export const STEERING_TOO_LONG_DETAIL = `the message is over the ${STEERING_MAX_TEXT_BYTES / 1024} KB steering limit`;
 
 /**
+ * The detail for a `not-running` refusal: the turn ended before the steer could
+ * land. Actionable (send it normally), unlike "not steerable", which invites the
+ * user to go looking for a setting. Shared so every transport says it the same way.
+ */
+export const STEERING_TURN_FINISHED_DETAIL =
+	'that turn has already finished, so there is nothing to steer';
+
+/**
  * The id of a well-formed steer frame whose ONLY fault is its size, else null.
  *
  * Exists so the server can answer an oversize frame with `refused` instead of

@@ -132,7 +132,9 @@ Rules carried over from the Claude path:
 - There is no `queued` verdict on this transport. One turn per process means nothing can be parked and drained after `turn/completed`; a steer either lands in the running turn or is refused.
 - The images rule holds: an item with images is not steerable (and an image turn never runs on this transport at all).
 
-The `SteeringVerdict` union needs no new member. The plumbing that carries a verdict from the spawner to the renderer (`process:steering-verdict`) is a later phase.
+- A turn that ends, with no echo, before the RPC's answer is read is answered `refused` / `not-running` rather than `delivered` then `dropped`. Both leave the message with the caller to send normally, but a `dropped` raised after `delivered` races the turn's exit to the renderer, and an exit that wins settles the held steer as unconfirmed (paused) instead.
+
+The `SteeringVerdict` union needs no new member. `ProcessManager.steer()` sends `turn/steer` when the registered process carries a `codexAppServer` handle (only the app-server path sets one; an exec turn falls through to the maestro-p socket client, which refuses it as `not-running`). The later verdict is emitted on the process manager as `steering-verdict` with the same frame and id the Claude path uses, so `process:steering-verdict` and `applySteeringVerdict()` carry it unchanged. The handle's `onTurnEnd` fires BEFORE the exit is reported, which is what puts a `dropped` verdict ahead of the exit.
 
 ## Lifecycle
 
@@ -173,6 +175,7 @@ spawn codex app-server (one child per turn)
 | Server-to-client request answers                     | `src/main/codex-app-server/server-requests.ts` (`answerCodexServerRequest`)                  |
 | Request ids, pending table, error shapes             | `src/main/codex-app-server/rpc-client.ts` (`CodexRpcRequestError` carries the server `code`) |
 | Notification -> exec line                            | `src/main/codex-app-server/event-translator.ts`                                              |
+| `turn/steer` and its verdicts                        | `src/main/codex-app-server/steering.ts` (`steerCodexAppServerTurn`)                          |
 | Child, handshake, lifecycle, fallback                | `src/main/process-manager/spawners/CodexAppServerSpawner.ts`                                 |
 
 `-c key=value` overrides are passed to the `codex app-server` child itself (it accepts `-c` and parses the value as TOML, like exec), so their semantics are unchanged; `model_reasoning_effort` / `model_reasoning_summary` additionally become `turn/start` `effort` / `summary`. Any exec arg the parser does not know sends the turn to exec rather than dropping the arg. Stop is `sdkController.interrupt()`: `turn/interrupt`, then the `stopProcess()` ladder if the child is still there after `CODEX_APP_SERVER_EXIT_GRACE_MS`.

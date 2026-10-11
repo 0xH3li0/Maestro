@@ -23,8 +23,9 @@ import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
-import type { SteeringResultFrame } from '../../shared/chatSteering';
+import { STEERING_TURN_FINISHED_DETAIL, type SteeringResultFrame } from '../../shared/chatSteering';
 import { sendSteeringRequest } from './steering-client';
+import { steerCodexAppServerTurn } from '../codex-app-server/steering';
 import { isPidAlive } from './utils/childProcessInfo';
 import { expandTilde } from '../../shared/pathUtils';
 import { agentAlreadyRunningMessage } from '../../shared/processErrors';
@@ -352,8 +353,12 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Ask a running Claude turn to take `text` into the turn in flight (chat
-	 * steering). Resolves with a verdict for the UI; never rejects.
+	 * Ask a running turn to take `text` into the turn in flight (chat steering):
+	 * a Claude turn on maestro-p, or a Codex turn on the app-server transport.
+	 * Resolves with a verdict for the UI; never rejects. The later verdict for a
+	 * delivered steer is emitted as `steering-verdict` with the same id: for
+	 * maestro-p it arrives on stdout (StdoutHandler), for Codex it comes from
+	 * `steerCodexAppServerTurn`.
 	 *
 	 * Requires the process to still be REGISTERED, checked here rather than left to
 	 * the socket, because a finished turn and an un-steerable one need different
@@ -365,7 +370,10 @@ export class ProcessManager extends EventEmitter {
 	 * only for a local interactive turn), and whether the TUI can accept keystroke
 	 * right now is answered by maestro-p, which is the only party holding the
 	 * screen. Re-deriving either would mean two places believing different things
-	 * about the same turn.
+	 * about the same turn. A Codex process carries its own channel
+	 * (`codexAppServer`, present only on the app-server path), so an exec turn has
+	 * none and is refused by the socket client exactly like an unsteerable Claude
+	 * turn.
 	 */
 	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
 		const id = randomUUID();
@@ -376,8 +384,13 @@ export class ProcessManager extends EventEmitter {
 				id,
 				verdict: 'refused',
 				refusal: 'not-running',
-				detail: 'that turn has already finished, so there is nothing to steer',
+				detail: STEERING_TURN_FINISHED_DETAIL,
 			};
+		}
+		if (process.codexAppServer) {
+			return steerCodexAppServerTurn(process.codexAppServer, { id, text }, (verdict) =>
+				this.emit('steering-verdict', sessionId, verdict)
+			);
 		}
 		return sendSteeringRequest({ processKey: sessionId, text, id });
 	}

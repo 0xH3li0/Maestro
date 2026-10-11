@@ -9,6 +9,9 @@
  *  - SSH, image, no-prompt, Auto Run and Cue turns stay on exec even when the
  *    agent opted in.
  *  - The transport field is ignored on a non-Codex agent.
+ *  - `steer()` sends `turn/steer` for a process carrying a `codexAppServer`
+ *    handle and emits its later verdict as `steering-verdict`; any other
+ *    process goes to the maestro-p socket client.
  *
  * The spawners are capture-only stubs, so nothing is launched.
  */
@@ -23,6 +26,20 @@ const captured = vi.hoisted(() => ({
 	pty: [] as ProcessConfig[],
 	appServer: [] as ProcessConfig[],
 	appServerOptions: [] as unknown[],
+	appServerProcesses: null as Map<string, unknown> | null,
+	socketSteers: [] as unknown[],
+}));
+
+vi.mock('../../../main/process-manager/steering-client', () => ({
+	sendSteeringRequest: (options: { id: string }) => {
+		captured.socketSteers.push(options);
+		return Promise.resolve({
+			type: 'steering',
+			id: options.id,
+			verdict: 'refused',
+			refusal: 'not-running',
+		});
+	},
 }));
 
 vi.mock('../../../main/coworking/coworking-socket-path', () => ({
@@ -55,6 +72,7 @@ vi.mock('../../../main/process-manager/spawners/OpencodeServerSpawner', () => ({
 vi.mock('../../../main/process-manager/spawners/CodexAppServerSpawner', () => ({
 	CodexAppServerSpawner: class {
 		constructor(...args: unknown[]) {
+			captured.appServerProcesses = args[0] as Map<string, unknown>;
 			captured.appServerOptions.push(args[4]);
 		}
 		spawn(config: ProcessConfig): SpawnResult {
@@ -74,6 +92,9 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 import { ProcessManager } from '../../../main/process-manager';
+import type { ManagedProcess } from '../../../main/process-manager/types';
+import type { CodexAppServerProcessHandle } from '../../../main/codex-app-server/protocol';
+import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 let nextId = 0;
 
@@ -188,5 +209,83 @@ describe('ProcessManager Codex transport routing', () => {
 
 		expect(captured.child).toHaveLength(1);
 		expect(captured.appServer).toHaveLength(0);
+	});
+});
+
+describe('ProcessManager.steer on Codex', () => {
+	let pm: ProcessManager;
+
+	beforeEach(() => {
+		captured.socketSteers.length = 0;
+		pm = new ProcessManager(undefined, { appVersion: '9.9.9' });
+	});
+
+	/** Register a process the way the app-server spawner does, with a scriptable handle. */
+	function registerAppServerTurn(sessionId: string) {
+		const userMessageListeners = new Set<
+			(message: { turnId: string; itemId: string; text: string }) => void
+		>();
+		const sendRequest = vi.fn(() => Promise.resolve({ turnId: 'turn-1' }));
+		const handle: CodexAppServerProcessHandle = {
+			threadId: 'thread-1',
+			activeTurnId: 'turn-1',
+			sendRequest: sendRequest as CodexAppServerProcessHandle['sendRequest'],
+			onUserMessage: (listener) => {
+				userMessageListeners.add(listener);
+				return () => userMessageListeners.delete(listener);
+			},
+			onTurnEnd: () => () => {},
+		};
+		captured.appServerProcesses!.set(sessionId, {
+			sessionId,
+			toolType: 'codex',
+			codexAppServer: handle,
+		} as unknown as ManagedProcess);
+		return {
+			sendRequest,
+			echo: (text: string) => {
+				for (const listener of [...userMessageListeners])
+					listener({ turnId: 'turn-1', itemId: 'item-1', text });
+			},
+		};
+	}
+
+	it('sends turn/steer and emits the absorbed verdict with the same id', async () => {
+		const turn = registerAppServerTurn('codex-agent-ai-tab');
+		const verdicts: Array<[string, SteeringResultFrame]> = [];
+		pm.on('steering-verdict', (sessionId: string, verdict: SteeringResultFrame) =>
+			verdicts.push([sessionId, verdict])
+		);
+
+		const result = await pm.steer('codex-agent-ai-tab', 'use tabs');
+
+		expect(result.verdict).toBe('delivered');
+		expect(turn.sendRequest).toHaveBeenCalledWith(
+			'turn/steer',
+			{
+				threadId: 'thread-1',
+				expectedTurnId: 'turn-1',
+				input: [{ type: 'text', text: 'use tabs' }],
+			},
+			expect.any(Object)
+		);
+		expect(captured.socketSteers).toEqual([]);
+
+		turn.echo('use tabs');
+		expect(verdicts).toEqual([
+			['codex-agent-ai-tab', { type: 'steering', id: result.id, verdict: 'absorbed' }],
+		]);
+	});
+
+	it('sends a process without a codexAppServer handle (exec) to the socket client', async () => {
+		captured.appServerProcesses!.set('codex-exec-ai-tab', {
+			sessionId: 'codex-exec-ai-tab',
+			toolType: 'codex',
+		} as unknown as ManagedProcess);
+
+		const result = await pm.steer('codex-exec-ai-tab', 'use tabs');
+
+		expect(captured.socketSteers).toHaveLength(1);
+		expect(result).toMatchObject({ verdict: 'refused', refusal: 'not-running' });
 	});
 });

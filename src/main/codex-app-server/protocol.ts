@@ -127,4 +127,11 @@ export interface CodexAppServerProcessHandle {
 	onUserMessage(
 		listener: (message: { turnId: string; itemId: string; text: string }) => void
 	): () => void;
+	/**
+	 * Subscribe to the end of this process's turn: `turn/completed` arrived, the
+	 * turn failed, or the child is gone. Fires once, BEFORE the exit is reported,
+	 * so a verdict raised from it reaches the renderer ahead of the exit. A
+	 * listener added after the end is called at once. Returns an unsubscribe.
+	 */
+	onTurnEnd(listener: () => void): () => void;
 }

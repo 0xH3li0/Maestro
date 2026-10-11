@@ -163,6 +163,9 @@ class CodexAppServerTurn {
 	/** Stderr produced before the turn was committed; forwarded on commit. */
 	private heldStderr = '';
 	private exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The turn is over (completed, failed, or the child is gone); steering listens. */
+	private turnEnded = false;
+	private readonly turnEndListeners = new Set<() => void>();
 
 	constructor(
 		private readonly ctx: TurnContext,
@@ -213,6 +216,7 @@ class CodexAppServerTurn {
 					options?: { timeoutMs?: number }
 				) => rpc.request<T>(method, params, options),
 				onUserMessage: (listener) => translator.onUserMessage(listener),
+				onTurnEnd: (listener) => this.onTurnEnd(listener),
 			},
 		};
 	}
@@ -449,6 +453,7 @@ class CodexAppServerTurn {
 	 */
 	private endTurn(): void {
 		this.phase = 'ended';
+		this.notifyTurnEnded();
 		this.finish(this.translator.outcome === 'failed' ? 1 : 0);
 		this.releaseChild();
 	}
@@ -558,6 +563,7 @@ class CodexAppServerTurn {
 			clearTimeout(this.exitGraceTimer);
 			this.exitGraceTimer = undefined;
 		}
+		this.notifyTurnEnded();
 		this.rpc.close('app-server exited');
 		if (this.isSuperseded() || this.finished) return;
 
@@ -634,8 +640,40 @@ class CodexAppServerTurn {
 		});
 		this.emitAgentError(error);
 		this.phase = 'ended';
+		this.notifyTurnEnded();
 		this.finish(1);
 		this.releaseChild();
+	}
+
+	/** See `CodexAppServerProcessHandle.onTurnEnd`. */
+	private onTurnEnd(listener: () => void): () => void {
+		if (this.turnEnded) {
+			listener();
+			return () => {};
+		}
+		this.turnEndListeners.add(listener);
+		return () => {
+			this.turnEndListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * Tell steering the turn is over, once. Called BEFORE `finish()` so a
+	 * `dropped` verdict reaches the renderer ahead of the exit, which would
+	 * otherwise settle the held steer as unconfirmed.
+	 */
+	private notifyTurnEnded(): void {
+		if (this.turnEnded) return;
+		this.turnEnded = true;
+		const listeners = [...this.turnEndListeners];
+		this.turnEndListeners.clear();
+		for (const listener of listeners) {
+			try {
+				listener();
+			} catch (error) {
+				void captureException(error);
+			}
+		}
 	}
 
 	/** Report the turn's exit through ExitHandler, exactly once. */

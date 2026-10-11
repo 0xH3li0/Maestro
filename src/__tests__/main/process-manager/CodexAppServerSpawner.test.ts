@@ -45,6 +45,8 @@ import { CodexAppServerSpawner } from '../../../main/process-manager/spawners/Co
 import { DataBufferManager } from '../../../main/process-manager/handlers/DataBufferManager';
 import type { ManagedProcess, ProcessConfig } from '../../../main/process-manager/types';
 import type { CodexAppServerMessage } from '../../../main/codex-app-server/protocol';
+import { steerCodexAppServerTurn } from '../../../main/codex-app-server/steering';
+import { STEERING_MAX_TEXT_BYTES, type SteeringResultFrame } from '../../../shared/chatSteering';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -66,6 +68,16 @@ function recvNotifications(fixture: FixtureLine[], method: string) {
 	return fixture.filter(
 		({ dir, msg }) => dir === 'recv' && msg.method === method && msg.id === undefined
 	);
+}
+
+/** The params of the fixture's `turn/steer` request. */
+function steerParams(fixture: FixtureLine[]) {
+	return fixture.find(({ dir, msg }) => dir === 'send' && msg.method === 'turn/steer')!.msg
+		.params as {
+		threadId: string;
+		expectedTurnId: string;
+		input: Array<{ type: 'text'; text: string }>;
+	};
 }
 
 function finalAgentMessage(fixture: FixtureLine[]): string {
@@ -499,5 +511,165 @@ describe('CodexAppServerSpawner', () => {
 
 		expect(h.fallbackToCli).toHaveBeenCalledTimes(2);
 		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+});
+
+describe('CodexAppServerSpawner steering (turn/steer)', () => {
+	/** Spawn a turn and steer it once the fixture is waiting for `turn/steer`. */
+	async function steerWhenReady(fixture: FixtureLine[], text = steerParams(fixture).input[0].text) {
+		const driver = fixtureDriver(fixture);
+		const server = new FakeAppServer(driver.onClientMessage);
+		const h = createHarness(server);
+		const events: string[] = [];
+		const verdicts: SteeringResultFrame[] = [];
+		h.emitter.on('exit', () => events.push('exit'));
+
+		h.spawner.spawn(h.config());
+		await vi.waitFor(() => {
+			expect(driver.waitingFor()).toBe('turn/steer');
+			expect(h.processes.get(h.sessionId)?.codexAppServer?.activeTurnId).toBeTruthy();
+		});
+		const handle = h.processes.get(h.sessionId)!.codexAppServer!;
+		const result = await steerCodexAppServerTurn(handle, { id: 'steer-1', text }, (verdict) => {
+			verdicts.push(verdict);
+			events.push(verdict.verdict);
+		});
+		return { h, server, handle, result, verdicts, events };
+	}
+
+	it('steered-turn: delivered, then absorbed when the userMessage echo arrives', async () => {
+		const fixture = loadFixture('steered-turn');
+		const { h, server, result, verdicts, events } = await steerWhenReady(fixture);
+
+		expect(result).toEqual({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+		expect(server.sent('turn/steer')[0].params).toEqual(steerParams(fixture));
+		expect(await h.exited).toBe(0);
+		await vi.waitFor(() =>
+			expect(verdicts).toEqual([{ type: 'steering', id: 'steer-1', verdict: 'absorbed' }])
+		);
+		expect(events.filter((e) => e !== 'exit')).toEqual(['absorbed']);
+		expect(server.unexpected).toEqual([]);
+		expect(h.data.join('')).toContain('PINEAPPLE');
+	});
+
+	it('late-steer: a steer the server rejects as "no active turn" is refused, never settled', async () => {
+		// Replay the race: the server has finished the turn and answers the steer
+		// with -32600 before its `turn/completed` notification reaches us.
+		const recorded = loadFixture('late-steer');
+		const completed = recorded.findIndex(({ msg }) => msg.method === 'turn/completed');
+		const fixture = [...recorded];
+		const [turnCompleted] = fixture.splice(completed, 1);
+		fixture.push(turnCompleted);
+
+		const { h, server, handle, result, verdicts } = await steerWhenReady(fixture);
+
+		expect(result).toEqual({
+			type: 'steering',
+			id: 'steer-1',
+			verdict: 'refused',
+			refusal: 'not-running',
+			detail: 'that turn has already finished, so there is nothing to steer',
+		});
+		expect(server.sent('turn/steer')[0].params).toEqual(steerParams(recorded));
+		expect(await h.exited).toBe(0);
+		expect(verdicts).toEqual([]);
+
+		// After the turn, there is no turn id to steer: refused without a request.
+		const late = await steerCodexAppServerTurn(handle, { id: 'steer-2', text: 'again' }, () => {});
+		expect(late).toMatchObject({ verdict: 'refused', refusal: 'not-running' });
+		expect(server.sent('turn/steer')).toHaveLength(1);
+	});
+
+	/** steered-turn without the steer's `userMessage` echo: the turn never takes it. */
+	function steeredTurnWithoutEcho(): FixtureLine[] {
+		const recorded = loadFixture('steered-turn');
+		const steerText = steerParams(recorded).input[0].text;
+		return recorded.filter(({ dir, msg }) => {
+			if (dir !== 'recv') return true;
+			const item = (msg.params as { item?: { type?: string; content?: Array<{ text?: string }> } })
+				?.item;
+			return !(item?.type === 'userMessage' && item.content?.[0]?.text === steerText);
+		});
+	}
+
+	it('a delivered steer with no matching userMessage before turn/completed is dropped, ahead of the exit', async () => {
+		// Hold `turn/completed` back so it lands after the steer is delivered, as
+		// it does live (the turn runs on for seconds after the RPC answers).
+		const fixture = steeredTurnWithoutEcho();
+		const completedAt = fixture.findIndex(({ msg }) => msg.method === 'turn/completed');
+		const [turnCompleted] = fixture.splice(completedAt, 1);
+
+		const { h, server, result, verdicts, events } = await steerWhenReady(fixture);
+		expect(result).toEqual({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+		expect(verdicts).toEqual([]);
+
+		server.send(turnCompleted.msg);
+		expect(await h.exited).toBe(0);
+		expect(verdicts).toEqual([{ type: 'steering', id: 'steer-1', verdict: 'dropped' }]);
+		expect(events).toEqual(['dropped', 'exit']);
+	});
+
+	it('a turn that ends before the steer is confirmed refuses it rather than racing the exit', async () => {
+		// The RPC answer and `turn/completed` arrive in one read.
+		const { h, result, verdicts } = await steerWhenReady(steeredTurnWithoutEcho());
+
+		expect(result).toMatchObject({ id: 'steer-1', verdict: 'refused', refusal: 'not-running' });
+		expect(await h.exited).toBe(0);
+		expect(verdicts).toEqual([]);
+	});
+
+	it('any other RPC error is unknown, and so is a timeout', async () => {
+		const threadId = 'thread-1';
+		const turnId = 'turn-1';
+		let answerSteer = true;
+		const server = new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') s.send({ id: msg.id, result: {} });
+			if (msg.method === 'thread/start')
+				s.send({ id: msg.id, result: { thread: { id: threadId } } });
+			if (msg.method === 'turn/start') {
+				s.send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
+				s.send({ method: 'turn/started', params: { threadId, turn: { id: turnId } } });
+			}
+			if (msg.method === 'turn/steer' && answerSteer) {
+				s.send({ id: msg.id, error: { code: -32603, message: 'internal error' } });
+			}
+		});
+		const h = createHarness(server);
+		h.spawner.spawn(h.config());
+		await vi.waitFor(() =>
+			expect(h.processes.get(h.sessionId)?.codexAppServer?.activeTurnId).toBe(turnId)
+		);
+		const handle = h.processes.get(h.sessionId)!.codexAppServer!;
+		const verdicts: SteeringResultFrame[] = [];
+
+		const failed = await steerCodexAppServerTurn(handle, { id: 'a', text: 'x' }, (v) =>
+			verdicts.push(v)
+		);
+		expect(failed).toMatchObject({ id: 'a', verdict: 'unknown' });
+		expect(failed.refusal).toBeUndefined();
+
+		answerSteer = false;
+		const timedOut = await steerCodexAppServerTurn(
+			handle,
+			{ id: 'b', text: 'y' },
+			(v) => verdicts.push(v),
+			{ timeoutMs: 20 }
+		);
+		expect(timedOut).toMatchObject({ id: 'b', verdict: 'unknown' });
+
+		// Neither was delivered, so the turn's end settles nothing.
+		server.exit(0);
+		expect(await h.exited).toBe(0);
+		expect(verdicts).toEqual([]);
+	});
+
+	it('refuses over-long text without sending it', async () => {
+		const fixture = loadFixture('steered-turn');
+		const { server, result } = await steerWhenReady(
+			fixture,
+			'x'.repeat(STEERING_MAX_TEXT_BYTES + 1)
+		);
+		expect(result).toMatchObject({ verdict: 'refused', refusal: 'too-long' });
+		expect(server.sent('turn/steer')).toEqual([]);
 	});
 });
