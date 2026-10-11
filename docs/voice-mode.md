@@ -89,7 +89,8 @@ reopen the walkthrough at any point, run **Set Up Voice Models** from the comman
 Local speech recognition needs model files. **Voice Setup** (Settings -> Plugins -> A Cappella) lists
 every one with its exact size, license, source repository, and install path before it downloads
 anything, and mounting the panel makes zero network calls. The system voice and the built-in router
-download nothing.
+download nothing. To manage these models alongside the embedding, classifier, and text models other
+features use, open [Local Models](./local-models).
 
 <Warning>
 	**The engine is downloaded, not bundled.** Speech recognition and the wake word run on ONNX
@@ -111,6 +112,8 @@ Every file is downloaded from a pinned revision and checked against a SHA-256 re
 ### Disk usage and getting the space back
 
 Models install under `models` inside Maestro's user data directory. The **Models** page shows the total footprint, each model's size, when it was installed, and when it was last verified, with **Remove** and **Re-verify** next to each one.
+
+The voice models are also listed in **Settings -> [Local Models](./local-models)**, with every other model Maestro can run. It is the same install: a model downloaded from either place shows in both, and Local Models shows which voice slot or task uses each one.
 
 When you switch A Cappella **off**, the Models page stays visible and offers to reclaim the disk. It deletes only the A Cappella model directory, and it confirms first.
 

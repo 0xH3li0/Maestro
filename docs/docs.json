@@ -63,6 +63,7 @@
 					"remote-control",
 					"ssh-remote-execution",
 					"agent-resilience",
+					"local-models",
 					"feedback",
 					"configuration"
 				]
