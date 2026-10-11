@@ -175,7 +175,8 @@ Things worth knowing:
   Basic row does there: an unquoted shell special character, or a relative
   `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
 - **A value cannot span lines.** A quoted multiline value (a PEM key, for instance) is
-  reported once, against the line that opens the quote, and none of it is saved.
+  reported once, against the line that opens the quote, and nothing from there through the
+  line that closes it is saved.
 - **The same name twice: the last one wins**, with a warning. A name that is both live and
   commented out stays live, and the commented copy is dropped.
 - **There are no inline comments.** `URL=https://example.com # prod` stores everything after

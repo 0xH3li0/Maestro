@@ -113,10 +113,40 @@ function splitAssignment(text: string): { key: string; value: string } | null {
 	return { key: body.slice(0, eq).trim(), value: body.slice(eq + 1).trim() };
 }
 
-/** Index of the first line at or after `from` that ends with `quote`, or -1. */
+/**
+ * Index of the first `quote` at or after `from` that actually closes a quoted
+ * value, or -1. Inside double quotes a backslash escapes the next character,
+ * so `\"` is part of the value; single quotes have no escape.
+ */
+function indexOfClosingQuote(text: string, quote: string, from: number): number {
+	for (let index = from; index < text.length; index++) {
+		if (quote === '"' && text[index] === '\\') {
+			index++;
+			continue;
+		}
+		if (text[index] === quote) return index;
+	}
+	return -1;
+}
+
+/**
+ * Index of the first line at or after `from` that closes a quote opened on an
+ * earlier line, or -1. A closing line is one whose ONLY unescaped `quote` is
+ * its last character: the tail of a PEM block, a `}"`, a final base64 chunk.
+ *
+ * Two rules it is deliberately not:
+ *  - "any line ending in the quote". `BAR="x"` ends in one, and treating it as
+ *    the close of an earlier lone quote would skip every line in between.
+ *  - "stop at the first line that looks like `KEY=value`". A short final line
+ *    of a base64 body (`Kw=="`) reads as exactly that, and would be saved as a
+ *    variable the user never wrote.
+ */
 function findClosingQuoteLine(lines: string[], from: number, quote: string): number {
 	for (let index = from; index < lines.length; index++) {
-		if (lines[index].trim().endsWith(quote)) return index;
+		const line = lines[index].trim();
+		if (line.endsWith(quote) && indexOfClosingQuote(line, quote, 0) === line.length - 1) {
+			return index;
+		}
 	}
 	return -1;
 }
@@ -151,12 +181,12 @@ export function parseDotEnv(text: string, options: ParseDotEnvOptions = {}): Par
 		const { key, value } = assignment;
 
 		const quote = value[0];
-		if ((quote === '"' || quote === "'") && value.indexOf(quote, 1) === -1) {
+		if ((quote === '"' || quote === "'") && indexOfClosingQuote(value, quote, 1) === -1) {
 			const closingIndex = findClosingQuoteLine(lines, index + 1, quote);
 			if (closingIndex !== -1) {
 				errors.push({
 					line,
-					message: `Multiline values are not supported (the quote opened here closes on line ${closingIndex + 1}).`,
+					message: `Multiline values are not supported. The quote opened here closes on line ${closingIndex + 1}, so nothing through line ${closingIndex + 1} is saved.`,
 				});
 				index = closingIndex;
 				continue;

@@ -173,7 +173,8 @@ describe('parseDotEnv', () => {
 			expect(result.errors).toEqual([
 				{
 					line: 2,
-					message: 'Multiline values are not supported (the quote opened here closes on line 5).',
+					message:
+						'Multiline values are not supported. The quote opened here closes on line 5, so nothing through line 5 is saved.',
 				},
 			]);
 		});
@@ -181,6 +182,46 @@ describe('parseDotEnv', () => {
 		it('does not misread the swallowed lines as variables', () => {
 			// `Zm9vYmFy==` would otherwise parse as the variable Zm9vYmFy.
 			expect(parseDotEnv(pem).vars).toEqual({ BEFORE: '1', AFTER: '2' });
+		});
+
+		it('does not take an escaped quote for the end of the value', () => {
+			// `\"` on the opening line is part of the value, so the quote is still
+			// open and INNER belongs to the block rather than being its own variable.
+			const result = parseDotEnv('CONFIG="say \\"hello\\"\nINNER=value\n"\nAFTER=1');
+			expect(result.vars).toEqual({ AFTER: '1' });
+			expect(result.errors).toEqual([
+				{ line: 1, message: expect.stringContaining('closes on line 3') },
+			]);
+		});
+
+		it('does not close the block on a line that ends in an escaped quote', () => {
+			const result = parseDotEnv('K="a\nb\\"\nc"\nAFTER=1');
+			expect(result.vars).toEqual({ AFTER: '1' });
+			expect(result.errors).toEqual([
+				{ line: 1, message: expect.stringContaining('closes on line 3') },
+			]);
+		});
+
+		it('commits a value whose escaped quotes close on the same line', () => {
+			const result = parseDotEnv('A="a \\"b\\" c"');
+			expect(result.vars).toEqual({ A: '"a \\"b\\" c"' });
+			expect(result.errors).toEqual([]);
+		});
+
+		it('closes on a final base64 chunk rather than saving it as a variable', () => {
+			// `Kw=="` reads as the assignment Kw, which is why "stop at the first
+			// line that looks like KEY=value" is the wrong rule.
+			const result = parseDotEnv('BLOB="AAAA\nBBBB\nKw=="\nAFTER=1');
+			expect(result.vars).toEqual({ AFTER: '1' });
+			expect(result.errors.map((issue) => issue.line)).toEqual([1]);
+		});
+
+		it('does not let a later quoted assignment close an earlier lone quote', () => {
+			// BAR="x" ends in a quote but opens one too, so it is its own variable
+			// and FOO between them is not swallowed.
+			const result = parseDotEnv('KEY="abc\nFOO=1\nBAR="x"');
+			expect(result.vars).toEqual({ KEY: '"abc', FOO: '1', BAR: '"x"' });
+			expect(result.errors).toEqual([]);
 		});
 
 		it('keeps a lone opening quote verbatim when nothing closes it', () => {
