@@ -13,6 +13,7 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **General Usage** (UI layout, status indicators)             | https://docs.runmaestro.ai/general-usage.md             |
 | **Features** (power features overview)                       | https://docs.runmaestro.ai/features.md                  |
 | **Encore Features** (feature-gated capabilities)             | https://docs.runmaestro.ai/encore-features.md           |
+| **Computer History** (recording, permissions, privacy)       | https://docs.runmaestro.ai/computer-history.md          |
 | **Maestro Cue** (overview & UI)                              | https://docs.runmaestro.ai/maestro-cue.md               |
 | **Cue YAML configuration** (schema, fields, file location)   | https://docs.runmaestro.ai/maestro-cue-configuration.md |
 | **Cue event types** (file, time, agent, GitHub, task events) | https://docs.runmaestro.ai/maestro-cue-events.md        |
