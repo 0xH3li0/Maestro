@@ -447,7 +447,7 @@ export class PluginServiceHost {
 		await call.lease.close(); // abort/kill and filesystem cleanup BEFORE reporting cancellation
 		await call.result.catch(() => {});
 	}
-	/** Admit a closed cancellation request to reserved release capacity only while its call belongs to this plugin. */
+	/** Identify an owned retained call for the cancellation release-rate exception. */
 	ownsCancel(pluginId: string, raw: unknown): boolean {
 		return (
 			!!raw &&

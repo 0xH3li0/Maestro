@@ -459,7 +459,7 @@ export class PluginSandboxHost {
 	}
 
 	/**
-	 * Bar new work, request shutdown and hard-kill after the grace period.
+	 * Bar new media/service work, request shutdown and hard-kill after the grace period.
 	 * Resolve only after child exit and host cleanup; a failed drain blocks restart until an explicit stop retry succeeds.
 	 */
 	stop(pluginId: string): Promise<void> {
