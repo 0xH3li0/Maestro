@@ -44,6 +44,7 @@ import type {
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
+import type { CueGateSetting, CueGateWriteResult } from '../../../../shared/cue/gate';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
@@ -365,6 +366,10 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
+	setCueSubscriptionGate: (
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	) => Promise<CueGateWriteResult>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
 	triggerCueSubscription: (
 		subscriptionName: string,

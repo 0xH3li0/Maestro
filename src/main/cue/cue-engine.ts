@@ -76,8 +76,14 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
-import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
-import type { CueGateEvaluator } from '../../shared/cue/gate';
+import { isSameTriggerGroup } from '../../shared/cue/trigger-group-key';
+import {
+	cueGateConditionProblem,
+	writeCueGateFields,
+	type CueGateEvaluator,
+	type CueGateSetting,
+	type CueGateWriteResult,
+} from '../../shared/cue/gate';
 import {
 	acquireCueEngineLock,
 	releaseCueEngineLock,
@@ -949,51 +955,150 @@ export class CueEngine {
 		subName: string,
 		enabled: boolean
 	): boolean {
+		const changed = this.patchSubscriptionRecords(
+			sessionId,
+			projectRoot,
+			'setSubscriptionEnabled',
+			new Set([subName]),
+			targetPipeline,
+			(record) => {
+				record.enabled = enabled;
+			}
+		);
+		return changed.length > 0;
+	}
+
+	/**
+	 * Read cue.yaml, apply `mutate` to every subscription record that is named
+	 * in `names` AND belongs to `targetPipeline`, write the file back, and
+	 * refresh the session so the change takes effect. Returns the names that
+	 * were changed; empty when nothing matched or the file could not be read
+	 * or written (the failure is reported to Sentry).
+	 *
+	 * Matching BOTH pipeline AND name is deliberate. Without the pipeline
+	 * discriminator, two same-named subs in different pipelines under one
+	 * session would have indistinguishable ids and a name-only match could
+	 * silently change the wrong row.
+	 *
+	 * Callers run this inside {@link enqueueYamlWrite}: it is a read, a
+	 * mutate and a write, which is not atomic on the filesystem.
+	 */
+	private patchSubscriptionRecords(
+		sessionId: string,
+		projectRoot: string,
+		operation: string,
+		names: ReadonlySet<string>,
+		targetPipeline: string,
+		mutate: (record: Record<string, unknown>) => void
+	): string[] {
 		const file = readCueConfigFile(projectRoot);
-		if (!file) return false;
+		if (!file) return [];
 
 		let parsed: unknown;
 		try {
 			parsed = yaml.load(file.raw);
 		} catch (err) {
-			captureException(err, { operation: 'setSubscriptionEnabled:yamlLoad', sessionId });
-			return false;
+			captureException(err, { operation: `${operation}:yamlLoad`, sessionId });
+			return [];
 		}
-		if (!parsed || typeof parsed !== 'object') return false;
+		if (!parsed || typeof parsed !== 'object') return [];
 		const subs = (parsed as Record<string, unknown>).subscriptions;
-		if (!Array.isArray(subs)) return false;
+		if (!Array.isArray(subs)) return [];
 
-		// Match BOTH pipeline AND name. Without the pipeline discriminator,
-		// two same-named subs in different pipelines under one session would
-		// have indistinguishable ids and the first-match heuristic could
-		// silently toggle the wrong row.
-		let found = false;
+		const changed: string[] = [];
 		for (const sub of subs) {
 			if (!sub || typeof sub !== 'object') continue;
 			const subRecord = sub as Record<string, unknown>;
-			if (subRecord.name !== subName) continue;
+			if (typeof subRecord.name !== 'string' || !names.has(subRecord.name)) continue;
+			// One row per name: names are unique within a pipeline, and a
+			// hand-edited duplicate must not be changed twice.
+			if (changed.includes(subRecord.name)) continue;
 			const subPipeline = pipelineKeyForSubscription({
-				name: subRecord.name as string,
+				name: subRecord.name,
 				pipeline_name:
 					typeof subRecord.pipeline_name === 'string' ? subRecord.pipeline_name : undefined,
 			});
 			if (subPipeline !== targetPipeline) continue;
-			subRecord.enabled = enabled;
-			found = true;
-			break;
+			mutate(subRecord);
+			changed.push(subRecord.name);
 		}
-		if (!found) return false;
+		if (changed.length === 0) return [];
 
 		try {
 			const serialized = yaml.dump(parsed, { lineWidth: -1, noRefs: true });
 			writeCueConfigFile(projectRoot, serialized);
 		} catch (err) {
-			captureException(err, { operation: 'setSubscriptionEnabled:yamlWrite', sessionId });
-			return false;
+			captureException(err, { operation: `${operation}:yamlWrite`, sessionId });
+			return [];
 		}
 
 		this.refreshSession(sessionId, projectRoot);
-		return true;
+		return changed;
+	}
+
+	/**
+	 * Set or remove the `gate` on a subscription in its owning session's
+	 * cue.yaml (`gate: null` removes it), then refresh that session.
+	 *
+	 * This is the `maestro-cli cue gate` half of the Gate field on a trigger
+	 * node in the pipeline editor, and it lands where that field does: on
+	 * EVERY subscription that is the same visual trigger as the one named
+	 * (see `isSameTriggerGroup`). A trigger that fans out is several
+	 * subscriptions in the file; gating one of them would leave the other
+	 * branches firing on every event, and would split one trigger node in two
+	 * the next time the editor loads the file.
+	 *
+	 * Identity and concurrency are {@link setSubscriptionEnabled}'s: the id is
+	 * `${sessionId}::${pipeline}::${name}` and the write is serialised per
+	 * project root.
+	 */
+	async setSubscriptionGate(
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	): Promise<CueGateWriteResult> {
+		const parsedId = parseCueSubscriptionId(subscriptionId);
+		if (!parsedId) return { ok: false, error: `"${subscriptionId}" is not a subscription id.` };
+		const { sessionId, pipeline: targetPipeline, name: subName } = parsedId;
+
+		if (gate) {
+			const problem = cueGateConditionProblem(gate.condition);
+			if (problem) return { ok: false, error: problem };
+		}
+
+		const session = this.deps.getSessions().find((s) => s.id === sessionId);
+		const projectRoot = session?.projectRoot;
+		if (!projectRoot) return { ok: false, error: `No agent owns subscription "${subName}".` };
+
+		return await this.enqueueYamlWrite(projectRoot, () => {
+			// Siblings are read inside the chain, from the config the engine has
+			// loaded, so a write queued ahead of this one is already reflected.
+			const loaded = this.registry.get(sessionId)?.config.subscriptions ?? [];
+			const anchor = loaded.find(
+				(sub) => sub.name === subName && pipelineKeyForSubscription(sub) === targetPipeline
+			);
+			const names = new Set([subName]);
+			if (anchor) {
+				for (const sub of loaded) {
+					if (isSameTriggerGroup(anchor, sub)) names.add(sub.name);
+				}
+			}
+
+			const updated = this.patchSubscriptionRecords(
+				sessionId,
+				projectRoot,
+				'setSubscriptionGate',
+				names,
+				targetPipeline,
+				(record) => writeCueGateFields(record, gate)
+			);
+			if (updated.length === 0) {
+				return {
+					ok: false as const,
+					error: `Could not write the gate: subscription "${subName}" was not found in cue.yaml, or the file could not be read or written.`,
+				};
+			}
+			return { ok: true as const, updated };
+		});
 	}
 
 	/** Returns the lifetime count of Cue events recorded in the journal. */
@@ -1373,23 +1478,13 @@ export class CueEngine {
 		}
 		if (!anchor) return false;
 
-		// Decide whether to fire the sibling group or just the anchor.
-		// See method docstring for the rationale on each condition.
-		const shouldFireGroup =
-			anchor.sub.event !== 'agent.completed' && !!anchor.sub.pipeline_name && !promptOverride;
-
-		let toDispatch: OwnedSub[];
-		if (shouldFireGroup) {
-			const anchorKey = triggerGroupKey(anchor.sub);
-			toDispatch = ownedSubs.filter(
-				(x) =>
-					x.sub.pipeline_name === anchor!.sub.pipeline_name &&
-					x.sub.event !== 'agent.completed' &&
-					triggerGroupKey(x.sub) === anchorKey
-			);
-		} else {
-			toDispatch = [anchor];
-		}
+		// Fire the whole visual trigger, or just the anchor when a prompt
+		// override targets it. See the method docstring; which subscriptions
+		// are the same trigger is `isSameTriggerGroup`'s answer.
+		const anchorSub = anchor.sub;
+		const toDispatch: OwnedSub[] = promptOverride
+			? [anchor]
+			: ownedSubs.filter((x) => isSameTriggerGroup(anchorSub, x.sub));
 
 		let totalDispatched = 0;
 		for (const { ownerSessionId, state, sub } of toDispatch) {

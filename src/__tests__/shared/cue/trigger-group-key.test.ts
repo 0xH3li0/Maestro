@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { triggerGroupKey } from '../../../shared/cue/trigger-group-key';
+import { isSameTriggerGroup, triggerGroupKey } from '../../../shared/cue/trigger-group-key';
 import type { CueSubscription } from '../../../shared/cue';
 
 function sub(overrides: Partial<CueSubscription> = {}): CueSubscription {
@@ -97,5 +97,41 @@ describe('triggerGroupKey', () => {
 		expect(triggerGroupKey(sub({ ...base, name: 'renew-prompt' }))).toBe(
 			triggerGroupKey(sub({ ...base, name: 'renew-notify', action: 'notify' }))
 		);
+	});
+});
+
+describe('isSameTriggerGroup', () => {
+	it('matches the parallel branches of one trigger in one pipeline', () => {
+		const anchor = sub({ name: 'p1', pipeline_name: 'P' });
+		expect(isSameTriggerGroup(anchor, sub({ name: 'p1-cmd-a', pipeline_name: 'P' }))).toBe(true);
+		expect(isSameTriggerGroup(anchor, anchor)).toBe(true);
+	});
+
+	it('leaves out another pipeline, a different trigger config, and a chain step', () => {
+		const anchor = sub({ name: 'p1', pipeline_name: 'P' });
+		expect(isSameTriggerGroup(anchor, sub({ name: 'q1', pipeline_name: 'Q' }))).toBe(false);
+		expect(
+			isSameTriggerGroup(anchor, sub({ name: 'p2', pipeline_name: 'P', repo: 'o/other' }))
+		).toBe(false);
+		expect(
+			isSameTriggerGroup(
+				anchor,
+				sub({ name: 'p1-chain-1', pipeline_name: 'P', event: 'agent.completed' })
+			)
+		).toBe(false);
+	});
+
+	it('gives a chain step and an ungrouped subscription no siblings but themselves', () => {
+		const chain = sub({ name: 'c1', pipeline_name: 'P', event: 'agent.completed' });
+		expect(isSameTriggerGroup(chain, chain)).toBe(true);
+		expect(
+			isSameTriggerGroup(chain, sub({ name: 'c2', pipeline_name: 'P', event: 'agent.completed' }))
+		).toBe(false);
+
+		// No `pipeline_name` predates grouping: an identical twin is still a
+		// different subscription.
+		const legacy = sub({ name: 'legacy' });
+		expect(isSameTriggerGroup(legacy, legacy)).toBe(true);
+		expect(isSameTriggerGroup(legacy, sub({ name: 'legacy-2' }))).toBe(false);
 	});
 });

@@ -15,6 +15,8 @@ interface CueSubscription {
 	sessionId: string;
 	sessionName: string;
 	enabled: boolean;
+	gate?: string;
+	gateOnUnavailable?: 'run' | 'skip';
 	lastTriggered?: number;
 	triggerCount: number;
 }
@@ -55,6 +57,9 @@ export async function cueList(options: CueListOptions): Promise<void> {
 				}
 				if (sub.schedule) {
 					lines.push(`     schedule: ${sub.schedule}`);
+				}
+				if (sub.gate) {
+					lines.push(`     gate: ${sub.gate}`);
 				}
 				lines.push('');
 			}

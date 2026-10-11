@@ -69,3 +69,28 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		gate_on_unavailable: sub.gate_on_unavailable ?? null,
 	});
 }
+
+/**
+ * Whether `candidate` is the same visual trigger as `anchor`: the anchor
+ * itself, or a sibling subscription of the same pipeline that carries the same
+ * trigger config.
+ *
+ * Two anchors have no siblings and match only themselves. A chain step
+ * (`agent.completed`) is fed by an upstream agent, not by a trigger node, and
+ * a subscription without a `pipeline_name` predates grouping, so widening
+ * either would act on subscriptions the caller never named.
+ *
+ * Anything that acts on "the trigger the user named" rides this: Play fires
+ * every member so a manual run matches a real tick, and a gate set from the
+ * CLI lands on every member, as it does when it is set on the trigger node in
+ * the editor.
+ */
+export function isSameTriggerGroup(anchor: CueSubscription, candidate: CueSubscription): boolean {
+	if (candidate === anchor) return true;
+	if (anchor.event === 'agent.completed' || !anchor.pipeline_name) return false;
+	return (
+		candidate.pipeline_name === anchor.pipeline_name &&
+		candidate.event !== 'agent.completed' &&
+		triggerGroupKey(candidate) === triggerGroupKey(anchor)
+	);
+}

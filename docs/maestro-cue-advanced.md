@@ -193,6 +193,19 @@ The point is cost. Most events a busy subscription sees do not need an agent tur
 
 **Setup.** The gate runs on the **Cue gate** task in Settings > Local Models > Assignments. Assign it a local model or an endpoint (Ollama, LM Studio). The task is off by default.
 
+**Where to set it.** You do not have to edit YAML:
+
+| Surface                           | How                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Pipeline editor                   | Select the trigger node. The **Gate** field is under the trigger's own settings.                  |
+| Scheduled Tasks tab               | **New Task**, or the edit button on a task. The **Gate** field is at the bottom of the form.      |
+| `maestro-cli cue gate <sub>`      | `--set "<condition>"`, `--on-unavailable run\|skip`, `--clear`. With no flag, it prints the gate. |
+| `maestro-cli cue schedule --gate` | Sets the gate when the scheduled task is created.                                                 |
+
+Under the field, the editor tells you if the Cue gate task is ready. If it is not, it tells you what is missing and what happens to events until it is. `maestro-cli cue gate` prints the same note after a write.
+
+A trigger that fans out to several agents or commands is several subscriptions in `cue.yaml`. The Gate field and `maestro-cli cue gate` both set the gate on all of them, so every branch is gated together. A CLI trigger has no Gate field, because it only fires from a manual run and manual runs are not gated.
+
 **When the model cannot answer** (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
 
 ```yaml
@@ -215,7 +228,7 @@ Things to know:
 - **A gated `time.once` task is consumed.** Its condition was checked at its scheduled time and the answer was no.
 - **The standalone engine cannot check a gate.** `maestro-cli cue engine` does not load local models, so every gate there follows `gate_on_unavailable`.
 
-Read gated events from the command line with `maestro-cli cue activity`.
+Read gated events from the command line with `maestro-cli cue activity`. Read a subscription's gate with `maestro-cli cue gate <subscription>`, or list every gate with `maestro-cli cue list`.
 
 ## Agent Chaining
 

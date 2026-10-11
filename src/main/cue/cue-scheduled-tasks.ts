@@ -31,6 +31,7 @@ import {
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
 import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
+import { readCueGateSetting, writeCueGateFields, type CueGateSetting } from '../../shared/cue/gate';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
 import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
@@ -184,6 +185,7 @@ function projectNextFire(sub: CueSubscription): number | null {
 function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): ScheduledTask {
 	const event = sub.event as ScheduledTask['event'];
 	const action: CueAction = sub.action ?? 'prompt';
+	const gate = readCueGateSetting(sub);
 	return {
 		name: sub.name,
 		kind: kindForEvent(event),
@@ -204,6 +206,8 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		notifyMessage: sub.notify?.message,
 		notifySticky: sub.notify?.sticky,
 		autoRun: sub.auto_run,
+		...(gate ? { gate: gate.condition } : {}),
+		...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -268,6 +272,15 @@ export function buildScheduledTaskSubscriptions(
 	if (hasAutoRun && (hasPrompt || hasNotify)) {
 		throw new Error('an Auto Run task cannot also carry a prompt or a notification');
 	}
+	// A policy with no gate would be written to disk and mean nothing, so it
+	// is refused rather than dropped: the caller asked for a gate it did not
+	// describe.
+	if (input.gateOnUnavailable !== undefined && !input.gate?.trim()) {
+		throw new Error('a gate policy needs a gate condition');
+	}
+	const gate: CueGateSetting | null = input.gate?.trim()
+		? { condition: input.gate, onUnavailable: input.gateOnUnavailable }
+		: null;
 
 	const timing: Record<string, unknown> = {};
 	let baseName: string;
@@ -389,6 +402,13 @@ export function buildScheduledTaskSubscriptions(
 		});
 	}
 
+	// Every subscription the task became carries the gate, so a prompt and its
+	// paired notification are skipped together and stay one visual trigger.
+	// `writeCueGateFields` refuses a condition the validator would reject.
+	if (gate) {
+		for (const sub of subs) writeCueGateFields(sub, gate);
+	}
+
 	return subs;
 }
 
@@ -498,6 +518,26 @@ export async function updateScheduledTask(
 		const notifyConfig: Record<string, unknown> = { message: patch.notify.message };
 		if (patch.notify.sticky === true) notifyConfig.sticky = true;
 		target.notify = notifyConfig;
+	}
+	if (patch.gate !== undefined || patch.gateOnUnavailable !== undefined) {
+		// `gate: null` removes the gate; a string sets it. A policy alone
+		// changes the policy of the gate the task already has.
+		let gate: CueGateSetting | null;
+		if (patch.gate === null) {
+			gate = null;
+		} else {
+			const current = readCueGateSetting(target);
+			const condition = patch.gate ?? current?.condition;
+			if (condition === undefined) {
+				return { updated: false, reason: `"${name}" has no gate to set a policy on` };
+			}
+			gate = { condition, onUnavailable: patch.gateOnUnavailable ?? current?.onUnavailable };
+		}
+		try {
+			writeCueGateFields(target, gate);
+		} catch (err) {
+			return { updated: false, reason: errText(err) };
+		}
 	}
 
 	const header = extractLeadingCommentBlock(raw);

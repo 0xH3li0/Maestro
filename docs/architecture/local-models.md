@@ -741,6 +741,20 @@ flowchart LR
 | Recording a skipped event                        | `recordSkippedRun()` in `cue-run-manager.ts` |
 | Activity log entry, metric, one-shot consumption | `onGated` in `src/main/cue/cue-engine.ts`    |
 
+Authoring a gate (the condition half) has four surfaces and one field:
+
+| Surface                           | Path to `cue.yaml`                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------- |
+| Gate on a trigger node (editor)   | `CueGateField` -> `TriggerNodeData.config` -> `pipelineToYaml`                           |
+| Gate in the Scheduled Task form   | `CueGateField` -> `createScheduledTask` / `updateScheduledTask`                          |
+| `maestro-cli cue schedule --gate` | `createScheduledTask` (works with the app closed)                                        |
+| `maestro-cli cue gate <sub>`      | `set_cue_subscription_gate` -> `CueEngine.setSubscriptionGate()` (every trigger sibling) |
+| Reading it back                   | `cue gate <sub>`, `cue list`, `cue schedule --list`                                      |
+
+`writeCueGateFields()` in `src/shared/cue/gate.ts` is the one place a patch writes the two keys.
+`CueGateField` and `cue gate` both report the `cue-gate` task's readiness after the condition is
+set: the task is off by default, and a condition with no model starts every run unchecked.
+
 **Failure policy.** A gate whose model cannot answer fails OPEN with a visible warning: the run
 starts, the event is stamped `ran-unchecked`, and a `gateUnavailable` log payload raises a sticky
 notice (coalesced per agent for 30 minutes in `src/main/index.ts`). A missing gate model must not

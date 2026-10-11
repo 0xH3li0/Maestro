@@ -15,13 +15,18 @@ import {
 	CUE_GATE_MAX_REASON_LENGTH,
 	CUE_GATE_PAYLOAD_KEY,
 	CUE_GATE_REPLY_SCHEMA,
+	CUE_GATE_MAX_CONDITION_LENGTH,
 	clampCueGateReason,
 	compactCueGateEvent,
+	cueGateConditionProblem,
 	formatCueGateInput,
+	parseCueGateOnUnavailable,
 	parseCueGateReply,
 	readCueGateRecord,
+	readCueGateSetting,
 	resolveCueGateDecision,
 	withCueGateRecord,
+	writeCueGateFields,
 } from '../../../shared/cue/gate';
 import { isCueRunSkipped, type CueEvent } from '../../../shared/cue';
 
@@ -255,5 +260,68 @@ describe('isCueRunSkipped', () => {
 		for (const status of ['running', 'completed', 'failed', 'timeout', 'stopped']) {
 			expect(isCueRunSkipped(status)).toBe(false);
 		}
+	});
+});
+
+describe('authoring a gate', () => {
+	it('narrows a policy and refuses anything that is not one', () => {
+		expect(parseCueGateOnUnavailable('run')).toBe('run');
+		expect(parseCueGateOnUnavailable('skip')).toBe('skip');
+		expect(parseCueGateOnUnavailable('SKIP')).toBeNull();
+		expect(parseCueGateOnUnavailable(true)).toBeNull();
+		expect(parseCueGateOnUnavailable(undefined)).toBeNull();
+	});
+
+	it('refuses a blank condition and one past the length the validator accepts', () => {
+		expect(cueGateConditionProblem('the comment reports a bug')).toBeNull();
+		expect(cueGateConditionProblem('   ')).toMatch(/needs a condition/);
+		expect(cueGateConditionProblem('x'.repeat(CUE_GATE_MAX_CONDITION_LENGTH))).toBeNull();
+		expect(cueGateConditionProblem('x'.repeat(CUE_GATE_MAX_CONDITION_LENGTH + 1))).toMatch(
+			/at most 1000 characters/
+		);
+	});
+
+	it('writes a trimmed condition, and the policy only when it is not the default', () => {
+		const record: Record<string, unknown> = { name: 'triage' };
+		writeCueGateFields(record, { condition: '  reports a bug  ', onUnavailable: 'skip' });
+		expect(record).toEqual({ name: 'triage', gate: 'reports a bug', gate_on_unavailable: 'skip' });
+
+		// The default is not spelled out, and a stale policy does not survive:
+		// `triggerGroupKey` compares the keys as written.
+		writeCueGateFields(record, { condition: 'reports a bug', onUnavailable: 'run' });
+		expect(record).toEqual({ name: 'triage', gate: 'reports a bug' });
+		writeCueGateFields(record, { condition: 'asks for a change' });
+		expect(record).toEqual({ name: 'triage', gate: 'asks for a change' });
+	});
+
+	it('removes both keys, and leaves the rest of the record alone', () => {
+		const record: Record<string, unknown> = {
+			name: 'triage',
+			gate: 'reports a bug',
+			gate_on_unavailable: 'skip',
+		};
+		writeCueGateFields(record, null);
+		expect(record).toEqual({ name: 'triage' });
+	});
+
+	it('throws on a condition that cannot be saved, without touching the record', () => {
+		const record: Record<string, unknown> = { name: 'triage', gate: 'reports a bug' };
+		expect(() => writeCueGateFields(record, { condition: ' ' })).toThrow(/needs a condition/);
+		expect(record).toEqual({ name: 'triage', gate: 'reports a bug' });
+	});
+
+	it('reads a gate back, and reads nothing from a blank or missing one', () => {
+		expect(readCueGateSetting({ gate: ' reports a bug ', gate_on_unavailable: 'skip' })).toEqual({
+			condition: 'reports a bug',
+			onUnavailable: 'skip',
+		});
+		expect(readCueGateSetting({ gate: 'reports a bug' })).toEqual({ condition: 'reports a bug' });
+		// A policy that is not one is dropped, not passed through.
+		expect(readCueGateSetting({ gate: 'reports a bug', gate_on_unavailable: 'maybe' })).toEqual({
+			condition: 'reports a bug',
+		});
+		expect(readCueGateSetting({ gate: '   ' })).toBeNull();
+		expect(readCueGateSetting({ gate_on_unavailable: 'skip' })).toBeNull();
+		expect(readCueGateSetting({ gate: 42 })).toBeNull();
 	});
 });

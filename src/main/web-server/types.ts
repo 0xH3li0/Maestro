@@ -23,6 +23,11 @@ import type {
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
 import type { MediaOpenMode } from '../../shared/mediaTypes';
+import type {
+	CueGateOnUnavailable,
+	CueGateSetting,
+	CueGateWriteResult,
+} from '../../shared/cue/gate';
 import type { DebugPackageDependencies } from '../debug-package';
 
 // Re-export Theme for convenience
@@ -1388,6 +1393,12 @@ export interface CueSubscriptionInfo {
 	sessionId: string;
 	sessionName: string;
 	enabled: boolean;
+	/** The subscription's gate condition, when it has one. See
+	 *  `CueSubscription.gate`. Set with `set_cue_subscription_gate`. */
+	gate?: string;
+	/** What the gate does when its model cannot answer. Present only beside a
+	 *  `gate`, and only when the subscription spells it out (absent = run). */
+	gateOnUnavailable?: CueGateOnUnavailable;
 	lastTriggered?: number;
 	triggerCount: number;
 }
@@ -1416,6 +1427,11 @@ export type ToggleCueSubscriptionCallback = (
 	subscriptionId: string,
 	enabled: boolean
 ) => Promise<boolean>;
+/** Set (`gate` present) or remove (`null`) a subscription's gate. */
+export type SetCueSubscriptionGateCallback = (
+	subscriptionId: string,
+	gate: CueGateSetting | null
+) => Promise<CueGateWriteResult>;
 export type GetCueActivityCallback = (
 	sessionId?: string,
 	limit?: number

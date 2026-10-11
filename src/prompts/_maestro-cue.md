@@ -362,6 +362,15 @@ Any subscription may carry a `gate`: one sentence in plain language that the eve
 - If the gate model cannot answer (task off, model missing, server down), the run starts and the user is warned, unless `gate_on_unavailable: skip`.
 - A manual trigger (`cue trigger`, Play) is never gated.
 - Suggest a gate only when the user has (or wants) a model assigned to the Cue gate task; without one, every event runs unchecked and raises a warning.
+- To set, change, or remove a gate on an existing subscription, use the CLI instead of editing YAML. It writes every branch of a fan-out trigger together and reports whether a model will check the gate:
+
+```bash
+{{MAESTRO_CLI_PATH}} cue gate <subscription>                                   # print the gate
+{{MAESTRO_CLI_PATH}} cue gate <subscription> --set "the comment reports a bug" # set or replace it
+{{MAESTRO_CLI_PATH}} cue gate <subscription> --on-unavailable skip             # change only the policy
+{{MAESTRO_CLI_PATH}} cue gate <subscription> --clear                           # remove it
+{{MAESTRO_CLI_PATH}} cue schedule --every 30m --agent <id> --prompt "..." --gate "the build is red"
+```
 
 ### CLI
 

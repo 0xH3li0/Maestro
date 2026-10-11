@@ -168,6 +168,7 @@ import {
 import {
 	handleGetCueSubscriptions,
 	handleToggleCueSubscription,
+	handleSetCueSubscriptionGate,
 	handleGetCueActivity,
 	handleTriggerCueSubscription,
 	handleCuePipelineList,
@@ -575,6 +576,10 @@ export class WebSocketMessageHandler {
 
 			case 'toggle_cue_subscription':
 				handleToggleCueSubscription(this.ctx, client, message);
+				break;
+
+			case 'set_cue_subscription_gate':
+				handleSetCueSubscriptionGate(this.ctx, client, message);
 				break;
 
 			case 'get_cue_activity':

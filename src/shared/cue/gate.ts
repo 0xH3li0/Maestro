@@ -40,6 +40,83 @@ export const CUE_GATE_MAX_CONDITION_LENGTH = 1000;
 export const CUE_GATE_MAX_REASON_LENGTH = 240;
 
 /**
+ * A gate as a person sets it: the condition and what to do when no model can
+ * answer. The shape every authoring surface speaks (the trigger panel, the
+ * Scheduled Task form, `maestro-cli cue gate`, `cue schedule --gate`), so a
+ * gate set by clicking and one set from the CLI are the same two keys on disk.
+ */
+export interface CueGateSetting {
+	condition: string;
+	/** Absent means {@link DEFAULT_CUE_GATE_ON_UNAVAILABLE}. */
+	onUnavailable?: CueGateOnUnavailable;
+}
+
+/** What a gate write reports. `updated` names every subscription it changed. */
+export type CueGateWriteResult = { ok: true; updated: string[] } | { ok: false; error: string };
+
+/** Narrow a value from the CLI, the bridge, or a form to a policy. */
+export function parseCueGateOnUnavailable(value: unknown): CueGateOnUnavailable | null {
+	return typeof value === 'string' && (CUE_GATE_ON_UNAVAILABLE as readonly string[]).includes(value)
+		? (value as CueGateOnUnavailable)
+		: null;
+}
+
+/**
+ * Why a condition cannot be saved, or `null` when it can. The same two rules
+ * the cue.yaml validator applies, so a surface refuses a gate when it is
+ * typed instead of writing a file the engine then rejects.
+ */
+export function cueGateConditionProblem(condition: string): string | null {
+	if (condition.trim().length === 0) {
+		return 'A gate needs a condition the event must meet, in plain language.';
+	}
+	if (condition.trim().length > CUE_GATE_MAX_CONDITION_LENGTH) {
+		return `A gate condition is at most ${CUE_GATE_MAX_CONDITION_LENGTH} characters. One sentence is enough.`;
+	}
+	return null;
+}
+
+/** The gate a subscription (or a raw cue.yaml record) carries, when it has one. */
+export function readCueGateSetting(sub: {
+	gate?: unknown;
+	gate_on_unavailable?: unknown;
+}): CueGateSetting | null {
+	if (typeof sub.gate !== 'string' || sub.gate.trim().length === 0) return null;
+	const onUnavailable = parseCueGateOnUnavailable(sub.gate_on_unavailable);
+	return { condition: sub.gate.trim(), ...(onUnavailable ? { onUnavailable } : {}) };
+}
+
+/**
+ * Set or remove the gate on one raw cue.yaml subscription record, in place.
+ * The one place the two keys are written by a patch, so every writer agrees:
+ * `null` removes both, the condition is trimmed, and the policy is written
+ * only when it is not the default. A policy alone means nothing, and a
+ * spelled-out default would make two otherwise identical triggers differ
+ * (`triggerGroupKey` compares the keys as written).
+ *
+ * Throws on a condition that cannot be saved; check with
+ * {@link cueGateConditionProblem} first to report it without a throw.
+ */
+export function writeCueGateFields(
+	record: Record<string, unknown>,
+	gate: CueGateSetting | null
+): void {
+	if (gate === null) {
+		delete record.gate;
+		delete record.gate_on_unavailable;
+		return;
+	}
+	const problem = cueGateConditionProblem(gate.condition);
+	if (problem) throw new Error(problem);
+	record.gate = gate.condition.trim();
+	if (gate.onUnavailable && gate.onUnavailable !== DEFAULT_CUE_GATE_ON_UNAVAILABLE) {
+		record.gate_on_unavailable = gate.onUnavailable;
+	} else {
+		delete record.gate_on_unavailable;
+	}
+}
+
+/**
  * Caps on the event handed to the model. A local model's whole context is a
  * few thousand tokens, and one issue body can be longer than that. Each string
  * is cut first, so a long body cannot push every later field out, and the

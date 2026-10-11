@@ -2,7 +2,8 @@
  * TriggerConfig - Event-type-specific configuration fields for trigger nodes.
  *
  * Renders form fields based on the trigger's event type (heartbeat, scheduled,
- * file change, agent completed, GitHub PR/issue, task pending).
+ * file change, agent completed, GitHub PR/issue, task pending), followed by
+ * the Gate, which applies to every event type that can fire by itself.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -10,10 +11,12 @@ import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
 import { normalizeWebhookPath } from '../../../../../shared/cue';
+import { DEFAULT_CUE_GATE_ON_UNAVAILABLE } from '../../../../../shared/cue/gate';
 import { useDebouncedCallback } from '../../../../hooks/utils';
 import { registerPendingEdit } from '../../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
 import { CueSelect } from '../CueSelect';
+import { CueGateField, type CueGateFieldValue } from '../CueGateField';
 
 /** Sentinel value matching `cue-github-poller.UNLIMITED_NOTIFICATIONS`. */
 const UNLIMITED_NOTIFICATIONS = 0;
@@ -160,6 +163,49 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		[localConfig, debouncedUpdate]
 	);
 
+	/**
+	 * Store the gate on the trigger config. A blank condition is no gate, so
+	 * both keys leave the config rather than being stored empty, and the
+	 * default policy is not stored at all: `triggerGroupKey` compares the keys
+	 * as written, so a spelled-out default would stop this trigger grouping
+	 * with a sibling that left it out.
+	 */
+	const updateGate = useCallback(
+		(next: CueGateFieldValue) => {
+			const updated = { ...localConfig };
+			if (next.condition.length === 0) {
+				delete updated.gate;
+				delete updated.gate_on_unavailable;
+			} else {
+				updated.gate = next.condition;
+				if (next.onUnavailable === DEFAULT_CUE_GATE_ON_UNAVAILABLE) {
+					delete updated.gate_on_unavailable;
+				} else {
+					updated.gate_on_unavailable = next.onUnavailable;
+				}
+			}
+			setLocalConfig(updated);
+			debouncedUpdate(updated);
+		},
+		[localConfig, debouncedUpdate]
+	);
+
+	// Rendered under the event-specific fields of every trigger that can fire
+	// by itself. `cli.trigger` is left out: it only ever fires from a manual
+	// run, and a manual run is never gated, so a gate there could not apply.
+	const gateField = (
+		<div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: 8, marginTop: 4 }}>
+			<CueGateField
+				theme={theme}
+				value={{
+					condition: localConfig.gate ?? '',
+					onUnavailable: localConfig.gate_on_unavailable ?? DEFAULT_CUE_GATE_ON_UNAVAILABLE,
+				}}
+				onChange={updateGate}
+			/>
+		</div>
+	);
+
 	const nameField = (
 		<label style={themedLabelStyle}>
 			Name
@@ -189,6 +235,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							style={themedInputStyle}
 						/>
 					</label>
+					{gateField}
 				</div>
 			);
 		case 'time.scheduled':
@@ -249,6 +296,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							})}
 						</div>
 					</label>
+					{gateField}
 				</div>
 			);
 		case 'file.changed':
@@ -280,6 +328,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							theme={theme}
 						/>
 					</label>
+					{gateField}
 				</div>
 			);
 		case 'agent.completed':
@@ -290,6 +339,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 						Source agent is determined by incoming edges. Connect a trigger or agent node to
 						configure the source.
 					</div>
+					{gateField}
 				</div>
 			);
 		case 'github.pull_request':
@@ -357,6 +407,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							labelStyle={themedLabelStyle}
 						/>
 					)}
+					{gateField}
 				</div>
 			);
 		}
@@ -414,6 +465,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 						Fires once per label that lands on a PR or issue, within one poll interval. Labels
 						already present when the trigger is first saved do not fire.
 					</div>
+					{gateField}
 				</div>
 			);
 		}
@@ -431,6 +483,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							style={themedInputStyle}
 						/>
 					</label>
+					{gateField}
 				</div>
 			);
 		case 'app.startup':
@@ -440,6 +493,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 					<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
 						Fires once when the Maestro application starts. No additional configuration needed.
 					</div>
+					{gateField}
 				</div>
 			);
 		case 'cli.trigger':
@@ -509,6 +563,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 						must present the secret via <code>X-Maestro-Cue-Secret</code> or{' '}
 						<code>Authorization: Bearer</code>.
 					</div>
+					{gateField}
 				</div>
 			);
 		}

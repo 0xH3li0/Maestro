@@ -693,6 +693,10 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return false;
 		return cueEngine.setSubscriptionEnabled(subscriptionId, enabled);
 	},
+	setCueSubscriptionGate: async (subscriptionId, gate) => {
+		if (!cueEngine) return { ok: false, error: 'The Cue engine is not running.' };
+		return cueEngine.setSubscriptionGate(subscriptionId, gate);
+	},
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();

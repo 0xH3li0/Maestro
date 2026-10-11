@@ -123,6 +123,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCreateGistCallback = vi.fn();
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
+			setSetCueSubscriptionGateCallback = vi.fn();
 			setGetCueActivityCallback = vi.fn();
 			setTriggerCueSubscriptionCallback = vi.fn();
 			setGetUsageDashboardCallback = vi.fn();
@@ -1802,6 +1803,77 @@ describe('web-server/web-server-factory', () => {
 				expect.stringContaining('setCueSubscriptionEnabled dependency not available'),
 				'WebServer'
 			);
+		});
+	});
+
+	describe('Cue gate callback', () => {
+		it('delegates to setCueSubscriptionGate, for a set and for a removal', async () => {
+			const setCueSubscriptionGate = vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] });
+			const createWebServer = createWebServerFactory({ ...deps, setCueSubscriptionGate });
+			const server = createWebServer() as any;
+
+			expect(server.setSetCueSubscriptionGateCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setSetCueSubscriptionGateCallback.mock.calls[0][0];
+
+			const gate = { condition: 'the issue reports a bug', onUnavailable: 'skip' };
+			expect(await callback('agent-1::Triage::Triage', gate)).toEqual({
+				ok: true,
+				updated: ['Triage'],
+			});
+			expect(setCueSubscriptionGate).toHaveBeenCalledWith('agent-1::Triage::Triage', gate);
+
+			await callback('agent-1::Triage::Triage', null);
+			expect(setCueSubscriptionGate).toHaveBeenLastCalledWith('agent-1::Triage::Triage', null);
+		});
+
+		it('answers with a printable refusal when the dep is missing', async () => {
+			const createWebServer = createWebServerFactory({
+				...deps,
+				setCueSubscriptionGate: undefined,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setSetCueSubscriptionGateCallback.mock.calls[0][0];
+
+			expect(await callback('agent-1::P::Triage', null)).toEqual({
+				ok: false,
+				error: 'Cue gate editing is not available.',
+			});
+		});
+
+		it('lists a gate back on the subscription, and leaves an ungated one without the keys', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Worker',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'Triage',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'triage it',
+							pipeline_name: 'Triage',
+							gate: 'the issue reports a bug',
+							gate_on_unavailable: 'skip',
+						},
+						{
+							name: 'Plain',
+							event: 'github.issue',
+							enabled: true,
+							prompt: 'x',
+							pipeline_name: 'Plain',
+						},
+					],
+				},
+			]);
+			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData });
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+			const [gated, plain] = await callback();
+
+			expect(gated).toMatchObject({ gate: 'the issue reports a bug', gateOnUnavailable: 'skip' });
+			expect(plain).not.toHaveProperty('gate');
+			expect(plain).not.toHaveProperty('gateOnUnavailable');
 		});
 	});
 

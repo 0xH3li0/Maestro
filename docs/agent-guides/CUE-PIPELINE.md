@@ -247,6 +247,14 @@ Models task) answers against the event payload before a run starts. It is applie
 - Both fields are in `triggerGroupKey()` and round-trip through the editor on the trigger node
   (`TriggerNodeData.config.gate`). A gate hand-written on an `agent.completed` chain sub is honored
   by the engine but is not carried by the editor's chain emission, the same as `filter` there.
+- Authoring: `<CueGateField>` (`CuePipelineEditor/panels/CueGateField.tsx`) is the one field, drawn by
+  `TriggerConfig` under every trigger that fires by itself (not `cli.trigger`, which is manual only)
+  and by `ScheduledTaskForm`. It shows the `cue-gate` task's readiness, because a condition with no
+  model checks nothing. `TriggerConfig` stores a blank gate as NO keys and never stores the default
+  policy; `triggerGroupKey` compares both keys as written.
+- CLI: `maestro-cli cue gate <sub>` (`set_cue_subscription_gate` -> `CueEngine.setSubscriptionGate()`,
+  which writes every member of the trigger group, see `isSameTriggerGroup`) and
+  `cue schedule --gate`. Every patch goes through `writeCueGateFields()`.
 
 Full design: [docs/architecture/local-models.md](../architecture/local-models.md#the-cue-gate-evaluatecuegate).
 

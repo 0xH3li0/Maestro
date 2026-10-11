@@ -110,6 +110,9 @@ Rules worth knowing before editing it:
 - **Manual triggers bypass the gate.** `payload.manual === true` (Play, `maestro-cli cue trigger`) is a person asking for the run, and its synthetic payload has nothing to judge.
 - **A gated `time.once` self-destructs.** Its condition was asked at its instant. Left in place it would re-fire on every reload inside its grace window.
 - **Not a security control.** The payload is untrusted text. Hostile text is the injection screen's job.
+- **Four authoring surfaces, one writer per file path.** The Gate field on a trigger node (`CueGateField` in `CuePipelineEditor/panels/`, stored on `TriggerNodeData.config` and emitted by `pipelineToYaml`), the same field in the Scheduled Task form (`createScheduledTask` / `updateScheduledTask`), `maestro-cli cue schedule --gate`, and `maestro-cli cue gate <sub>` (`set_cue_subscription_gate` -> `CueEngine.setSubscriptionGate()`). Every patch writes the two keys through `writeCueGateFields()` in `src/shared/cue/gate.ts`: the condition is trimmed, `null` removes both keys, and the default policy is NOT written, because `triggerGroupKey` compares the keys as written and a spelled-out `run` would split a trigger from a sibling that left it out.
+- **A gate set by name lands on the whole trigger.** `setSubscriptionGate()` patches every subscription `isSameTriggerGroup()` matches (the same rule Play fires by), so a fan-out is gated on every branch and still loads as one trigger node. It shares `patchSubscriptionRecords()` and the per-root write chain with `setSubscriptionEnabled()`.
+- **A gate is two halves.** The condition is on the subscription; the model is the `cue-gate` Local Models task, off by default. A surface that writes a gate must say whether a model will check it (`CueGateField` reads `useLocalModelTaskReadiness`, `cue gate` asks `local_models_task_readiness`), or a gate that screens nothing looks live.
 
 ## Scheduled Tasks (`cue-scheduled-tasks.ts`)
 

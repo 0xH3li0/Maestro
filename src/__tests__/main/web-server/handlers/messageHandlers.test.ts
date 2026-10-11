@@ -349,6 +349,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
+		setCueSubscriptionGate: vi.fn().mockResolvedValue({ ok: true, updated: ['Triage'] }),
 		getCueActivity: vi.fn().mockResolvedValue([]),
 		triggerCueSubscription: vi.fn().mockResolvedValue(true),
 		listCuePipelines: vi.fn().mockResolvedValue({ pipelines: [] }),
@@ -4903,6 +4904,90 @@ describe('WebSocketMessageHandler', () => {
 			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', hidden: 'true' });
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Cue gate (maestro-cli cue gate)', () => {
+		const lastFrame = () =>
+			JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, unknown>;
+
+		it('sets a gate with its policy and reports every subscription changed', async () => {
+			vi.mocked(callbacks.setCueSubscriptionGate).mockResolvedValue({
+				ok: true,
+				updated: ['Triage', 'Triage-cmd-a'],
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_gate',
+				requestId: 'g1',
+				subscriptionId: 'a1::Triage::Triage',
+				gate: '  the issue reports a bug  ',
+				gateOnUnavailable: 'skip',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe('set_cue_subscription_gate_result'));
+			expect(callbacks.setCueSubscriptionGate).toHaveBeenCalledWith('a1::Triage::Triage', {
+				condition: '  the issue reports a bug  ',
+				onUnavailable: 'skip',
+			});
+			expect(lastFrame()).toMatchObject({
+				success: true,
+				requestId: 'g1',
+				subscriptionId: 'a1::Triage::Triage',
+				updated: ['Triage', 'Triage-cmd-a'],
+				gate: 'the issue reports a bug',
+				gateOnUnavailable: 'skip',
+			});
+		});
+
+		it('removes a gate on an explicit null', async () => {
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_gate',
+				subscriptionId: 'a1::Triage::Triage',
+				gate: null,
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe('set_cue_subscription_gate_result'));
+			expect(callbacks.setCueSubscriptionGate).toHaveBeenCalledWith('a1::Triage::Triage', null);
+			expect(lastFrame()).toMatchObject({ success: true, gate: null });
+		});
+
+		it('passes the engine refusal back as a failed result', async () => {
+			vi.mocked(callbacks.setCueSubscriptionGate).mockResolvedValue({
+				ok: false,
+				error: 'Could not write the gate.',
+			});
+			handler.handleMessage(client, {
+				type: 'set_cue_subscription_gate',
+				subscriptionId: 'a1::Triage::Missing',
+				gate: 'the issue reports a bug',
+			});
+
+			await vi.waitFor(() => expect(lastFrame().type).toBe('set_cue_subscription_gate_result'));
+			expect(lastFrame()).toMatchObject({ success: false, error: 'Could not write the gate.' });
+			expect(lastFrame()).not.toHaveProperty('updated');
+		});
+
+		it('refuses a frame that is neither a removal nor a usable condition', () => {
+			const refused = (frame: Record<string, unknown>) => {
+				handler.handleMessage(client, { type: 'set_cue_subscription_gate', ...frame });
+				return lastFrame();
+			};
+
+			// A dropped `gate` field must not be read as "remove the gate".
+			expect(refused({ subscriptionId: 'a1::T::T' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Missing gate'),
+			});
+			expect(refused({ subscriptionId: 'a1::T::T', gate: '   ' }).type).toBe('error');
+			expect(refused({ subscriptionId: 'a1::T::T', gate: 'x'.repeat(1001) }).type).toBe('error');
+			expect(
+				refused({ subscriptionId: 'a1::T::T', gate: 'a bug', gateOnUnavailable: 'maybe' })
+			).toMatchObject({ type: 'error', message: expect.stringContaining('gateOnUnavailable') });
+			expect(refused({ gate: 'a bug' })).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('Missing subscriptionId'),
+			});
+			expect(callbacks.setCueSubscriptionGate).not.toHaveBeenCalled();
 		});
 	});
 });

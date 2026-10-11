@@ -120,6 +120,7 @@ import type {
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
+	SetCueSubscriptionGateCallback,
 	GetCueActivityCallback,
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
@@ -153,6 +154,7 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { CueGateSetting, CueGateWriteResult } from '../../../shared/cue/gate';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -245,6 +247,7 @@ export interface WebServerCallbacks {
 	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
+	setCueSubscriptionGate: SetCueSubscriptionGateCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
 	getUsageDashboard: GetUsageDashboardCallback | null;
@@ -350,6 +353,7 @@ export class CallbackRegistry {
 		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
+		setCueSubscriptionGate: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
 		getUsageDashboard: null,
@@ -945,6 +949,16 @@ export class CallbackRegistry {
 		return this.callbacks.toggleCueSubscription(subscriptionId, enabled);
 	}
 
+	async setCueSubscriptionGate(
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	): Promise<CueGateWriteResult> {
+		if (!this.callbacks.setCueSubscriptionGate) {
+			return { ok: false, error: 'Cue gate editing is not available.' };
+		}
+		return this.callbacks.setCueSubscriptionGate(subscriptionId, gate);
+	}
+
 	async getCueActivity(sessionId?: string, limit?: number): Promise<CueActivityEntry[]> {
 		if (!this.callbacks.getCueActivity) return [];
 		return this.callbacks.getCueActivity(sessionId, limit);
@@ -1415,6 +1429,10 @@ export class CallbackRegistry {
 
 	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
 		this.callbacks.toggleCueSubscription = callback;
+	}
+
+	setSetCueSubscriptionGateCallback(callback: SetCueSubscriptionGateCallback): void {
+		this.callbacks.setCueSubscriptionGate = callback;
 	}
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {

@@ -1,7 +1,8 @@
 /**
  * @file cue-control.test.ts
- * @description Tests for `cue enable|disable|activity`: name resolution
- * (refusing an ambiguous name), the toggle message, and error-frame handling.
+ * @description Tests for `cue enable|disable|gate|activity`: name resolution
+ * (refusing an ambiguous name), the toggle and gate messages, and error-frame
+ * handling.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -19,6 +20,7 @@ import {
 	cueActivity,
 	cueDisable,
 	cueEnable,
+	cueGate,
 	resolveSubscription,
 } from '../../../cli/commands/cue-control';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -165,5 +167,236 @@ describe('cue enable/disable/activity', () => {
 		const sent = mockBridge({});
 		await expect(cueActivity({ limit: 'lots' })).rejects.toThrow('__exit__');
 		expect(sent).toHaveLength(0);
+	});
+});
+
+describe('cue gate', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+
+	const gated = [
+		...subs,
+		{
+			id: 'a1::p::triage',
+			name: 'triage',
+			eventType: 'github.issue',
+			sessionId: 'a1',
+			sessionName: 'One',
+			enabled: true,
+			gate: 'the comment reports a bug',
+			gateOnUnavailable: 'skip' as const,
+		},
+	];
+	const ready = {
+		type: 'local_models_task_readiness_result',
+		success: true,
+		readiness: [{ taskId: 'cue-gate', state: 'ready', detail: 'Runs on Qwen.' }],
+	};
+	const off = {
+		type: 'local_models_task_readiness_result',
+		success: true,
+		readiness: [
+			{
+				taskId: 'cue-gate',
+				state: 'off',
+				detail: 'Cue gate is off.',
+				suggestedAction: 'Assign it a local model or an endpoint in Settings > Local Models.',
+			},
+		],
+	};
+	const written = (updated: string[]) => ({
+		type: 'set_cue_subscription_gate_result',
+		success: true,
+		updated,
+	});
+	const printed = () => logSpy.mock.calls.map((call) => String(call[0]));
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('shows a gate and its policy without writing anything', async () => {
+		const sent = mockBridge({ get_cue_subscriptions: { subscriptions: gated } });
+		await cueGate('triage', {});
+		expect(sent.map((frame) => frame.type)).toEqual(['get_cue_subscriptions']);
+		expect(printed()).toEqual([
+			'triage (One)',
+			'  gate: the comment reports a bug',
+			'  if no model can answer: skip the event',
+		]);
+	});
+
+	it('says so when a subscription has no gate, and reads back as JSON', async () => {
+		mockBridge({ get_cue_subscriptions: { subscriptions: gated } });
+		await cueGate('on-pr', {});
+		expect(printed()[0]).toBe('on-pr (One) has no gate. Every event starts a run.');
+
+		logSpy.mockClear();
+		await cueGate('on-pr', { json: true });
+		expect(JSON.parse(printed()[0])).toEqual({
+			subscriptionId: 'a1::p::on-pr',
+			name: 'on-pr',
+			gate: null,
+			gateOnUnavailable: null,
+		});
+
+		logSpy.mockClear();
+		await cueGate('triage', { json: true });
+		expect(JSON.parse(printed()[0])).toMatchObject({
+			gate: 'the comment reports a bug',
+			gateOnUnavailable: 'skip',
+		});
+	});
+
+	it('sets a trimmed condition with the default policy and names every subscription changed', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: written(['on-pr', 'on-pr-cmd-a']),
+			local_models_task_readiness: ready,
+		});
+		await cueGate('on-pr', { set: '  the PR changes source code  ' });
+		expect(sent[1]).toEqual({
+			type: 'set_cue_subscription_gate',
+			subscriptionId: 'a1::p::on-pr',
+			gate: 'the PR changes source code',
+			gateOnUnavailable: 'run',
+		});
+		expect(printed()).toEqual([
+			'Gate set on on-pr, on-pr-cmd-a (One): the PR changes source code',
+			'  if no model can answer: start the run and warn',
+		]);
+	});
+
+	it('warns when the gate was written but no model will check it', async () => {
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: written(['on-pr']),
+			local_models_task_readiness: off,
+		});
+		await cueGate('on-pr', { set: 'the PR changes source code' });
+		expect(printed()[2]).toBe(
+			'Note: Cue gate is off. Assign it a local model or an endpoint in Settings > Local Models. Until it can answer, every event starts a run unchecked.'
+		);
+
+		// The consequence follows the policy that was written.
+		logSpy.mockClear();
+		await cueGate('on-pr', { set: 'the PR changes source code', onUnavailable: 'skip' });
+		expect(printed()[2]).toMatch(/Until it can answer, every event is skipped\.$/);
+	});
+
+	it('does not fail a good write when readiness cannot be read', async () => {
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: written(['on-pr']),
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+					if (payload.type === 'local_models_task_readiness') {
+						return Promise.reject(new Error('timed out'));
+					}
+					if (payload.type === 'get_cue_subscriptions') {
+						return Promise.resolve({ subscriptions: gated });
+					}
+					return Promise.resolve(written(['on-pr']));
+				}),
+			} as never)
+		);
+		await cueGate('on-pr', { set: 'the PR changes source code' });
+		expect(printed()).toHaveLength(2);
+	});
+
+	it('keeps the half that was not passed: a new condition keeps the policy, a new policy the condition', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: written(['triage']),
+			local_models_task_readiness: ready,
+		});
+		await cueGate('triage', { set: 'the comment asks for a change' });
+		expect(sent[1]).toMatchObject({
+			gate: 'the comment asks for a change',
+			gateOnUnavailable: 'skip',
+		});
+
+		sent.length = 0;
+		await cueGate('triage', { onUnavailable: 'run' });
+		expect(sent[1]).toMatchObject({
+			gate: 'the comment reports a bug',
+			gateOnUnavailable: 'run',
+		});
+	});
+
+	it('refuses a policy for a subscription that has no gate', async () => {
+		const sent = mockBridge({ get_cue_subscriptions: { subscriptions: gated } });
+		await expect(cueGate('on-pr', { onUnavailable: 'skip' })).rejects.toThrow('__exit__');
+		expect(sent.map((frame) => frame.type)).toEqual(['get_cue_subscriptions']);
+		expect(String(errorSpy.mock.calls[0][0])).toContain('has no gate to set a policy on');
+	});
+
+	it('removes a gate with a null condition and no policy', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: written(['triage']),
+		});
+		await cueGate('triage', { clear: true });
+		expect(sent[1]).toEqual({
+			type: 'set_cue_subscription_gate',
+			subscriptionId: 'a1::p::triage',
+			gate: null,
+		});
+		expect(printed()).toEqual(['Removed the gate from triage (One).']);
+	});
+
+	it('reports a JSON result for a write, with no readiness lookup', async () => {
+		const sent = mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: written(['on-pr']),
+			local_models_task_readiness: off,
+		});
+		await cueGate('on-pr', { set: 'the PR changes source code', json: true });
+		expect(sent.map((frame) => frame.type)).toEqual([
+			'get_cue_subscriptions',
+			'set_cue_subscription_gate',
+		]);
+		expect(JSON.parse(printed()[0])).toEqual({
+			success: true,
+			subscriptionId: 'a1::p::on-pr',
+			updated: ['on-pr'],
+			gate: 'the PR changes source code',
+			gateOnUnavailable: 'run',
+		});
+	});
+
+	it('refuses bad flags before connecting', async () => {
+		const sent = mockBridge({});
+		await expect(cueGate('on-pr', { set: '   ' })).rejects.toThrow('__exit__');
+		await expect(cueGate('on-pr', { set: 'x'.repeat(1001) })).rejects.toThrow('__exit__');
+		await expect(cueGate('on-pr', { onUnavailable: 'maybe' })).rejects.toThrow('__exit__');
+		await expect(cueGate('on-pr', { clear: true, set: 'a bug' })).rejects.toThrow('__exit__');
+		expect(sent).toHaveLength(0);
+	});
+
+	it('exits non-zero when the engine refuses the write or the bridge answers with an error', async () => {
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: {
+				type: 'set_cue_subscription_gate_result',
+				success: false,
+				error: 'Could not write the gate.',
+			},
+		});
+		await expect(cueGate('on-pr', { set: 'a bug' })).rejects.toThrow('__exit__');
+		expect(String(errorSpy.mock.calls[0][0])).toContain('Could not write the gate.');
+
+		mockBridge({
+			get_cue_subscriptions: { subscriptions: gated },
+			set_cue_subscription_gate: { type: 'error', message: 'Cue gate editing is not available' },
+		});
+		await expect(cueGate('on-pr', { clear: true })).rejects.toThrow('__exit__');
 	});
 });

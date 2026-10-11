@@ -168,6 +168,7 @@ import type {
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
+	SetCueSubscriptionGateCallback,
 	TriggerCueSubscriptionCallback,
 	GetCueActivityCallback,
 	CueActivityEntry,
@@ -841,6 +842,10 @@ export class WebServer {
 		this.callbackRegistry.setToggleCueSubscriptionCallback(callback);
 	}
 
+	setSetCueSubscriptionGateCallback(callback: SetCueSubscriptionGateCallback): void {
+		this.callbackRegistry.setSetCueSubscriptionGateCallback(callback);
+	}
+
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
 		this.callbackRegistry.setTriggerCueSubscriptionCallback(callback);
 	}
@@ -1341,6 +1346,8 @@ export class WebServer {
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
 				this.callbackRegistry.toggleCueSubscription(subscriptionId, enabled),
+			setCueSubscriptionGate: async (subscriptionId, gate) =>
+				this.callbackRegistry.setCueSubscriptionGate(subscriptionId, gate),
 			getCueActivity: async (sessionId?: string, limit?: number) =>
 				this.callbackRegistry.getCueActivity(sessionId, limit),
 			triggerCueSubscription: async (

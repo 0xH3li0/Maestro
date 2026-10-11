@@ -48,7 +48,7 @@ import { reference } from './commands/reference';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
 import { cueList } from './commands/cue-list';
-import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
+import { cueEnable, cueDisable, cueGate, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
 import {
@@ -1045,6 +1045,24 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueDisable);
 
+// Cue gate - the pipeline editor's Gate field: a plain-language condition the
+// Local Models `cue-gate` task checks before an event starts a run. With no
+// flag it prints the gate, so a write can be read back.
+cue
+	.command('gate <subscription>')
+	.description(
+		"Show, set, or remove a subscription's gate (a condition a local model checks before a run starts)"
+	)
+	.option('--set <condition>', 'Set the gate: a condition the event must meet, in plain language')
+	.option(
+		'--on-unavailable <policy>',
+		'When no model can answer: run (start the run and warn; default) or skip'
+	)
+	.option('--clear', 'Remove the gate')
+	.option('-a, --agent <id>', 'Disambiguate a name several agents share')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueGate);
+
 cue
 	.command('activity')
 	.description('Show recent Cue runs, newest first')
@@ -1120,6 +1138,14 @@ cue
 	.option(
 		'--keep-on-failure',
 		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
+	)
+	.option(
+		'--gate <condition>',
+		'Only run when a local model says the fire meets this condition (edit later with `cue gate`)'
+	)
+	.option(
+		'--gate-on-unavailable <policy>',
+		'With --gate, when no model can answer: run (default) or skip'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueSchedule);
