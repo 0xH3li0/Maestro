@@ -2409,6 +2409,18 @@ quickChatCmd
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('stop', {}, options));
 
+quickChatCmd
+	.command('bounds')
+	.description(
+		'Move or resize the window, as dragging it does, and remember it (--height is the conversation height)'
+	)
+	.option('--x <px>', 'Left edge, in screen points (give with --y)')
+	.option('--y <px>', 'Top edge, in screen points (give with --x)')
+	.option('--width <px>', 'Width')
+	.option('--height <px>', 'Height of the conversation shape')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('bounds', {}, options));
+
 // Cadenza commands - open small cadenza panels that display or track work.
 const cadenza = program
 	.command('cadenza')

@@ -675,6 +675,11 @@ const quickChatController = createQuickChatController({
 		rendererProductionUrl,
 		devServerUrl,
 		windowRegistry,
+		// Per-device, like every other window's bounds.
+		boundsStore: {
+			get: () => windowStateStore.get('quickChat'),
+			set: (bounds) => windowStateStore.set('quickChat', bounds),
+		},
 	},
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,

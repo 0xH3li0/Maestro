@@ -1149,6 +1149,7 @@ maestro-cli quick-chat new                   # start over; an ephemeral chat's h
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
 maestro-cli quick-chat reveal                # open the chat as a tab in the main window
 maestro-cli quick-chat stop                  # stop the reply
+maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
 ```
 
 ### Custom Theme Palette
