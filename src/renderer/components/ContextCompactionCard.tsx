@@ -14,7 +14,8 @@
  */
 
 import type React from 'react';
-import { Loader2, Minimize2 } from 'lucide-react';
+import { Minimize2 } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { LogEntry, Theme } from '../types';
 import { useIsContextCompactionLive } from '../stores/retryStore';
 
@@ -88,11 +89,7 @@ export function ContextCompactionCard({
 			data-state={state}
 		>
 			{state === 'working' ? (
-				<Loader2
-					className="w-3.5 h-3.5 shrink-0 animate-spin"
-					style={{ color: accent }}
-					aria-hidden
-				/>
+				<Spinner size={14} color={accent} decorative />
 			) : (
 				<Minimize2 className="w-3.5 h-3.5 shrink-0" style={{ color: accent }} aria-hidden />
 			)}

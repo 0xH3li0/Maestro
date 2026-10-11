@@ -43,7 +43,7 @@ import { Modal, ModalFooter } from '../ui/Modal';
 import { MermaidRenderer } from '../MermaidRenderer';
 import { CsvTableRenderer } from '../CsvTableRenderer';
 import { JsonlViewer, SYNTAX_EXAMPLES } from '../JsonlViewer';
-import { getEncoder } from '../../utils/tokenCounter';
+import { countTokens } from '../../utils/tokenCounter';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
@@ -1047,15 +1047,18 @@ export const FilePreview = React.memo(
 				return;
 			}
 
-			getEncoder()
-				.then((encoder) => {
-					const tokens = encoder.encode(file.content);
-					setTokenCount(tokens.length);
+			let isActive = true;
+			countTokens(file.content)
+				.then((count) => {
+					if (isActive) setTokenCount(count);
 				})
 				.catch((err) => {
 					logger.error('Failed to count tokens:', undefined, err);
-					setTokenCount(null);
+					if (isActive) setTokenCount(null);
 				});
+			return () => {
+				isActive = false;
+			};
 		}, [file?.content, isImage, isBinary, isParquet, isLargeFile]);
 
 		// Sync internal edit content when file changes (only when NOT using external content)
