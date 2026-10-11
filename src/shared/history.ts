@@ -92,8 +92,12 @@ export const HISTORY_VERSION = 1;
  * Default maximum number of history entries stored per session.
  * Used as fallback when maxLogBuffer setting is not available.
  * The actual limit is controlled by the maxLogBuffer user setting.
+ *
+ * This is also the `maxLogBuffer` default itself: the renderer store and the
+ * settings metadata both read it, so the value a fresh install shows in
+ * Settings is the value every writer falls back to.
  */
-export const MAX_ENTRIES_PER_SESSION = 5000;
+export const MAX_ENTRIES_PER_SESSION = 10000;
 
 /**
  * Session ID used for history entries that don't have an associated session.
@@ -107,9 +111,9 @@ export const ORPHANED_SESSION_ID = '_orphaned';
  * Every writer (main process, Cue, CLI) MUST run the setting through this so a
  * single writer can't quietly trim a file the others are allowed to grow: the
  * trim is destructive, so the smallest cap in play wins on disk. A busy Auto
- * Run agent hit exactly this - its Cue writes used the 5,000 fallback and
- * truncated a history the user had raised to 25,000, leaving only the last
- * few days visible.
+ * Run agent hit exactly this - its Cue writes used the built-in fallback (then
+ * 5,000) and truncated a history the user had raised to 25,000, leaving only
+ * the last few days visible.
  *
  * @param value - Raw setting value (may be undefined, a string, or garbage)
  * @returns A positive integer cap, or MAX_ENTRIES_PER_SESSION when unusable
@@ -120,6 +124,22 @@ export function resolveHistoryEntryLimit(value: unknown): number {
 		return MAX_ENTRIES_PER_SESSION;
 	}
 	return Math.floor(parsed);
+}
+
+/**
+ * Entry count at which an agent's history reads as full, for surfaces that
+ * report a count as a floor rather than an exact figure (Director's Notes).
+ *
+ * Two caps can have trimmed what such a surface holds: the history file's own
+ * retention, which is the user's `maxLogBuffer`, and the fixed
+ * `MAX_ENTRIES_PER_SESSION` row limit a Cue read is issued with. The lower of
+ * the two is where either one may have bitten, so a user who lowered the
+ * setting still has a full file recognized as full.
+ *
+ * @param value - Raw `maxLogBuffer` setting value
+ */
+export function historyRetentionCeiling(value: unknown): number {
+	return Math.min(resolveHistoryEntryLimit(value), MAX_ENTRIES_PER_SESSION);
 }
 
 /**
