@@ -14,6 +14,8 @@ import {
 	createTranscriptReader,
 	historyEntryItem,
 	historyEntryText,
+	historyGroupEntries,
+	historySessionIds,
 	synopsisItem,
 	transcriptItems,
 	type SemanticSourceItem,
@@ -162,6 +164,27 @@ describe('createHistoryReader', () => {
 		const reader = createHistoryReader({ ...base, includeCue: () => true, cueRuns });
 		const ids = (await readAll(reader)).map((item) => item.sourceId);
 		expect(ids.filter((id) => id === 'a-cue')).toHaveLength(1);
+	});
+
+	it('hands the search the same entries, each paired with its index item', async () => {
+		const deps = { ...base, includeCue: () => false };
+		expect(await historySessionIds(deps)).toEqual(['agent-a', 'agent-b']);
+
+		const pairs = await historyGroupEntries(deps, 'agent-a');
+		// The Cue run is left out here exactly as the reader leaves it out.
+		expect(pairs.map((pair) => pair.entry.id)).toEqual(['a-user', 'a-auto']);
+		expect(pairs[1].entry).toBe(stored['agent-a'][2]);
+		expect(pairs[1].item).toEqual({
+			sourceType: 'history',
+			sourceId: 'a-auto',
+			agentId: 'agent-a',
+			text: 'Auto Run task',
+			mutable: false,
+		});
+
+		const reader = createHistoryReader(deps);
+		const group = (await reader.groups()).find((candidate) => candidate.key === 'agent-a')!;
+		expect(await group.load()).toEqual(pairs.map((pair) => pair.item));
 	});
 });
 

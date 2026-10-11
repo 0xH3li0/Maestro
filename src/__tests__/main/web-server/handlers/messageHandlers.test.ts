@@ -130,6 +130,16 @@ vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 }));
 import { semanticIndexProgress } from '../../../../main/local-models/semantic-indexer';
 
+vi.mock('../../../../main/local-models/work-search', () => ({
+	searchPastWorkRequest: vi.fn().mockResolvedValue({
+		status: 'ok',
+		mode: 'semantic',
+		hits: [{ sourceType: 'history', sourceId: 'e1', agentId: 'agent-1', score: 0.8 }],
+		durationMs: 4,
+	}),
+}));
+import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
+
 // The Local Models service reads the model store and runs the downloader; the
 // handler tests only care that `maestro-cli models list|install|verify|remove`
 // reach the same service functions the Settings rows call.
@@ -5125,6 +5135,25 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				expect(lastResponse().type).toBe('local_models_semantic_index_status_result')
 			);
 			expect(lastResponse()).toMatchObject({ success: false, error: 'indexer exploded' });
+		});
+
+		it('local_models_search passes the request through and answers with the verdict', async () => {
+			const request = { query: 'retry logic', mode: 'semantic', limit: 5 };
+			handler.handleMessage(client, { type: 'local_models_search', request, requestId: 's1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_search_result'));
+			expect(searchPastWorkRequest).toHaveBeenCalledWith(request);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1',
+				result: { status: 'ok', mode: 'semantic', hits: [{ sourceId: 'e1', score: 0.8 }] },
+			});
+		});
+
+		it('local_models_search reports a refused request as success: false', async () => {
+			vi.mocked(searchPastWorkRequest).mockRejectedValueOnce(new Error('A search needs a query.'));
+			handler.handleMessage(client, { type: 'local_models_search', requestId: 's2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_search_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'A search needs a query.' });
 		});
 
 		it('local_models_list answers with the listings and the footprint', async () => {

@@ -101,6 +101,8 @@ For AI command mode, **Utility Agent** means the tab's own provider at its curre
 
 **Semantic search** builds its index in the background once it is assigned a source. It reads History entries, Director's Notes, and the tab transcripts Maestro keeps, and it waits whenever another task is using the model. The **Semantic index** card under Assignments shows how much is indexed. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** there. Setting the task back to Off stops indexing.
 
+Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle icon): the [History panel's filter](./history#by-meaning) and [Search Messages (All Agent Tabs)](./general-usage#searching-message-history). With it on, you describe what you are looking for and each result shows how close it is (a percentage) and the passage that matched. The toggle is not shown while the task is off or its model is not ready. From the command line, `maestro-cli search "<query>" --semantic` runs the same search across every agent.
+
 **A task never falls back.** If a task's assignment is not ready, the task does not run on some other source instead. It reports why, and the readiness line shows the same reason. A silent fallback would send your text somewhere you did not choose.
 
 ## Privacy
@@ -150,6 +152,7 @@ maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
 maestro-cli models status [task-id]              # would it run, and if not, why and what to do
 maestro-cli models index                         # the semantic index: state, and how much is indexed
+maestro-cli search "<query>" --semantic          # find past work by meaning (drop --semantic for exact text)
 maestro-cli models run <task-id> --input "..."   # run a text-generation task once
 maestro-cli models run git-drafts --cwd <repo> [--base <branch>]   # draft a pull request title and body
 ```

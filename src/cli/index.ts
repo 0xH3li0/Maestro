@@ -116,6 +116,7 @@ import { modelsInstall, modelsList, modelsRemove, modelsVerify } from './command
 import { modelsRun } from './commands/models-run';
 import { modelsIndex } from './commands/models-index';
 import { modelsStatus } from './commands/models-status';
+import { search } from './commands/search';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -2166,6 +2167,25 @@ notify
 // (Ollama, LM Studio, OpenAI-compatible), task assignments, and the task
 // router. Endpoint list/add/remove and assign edit settings directly; the
 // catalog verbs, test/detect, run, status, and readiness run in the desktop app.
+program
+	.command('search <query>')
+	.description(
+		"Search past work across History entries, Director's Notes, and tab transcripts: exact text by default, by meaning with --semantic (requires the desktop app)"
+	)
+	.option(
+		'--semantic',
+		'Match by meaning on the Semantic search assignment instead of by exact text'
+	)
+	.option(
+		'--source <source>',
+		'Restrict to a source: history, notes, or transcripts (repeatable, or comma-separated)',
+		(value: string, previous: string[] = []) => [...previous, value]
+	)
+	.option('-a, --agent <id>', 'Restrict to one agent (id, id prefix, or exact name)')
+	.option('-l, --limit <n>', 'Most results to return (default 20, max 100)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(search);
+
 const models = program.command('models').description('Local Models: model sources Maestro can use');
 
 models

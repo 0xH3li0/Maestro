@@ -106,33 +106,57 @@ export interface HistoryReaderDeps {
 	};
 }
 
+/**
+ * The agents a History read covers: every agent with a History file, plus
+ * (while Cue indexing is on) every agent that may have Cue runs in the Cue
+ * database only.
+ */
+export async function historySessionIds(deps: HistoryReaderDeps): Promise<string[]> {
+	const sessionIds = new Set(await deps.listSessions());
+	if (deps.includeCue() && deps.cueRuns) {
+		for (const id of deps.cueRuns.sessions()) sessionIds.add(id);
+	}
+	return [...sessionIds];
+}
+
+/**
+ * One agent's indexable History entries, each paired with its index item.
+ * Entries that are not indexed (see {@link historyEntryItem}) and repeats of an
+ * id are left out.
+ *
+ * The indexer and the search both read through here. A search turns a hit back
+ * into text by re-reading its source, so a second derivation that disagreed
+ * about which entries exist, or what their text is, would hand back the wrong
+ * snippet for a chunk index.
+ */
+export async function historyGroupEntries(
+	deps: HistoryReaderDeps,
+	sessionId: string
+): Promise<Array<{ entry: HistoryEntry; item: SemanticSourceItem }>> {
+	const includeCue = deps.includeCue();
+	const stored = await deps.getEntries(sessionId);
+	const entries =
+		includeCue && deps.cueRuns ? [...stored, ...deps.cueRuns.entries(sessionId, stored)] : stored;
+	const pairs: Array<{ entry: HistoryEntry; item: SemanticSourceItem }> = [];
+	const seen = new Set<string>();
+	for (const entry of entries) {
+		const item = historyEntryItem(entry, sessionId, includeCue);
+		if (!item || seen.has(item.sourceId)) continue;
+		seen.add(item.sourceId);
+		pairs.push({ entry, item });
+	}
+	return pairs;
+}
+
 /** History entries, one group per agent. */
 export function createHistoryReader(deps: HistoryReaderDeps): SemanticSourceReader {
 	return {
 		sourceType: 'history',
 		async groups() {
-			const includeCue = deps.includeCue();
-			const sessionIds = new Set(await deps.listSessions());
-			if (includeCue && deps.cueRuns) {
-				for (const id of deps.cueRuns.sessions()) sessionIds.add(id);
-			}
-			return [...sessionIds].map((sessionId) => ({
+			return (await historySessionIds(deps)).map((sessionId) => ({
 				key: sessionId,
 				async load() {
-					const stored = await deps.getEntries(sessionId);
-					const entries =
-						includeCue && deps.cueRuns
-							? [...stored, ...deps.cueRuns.entries(sessionId, stored)]
-							: stored;
-					const items: SemanticSourceItem[] = [];
-					const seen = new Set<string>();
-					for (const entry of entries) {
-						const item = historyEntryItem(entry, sessionId, includeCue);
-						if (!item || seen.has(item.sourceId)) continue;
-						seen.add(item.sourceId);
-						items.push(item);
-					}
-					return items;
+					return (await historyGroupEntries(deps, sessionId)).map((pair) => pair.item);
 				},
 			}));
 		},

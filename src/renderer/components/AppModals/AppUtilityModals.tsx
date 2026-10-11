@@ -828,6 +828,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					theme={theme}
 					tabs={activeSession.aiTabs}
 					activeTabId={activeSession.activeTabId}
+					agentId={activeSession.id}
 					shortcut={shortcuts.searchAllTabs}
 					onJump={onCrossTabSearchJump}
 					onClose={onCloseCrossTabSearch}

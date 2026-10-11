@@ -26,3 +26,9 @@ export { useLocalModelTaskReadiness } from './useLocalModelTaskReadiness';
 export type { LocalModelTaskReadinessState } from './useLocalModelTaskReadiness';
 export { useSemanticIndexStatus } from './useSemanticIndexStatus';
 export type { SemanticIndexStatusState } from './useSemanticIndexStatus';
+export {
+	SEMANTIC_SEARCH_DEBOUNCE_MS,
+	useSemanticSearch,
+	useSemanticSearchReady,
+} from './useSemanticSearch';
+export type { SemanticSearchState, UseSemanticSearchOptions } from './useSemanticSearch';

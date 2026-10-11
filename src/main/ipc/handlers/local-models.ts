@@ -43,7 +43,9 @@ import {
 	onSemanticIndexProgress,
 	semanticIndexProgress,
 } from '../../local-models/semantic-indexer';
+import { searchPastWorkRequest } from '../../local-models/work-search';
 import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
+import type { WorkSearchResult } from '../../../shared/local-models/work-search';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
 import {
@@ -257,6 +259,14 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('semanticIndex:status'),
 			async (): Promise<SemanticIndexProgress> => semanticIndexProgress()
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:search',
+		withIpcErrorLogging(
+			handlerOpts('search'),
+			async (request: unknown): Promise<WorkSearchResult> => searchPastWorkRequest(request)
 		)
 	);
 

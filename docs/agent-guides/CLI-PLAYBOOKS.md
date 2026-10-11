@@ -387,6 +387,19 @@ maestro-cli models tasks [--json]
 
 Prints the semantic index's background indexer: its state (`off`, `idle`, `indexing`, `paused`, `unavailable`), `indexed / total` sources per type, and the reason when it cannot run. It is one WS round trip (`local_models_semantic_index_status`) answered from memory by `semanticIndexProgress()`, the same record `localModels:semanticIndex:status` returns. There is no start verb: the indexer runs whenever `semantic-search` is assigned a source, and `settings set semanticIndexCue true` opts Cue runs in. Exit code is non-zero only for `unavailable`.
 
+### `search <query>`
+
+Finds past work across History entries, archived Director's Notes synopses, and persisted AI tab transcripts. Implemented in `src/cli/commands/search.ts`.
+
+```bash
+maestro-cli search "<query>" [--semantic] [--source history|notes|transcripts] [--agent <id>] [--limit n] [--json]
+```
+
+- One WS round trip (`local_models_search`) to `searchPastWorkRequest()` in `src/main/local-models/work-search.ts`, the same function the `localModels:search` IPC channel calls for the History panel's and cross-tab search's Semantic toggle, so the three rank and cut snippets identically.
+- With no flag it matches the query as written (case-insensitive), newest first, with no model. `--semantic` embeds the query on the `semantic-search` assignment and ranks by cosine similarity against the semantic index. It NEVER falls back to text: `off` and `unavailable` print the reason and exit 1.
+- `--source` is repeatable or comma-separated. `--agent` goes through `resolveAgentId()` (id, prefix, or exact name) and leaves Director's Notes out, since a synopsis belongs to no agent. `--limit` is 1 to 100, default 20.
+- Each hit prints its rank (a percentage, or a match count in text mode), source, agent, age, title, snippet, and the ids to act on (`agent <id>  entry <id>` or `agent <id>  tab <id>`). `--json` prints the whole `WorkSearchResult`, including `index` (how far the index had got) for a semantic search.
+
 ### `models run git-drafts --cwd <path>`
 
 The CLI path to the Create Pull Request form's "Draft with local model" button. Implemented in `src/cli/commands/models-run.ts` (`runPullRequestDraft`).

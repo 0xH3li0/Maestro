@@ -96,6 +96,7 @@ import {
 	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
+	handleLocalModelsSearch,
 	handleLocalModelsTaskReadiness,
 	handleLocalModelsVerify,
 } from './localModels';
@@ -729,6 +730,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_semantic_index_status':
 				void handleLocalModelsSemanticIndexStatus(this.ctx, client, message);
+				break;
+
+			case 'local_models_search':
+				void handleLocalModelsSearch(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

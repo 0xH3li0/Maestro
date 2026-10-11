@@ -108,6 +108,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `directors-notes-archive.ts`   | The index's own copy of generated synopses (`userData/semantic-index/directors-notes.jsonl`)            |
 | `semantic-indexer.ts`          | `SemanticIndexer`: the background pass, incremental adds, pause, progress (below)                       |
 | `semantic-index-startup.ts`    | `startSemanticIndex()`: the indexer over the app's real stores, and its two settings listeners          |
+| `work-search.ts`               | `searchPastWork()`: the one search (by meaning or by text) behind every search surface (below)          |
 | `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                              |
 | `task-router.ts`               | `runLocalTask()` / `runEmbeddingTask()` / `runClassifierTask()`: assignment decides the source; stats   |
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)             |
@@ -450,6 +451,57 @@ and printed by `maestro-cli models index`.
 Known limits: voice (A Cappella) does not run through the task router, so the indexer does not
 pause for a live voice session. Cue runs indexed from the Cue database leave the index when Cue's
 own retention drops them.
+
+### Search: `searchPastWork(request)`
+
+`work-search.ts` is the one search over the indexed corpus. Three surfaces call it and no surface
+calls the store directly:
+
+| Surface                                     | Transport                         | Request                                                  |
+| ------------------------------------------- | --------------------------------- | -------------------------------------------------------- |
+| History panel, Semantic toggle              | `localModels:search`              | `semantic`, `['history']`, the agent, `includeEntries`   |
+| Search Messages (All Agent Tabs), Semantic  | `localModels:search`              | `semantic`, `['transcript']`, the agent                  |
+| `maestro-cli search "<query>" [--semantic]` | `local_models_search` (WS bridge) | `text` by default, `semantic` with the flag, any sources |
+
+```mermaid
+flowchart LR
+	Q[query] --> M{mode}
+	M -->|semantic| E["runEmbeddingTask (interactive, mode: query)"]
+	E --> S["EmbeddingStore.search (ids + scores)"]
+	S --> D[one hit per source, best chunk]
+	D --> RR[re-read the source, re-chunk, take chunkIndex]
+	M -->|text| T[read the corpus, match as written]
+	RR --> H[WorkSearchHit: title, snippet, score]
+	T --> H2[WorkSearchHit: title, snippet, matchCount]
+```
+
+| Rule                                                     | Why                                                                                                                               |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| A hit is turned back into words by re-reading its source | The store holds vectors and no text. The source is re-cut with `chunkText()` and `resolveSemanticChunkBudget(source)`.            |
+| The search reads through `semantic-sources.ts`           | `historyGroupEntries()`, `transcriptItems()`, `synopsisItem()`: the indexer's own readers, or a chunk index names another window. |
+| Both are wired from one place                            | `semantic-index-startup.ts` hands the indexer and `configureWorkSearch()` the same History readers and session records.           |
+| One hit per source                                       | A long source matches with several windows. The store is asked for 4x the limit and the best chunk of each source is kept.        |
+| A source that is gone is dropped                         | A deleted entry, a closed tab, a hidden consult tab, a Cue run while Cue indexing is off: never a bare id.                        |
+| A group loads once per search                            | Twenty hits in one agent's History read that agent's file once. An unreadable group is logged and skipped.                        |
+| The query is an INTERACTIVE embedding call               | No `background: true`, so the indexer waits for it (`whenNoInteractiveLocalTask()`).                                              |
+| No fallback                                              | `off`, `unavailable` and `cancelled` pass through with the reason. A semantic search is never answered with text matches.         |
+| A semantic result carries the index state                | `index: { state, indexed, total }`, so a surface can say the index is still building instead of implying nothing matched.         |
+| Text mode uses no model and no store                     | It reads the same corpus and matches case-insensitively, newest first. It works with Semantic search off.                         |
+
+The wire types and pure helpers are in `src/shared/local-models/work-search.ts`: `WorkSearchRequest`,
+`WorkSearchHit` (`score` for a semantic hit, `matchCount` for a text hit, plus a `history` or
+`transcript` locator), `WorkSearchResult`, `parseWorkSearchRequest()` (the transport guard),
+`workSearchSnippet()` (the window is placed on the query, else on its first word found, else at
+the start), and `formatWorkSearchScore()`.
+
+In the renderer, `useSemanticSearchReady()` decides whether a surface draws `<SemanticSearchToggle>`
+at all (only while the task's readiness is `ready`), and `useSemanticSearch()` runs the debounced
+search. `<SemanticMatchLine>` draws the score and the matched passage. A cross-tab jump from a
+semantic hit carries an empty query, so the transcript's Find bar is left as it was.
+
+Known limits: the History panel's text filter also sees entries other hosts wrote under
+`<project>/.maestro/history`; those are not indexed, so neither search mode here returns them.
+No surface opens an archived Director's Notes synopsis yet; a notes hit is returned by the CLI only.
 
 ### Classifiers: `classifyText(source, text)`
 

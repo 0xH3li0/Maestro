@@ -732,6 +732,7 @@ const mockMaestro = {
 			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
 		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
+		search: vi.fn().mockResolvedValue({ status: 'off' }),
 		semanticIndex: {
 			status: vi.fn().mockResolvedValue({
 				state: 'off',

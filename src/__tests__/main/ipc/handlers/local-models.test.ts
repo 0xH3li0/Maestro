@@ -24,6 +24,8 @@
  *     `maestro-cli models run git-drafts --cwd` also reaches.
  *   - **`semanticIndex:status` reads the indexer's own record**, the one
  *     `maestro-cli models index` prints, and its progress is broadcast once.
+ *   - **`search` hands its request to the one search entry** `maestro-cli
+ *     search` also reaches, and returns the verdict untouched.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -134,6 +136,10 @@ vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 	}),
 }));
 
+vi.mock('../../../../main/local-models/work-search', () => ({
+	searchPastWorkRequest: vi.fn(async () => ({ status: 'off' })),
+}));
+
 import {
 	registerLocalModelsHandlers,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
@@ -157,6 +163,7 @@ import {
 import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
+import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -374,6 +381,14 @@ describe('task router channel', () => {
 			error: 'Git drafts is off.',
 		});
 		expect(draftPullRequestRequest).toHaveBeenCalledWith(request);
+	});
+
+	it('hands search its request untouched and returns the verdict', async () => {
+		const request = { query: 'retry logic', mode: 'semantic', agentId: 'agent-1' };
+		await expect(handlerFor('localModels:search')({}, request)).resolves.toEqual({
+			status: 'off',
+		});
+		expect(searchPastWorkRequest).toHaveBeenCalledWith(request);
 	});
 });
 

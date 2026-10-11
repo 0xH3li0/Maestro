@@ -1797,6 +1797,18 @@ Show a center-screen flash (momentary, exclusive - replaces any active flash)
 | `-t, --timeout <seconds>` | Auto-dismiss after N seconds (range: (0, 5]; default 1.5)  | -       |
 | `--json`                  | Output as JSON (for scripting)                             | -       |
 
+## `maestro-cli search <query>`
+
+Search past work across History entries, Director's Notes, and tab transcripts: exact text by default, by meaning with --semantic (requires the desktop app)
+
+| Option              | Description                                                                           | Default |
+| ------------------- | ------------------------------------------------------------------------------------- | ------- |
+| `--semantic`        | Match by meaning on the Semantic search assignment instead of by exact text           | -       |
+| `--source <source>` | Restrict to a source: history, notes, or transcripts (repeatable, or comma-separated) | -       |
+| `-a, --agent <id>`  | Restrict to one agent (id, id prefix, or exact name)                                  | -       |
+| `-l, --limit <n>`   | Most results to return (default 20, max 100)                                          | -       |
+| `--json`            | Output as JSON (for scripting)                                                        | -       |
+
 ## `maestro-cli models`
 
 Local Models: model sources Maestro can use

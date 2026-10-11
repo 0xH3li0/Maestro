@@ -4,7 +4,7 @@
  * Handles: local_models_list, local_models_download, local_models_verify,
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
  * local_models_run_task, local_models_task_readiness, local_models_git_draft,
- * local_models_semantic_index_status.
+ * local_models_semantic_index_status, local_models_search.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -35,6 +35,7 @@ import { draftPullRequestRequest } from '../../../local-models/git-drafts';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
 import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
+import { searchPastWorkRequest } from '../../../local-models/work-search';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -208,5 +209,22 @@ export function handleLocalModelsSemanticIndexStatus(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_semantic_index_status_result', async () => ({
 		progress: semanticIndexProgress(),
+	}));
+}
+
+/**
+ * Handle local_models_search - search past work by meaning or by text
+ * (`maestro-cli search`), through the same function the `localModels:search`
+ * IPC channel calls. A search that is off or unavailable is a successful round
+ * trip with the verdict in `result`; only a bad request (no query, an unknown
+ * source) comes back as an error.
+ */
+export function handleLocalModelsSearch(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_search_result', async () => ({
+		result: await searchPastWorkRequest(message.request),
 	}));
 }

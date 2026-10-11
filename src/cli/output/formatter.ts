@@ -1,13 +1,20 @@
 // Human-readable output formatter for CLI
 // Provides beautiful, colored terminal output
 
-import { formatDurationDecimal } from '../../shared/formatters';
+import { formatDurationDecimal, formatRelativeTime } from '../../shared/formatters';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import {
 	EMBEDDING_SOURCE_TYPES,
 	type EmbeddingSourceType,
 	type SemanticIndexProgress,
 } from '../../shared/local-models/embedding-index';
+import {
+	describeWorkSearchIndex,
+	formatWorkSearchScore,
+	WORK_SEARCH_SOURCE_LABELS,
+	type WorkSearchHit,
+	type WorkSearchResult,
+} from '../../shared/local-models/work-search';
 
 // ANSI color codes
 const colors = {
@@ -1011,6 +1018,58 @@ export function formatSemanticIndexProgress(progress: SemanticIndexProgress): st
 	}
 	lines.push(`  ${bold('Total'.padEnd(labelWidth))}  ${progress.indexed} / ${progress.total}`);
 	if (progress.lastPassAt === undefined) lines.push('', dim('  No pass has finished yet.'));
+	return lines.join('\n');
+}
+
+/** What ranks a hit, as the first column of its row: a score, or a match count. */
+function workSearchRank(hit: WorkSearchHit): string {
+	if (hit.score !== undefined) return formatWorkSearchScore(hit.score);
+	const count = hit.matchCount ?? 0;
+	return `${count} ${count === 1 ? 'match' : 'matches'}`;
+}
+
+/**
+ * `maestro-cli search`: one block per hit (rank, source, agent, age, then the
+ * title, the snippet, and the id to act on), best first. A semantic search over
+ * an index that is still building says so, since a missing result there means
+ * "not indexed yet", not "no such work".
+ */
+export function formatWorkSearchResult(
+	query: string,
+	result: Extract<WorkSearchResult, { status: 'ok' }>
+): string {
+	const kind = result.mode === 'semantic' ? 'SEMANTIC SEARCH' : 'TEXT SEARCH';
+	const count = `${result.hits.length} ${result.hits.length === 1 ? 'result' : 'results'}`;
+	const lines = [`${bold(c('cyan', kind))}  ${dim(`"${truncate(query, 60)}"`)}  ${count}`];
+	if (result.modelId) lines.push(dim(`  ${result.modelId}`));
+	const indexNote = describeWorkSearchIndex(result.index);
+	if (indexNote) lines.push(c('yellow', `  ${indexNote}`));
+
+	if (result.hits.length === 0) {
+		lines.push('', dim('  Nothing matched.'));
+		return lines.join('\n');
+	}
+
+	for (const hit of result.hits) {
+		const meta = [
+			WORK_SEARCH_SOURCE_LABELS[hit.sourceType],
+			hit.history?.type,
+			hit.agentName,
+			hit.timestamp !== undefined ? formatRelativeTime(hit.timestamp) : undefined,
+		].filter((part): part is string => !!part);
+		lines.push(
+			'',
+			`  ${bold(c('green', workSearchRank(hit)))}  ${dim(meta.join(' · '))}`,
+			`  ${c('white', hit.title)}`
+		);
+		if (hit.snippet && hit.snippet !== hit.title) lines.push(`  ${dim(hit.snippet)}`);
+		const ids = hit.transcript
+			? `agent ${hit.agentId}  tab ${hit.transcript.tabId}`
+			: hit.agentId
+				? `agent ${hit.agentId}  entry ${hit.sourceId}`
+				: `id ${hit.sourceId}`;
+		lines.push(dim(`  ${ids}`));
+	}
 	return lines.join('\n');
 }
 

@@ -280,6 +280,9 @@ of taking a second round trip or trusting a value the caller guessed.
 | Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)           |
 | Local Models: semantic index status and progress     | `models index` (same record as `localModels:semanticIndex:status`)                                |
 | Local Models: Index Cue runs toggle                  | `settings set semanticIndexCue <true\|false>` (read: `settings get semanticIndexCue`)             |
+| History panel: Semantic toggle (search by meaning)   | `search "<query>" --semantic --source history --agent <id>` (same `searchPastWork()`)             |
+| Search Messages (All Agent Tabs): Semantic toggle    | `search "<query>" --semantic --source transcripts --agent <id>`                                   |
+| History panel filter / cross-tab search by text      | `search "<query>" [--source history\|notes\|transcripts] [--agent <id>] [--limit n]`              |
 
 ## Open gaps
 
@@ -376,7 +379,10 @@ still missing. Grouped, highest value first:
   `open-browser` refuses `file://`.
 - **Playbooks:** update an existing one, export/import `.maestro-playbook.zip`.
 - **Group chat:** delete, rename, archive, edit moderator/participants, export.
-- **History:** delete an entry, toggle validated, generate a synopsis now, search.
+- **History:** delete an entry, toggle validated, generate a synopsis now. (Search
+  is covered by `maestro-cli search`, which reads the entries Maestro stores for an
+  agent; it does not merge the `<project>/.maestro/history` files other hosts wrote,
+  which the panel's text filter does see.)
 - **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
   logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.
 - **SSH remotes:** test, edit, enable/disable, set default.

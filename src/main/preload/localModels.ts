@@ -31,6 +31,7 @@ import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import type { PullRequestDraftRequest, PullRequestDraftResult } from '../../shared/gitDrafts';
 import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
+import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -175,6 +176,15 @@ export function createLocalModelsApi() {
 		 */
 		draftPullRequest: (request: PullRequestDraftRequest): Promise<PullRequestDraftResult> =>
 			ipcRenderer.invoke('localModels:draftPullRequest', request),
+
+		/**
+		 * Search past work (History entries, Director's Notes, tab transcripts) by
+		 * meaning on the Semantic search assignment, or by exact text. Answers `off`
+		 * or `unavailable` with the reason when a semantic search cannot run; it
+		 * never falls back to text matches.
+		 */
+		search: (request: WorkSearchRequest): Promise<WorkSearchResult> =>
+			ipcRenderer.invoke('localModels:search', request),
 
 		semanticIndex: createSemanticIndexApi(),
 
