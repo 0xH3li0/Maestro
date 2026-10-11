@@ -11,7 +11,7 @@ import { SectionCard } from './tabs/DisplayTab/components/SectionCard';
 export function PluginSettingsCard({ panel, theme }: { panel: PanelContribution; theme: Theme }) {
 	return (
 		<div data-setting-id={pluginSettingsId(panel.id)}>
-			<SettingsSectionHeading icon={Puzzle} description={`Settings from ${panel.pluginId}`}>
+			<SettingsSectionHeading icon={Puzzle} description={`Settings from ${panel.pluginId}.`}>
 				{panel.title}
 			</SettingsSectionHeading>
 			<SectionCard theme={theme}>

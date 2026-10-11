@@ -36,6 +36,11 @@ revoke, feature-off or failed contribution refresh remove the executable
 surface. The plugin-management entry remains available for explaining status
 and requesting consent. Existing guest isolation/provenance and command bridges
 are reused; settings panels no longer mount in Display or as duplicate overlays.
+Registry notifications carry live, grant-filtered panel IDs so unrelated refreshes
+preserve open guests and unfinished edits while revocation removes affected guests
+immediately. Feature-off clears cached contributions, including in-flight reads.
+Deep links are consumed once; a user tab selection cancels a pending link, and a
+new external launch can navigate to the same card again.
 
 `hostSettings` is an optional closed list, currently only `["media"]`, accepted
 only on settings panels. It draws a host-owned button to the existing

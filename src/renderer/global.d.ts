@@ -4656,7 +4656,7 @@ interface MaestroAPI {
 		invokeTool: (toolId: string, args?: unknown) => Promise<{ result: unknown }>;
 		getActivity: () => Promise<PluginActivityMap>;
 		getGroupings: () => Promise<PluginGroupingSnapshot>;
-		onChanged: (callback: () => void) => () => void;
+		onChanged: (callback: (activePanelIds?: string[]) => void) => () => void;
 		onGroupingsChanged: (callback: () => void) => () => void;
 		onPanelData: (
 			callback: (payload: { pluginId: string; panelId: string; data: unknown }) => void

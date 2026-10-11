@@ -54,8 +54,14 @@ export function usePluginContributions(): AggregatedContributions {
 		};
 
 		void load();
-		const unsubscribe = plugins.onChanged(() => {
-			setContributions(EMPTY);
+		const unsubscribe = plugins.onChanged((activePanelIds) => {
+			// The host sends live, grant-filtered panel IDs. Remove revoked guests
+			// immediately while retaining unaffected guests and their unsaved edits.
+			// A legacy notification without IDs cannot confirm eligibility.
+			setContributions((previous) => ({
+				...previous,
+				panels: previous.panels.filter((panel) => activePanelIds?.includes(panel.id)),
+			}));
 			void load();
 		});
 

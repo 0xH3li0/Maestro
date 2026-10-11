@@ -3081,7 +3081,7 @@ describe('plugin settings destinations', () => {
 			target: { value: 'example.plugin' },
 		});
 		await waitFor(() =>
-			expect(screen.getByText('Settings from example.plugin')).toBeInTheDocument()
+			expect(screen.getByText('Settings from example.plugin.')).toBeInTheDocument()
 		);
 		fireEvent.change(screen.getByRole('textbox', { name: 'Search settings' }), {
 			target: { value: '' },
@@ -3095,5 +3095,67 @@ describe('plugin settings destinations', () => {
 		view.rerender(<SettingsModal {...props} initialSettingId={undefined} />);
 		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Example Preferences' })).not.toBeInTheDocument();
+	});
+	it('does not replay a consumed deep link on refresh after the user changes tabs', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [panel];
+		const props = {
+			isOpen: true,
+			onClose: vi.fn(),
+			theme: mockTheme,
+			themes: { dracula: mockTheme },
+			initialSettingId: 'plugin-settings:example.plugin/config',
+		};
+		const view = render(<SettingsModal {...props} />);
+		expect(await screen.findByTestId('plugin-settings-frame')).toBeInTheDocument();
+		fireEvent.click(screen.getByTitle('General'));
+		settingsPanels = [{ ...panel }];
+		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
+		expect(screen.getByTitle('General')).toHaveClass('font-bold');
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+	});
+
+	it('resolves a deferred link once but lets a user cancel it before contributions arrive', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [];
+		const props = {
+			isOpen: true,
+			onClose: vi.fn(),
+			theme: mockTheme,
+			themes: { dracula: mockTheme },
+			initialSettingId: 'plugin-settings:example.plugin/config',
+		};
+		const view = render(<SettingsModal {...props} />);
+		settingsPanels = [panel];
+		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
+		expect(await screen.findByTestId('plugin-settings-frame')).toBeInTheDocument();
+		view.rerender(<SettingsModal {...props} isOpen={false} />);
+		settingsPanels = [];
+		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
+		fireEvent.click(screen.getByTitle('General'));
+		settingsPanels = [panel];
+		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
+		expect(screen.getByTitle('General')).toHaveClass('font-bold');
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+	});
+	it('honors repeated external launches of the same card while Settings stays open', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [panel];
+		const request = { tab: 'encore' as const, settingId: 'plugin-settings:example.plugin/config' };
+		const props = {
+			isOpen: true,
+			onClose: vi.fn(),
+			theme: mockTheme,
+			themes: { dracula: mockTheme },
+			initialTab: request.tab,
+			initialSettingId: request.settingId,
+		};
+		const view = render(<SettingsModal {...props} initialNavigationRequest={request} />);
+		expect(await screen.findByTestId('plugin-settings-frame')).toBeInTheDocument();
+		fireEvent.click(screen.getByTitle('General'));
+		view.rerender(<SettingsModal {...props} initialNavigationRequest={request} />);
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+		view.rerender(<SettingsModal {...props} initialNavigationRequest={{ ...request }} />);
+		expect(await screen.findByTestId('plugin-settings-frame')).toBeInTheDocument();
 	});
 });

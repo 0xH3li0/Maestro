@@ -279,6 +279,7 @@ function AppStandaloneModalsInner({
 		settingsTab,
 		settingsPromptId,
 		settingsSettingId,
+		settingsNavigationRequest,
 		wizardResumeModalOpen,
 		wizardResumeState,
 		tourOpen,
@@ -699,6 +700,7 @@ function AppStandaloneModalsInner({
 						initialTab={settingsTab}
 						initialSelectedPromptId={settingsPromptId}
 						initialSettingId={settingsSettingId}
+						initialNavigationRequest={settingsNavigationRequest}
 						hasNoAgents={hasNoAgents}
 						onThemeImportError={(msg) => setFlashNotification(msg)}
 						onThemeImportSuccess={(msg) => setFlashNotification(msg)}

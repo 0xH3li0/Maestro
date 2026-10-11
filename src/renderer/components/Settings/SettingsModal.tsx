@@ -41,6 +41,7 @@ import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import { PluginSettingsCard } from './PluginSettingsCard';
 import type { SearchableSetting } from './searchableSettings';
+import type { SettingsModalData } from '../../stores/modalStore';
 
 type SettingsTabId =
 	| 'about'
@@ -155,6 +156,8 @@ interface SettingsModalProps {
 	initialSelectedPromptId?: string;
 	/** A `data-setting-id` to scroll to and flash on open (deep link from outside Settings). */
 	initialSettingId?: string;
+	/** The immutable modal data identifies each external navigation request. */
+	initialNavigationRequest?: SettingsModalData;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -169,6 +172,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		initialTab,
 		initialSelectedPromptId,
 		initialSettingId,
+		initialNavigationRequest,
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
@@ -223,7 +227,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				tab: pluginSettingsId(panel.id),
 				tabLabel: 'Plugin settings',
 				label: panel.title,
-				description: `Settings from ${panel.pluginId}`,
+				description: `Settings from ${panel.pluginId}.`,
 				keywords: [panel.pluginId, panel.localId],
 			})),
 		[settingsPanels]
@@ -280,27 +284,61 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// chains) avoids a race where scrollIntoView fires while the content div
 	// still has `hidden` / display:none from search mode, silently no-opping.
 	const pendingScrollIdRef = useRef<string | null>(null);
-
-	const handleSearchNavigate = useCallback((tab: SearchableSetting['tab'], settingId: string) => {
-		pendingScrollIdRef.current = settingId;
-		setQueryRef.current('');
+	const handledSettingIdRef = useRef<string | null>(null);
+	const handledNavigationRequestRef = useRef<SettingsModalData | undefined>(undefined);
+	const pendingPluginSettingIdRef = useRef<string | null>(null);
+	const selectTab = useCallback((tab: SettingsTabId) => {
+		pendingPluginSettingIdRef.current = null;
 		setActiveTab(tab);
 	}, []);
+
+	const handleSearchNavigate = useCallback(
+		(tab: SearchableSetting['tab'], settingId: string) => {
+			pendingScrollIdRef.current = settingId;
+			setQueryRef.current('');
+			selectTab(tab);
+		},
+		[selectTab]
+	);
 
 	// Deep link from outside Settings (e.g. a disabled control explaining which
 	// setting unlocks it). Bumping the counter re-runs the jump effect below even
 	// when the target tab is already the active one.
 	const [deepLinkJump, setDeepLinkJump] = useState(0);
 	useEffect(() => {
-		if (!isOpen || !initialSettingId) return;
+		if (!isOpen || !initialSettingId) {
+			handledSettingIdRef.current = null;
+			pendingPluginSettingIdRef.current = null;
+			return;
+		}
+		if (
+			handledSettingIdRef.current === initialSettingId &&
+			handledNavigationRequestRef.current === initialNavigationRequest
+		)
+			return;
+		handledNavigationRequestRef.current = initialNavigationRequest;
+		handledSettingIdRef.current = initialSettingId;
+		pendingPluginSettingIdRef.current = null;
 		pendingScrollIdRef.current = initialSettingId;
 		if (initialSettingId.startsWith('plugin-settings:')) {
-			const available = settingsPanels.some((p) => pluginSettingsId(p.id) === initialSettingId);
-			setActiveTab(available ? (initialSettingId as SettingsTabId) : 'encore');
-			if (!available) pendingScrollIdRef.current = null;
+			// Keep only unresolved requests pending. A user tab selection cancels
+			// the request, so later registry refreshes cannot replay an old link.
+			pendingPluginSettingIdRef.current = initialSettingId;
+			pendingScrollIdRef.current = null;
+			setActiveTab('encore');
 		}
 		setDeepLinkJump((n) => n + 1);
-	}, [isOpen, initialSettingId, settingsPanels]);
+	}, [isOpen, initialSettingId, initialNavigationRequest]);
+
+	useEffect(() => {
+		const targetId = pendingPluginSettingIdRef.current;
+		if (!isOpen || !targetId) return;
+		if (!settingsPanels.some((p) => pluginSettingsId(p.id) === targetId)) return;
+		pendingPluginSettingIdRef.current = null;
+		pendingScrollIdRef.current = targetId;
+		setActiveTab(targetId as SettingsTabId);
+		setDeepLinkJump((n) => n + 1);
+	}, [isOpen, initialSettingId, initialNavigationRequest, settingsPanels]);
 
 	useEffect(() => {
 		const targetId = pendingScrollIdRef.current;
@@ -342,7 +380,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (isOpen && initialTab && !initialSettingId?.startsWith('plugin-settings:')) {
 			setActiveTab(initialTab);
 		}
-	}, [isOpen, initialTab, initialSettingId]);
+	}, [isOpen, initialTab, initialSettingId, initialNavigationRequest]);
 
 	// Persist the current tab in module memory so the next open lands here.
 	// In-memory only - resets on app restart by design.
@@ -404,17 +442,17 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
 				e.preventDefault();
 				const prevIndex = currentIndex === 0 ? tabs.length - 1 : currentIndex - 1;
-				setActiveTab(tabs[prevIndex]);
+				selectTab(tabs[prevIndex]);
 			} else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']') {
 				e.preventDefault();
 				const nextIndex = (currentIndex + 1) % tabs.length;
-				setActiveTab(tabs[nextIndex]);
+				selectTab(tabs[nextIndex]);
 			}
 		};
 
 		window.addEventListener('keydown', handleTabNavigation);
 		return () => window.removeEventListener('keydown', handleTabNavigation);
-	}, [isOpen, activeTab, tabItems]);
+	}, [isOpen, activeTab, tabItems, selectTab]);
 
 	useEffect(() => {
 		if (
@@ -501,7 +539,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									isActive={activeTab === tab.id}
 									orientation="horizontal"
 									theme={theme}
-									onClick={() => setActiveTab(tab.id)}
+									onClick={() => selectTab(tab.id)}
 								/>
 							))}
 						</nav>
@@ -519,7 +557,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									isActive={activeTab === tab.id}
 									orientation="vertical"
 									theme={theme}
-									onClick={() => setActiveTab(tab.id)}
+									onClick={() => selectTab(tab.id)}
 								/>
 							))}
 						</nav>

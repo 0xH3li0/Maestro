@@ -26,6 +26,9 @@ function Probe() {
 	const contributions = usePluginContributions();
 	return (
 		<>
+			{contributions.panels.map((panel) => (
+				<input key={panel.id} aria-label={panel.id} defaultValue="draft" />
+			))}
 			{contributions.uiItems.map((item) => (
 				<span key={item.id}>{item.label}</span>
 			))}
@@ -80,5 +83,86 @@ describe('usePluginContributions', () => {
 		});
 
 		await waitFor(() => expect(screen.queryByText('Revoked action')).not.toBeInTheDocument());
+	});
+	it('preserves a live settings guest during unrelated refresh and removes it immediately on revoke', async () => {
+		const panel = {
+			id: 'p/config',
+			localId: 'config',
+			pluginId: 'p',
+			title: 'Preferences',
+			entry: 'panel.html',
+			placement: 'settings' as const,
+			size: 'default' as const,
+		};
+		let notifyChanged!: (activePanelIds?: string[]) => void;
+		let resolveRefresh!: (value: AggregatedContributions) => void;
+		const refresh = new Promise<AggregatedContributions>((resolve) => {
+			resolveRefresh = resolve;
+		});
+		const plugins = {
+			contributions: vi
+				.fn()
+				.mockResolvedValueOnce({ ...EMPTY, panels: [panel] })
+				.mockReturnValueOnce(refresh)
+				.mockReturnValueOnce(new Promise(() => {})),
+			onChanged: vi.fn((listener: (ids?: string[]) => void) => {
+				notifyChanged = listener;
+				return () => {};
+			}),
+		};
+		window.maestro.plugins = plugins as unknown as typeof window.maestro.plugins;
+		render(<Probe />);
+		const guest = await screen.findByRole('textbox', { name: panel.id });
+		(guest as HTMLInputElement).value = 'unsaved edits';
+		act(() => notifyChanged([panel.id]));
+		expect(screen.getByRole('textbox', { name: panel.id })).toBe(guest);
+		await act(async () => resolveRefresh({ ...EMPTY, panels: [{ ...panel }] }));
+		expect(screen.getByRole('textbox', { name: panel.id })).toBe(guest);
+		expect(guest).toHaveValue('unsaved edits');
+		act(() => notifyChanged([]));
+		expect(screen.queryByRole('textbox', { name: panel.id })).not.toBeInTheDocument();
+	});
+
+	it('removes a feature-disabled guest and ignores an older in-flight response', async () => {
+		let resolveRefresh!: (value: AggregatedContributions) => void;
+		let notifyChanged!: (ids?: string[]) => void;
+		const active = {
+			...EMPTY,
+			panels: [
+				{
+					id: 'p/config',
+					localId: 'config',
+					pluginId: 'p',
+					title: 'Preferences',
+					entry: 'panel.html',
+					placement: 'settings' as const,
+					size: 'default' as const,
+				},
+			],
+		};
+		window.maestro.plugins = {
+			contributions: vi
+				.fn()
+				.mockResolvedValueOnce(active)
+				.mockReturnValueOnce(
+					new Promise<AggregatedContributions>((resolve) => {
+						resolveRefresh = resolve;
+					})
+				)
+				.mockRejectedValueOnce(new Error('PluginsDisabled')),
+			onChanged: vi.fn((listener: (ids?: string[]) => void) => {
+				notifyChanged = listener;
+				return () => {};
+			}),
+		} as unknown as typeof window.maestro.plugins;
+		render(<Probe />);
+		expect(await screen.findByRole('textbox', { name: 'p/config' })).toBeInTheDocument();
+		act(() => notifyChanged(['p/config']));
+		// The main feature watcher broadcasts an empty eligibility list before
+		// the gated re-read rejects, including changes made through the CLI.
+		act(() => notifyChanged([]));
+		expect(screen.queryByRole('textbox', { name: 'p/config' })).not.toBeInTheDocument();
+		await act(async () => resolveRefresh(active));
+		expect(screen.queryByRole('textbox', { name: 'p/config' })).not.toBeInTheDocument();
 	});
 });
