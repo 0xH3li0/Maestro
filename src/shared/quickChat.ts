@@ -128,6 +128,55 @@ export interface QuickChatCommandResult {
 	snapshot: QuickChatSnapshot;
 }
 
+/**
+ * Where the user left the Quick Chat window, persisted per device in the
+ * window-state store. `x`/`y` are written only once the user drags the window,
+ * so until then it keeps opening centered on the display under the cursor.
+ * `expandedHeight` is the conversation shape's height; the composer-only shape
+ * has a fixed height, so it is never recorded.
+ */
+export interface QuickChatWindowBounds {
+	x?: number;
+	y?: number;
+	width?: number;
+	expandedHeight?: number;
+}
+
+/** The narrowest the window can be dragged, in either shape. */
+export const QUICK_CHAT_MIN_WIDTH = 380;
+/** The shortest the conversation shape can be dragged. */
+export const QUICK_CHAT_MIN_EXPANDED_HEIGHT = 320;
+
+/**
+ * `maestro-cli quick-chat bounds`: the same move or resize a drag makes.
+ * `height` is the conversation shape's height (the composer-only shape's height
+ * is fixed), and `x`/`y` come as a pair.
+ */
+export interface QuickChatBoundsRequest {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+}
+
+/** Why a bounds request cannot be applied, or null when it can. */
+export function validateQuickChatBoundsRequest(request: QuickChatBoundsRequest): string | null {
+	const { x, y, width, height } = request;
+	const given = [x, y, width, height].filter((v) => v !== undefined);
+	if (given.length === 0) return 'Give at least one of x, y, width, height';
+	if (given.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
+		return 'Bounds must be numbers';
+	}
+	if ((x === undefined) !== (y === undefined)) return 'Give x and y together';
+	if (width !== undefined && width < QUICK_CHAT_MIN_WIDTH) {
+		return `Width must be at least ${QUICK_CHAT_MIN_WIDTH}`;
+	}
+	if (height !== undefined && height < QUICK_CHAT_MIN_EXPANDED_HEIGHT) {
+		return `Height must be at least ${QUICK_CHAT_MIN_EXPANDED_HEIGHT}`;
+	}
+	return null;
+}
+
 /** Everything `maestro-cli quick-chat status` reports. */
 export interface QuickChatStatus {
 	enabled: boolean;
@@ -135,6 +184,8 @@ export interface QuickChatStatus {
 	hotkey: string[];
 	/** False when the OS or another app refused the hotkey. */
 	hotkeyRegistered: boolean;
+	/** The window's current bounds, or null before it has been created. */
+	bounds: { x: number; y: number; width: number; height: number } | null;
 	snapshot: QuickChatSnapshot;
 }
 

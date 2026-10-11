@@ -8,7 +8,7 @@
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
-import type { QuickChatSettings } from '../../shared/quickChat';
+import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -205,6 +205,8 @@ export interface WindowState {
 	 * becomes the source of truth once windows are created through the registry.
 	 */
 	multiWindow?: MultiWindowState;
+	/** Where the user left the Quick Chat window (see `QuickChatWindowBounds`). */
+	quickChat?: QuickChatWindowBounds;
 }
 
 // ============================================================================

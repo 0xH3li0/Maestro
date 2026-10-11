@@ -14,6 +14,7 @@ import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
+	type QuickChatBoundsRequest,
 	type QuickChatCommand,
 	type QuickChatCommandResult,
 	type QuickChatLayout,
@@ -28,9 +29,11 @@ import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
 import {
 	closeQuickChatWindow,
 	getQuickChatWindow,
+	getQuickChatWindowBounds,
 	hideQuickChatWindow,
 	isQuickChatWindowVisible,
 	setQuickChatLayout,
+	setQuickChatWindowBounds,
 	showQuickChatWindow,
 	toggleQuickChatWindow,
 	type QuickChatWindowDeps,
@@ -59,6 +62,8 @@ export interface QuickChatController {
 	init(): void;
 	runCommand(command: QuickChatCommand): Promise<QuickChatCommandResult>;
 	windowAction(action: QuickChatWindowAction): QuickChatStatus;
+	/** Move or resize the window as a drag would (validated by the caller). */
+	setBounds(request: QuickChatBoundsRequest): QuickChatStatus;
 	getStatus(): QuickChatStatus;
 }
 
@@ -93,6 +98,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		visible: isQuickChatWindowVisible(),
 		hotkey: readSettings().hotkey,
 		hotkeyRegistered,
+		bounds: getQuickChatWindowBounds(),
 		snapshot,
 	});
 
@@ -138,6 +144,11 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		return getStatus();
 	};
 
+	const setBounds = (request: QuickChatBoundsRequest): QuickChatStatus => {
+		setQuickChatWindowBounds(request, windowDeps);
+		return getStatus();
+	};
+
 	const syncHotkey = () => {
 		const keys = isEnabled() ? readSettings().hotkey : [];
 		hotkeyRegistered = setNamedGlobalHotkey(HOTKEY_ID, keys, () => windowAction('toggle'));
@@ -176,7 +187,13 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		logger.info('Quick Chat controller ready', 'QuickChat', { enabled: isEnabled() });
 	};
 
-	const controller: QuickChatController = { init, runCommand, windowAction, getStatus };
+	const controller: QuickChatController = {
+		init,
+		runCommand,
+		windowAction,
+		setBounds,
+		getStatus,
+	};
 	activeController = controller;
 	return controller;
 }

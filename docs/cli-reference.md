@@ -2065,6 +2065,18 @@ Stop the reply the agent is writing
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat bounds`
+
+Move or resize the window, as dragging it does, and remember it (--height is the conversation height)
+
+| Option          | Description                                 | Default |
+| --------------- | ------------------------------------------- | ------- |
+| `--x <px>`      | Left edge, in screen points (give with --y) | -       |
+| `--y <px>`      | Top edge, in screen points (give with --x)  | -       |
+| `--width <px>`  | Width                                       | -       |
+| `--height <px>` | Height of the conversation shape            | -       |
+| `--json`        | Output as JSON (for scripting)              | -       |
+
 ## `maestro-cli cadenza`
 
 Open small cadenza views to display or track work in the Maestro desktop app
