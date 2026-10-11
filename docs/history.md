@@ -12,12 +12,12 @@ The History panel provides a timestamped log of all agent activity - both automa
 
 History entries are categorized by source:
 
-| Type      | Label    | Description                                                    |
-| --------- | -------- | -------------------------------------------------------------- |
-| **AUTO**  | 🤖 AUTO  | Entries created by Auto Run task completions                   |
-| **USER**  | 👤 USER  | Entries created manually by the user                           |
-| **AGENT** | 💬 AGENT | Questions another agent sent this one by `@mention`ing it      |
-| **CUE**   | ⚡ CUE   | Turns triggered by a Cue subscription (when the feature is on) |
+| Type      | Label    | Description                                                        |
+| --------- | -------- | ------------------------------------------------------------------ |
+| **AUTO**  | 🤖 AUTO  | Entries created by Auto Run task completions                       |
+| **USER**  | 👤 USER  | Entries created manually by the user                               |
+| **AGENT** | 💬 AGENT | Turns another agent asked for, by `@mention` or `maestro-cli send` |
+| **CUE**   | ⚡ CUE   | Turns triggered by a Cue subscription (when the feature is on)     |
 
 ### Auto Entries
 
@@ -42,7 +42,7 @@ User entries are created in three ways:
 
 ### Agent Entries
 
-Agent entries are created when another agent consults this one by `@mention`ing it. They are ordinary turns, not automation - the only difference from a user entry is who asked. Each entry names the calling agent and the subject of the question, carries a pass/fail indicator, and links to the conversation the answer was written in.
+Agent entries are created when another agent consults this one by `@mention`ing it, or runs `maestro-cli send` against it from its own shell. They are ordinary turns, not automation - the only difference from a user entry is who asked. Each entry names the calling agent, carries a pass/fail indicator, and links to the conversation the answer was written in. A consult's summary reads `Consulted by <agent>: <subject>`; a send's reads `Sent by <agent>:` followed by a synopsis of the turn.
 
 ### Synopsis Debounce
 
@@ -58,7 +58,7 @@ Use the filter buttons at the top of the History panel to show or hide each entr
 
 - Click **AUTO** to toggle Auto Run entries
 - Click **USER** to toggle user-created entries
-- Click **AGENT** to toggle questions proxied in from other agents
+- Click **AGENT** to toggle turns other agents asked for
 - Click **CUE** to toggle Cue-triggered entries (shown only when Maestro Cue is enabled)
 - Any combination can be active simultaneously
 

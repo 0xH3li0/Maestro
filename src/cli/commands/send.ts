@@ -11,6 +11,7 @@ import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitio
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { withMaestroClient } from '../services/maestro-client';
 import { installInterruptHandler } from '../utils/interrupt';
+import { readCallerIdentity } from '../../shared/agentDelegation';
 import { generateUUID } from '../../shared/uuid';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 
@@ -58,6 +59,13 @@ function fallbackSummary(text: string): string {
  * response stands in instead. Failed and interrupted turns are recorded
  * without a synopsis turn. Failures here never fail the send: the caller
  * already has its response on stdout, so they only warn on stderr.
+ *
+ * WHO asked decides the kind. A send run from another agent's shell (the
+ * caller identity every desktop agent spawn stamps into its environment) is an
+ * AGENT entry naming that agent, the same kind a consult writes: an ordinary
+ * turn whose only difference from a user's is who asked, and one whose
+ * pass/fail the panel marks. With no calling agent it is the user, or a script
+ * of theirs, at a shell, so it stays a USER entry.
  */
 async function recordSendHistory(
 	agent: SessionInfo,
@@ -103,12 +111,22 @@ async function recordSendHistory(
 			}
 		}
 
+		const caller = readCallerIdentity(process.env);
+		// A caller whose agent is gone by now still asked; its id is the only
+		// name left for it.
+		const sourceAgentName = caller
+			? (getSessionById(caller.agentId)?.name ?? caller.agentId)
+			: undefined;
+
 		const entry: HistoryEntry = {
 			id: generateUUID(),
-			type: 'USER',
+			type: sourceAgentName ? 'AGENT' : 'USER',
 			timestamp: Date.now(),
-			summary,
+			// Nothing in the panel draws `sourceAgentName`, so the summary names
+			// the sender, as a consult's "Consulted by" does.
+			summary: sourceAgentName ? `Sent by ${sourceAgentName}: ${summary}` : summary,
 			fullResponse,
+			...(sourceAgentName ? { sourceAgentName } : {}),
 			agentSessionId: result.agentSessionId,
 			projectPath: agent.cwd,
 			sessionId: agent.id,

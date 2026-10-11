@@ -56,9 +56,9 @@ export function visibleHistoryEntryTypes(maestroCueEnabled: boolean): HistoryEnt
  * `AGENT`; this coerces the entries already on disk so no history file has to be
  * rewritten.
  *
- * `sourceAgentName` is the discriminator: it is set ONLY by the consult writer
- * (`recordConsultHistory`), so an `AUTO` entry carrying one is unambiguously a
- * consult. Applied at both read chokepoints - `HistoryManager.getEntries` (app)
+ * `sourceAgentName` is the discriminator: only writers of `AGENT` entries set
+ * it (`recordConsultHistory`, and `maestro-cli send` run by another agent), so
+ * an `AUTO` entry carrying one is unambiguously a legacy consult. Applied at both read chokepoints - `HistoryManager.getEntries` (app)
  * and `readSessionHistory` (CLI) - so every consumer sees the corrected type.
  */
 export function normalizeHistoryEntryType(entry: HistoryEntry): HistoryEntryType {

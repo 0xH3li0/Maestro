@@ -10,7 +10,7 @@
  * - Unsupported agent types
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 
 // Mock maestro-client
@@ -65,6 +65,7 @@ import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -87,6 +88,14 @@ describe('send command', () => {
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+		// A test run started from an agent's own shell inherits its caller
+		// identity, which would turn every entry here into an AGENT entry. Blank
+		// reads as absent.
+		vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, '');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	it('should query an agent and return JSON response for new session', async () => {
@@ -522,6 +531,92 @@ describe('send command', () => {
 			// stdout still carries only the turn's JSON
 			expect(consoleSpy).toHaveBeenCalledTimes(1);
 			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('writes an AGENT entry naming the sender when another agent runs the send', async () => {
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-caller-1');
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockImplementation((id) =>
+				id === 'agent-caller-1'
+					? mockAgent({ id: 'agent-caller-1', name: 'Conductor' })
+					: mockAgent()
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Fixed the bug.',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Fix it', { synopsis: false });
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'AGENT',
+				sessionId: 'agent-abc-123',
+				sourceAgentName: 'Conductor',
+				summary: 'Sent by Conductor: Fixed the bug.',
+				fullResponse: 'Fixed the bug.',
+				success: true,
+			});
+		});
+
+		it('marks a failed send from another agent as a failed AGENT entry', async () => {
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-caller-1');
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockImplementation((id) =>
+				id === 'agent-caller-1'
+					? mockAgent({ id: 'agent-caller-1', name: 'Conductor' })
+					: mockAgent()
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({ success: false, error: 'boom' });
+
+			await send('agent-abc', 'Do it', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'AGENT',
+				success: false,
+				summary: 'Sent by Conductor: Send failed: boom',
+			});
+			errSpy.mockRestore();
+		});
+
+		it('names a calling agent that no longer exists by its id', async () => {
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-gone-9');
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockImplementation((id) =>
+				id === 'agent-gone-9' ? undefined : mockAgent()
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ type: 'AGENT', sourceAgentName: 'agent-gone-9' });
+		});
+
+		it('writes a USER entry with no sender when no agent is calling', async () => {
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.type).toBe('USER');
+			expect(entry.summary).toBe('Done');
+			expect(entry.sourceAgentName).toBeUndefined();
 		});
 
 		it('writes nothing with --no-history', async () => {
