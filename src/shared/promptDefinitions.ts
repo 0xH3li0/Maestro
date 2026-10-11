@@ -228,6 +228,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'tab-naming-local',
+		filename: 'tab-naming-local.md',
+		description:
+			'Tab naming prompt for a small local model or endpoint: short, and answers as JSON',
+		category: 'system',
+	},
+	{
 		id: 'director-notes',
 		filename: 'director-notes.md',
 		description: "Director's Notes prompt",
@@ -371,6 +378,7 @@ export const PROMPT_IDS = {
 	CROSS_AGENT_HANDOFF_PENDING: 'cross-agent-handoff-pending',
 	// System
 	TAB_NAMING: 'tab-naming',
+	TAB_NAMING_LOCAL: 'tab-naming-local',
 	DIRECTOR_NOTES: 'director-notes',
 	ACAPPELLA_ROUTER: 'acappella-router',
 	ACAPPELLA_TRANSLATOR: 'acappella-translator',

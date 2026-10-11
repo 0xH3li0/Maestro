@@ -611,6 +611,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
+		safeSend: deps.safeSend,
 	});
 
 	// AI Command handlers (plain-English request -> one shell command line).

@@ -8,6 +8,8 @@
 import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
 import { ipcMain } from 'electron';
 import { registerTabNamingHandlers } from '../../../../main/ipc/handlers/tabNaming';
+import { runLocalTask } from '../../../../main/local-models/task-router';
+import { resetLocalTaskNotices } from '../../../../main/local-models/task-notices';
 import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
@@ -37,10 +39,22 @@ vi.mock('uuid', () => ({
 	v4: vi.fn(() => 'mock-uuid-1234'),
 }));
 
+// The Local Models router answers `use-utility-agent` (the default assignment)
+// unless a test says otherwise, so every agent-path test runs unchanged.
+vi.mock('../../../../main/local-models/task-router', () => ({
+	runLocalTask: vi.fn(),
+}));
+
+beforeEach(() => {
+	(runLocalTask as Mock).mockResolvedValue({ status: 'use-utility-agent' });
+	resetLocalTaskNotices();
+});
+
 // Mock prompt-manager so getPrompt() returns mock content without needing disk I/O
 vi.mock('../../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
 		if (id === 'tab-naming') return 'You are a tab naming assistant. Generate a concise tab name.';
+		if (id === 'tab-naming-local') return 'LOCAL NAMING PROMPT';
 		return `mock prompt for ${id}`;
 	}),
 }));
@@ -122,6 +136,8 @@ describe('Tab Naming IPC Handlers', () => {
 		set: Mock;
 	};
 
+	let mockSafeSend: Mock;
+
 	const mockClaudeAgent: AgentConfig = {
 		id: 'claude-code',
 		name: 'Claude Code',
@@ -143,6 +159,7 @@ describe('Tab Naming IPC Handlers', () => {
 
 	beforeEach(async () => {
 		vi.clearAllMocks();
+		mockSafeSend = vi.fn();
 		registeredHandlers.clear();
 		const { isWindows } = await import('../../../../shared/platformDetection');
 		(isWindows as Mock).mockReturnValue(false);
@@ -194,6 +211,7 @@ describe('Tab Naming IPC Handlers', () => {
 			settingsStore: mockSettingsStore as unknown as Parameters<
 				typeof registerTabNamingHandlers
 			>[0]['settingsStore'],
+			safeSend: mockSafeSend,
 		});
 	});
 
@@ -1614,6 +1632,155 @@ describe('Tab Naming IPC Handlers', () => {
 			await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
 			expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
 			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
+		});
+	});
+
+	describe('Local Models assignment', () => {
+		const localSource = { type: 'local', modelId: 'qwen3-1.7b' } as const;
+		const request = (sessionId = 'agent-1') =>
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'add dark mode to the React app',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionId,
+			});
+		const okWith = (json: unknown, text = '') => ({
+			status: 'ok',
+			text,
+			...(json !== undefined ? { json } : {}),
+			source: localSource,
+			durationMs: 120,
+		});
+
+		it('asks the router with the local prompt, the message, and a JSON schema', async () => {
+			(runLocalTask as Mock).mockResolvedValue(okWith({ name: 'Dark Mode Toggle' }));
+
+			await request();
+
+			expect(runLocalTask).toHaveBeenCalledWith(
+				'tab-naming',
+				expect.objectContaining({
+					system: 'LOCAL NAMING PROMPT',
+					prompt: 'add dark mode to the React app',
+					jsonSchema: expect.objectContaining({ required: ['name'] }),
+					signal: expect.any(AbortSignal),
+				})
+			);
+		});
+
+		it('uses the assigned model name and never spawns an agent', async () => {
+			(runLocalTask as Mock).mockResolvedValue(okWith({ name: 'Dark Mode Toggle' }));
+
+			expect(await request()).toBe('Dark Mode Toggle');
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('sanitizes the model reply with the same rules as an agent reply', async () => {
+			(runLocalTask as Mock).mockResolvedValue(okWith({ name: '**Dark Mode Toggle**.' }));
+			expect(await request()).toBe('Dark Mode Toggle');
+
+			(runLocalTask as Mock).mockResolvedValue(okWith({ name: '</parameter> (no content)' }));
+			expect(await request()).toBeNull();
+		});
+
+		it('falls back to the raw text when the reply did not parse as JSON', async () => {
+			(runLocalTask as Mock).mockResolvedValue(okWith(undefined, 'Tab name: Dark Mode Toggle'));
+			expect(await request()).toBe('Dark Mode Toggle');
+		});
+
+		it('skips naming silently when the assignment is off', async () => {
+			(runLocalTask as Mock).mockResolvedValue({ status: 'off' });
+
+			expect(await request()).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(mockSafeSend).not.toHaveBeenCalled();
+		});
+
+		it('skips naming when the model is unavailable and toasts once per agent', async () => {
+			(runLocalTask as Mock).mockResolvedValue({
+				status: 'unavailable',
+				source: localSource,
+				reason: 'Qwen3 1.7B is not downloaded. Download it in Settings.',
+				code: 'model-not-installed',
+			});
+
+			expect(await request('agent-1')).toBeNull();
+			expect(await request('agent-1')).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(mockSafeSend).toHaveBeenCalledTimes(1);
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'remote:notifyToast',
+				expect.objectContaining({
+					color: 'yellow',
+					sessionId: 'agent-1',
+					message: 'Qwen3 1.7B is not downloaded. Download it in Settings.',
+				})
+			);
+
+			// A different agent gets its own notice.
+			await request('agent-2');
+			expect(mockSafeSend).toHaveBeenCalledTimes(2);
+		});
+
+		it('re-arms the notice after the model works again for that agent', async () => {
+			const unavailable = {
+				status: 'unavailable',
+				source: localSource,
+				reason: 'Ollama is not running.',
+				code: 'network',
+			};
+			(runLocalTask as Mock).mockResolvedValue(unavailable);
+			await request();
+			(runLocalTask as Mock).mockResolvedValue(okWith({ name: 'Dark Mode Toggle' }));
+			await request();
+			(runLocalTask as Mock).mockResolvedValue(unavailable);
+			await request();
+
+			expect(mockSafeSend).toHaveBeenCalledTimes(2);
+		});
+
+		it('returns null when the assigned model was cancelled', async () => {
+			(runLocalTask as Mock).mockResolvedValue({ status: 'cancelled', source: localSource });
+
+			expect(await request()).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('returns null and reports an unexpected router failure without spawning', async () => {
+			const { captureException } = await import('../../../../main/utils/sentry');
+			(runLocalTask as Mock).mockRejectedValue(new Error('engine exploded'));
+
+			expect(await request()).toBeNull();
+			expect(captureException).toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('keeps the existing agent spawn path for use-utility-agent', async () => {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = request();
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'claude-code',
+					prompt: expect.stringContaining('You are a tab naming assistant'),
+				})
+			);
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Dark Mode Toggle');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			expect(await resultPromise).toBe('Dark Mode Toggle');
+			expect(mockSafeSend).not.toHaveBeenCalled();
 		});
 	});
 });

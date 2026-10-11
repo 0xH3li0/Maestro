@@ -4327,6 +4327,8 @@ interface MaestroAPI {
 			userMessage: string;
 			agentType: string;
 			cwd: string;
+			// The agent the tab belongs to; scopes the Local Models "unavailable" notice.
+			sessionId?: string;
 			sessionSshRemoteConfig?: {
 				enabled: boolean;
 				remoteId: string | null;

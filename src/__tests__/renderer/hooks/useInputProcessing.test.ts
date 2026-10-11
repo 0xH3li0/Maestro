@@ -2565,6 +2565,7 @@ describe('useInputProcessing', () => {
 				userMessage: 'Help me implement a new feature',
 				agentType: 'claude-code',
 				cwd: '/test/project',
+				sessionId: session.id,
 				sessionSshRemoteConfig: undefined,
 			});
 		});

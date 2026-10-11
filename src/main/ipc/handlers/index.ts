@@ -384,6 +384,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 	});
 	// Register Director's Notes handlers (unified history + synopsis)
 	registerDirectorNotesHandlers({
