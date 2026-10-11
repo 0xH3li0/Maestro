@@ -18,6 +18,7 @@ import {
 	parseLocalModelAssignmentSpec,
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
+	tasksForSystem,
 	tasksNeedingKind,
 	tasksUsingEndpoint,
 	tasksUsingLocalModel,
@@ -63,6 +64,12 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'voice-routing',
 			'token-proxy',
 		]);
+	});
+
+	it('gives every task a system, so a new task cannot skip the choice', () => {
+		for (const id of LOCAL_MODEL_TASK_IDS) {
+			expect(['one', 'two'], `${id} has no system`).toContain(LOCAL_MODEL_TASKS[id].system);
+		}
 	});
 
 	it('is frozen', () => {
@@ -364,6 +371,33 @@ describe('tasksUsingLocalModel', () => {
 				QWEN3_1_7B_ID
 			)
 		).toEqual([]);
+	});
+});
+
+describe('tasksForSystem', () => {
+	it('puts judgments in System One and written text in System Two', () => {
+		expect(tasksForSystem('one').map((task) => task.id)).toEqual([
+			'tab-cleanup',
+			'semantic-search',
+			'cue-gate',
+			'injection-screen',
+			'secret-screen',
+			'dictation',
+			'voice-routing',
+		]);
+		expect(tasksForSystem('two').map((task) => task.id)).toEqual([
+			'tab-naming',
+			'tab-summary',
+			'ai-command',
+			'git-drafts',
+			'spoken-notices',
+			'token-proxy',
+		]);
+	});
+
+	it('covers every task exactly once', () => {
+		const all = [...tasksForSystem('one'), ...tasksForSystem('two')].map((task) => task.id);
+		expect(all.sort()).toEqual([...LOCAL_MODEL_TASK_IDS].sort());
 	});
 });
 

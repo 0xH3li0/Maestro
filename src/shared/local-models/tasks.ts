@@ -105,6 +105,15 @@ export const LOCAL_MODEL_TASK_IDS = [
 
 export type LocalModelTaskId = (typeof LOCAL_MODEL_TASK_IDS)[number];
 
+/**
+ * Which half of the Models settings a task belongs to. System One tasks
+ * return a judgment (a decision, label, score, vector or transcript). System
+ * Two tasks write text for someone to read or run.
+ */
+export type LocalModelSystem = 'one' | 'two';
+
+export const LOCAL_MODEL_SYSTEMS: readonly LocalModelSystem[] = Object.freeze(['one', 'two']);
+
 export interface LocalModelTaskDefinition {
 	readonly id: LocalModelTaskId;
 	/** What the task is called in front of a person. */
@@ -116,6 +125,12 @@ export interface LocalModelTaskDefinition {
 	 * models and endpoint models of this kind.
 	 */
 	readonly needs: LocalModelTaskNeed;
+	/**
+	 * System One when the output is a judgment (a decision, label, score, vector
+	 * or transcript), System Two when it is text written for someone to read or
+	 * run. Required, so a new task cannot skip the choice.
+	 */
+	readonly system: LocalModelSystem;
 	/**
 	 * Capabilities the task also uses that this assignment does NOT choose, so a
 	 * readiness check can name them. Spoken notices write the summary with the
@@ -164,6 +179,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 	Object.freeze({
 		'tab-naming': defineTask({
 			id: 'tab-naming',
+			system: 'two',
 			label: 'Tab naming',
 			description: 'Names a new AI tab from the first message sent in it.',
 			needs: 'text-gen',
@@ -172,6 +188,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'tab-summary': defineTask({
 			id: 'tab-summary',
+			system: 'two',
 			label: 'Summaries',
 			description:
 				'Writes context summaries for Summarize & Continue and the group chat participant summary.',
@@ -181,6 +198,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'tab-cleanup': defineTask({
 			id: 'tab-cleanup',
+			system: 'one',
 			label: 'Tab cleanup suggestions',
 			description:
 				'Suggests tabs to close, snooze, or bring back from snooze. Every action still needs your confirmation.',
@@ -190,6 +208,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'ai-command': defineTask({
 			id: 'ai-command',
+			system: 'two',
 			label: 'AI command mode',
 			description: 'Turns a plain-English request in command mode into a shell command.',
 			needs: 'text-gen',
@@ -208,6 +227,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'git-drafts': defineTask({
 			id: 'git-drafts',
+			system: 'two',
 			label: 'Git drafts',
 			description:
 				'Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.',
@@ -217,6 +237,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'semantic-search': defineTask({
 			id: 'semantic-search',
+			system: 'one',
 			label: 'Semantic search',
 			description: 'Finds history, transcripts, and documents by meaning rather than exact words.',
 			needs: 'embedding',
@@ -225,6 +246,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'cue-gate': defineTask({
 			id: 'cue-gate',
+			system: 'one',
 			label: 'Cue gate',
 			description:
 				'Checks a Cue subscription gate condition against the event before an agent is started.',
@@ -234,6 +256,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'injection-screen': defineTask({
 			id: 'injection-screen',
+			system: 'one',
 			label: 'Prompt-injection screen',
 			description: 'Scores untrusted text for prompt injection before Cue passes it to an agent.',
 			needs: 'classifier',
@@ -242,6 +265,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'secret-screen': defineTask({
 			id: 'secret-screen',
+			system: 'one',
 			label: 'Secret screen',
 			description:
 				'Extra model coverage when scanning content for secrets before it is published. Pattern detection always runs.',
@@ -251,6 +275,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		dictation: defineTask({
 			id: 'dictation',
+			system: 'one',
 			label: 'Dictation',
 			description: 'Transcribes speech into any text box without starting a voice session.',
 			needs: 'stt',
@@ -259,6 +284,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'spoken-notices': defineTask({
 			id: 'spoken-notices',
+			system: 'two',
 			label: 'Spoken notices',
 			description:
 				'Writes the short summary a spoken notice adds when an agent finishes a turn. Off speaks the agent name alone. Turn notices on in Settings > Notifications.',
@@ -269,6 +295,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'voice-routing': defineTask({
 			id: 'voice-routing',
+			system: 'one',
 			label: 'Voice routing',
 			description:
 				'Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings.',
@@ -287,6 +314,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		}),
 		'token-proxy': defineTask({
 			id: 'token-proxy',
+			system: 'two',
 			label: 'Token proxy',
 			description: 'Summarizes large tool output for the token-conservation proxy.',
 			needs: 'text-gen',
@@ -502,6 +530,13 @@ export function tasksUsingLocalModel(
 export function tasksNeedingKind(kind: LocalModelKind): LocalModelTaskDefinition[] {
 	return LOCAL_MODEL_TASK_IDS.map((taskId) => LOCAL_MODEL_TASKS[taskId]).filter(
 		(task) => task.needs === kind
+	);
+}
+
+/** The tasks that belong to one half of the Models settings, in registry order. */
+export function tasksForSystem(system: LocalModelSystem): LocalModelTaskDefinition[] {
+	return LOCAL_MODEL_TASK_IDS.map((taskId) => LOCAL_MODEL_TASKS[taskId]).filter(
+		(task) => task.system === system
 	);
 }
 
