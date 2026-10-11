@@ -133,6 +133,29 @@ describe('truncation', () => {
 	});
 });
 
+describe('countTokens', () => {
+	it('counts content tokens only, leaving out the special tokens', async () => {
+		const tokenizer = await loadTokenizer(FIXTURE_DIR);
+		// [CLS] how do i ren ##ame a tab ? [SEP] is 10 ids, 8 of them content.
+		expect(tokenizer.countTokens('How do I rename a tab?')).toBe(8);
+		expect(tokenizer.countTokens('')).toBe(0);
+	});
+
+	it('is not truncated at the model window', async () => {
+		const tokenizer = await loadTokenizer(FIXTURE_DIR);
+		expect(tokenizer.countTokens('tab '.repeat(900))).toBe(900);
+	});
+
+	it('adds up across whitespace, so a chunker can sum sentences', async () => {
+		const tokenizer = await loadTokenizer(FIXTURE_DIR);
+		const first = 'How do I rename a tab? ';
+		const second = 'Hello, World!';
+		expect(tokenizer.countTokens(first + second)).toBe(
+			tokenizer.countTokens(first) + tokenizer.countTokens(second)
+		);
+	});
+});
+
 describe('batching', () => {
 	let definition: object;
 	let config: Record<string, unknown>;

@@ -3,7 +3,8 @@
  *
  * Handles: local_models_list, local_models_download, local_models_verify,
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
- * local_models_run_task, local_models_task_readiness, local_models_git_draft.
+ * local_models_run_task, local_models_task_readiness, local_models_git_draft,
+ * local_models_semantic_index_status.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -33,6 +34,7 @@ import {
 import { draftPullRequestRequest } from '../../../local-models/git-drafts';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
+import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -190,5 +192,21 @@ export function handleLocalModelsGitDraft(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_git_draft_result', async () => ({
 		result: await draftPullRequestRequest({ cwd: message.cwd, baseBranch: message.baseBranch }),
+	}));
+}
+
+/**
+ * Handle local_models_semantic_index_status - what the background indexer is
+ * doing and how far along it is (`maestro-cli models index`). The same record
+ * the `localModels:semanticIndex:status` IPC channel answers with; reads memory
+ * only, and answers `off` before the indexer has started.
+ */
+export function handleLocalModelsSemanticIndexStatus(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_semantic_index_status_result', async () => ({
+		progress: semanticIndexProgress(),
 	}));
 }

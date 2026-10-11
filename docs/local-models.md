@@ -99,6 +99,8 @@ For AI command mode, **Utility Agent** means the tab's own provider at its curre
 
 **Git drafts** adds a **Draft with local model** button to the Create Pull Request form once it is assigned a source. It reads the branch's commit subjects and the list of changed files (not the diff itself), and fills the title and description for you to edit. It never creates the pull request: that is still the Create PR button. While the task is off the button is not shown, and when the assigned model or endpoint is not ready the button is disabled with the reason beside it.
 
+**Semantic search** builds its index in the background once it is assigned a source. It reads History entries, Director's Notes, and the tab transcripts Maestro keeps, and it waits whenever another task is using the model. The **Semantic index** card under Assignments shows how much is indexed. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** there. Setting the task back to Off stops indexing.
+
 **A task never falls back.** If a task's assignment is not ready, the task does not run on some other source instead. It reports why, and the readiness line shows the same reason. A silent fallback would send your text somewhere you did not choose.
 
 ## Privacy
@@ -147,6 +149,7 @@ maestro-cli models assign <task-id> utility-agent
 maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
 maestro-cli models status [task-id]              # would it run, and if not, why and what to do
+maestro-cli models index                         # the semantic index: state, and how much is indexed
 maestro-cli models run <task-id> --input "..."   # run a text-generation task once
 maestro-cli models run git-drafts --cwd <repo> [--base <branch>]   # draft a pull request title and body
 ```

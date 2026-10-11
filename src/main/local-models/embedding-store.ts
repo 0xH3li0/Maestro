@@ -469,6 +469,57 @@ export class EmbeddingStore {
 		return known;
 	}
 
+	/**
+	 * Every source of one type embedded under `modelId`, with its chunks' text
+	 * hashes in chunk order. The indexer compares this, position by position,
+	 * with what a source's text chunks to now: equal lists mean the source is up
+	 * to date, and a position that differs is the only one re-embedded.
+	 *
+	 * Per source on purpose. {@link knownTextHashes} answers "has this text ever
+	 * been embedded", which is not enough to skip a chunk: two sources with the
+	 * same text each need a row of their own to be found.
+	 */
+	sourceChunkHashes(modelId: string, sourceType: EmbeddingSourceType): Map<string, string[]> {
+		const rows = this.db
+			.prepare(
+				`SELECT source_id, text_hash FROM embedding_chunks
+				 WHERE model_id = ? AND source_type = ?
+				 ORDER BY source_id, chunk_index`
+			)
+			.all(modelId, sourceType) as Array<{ source_id: string; text_hash: string }>;
+		const bySource = new Map<string, string[]>();
+		for (const row of rows) {
+			const hashes = bySource.get(row.source_id);
+			if (hashes) hashes.push(row.text_hash);
+			else bySource.set(row.source_id, [row.text_hash]);
+		}
+		return bySource;
+	}
+
+	/** Whether one source has any chunk embedded under `modelId`. One indexed lookup. */
+	hasSource(modelId: string, sourceType: EmbeddingSourceType, sourceId: string): boolean {
+		const row = this.db
+			.prepare(
+				`SELECT 1 AS present FROM embedding_chunks
+				 WHERE source_type = ? AND source_id = ? AND model_id = ?
+				 LIMIT 1`
+			)
+			.get(sourceType, sourceId, modelId);
+		return row !== undefined && row !== null;
+	}
+
+	/**
+	 * The ids of every source of one type with a row under ANY model. What a
+	 * prune walks: a source that no longer exists is dead under every model, and
+	 * {@link deleteBySource} removes it from all of them.
+	 */
+	sourceIds(sourceType: EmbeddingSourceType): string[] {
+		const rows = this.db
+			.prepare('SELECT DISTINCT source_id FROM embedding_chunks WHERE source_type = ?')
+			.all(sourceType) as Array<{ source_id: string }>;
+		return rows.map((row) => row.source_id);
+	}
+
 	/** What is on disk, per model. Reads the database, not the in-memory copy. */
 	stats(): EmbeddingStoreStats {
 		const rows = this.db

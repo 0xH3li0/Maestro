@@ -22,6 +22,8 @@
  *     readiness request entry `maestro-cli models status` also reaches.
  *   - **And `draftPullRequest`.** It hands the request to the Git drafts entry
  *     `maestro-cli models run git-drafts --cwd` also reaches.
+ *   - **`semanticIndex:status` reads the indexer's own record**, the one
+ *     `maestro-cli models index` prints, and its progress is broadcast once.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -106,10 +108,37 @@ vi.mock('../../../../main/local-models/git-drafts', () => ({
 	})),
 }));
 
+const semanticIndex = vi.hoisted(() => {
+	const listeners = new Set<(progress: unknown) => void>();
+	return {
+		listeners,
+		progress: {
+			state: 'indexing',
+			indexed: 3,
+			total: 10,
+			bySourceType: {
+				history: { indexed: 3, total: 8 },
+				'directors-notes': { indexed: 0, total: 1 },
+				transcript: { indexed: 0, total: 1 },
+			},
+			modelId: 'local:bge-small-en-v1.5',
+		},
+	};
+});
+
+vi.mock('../../../../main/local-models/semantic-indexer', () => ({
+	semanticIndexProgress: vi.fn(() => semanticIndex.progress),
+	onSemanticIndexProgress: vi.fn((listener: (progress: unknown) => void) => {
+		semanticIndex.listeners.add(listener);
+		return () => semanticIndex.listeners.delete(listener);
+	}),
+}));
+
 import {
 	registerLocalModelsHandlers,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
 	LOCAL_RUNTIME_PROGRESS_CHANNEL,
+	SEMANTIC_INDEX_PROGRESS_CHANNEL,
 } from '../../../../main/ipc/handlers/local-models';
 import {
 	registerACappellaModelsHandlers,
@@ -345,5 +374,29 @@ describe('task router channel', () => {
 			error: 'Git drafts is off.',
 		});
 		expect(draftPullRequestRequest).toHaveBeenCalledWith(request);
+	});
+});
+
+describe('semantic index channels', () => {
+	it('answers status with the indexer record, untouched', async () => {
+		await expect(handlerFor('localModels:semanticIndex:status')({})).resolves.toBe(
+			semanticIndex.progress
+		);
+	});
+
+	it('broadcasts the indexer progress on its own channel', () => {
+		const update = { ...semanticIndex.progress, indexed: 4 };
+		for (const listener of semanticIndex.listeners) listener(update);
+
+		expect(broadcasts).toEqual([{ channel: SEMANTIC_INDEX_PROGRESS_CHANNEL, payload: update }]);
+	});
+
+	it('broadcasts once however many times the handlers are registered', () => {
+		registerLocalModelsHandlers({ safeSend: safeSend as never });
+		registerLocalModelsHandlers({ safeSend: safeSend as never });
+		expect(semanticIndex.listeners.size).toBe(1);
+
+		for (const listener of semanticIndex.listeners) listener(semanticIndex.progress);
+		expect(broadcasts).toHaveLength(1);
 	});
 });

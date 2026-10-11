@@ -732,6 +732,19 @@ const mockMaestro = {
 			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
 		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
+		semanticIndex: {
+			status: vi.fn().mockResolvedValue({
+				state: 'off',
+				indexed: 0,
+				total: 0,
+				bySourceType: {
+					history: { indexed: 0, total: 0 },
+					'directors-notes': { indexed: 0, total: 0 },
+					transcript: { indexed: 0, total: 0 },
+				},
+			}),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
 		draftPullRequest: vi.fn().mockResolvedValue({
 			success: false,
 			status: 'off',

@@ -79,7 +79,7 @@ These namespaces are exposed on `window.maestro` via the preload bridge:
 | `directorNotes` | `createDirectorNotesApi()` | `director-notes.ts`                                                                                                                                      | Unified history + synopsis                                                                         |
 | `wakatime`      | `createWakatimeApi()`      | `wakatime.ts`                                                                                                                                            | WakaTime integration                                                                               |
 | `cue`           | `createCueApi()`           | `cue.ts`                                                                                                                                                 | Maestro Cue event-driven automation                                                                |
-| `localModels`   | `createLocalModelsApi()`   | `local-models.ts`                                                                                                                                        | Local Models catalog, downloads, runtimes (ungated core service)                                   |
+| `localModels`   | `createLocalModelsApi()`   | `local-models.ts`                                                                                                                                        | Local Models catalog, downloads, runtimes, semantic index status (ungated core service)            |
 
 ---
 

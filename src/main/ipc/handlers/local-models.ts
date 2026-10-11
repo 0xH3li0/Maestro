@@ -39,6 +39,11 @@ import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
 import { runLocalTaskRequest, type LocalTaskResult } from '../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../local-models/task-readiness';
+import {
+	onSemanticIndexProgress,
+	semanticIndexProgress,
+} from '../../local-models/semantic-indexer';
+import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
 import {
@@ -71,6 +76,9 @@ export const LOCAL_MODEL_PROGRESS_CHANNEL = 'localModels:progress';
 /** The push channel native-runtime install progress goes out on. */
 export const LOCAL_RUNTIME_PROGRESS_CHANNEL = 'localModels:runtimes:progress';
 
+/** The push channel the semantic indexer's progress goes out on. */
+export const SEMANTIC_INDEX_PROGRESS_CHANNEL = 'localModels:semanticIndex:progress';
+
 export interface LocalModelsHandlerDependencies {
 	/** Broadcasts to every window and to the web-desktop bridge. */
 	safeSend: SafeSendFn;
@@ -101,9 +109,13 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 	const releaseRuntime = onLocalRuntimeInstallProgress((progress: RuntimeInstallProgress) => {
 		safeSend(LOCAL_RUNTIME_PROGRESS_CHANNEL, progress);
 	});
+	const releaseIndex = onSemanticIndexProgress((progress: SemanticIndexProgress) => {
+		safeSend(SEMANTIC_INDEX_PROGRESS_CHANNEL, progress);
+	});
 	releaseProgressListeners = () => {
 		releaseModel();
 		releaseRuntime();
+		releaseIndex();
 	};
 
 	ipcMain.handle(
@@ -237,6 +249,14 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('taskReadiness'),
 			async (taskId?: unknown): Promise<LocalModelTaskReadiness[]> =>
 				resolveTaskReadinessRequest(taskId)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:semanticIndex:status',
+		withIpcErrorLogging(
+			handlerOpts('semanticIndex:status'),
+			async (): Promise<SemanticIndexProgress> => semanticIndexProgress()
 		)
 	);
 

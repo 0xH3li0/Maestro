@@ -114,6 +114,7 @@ import {
 import { modelsAssign, modelsTasks } from './commands/models-assign';
 import { modelsInstall, modelsList, modelsRemove, modelsVerify } from './commands/models-manage';
 import { modelsRun } from './commands/models-run';
+import { modelsIndex } from './commands/models-index';
 import { modelsStatus } from './commands/models-status';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
@@ -2243,6 +2244,14 @@ models
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsStatus);
+
+models
+	.command('index')
+	.description(
+		'What the semantic index is doing: its state, and how many sources are indexed (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsIndex);
 
 const modelEndpoints = models
 	.command('endpoints')

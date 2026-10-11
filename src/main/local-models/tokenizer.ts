@@ -93,6 +93,12 @@ export interface LocalTokenizer {
 	 */
 	readonly padTokenId: number;
 	encode(text: string, options?: TokenizerEncodeOptions): TokenizedInput;
+	/**
+	 * How many CONTENT tokens a text is: no special tokens, no truncation. What
+	 * a chunker sums to decide where a window ends, so the wrapper a model adds
+	 * once per sequence is not counted once per sentence.
+	 */
+	countTokens(text: string): number;
 	/** Encode every text and pad them to the longest. An empty list is an error. */
 	encodeBatch(texts: readonly string[], options?: TokenizerEncodeOptions): TokenizedBatch;
 	/**
@@ -193,6 +199,9 @@ export function createLocalTokenizer(
 				kept(full.ids),
 				full.token_type_ids ? kept(full.token_type_ids) : undefined
 			);
+		},
+		countTokens(text) {
+			return tokenizer.encode(text, { add_special_tokens: false }).ids.length;
 		},
 		encodeBatch(texts, options = {}) {
 			if (texts.length === 0) throw new Error('Cannot encode an empty batch');

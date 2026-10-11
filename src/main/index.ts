@@ -139,6 +139,8 @@ import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { closeEmbeddingStore } from './local-models/embedding-store';
+import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
+import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -535,6 +537,10 @@ const settingsWatcher = createSettingsWatcher({
 		// clear is unconditional because the previous value is not available
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
+		// `maestro-cli models assign semantic-search ...` and `settings set
+		// semanticIndexCue ...` edit the file directly. A no-op unless one of
+		// those two actually moved.
+		refreshSemanticIndexer();
 	},
 });
 
@@ -3183,6 +3189,15 @@ app
 		// Start settings file watcher for external changes (e.g., maestro-cli settings set)
 		settingsWatcher.start();
 
+		// The semantic index's background indexer. Free to start: it arms its
+		// first pass for a minute from now, and only when Semantic search is
+		// assigned a source.
+		startSemanticIndex({
+			settingsStore: store,
+			sessionsStore,
+			historyManager: getHistoryManager(),
+		});
+
 		// Start watching for system timezone changes (laptop crossing zones).
 		timeZoneWatcher.start();
 
@@ -3276,7 +3291,11 @@ quitHandler = createQuitHandler({
 	getHistoryManager,
 	tunnelManager,
 	closeStatsDB,
-	closeEmbeddingStore,
+	// The indexer first, so no batch is mid-write when the file is released.
+	closeEmbeddingStore: () => {
+		stopSemanticIndexer();
+		closeEmbeddingStore();
+	},
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

@@ -27,6 +27,12 @@
  *
  * Every call that reaches a model is recorded in the stats database
  * (`local_model_runs`), success or failure, honoring `statsCollectionEnabled`.
+ *
+ * The router also knows when someone is WAITING on a model. A call is
+ * interactive unless its caller marks it `background` (the semantic indexer
+ * does), and {@link isInteractiveLocalTaskRunning} /
+ * {@link whenNoInteractiveLocalTask} let background work stand aside while one
+ * is in flight instead of competing with it for the same cores.
  */
 
 import {
@@ -102,6 +108,12 @@ export interface EmbeddingTaskInput {
 	/** Which side of a search the texts are on (see `embedTexts`). */
 	mode: EmbeddingMode;
 	signal?: AbortSignal;
+	/**
+	 * Nobody is waiting on this call (the semantic indexer's batches). It is not
+	 * counted by {@link isInteractiveLocalTaskRunning}, so background work never
+	 * holds itself up.
+	 */
+	background?: boolean;
 }
 
 /**
@@ -194,11 +206,15 @@ export async function runEmbeddingTask(
 	input: EmbeddingTaskInput
 ): Promise<EmbeddingTaskResult> {
 	requireTaskNeed(taskId, 'embedding', 'runEmbeddingTask');
-	const verdict = await runThroughAssignment(taskId, (source) =>
-		embedTexts(source, input.texts, {
-			mode: input.mode,
-			...(input.signal ? { signal: input.signal } : {}),
-		})
+	const verdict = await runThroughAssignment(
+		taskId,
+		(source) =>
+			embedTexts(source, input.texts, {
+				mode: input.mode,
+				...(input.signal ? { signal: input.signal } : {}),
+			}),
+		undefined,
+		input.background === true
 	);
 	if (verdict.status === 'use-utility-agent') {
 		// The registry refuses this assignment for every embedding task.
@@ -266,6 +282,35 @@ type AssignedVerdict<T> =
 	| LocalTaskUnavailable
 	| { status: 'cancelled'; source: LocalModelSource };
 
+/** Interactive calls that have reached a model and not settled yet. */
+let interactiveInFlight = 0;
+
+/** Resolved, then dropped, when {@link interactiveInFlight} returns to zero. */
+let idleWaiters: Array<() => void> = [];
+
+/** Whether a task someone is waiting on is running on a model right now. */
+export function isInteractiveLocalTaskRunning(): boolean {
+	return interactiveInFlight > 0;
+}
+
+/**
+ * Resolves once no interactive task is running: immediately when none is.
+ * Background work awaits it between batches, so a search or a tab name never
+ * queues behind an index pass for longer than the batch already in flight.
+ */
+export function whenNoInteractiveLocalTask(): Promise<void> {
+	if (interactiveInFlight === 0) return Promise.resolve();
+	return new Promise((resolve) => idleWaiters.push(resolve));
+}
+
+function endInteractiveCall(): void {
+	interactiveInFlight--;
+	if (interactiveInFlight > 0) return;
+	const waiters = idleWaiters;
+	idleWaiters = [];
+	for (const resolve of waiters) resolve();
+}
+
 /**
  * The part every task kind shares: read the assignment, run the call on its
  * source, classify a failure, and record the run. There is no fallback branch:
@@ -273,12 +318,13 @@ type AssignedVerdict<T> =
  *
  * `metrics` lets a service that measures its own call (text generation does)
  * supply the duration and token counts; otherwise the router's own sleep-aware
- * span is used.
+ * span is used. `background` keeps the call out of the interactive count.
  */
 async function runThroughAssignment<T>(
 	taskId: LocalModelTaskId,
 	call: (source: LocalModelSource) => Promise<T>,
-	metrics: (value: T) => RunMetrics = () => ({})
+	metrics: (value: T) => RunMetrics = () => ({}),
+	background = false
 ): Promise<AssignedVerdict<T>> {
 	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
 	const source = sourceForAssignment(assignment);
@@ -286,6 +332,7 @@ async function runThroughAssignment<T>(
 
 	const startedAt = Date.now();
 	const span = beginSleepAwareSpan();
+	if (!background) interactiveInFlight++;
 	try {
 		const value = await call(source);
 		const measured = metrics(value);
@@ -316,6 +363,8 @@ async function runThroughAssignment<T>(
 		}
 		recordRun(taskId, source, startedAt, durationMs, 'error', { errorCode: 'unexpected' });
 		throw error;
+	} finally {
+		if (!background) endInteractiveCall();
 	}
 }
 

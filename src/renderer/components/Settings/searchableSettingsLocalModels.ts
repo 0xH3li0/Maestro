@@ -2,7 +2,8 @@
  * Local Models tab searchable-settings entries.
  *
  * One entry per section of `LocalModelsTab`, plus the Utility Agent controls
- * inside Assignments; each `id` matches a rendered `data-setting-id`.
+ * and the semantic index card inside Assignments; each `id` matches a rendered
+ * `data-setting-id`.
  */
 
 import type { SearchableSetting } from './searchableSettings';
@@ -100,6 +101,32 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'background',
 			'haiku',
 			'override',
+		],
+	},
+	{
+		id: 'local-models-semantic-index',
+		tab: TAB,
+		tabLabel: TAB_LABEL,
+		label: 'Semantic index',
+		description:
+			"Background index of History, Director's Notes, and tab transcripts for search by meaning, with a switch for Cue runs",
+		keywords: [
+			'semantic',
+			'semantic index',
+			'semantic search',
+			'index',
+			'indexing',
+			'indexed',
+			'embedding',
+			'embeddings',
+			'search by meaning',
+			'history',
+			'transcripts',
+			"director's notes",
+			'cue',
+			'index cue runs',
+			'background',
+			'progress',
 		],
 	},
 ];

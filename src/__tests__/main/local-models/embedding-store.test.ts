@@ -385,6 +385,46 @@ describe.skipIf(!canLoadNodeSqlite())('EmbeddingStore', () => {
 		});
 	});
 
+	describe('per-source reads for the indexer', () => {
+		beforeEach(() => {
+			store.upsertChunks([
+				chunk({ sourceId: 'entry-1', chunkIndex: 1, textHash: 'h-1b', vector: [0, 1] }),
+				chunk({ sourceId: 'entry-1', chunkIndex: 0, textHash: 'h-1a', vector: [1, 0] }),
+				chunk({ sourceId: 'entry-2', textHash: 'h-2a', vector: [1, 1] }),
+				chunk({ sourceType: 'transcript', sourceId: 'tab-1#m1', textHash: 'h-t', vector: [1, 0] }),
+				chunk({ sourceId: 'entry-3', modelId: OTHER_MODEL, textHash: 'h-3a', vector: [1, 0] }),
+			]);
+		});
+
+		it('lists each source of a type with its hashes in chunk order', () => {
+			const hashes = store.sourceChunkHashes(MODEL, 'history');
+			expect([...hashes.keys()].sort()).toEqual(['entry-1', 'entry-2']);
+			// Written out of order; read back by chunk index.
+			expect(hashes.get('entry-1')).toEqual(['h-1a', 'h-1b']);
+			expect(hashes.get('entry-2')).toEqual(['h-2a']);
+		});
+
+		it('reads one model and one source type, never another', () => {
+			expect([...store.sourceChunkHashes(MODEL, 'transcript').keys()]).toEqual(['tab-1#m1']);
+			expect([...store.sourceChunkHashes(OTHER_MODEL, 'history').keys()]).toEqual(['entry-3']);
+			expect(store.sourceChunkHashes(MODEL, 'directors-notes').size).toBe(0);
+		});
+
+		it('lists the source ids of a type under every model, each once', () => {
+			expect(store.sourceIds('history').sort()).toEqual(['entry-1', 'entry-2', 'entry-3']);
+			expect(store.sourceIds('transcript')).toEqual(['tab-1#m1']);
+			expect(store.sourceIds('directors-notes')).toEqual([]);
+		});
+
+		it('answers whether one source is embedded under one model', () => {
+			expect(store.hasSource(MODEL, 'history', 'entry-1')).toBe(true);
+			expect(store.hasSource(MODEL, 'history', 'entry-3')).toBe(false);
+			expect(store.hasSource(OTHER_MODEL, 'history', 'entry-3')).toBe(true);
+			expect(store.hasSource(MODEL, 'transcript', 'entry-1')).toBe(false);
+			expect(store.hasSource(MODEL, 'history', 'missing')).toBe(false);
+		});
+	});
+
 	describe('a database file that cannot be read', () => {
 		it('is moved aside and replaced with an empty index', () => {
 			store.close();

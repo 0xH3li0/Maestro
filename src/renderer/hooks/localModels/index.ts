@@ -24,3 +24,5 @@ export type {
 } from './useLocalModelEndpoints';
 export { useLocalModelTaskReadiness } from './useLocalModelTaskReadiness';
 export type { LocalModelTaskReadinessState } from './useLocalModelTaskReadiness';
+export { useSemanticIndexStatus } from './useSemanticIndexStatus';
+export type { SemanticIndexStatusState } from './useSemanticIndexStatus';

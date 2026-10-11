@@ -103,6 +103,11 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `classifier.ts`                | `classifyText()` on a local classifier; overlapping windows, max positive score across them             |
 | `vectors.ts`                   | `l2Normalize()`, `dotProduct()`: import-free vector math shared by the service and the store            |
 | `embedding-store.ts`           | `EmbeddingStore` over `userData/embeddings.db`: upsert, delete, in-memory cosine search (below)         |
+| `text-chunker.ts`              | `chunkText()`: token-counted windows with overlap, ending at sentence ends, bounded per text            |
+| `semantic-sources.ts`          | Readers for History, the Director's Notes archive, and persisted transcript turns (below)               |
+| `directors-notes-archive.ts`   | The index's own copy of generated synopses (`userData/semantic-index/directors-notes.jsonl`)            |
+| `semantic-indexer.ts`          | `SemanticIndexer`: the background pass, incremental adds, pause, progress (below)                       |
+| `semantic-index-startup.ts`    | `startSemanticIndex()`: the indexer over the app's real stores, and its two settings listeners          |
 | `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                              |
 | `task-router.ts`               | `runLocalTask()` / `runEmbeddingTask()` / `runClassifierTask()`: assignment decides the source; stats   |
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)             |
@@ -116,8 +121,9 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 - `src/main/ipc/handlers/local-models.ts` registers `localModels:{list,download,pause,resume,cancel,verify,remove,remove-all,footprint}`
   and `localModels:runtimes:{list,install,footprint,remove-all}`, plus `localModels:runTask` (the
   task router), `localModels:taskReadiness` (task readiness), `localModels:draftPullRequest` (Git
-  drafts) and `localModels:endpoints:*`, broadcasting on
-  `localModels:progress` and `localModels:runtimes:progress`. It is **not** gated by the A Cappella
+  drafts), `localModels:semanticIndex:status` (the indexer's progress) and
+  `localModels:endpoints:*`, broadcasting on `localModels:progress`,
+  `localModels:runtimes:progress` and `localModels:semanticIndex:progress`. It is **not** gated by the A Cappella
   Encore flag. It is wired in `setupIpcHandlers()`.
 - Preload: `window.maestro.localModels` (with a `.runtimes` sub-namespace), in
   `src/main/preload/localModels.ts`, typed as `LocalModelsApi`.
@@ -347,7 +353,7 @@ opened on first use and closed by the quit handler.
 | ------------- | ------------------------------------------------------------------------ |
 | `id`          | `embeddingChunkId(model, sourceType, sourceId, chunkIndex)`, a hash      |
 | `source_type` | `history`, `directors-notes`, or `transcript` (`EMBEDDING_SOURCE_TYPES`) |
-| `source_id`   | The source's own id (a history entry id, a notes id, a tab id)           |
+| `source_id`   | The source's own id (a history entry id, a notes id, a transcript turn)  |
 | `agent_id`    | The agent the source belongs to, or NULL                                 |
 | `chunk_index` | Which window of the source's text this is                                |
 | `text_hash`   | `embeddingTextHash(text)`: SHA-256 of the chunk text, the dedupe key     |
@@ -362,6 +368,9 @@ opened on first use and closed by the quit handler.
 | `deleteBySource(sourceType, sourceId)`                            | Drops the source's chunks under every model                        |
 | `search(queryVector, { modelId, limit, sourceTypes?, agentId? })` | Best-first `EmbeddingSearchHit[]` (`score` is the cosine, -1 to 1) |
 | `knownTextHashes(modelId, hashes)`                                | Which texts the model has already embedded                         |
+| `sourceChunkHashes(modelId, sourceType)`                          | Each source's chunk hashes in chunk order (the indexer's dedupe)   |
+| `sourceIds(sourceType)`                                           | Every source id with a row under any model (what a prune walks)    |
+| `hasSource(modelId, sourceType, sourceId)`                        | Whether one source is embedded under one model                     |
 | `stats()`                                                         | Chunks per model and source type, and the file's size              |
 | `clear(modelId?)`                                                 | Deletes one model's rows, or every model's                         |
 
@@ -381,6 +390,66 @@ changed.
 
 Schema changes go through `runSqliteMigrations()` in `src/main/utils/sqlite-migrations.ts`, the
 runner `stats.db` also uses (`_migrations` table, `user_version`, one transaction per migration).
+
+### The background indexer: `semantic-indexer.ts`
+
+The indexer fills the store from what Maestro already keeps, and keeps it current. It runs in main,
+is driven only by the `semantic-search` assignment, and has no start or stop verb.
+
+```mermaid
+flowchart LR
+	H[History files] --> R[Source readers]
+	N[Director's Notes archive] --> R
+	T[Persisted tab transcripts] --> R
+	R --> S[Scan: count, compare hashes, prune]
+	S --> C[chunkText]
+	C --> E["runEmbeddingTask (background)"]
+	E --> DB[(embeddings.db)]
+	HK[addEntry / archive hook] -->|noteItem| C
+```
+
+| Source            | Source id                           | Read from                                                | Mutable     |
+| ----------------- | ----------------------------------- | -------------------------------------------------------- | ----------- |
+| `history`         | The entry id                        | `HistoryManager.getEntries()`, one group per agent       | No          |
+| `directors-notes` | The archive record id               | `userData/semantic-index/directors-notes.jsonl`          | No          |
+| `transcript`      | `transcriptSourceId(tabId, turnId)` | `aiTabs[].logs` in the sessions store, one group / agent | Newest turn |
+
+| Rule                                                       | Why                                                                                                                     |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Off means nothing runs                                     | No timer, no file read, no model load. `refreshSemanticIndexer()` starts it when an assignment appears.                 |
+| The row key is `localModelSourceKey(source)`               | `local:<id>` or `endpoint:<id>:<model>`. A bare model name served by two endpoints is two vector spaces.                |
+| A pass scans, then embeds                                  | The scan counts every source first, so `total` is known before the first batch. It then re-reads only groups with work. |
+| An immutable source is skipped once the store holds it     | Its text is never chunked again. A source the store has never seen is NOT chunked during the scan either.               |
+| A mutable source is compared by hash, position by position | Only a chunk whose hash differs is embedded. A source that shrank is cleared first (`deleteBySource`).                  |
+| A source's chunks are written together                     | An interrupted pass never leaves half a source looking like a whole one.                                                |
+| Missing sources are pruned, per type                       | Skipped for a type when any of its groups failed to load: an unreadable file must not look like deleted entries.        |
+| It waits for interactive tasks                             | Before each batch it awaits `whenNoInteractiveLocalTask()`; its own calls pass `background: true` and are not counted.  |
+| A transcript source is a TURN, not a tab                   | A tab persists a sliding window of 100 entries. Per-tab chunks would renumber, and re-embed, every time one fell off.   |
+| A tab's newest turn waits `TRANSCRIPT_SETTLE_MS`           | A turn still streaming would be embedded again on every pass. Hidden consult tabs are never indexed.                    |
+| Cue runs are opt-in (`semanticIndexCue`, default false)    | They are about 98% of History by volume. Turning the setting off prunes them at the next pass.                          |
+| A synopsis is archived only while the task is assigned     | Director's Notes are stored nowhere else. With the task off, generating one leaves nothing new on disk.                 |
+| No fallback                                                | A source that cannot run stops the pass as `unavailable` with its reason. Nothing reaches for another model.            |
+
+Timing: the first pass is armed `INDEX_STARTUP_DELAY_MS` (60 s) after launch, a settings change
+arms one after 5 s, a new History entry or synopsis is embedded after 3 s without a pass, and a
+pass repeats every 15 minutes (that is what picks up transcripts, which have no write hook, and
+History written by `maestro-cli`).
+
+`chunkText()` cuts a text into windows of about 320 tokens with a 40 token overlap. Tokens are
+counted with the assigned model's own tokenizer (`LocalTokenizer.countTokens`, resolved without
+opening the ONNX session); an endpoint model is estimated at four characters a token. A text is
+bounded to what 24 windows could hold BEFORE it is tokenized, because counting runs on the main
+thread.
+
+Progress is `SemanticIndexProgress` (`src/shared/local-models/embedding-index.ts`): a state
+(`off`, `idle`, `indexing`, `paused`, `unavailable`) and `indexed / total` counted in SOURCES, per
+type and overall. It is read over `localModels:semanticIndex:status`, pushed on
+`localModels:semanticIndex:progress`, drawn by `SemanticIndexSettings` in Settings -> Local Models,
+and printed by `maestro-cli models index`.
+
+Known limits: voice (A Cappella) does not run through the task router, so the indexer does not
+pause for a live voice session. Cue runs indexed from the Cue database leave the index when Cue's
+own retention drops them.
 
 ### Classifiers: `classifyText(source, text)`
 

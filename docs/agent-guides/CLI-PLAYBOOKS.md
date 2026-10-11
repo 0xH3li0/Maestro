@@ -383,6 +383,10 @@ maestro-cli models tasks [--json]
 - `assign` edits the `localModelAssignments` setting on disk (`readLocalModelAssignments()` / `writeLocalModelAssignments()`), so it works with the app closed. It parses with `parseLocalModelAssignmentSpec()`, validates with `localModelAssignmentProblem()`, and stores with `withLocalModelAssignment()` (shared, `src/shared/local-models/tasks.ts`): the same three the Assignments picker uses, so a wrong-kind model or an endpoint for a classifier is refused, and choosing a task's default removes its entry. The endpoint may be named by id, id prefix, or name (`findLocalModelEndpoint()`); the full id is stored. Everything after the endpoint is the model, so `endpoint:ollama:qwen3:latest` keeps the tag.
 - `tasks` lists every task with its stored-or-default assignment, and the readiness verdict from the desktop (`local_models_task_readiness`, the resolver behind `models status`). With the app closed it still lists the assignments and reports `readinessError`. Use `models status` when a script needs an exit code.
 
+### `models index`
+
+Prints the semantic index's background indexer: its state (`off`, `idle`, `indexing`, `paused`, `unavailable`), `indexed / total` sources per type, and the reason when it cannot run. It is one WS round trip (`local_models_semantic_index_status`) answered from memory by `semanticIndexProgress()`, the same record `localModels:semanticIndex:status` returns. There is no start verb: the indexer runs whenever `semantic-search` is assigned a source, and `settings set semanticIndexCue true` opts Cue runs in. Exit code is non-zero only for `unavailable`.
+
 ### `models run git-drafts --cwd <path>`
 
 The CLI path to the Create Pull Request form's "Draft with local model" button. Implemented in `src/cli/commands/models-run.ts` (`runPullRequestDraft`).

@@ -115,6 +115,21 @@ vi.mock('../../../../main/local-models/git-drafts', () => ({
 }));
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
 
+vi.mock('../../../../main/local-models/semantic-indexer', () => ({
+	semanticIndexProgress: vi.fn(() => ({
+		state: 'indexing',
+		indexed: 3,
+		total: 10,
+		bySourceType: {
+			history: { indexed: 3, total: 8 },
+			'directors-notes': { indexed: 0, total: 1 },
+			transcript: { indexed: 0, total: 1 },
+		},
+		modelId: 'local:bge-small-en-v1.5',
+	})),
+}));
+import { semanticIndexProgress } from '../../../../main/local-models/semantic-indexer';
+
 // The Local Models service reads the model store and runs the downloader; the
 // handler tests only care that `maestro-cli models list|install|verify|remove`
 // reach the same service functions the Settings rows call.
@@ -5074,6 +5089,42 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				requestId: 'q1',
 				readiness: [{ taskId: 'injection-screen', state: 'unavailable' }],
 			});
+		});
+
+		it('local_models_semantic_index_status answers with the indexer record', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_semantic_index_status',
+				requestId: 'si-1',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_semantic_index_status_result')
+			);
+			expect(semanticIndexProgress).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'si-1',
+				progress: {
+					state: 'indexing',
+					indexed: 3,
+					total: 10,
+					bySourceType: { history: { indexed: 3, total: 8 } },
+					modelId: 'local:bge-small-en-v1.5',
+				},
+			});
+		});
+
+		it('local_models_semantic_index_status reports a failed read as success: false', async () => {
+			vi.mocked(semanticIndexProgress).mockImplementationOnce(() => {
+				throw new Error('indexer exploded');
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_semantic_index_status',
+				requestId: 'si-2',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_semantic_index_status_result')
+			);
+			expect(lastResponse()).toMatchObject({ success: false, error: 'indexer exploded' });
 		});
 
 		it('local_models_list answers with the listings and the footprint', async () => {

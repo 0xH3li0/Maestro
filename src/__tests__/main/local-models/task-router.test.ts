@@ -12,6 +12,9 @@
  *   - **Every call that reaches a model is recorded**, success or failure, and a
  *     stats failure never turns a good run into a bad one.
  *   - **Untrusted requests are checked once**, for IPC and the CLI bridge alike.
+ *   - **Interactive calls are countable.** Background work (the semantic
+ *     indexer) can tell when someone is waiting on a model, and its own calls
+ *     never count as that.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -61,11 +64,13 @@ vi.mock('../../../main/local-models/classifier', () => ({
 
 import {
 	DEFAULT_TASK_MAX_TOKENS,
+	isInteractiveLocalTaskRunning,
 	parseLocalTaskInput,
 	runClassifierTask,
 	runEmbeddingTask,
 	runLocalTask,
 	runLocalTaskRequest,
+	whenNoInteractiveLocalTask,
 } from '../../../main/local-models/task-router';
 import { LocalModelEndpointError, LocalModelError } from '../../../main/local-models/errors';
 import { captureException } from '../../../main/utils/sentry';
@@ -521,5 +526,87 @@ describe('runLocalTaskRequest / parseLocalTaskInput', () => {
 		[{ prompt: 'p', jsonSchema: [] }, /jsonSchema/],
 	])('refuses %j', (input, message) => {
 		expect(() => parseLocalTaskInput(input)).toThrow(message);
+	});
+});
+
+describe('interactive call tracking', () => {
+	const BGE = { type: 'local', modelId: BGE_SMALL_EN_ID } as const;
+
+	/** A promise whose settlement the test controls. */
+	function deferred<T>() {
+		let resolve!: (value: T) => void;
+		let reject!: (error: unknown) => void;
+		const promise = new Promise<T>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		return { promise, resolve, reject };
+	}
+
+	beforeEach(() => {
+		settings.clear();
+		stats.ready = true;
+		stats.recordLocalModelRun.mockReset().mockReturnValue('id');
+		embed.embedTexts.mockReset();
+		assign('semantic-search', BGE);
+	});
+
+	it('reports a call someone is waiting on for exactly as long as it runs', async () => {
+		const call = deferred<Float32Array[]>();
+		embed.embedTexts.mockReturnValue(call.promise);
+		expect(isInteractiveLocalTaskRunning()).toBe(false);
+
+		const running = runEmbeddingTask('semantic-search', { texts: ['q'], mode: 'query' });
+		expect(isInteractiveLocalTaskRunning()).toBe(true);
+
+		let idle = false;
+		void whenNoInteractiveLocalTask().then(() => {
+			idle = true;
+		});
+		await Promise.resolve();
+		expect(idle).toBe(false);
+
+		call.resolve([new Float32Array([1, 0])]);
+		await running;
+		await Promise.resolve();
+		expect(isInteractiveLocalTaskRunning()).toBe(false);
+		expect(idle).toBe(true);
+	});
+
+	it('does not count a background call, so background work never waits on itself', async () => {
+		const call = deferred<Float32Array[]>();
+		embed.embedTexts.mockReturnValue(call.promise);
+
+		const running = runEmbeddingTask('semantic-search', {
+			texts: ['a document'],
+			mode: 'document',
+			background: true,
+		});
+		expect(isInteractiveLocalTaskRunning()).toBe(false);
+		await expect(whenNoInteractiveLocalTask()).resolves.toBeUndefined();
+
+		call.resolve([new Float32Array([1, 0])]);
+		await expect(running).resolves.toMatchObject({ status: 'ok' });
+	});
+
+	it('releases the count when the call fails', async () => {
+		embed.embedTexts.mockRejectedValue(
+			new LocalModelError('bge is not downloaded.', {
+				code: 'model-not-installed',
+				recovery: 'Download it.',
+				consumerId: 'test',
+			})
+		);
+		await expect(
+			runEmbeddingTask('semantic-search', { texts: ['q'], mode: 'query' })
+		).resolves.toMatchObject({ status: 'unavailable' });
+		expect(isInteractiveLocalTaskRunning()).toBe(false);
+	});
+
+	it('answers a task that is off without ever counting as running', async () => {
+		settings.clear();
+		await runEmbeddingTask('semantic-search', { texts: ['q'], mode: 'query' });
+		expect(isInteractiveLocalTaskRunning()).toBe(false);
+		expect(embed.embedTexts).not.toHaveBeenCalled();
 	});
 });

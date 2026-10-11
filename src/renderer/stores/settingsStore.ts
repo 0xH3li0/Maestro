@@ -370,6 +370,11 @@ export interface SettingsStoreState
 	 * See shared/local-models/tasks.ts.
 	 */
 	localModelAssignments: LocalModelAssignments;
+	/**
+	 * Include Cue runs in the semantic index. Off by default: Cue runs are most
+	 * of History by volume and mostly repeat. Read by the main-process indexer.
+	 */
+	semanticIndexCue: boolean;
 	ghPath: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
@@ -519,6 +524,7 @@ export interface SettingsStoreActions
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
 	setLocalModelAssignments: (value: LocalModelAssignments) => void;
+	setSemanticIndexCue: (value: boolean) => void;
 	setGhPath: (value: string) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
@@ -772,6 +778,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVarsDisabled: {},
 		localModelEndpoints: [],
 		localModelAssignments: {},
+		semanticIndexCue: false,
 		ghPath: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
@@ -933,6 +940,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setLocalModelAssignments: (value) => {
 			set({ localModelAssignments: value });
 			window.maestro.settings.set('localModelAssignments', value);
+		},
+
+		setSemanticIndexCue: (value) => {
+			set({ semanticIndexCue: value });
+			window.maestro.settings.set('semanticIndexCue', value);
 		},
 
 		setGhPath: (value) => {
@@ -2042,6 +2054,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.localModelAssignments = parseLocalModelAssignments(
 				allSettings['localModelAssignments']
 			);
+
+		if (allSettings['semanticIndexCue'] !== undefined)
+			patch.semanticIndexCue = allSettings['semanticIndexCue'] === true;
 
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 

@@ -5,7 +5,11 @@
  * assignment into a source once for all of them.
  */
 
-import type { LocalModelAssignment, LocalModelAssignments } from '../../shared/local-models/tasks';
+import {
+	formatLocalModelAssignmentSpec,
+	type LocalModelAssignment,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
 import { getSettingsStore } from '../stores/getters';
 
 export type LocalModelSource =
@@ -19,6 +23,19 @@ export function sourceForAssignment(assignment: LocalModelAssignment): LocalMode
 		return { type: 'endpoint', endpointId: assignment.endpointId, model: assignment.model };
 	}
 	return null;
+}
+
+/**
+ * A source as one string: `local:<id>` or `endpoint:<id>:<model>`, the same
+ * spelling the assignments picker and `maestro-cli models assign` use.
+ *
+ * It is the embedding index's `model_id`. A bare model name would not do: the
+ * same name served by two endpoints, or by an endpoint and the local catalog,
+ * is two different vector spaces, and rows from both under one key would be
+ * compared as if they were one.
+ */
+export function localModelSourceKey(source: LocalModelSource): string {
+	return formatLocalModelAssignmentSpec(source);
 }
 
 /**

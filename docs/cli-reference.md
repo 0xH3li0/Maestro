@@ -1872,6 +1872,14 @@ Whether each task (or one) would run on its assignment, and if not why and what 
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli models index`
+
+What the semantic index is doing: its state, and how many sources are indexed (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli models endpoints`
 
 Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL

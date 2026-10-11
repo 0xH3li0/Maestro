@@ -7,6 +7,9 @@
  * picker's choices: a task assigned "Utility Agent" runs on whatever is set
  * there.
  *
+ * The semantic index card sits below for the mirror-image reason: it is what
+ * one of the rows (Semantic search) builds once it is assigned a source.
+ *
  * Nothing about readiness is decided here. Every verdict comes from the main
  * process (`resolveTaskReadiness`, through `useLocalModelTaskReadiness`), the
  * same answer `maestro-cli models status` prints. This surface only adds a
@@ -44,6 +47,7 @@ import type { Theme } from '../../../../types';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { buildAssignmentOptionGroups } from './assignmentOptions';
 import { downloadPercent, isActive } from './LocalModelRow';
+import { SemanticIndexSettings } from './SemanticIndexSettings';
 import { UtilityAgentSettings } from './UtilityAgentSettings';
 
 export interface LocalModelsAssignmentsSectionProps {
@@ -125,6 +129,7 @@ export function LocalModelsAssignmentsSection({
 					/>
 				))}
 			</SectionCard>
+			<SemanticIndexSettings theme={theme} />
 		</div>
 	);
 }

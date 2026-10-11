@@ -12,7 +12,7 @@
  * the user runs. `list()` is a disk read against a frozen local catalog.
  * `taskReadiness()` lists an endpoint's models only when a task is assigned to
  * one. `draftPullRequest()` reaches a model only when Git drafts is assigned
- * one.
+ * one. `semanticIndex.*` reads the indexer's in-memory progress.
  */
 
 import { ipcRenderer } from 'electron';
@@ -30,6 +30,7 @@ import type { LocalTaskInput, LocalTaskResult } from '../local-models/task-route
 import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import type { PullRequestDraftRequest, PullRequestDraftResult } from '../../shared/gitDrafts';
+import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -86,6 +87,23 @@ function createLocalModelEndpointsApi() {
 		/** A one-token chat, reporting latency. `model` defaults to the first listed. */
 		test: (endpoint: string | LocalModelEndpoint, model?: string): Promise<EndpointTestResult> =>
 			ipcRenderer.invoke('localModels:endpoints:test', endpoint, model),
+	};
+}
+
+/**
+ * `window.maestro.localModels.semanticIndex.*` - the background indexer behind
+ * semantic search. Read-only: the indexer is driven by the Semantic search
+ * assignment and the `semanticIndexCue` setting, not by a call from here.
+ */
+function createSemanticIndexApi() {
+	return {
+		/** What the indexer is doing and how far along it is. Reads memory only. */
+		status: (): Promise<SemanticIndexProgress> =>
+			ipcRenderer.invoke('localModels:semanticIndex:status'),
+
+		/** Progress pushes, throttled at the source. Broadcast to every window. */
+		onProgress: (handler: (progress: SemanticIndexProgress) => void): (() => void) =>
+			subscribe('localModels:semanticIndex:progress', handler),
 	};
 }
 
@@ -157,6 +175,8 @@ export function createLocalModelsApi() {
 		 */
 		draftPullRequest: (request: PullRequestDraftRequest): Promise<PullRequestDraftResult> =>
 			ipcRenderer.invoke('localModels:draftPullRequest', request),
+
+		semanticIndex: createSemanticIndexApi(),
 
 		runtimes: createLocalRuntimesApi(),
 

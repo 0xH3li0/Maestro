@@ -248,6 +248,9 @@ describe('searchableSettings', () => {
 			['utility agent', 'local-models-assignments'],
 			['utility agent', 'local-models-utility-agent'],
 			['context grooming', 'local-models-utility-agent'],
+			['semantic index', 'local-models-semantic-index'],
+			['index cue runs', 'local-models-semantic-index'],
+			['search by meaning', 'local-models-semantic-index'],
 		])('should find "%s" and return id %s', (query, expectedId) => {
 			const results = searchSettings(query);
 			expect(

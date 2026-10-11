@@ -3,6 +3,11 @@
 
 import { formatDurationDecimal } from '../../shared/formatters';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
+import {
+	EMBEDDING_SOURCE_TYPES,
+	type EmbeddingSourceType,
+	type SemanticIndexProgress,
+} from '../../shared/local-models/embedding-index';
 
 // ANSI color codes
 const colors = {
@@ -953,6 +958,59 @@ export function formatLocalModelTaskReadiness(
 			lines.push(`  ${' '.repeat(idWidth + stateWidth + 2)}  ${dim(`-> ${row.suggestedAction}`)}`);
 		}
 	}
+	return lines.join('\n');
+}
+
+/** The words a person reads for each indexer state, and how loud each is. */
+const SEMANTIC_INDEX_STATE: Record<
+	SemanticIndexProgress['state'],
+	{ label: string; color: Parameters<typeof c>[0] }
+> = {
+	off: { label: 'off', color: 'gray' },
+	idle: { label: 'up to date', color: 'green' },
+	indexing: { label: 'indexing', color: 'cyan' },
+	paused: { label: 'paused', color: 'yellow' },
+	unavailable: { label: 'unavailable', color: 'red' },
+};
+
+/** The source types as a person reads them, in the order they are listed. */
+const SEMANTIC_INDEX_SOURCE_LABELS: Record<EmbeddingSourceType, string> = {
+	history: 'History entries',
+	'directors-notes': "Director's Notes",
+	transcript: 'Transcript turns',
+};
+
+/**
+ * `maestro-cli models index`: what the background indexer is doing, how many
+ * sources are indexed, and (when it cannot run) why. `off` names the fix,
+ * since nothing else on the screen says how to turn it on.
+ */
+export function formatSemanticIndexProgress(progress: SemanticIndexProgress): string {
+	const state = SEMANTIC_INDEX_STATE[progress.state];
+	const lines = [`${bold(c('cyan', 'SEMANTIC INDEX'))}  ${c(state.color, state.label)}`];
+	if (progress.state === 'off') {
+		lines.push(
+			'',
+			dim(
+				'  -> Assign Semantic search a source: maestro-cli models assign semantic-search <source>'
+			)
+		);
+		return lines.join('\n');
+	}
+	if (progress.modelId) lines.push(dim(`  ${progress.modelId}`));
+	if (progress.reason) lines.push(`  ${progress.reason}`);
+	lines.push('');
+	const labelWidth = Math.max(
+		...EMBEDDING_SOURCE_TYPES.map((type) => SEMANTIC_INDEX_SOURCE_LABELS[type].length)
+	);
+	for (const type of EMBEDDING_SOURCE_TYPES) {
+		const { indexed, total } = progress.bySourceType[type];
+		lines.push(
+			`  ${c('white', SEMANTIC_INDEX_SOURCE_LABELS[type].padEnd(labelWidth))}  ${indexed} / ${total}`
+		);
+	}
+	lines.push(`  ${bold('Total'.padEnd(labelWidth))}  ${progress.indexed} / ${progress.total}`);
+	if (progress.lastPassAt === undefined) lines.push('', dim('  No pass has finished yet.'));
 	return lines.join('\n');
 }
 

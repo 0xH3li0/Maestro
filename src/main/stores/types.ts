@@ -150,6 +150,9 @@ export interface MaestroSettings {
 	// Which source each Local Models task runs on. Sparse: a task with no entry
 	// uses its registry default. See shared/local-models/tasks.ts.
 	localModelAssignments: LocalModelAssignments;
+	// Include Cue runs in the semantic index. Declared explicitly because the
+	// main process reads it (local-models/semantic-index-startup.ts).
+	semanticIndexCue: boolean;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

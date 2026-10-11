@@ -18,6 +18,7 @@ import { MAX_ENTRIES_PER_SESSION, paginateEntries } from '../../../shared/histor
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
+import { archiveDirectorNotesSynopsisInBackground } from '../../local-models/directors-notes-archive';
 import {
 	withIpcErrorLogging,
 	requireDependency,
@@ -1196,6 +1197,15 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							narrativeFields = { narrativeError: parsed.error };
 						}
 					}
+
+					// Keep a copy for semantic search. A no-op unless that task is
+					// assigned a source, and never a reason for this call to fail.
+					archiveDirectorNotesSynopsisInBackground({
+						synopsis,
+						narrative: narrativeFields.narrative,
+						lookbackDays: options.lookbackDays,
+						provider,
+					});
 
 					return {
 						success: true,

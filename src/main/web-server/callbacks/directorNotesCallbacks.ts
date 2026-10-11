@@ -1,6 +1,7 @@
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { getHistoryManager } from '../../history-manager';
+import { archiveDirectorNotesSynopsisInBackground } from '../../local-models/directors-notes-archive';
 
 export function registerDirectorNotesCallbacks(
 	server: WebServer,
@@ -109,6 +110,14 @@ export function registerDirectorNotesCallbacks(
 						error: 'Agent returned an empty response.',
 					};
 				}
+
+				// Keep a copy for semantic search, as the desktop path does. A no-op
+				// unless that task is assigned a source.
+				archiveDirectorNotesSynopsisInBackground({
+					synopsis,
+					lookbackDays,
+					provider: agentType,
+				});
 
 				return {
 					success: true,
