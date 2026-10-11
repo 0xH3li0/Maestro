@@ -157,6 +157,7 @@ spawn codex app-server (one child per turn)
 - **Stop = `turn/interrupt` then kill.** Send `turn/interrupt` `{ threadId, turnId }` (`interrupted-turn:54`); it answers `{}` (`interrupted-turn:57`) and the turn ends `turn/completed` with `status: 'interrupted'` (`interrupted-turn:59`). Then run the normal `stopProcess()` ladder in case the child does not leave on its own. Never skip the kill: a child that ignored the interrupt goes on running commands.
 - **Fallback.** If the binary is missing, `initialize` fails, or `thread/start` / `thread/resume` errors BEFORE `turn/start` is sent, kill the child and spawn the same `ProcessConfig` through the normal `codex exec` path. Once `turn/start` has been sent, never fall back: the prompt may already be running, and sending it twice is worse than an error.
 - **Instructions.** The thread picks up `AGENTS.md` from the cwd (`instructionSources`, `plain-turn:6`), same as exec.
+- **Verified live (codex-cli 0.162.1).** Plain turn, resume on the same thread id, a mid-tool-loop steer (`delivered` then `absorbed`), a steer after exit (`refused` / `not-running`), Stop (the child and its `sleep` grandchild both gone), and the default transport staying on `codex exec` all behaved as written here. One ordering to expect: the exit is reported on `turn/completed`, a moment BEFORE the child process actually leaves, so a check that the pid is gone has to wait briefly after the exit event.
 
 ## Out of scope (stay on `codex exec`)
 

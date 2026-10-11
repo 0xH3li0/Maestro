@@ -555,7 +555,7 @@ queue
 queue
 	.command('steer <item-id>')
 	.description(
-		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source only). The item leaves the queue once Claude has it and returns if Claude never takes it.'
+		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.'
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueSteer);

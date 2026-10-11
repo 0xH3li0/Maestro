@@ -306,7 +306,7 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 
 ## `maestro-cli queue steer <item-id>`
 
-Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source only). The item leaves the queue once Claude has it and returns if Claude never takes it.
+Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.
 
 | Option             | Description                                      | Default |
 | ------------------ | ------------------------------------------------ | ------- |
