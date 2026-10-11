@@ -8,7 +8,6 @@ import { describe, it, expect } from 'vitest';
 import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
-	historyRetentionCeiling,
 	ORPHANED_SESSION_ID,
 	resolveHistoryEntryLimit,
 	parseHistoryJsonl,
@@ -74,23 +73,6 @@ describe('shared/history', () => {
 			for (const value of [undefined, null, 0, -5, NaN, Infinity, 'abc', {}, []]) {
 				expect(resolveHistoryEntryLimit(value)).toBe(MAX_ENTRIES_PER_SESSION);
 			}
-		});
-	});
-
-	describe('historyRetentionCeiling', () => {
-		it('follows a setting lowered below the built-in cap', () => {
-			// A file capped at 5,000 is full at 5,000, not at the default.
-			expect(historyRetentionCeiling(5000)).toBe(5000);
-		});
-
-		it('stops at the built-in cap when the setting is higher', () => {
-			// A Cue read is issued with MAX_ENTRIES_PER_SESSION rows no matter how
-			// far the user raised file retention.
-			expect(historyRetentionCeiling(25000)).toBe(MAX_ENTRIES_PER_SESSION);
-		});
-
-		it('is the built-in cap when the setting is unset', () => {
-			expect(historyRetentionCeiling(undefined)).toBe(MAX_ENTRIES_PER_SESSION);
 		});
 	});
 
