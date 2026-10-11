@@ -75,6 +75,7 @@ import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
+import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
@@ -370,6 +371,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// caller that is not one. See src/main/ipc/handlers/cot-export.ts.
 	registerCotExportHandlers({
 		getAgentName,
+		anchor: createCotStateKeyringAnchor(),
 		isAppWindow: (window) =>
 			deps.windowRegistry
 				.getAll()

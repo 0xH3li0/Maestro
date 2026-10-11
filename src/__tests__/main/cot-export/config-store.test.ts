@@ -67,14 +67,18 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import {
 	COT_CONFIG_STORE_NAME,
+	COT_STATE_ANCHOR_SERVICE,
 	__resetCotConfigStoreForTests,
+	cotStateAnchorAccount,
 	createCotConfigStore,
 	flushCotConfigStoreSync,
 	getCotConfigStore,
 	setCotFailureListener,
+	setCotStateAnchor,
 } from '../../../main/cot-export/config-store';
 import type { CotConfigStore, CotConfigStoreDeps } from '../../../main/cot-export/config-store';
 import { turnFilePath } from '../../../main/cot-export/layout';
+import type { Anchor, AnchorStore } from '../../../main/utils/keyring-anchor';
 import { safeStorageSeal } from '../../../main/utils/safe-storage-seal';
 import { COT_GENESIS_CHAIN_SEQ, COT_GENESIS_HASH } from '../../../shared/cotExport/types';
 import type { CotLastError } from '../../../shared/cotExport/types';
@@ -250,10 +254,11 @@ describe('cot-export/config-store', () => {
 		});
 
 		it('says that the saved state could not be read, and only then', () => {
-			expect(makeStore().getLoadProblem()).toBeNull();
+			expect(makeStore().getStateProblem()).toBeNull();
 
 			electronMock.state.key = 0x33;
-			const problem = makeStore().getLoadProblem();
+			const problem = makeStore().getStateProblem();
+			expect(problem?.kind).toBe('unreadable');
 			expect(problem?.message).toMatch(/could not read/i);
 			expect(problem?.at).toBe(START);
 		});
@@ -321,6 +326,281 @@ describe('cot-export/config-store', () => {
 			const blob = electronMock.safeStorage.encryptString('{"agents":[]}').toString('base64');
 			fs.writeFileSync(storeFile(), JSON.stringify({ blob }));
 			expect(makeStore().isEnabled(AGENT)).toBe(false);
+		});
+	});
+
+	describe('a file that went missing, or was put back from an older copy', () => {
+		/** An anchor that lives in memory, as the OS credential store would hold it. */
+		interface FakeAnchor extends AnchorStore {
+			value: Anchor | null;
+			usable: boolean;
+			reads: number;
+			writes: Anchor[];
+			writeThrows: boolean;
+		}
+
+		const makeAnchor = (): FakeAnchor => {
+			const fake: FakeAnchor = {
+				value: null,
+				usable: true,
+				reads: 0,
+				writes: [],
+				writeThrows: false,
+				available: () => fake.usable,
+				read: () => {
+					fake.reads += 1;
+					return fake.value ? { ...fake.value } : null;
+				},
+				write: (next) => {
+					if (fake.writeThrows) throw new Error('The credential store is locked.');
+					fake.value = { ...next };
+					fake.writes.push({ ...next });
+				},
+				clear: () => {
+					fake.value = null;
+				},
+			};
+			return fake;
+		};
+
+		let anchor: FakeAnchor;
+		let logs: string;
+		let secrets: number;
+
+		/** A store with the anchor, as the app would make it after a restart. */
+		const anchored = (extra: Partial<CotConfigStoreDeps> = {}): CotConfigStore =>
+			makeStore({ anchor, newSecret: () => `secret-${++secrets}`, ...extra });
+
+		beforeEach(() => {
+			anchor = makeAnchor();
+			logs = logFolder('logs');
+			secrets = 0;
+		});
+
+		it('counts each change the person makes, in the file and in the anchor', () => {
+			const store = anchored();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			expect(anchor.value).toEqual({ installSecret: 'secret-1', epoch: 1 });
+
+			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			expect(anchor.value).toEqual({ installSecret: 'secret-1', epoch: 2 });
+
+			// A head is not a change the person made: it moves with every record.
+			store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: 0 });
+			store.flushSync();
+			expect(anchor.writes).toHaveLength(2);
+
+			// A change that changes nothing is not counted either.
+			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			expect(anchor.writes).toHaveLength(2);
+		});
+
+		it('finds nothing wrong with the state it saved', async () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toBeNull();
+			expect(store.isEnabled(AGENT)).toBe(true);
+			expect((await store.getStatus(AGENT)).lastError).toBeUndefined();
+		});
+
+		it('says so when the file is gone and the anchor says there was one', async () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			fs.rmSync(storeFile());
+
+			const store = anchored();
+			// Nothing is known until the anchor is read: the start itself reads none.
+			expect(store.getStateProblem()).toBeNull();
+			expect(anchor.reads).toBe(1);
+			store.checkStateAnchor();
+
+			expect(store.isEnabled(AGENT)).toBe(false);
+			expect(store.getStateProblem()).toMatchObject({ kind: 'missing', at: START });
+			expect((await store.getStatus(AGENT)).lastError?.message).toMatch(/are missing/);
+			// Telling is not mending: the anchor still says a state is owed.
+			expect(anchor.value).toEqual({ installSecret: 'secret-1', epoch: 1 });
+			expect(fs.existsSync(storeFile())).toBe(false);
+		});
+
+		it('is in step again once the person turns export back on', () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			fs.rmSync(storeFile());
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logs }).ok).toBe(true);
+			// Past the anchor's count, under the anchor's own secret.
+			expect(anchor.value).toEqual({ installSecret: 'secret-1', epoch: 2 });
+
+			const next = anchored();
+			next.checkStateAnchor();
+			expect(next.getStateProblem()).toBeNull();
+			expect(next.isEnabled(AGENT)).toBe(true);
+		});
+
+		it('says nothing for a first start, and writes nothing to the anchor', () => {
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toBeNull();
+			expect(anchor.writes).toEqual([]);
+			expect(fs.readdirSync(dataDir)).toEqual([]);
+		});
+
+		it('takes a missing file for a reset profile when Maestro has no agent at all', () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			fs.rmSync(storeFile());
+
+			const store = anchored({ isFreshProfile: () => true });
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toBeNull();
+			// The anchor is let go, so the next start is a first start.
+			expect(anchor.value).toBeNull();
+		});
+
+		it('says so when an older copy of the file was put back, and still uses it', async () => {
+			const first = anchored();
+			first.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			const older = fs.readFileSync(storeFile());
+			first.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			first.setAgentConfig(OTHER_AGENT, { enabled: true, folder: logFolder('other') });
+			expect(anchor.value?.epoch).toBe(3);
+			fs.writeFileSync(storeFile(), older);
+
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toMatchObject({ kind: 'replaced', at: START });
+			// The older copy is what there is. Dropping it would turn everything off.
+			expect(store.getAgentConfig(AGENT)).toMatchObject({ enabled: false, folder: logs });
+			expect(store.isEnabled(AGENT)).toBe(false);
+			// It is said for an agent with an entry and for one without.
+			expect((await store.getStatus(AGENT)).lastError?.message).toMatch(/older copy/);
+			expect((await store.getStatus(OTHER_AGENT)).lastError?.message).toMatch(/older copy/);
+		});
+
+		it("is the person's own again once they change something over an older copy", async () => {
+			const first = anchored();
+			first.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			const older = fs.readFileSync(storeFile());
+			first.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			fs.writeFileSync(storeFile(), older);
+			const store = anchored();
+			store.checkStateAnchor();
+
+			store.setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			expect(store.getStateProblem()).toBeNull();
+			expect((await store.getStatus(AGENT)).lastError).toBeUndefined();
+			// Past the anchor's count, not past the older file's.
+			expect(anchor.value?.epoch).toBe(3);
+			const next = anchored();
+			next.checkStateAnchor();
+			expect(next.getStateProblem()).toBeNull();
+		});
+
+		it('says so when the file belongs to another anchor', () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			anchor.value = { installSecret: 'another-install', epoch: 1 };
+
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toMatchObject({ kind: 'replaced' });
+		});
+
+		it('does not call a file that is ahead of its anchor an older copy', () => {
+			anchor.writeThrows = true;
+			const first = anchored();
+			// The file is saved and the anchor is not: the change still holds.
+			expect(first.setAgentConfig(AGENT, { enabled: true, folder: logs }).ok).toBe(true);
+			anchor.writeThrows = false;
+			first.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			anchor.writeThrows = true;
+			first.setAgentConfig(AGENT, { enabled: true, folder: logs });
+			expect(anchor.value).toEqual({ installSecret: 'secret-1', epoch: 2 });
+
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toBeNull();
+			expect(store.isEnabled(AGENT)).toBe(true);
+		});
+
+		it('vouches for a state that has no anchor yet', () => {
+			// Saved with no anchor, as a store without one would.
+			makeStore().setAgentConfig(AGENT, { enabled: true, folder: logs });
+
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toBeNull();
+			expect(anchor.value).toEqual({ installSecret: 'secret-1', epoch: 1 });
+			// The secret is in the file too, so the next start finds them in step.
+			store.flushSync();
+			const next = anchored();
+			next.checkStateAnchor();
+			expect(next.getStateProblem()).toBeNull();
+		});
+
+		it('reads the anchor once, however often it is asked', async () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			const store = anchored();
+			const before = anchor.reads;
+
+			store.checkStateAnchor();
+			store.checkStateAnchor();
+			await store.getStatus(AGENT);
+			await store.getStatus(AGENT);
+
+			expect(anchor.reads).toBe(before + 1);
+			// A turn asks only this, and it never goes near the anchor.
+			store.isEnabled(AGENT);
+			expect(anchor.reads).toBe(before + 1);
+		});
+
+		it('checks from the dialog too, so the status is never ahead of the check', async () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			fs.rmSync(storeFile());
+
+			const status = await anchored().getStatus(AGENT);
+
+			expect(status.lastError?.message).toMatch(/are missing/);
+		});
+
+		it.each([
+			['the OS has no credential store', (): void => void (anchor.usable = false)],
+			['the OS offers no encryption', (): void => void (electronMock.state.available = false)],
+			[
+				'the credential store fails',
+				(): void => {
+					anchor.read = () => {
+						throw new Error('The credential store is locked.');
+					};
+				},
+			],
+		])('has nothing to say when %s', (_name, arrange) => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			fs.rmSync(storeFile());
+			arrange();
+
+			const store = anchored();
+			expect(() => store.checkStateAnchor()).not.toThrow();
+
+			expect(store.getStateProblem()).toBeNull();
+		});
+
+		it('leaves a file it could not read to the report it already has', () => {
+			anchored().setAgentConfig(AGENT, { enabled: true, folder: logs });
+			electronMock.state.key = 0x33;
+
+			const store = anchored();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toMatchObject({ kind: 'unreadable' });
 		});
 	});
 
@@ -955,6 +1235,67 @@ describe('cot-export/config-store', () => {
 			];
 			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
 			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logs }).ok).toBe(false);
+		});
+
+		it('compares against the anchor that was set, whether before the store was made or after', () => {
+			const held: { value: Anchor | null } = { value: null };
+			const fake: AnchorStore = {
+				available: () => true,
+				read: () => held.value,
+				write: (next) => {
+					held.value = next;
+				},
+				clear: () => {
+					held.value = null;
+				},
+			};
+			sessionsMock.sessions = [{ id: AGENT, cwd: workspace }];
+
+			// With none set, nothing is kept outside the file.
+			const store = getCotConfigStore();
+			store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') });
+			expect(held.value).toBeNull();
+
+			setCotStateAnchor(fake);
+			store.setAgentConfig(AGENT, { enabled: false, folder: logFolder('logs') });
+			expect(held.value).toMatchObject({ epoch: 2 });
+
+			// The next start: the file is gone, and Maestro still has an agent.
+			fs.rmSync(storeFile());
+			__resetCotConfigStoreForTests();
+			setCotStateAnchor(fake);
+			const next = getCotConfigStore();
+			next.checkStateAnchor();
+			expect(next.getStateProblem()).toMatchObject({ kind: 'missing' });
+		});
+
+		it('lets the anchor go when the file is gone and Maestro has no agent', () => {
+			const held: { value: Anchor | null } = { value: { installSecret: 's', epoch: 4 } };
+			setCotStateAnchor({
+				available: () => true,
+				read: () => held.value,
+				write: (next) => {
+					held.value = next;
+				},
+				clear: () => {
+					held.value = null;
+				},
+			});
+			sessionsMock.sessions = [];
+
+			const store = getCotConfigStore();
+			store.checkStateAnchor();
+
+			expect(store.getStateProblem()).toBeNull();
+			expect(held.value).toBeNull();
+		});
+
+		it('names one anchor per data folder, under a bland service', () => {
+			expect(COT_STATE_ANCHOR_SERVICE).toBe('com.maestro.device-state');
+			const account = cotStateAnchorAccount(dataDir);
+			expect(account).toMatch(/^state:[0-9a-f]{16}$/);
+			expect(cotStateAnchorAccount(path.join(dataDir, '.'))).toBe(account);
+			expect(cotStateAnchorAccount(path.join(root, 'other-data'))).not.toBe(account);
 		});
 
 		it('flushCotConfigStoreSync saves what is waiting, and never makes a store', () => {

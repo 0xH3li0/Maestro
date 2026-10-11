@@ -42,8 +42,13 @@ import type {
 	CotSetResult,
 } from '../../../shared/cotExport/types';
 import { DURATION_MS } from '../../../shared/duration';
-import { getCotConfigStore, setCotFailureListener } from '../../cot-export/config-store';
-import type { CotFailureListener } from '../../cot-export/config-store';
+import {
+	getCotConfigStore,
+	setCotFailureListener,
+	setCotStateAnchor,
+} from '../../cot-export/config-store';
+import type { CotFailureListener, CotStateProblemKind } from '../../cot-export/config-store';
+import type { AnchorStore } from '../../utils/keyring-anchor';
 import { getCotWriter } from '../../cot-export/runtime';
 import { verifyAgentChain } from '../../cot-export/verify';
 import { markDesktopOnlyChannel } from '../desktop-only-channels';
@@ -161,25 +166,54 @@ export function createCotFailureNotifier(
 	};
 }
 
-/** Kept for the reason given in `createCotFailureNotifier`. */
-let loadProblemNotice: Notification | null = null;
+/**
+ * How long after the handlers are registered the saved state is compared with
+ * its anchor in the OS credential store. That comparison is a synchronous call
+ * into the OS, and nothing a turn does waits on it, so it is kept off startup.
+ */
+export const COT_STATE_ANCHOR_CHECK_DELAY_MS = 5 * DURATION_MS.second;
+
+/** What the person is told at start, by what is wrong with the saved state. */
+const STATE_PROBLEM_NOTICES: Record<CotStateProblemKind, string> = {
+	unreadable:
+		'Chain of thought export is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
+	missing:
+		'Chain of thought export is off for every agent: its saved settings are missing. Open Edit Agent to turn it on again.',
+	replaced:
+		'The saved settings of chain of thought export were replaced with an older copy. Open Edit Agent to check which agents are recorded.',
+};
+
+/** Kept for the reason given in `createCotFailureNotifier`. Null until one was shown. */
+let stateProblemNotice: Notification | null = null;
+
+/** The check of the anchor that is still waiting, if one is. */
+let pendingAnchorCheck: ReturnType<typeof setTimeout> | null = null;
+
+/** Drops the check of the anchor that is still waiting. For tests. */
+export function __cancelCotStateAnchorCheckForTests(): void {
+	if (pendingAnchorCheck !== null) clearTimeout(pendingAnchorCheck);
+	pendingAnchorCheck = null;
+}
 
 /**
- * Tells the person that the saved state could not be read when the app
- * started. Export is then off for every agent, and nothing else would say so
- * until someone opened an Edit Agent dialog: a log that stopped must not stop
- * without a word. It does nothing when the state was read, and it never
- * throws. The registration calls it, so it is said once per start of the app.
+ * Tells the person that the saved state is not the one they last left: it
+ * could not be read, it is missing, or it is an older copy. Recording is then
+ * off, or set as it once was, and nothing else would say so until someone
+ * opened an Edit Agent dialog: a log that stopped must not stop without a
+ * word. It is said once per start of the app, it does nothing when the state
+ * is in order, and it never throws.
  */
-function notifyCotLoadProblem(): void {
+function notifyCotStateProblem(): void {
 	try {
-		if (getCotConfigStore().getLoadProblem() === null) return;
+		if (stateProblemNotice !== null) return;
+		const problem = getCotConfigStore().getStateProblem();
+		if (problem === null) return;
 		if (!Notification.isSupported()) return;
-		loadProblemNotice = new Notification({
+		stateProblemNotice = new Notification({
 			title: 'Maestro',
-			body: 'Chain of thought export is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
+			body: STATE_PROBLEM_NOTICES[problem.kind],
 		});
-		loadProblemNotice.show();
+		stateProblemNotice.show();
 	} catch {
 		// The dialog still shows the reason. A notice that cannot be raised
 		// must not keep the handlers from being registered.
@@ -299,6 +333,12 @@ export interface CotExportHandlerDependencies {
 	 * window, and no helper window that loads the same page.
 	 */
 	isAppWindow: (window: BrowserWindow) => boolean;
+	/**
+	 * Where the count of the person's changes is kept outside the data folder
+	 * (`createCotStateKeyringAnchor`). It is what makes a saved state that was
+	 * deleted, or put back from an older copy, something the person is told of.
+	 */
+	anchor: AnchorStore;
 }
 
 /**
@@ -323,5 +363,21 @@ export function registerCotExportHandlers(deps: CotExportHandlerDependencies): v
 		});
 	}
 	setCotFailureListener(createCotFailureNotifier(deps.getAgentName));
-	notifyCotLoadProblem();
+	setCotStateAnchor(deps.anchor);
+	stateProblemNotice = null;
+	// A file that could not be read is known at once. One that is missing, or
+	// an older copy, is known only once the anchor was read.
+	notifyCotStateProblem();
+	if (pendingAnchorCheck !== null) clearTimeout(pendingAnchorCheck);
+	pendingAnchorCheck = setTimeout(() => {
+		pendingAnchorCheck = null;
+		try {
+			getCotConfigStore().checkStateAnchor();
+		} catch {
+			// The store could not be made. There is nothing to compare.
+		}
+		notifyCotStateProblem();
+	}, COT_STATE_ANCHOR_CHECK_DELAY_MS);
+	// A check that is still waiting must not keep the app from quitting.
+	pendingAnchorCheck.unref?.();
 }

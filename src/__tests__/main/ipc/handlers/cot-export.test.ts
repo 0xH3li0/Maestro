@@ -129,11 +129,14 @@ import { verifyAgentChain } from '../../../../main/cot-export/verify';
 import type { CotRecordDraft } from '../../../../main/cot-export/writer';
 import {
 	COT_FAILURE_NOTICE_INTERVAL_MS,
+	COT_STATE_ANCHOR_CHECK_DELAY_MS,
+	__cancelCotStateAnchorCheckForTests,
 	assertDesktopSender,
 	registerCotExportHandlers,
 	shortFailureReason,
 } from '../../../../main/ipc/handlers/cot-export';
 import { handleBridgeInvoke } from '../../../../main/web-server/handlers/bridgeHandlers';
+import type { Anchor, AnchorStore } from '../../../../main/utils/keyring-anchor';
 import type { WebClient } from '../../../../main/web-server/types';
 import { isDesktopOnlyChannel } from '../../../../main/ipc/desktop-only-channels';
 import { COT_EXPORT_CHANNELS } from '../../../../shared/cotExport/channels';
@@ -219,6 +222,18 @@ describe('cot-export IPC handlers', () => {
 	let dataDir: string;
 	let workspace: string;
 	let walkChain: typeof verifyAgentChain;
+	/** What the OS credential store holds for this app, across "restarts". */
+	let anchorValue: Anchor | null;
+	const anchor: AnchorStore = {
+		available: () => true,
+		read: () => anchorValue,
+		write: (next) => {
+			anchorValue = next;
+		},
+		clear: () => {
+			anchorValue = null;
+		},
+	};
 
 	/** A log folder outside every workspace. `set` creates it. */
 	const logFolder = (name: string): string => path.join(root, name);
@@ -279,6 +294,7 @@ describe('cot-export IPC handlers', () => {
 		electronMock.state.notificationsSupported = true;
 		electronMock.state.notices.length = 0;
 		electronMock.invokeHandlers.clear();
+		anchorValue = null;
 		sessionsMock.sessions = [
 			{ id: AGENT, name: 'Backend', cwd: workspace, projectRoot: workspace },
 			{ id: OTHER_AGENT, name: 'Frontend', cwd: workspace, projectRoot: workspace },
@@ -291,6 +307,19 @@ describe('cot-export IPC handlers', () => {
 		register();
 	});
 
+	/**
+	 * The next start of the app: a new store and a new writer over what is on
+	 * disk, and the handlers registered again. The anchor keeps its value, as
+	 * the OS credential store does.
+	 */
+	const restart = (): void => {
+		__resetCotConfigStoreForTests();
+		__resetCotWriterForTests();
+		electronMock.invokeHandlers.clear();
+		electronMock.state.notices.length = 0;
+		register();
+	};
+
 	/** Registers the handlers the way the app does at start. */
 	const register = (): void => {
 		registerCotExportHandlers({
@@ -299,6 +328,7 @@ describe('cot-export IPC handlers', () => {
 				return typeof name === 'string' ? name : undefined;
 			},
 			isAppWindow: (window) => !electronMock.state.helperWindows.has(window),
+			anchor,
 		});
 	};
 
@@ -307,6 +337,8 @@ describe('cot-export IPC handlers', () => {
 		// timer. Going back to real timers discards it, so it cannot fire after
 		// the temp dir is gone and bring the directory back.
 		vi.useRealTimers();
+		// The check of the anchor would make a store over a temp dir that is gone.
+		__cancelCotStateAnchorCheckForTests();
 		flushCotConfigStoreSync();
 		__resetCotConfigStoreForTests();
 		__resetCotWriterForTests();
@@ -913,12 +945,7 @@ describe('cot-export IPC handlers', () => {
 				storeFile(),
 				JSON.stringify({ blob: Buffer.from('not ours').toString('base64') })
 			);
-			__resetCotConfigStoreForTests();
-			__resetCotWriterForTests();
-			electronMock.invokeHandlers.clear();
-			electronMock.state.notices.length = 0;
-
-			register();
+			restart();
 
 			expect(getCotConfigStore().isEnabled(AGENT)).toBe(false);
 			expect(electronMock.state.notices).toEqual([
@@ -931,16 +958,82 @@ describe('cot-export IPC handlers', () => {
 		});
 
 		it('says nothing at start when the saved state was read, or there was none', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			// A first start: nothing on disk, nothing in the credential store.
+			restart();
+			vi.advanceTimersByTime(COT_STATE_ANCHOR_CHECK_DELAY_MS);
 			expect(electronMock.state.notices).toEqual([]);
+			expect(anchorValue).toBeNull();
 
 			await turnOn(AGENT, logFolder('logs'));
-			__resetCotConfigStoreForTests();
-			__resetCotWriterForTests();
-			electronMock.invokeHandlers.clear();
-			register();
+			restart();
+			vi.advanceTimersByTime(COT_STATE_ANCHOR_CHECK_DELAY_MS);
 
 			expect(getCotConfigStore().isEnabled(AGENT)).toBe(true);
 			expect(electronMock.state.notices).toEqual([]);
+		});
+
+		it('tells the person, a moment after start, that the saved state went missing', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			await turnOn(AGENT, logFolder('logs'));
+			expect(anchorValue).toMatchObject({ epoch: 1 });
+			// Something removed the file between two runs of the app.
+			fs.rmSync(storeFile());
+
+			restart();
+
+			// Not during startup: reading the credential store is kept off it.
+			expect(electronMock.state.notices).toEqual([]);
+			vi.advanceTimersByTime(COT_STATE_ANCHOR_CHECK_DELAY_MS - 1);
+			expect(electronMock.state.notices).toEqual([]);
+			vi.advanceTimersByTime(1);
+
+			expect(getCotConfigStore().isEnabled(AGENT)).toBe(false);
+			expect(electronMock.state.notices).toEqual([
+				{
+					title: 'Maestro',
+					body: 'Chain of thought export is off for every agent: its saved settings are missing. Open Edit Agent to turn it on again.',
+					shown: true,
+				},
+			]);
+			expect(
+				(await fromWindow<CotAgentStatus>(COT_EXPORT_CHANNELS.status, AGENT)).lastError?.message
+			).toMatch(/are missing/);
+		});
+
+		it('tells the person that an older copy of the saved state was put back', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			const logs = logFolder('logs');
+			await fromWindow(COT_EXPORT_CHANNELS.set, AGENT, { enabled: false, folder: logs });
+			const older = fs.readFileSync(storeFile());
+			await turnOn(AGENT, logs);
+			fs.writeFileSync(storeFile(), older);
+
+			restart();
+			vi.advanceTimersByTime(COT_STATE_ANCHOR_CHECK_DELAY_MS);
+
+			expect(electronMock.state.notices).toEqual([
+				{
+					title: 'Maestro',
+					body: 'The saved settings of chain of thought export were replaced with an older copy. Open Edit Agent to check which agents are recorded.',
+					shown: true,
+				},
+			]);
+		});
+
+		it('says it once per start, however the problem was found', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			await turnOn(AGENT, logFolder('logs'));
+			fs.writeFileSync(
+				storeFile(),
+				JSON.stringify({ blob: Buffer.from('not ours').toString('base64') })
+			);
+
+			restart();
+			// Known at once, with no anchor needed, and not said again by the check.
+			expect(electronMock.state.notices).toHaveLength(1);
+			vi.advanceTimersByTime(COT_STATE_ANCHOR_CHECK_DELAY_MS);
+			expect(electronMock.state.notices).toHaveLength(1);
 		});
 
 		describe('shortFailureReason', () => {

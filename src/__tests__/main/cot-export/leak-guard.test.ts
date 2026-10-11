@@ -32,7 +32,8 @@ import { describe, expect, it } from 'vitest';
 // ============================================================================
 
 /** What no walked file may contain. The search ignores case. */
-const FORBIDDEN = /cot[-_ ]?export|chain[- ]of[- ]thought export|cotExport|maestro-device-state/i;
+const FORBIDDEN =
+	/cot[-_ ]?export|chain[- ]of[- ]thought export|cotExport|maestro[-.]device-state/i;
 
 /**
  * Where an agent or a contributor would look, relative to the repo root. A
@@ -180,6 +181,8 @@ describe('the rule', () => {
 			'Chain of Thought Export',
 			'chain-of-thought export',
 			'maestro-device-state.json',
+			// The service name of the anchor in the OS credential store.
+			'com.maestro.device-state',
 			"import x from '../cot-export/runtime'",
 		]) {
 			expect(FORBIDDEN.test(spelling), spelling).toBe(true);

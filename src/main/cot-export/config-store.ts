@@ -20,8 +20,9 @@
  * The seal keeps a search of the disk from turning up a log folder. It does
  * not stop a process that sets out to get the same key from the OS.
  *
- * For someone who never turned this on there is no file, and the OS key store
- * is never asked for anything: not at start, and not at any turn.
+ * For someone who never turned this on there is no file, and nothing is ever
+ * written to the OS key store. It is read once, a few seconds after the app
+ * starts (see "A file that went missing" below), and never at a turn.
  *
  * WHY THE HEAD IS KEPT HERE
  * A log folder cannot vouch for records that were removed from its end. So the
@@ -39,6 +40,23 @@
  * at the genesis hash in the same folder would repeat every position, and the
  * verifier reports that as a break.
  *
+ * A FILE THAT WENT MISSING
+ * A deleted file reads exactly like a first start, and an older sealed copy put
+ * back in its place opens like the newest. Either would turn recording off, or
+ * back to an earlier choice, with nobody told. So each change the person makes
+ * is counted (`epoch`), and the count is kept in two places: inside the sealed
+ * file, and in the OS credential store (`AnchorStore`). `checkStateAnchor`
+ * compares them once per start:
+ * - the credential store has a count and the file is gone: the person is told
+ *   that the settings are missing
+ * - the file's count is behind, or the file belongs to another anchor: the
+ *   person is told that an older copy was put back. The file is still used as
+ *   it is, because dropping it would turn recording off, which is the outcome
+ *   this check exists to make visible.
+ * The limit, stated plainly: a process that runs as the same OS user can remove
+ * the credential entry as well as the file, and then nothing is left to
+ * compare. This makes the removal of one file loud. It is not a wall.
+ *
  * WHEN IT SAVES
  * A change the person makes (`setAgentConfig`) is saved before the call
  * returns. The head and the status change with every record, so they are saved
@@ -50,6 +68,7 @@
  * `src/shared/cotExport/types.ts` before you change or expose anything here.
  */
 
+import { createHash, randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -67,6 +86,8 @@ import type {
 import { corruptStorePath, createStoreDeserializer } from '../stores/corrupt-store-recovery';
 import { getSessionsStore, getSyncPath } from '../stores/getters';
 import { debounce } from '../utils/debounce';
+import { createKeyringAnchor, noAnchor } from '../utils/keyring-anchor';
+import type { AnchorStore } from '../utils/keyring-anchor';
 import { logger } from '../utils/logger';
 import { safeStorageSeal } from '../utils/safe-storage-seal';
 import type { SealProvider } from '../utils/safe-storage-seal';
@@ -106,6 +127,27 @@ const LOG_CONTEXT = 'Stores';
 const UNREADABLE_MESSAGE =
 	'Maestro could not read the saved settings for this feature, so it is off for every agent until you turn it on again.';
 
+/** What the person is told when the saved state is gone and the anchor says there was one. */
+const MISSING_MESSAGE =
+	'The saved settings for this feature are missing, so it is off for every agent until you turn it on again.';
+
+/** What the person is told when the file on disk is older than the last change they made. */
+const REPLACED_MESSAGE =
+	'The saved settings for this feature were replaced with an older copy. Check which agents have it turned on, then choose a folder or change the switch to confirm.';
+
+/**
+ * Why the saved state is not the one the person last left:
+ * - `unreadable`: there is a file and it could not be read
+ * - `missing`: there is no file, and the credential store says there was one
+ * - `replaced`: the file is an older copy, or belongs to another anchor
+ */
+export type CotStateProblemKind = 'unreadable' | 'missing' | 'replaced';
+
+/** A problem with the saved state as a whole, for the notice raised at start. */
+export interface CotStateProblem extends CotLastError {
+	kind: CotStateProblemKind;
+}
+
 /** Everything the store holds about one agent. */
 interface CotAgentEntry {
 	config: CotAgentConfig;
@@ -122,6 +164,13 @@ interface CotAgentEntry {
 /** The state as it is sealed, or written under `plain`. */
 interface CotStoreState {
 	agents: Record<string, CotAgentEntry>;
+	/**
+	 * How many changes the person has made. The same number is kept in the OS
+	 * credential store, and a file whose number is behind is an older copy.
+	 */
+	epoch?: number;
+	/** Binds this file to its anchor in the credential store. */
+	installSecret?: string;
 }
 
 /** The store file: one of the two fields, never both. */
@@ -157,6 +206,19 @@ export interface CotConfigStoreDeps {
 	 * up. A throw from it goes nowhere.
 	 */
 	onError?: CotFailureListener;
+	/**
+	 * Where the count of the person's changes is kept outside the data folder.
+	 * Defaults to none, and then a missing or older file cannot be told from an
+	 * honest one.
+	 */
+	anchor?: AnchorStore;
+	/**
+	 * Whether Maestro has no agents at all. A missing file is then a profile
+	 * that was reset, not a file that was taken away, and nobody is told.
+	 */
+	isFreshProfile?: () => boolean;
+	/** A new install secret. Defaults to 32 random bytes as hex. */
+	newSecret?: () => string;
 	/** The clock, in epoch milliseconds. Defaults to `Date.now`. */
 	now?: () => number;
 }
@@ -216,11 +278,17 @@ export interface CotConfigStore {
 	/** What the Edit Agent dialog shows. It reads today's folders to count turns. */
 	getStatus(agentId: string): Promise<CotAgentStatus>;
 	/**
-	 * Set when the saved state could not be read at start, so export is off for
-	 * every agent until the person turns it on again. Null when it was read, or
-	 * when there was nothing to read.
+	 * Compares the saved state with the anchor in the OS credential store, once.
+	 * A later call does nothing. It makes a synchronous call into the OS, so
+	 * call it after startup and not during it. It never throws.
 	 */
-	getLoadProblem(): CotLastError | null;
+	checkStateAnchor(): void;
+	/**
+	 * Set when the saved state is not the one the person last left: it could
+	 * not be read, it is missing, or it is an older copy. Null otherwise. The
+	 * last two are known only after `checkStateAnchor`.
+	 */
+	getStateProblem(): CotStateProblem | null;
 	/** Saves now whatever is still waiting. For the way out of the app. */
 	flushSync(): void;
 }
@@ -306,6 +374,18 @@ function readAgents(raw: unknown): Map<string, CotAgentEntry> {
 	return agents;
 }
 
+/** The count and the install secret of a stored state. A state with neither is at zero. */
+function readFreshness(raw: unknown): { epoch: number; installSecret: string | null } {
+	const state = isRecord(raw) ? raw : {};
+	return {
+		epoch: typeof state.epoch === 'number' && Number.isFinite(state.epoch) ? state.epoch : 0,
+		installSecret:
+			typeof state.installSecret === 'string' && state.installSecret !== ''
+				? state.installSecret
+				: null,
+	};
+}
+
 /** Why a save failed, in one sentence. */
 function describeSaveError(error: unknown): string {
 	const code = (error as NodeJS.ErrnoException | null)?.code;
@@ -320,6 +400,8 @@ function describeSaveError(error: unknown): string {
 
 export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 	const now = deps.now ?? Date.now;
+	const anchor = deps.anchor ?? noAnchor();
+	const newSecret = deps.newSecret ?? ((): string => randomBytes(32).toString('hex'));
 	const storePath = path.resolve(deps.cwd, `${COT_CONFIG_STORE_NAME}.json`);
 	const store = new Store<CotStoreFile>({
 		name: COT_CONFIG_STORE_NAME,
@@ -336,7 +418,19 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 	 * Set when the file on disk could not be read at start. It is shown as the
 	 * last error of every agent the person has not set up again since.
 	 */
-	let loadProblem: CotLastError | null = null;
+	let loadProblem: CotStateProblem | null = null;
+	/**
+	 * Set when the file was read and is an older copy. It is shown for every
+	 * agent that has no failure of its own, until the person makes a change.
+	 */
+	let replacedProblem: CotStateProblem | null = null;
+	/** How many changes the person has made, as the file on disk has it. */
+	let epoch = 0;
+	/** What binds the file to its anchor. Null until the first change is saved. */
+	let installSecret: string | null = null;
+	/** There was no state on disk at start: a first start, or a file that was removed. */
+	let nothingOnDisk = false;
+	let anchorChecked = false;
 	/**
 	 * The file on disk is one this start could not read. It is moved aside,
 	 * never written over, before the first save.
@@ -356,7 +450,10 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 	 * Writes `next` to disk, sealed when the OS can seal. It throws when the
 	 * state could not be saved, and then the file on disk is as it was.
 	 */
-	function write(next: Map<string, CotAgentEntry>): void {
+	function write(
+		next: Map<string, CotAgentEntry>,
+		freshness: { epoch: number; installSecret: string | null } = { epoch, installSecret }
+	): void {
 		if (unreadableOnDisk) {
 			// The bytes this start could not read can be another start's whole
 			// state: a keyring that was locked today, or a build signed with
@@ -366,7 +463,8 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			}
 			unreadableOnDisk = false;
 		}
-		const state: CotStoreState = { agents: Object.fromEntries(next) };
+		const state: CotStoreState = { agents: Object.fromEntries(next), epoch: freshness.epoch };
+		if (freshness.installSecret !== null) state.installSecret = freshness.installSecret;
 		// Assigning the whole document replaces it, so a `plain` left from a
 		// time without encryption does not stay beside a new `blob`.
 		store.store = deps.seal.available()
@@ -406,15 +504,22 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			try {
 				// With no encryption on offer today there is no key to open it with.
 				if (!deps.seal.available()) throw new Error('No encryption is available.');
-				agents = readAgents(JSON.parse(deps.seal.unseal(Buffer.from(file.blob, 'base64'))));
+				const state: unknown = JSON.parse(deps.seal.unseal(Buffer.from(file.blob, 'base64')));
+				agents = readAgents(state);
+				({ epoch, installSecret } = readFreshness(state));
 			} catch {
 				markUnreadable();
 			}
 			return;
 		}
-		if (file.plain === undefined) return; // A first start: nothing is stored yet.
+		if (file.plain === undefined) {
+			// A first start, or a file that was removed. The anchor tells them apart.
+			nothingOnDisk = true;
+			return;
+		}
 		try {
 			agents = readAgents(file.plain);
+			({ epoch, installSecret } = readFreshness(file.plain));
 		} catch {
 			markUnreadable();
 			return;
@@ -431,14 +536,62 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 	}
 
 	/**
-	 * No log line: the person is told on their own screen (`getLoadProblem`),
+	 * No log line: the person is told on their own screen (`getStateProblem`),
 	 * and a line here would tell anything that reads Maestro's logs that the
 	 * file had stopped being readable.
 	 */
 	function markUnreadable(): void {
 		agents = new Map();
 		unreadableOnDisk = true;
-		loadProblem = { message: UNREADABLE_MESSAGE, at: now() };
+		loadProblem = { kind: 'unreadable', message: UNREADABLE_MESSAGE, at: now() };
+	}
+
+	/** Whether there is an anchor to compare against. Never throws. */
+	function anchorUsable(): boolean {
+		try {
+			// With no seal the state lies in the clear, where anyone can set its
+			// count, so an anchor would vouch for nothing.
+			return deps.seal.available() && anchor.available();
+		} catch {
+			return false;
+		}
+	}
+
+	function checkStateAnchor(): void {
+		if (anchorChecked) return;
+		anchorChecked = true;
+		try {
+			if (!anchorUsable()) return;
+			const held = anchor.read();
+			if (!held) {
+				// State from before there was an anchor, or an anchor that was
+				// removed while the file was left. Vouch for the file as it is.
+				if (agents.size > 0) {
+					installSecret ??= newSecret();
+					anchor.write({ installSecret, epoch });
+					persistSoon();
+				}
+				return;
+			}
+			// A file that could not be read is already reported.
+			if (loadProblem) return;
+			if (nothingOnDisk) {
+				if (deps.isFreshProfile?.()) {
+					// The whole profile was reset. There is no agent to record, and
+					// an anchor left behind would call every later start a loss.
+					anchor.clear();
+					return;
+				}
+				loadProblem = { kind: 'missing', message: MISSING_MESSAGE, at: now() };
+				return;
+			}
+			if (installSecret !== held.installSecret || epoch < held.epoch) {
+				replacedProblem = { kind: 'replaced', message: REPLACED_MESSAGE, at: now() };
+			}
+		} catch {
+			// A credential store that fails has nothing to say. The state is used
+			// as it was read, which is what happens with no anchor at all.
+		}
 	}
 
 	/** The agent's chain in `folder`, as the live object, and where it is kept. */
@@ -563,12 +716,41 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			// worse than one that says it could not be changed.
 			const candidate = new Map(agents);
 			candidate.set(agentId, nextEntry);
+			// A change the person makes is what the anchor counts. The new count
+			// is past both the file's and the anchor's, so a change made over an
+			// older copy leaves the two in step again.
+			const anchored = anchorUsable();
+			let held: ReturnType<AnchorStore['read']> = null;
+			if (anchored) {
+				try {
+					held = anchor.read();
+				} catch {
+					held = null;
+				}
+			}
+			const freshness = {
+				epoch: Math.max(epoch, held?.epoch ?? 0) + 1,
+				installSecret: installSecret ?? held?.installSecret ?? (anchored ? newSecret() : null),
+			};
 			try {
-				write(candidate);
+				write(candidate, freshness);
 			} catch (error) {
 				return { ok: false, reason: describeSaveError(error) };
 			}
 			agents = candidate;
+			({ epoch, installSecret } = freshness);
+			nothingOnDisk = false;
+			// The person has seen the state and changed it: it is theirs again.
+			replacedProblem = null;
+			if (anchored && installSecret !== null) {
+				try {
+					// The file first, the anchor second. If this write fails the file
+					// is ahead of the anchor, which is never read as an older copy.
+					anchor.write({ installSecret, epoch });
+				} catch {
+					// A locked credential store. The next change tries again.
+				}
+			}
 			saveFailing = false;
 			// That save held every head and status as well, so nothing is waiting.
 			persistSoon.cancel();
@@ -636,6 +818,8 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 		},
 
 		async getStatus(agentId) {
+			// The dialog must not be ahead of the check that runs after startup.
+			checkStateAnchor();
 			const entry = agents.get(agentId);
 			const config = entry?.config ?? DEFAULT_CONFIG;
 			let turnsToday = 0;
@@ -656,13 +840,19 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			if (entry?.status.lastWriteAt !== undefined) status.lastWriteAt = entry.status.lastWriteAt;
 			// An agent the person has not set up since a failed start is off
 			// because of that failure, so that is what its status says.
-			const lastError = entry ? entry.status.lastError : (loadProblem ?? undefined);
-			if (lastError) status.lastError = { ...lastError };
+			// The same for an older copy: it is said for every agent, since it is
+			// about what each of them is set to.
+			const problem = (entry ? null : loadProblem) ?? replacedProblem;
+			const lastError = entry?.status.lastError ?? problem;
+			if (lastError) status.lastError = { message: lastError.message, at: lastError.at };
 			return status;
 		},
 
-		getLoadProblem() {
-			return loadProblem ? { ...loadProblem } : null;
+		checkStateAnchor,
+
+		getStateProblem() {
+			const problem = loadProblem ?? replacedProblem;
+			return problem ? { ...problem } : null;
 		},
 
 		flushSync() {
@@ -677,6 +867,54 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 
 let _store: CotConfigStore | null = null;
 let _failureListener: CotFailureListener | null = null;
+let _stateAnchor: AnchorStore | null = null;
+
+/**
+ * Service name of the anchor in the OS credential store. Bland for the reason
+ * the file name is: the credential store lists its entries by name.
+ */
+export const COT_STATE_ANCHOR_SERVICE = 'com.maestro.device-state';
+
+/**
+ * Account name of the anchor for one data folder. A development run, a demo
+ * instance and the installed app each have a data folder of their own, and
+ * each must have an anchor of its own: one shared entry would make every one
+ * of them call the others' files older copies.
+ */
+export function cotStateAnchorAccount(userDataPath: string): string {
+	const digest = createHash('sha256').update(path.resolve(userDataPath), 'utf8').digest('hex');
+	return `state:${digest.slice(0, 16)}`;
+}
+
+/**
+ * The anchor the app's store compares its file against, or null for none. Like
+ * the failure listener it can be set before or after the store is made, and it
+ * is read each time it is needed. The app sets it where it registers the IPC
+ * handlers of this feature. With none set, nothing touches the OS credential
+ * store, which is what a test wants.
+ */
+export function setCotStateAnchor(anchor: AnchorStore | null): void {
+	_stateAnchor = anchor;
+}
+
+/**
+ * The anchor of this app's data folder, in the OS credential store. Making it
+ * touches nothing: the native keyring module is loaded at the first use.
+ */
+export function createCotStateKeyringAnchor(): AnchorStore {
+	return createKeyringAnchor(
+		COT_STATE_ANCHOR_SERVICE,
+		cotStateAnchorAccount(app.getPath('userData'))
+	);
+}
+
+/** The app's anchor as the store sees it: whichever was set last, read at each call. */
+const lateBoundAnchor: AnchorStore = {
+	available: () => _stateAnchor?.available() ?? false,
+	read: () => _stateAnchor?.read() ?? null,
+	write: (value) => _stateAnchor?.write(value),
+	clear: () => _stateAnchor?.clear(),
+};
 
 /**
  * Who is told when the app's store keeps a failure, or null for nobody. It can
@@ -762,6 +1000,11 @@ export function getCotConfigStore(): CotConfigStore {
 			}),
 			// Read at each failure, so a listener set after this point is heard.
 			onError: (agentId, error) => _failureListener?.(agentId, error),
+			anchor: lateBoundAnchor,
+			isFreshProfile: () => {
+				const sessions: unknown = getSessionsStore().get('sessions', []);
+				return !Array.isArray(sessions) || sessions.length === 0;
+			},
 		});
 	}
 	return _store;
@@ -780,4 +1023,5 @@ export function flushCotConfigStoreSync(): void {
 export function __resetCotConfigStoreForTests(): void {
 	_store = null;
 	_failureListener = null;
+	_stateAnchor = null;
 }
