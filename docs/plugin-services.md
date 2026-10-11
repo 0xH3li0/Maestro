@@ -212,7 +212,12 @@ fixture, not a bundled or automatically installed plugin.
 6. Main cleans the parent job before delivering success or failure, then checks
    both principals/binding again. Late provider replies are ignored after cancel,
    timeout or crash. `result` consumes the retained call; unclaimed calls/results
-   expire at the original parent deadline. Cleanup failure prevents success and
+   expire at the original parent deadline. Consumer teardown removes its own
+   unreachable calls and disarms their watchdogs as soon as abort and drain
+   succeed, notifying dependents of released capacity. Provider teardown retains
+   calls owned by surviving consumers so they can retrieve the typed failure.
+   Teardown releases owner service reservations only after successful abort/drain;
+   failed cleanup remains retryable. Cleanup failure prevents success and
    the underlying media slot remains retained until broker cleanup succeeds.
 
 Bounds: 4 KiB UTF-8 service request, 64 KiB result, 4 retained service calls globally,

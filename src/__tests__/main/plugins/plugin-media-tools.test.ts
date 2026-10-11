@@ -899,7 +899,7 @@ describe('service media leases', () => {
 			tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {})
 		).toThrow('MediaInvalid');
 	});
-	it.each(['cancel', 'stop', 'revoke', 'late-start'] as const)(
+	it.each(['cancel', 'stop', 'consumer-stop', 'revoke', 'late-start'] as const)(
 		'%s drains blocked service media only after native exit and private-file removal',
 		async (mode) => {
 			const jobId = await open();
@@ -968,15 +968,17 @@ describe('service media leases', () => {
 			const drain =
 				mode === 'stop'
 					? registry.cleanupPlugin('provider')
-					: mode === 'revoke'
-						? (() => {
-								allowed = false;
-								registry.reconcile();
-								return registry.result('p', reservation.callId);
-							})()
-						: mode === 'late-start'
-							? reply.promise.then((late) => registry.cancel('p', late.callId))
-							: registry.cancel('p', reservation.callId);
+					: mode === 'consumer-stop'
+						? registry.cleanupPlugin('p')
+						: mode === 'revoke'
+							? (() => {
+									allowed = false;
+									registry.reconcile();
+									return registry.result('p', reservation.callId);
+								})()
+							: mode === 'late-start'
+								? reply.promise.then((late) => registry.cancel('p', late.callId))
+								: registry.cancel('p', reservation.callId);
 			const outcome = drain.then(
 				() => {
 					drained = true;
@@ -990,10 +992,17 @@ describe('service media leases', () => {
 			if (mode === 'late-start') reply.resolve(reservation);
 			await vi.waitFor(() => expect(kill).toHaveBeenCalledWith('SIGKILL'));
 			expect(drained).toBe(false);
+			if (mode === 'consumer-stop') expect(registry.ownsCancel('p', reservation)).toBe(true);
 			expect(await fs.readdir(root)).toHaveLength(1);
 			exitNative();
 			await outcome;
 			expect(drained).toBe(true);
+			if (mode === 'consumer-stop') {
+				expect(registry.ownsCancel('p', reservation)).toBe(false);
+				await expect(registry.result('p', reservation.callId)).rejects.toMatchObject({
+					code: 'ServiceInvalid',
+				});
+			}
 			expect(await fs.readdir(root)).toEqual([]);
 			await expect(
 				registry.media('provider', 'probe', reservation.callId, audioId)

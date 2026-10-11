@@ -32,8 +32,12 @@ let closedFailure: boolean;
 let lifetime: number;
 let holding: boolean;
 let running: Set<string>;
+let changed: ReturnType<typeof vi.fn>;
+let cancelProvider: ReturnType<typeof vi.fn>;
 let media: Pick<PluginMediaTools, 'delegate' | 'serviceStatus'>;
 beforeEach(() => {
+	changed = vi.fn();
+	cancelProvider = vi.fn();
 	revoked = new Set();
 	leases = [];
 	cleaned = 0;
@@ -86,7 +90,7 @@ beforeEach(() => {
 	);
 	media = {
 		delegate: vi.fn((owner, job, audio, _options, authorize) => {
-			if (owner !== 'consumer' || job !== request.jobId || audio !== request.audioId)
+			if (!records[owner]?.requires || job !== request.jobId || audio !== request.audioId)
 				throw Object.assign(new Error('MediaInvalid'), { code: 'MediaInvalid' });
 			authorize();
 			const controller = new AbortController();
@@ -118,15 +122,18 @@ beforeEach(() => {
 			!revoked.has(`${id}:${cap}`) &&
 			(cap !== 'services:call' || target === 'provider/transcription'),
 		invoke,
+		changed,
+		cancelProvider,
 		media: media as PluginMediaTools,
 		settingsPanel: (_id, panel) => panel === 'config',
 	});
 	host.register('provider', 'transcription');
 });
 afterEach(async () => {
-	host.cleanupPlugin('consumer');
-	host.cleanupPlugin('provider');
-	await Promise.resolve();
+	closedFailure = false;
+	await Promise.allSettled([...running].map((id) => host.cleanupPlugin(id)));
+	await host.cleanupPlugin('consumer');
+	await host.cleanupPlugin('provider');
 	vi.useRealTimers();
 });
 
@@ -317,6 +324,143 @@ describe('host-mediated service lifecycle', () => {
 			expect(leases[0].signal.aborted).toBe(true);
 		}
 	);
+	it.each([true, false])(
+		'consumer cleanup releases both local slots after drain (in flight: %s)',
+		async (inFlight) => {
+			vi.useFakeTimers();
+			holding = inFlight;
+			const first = host.start('consumer', 'voice', request);
+			host.start('consumer', 'voice', request);
+			expect((await host.status('consumer', 'voice')).state).toBe('busy');
+			const retained: boolean[] = [];
+			changed.mockImplementation(() => retained.push(host.ownsCancel('consumer', first)));
+			await host.cleanupPlugin('consumer');
+			expect(leases.every((lease) => lease.signal.aborted)).toBe(true);
+			expect((await host.status('consumer', 'voice')).state).toBe('ready');
+			expect(vi.getTimerCount()).toBe(0);
+			expect(host.ownsCancel('consumer', first)).toBe(false);
+			await expect(host.result('consumer', first.callId)).rejects.toMatchObject({
+				code: 'ServiceInvalid',
+			});
+			expect(retained[0]).toBe(true);
+			expect(retained.at(-1)).toBe(false);
+			host.start('consumer', 'voice', request);
+			host.start('consumer', 'voice', request);
+			expect(invoke).toHaveBeenCalledTimes(4);
+		}
+	);
+	it('consumer cleanup releases four global slots for an unrelated surviving consumer', async () => {
+		vi.useFakeTimers();
+		holding = true;
+		for (const id of ['other', 'survivor']) {
+			records[id] = { ...records.consumer, id };
+			running.add(id);
+		}
+		for (const id of ['consumer', 'other']) {
+			host.start(id, 'voice', request);
+			host.start(id, 'voice', request);
+		}
+		expect(() => host.start('survivor', 'voice', request)).toThrow('ServiceBusy');
+		await Promise.all([host.cleanupPlugin('consumer'), host.cleanupPlugin('other')]);
+		expect((await host.status('survivor', 'voice')).state).toBe('ready');
+		expect(vi.getTimerCount()).toBe(0);
+		host.start('survivor', 'voice', request);
+		host.start('survivor', 'voice', request);
+		expect(invoke).toHaveBeenCalledTimes(6);
+	});
+	it('retains owner reservations and cleanup barrier until media drain finishes', async () => {
+		vi.useFakeTimers();
+		holding = true;
+		const first = host.start('consumer', 'voice', request);
+		host.start('consumer', 'voice', request);
+		const gate = Promise.withResolvers<void>();
+		for (const lease of leases) {
+			const close = lease.close;
+			lease.close = vi.fn(async () => {
+				await close();
+				await gate.promise;
+			});
+		}
+		let drained = false;
+		const cleanup = host.cleanupPlugin('consumer').then(() => {
+			drained = true;
+		});
+		await Promise.resolve();
+		expect(drained).toBe(false);
+		expect(host.ownsCancel('consumer', first)).toBe(true);
+		expect((await host.status('consumer', 'voice')).state).toBe('busy');
+		expect(() => host.start('consumer', 'voice', request)).toThrow('ServiceBusy');
+		gate.resolve();
+		await cleanup;
+		expect(drained).toBe(true);
+		expect(host.ownsCancel('consumer', first)).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
+		host.start('consumer', 'voice', request);
+		host.start('consumer', 'voice', request);
+	});
+	it('retains failed owner cleanup for retry before releasing capacity', async () => {
+		vi.useFakeTimers();
+		holding = true;
+		const first = host.start('consumer', 'voice', request);
+		host.start('consumer', 'voice', request);
+		closedFailure = true;
+		await expect(host.cleanupPlugin('consumer')).rejects.toThrow('secret cleanup path');
+		expect(host.ownsCancel('consumer', first)).toBe(true);
+		expect((await host.status('consumer', 'voice')).state).toBe('busy');
+		expect(() => host.start('consumer', 'voice', request)).toThrow('ServiceBusy');
+		closedFailure = false;
+		await host.cleanupPlugin('consumer');
+		expect(vi.getTimerCount()).toBe(0);
+		host.start('consumer', 'voice', request);
+		host.start('consumer', 'voice', request);
+	});
+	it('provider cleanup retains unavailable errors for surviving consumers after re-registration', async () => {
+		vi.useFakeTimers();
+		holding = true;
+		const first = host.start('consumer', 'voice', request);
+		const second = host.start('consumer', 'voice', request);
+		await host.cleanupPlugin('provider');
+		expect((await host.status('consumer', 'voice')).state).toBe('unavailable');
+		host.register('provider', 'transcription');
+		expect((await host.status('consumer', 'voice')).state).toBe('busy');
+		for (const call of [first, second]) {
+			expect(host.ownsCancel('consumer', call)).toBe(true);
+			await expect(host.result('consumer', call.callId)).rejects.toMatchObject({
+				code: 'ServiceUnavailable',
+			});
+		}
+		expect(vi.getTimerCount()).toBe(0);
+		expect((await host.status('consumer', 'voice')).state).toBe('ready');
+	});
+	it('awaits late provider settlement during overlapping cleanup/cancel and preserves the first failure', async () => {
+		vi.useFakeTimers();
+		const reply = Promise.withResolvers<typeof result>();
+		invoke.mockReturnValueOnce(reply.promise);
+		const first = host.start('consumer', 'voice', request);
+		const value = host.result('consumer', first.callId);
+		const failed = expect(value).rejects.toMatchObject({ code: 'ServiceCancelled' });
+		changed.mockClear();
+		const cancel = host.cancel('consumer', first.callId);
+		let drained = false;
+		const cleanup = host.cleanupPlugin('consumer').then(() => {
+			drained = true;
+		});
+		await Promise.resolve();
+		expect(drained).toBe(false);
+		expect(host.ownsCancel('consumer', first)).toBe(true);
+		reply.resolve(result);
+		await Promise.all([cancel, cleanup, failed]);
+		expect(cancelProvider).toHaveBeenCalledTimes(1);
+		expect(changed).toHaveBeenCalledTimes(1);
+		expect(vi.getTimerCount()).toBe(0);
+		expect(host.ownsCancel('consumer', first)).toBe(false);
+		const next = host.start('consumer', 'voice', request);
+		await host.cleanupPlugin('consumer');
+		expect(host.ownsCancel('consumer', next)).toBe(false);
+		await vi.advanceTimersByTimeAsync(SERVICE_LIMITS.timeoutMs);
+		expect(vi.getTimerCount()).toBe(0);
+		expect(invoke).toHaveBeenCalledTimes(2);
+	});
 	it('does not resurrect a revoked registration when permissions are restored', async () => {
 		revoked.add('provider:services:provide');
 		host.reconcile();

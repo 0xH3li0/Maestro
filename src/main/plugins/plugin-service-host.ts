@@ -499,7 +499,8 @@ export class PluginServiceHost {
 
 	/**
 	 * Invalidate a plugin's registrations and drain every call it owns or provides during teardown.
-	 * Notify dependents immediately; the returned promise is the cleanup barrier and rejects on drain failure.
+	 * Release owner calls/watchdogs only after successful abort/drain; retain provider calls for surviving consumers.
+	 * Notify dependents on invalidation and released capacity; the cleanup barrier rejects on drain failure.
 	 */
 	cleanupPlugin(pluginId: string): Promise<void> {
 		for (const key of this.registrations.keys())
@@ -507,7 +508,14 @@ export class PluginServiceHost {
 		const drain = Promise.all(
 			[...this.calls.values()]
 				.filter((call) => call.owner === pluginId || call.binding.provider === pluginId)
-				.map((call) => this.abort(call, 'ServiceUnavailable'))
+				.map(async (call) => {
+					await this.abort(call, 'ServiceUnavailable');
+					if (call.owner === pluginId && this.calls.get(call.id) === call) {
+						this.calls.delete(call.id);
+						call.watchdog.disarm();
+						this.deps.changed?.();
+					}
+				})
 		).then(() => {});
 		void drain.catch(() => {});
 		this.deps.changed?.();
