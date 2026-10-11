@@ -176,10 +176,15 @@ export async function countTurnFilesOnDay(agentFolder: string, day: Date): Promi
 
 /** What `validateAgentFolder` needs to know about the machine. */
 export interface AgentFolderContext {
-	/** Every local agent's `cwd` and `projectRoot`, not only the agent being set up. */
+	/** Every folder a local agent works in, not only those of the agent being set up. */
 	agentDirs: string[];
 	/** Maestro's user data directory. */
 	userDataPath: string;
+	/**
+	 * The folder the agent list and the settings were moved to, when the person
+	 * moved them out of the data directory. An agent reads those files too.
+	 */
+	syncPath?: string;
 	/** The user's home directory. */
 	homeDir: string;
 }
@@ -252,8 +257,10 @@ function rejectionFor(resolved: string, ctx: AgentFolderContext): string | null 
 	if (ctx.homeDir && foldCase(resolved) === foldCase(resolveRealPath(ctx.homeDir))) {
 		return 'The folder is your home folder, which is too broad to hold an agent log.';
 	}
-	if (ctx.userDataPath && isSameOrInside(resolved, resolveRealPath(ctx.userDataPath))) {
-		return 'The folder is inside the Maestro data folder, which agents can find from their environment.';
+	for (const dataDir of [ctx.userDataPath, ctx.syncPath]) {
+		if (dataDir && isSameOrInside(resolved, resolveRealPath(dataDir))) {
+			return 'The folder is inside the Maestro data folder, which agents can find from their environment.';
+		}
 	}
 	for (const dir of ctx.agentDirs) {
 		if (!dir) continue;
@@ -274,9 +281,9 @@ function describeFsError(action: string, error: unknown): string {
  * Whether `candidate` may hold an agent's log, and the real path to store.
  *
  * It rejects a relative path, the root of a drive, the home folder itself,
- * any folder equal to or inside ANY agent's `cwd` or `projectRoot` (an agent
- * can read another agent's workspace), and any folder equal to or inside
- * Maestro's data directory.
+ * any folder equal to or inside a folder ANY agent works in (an agent can
+ * read another agent's workspace), and any folder equal to or inside Maestro's
+ * data directory or the folder its agent list was moved to.
  *
  * Symlinks are followed before the checks, so a link that points into a
  * workspace is judged by where it lands. The folder is created when it does

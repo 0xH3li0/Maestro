@@ -203,6 +203,11 @@ function CotExportControls({
 				When this is on, Maestro records each turn of {agentName} into a folder you choose: the
 				prompt, the reasoning, each tool call and its result, the replies, and the usage.
 			</p>
+			<p className="text-xs mb-2" style={{ color: colors.textDim }} data-testid="cot-export-scope">
+				Recorded: messages sent in this app, Auto Run tasks, Group Chat replies, and Cue runs. Not
+				recorded: a turn started from the command line, an answer to another agent's question, and
+				anything a program the agent starts does on its own.
+			</p>
 
 			{status?.unencrypted && (
 				<div
@@ -279,8 +284,8 @@ function CotExportControls({
 
 			{!supportsReasoning && (
 				<p className="mt-2 text-xs" style={{ color: colors.textDim }}>
-					This provider does not expose its reasoning. Prompts, tool calls, results, replies, and
-					usage are still recorded.
+					This provider does not expose its reasoning. Prompts are still recorded, and so are tool
+					calls, results, replies, and usage when the provider reports them.
 				</p>
 			)}
 			{usesInteractiveTokenSource && (
@@ -362,7 +367,11 @@ function VerificationOutput({
 					<div className="font-mono break-all" style={{ color: colors.textDim }}>
 						{result.folder}
 					</div>
-					{result.ok ? (
+					{result.error ? (
+						<div role="alert" style={{ color: colors.error }}>
+							Maestro could not check this folder: {result.error}
+						</div>
+					) : result.ok ? (
 						<div style={{ color: colors.success }}>
 							Intact: {countOf(result.recordsChecked, 'record')} in{' '}
 							{countOf(result.filesChecked, 'file')}
@@ -380,7 +389,8 @@ function VerificationOutput({
 							)}
 							{!result.headMatches && (
 								<div>
-									The newest records are missing: the log ends before the last record Maestro wrote.
+									The newest record in this folder is not the last one Maestro wrote: records were
+									removed from the end of the log, or added to it.
 								</div>
 							)}
 							<div style={{ color: colors.textDim }}>

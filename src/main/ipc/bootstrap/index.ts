@@ -368,7 +368,13 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Per-agent turn log control. Desktop window only: every handler refuses a
 	// caller that is not one. See src/main/ipc/handlers/cot-export.ts.
-	registerCotExportHandlers({ getAgentName });
+	registerCotExportHandlers({
+		getAgentName,
+		isAppWindow: (window) =>
+			deps.windowRegistry
+				.getAll()
+				.some((entry) => entry.browserWindow === window && entry.kind === 'app'),
+	});
 
 	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
 	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation

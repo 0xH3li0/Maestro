@@ -797,6 +797,25 @@ describe('cot-export turn assembler', () => {
 			expect(records[0]).not.toHaveProperty('systemPromptSha256');
 		});
 
+		it('says so when the provider has no output parser, so no line of the turn can be read', async () => {
+			// `terminal` stands for any provider Maestro has no parser for: its
+			// output is passed on as raw text and never arrives here as an event.
+			await runTurn(makeAssembler(), [], spawnConfig({ toolType: 'terminal' }));
+
+			const [records] = await readTurns();
+			expect(kindsOf(records)).toEqual(['turn-start', 'capture-gap', 'turn-end']);
+			expect(records[1]).toMatchObject({ reason: 'output-not-captured:no-parser' });
+			// The gap is Maestro's note about the log, not a record of the turn.
+			expect(records[2]).toMatchObject({ recordCount: 2 });
+		});
+
+		it('writes no such gap for a provider it can read', async () => {
+			await runTurn(makeAssembler(), [], spawnConfig({ toolType: 'claude-code' }));
+
+			const [records] = await readTurns();
+			expect(kindsOf(records)).toEqual(['turn-start', 'turn-end']);
+		});
+
 		it('says so when the prompt of a turn on an SSH remote did not reach it', async () => {
 			await runTurn(
 				makeAssembler(),

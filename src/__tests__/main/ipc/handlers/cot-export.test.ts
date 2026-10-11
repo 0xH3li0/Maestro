@@ -12,7 +12,10 @@
  *   export off.
  * - `verify` gives one verdict per chain, and checks the stored head against
  *   the disk first, so a log that is intact after a hard stop reads as intact.
- * - A failing log raises one native notification per agent per hour.
+ *   The walk runs with the agent's writes held, and a folder that cannot be
+ *   read costs only its own verdict.
+ * - A failing log raises one native notification per agent per hour, and a
+ *   saved state that could not be read raises one when the app starts.
  *
  * The store and the writer are the APP'S own (`getCotConfigStore`,
  * `getCotWriter`), over a fresh directory in the OS temp dir. `electron` is
@@ -34,6 +37,8 @@ const electronMock = vi.hoisted(() => {
 		contents: new Map<number, object>(),
 		/** The `BrowserWindow` that owns a `WebContents`. */
 		owners: new Map<object, object>(),
+		/** Windows that load the app's page and are not ones a person works in. */
+		helperWindows: new Set<object>(),
 		notificationsSupported: true,
 		/** Every notification that was made, in order. */
 		notices: [] as Array<{ title: string; body: string; shown: boolean }>,
@@ -130,10 +135,8 @@ import {
 } from '../../../../main/ipc/handlers/cot-export';
 import { handleBridgeInvoke } from '../../../../main/web-server/handlers/bridgeHandlers';
 import type { WebClient } from '../../../../main/web-server/types';
-import {
-	COT_EXPORT_CHANNELS,
-	HUMAN_ONLY_IPC_CHANNELS,
-} from '../../../../shared/cotExport/channels';
+import { isDesktopOnlyChannel } from '../../../../main/ipc/desktop-only-channels';
+import { COT_EXPORT_CHANNELS } from '../../../../shared/cotExport/channels';
 import type { CotExportChannel } from '../../../../shared/cotExport/channels';
 import type {
 	CotAgentConfig,
@@ -169,22 +172,37 @@ const BRIDGE_EVENT = { senderFrame: null, frameId: -1, processId: -1, type: 'bri
 
 const NOT_AVAILABLE = { message: 'Not available' };
 
+/** Every channel of the feature. */
+const CHANNELS: CotExportChannel[] = Object.values(COT_EXPORT_CHANNELS);
+
 interface FakeContents {
 	id: number;
 	getType: () => string;
+	/** The frame of the window's own page. */
+	mainFrame: object;
+}
+
+interface FakeEvent {
+	sender: FakeContents;
+	senderFrame: object | null;
 }
 
 /** A `WebContents` the mocked Electron has, owned by a window or by none. */
 function addContents(id: number, type: string, ownedByWindow: boolean): FakeContents {
-	const contents: FakeContents = { id, getType: () => type };
+	const contents: FakeContents = { id, getType: () => type, mainFrame: { frameOf: id } };
 	electronMock.state.contents.set(id, contents);
 	if (ownedByWindow) electronMock.state.owners.set(contents, { windowOf: id });
 	return contents;
 }
 
+/** An IPC event sent by the page `contents` shows. */
+function eventFrom(contents: FakeContents): FakeEvent {
+	return { sender: contents, senderFrame: contents.mainFrame };
+}
+
 /** An IPC event from a window of the desktop app. */
-function windowEvent(): { sender: FakeContents } {
-	return { sender: addContents(1, 'window', true) };
+function windowEvent(): FakeEvent {
+	return eventFrom(addContents(1, 'window', true));
 }
 
 function text(turnId: string, body: string): CotRecordDraft {
@@ -257,6 +275,7 @@ describe('cot-export IPC handlers', () => {
 		electronMock.state.userData = dataDir;
 		electronMock.state.contents.clear();
 		electronMock.state.owners.clear();
+		electronMock.state.helperWindows.clear();
 		electronMock.state.notificationsSupported = true;
 		electronMock.state.notices.length = 0;
 		electronMock.invokeHandlers.clear();
@@ -269,13 +288,19 @@ describe('cot-export IPC handlers', () => {
 
 		__resetCotConfigStoreForTests();
 		__resetCotWriterForTests();
+		register();
+	});
+
+	/** Registers the handlers the way the app does at start. */
+	const register = (): void => {
 		registerCotExportHandlers({
 			getAgentName: (agentId) => {
 				const name = sessionsMock.sessions.find((session) => session.id === agentId)?.name;
 				return typeof name === 'string' ? name : undefined;
 			},
+			isAppWindow: (window) => !electronMock.state.helperWindows.has(window),
 		});
-	});
+	};
 
 	afterEach(() => {
 		// A store dropped by a "hard stop" still has a save waiting on a fake
@@ -293,8 +318,8 @@ describe('cot-export IPC handlers', () => {
 	// ========================================================================
 
 	describe('the channel list', () => {
-		it('is every channel of the feature, and cannot be changed at run time', () => {
-			expect([...HUMAN_ONLY_IPC_CHANNELS].sort()).toEqual(
+		it('is every channel of the feature', () => {
+			expect([...CHANNELS].sort()).toEqual(
 				[
 					'cotExport:get',
 					'cotExport:set',
@@ -303,16 +328,15 @@ describe('cot-export IPC handlers', () => {
 					'cotExport:verify',
 				].sort()
 			);
-			expect([...HUMAN_ONLY_IPC_CHANNELS].sort()).toEqual(
-				Object.values(COT_EXPORT_CHANNELS).sort()
-			);
-			expect(Object.isFrozen(HUMAN_ONLY_IPC_CHANNELS)).toBe(true);
 		});
 
 		it('has one handler per channel, and no handler outside the list', () => {
-			expect([...electronMock.invokeHandlers.keys()].sort()).toEqual(
-				[...HUMAN_ONLY_IPC_CHANNELS].sort()
-			);
+			expect([...electronMock.invokeHandlers.keys()].sort()).toEqual([...CHANNELS].sort());
+		});
+
+		it('marks every channel desktop-only when it registers the handler', () => {
+			for (const channel of CHANNELS) expect(isDesktopOnlyChannel(channel), channel).toBe(true);
+			expect(isDesktopOnlyChannel('settings:get')).toBe(false);
 		});
 	});
 
@@ -321,16 +345,18 @@ describe('cot-export IPC handlers', () => {
 	// ========================================================================
 
 	describe('who may call', () => {
-		it.each([...HUMAN_ONLY_IPC_CHANNELS])(
+		it.each([...CHANNELS])(
 			'%s refuses the event the web bridge hands over, which has no sender',
 			async (channel) => {
 				await expect(invoke(channel, BRIDGE_EVENT, AGENT)).rejects.toMatchObject(NOT_AVAILABLE);
 			}
 		);
 
-		it.each([...HUMAN_ONLY_IPC_CHANNELS])(
-			'%s refuses a call that comes in through the web bridge itself',
+		it.each([...CHANNELS])(
+			'%s is answered by the web bridge as a channel nobody registered',
 			async (channel) => {
+				const handler = vi.fn();
+				electronMock.invokeHandlers.set(channel, handler);
 				const responses: object[] = [];
 				const client = { id: 'web-client-1' } as unknown as WebClient;
 
@@ -345,8 +371,31 @@ describe('cot-export IPC handlers', () => {
 					(_client, payload) => responses.push(payload)
 				);
 
+				// The bridge never looked the handler up, and its answer is the one
+				// a channel that does not exist gets, word for word.
+				expect(handler).not.toHaveBeenCalled();
 				expect(responses).toEqual([
-					{ type: 'bridge.response', requestId: 7, ok: false, error: 'Not available' },
+					{
+						type: 'bridge.response',
+						requestId: 7,
+						ok: false,
+						error: `No ipcMain handler registered for channel "${channel}"`,
+					},
+				]);
+
+				const unknown: object[] = [];
+				await handleBridgeInvoke(
+					client,
+					{ type: 'bridge.invoke', requestId: 8, channel: 'noSuch:channel', args: [] },
+					(_client, payload) => unknown.push(payload)
+				);
+				expect(unknown).toEqual([
+					{
+						type: 'bridge.response',
+						requestId: 8,
+						ok: false,
+						error: 'No ipcMain handler registered for channel "noSuch:channel"',
+					},
 				]);
 			}
 		);
@@ -369,29 +418,53 @@ describe('cot-export IPC handlers', () => {
 		});
 
 		it('refuses a WebContents that no BrowserWindow owns', async () => {
-			const event = { sender: addContents(2, 'window', false) };
+			const event = eventFrom(addContents(2, 'window', false));
 			await expect(invoke(COT_EXPORT_CHANNELS.get, event, AGENT)).rejects.toMatchObject(
 				NOT_AVAILABLE
 			);
 		});
 
 		it('refuses a webview guest, which a window owns too', async () => {
-			const event = { sender: addContents(3, 'webview', true) };
+			const event = eventFrom(addContents(3, 'webview', true));
 			await expect(invoke(COT_EXPORT_CHANNELS.get, event, AGENT)).rejects.toMatchObject(
 				NOT_AVAILABLE
 			);
+		});
+
+		it('refuses a frame inside the window, and an event that names no frame', async () => {
+			const contents = addContents(5, 'window', true);
+			for (const senderFrame of [{ frameOf: 'an embedded page' }, null, undefined]) {
+				await expect(
+					invoke(COT_EXPORT_CHANNELS.get, { sender: contents, senderFrame }, AGENT)
+				).rejects.toMatchObject(NOT_AVAILABLE);
+			}
+		});
+
+		it('refuses a window that loads the app page and is not one a person works in', async () => {
+			const contents = addContents(6, 'window', true);
+			const owner = electronMock.state.owners.get(contents);
+			if (!owner) throw new Error('The window has no owner.');
+			electronMock.state.helperWindows.add(owner);
+
+			await expect(
+				invoke(COT_EXPORT_CHANNELS.get, eventFrom(contents), AGENT)
+			).rejects.toMatchObject(NOT_AVAILABLE);
 		});
 
 		it('refuses an object that only looks like the window', async () => {
 			const real = addContents(1, 'window', true);
 			// The same id and type, and a window that would vouch for it. It is
 			// still not the WebContents Electron keeps under that id.
-			const forged: FakeContents = { id: real.id, getType: () => 'window' };
+			const forged: FakeContents = {
+				id: real.id,
+				getType: () => 'window',
+				mainFrame: real.mainFrame,
+			};
 			electronMock.state.owners.set(forged, { windowOf: real.id });
 
-			await expect(
-				invoke(COT_EXPORT_CHANNELS.get, { sender: forged }, AGENT)
-			).rejects.toMatchObject(NOT_AVAILABLE);
+			await expect(invoke(COT_EXPORT_CHANNELS.get, eventFrom(forged), AGENT)).rejects.toMatchObject(
+				NOT_AVAILABLE
+			);
 		});
 
 		it.each([
@@ -412,7 +485,7 @@ describe('cot-export IPC handlers', () => {
 				throw new Error('Object has been destroyed');
 			};
 			await expect(
-				invoke(COT_EXPORT_CHANNELS.get, { sender: contents }, AGENT)
+				invoke(COT_EXPORT_CHANNELS.get, eventFrom(contents), AGENT)
 			).rejects.toMatchObject(NOT_AVAILABLE);
 		});
 
@@ -551,7 +624,7 @@ describe('cot-export IPC handlers', () => {
 			});
 		});
 
-		it.each([...HUMAN_ONLY_IPC_CHANNELS])('%s needs an agent id', async (channel) => {
+		it.each([...CHANNELS])('%s needs an agent id', async (channel) => {
 			await expect(fromWindow(channel, '')).rejects.toThrow('An agent id is required.');
 			await expect(fromWindow(channel, 42)).rejects.toThrow('An agent id is required.');
 			await expect(fromWindow(channel)).rejects.toThrow('An agent id is required.');
@@ -684,49 +757,58 @@ describe('cot-export IPC handlers', () => {
 			expect(getCotConfigStore().getChainState(AGENT, logs)?.head).toBe(newest.hash);
 		});
 
-		it('walks the chain again when the agent wrote during the walk', async () => {
+		it('holds the writes of the agent until the walk is over, and loses none', async () => {
 			const logs = logFolder('logs');
 			await turnOn(AGENT, logs);
 			await writeRecord(AGENT, logs, 'turn-a', 'one');
-			// The first walk is given a head, and a record lands before it reads
-			// the file. The walk sees a record its head does not know.
+			// A record is handed to the writer while the walk runs. A walk beside
+			// the writer would see a record its head does not know.
+			let late: Promise<CotRecord> | undefined;
 			vi.mocked(verifyAgentChain).mockImplementationOnce(async (folder, head) => {
-				await writeRecord(AGENT, logs, 'turn-a', 'two');
+				late = writeRecord(AGENT, logs, 'turn-a', 'two');
+				// Long enough for a write that was not held to land.
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				expect((await readTurnFiles(logs)).flat()).toHaveLength(1);
 				return walkChain(folder, head);
 			});
 
 			expect(await fromWindow<CotChainVerifyResult[]>(COT_EXPORT_CHANNELS.verify, AGENT)).toEqual([
+				{ folder: logs, ok: true, filesChecked: 1, recordsChecked: 1, headMatches: true },
+			]);
+			expect(verifyAgentChain).toHaveBeenCalledTimes(1);
+
+			// The record that waited is written once the walk is done.
+			expect((await late)?.chainSeq).toBe(1);
+			expect(await fromWindow<CotChainVerifyResult[]>(COT_EXPORT_CHANNELS.verify, AGENT)).toEqual([
 				{ folder: logs, ok: true, filesChecked: 1, recordsChecked: 2, headMatches: true },
 			]);
-			expect(verifyAgentChain).toHaveBeenCalledTimes(2);
 		});
 
-		it('gives the verdict it has when the agent writes during every walk', async () => {
-			const logs = logFolder('logs');
-			await turnOn(AGENT, logs);
-			let written = 0;
-			vi.mocked(verifyAgentChain).mockImplementation(async (folder, head) => {
-				written += 1;
-				await writeRecord(AGENT, logs, 'turn-a', `record ${written}`);
-				return walkChain(folder, head);
+		it('gives no verdict on a folder it cannot read, and still checks the others', async () => {
+			const first = logFolder('first');
+			const second = logFolder('second');
+			await turnOn(AGENT, first);
+			await writeRecord(AGENT, first, 'turn-a', 'one');
+			await turnOn(AGENT, second);
+			await writeRecord(AGENT, second, 'turn-b', 'two');
+			// The current folder cannot be listed. The past one can.
+			vi.mocked(verifyAgentChain).mockImplementationOnce(async () => {
+				throw Object.assign(new Error(`EACCES: permission denied, scandir '${second}'`), {
+					code: 'EACCES',
+				});
 			});
 
-			const [verdict] = await fromWindow<CotChainVerifyResult[]>(COT_EXPORT_CHANNELS.verify, AGENT);
-
-			expect(verifyAgentChain).toHaveBeenCalledTimes(3);
-			expect(verdict).toMatchObject({ ok: false, headMatches: false, recordsChecked: 3 });
-			expect(verdict.firstBreak).toBeUndefined();
-		});
-
-		it('does not walk a failed chain twice when nothing was written meanwhile', async () => {
-			const logs = logFolder('logs');
-			await turnOn(AGENT, logs);
-			await writeRecord(AGENT, logs, 'turn-a', 'one');
-			fs.rmSync(turnFilePath(logs, TURN_START, 'tab-1', 'turn-a'));
-
-			await fromWindow(COT_EXPORT_CHANNELS.verify, AGENT);
-
-			expect(verifyAgentChain).toHaveBeenCalledTimes(1);
+			expect(await fromWindow<CotChainVerifyResult[]>(COT_EXPORT_CHANNELS.verify, AGENT)).toEqual([
+				{
+					folder: second,
+					ok: false,
+					filesChecked: 0,
+					recordsChecked: 0,
+					headMatches: false,
+					error: 'The folder could not be read (EACCES).',
+				},
+				{ folder: first, ok: true, filesChecked: 1, recordsChecked: 1, headMatches: true },
+			]);
 		});
 	});
 
@@ -820,6 +902,44 @@ describe('cot-export IPC handlers', () => {
 
 		it('says nothing for an agent that was never set up', () => {
 			getCotConfigStore().recordError(AGENT, DISK_FULL, T0);
+			expect(electronMock.state.notices).toEqual([]);
+		});
+
+		it('tells the person at start that the saved state could not be read', async () => {
+			await turnOn(AGENT, logFolder('logs'));
+			// The next start finds a file it cannot open: bytes sealed with a key
+			// this run does not have.
+			fs.writeFileSync(
+				storeFile(),
+				JSON.stringify({ blob: Buffer.from('not ours').toString('base64') })
+			);
+			__resetCotConfigStoreForTests();
+			__resetCotWriterForTests();
+			electronMock.invokeHandlers.clear();
+			electronMock.state.notices.length = 0;
+
+			register();
+
+			expect(getCotConfigStore().isEnabled(AGENT)).toBe(false);
+			expect(electronMock.state.notices).toEqual([
+				{
+					title: 'Maestro',
+					body: 'Chain of thought export is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
+					shown: true,
+				},
+			]);
+		});
+
+		it('says nothing at start when the saved state was read, or there was none', async () => {
+			expect(electronMock.state.notices).toEqual([]);
+
+			await turnOn(AGENT, logFolder('logs'));
+			__resetCotConfigStoreForTests();
+			__resetCotWriterForTests();
+			electronMock.invokeHandlers.clear();
+			register();
+
+			expect(getCotConfigStore().isEnabled(AGENT)).toBe(true);
 			expect(electronMock.state.notices).toEqual([]);
 		});
 

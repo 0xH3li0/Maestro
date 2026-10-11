@@ -48,13 +48,20 @@ const WALKED = {
 		'src/renderer/components/QuickActionsModal',
 	],
 	files: [
-		'src/renderer/components/Settings/searchableSettings.ts',
 		'src/shared/uiSurfaces.ts',
 		'src/renderer/constants/shortcuts.ts',
 		// The hamburger menu content component.
 		'src/renderer/components/SessionList/HamburgerMenuContent.tsx',
 	],
 	rootFilePattern: /^CLAUDE.*\.md$/,
+	/**
+	 * The settings search registry. `searchableSettings.ts` only gathers the
+	 * entries; they are written in the files beside it, one per settings tab.
+	 */
+	settingsSearch: {
+		folder: 'src/renderer/components/Settings',
+		filePattern: /^searchableSettings.*\.ts$/,
+	},
 } as const;
 
 /** Folders that hold other people's code, or build output. They are not read. */
@@ -112,6 +119,12 @@ function walkedFiles(root: string): string[] {
 		for (const file of filesUnder(path.join(root, folder))) found.add(file);
 	}
 	for (const file of WALKED.files) found.add(path.join(root, file));
+	const settingsDir = path.join(root, WALKED.settingsSearch.folder);
+	for (const entry of fs.readdirSync(settingsDir, { withFileTypes: true })) {
+		if (entry.isFile() && WALKED.settingsSearch.filePattern.test(entry.name)) {
+			found.add(path.join(settingsDir, entry.name));
+		}
+	}
 	for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
 		if (entry.isFile() && WALKED.rootFilePattern.test(entry.name)) {
 			found.add(path.join(root, entry.name));
@@ -211,6 +224,16 @@ describe('the walked paths', () => {
 			fs.existsSync(path.join(ROOT, file)),
 			`${file} is gone: update WALKED in this test`
 		).toBe(true);
+	});
+
+	it('finds the settings search registry and the files its entries are written in', () => {
+		const names = walkedFiles(ROOT)
+			.map((file) => path.relative(ROOT, file))
+			.filter((name) => WALKED.settingsSearch.filePattern.test(path.basename(name)));
+		expect(names).toContain(path.join(WALKED.settingsSearch.folder, 'searchableSettings.ts'));
+		// The aggregator alone holds no entry. A registry moved elsewhere would
+		// otherwise leave this guard reading a file with nothing in it.
+		expect(names.length).toBeGreaterThan(1);
 	});
 
 	it('finds the CLAUDE guides at the root', () => {

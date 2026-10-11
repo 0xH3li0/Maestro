@@ -101,9 +101,10 @@ export interface ProcessRunOptions {
 	 * Receives the run's RAW stdout, byte for byte, once the child has settled
 	 * and just before the result is returned. The result's own `stdout` is the
 	 * cleaned text, so this is the only way a caller can read the stream the
-	 * agent actually printed. Called at most once, never for a spawn that failed
-	 * to start, and a throw from it is swallowed: an observer cannot be allowed
-	 * to change what a run reports.
+	 * agent actually printed. Called at most once, and for a child that reported
+	 * a spawn error too (it printed nothing, so the text is then empty). A throw
+	 * from it is swallowed: an observer cannot be allowed to change what a run
+	 * reports.
 	 */
 	onRawStdout?: (rawStdout: string) => void;
 }

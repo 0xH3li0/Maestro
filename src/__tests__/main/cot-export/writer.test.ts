@@ -806,6 +806,64 @@ describe('cot-export writer', () => {
 			expectChain([...readRecords(file), ...next]);
 		});
 
+		it('goes on from the stored head, and says so, when the folder can never be checked', async () => {
+			const { states } = await writeRecords(emptyChain(folder), file, drafts);
+			const { writer, errors } = createHarness({ [AGENT]: states[2] });
+			const denied = (): Error =>
+				Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' });
+			const readdir = vi.spyOn(fs.promises, 'readdir').mockImplementation(async () => {
+				throw denied();
+			});
+
+			// Two records are lost while the check is tried again.
+			expect(await writer.append(AGENT, nextFile, turnStart('turn-2'))).toBeNull();
+			expect(await writer.append(AGENT, nextFile, text('turn-2', 'lost'))).toBeNull();
+			// The third failure is the last try: the log must not stop for good.
+			const landed = await writer.append(AGENT, nextFile, text('turn-2', 'kept'));
+			expect(landed).toMatchObject({ kind: 'text', text: 'kept' });
+			expect(errors.map((entry) => errorCode(entry.error))).toEqual(['EACCES', 'EACCES', 'EACCES']);
+
+			const walks = readdir.mock.calls.length;
+			await writer.append(AGENT, nextFile, text('turn-2', 'next'));
+			// The folder is not walked again for every record after that.
+			expect(readdir.mock.calls.length).toBe(walks);
+
+			const records = readRecords(nextFile);
+			expect(
+				records.map((record) => (record.kind === 'capture-gap' ? record.reason : record.kind))
+			).toEqual(['head-unchecked-on-start', 'write-failed:EACCES', 'text', 'text']);
+			expect(records[1]).toMatchObject({ droppedRecords: 2 });
+			expectChain(records, states[2]);
+		});
+
+		it('takes a whole log up again from a chain with no stored head, however many hours it spans', async () => {
+			// More hour folders than a check of a stored head reads.
+			const HOURS = 30;
+			const harness = createHarness({ [AGENT]: emptyChain(folder) });
+			for (let hour = 0; hour < HOURS; hour++) {
+				const start = new Date(2026, 9, 10 + Math.floor(hour / 24), hour % 24, 0, 0);
+				const target = turnFilePath(folder, start, 'tab-1', `turn-${hour}`);
+				expect(
+					await harness.writer.append(AGENT, target, text(`turn-${hour}`, 'one'))
+				).not.toBeNull();
+			}
+			const newest = harness.heads[harness.heads.length - 1].state;
+			expect(newest.chainSeq).toBe(HOURS - 1);
+
+			// The state was lost and the person chose the same folder again.
+			expect(await recoverHead(folder, emptyChain(folder))).toEqual({
+				outcome: 'adopted',
+				state: newest,
+			});
+
+			// The next record continues the chain. It does not start a second one.
+			const { writer, errors } = createHarness({ [AGENT]: emptyChain(folder) });
+			const record = await writer.append(AGENT, nextFile, turnStart('turn-next'));
+			expect(record).toMatchObject({ chainSeq: HOURS, prevHash: newest.head });
+			expect(readRecords(nextFile).map((entry) => entry.kind)).toEqual(['turn-start']);
+			expect(errors).toEqual([]);
+		});
+
 		it('recovers on request, once, without writing a record', async () => {
 			const { states } = await writeRecords(emptyChain(folder), file, drafts);
 			const { writer, heads, errors } = createHarness({ [AGENT]: states[0] });
@@ -824,6 +882,73 @@ describe('cot-export writer', () => {
 			await writer.recover(AGENT, folder);
 			expect(heads).toEqual([]);
 			expect(errors).toEqual([]);
+		});
+	});
+
+	describe('whileQuiet', () => {
+		const drafts = [turnStart('turn-1'), text('turn-1', 'one'), text('turn-1', 'two')];
+
+		it('hands over the head after it was checked against the disk', async () => {
+			const { states } = await writeRecords(emptyChain(folder), file, drafts);
+			// The stored head is behind the disk, as after a hard stop.
+			const { writer, heads, errors } = createHarness({ [AGENT]: states[0] });
+
+			expect(await writer.whileQuiet(AGENT, folder, async (state) => state)).toEqual(states[2]);
+			expect(heads).toEqual([{ agentId: AGENT, state: states[2] }]);
+			expect(errors).toEqual([]);
+		});
+
+		it('holds every write of the agent until the work is done, and loses none', async () => {
+			const { states } = await writeRecords(emptyChain(folder), file, drafts);
+			const { writer } = createHarness({ [AGENT]: states[2] });
+			const before = fs.readFileSync(file, 'utf8');
+			let release = (): void => undefined;
+			const held = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+
+			const work = writer.whileQuiet(AGENT, folder, async (state) => {
+				await held;
+				return state;
+			});
+			const late = writer.append(AGENT, file, text('turn-1', 'three'));
+			// Long enough for a write that was not held to land.
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(fs.readFileSync(file, 'utf8')).toBe(before);
+
+			release();
+			expect(await work).toEqual(states[2]);
+			expect(await late).toMatchObject({ chainSeq: 3, prevHash: states[2].head });
+			expectChain(readRecords(file));
+		});
+
+		it('hands over null for an agent with no chain in the folder', async () => {
+			const { writer, errors } = createHarness({ [AGENT]: null });
+			expect(await writer.whileQuiet(AGENT, folder, async (state) => state)).toBeNull();
+			expect(errors).toEqual([]);
+		});
+
+		it('hands over the head it holds when the folder could not be checked', async () => {
+			const { states } = await writeRecords(emptyChain(folder), file, drafts);
+			const { writer, errors } = createHarness({ [AGENT]: states[2] });
+			vi.spyOn(fs.promises, 'readdir').mockRejectedValueOnce(
+				Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' })
+			);
+
+			expect(await writer.whileQuiet(AGENT, folder, async (state) => state)).toEqual(states[2]);
+			expect(errors.map((entry) => errorCode(entry.error))).toEqual(['EACCES']);
+		});
+
+		it('rejects when the work does, and the writes behind it still land', async () => {
+			const { writer } = createHarness({ [AGENT]: emptyChain(folder) });
+
+			const work = writer.whileQuiet(AGENT, folder, async () => {
+				throw new Error('The walk failed.');
+			});
+			const late = writer.append(AGENT, file, turnStart('turn-1'));
+
+			await expect(work).rejects.toThrow('The walk failed.');
+			expect(await late).toMatchObject({ kind: 'turn-start', chainSeq: 0 });
 		});
 	});
 });

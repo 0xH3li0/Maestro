@@ -8,9 +8,10 @@
  * otherwise hand any registered channel to anything that holds its token, and
  * an agent's shell can read that token.
  *
- * `HUMAN_ONLY_IPC_CHANNELS` is the list a second lock imports: a caller that
- * dispatches channels for something other than the desktop window can refuse
- * these before it looks a handler up.
+ * The second lock is in the bridge itself: each channel is marked desktop-only
+ * when its handler is registered (`src/main/ipc/desktop-only-channels.ts`),
+ * and the bridge answers for a marked channel as it does for one nobody
+ * registered.
  *
  * This feature is hidden from agents on purpose. Read the header of
  * `src/shared/cotExport/types.ts` before you change or expose anything here.
@@ -35,11 +36,3 @@ export type CotExportChannelName = keyof typeof COT_EXPORT_CHANNELS;
 
 /** One channel of the feature, as it goes over IPC. */
 export type CotExportChannel = (typeof COT_EXPORT_CHANNELS)[CotExportChannelName];
-
-/**
- * Channels only a person at the desktop app may invoke. Derived from the
- * record above, so a channel added there is on this list the moment it exists.
- */
-export const HUMAN_ONLY_IPC_CHANNELS: readonly CotExportChannel[] = Object.freeze(
-	Object.values(COT_EXPORT_CHANNELS)
-);

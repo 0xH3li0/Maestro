@@ -315,6 +315,17 @@ describe('validateAgentFolder', () => {
 		if (!inside.ok) expect(inside.reason).toMatch(/data folder/i);
 	});
 
+	it('rejects a folder equal to or inside the folder the agent list was moved to', () => {
+		const synced = path.join(sandbox, 'synced');
+		const moved = { ...context(), syncPath: synced };
+		expect(validateAgentFolder(synced, moved).ok).toBe(false);
+		const inside = validateAgentFolder(path.join(synced, 'logs'), moved);
+		expect(inside.ok).toBe(false);
+		if (!inside.ok) expect(inside.reason).toMatch(/data folder/i);
+		// With nothing moved, the same folder is an ordinary one.
+		expect(validateAgentFolder(path.join(synced, 'logs'), context()).ok).toBe(true);
+	});
+
 	it('rejects a symlink that points into an agent cwd', (ctx) => {
 		const link = path.join(sandbox, 'innocent-link');
 		try {

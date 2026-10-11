@@ -337,12 +337,14 @@ export interface CotCaptureGapPayload {
 	kind: 'capture-gap';
 	/**
 	 * Why records are missing. Known values: `write-failed:<error code>` (for
-	 * example `write-failed:ENOSPC`), `head-mismatch-on-start`,
-	 * `app-restarted-mid-turn`, `unrecognized-block:<block type>` (the provider
-	 * sent a kind of content this version of Maestro cannot record),
-	 * `output-not-captured:no-parser` (a Cue run whose provider has no output
-	 * parser, so its stream could not be read), `unparsed-lines:<count>` (a Cue
-	 * run whose parser threw on that many lines), and
+	 * example `write-failed:ENOSPC`), `head-mismatch-on-start` (the newest record
+	 * on disk was not the one Maestro last sealed), `head-unchecked-on-start`
+	 * (that could not be checked, because the folder could not be read),
+	 * `unrecognized-block:<block type>` (the provider sent a kind of content
+	 * this version of Maestro cannot record), `output-not-captured:no-parser`
+	 * (the provider has no output parser, so its stream could not be read),
+	 * `unparsed-lines:<count>` (a Cue run whose parser threw on that many
+	 * lines), and
 	 * `prompt-not-captured` or `prompt-not-captured:ssh-remote` (written right
 	 * after a `turn-start` whose `prompt` is empty because the prompt did not
 	 * reach Maestro's recorder, as on an SSH remote, where it travels inside
@@ -487,6 +489,12 @@ export interface CotVerifyResult {
  */
 export interface CotChainVerifyResult extends CotVerifyResult {
 	folder: string;
+	/**
+	 * Set when the chain could not be checked at all, with the reason in one
+	 * sentence. `ok` is then false and nothing was counted. It is not a verdict
+	 * on the log: nothing was read.
+	 */
+	error?: string;
 }
 
 /**

@@ -65,7 +65,7 @@ import type {
 	CotPastChain,
 } from '../../shared/cotExport/types';
 import { corruptStorePath, createStoreDeserializer } from '../stores/corrupt-store-recovery';
-import { getSessionsStore } from '../stores/getters';
+import { getSessionsStore, getSyncPath } from '../stores/getters';
 import { debounce } from '../utils/debounce';
 import { logger } from '../utils/logger';
 import { safeStorageSeal } from '../utils/safe-storage-seal';
@@ -90,6 +90,15 @@ export const COT_CONFIG_STORE_NAME = 'maestro-device-state';
  * with every record of a turn, and one save covers them all.
  */
 const PERSIST_DEBOUNCE_MS = 500;
+
+/**
+ * The longest a new head waits, however fast records keep coming. A stream
+ * with no pause of `PERSIST_DEBOUNCE_MS` would otherwise never save one, and
+ * the head kept here is what shows that the end of a log was removed: after a
+ * hard stop, nothing past the saved head can be told from a record that was
+ * never written.
+ */
+const PERSIST_MAX_WAIT_MS = 2000;
 
 const LOG_CONTEXT = 'Stores';
 
@@ -206,6 +215,12 @@ export interface CotConfigStore {
 	recordError(agentId: string, message: string, at: number): void;
 	/** What the Edit Agent dialog shows. It reads today's folders to count turns. */
 	getStatus(agentId: string): Promise<CotAgentStatus>;
+	/**
+	 * Set when the saved state could not be read at start, so export is off for
+	 * every agent until the person turns it on again. Null when it was read, or
+	 * when there was nothing to read.
+	 */
+	getLoadProblem(): CotLastError | null;
 	/** Saves now whatever is still waiting. For the way out of the app. */
 	flushSync(): void;
 }
@@ -359,21 +374,25 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			: { plain: state };
 	}
 
-	const persistSoon = debounce(() => {
-		try {
-			write(agents);
-			saveFailing = false;
-		} catch (error) {
-			// The change is still in memory, and the next one tries the save
-			// again. Logged once per run of failures, under the file's own bland
-			// name, so a full disk does not fill the log as well.
-			if (!saveFailing) {
-				const code = (error as NodeJS.ErrnoException | null)?.code ?? 'unknown error';
-				logger.warn(`Could not save ${COT_CONFIG_STORE_NAME}.json (${code}).`, LOG_CONTEXT);
+	const persistSoon = debounce(
+		() => {
+			try {
+				write(agents);
+				saveFailing = false;
+			} catch (error) {
+				// The change is still in memory, and the next one tries the save
+				// again. Logged once per run of failures, under the file's own bland
+				// name, so a full disk does not fill the log as well.
+				if (!saveFailing) {
+					const code = (error as NodeJS.ErrnoException | null)?.code ?? 'unknown error';
+					logger.warn(`Could not save ${COT_CONFIG_STORE_NAME}.json (${code}).`, LOG_CONTEXT);
+				}
+				saveFailing = true;
 			}
-			saveFailing = true;
-		}
-	}, PERSIST_DEBOUNCE_MS);
+		},
+		PERSIST_DEBOUNCE_MS,
+		{ maxWaitMs: PERSIST_MAX_WAIT_MS }
+	);
 
 	function load(): void {
 		let file: CotStoreFile;
@@ -411,11 +430,15 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 		}
 	}
 
+	/**
+	 * No log line: the person is told on their own screen (`getLoadProblem`),
+	 * and a line here would tell anything that reads Maestro's logs that the
+	 * file had stopped being readable.
+	 */
 	function markUnreadable(): void {
 		agents = new Map();
 		unreadableOnDisk = true;
 		loadProblem = { message: UNREADABLE_MESSAGE, at: now() };
-		logger.warn(`Could not read ${COT_CONFIG_STORE_NAME}.json. Starting empty.`, LOG_CONTEXT);
 	}
 
 	/** The agent's chain in `folder`, as the live object, and where it is kept. */
@@ -638,6 +661,10 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 			return status;
 		},
 
+		getLoadProblem() {
+			return loadProblem ? { ...loadProblem } : null;
+		},
+
 		flushSync() {
 			persistSoon.flush();
 		},
@@ -661,24 +688,53 @@ export function setCotFailureListener(listener: CotFailureListener | null): void
 }
 
 /**
- * Every folder a local agent works in: its working directory, its project
- * root, and its Auto Run folder (which can lie outside the project, and which
- * the agent is told it may write to). An agent on an SSH remote is left out:
- * its paths are paths on another machine.
+ * Every folder a local agent works in or is pointed at: its working directory,
+ * its project root, its Auto Run folder (which can lie outside the project,
+ * and which the agent is told it may write to), the extra directories it was
+ * granted (they reach the provider as flags and are named in its prompt), and
+ * the folder its worktrees are created in (each one becomes an agent's working
+ * directory, and its siblings are one `ls ..` away). An agent on an SSH remote
+ * is left out: its paths are paths on another machine.
  */
-function localAgentDirs(): string[] {
-	const sessions: unknown = getSessionsStore().get('sessions', []);
+export function agentDirsOf(sessions: unknown): string[] {
 	const dirs: string[] = [];
 	if (!Array.isArray(sessions)) return dirs;
 	for (const session of sessions) {
 		if (!isRecord(session)) continue;
 		const ssh = session.sessionSshRemoteConfig;
 		if (isRecord(ssh) && ssh.enabled === true) continue;
-		for (const dir of [session.cwd, session.projectRoot, session.autoRunFolderPath]) {
+		const granted = Array.isArray(session.additionalDirectories)
+			? session.additionalDirectories.map((dir) => (isRecord(dir) ? dir.path : undefined))
+			: [];
+		const worktrees = isRecord(session.worktreeConfig)
+			? session.worktreeConfig.basePath
+			: undefined;
+		for (const dir of [
+			session.cwd,
+			session.projectRoot,
+			session.autoRunFolderPath,
+			worktrees,
+			session.worktreeParentPath,
+			...granted,
+		]) {
 			if (typeof dir === 'string' && dir.trim() !== '') dirs.push(dir);
 		}
 	}
 	return dirs;
+}
+
+/**
+ * The folder that holds the agent list and the settings when the person moved
+ * them out of the data folder (a synced folder). Undefined when they were not
+ * moved, or when the stores are not up yet.
+ */
+function movedSyncPath(userDataPath: string): string | undefined {
+	try {
+		const syncPath = getSyncPath();
+		return isSameFolder(syncPath, userDataPath) ? undefined : syncPath;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -699,8 +755,9 @@ export function getCotConfigStore(): CotConfigStore {
 			cwd: userDataPath,
 			seal: safeStorageSeal(safeStorage),
 			getFolderContext: () => ({
-				agentDirs: localAgentDirs(),
+				agentDirs: agentDirsOf(getSessionsStore().get('sessions', [])),
 				userDataPath,
+				syncPath: movedSyncPath(userDataPath),
 				homeDir: os.homedir(),
 			}),
 			// Read at each failure, so a listener set after this point is heard.

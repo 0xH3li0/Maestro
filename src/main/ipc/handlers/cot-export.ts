@@ -46,6 +46,7 @@ import { getCotConfigStore, setCotFailureListener } from '../../cot-export/confi
 import type { CotFailureListener } from '../../cot-export/config-store';
 import { getCotWriter } from '../../cot-export/runtime';
 import { verifyAgentChain } from '../../cot-export/verify';
+import { markDesktopOnlyChannel } from '../desktop-only-channels';
 
 // ============================================================================
 // The sender check
@@ -57,16 +58,22 @@ import { verifyAgentChain } from '../../cot-export/verify';
  */
 const NOT_AVAILABLE = 'Not available';
 
+/** Whether a window is one the person works in. Set by `registerCotExportHandlers`. */
+let isAppWindow: (window: BrowserWindow) => boolean = () => false;
+
 /**
  * Whether an IPC call came from a window of the desktop app.
  *
- * Three things must hold, and any doubt is a no:
+ * Every one of these must hold, and any doubt is a no:
  * - The event has a sender, and it is the `WebContents` Electron itself keeps
  *   under that id. The bridge's synthetic event has no sender at all, and an
  *   object that only looks like a `WebContents` is not the one Electron has.
  * - The sender is a window. A `<webview>` guest (an embedded browser tab) is
  *   owned by a window too, so the owner alone does not tell them apart.
- * - A `BrowserWindow` owns it.
+ * - The call came from the window's own page, not from a frame inside it.
+ * - A `BrowserWindow` owns it, and it is a window the person works in. Other
+ *   windows load the same page and the same preload (the floating HUD), and
+ *   none of them shows this control.
  */
 function isDesktopSender(event: IpcMainInvokeEvent | undefined): boolean {
 	try {
@@ -74,7 +81,9 @@ function isDesktopSender(event: IpcMainInvokeEvent | undefined): boolean {
 		if (!sender || typeof sender.id !== 'number') return false;
 		if (webContents.fromId(sender.id) !== sender) return false;
 		if (sender.getType() !== 'window') return false;
-		return BrowserWindow.fromWebContents(sender) !== null;
+		if (!event.senderFrame || event.senderFrame !== sender.mainFrame) return false;
+		const window = BrowserWindow.fromWebContents(sender);
+		return window !== null && isAppWindow(window);
 	} catch {
 		return false;
 	}
@@ -152,15 +161,34 @@ export function createCotFailureNotifier(
 	};
 }
 
+/** Kept for the reason given in `createCotFailureNotifier`. */
+let loadProblemNotice: Notification | null = null;
+
+/**
+ * Tells the person that the saved state could not be read when the app
+ * started. Export is then off for every agent, and nothing else would say so
+ * until someone opened an Edit Agent dialog: a log that stopped must not stop
+ * without a word. It does nothing when the state was read, and it never
+ * throws. The registration calls it, so it is said once per start of the app.
+ */
+function notifyCotLoadProblem(): void {
+	try {
+		if (getCotConfigStore().getLoadProblem() === null) return;
+		if (!Notification.isSupported()) return;
+		loadProblemNotice = new Notification({
+			title: 'Maestro',
+			body: 'Chain of thought export is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
+		});
+		loadProblemNotice.show();
+	} catch {
+		// The dialog still shows the reason. A notice that cannot be raised
+		// must not keep the handlers from being registered.
+	}
+}
+
 // ============================================================================
 // The handlers
 // ============================================================================
-
-/**
- * How many times a verify walks a chain that the agent wrote to during the
- * walk, before it gives the verdict it has.
- */
-const VERIFY_ATTEMPTS = 3;
 
 function requireAgentId(value: unknown): string {
 	if (typeof value !== 'string' || value === '') throw new TypeError('An agent id is required.');
@@ -188,28 +216,32 @@ function requireChoice(value: unknown): { enabled: boolean; folder: string | nul
 /**
  * Checks the agent's chain in `folder` against the head Maestro holds for it.
  *
- * `recover` goes first, for two reasons. After a hard stop the stored head can
- * be behind the disk, and a verify then would report an intact log as missing
- * its newest records. And `recover` waits its turn behind the agent's writes,
- * so the head read after it belongs to a chain with no write under way.
+ * The walk runs with the chain at rest (`whileQuiet`). The agent's writes wait
+ * behind it and none is lost, so the walk sees every record up to the head and
+ * nothing half way in: a walk beside the writer reads one file before a record
+ * lands in it and the next file after, and calls an intact log broken. The
+ * stored head is checked against the disk first, because after a hard stop it
+ * can be behind, and an intact log would then read as one with records added.
  *
- * An agent can still write while the walk runs, and the walk then sees a
- * record the head it was given does not know. So a walk that fails while the
- * head moved is run again, a few times. A walk that passes needs no second
- * look: it saw every record up to the head it was given, in order.
+ * It never rejects. A folder that cannot be read gives no verdict on its
+ * chain, and says so, and the agent's other chains are still checked.
  */
 async function verifyChain(agentId: string, folder: string): Promise<CotChainVerifyResult> {
-	const store = getCotConfigStore();
-	const writer = getCotWriter();
-	const storedHead = (): string | null => store.getChainState(agentId, folder)?.head ?? null;
-
-	for (let attempt = 1; ; attempt++) {
-		await writer.recover(agentId, folder);
-		const head = storedHead();
-		const result = { folder, ...(await verifyAgentChain(folder, head)) };
-		if (result.ok || attempt === VERIFY_ATTEMPTS) return result;
-		await writer.recover(agentId, folder);
-		if (storedHead() === head) return result;
+	try {
+		const result = await getCotWriter().whileQuiet(agentId, folder, (state) =>
+			verifyAgentChain(folder, state?.head ?? null)
+		);
+		return { folder, ...result };
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException | null)?.code;
+		return {
+			folder,
+			ok: false,
+			filesChecked: 0,
+			recordsChecked: 0,
+			headMatches: false,
+			error: code ? `The folder could not be read (${code}).` : 'The folder could not be read.',
+		};
 	}
 }
 
@@ -262,23 +294,34 @@ const HANDLERS: Record<CotExportChannelName, (...args: unknown[]) => unknown> = 
 export interface CotExportHandlerDependencies {
 	/** The name the person gave an agent, for the failure notice. */
 	getAgentName: (agentId: string) => string | undefined;
+	/**
+	 * Whether `window` is one the person works in: a main or a secondary app
+	 * window, and no helper window that loads the same page.
+	 */
+	isAppWindow: (window: BrowserWindow) => boolean;
 }
 
 /**
  * Registers the channels, each behind the sender check, and starts telling
- * the person when a log fails. Call it once: Electron refuses a second handler
- * for a channel.
+ * the person when a log fails. Call it once, after the app's `ready` event:
+ * Electron refuses a second handler for a channel, and the store it reads
+ * needs the OS key store.
  *
  * The loop is what keeps the check in front of every handler: a channel
  * cannot be registered here without it.
  */
 export function registerCotExportHandlers(deps: CotExportHandlerDependencies): void {
+	isAppWindow = deps.isAppWindow;
 	for (const name of Object.keys(HANDLERS) as CotExportChannelName[]) {
 		const handler = HANDLERS[name];
+		// The second lock: the web bridge answers for a marked channel as it
+		// does for one nobody registered, and never reaches the handler.
+		markDesktopOnlyChannel(COT_EXPORT_CHANNELS[name]);
 		ipcMain.handle(COT_EXPORT_CHANNELS[name], async (event, ...args: unknown[]) => {
 			assertDesktopSender(event);
 			return handler(...args);
 		});
 	}
 	setCotFailureListener(createCotFailureNotifier(deps.getAgentName));
+	notifyCotLoadProblem();
 }

@@ -10,7 +10,20 @@
  * Trailing-edge only (the wrapped function runs after the quiet period, never on
  * the leading call) and the most recent arguments win. Returns a callable with
  * `cancel()` (drop any pending run) and `flush()` (run a pending call now).
+ *
+ * `maxWaitMs` bounds how long a run can be put off. Without it a stream of
+ * calls closer together than `waitMs` never lets the function run at all,
+ * which is wrong for anything that must not fall far behind (a save).
  */
+
+/** Options of `debounce`. */
+export interface DebounceOptions {
+	/**
+	 * The longest a pending call waits, counted from the first call since the
+	 * last run. Calls that keep arriving cannot push the run past it.
+	 */
+	maxWaitMs?: number;
+}
 
 /** A debounced wrapper around a function of arguments `A`. */
 export interface DebouncedFunction<A extends unknown[]> {
@@ -28,28 +41,40 @@ export interface DebouncedFunction<A extends unknown[]> {
  */
 export function debounce<A extends unknown[]>(
 	fn: (...args: A) => void,
-	waitMs: number
+	waitMs: number,
+	options: DebounceOptions = {}
 ): DebouncedFunction<A> {
+	const { maxWaitMs } = options;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	let pendingArgs: A | null = null;
+	/** When the oldest call still waiting was made. Null when nothing waits. */
+	let waitingSince: number | null = null;
 
 	const run = (): void => {
 		const args = pendingArgs;
 		timer = null;
 		pendingArgs = null;
+		waitingSince = null;
 		if (args) fn(...args);
 	};
 
 	const debounced = ((...args: A): void => {
 		pendingArgs = args;
 		if (timer) clearTimeout(timer);
-		timer = setTimeout(run, waitMs);
+		let delay = waitMs;
+		if (maxWaitMs !== undefined) {
+			const now = Date.now();
+			waitingSince ??= now;
+			delay = Math.max(0, Math.min(waitMs, waitingSince + maxWaitMs - now));
+		}
+		timer = setTimeout(run, delay);
 	}) as DebouncedFunction<A>;
 
 	debounced.cancel = (): void => {
 		if (timer) clearTimeout(timer);
 		timer = null;
 		pendingArgs = null;
+		waitingSince = null;
 	};
 
 	debounced.flush = (): void => {

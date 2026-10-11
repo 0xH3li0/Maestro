@@ -238,11 +238,17 @@ function outputText(value: unknown): string {
 function capOutput(
 	text: string
 ): Pick<CotToolResultPayload, 'output' | 'outputSha256' | 'truncatedBytes'> {
-	const bytes = Buffer.from(text, 'utf8');
-	const outputSha256 = sha256Hex(bytes);
-	if (bytes.length <= COT_TOOL_OUTPUT_CAP_BYTES) {
+	// The hash reads the text as UTF-8 itself. Only the part that can be kept
+	// is ever copied into a buffer here: an output can be tens of megabytes,
+	// and this runs where the process's output is handled.
+	const outputSha256 = sha256Hex(text);
+	const byteLength = Buffer.byteLength(text, 'utf8');
+	if (byteLength <= COT_TOOL_OUTPUT_CAP_BYTES) {
 		return { output: text, outputSha256 };
 	}
+	// A character is at least one byte, so one character more than the cap
+	// holds the whole kept part and the first byte past it.
+	const bytes = Buffer.from(text.slice(0, COT_TOOL_OUTPUT_CAP_BYTES + 1), 'utf8');
 	// `bytes[end]` is the first byte left out. While it is a continuation byte
 	// (10xxxxxx), the character it belongs to began before the cut, so the cut
 	// moves back to where that character starts.
@@ -251,7 +257,7 @@ function capOutput(
 	return {
 		output: bytes.toString('utf8', 0, end),
 		outputSha256,
-		truncatedBytes: bytes.length - end,
+		truncatedBytes: byteLength - end,
 	};
 }
 

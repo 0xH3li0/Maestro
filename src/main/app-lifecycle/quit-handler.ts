@@ -429,6 +429,14 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		logger.info('Killing all running processes', 'Shutdown');
 		getProcessManager()?.killAll({ shutdown: true });
 
+		// Once more, now that nothing is running: a line a process printed on its
+		// way out can have moved that store after the save near the top.
+		try {
+			flushCotConfigStoreSync();
+		} catch (err) {
+			logger.error(`Error flushing device state on quit: ${err}`, 'Shutdown');
+		}
+
 		// Clear power save blocker AFTER killAll() to prevent late process output
 		// from re-arming the blocker via addBlockReason()
 		powerManager.clearAllReasons();

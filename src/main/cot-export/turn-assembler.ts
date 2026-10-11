@@ -193,6 +193,9 @@ const COALESCE_FLUSH_BYTES = 8 * 1024;
 /** Reason of the gap written when the prompt never reached this module. */
 const PROMPT_NOT_CAPTURED_REASON = 'prompt-not-captured';
 
+/** Reason of the gap written when the turn's provider has no output parser. */
+const OUTPUT_NOT_PARSED_REASON = 'output-not-captured:no-parser';
+
 type ProseBlock = CotThinkingPayload | CotTextPayload;
 
 function isProse(block: CotBlock): block is ProseBlock {
@@ -366,8 +369,9 @@ function buildTurnStart(
 	target: CotTarget
 ): { start: CotTurnStartPayload; startGaps: string[] } {
 	const ssh = runsOverSsh(config);
-	// A Cue run's prompt is the one the subscription wrote. Cue puts no system
-	// prompt in front of it, so a marker in it can only be the writer's own text.
+	// A Cue run hands over the prompt the subscription wrote, from before any
+	// system prompt is put in front of it for the provider, so a marker in it
+	// can only be the writer's own text.
 	const { prompt, systemPromptSha256 } =
 		target.origin === 'cue' ? { prompt: config.prompt ?? '' } : splitSystemPrompt(config);
 	const origin: CotTurnOrigin = target.origin;
@@ -540,6 +544,10 @@ export function createCotTurnAssembler(deps: CotTurnAssemblerDeps): CotTurnAssem
 			const turnId = newTurnId();
 			const filePath = turnFilePath(folder, new Date(startedAt), target.tabId, turnId);
 			const { start, startGaps } = buildTurnStart(config, target);
+			// With no parser the process manager passes the output on as raw text
+			// and no parsed line ever arrives here. The turn would read as an agent
+			// that said nothing, so it says what it is instead.
+			if (!createOutputParser(config.toolType)) startGaps.push(OUTPUT_NOT_PARSED_REASON);
 			// `append` never rejects and reports its own failures. The guard is for
 			// a throw before the writer takes the record, so that one bad record
 			// cannot leave a `turn-start` without its `turn-end`.
@@ -637,9 +645,6 @@ export function createCotTurnAssembler(deps: CotTurnAssemblerDeps): CotTurnAssem
 // ============================================================================
 // Cue runs
 // ============================================================================
-
-/** Reason of the gap written when a Cue run's provider has no output parser. */
-const OUTPUT_NOT_PARSED_REASON = 'output-not-captured:no-parser';
 
 /** Prefix of the gap written when a parser threw on some lines of a Cue run. */
 const UNPARSED_LINES_REASON = 'unparsed-lines';

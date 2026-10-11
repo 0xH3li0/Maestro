@@ -426,7 +426,7 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockSaveAllWindowStates).not.toHaveBeenCalled();
 		});
 
-		it('lands the pending device-state write during cleanup, before processes are torn down', async () => {
+		it('lands the pending device-state write before processes are torn down, and once more after', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 
 			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
@@ -435,10 +435,13 @@ describe('app-lifecycle/quit-handler', () => {
 
 			beforeQuitHandler!({ preventDefault: vi.fn() });
 
-			expect(mockFlushDeviceState).toHaveBeenCalledTimes(1);
-			const flushOrder = mockFlushDeviceState.mock.invocationCallOrder[0];
+			// Before: nothing further down cleanup can cost the write. After: a
+			// line a process printed on its way out can have moved the store again.
+			expect(mockFlushDeviceState).toHaveBeenCalledTimes(2);
+			const [firstFlush, secondFlush] = mockFlushDeviceState.mock.invocationCallOrder;
 			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
-			expect(flushOrder).toBeLessThan(killOrder);
+			expect(firstFlush).toBeLessThan(killOrder);
+			expect(secondFlush).toBeGreaterThan(killOrder);
 		});
 
 		it('finishes cleanup when the device-state write fails', async () => {

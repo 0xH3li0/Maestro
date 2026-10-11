@@ -101,6 +101,23 @@ export interface CotWriter {
 	 * reported as a removed record. It never rejects.
 	 */
 	recover(agentId: string, folder: string): Promise<void>;
+	/**
+	 * Runs `work` while nothing is written to the agent's chains: the agent's
+	 * writes wait behind it, in order, and none is lost. `work` is given the
+	 * newest record of the chain in `folder` that is sealed and on disk, after
+	 * the stored head was checked against the disk as `recover` checks it; or
+	 * null when the agent has no chain there.
+	 *
+	 * This is how a chain is read back and compared with its head. A walk that
+	 * runs beside the writer can read one file before a record lands in it and
+	 * the next file after, and then reports a record as missing that was only
+	 * late. It rejects only when `work` does.
+	 */
+	whileQuiet<T>(
+		agentId: string,
+		folder: string,
+		work: (state: CotChainState | null) => Promise<T>
+	): Promise<T>;
 }
 
 /** What `recoverHead` found when it compared a stored head with the disk. */
@@ -134,6 +151,17 @@ const NEWLINE_BYTE = 0x0a;
 
 /** Reason of the gap written when the disk contradicts the stored head. */
 const HEAD_MISMATCH_REASON = 'head-mismatch-on-start';
+
+/** Reason of the gap written when the stored head could not be checked at all. */
+const HEAD_UNCHECKED_REASON = 'head-unchecked-on-start';
+
+/**
+ * How many times the check of a stored head may fail before the writer goes on
+ * without it. A file that is busy for a moment (a virus scanner, a sync
+ * client) passes at the next record. A file that can never be read must not
+ * stop the log for good, and must not cost a full walk at every record.
+ */
+const MAX_RECOVERY_ATTEMPTS = 3;
 
 /**
  * The records at the end of one turn file, newest first: every record past
@@ -201,6 +229,12 @@ async function readLinksBackTo(filePath: string, chainSeq: number): Promise<CotC
  * throws when the folder cannot be read. A folder that does not exist holds
  * no records, which is not an error.
  *
+ * A chain with no stored head is the one case that reads every folder. It is
+ * either new, with nothing on disk to read, or it was set up again over a log
+ * whose state Maestro lost. Every record of that log is then past the stored
+ * head, and the chain can be taken up only from all of them: a record that is
+ * not position 0, read from the newest folders alone, links to nothing here.
+ *
  * A limit, stated plainly: a forward record is taken on trust. After a hard
  * stop Maestro cannot tell a record it wrote and did not save from one that
  * someone who knew the head appended. That is inside the limit this feature
@@ -211,7 +245,10 @@ export async function recoverHead(folder: string, stored: CotChainState): Promis
 	const forward: CotChainLink[] = [];
 	// The newest record on disk at or before the stored head.
 	let newestBehind: CotChainLink | null = null;
-	const files = await listTurnFiles(folder, { newestHourFolders: RECOVERY_HOUR_FOLDERS });
+	const files = await listTurnFiles(
+		folder,
+		stored.chainSeq === COT_GENESIS_CHAIN_SEQ ? {} : { newestHourFolders: RECOVERY_HOUR_FOLDERS }
+	);
 	for (const file of files) {
 		for (const link of await readLinksBackTo(file, stored.chainSeq)) {
 			if (link.chainSeq > stored.chainSeq) forward.push(link);
@@ -265,8 +302,13 @@ interface ChainSlot {
 	state: CotChainState;
 	/** Whether the stored head was checked against the disk since the app started. */
 	recovered: boolean;
-	/** The chain is owed a gap that says the disk contradicted the stored head. */
-	headMismatch: boolean;
+	/** How many times that check failed. See `MAX_RECOVERY_ATTEMPTS`. */
+	recoveryFailures: number;
+	/**
+	 * The reason of the gap the chain is owed for its head: the disk
+	 * contradicted it, or it could not be checked. Null when nothing is owed.
+	 */
+	headGap: string | null;
 	/** Records lost since the last line that landed. */
 	dropped: number;
 	/** Why the first of those records was lost. */
@@ -328,7 +370,7 @@ function stamp(
 /** The gaps a chain is owed, oldest cause first. */
 function owedGaps(slot: ChainSlot): CotCaptureGapPayload[] {
 	const gaps: CotCaptureGapPayload[] = [];
-	if (slot.headMismatch) gaps.push({ kind: 'capture-gap', reason: HEAD_MISMATCH_REASON });
+	if (slot.headGap !== null) gaps.push({ kind: 'capture-gap', reason: slot.headGap });
 	if (slot.dropped > 0) {
 		gaps.push({
 			kind: 'capture-gap',
@@ -374,7 +416,8 @@ export function createCotWriter(deps: CotWriterDeps): CotWriter {
 			slot = {
 				state: { ...stored },
 				recovered: false,
-				headMismatch: false,
+				recoveryFailures: 0,
+				headGap: null,
 				dropped: 0,
 				dropCode: null,
 				files: new Map(),
@@ -384,12 +427,29 @@ export function createCotWriter(deps: CotWriterDeps): CotWriter {
 		return slot;
 	}
 
-	/** Checks the stored head against the disk, the first time the chain is used. */
+	/**
+	 * Checks the stored head against the disk, the first time the chain is used.
+	 *
+	 * It throws while the check keeps failing, so the record that asked for it
+	 * is counted as lost and the next one tries again. After
+	 * `MAX_RECOVERY_ATTEMPTS` it stops trying: the chain goes on from the stored
+	 * head, and a gap says the head was never checked.
+	 */
 	async function recoverOnce(agentId: string, folder: string, slot: ChainSlot): Promise<void> {
 		if (slot.recovered) return;
-		const recovery = await recoverHead(folder, slot.state);
+		let recovery: CotHeadRecovery;
+		try {
+			recovery = await recoverHead(folder, slot.state);
+		} catch (error) {
+			slot.recoveryFailures += 1;
+			if (slot.recoveryFailures < MAX_RECOVERY_ATTEMPTS) throw error;
+			report(agentId, error);
+			slot.recovered = true;
+			slot.headGap = HEAD_UNCHECKED_REASON;
+			return;
+		}
 		slot.recovered = true;
-		if (recovery.outcome === 'mismatch') slot.headMismatch = true;
+		if (recovery.outcome === 'mismatch') slot.headGap = HEAD_MISMATCH_REASON;
 		if (recovery.outcome === 'adopted') {
 			slot.state = recovery.state;
 			announce(agentId, slot.state);
@@ -443,7 +503,7 @@ export function createCotWriter(deps: CotWriterDeps): CotWriter {
 
 		file.nextSeq = seq;
 		slot.state = { folder: slot.state.folder, head, chainSeq };
-		slot.headMismatch = false;
+		slot.headGap = null;
 		slot.dropped = 0;
 		slot.dropCode = null;
 		announce(agentId, slot.state);
@@ -491,6 +551,22 @@ export function createCotWriter(deps: CotWriterDeps): CotWriter {
 				} catch (error) {
 					report(agentId, error);
 				}
+			});
+		},
+		whileQuiet(agentId, folder, work) {
+			return queue.enqueue(agentId, async () => {
+				const resolved = path.resolve(folder);
+				let slot: ChainSlot | null = null;
+				try {
+					slot = slotFor(agentId, resolved);
+					if (slot) await recoverOnce(agentId, resolved, slot);
+				} catch (error) {
+					// The head could not be checked this time. The chain is still
+					// read back against the head as it is held: that is the best
+					// answer there is, and the failure is on record.
+					report(agentId, error);
+				}
+				return work(slot ? { ...slot.state } : null);
 			});
 		},
 	};

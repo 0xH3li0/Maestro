@@ -46,11 +46,19 @@ const electronMock = vi.hoisted(() => {
 	return { state, safeStorage, app: { getPath: (): string => state.userData } };
 });
 
-const sessionsMock = vi.hoisted(() => ({ sessions: [] as Array<Record<string, unknown>> }));
+const sessionsMock = vi.hoisted(() => ({
+	sessions: [] as Array<Record<string, unknown>>,
+	/** Where the agent list and the settings lie. Null while the stores are not up. */
+	syncPath: null as string | null,
+}));
 
 vi.mock('electron', () => ({ safeStorage: electronMock.safeStorage, app: electronMock.app }));
 vi.mock('../../../main/stores/getters', () => ({
 	getSessionsStore: () => ({ get: () => sessionsMock.sessions }),
+	getSyncPath: (): string => {
+		if (sessionsMock.syncPath === null) throw new Error('Stores not initialized.');
+		return sessionsMock.syncPath;
+	},
 }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -122,6 +130,7 @@ describe('cot-export/config-store', () => {
 		stores = [];
 		electronMock.state.userData = dataDir;
 		sessionsMock.sessions = [];
+		sessionsMock.syncPath = null;
 		__resetCotConfigStoreForTests();
 	});
 
@@ -238,6 +247,15 @@ describe('cot-export/config-store', () => {
 			store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: 7 });
 			store.flushSync();
 			sealedBytes = fs.readFileSync(storeFile());
+		});
+
+		it('says that the saved state could not be read, and only then', () => {
+			expect(makeStore().getLoadProblem()).toBeNull();
+
+			electronMock.state.key = 0x33;
+			const problem = makeStore().getLoadProblem();
+			expect(problem?.message).toMatch(/could not read/i);
+			expect(problem?.at).toBe(START);
 		});
 
 		it('starts empty, tells the person, and leaves the file as it is', async () => {
@@ -649,6 +667,21 @@ describe('cot-export/config-store', () => {
 			expect(headOnDisk()).toBe(HASH_B);
 		});
 
+		it('saves within 2 s, however fast the changes keep coming', () => {
+			// A record every 300 ms: the 500 ms pause never comes.
+			for (let position = 0; position < 6; position++) {
+				store.setChainHead(AGENT, { folder: logs, head: HASH_A, chainSeq: position });
+				vi.advanceTimersByTime(300);
+			}
+			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
+
+			store.setChainHead(AGENT, { folder: logs, head: HASH_B, chainSeq: 6 });
+			vi.advanceTimersByTime(199);
+			expect(headOnDisk()).toBe(COT_GENESIS_HASH);
+			vi.advanceTimersByTime(1);
+			expect(headOnDisk()).toBe(HASH_B);
+		});
+
 		it('saves a write time and a failure the same way', async () => {
 			store.recordWrite(AGENT, START + 5);
 			store.recordError(AGENT, 'The folder is gone.', START + 6);
@@ -841,6 +874,60 @@ describe('cot-export/config-store', () => {
 				});
 				expect(result.ok).toBe(false);
 			}
+			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') }).ok).toBe(
+				true
+			);
+		});
+
+		it('refuses a folder inside a directory an agent was granted, and inside where its worktrees go', () => {
+			const granted = path.join(root, 'granted');
+			const worktrees = path.join(root, 'worktrees');
+			const legacyWorktrees = path.join(root, 'legacy-worktrees');
+			for (const dir of [granted, worktrees, legacyWorktrees]) fs.mkdirSync(dir);
+			sessionsMock.sessions = [
+				{
+					id: 'a',
+					cwd: workspace,
+					additionalDirectories: [
+						{ path: granted, read: true, write: false },
+						// Entries a damaged sessions file can hold must not break the check.
+						null,
+						{ path: 42 },
+					],
+					worktreeConfig: { basePath: worktrees },
+				},
+				{ id: 'b', cwd: workspace, worktreeParentPath: legacyWorktrees },
+				{ id: 'c', cwd: workspace, additionalDirectories: 'not a list', worktreeConfig: 7 },
+			];
+			const store = getCotConfigStore();
+
+			for (const inside of [granted, worktrees, legacyWorktrees]) {
+				const result = store.setAgentConfig(AGENT, {
+					enabled: true,
+					folder: path.join(inside, 'logs'),
+				});
+				expect(result, inside).toMatchObject({ ok: false });
+			}
+			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') }).ok).toBe(
+				true
+			);
+		});
+
+		it('refuses a folder inside the folder the agent list was moved to', () => {
+			const synced = path.join(root, 'synced');
+			fs.mkdirSync(synced);
+			sessionsMock.syncPath = synced;
+			const store = getCotConfigStore();
+
+			const result = store.setAgentConfig(AGENT, {
+				enabled: true,
+				folder: path.join(synced, 'logs'),
+			});
+			expect(result).toMatchObject({ ok: false });
+
+			// Not moved: the agent list lies in the data folder, which is refused
+			// as the data folder and adds nothing of its own.
+			sessionsMock.syncPath = dataDir;
 			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') }).ok).toBe(
 				true
 			);

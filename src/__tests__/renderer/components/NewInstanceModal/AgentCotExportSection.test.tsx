@@ -292,6 +292,18 @@ describe('AgentCotExportSection', () => {
 	});
 
 	describe('the notes', () => {
+		it('says which turns are recorded and which are not', async () => {
+			await renderLoaded(createApi());
+
+			const scope = screen.getByTestId('cot-export-scope');
+			expect(scope).toHaveTextContent(
+				'Recorded: messages sent in this app, Auto Run tasks, Group Chat replies, and Cue runs.'
+			);
+			expect(scope).toHaveTextContent(
+				"Not recorded: a turn started from the command line, an answer to another agent's question, and anything a program the agent starts does on its own."
+			);
+		});
+
 		const UNSUPPORTED = /This provider does not expose its reasoning\./;
 		const INTERACTIVE = /Reasoning may be missing while this agent runs through the interactive/;
 
@@ -299,7 +311,7 @@ describe('AgentCotExportSection', () => {
 			await renderLoaded(createApi(), { supportsReasoning: false });
 
 			expect(screen.getByText(UNSUPPORTED)).toHaveTextContent(
-				'Prompts, tool calls, results, replies, and usage are still recorded.'
+				'Prompts are still recorded, and so are tool calls, results, replies, and usage when the provider reports them.'
 			);
 		});
 
@@ -453,11 +465,11 @@ describe('AgentCotExportSection', () => {
 				'Record 7 was changed after it was written: its contents no longer match its hash.'
 			);
 			expect(output).not.toHaveTextContent('Intact');
-			// The link itself held up to the head, so the tail is not reported missing.
-			expect(output).not.toHaveTextContent('The newest records are missing');
+			// The link itself held up to the head, so the end of the log is not called into question.
+			expect(output).not.toHaveTextContent('is not the last one Maestro wrote');
 		});
 
-		it('says that the newest records are missing when the head does not match', async () => {
+		it('says that the end of the log was changed when the head does not match', async () => {
 			const api = createApi(statusOf({ enabled: true, folder: FOLDER }));
 			api.verify.mockResolvedValue([verdictOf({ ok: false, headMatches: false })]);
 			await renderLoaded(api);
@@ -465,9 +477,36 @@ describe('AgentCotExportSection', () => {
 			fireEvent.click(screen.getByText('Verify Log'));
 
 			const output = await screen.findByTestId('cot-export-verification');
-			expect(output).toHaveTextContent('The newest records are missing');
+			expect(output).toHaveTextContent(
+				'The newest record in this folder is not the last one Maestro wrote: records were removed from the end of the log, or added to it.'
+			);
 			expect(output).toHaveTextContent('Checked 12 records in 3 files.');
 			expect(output).not.toHaveTextContent('Intact');
+		});
+
+		it('says that a folder could not be checked, and gives no verdict on it', async () => {
+			const api = createApi(statusOf({ enabled: true, folder: FOLDER }));
+			api.verify.mockResolvedValue([
+				verdictOf({
+					ok: false,
+					headMatches: false,
+					filesChecked: 0,
+					recordsChecked: 0,
+					error: 'The folder could not be read (EACCES).',
+				}),
+			]);
+			await renderLoaded(api);
+
+			fireEvent.click(screen.getByText('Verify Log'));
+
+			const output = await screen.findByTestId('cot-export-verification');
+			expect(output).toHaveTextContent(
+				'Maestro could not check this folder: The folder could not be read (EACCES).'
+			);
+			// Nothing was read, so nothing is said about the log itself.
+			expect(output).not.toHaveTextContent('Intact');
+			expect(output).not.toHaveTextContent('is not the last one Maestro wrote');
+			expect(output).not.toHaveTextContent('Checked');
 		});
 
 		it('renders one verdict per chain, the current folder first', async () => {
