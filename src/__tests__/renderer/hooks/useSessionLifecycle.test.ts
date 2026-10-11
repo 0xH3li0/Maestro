@@ -304,6 +304,24 @@ describe('useSessionLifecycle', () => {
 			expect(sessions[1].name).toBe('Updated Session 2');
 		});
 
+		it('writes the save to disk right away, since the next spawn routes from it', () => {
+			// Persistence is debounced and re-armed by every store change; a streaming
+			// agent would otherwise hold a transport change past the next turn.
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'codex' })],
+				activeSessionId: 'session-1',
+			});
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			mockFlushSessionPersistence.mockClear();
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'Renamed');
+			});
+			vi.runAllTimers();
+
+			expect(mockFlushSessionPersistence).toHaveBeenCalledTimes(1);
+		});
+
 		it('sets optional fields to undefined when not provided', () => {
 			const session = createMockSession({
 				id: 'session-1',

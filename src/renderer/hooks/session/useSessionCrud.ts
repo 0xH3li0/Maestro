@@ -330,6 +330,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
+				// The first spawn reads its routing (Codex transport, Claude token mode)
+				// from the persisted record, so do not leave the new agent sitting in a
+				// debounce that any streaming agent keeps re-arming.
+				setTimeout(() => flushSessionPersistence(), 0);
 				// Claim the agent for THIS window before any process spawns, so a
 				// secondary window surfaces it immediately and the primary's catch-all
 				// never flashes it. No-op in the primary window / outside a WindowProvider.
@@ -349,7 +353,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				logger.error('Failed to create session:', undefined, error);
 			}
 		},
-		[setSessions, setActiveSessionId, setActiveFocus, inputRef, registerNewSession]
+		[
+			setSessions,
+			setActiveSessionId,
+			setActiveFocus,
+			inputRef,
+			registerNewSession,
+			flushSessionPersistence,
+		]
 	);
 
 	// ========================================================================

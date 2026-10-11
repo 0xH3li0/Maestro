@@ -284,8 +284,14 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				const next = { ...s, ...updatedFields };
 				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 			});
+			// The spawn path routes from the PERSISTED record (Codex transport, Claude
+			// token mode), so a stale renderer cannot send a turn somewhere other than
+			// what is saved. Persistence is debounced and re-arms on every store
+			// change, so while any agent streams this save could still be unwritten
+			// when the next turn spawns. Write it now.
+			setTimeout(() => flushSessionPersistence(), 0);
 		},
-		[]
+		[flushSessionPersistence]
 	);
 
 	const handleRenameTab = useCallback(

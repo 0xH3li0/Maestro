@@ -757,6 +757,33 @@ describe('getSteerEligibility', () => {
 		).toBe('too-long');
 	});
 
+	it('refuses a paused item, including one an unconfirmed steer just paused', () => {
+		// Steering it again would type the text a second time.
+		expect(getSteerEligibility(steerableSession(), { ...item, paused: true })).toEqual({
+			canSteer: false,
+			blockedReason: 'paused',
+		});
+	});
+
+	it('refuses an item held for a reconnect', () => {
+		expect(
+			getSteerEligibility(steerableSession(), { ...item, waitingForConnection: true }).blockedReason
+		).toBe('waiting-for-connection');
+	});
+
+	it('refuses an SSH agent, whose turn runs on another host', () => {
+		const claude = steerableSession({
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
+		} as Partial<Session>);
+		const codex = steerableSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			sshRemoteId: 'r1',
+		} as Partial<Session>);
+		expect(getSteerEligibility(claude, item).blockedReason).toBe('ssh-remote');
+		expect(getSteerEligibility(codex, item).blockedReason).toBe('ssh-remote');
+	});
+
 	it('refuses when the agent has no tabs at all', () => {
 		const session = steerableSession({ aiTabs: [], activeTabId: undefined });
 		expect(getSteerEligibility(session, item).blockedReason).toBe('no-target-tab');
@@ -878,6 +905,10 @@ describe('shouldOfferSteer', () => {
 			'cross-agent-mention',
 			'has-agent-context',
 			'too-long',
+			'paused',
+			'waiting-for-connection',
+			'ssh-remote',
+			'steer-in-flight',
 		] as const) {
 			expect(shouldOfferSteer({ canSteer: false, blockedReason })).toBe(false);
 		}

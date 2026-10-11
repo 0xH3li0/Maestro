@@ -230,6 +230,20 @@ describe('useSessionCrud', () => {
 			expect(sessions[0].projectRoot).toBe('/test/project');
 		});
 
+		it('writes the new agent to disk right away, since its first spawn routes from it', async () => {
+			vi.useFakeTimers();
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('codex', '/test/project', 'Codex');
+			});
+			vi.runAllTimers();
+			vi.useRealTimers();
+
+			expect(deps.flushSessionPersistence).toHaveBeenCalled();
+		});
+
 		it('sets active session ID to the new session', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));

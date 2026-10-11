@@ -16,7 +16,9 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 import {
 	applySteeringVerdict,
 	pendingSteerCount,
+	reconcilePendingSteers,
 	resetPendingSteersForTests,
+	returnPendingSteersToQueue,
 	settlePendingSteersOnExit,
 	steerQueuedItem,
 } from '../../../renderer/services/chatSteering';
@@ -56,6 +58,10 @@ function queue(): QueuedItem[] {
 	return useSessionStore.getState().sessions[0].executionQueue;
 }
 
+function tabLogs() {
+	return useSessionStore.getState().sessions[0].aiTabs[0].logs;
+}
+
 /** Steer `item-a` with the socket answering `delivered` under steer id `steer-1`. */
 async function deliver(queued: QueuedItem[] = [item()]): Promise<void> {
 	useSessionStore.setState({ sessions: [steerableSession(queued)] });
@@ -71,6 +77,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	delete maestroProcess.steer;
+	delete maestroProcess.getActiveProcesses;
 });
 
 describe('steerQueuedItem', () => {
@@ -130,6 +137,87 @@ describe('steerQueuedItem', () => {
 		expect(result.outcome).toBe('unconfirmed');
 		expect(queue()).toEqual([{ ...item(), paused: true }]);
 	});
+
+	it('puts the steered message in the transcript and parks it on the agent', async () => {
+		// A steered message never dispatches, so nothing else would log it: without
+		// this the user's words vanished from both the queue and the transcript.
+		await deliver();
+
+		const logs = tabLogs();
+		expect(logs).toHaveLength(1);
+		expect(logs[0]).toMatchObject({
+			source: 'user',
+			text: 'go left instead',
+			queuedItemId: 'item-a',
+		});
+		// The record lives on the session so it is persisted with it.
+		expect(useSessionStore.getState().sessions[0].pendingSteers).toEqual([
+			expect.objectContaining({
+				steerId: 'steer-1',
+				processKey: PROCESS_KEY,
+				tabId: 'tab-1',
+				logEntryId: logs[0].id,
+				item: item(),
+			}),
+		]);
+	});
+
+	it('refuses a second steer of the same item while the first is unanswered', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		let answer: (frame: unknown) => void = () => {};
+		steer.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+
+		const first = steerQueuedItem('sess-1', 'item-a');
+		const second = await steerQueuedItem('sess-1', 'item-a');
+		answer({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+		await first;
+
+		expect(second).toMatchObject({ outcome: 'not-steerable', blockedReason: 'steer-in-flight' });
+		expect(steer).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not park an item the queue already sent while the steer was in flight', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		steer.mockImplementation(async () => {
+			// The turn ended during the await and the drain took the item.
+			useSessionStore.setState({ sessions: [steerableSession([])] });
+			return { type: 'steering', id: 'steer-1', verdict: 'delivered' };
+		});
+
+		await steerQueuedItem('sess-1', 'item-a');
+
+		expect(pendingSteerCount()).toBe(0);
+		expect(tabLogs()).toEqual([]);
+	});
+
+	it('pauses the item when the steer bridge itself fails', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		steer.mockRejectedValue(new Error('ipc closed'));
+
+		const result = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(result).toMatchObject({ outcome: 'unconfirmed', detail: 'ipc closed' });
+		expect(queue()).toEqual([{ ...item(), paused: true }]);
+	});
+
+	it('names the provider that took the message, not always Claude', async () => {
+		useSessionStore.setState({
+			sessions: [
+				{
+					...steerableSession([item()]),
+					toolType: 'codex',
+					codexTransport: 'app-server',
+				} as Session,
+			],
+		});
+		steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+
+		await steerQueuedItem('sess-1', 'item-a');
+
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringMatching(/^Codex has your message/) })
+		);
+	});
 });
 
 describe('applySteeringVerdict', () => {
@@ -167,6 +255,17 @@ describe('applySteeringVerdict', () => {
 		expect(queue().map((i) => i.id)).toEqual(['item-a', 'item-b']);
 		expect(queue()[0].paused).toBeUndefined();
 		expect(pendingSteerCount()).toBe(0);
+	});
+
+	it('takes the steered bubble back out when the item returns to the queue', async () => {
+		// The item logs itself again when it dispatches; keeping both would show
+		// the message twice.
+		await deliver();
+		expect(tabLogs()).toHaveLength(1);
+
+		applySteeringVerdict(PROCESS_KEY, { type: 'steering', id: 'steer-1', verdict: 'dropped' });
+
+		expect(tabLogs()).toEqual([]);
 	});
 
 	it('ignores a verdict for a steer this client did not send', async () => {
@@ -222,5 +321,52 @@ describe('settlePendingSteersOnExit', () => {
 		settlePendingSteersOnExit(PROCESS_KEY);
 
 		expect(queue()).toEqual([]);
+	});
+});
+
+describe('reconcilePendingSteers', () => {
+	it('returns a parked steer whose process is gone, paused, after a reload', async () => {
+		await deliver();
+		maestroProcess.getActiveProcesses = vi.fn().mockResolvedValue([]);
+
+		await reconcilePendingSteers();
+
+		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(pendingSteerCount()).toBe(0);
+	});
+
+	it('keeps a parked steer whose process is still running', async () => {
+		await deliver();
+		maestroProcess.getActiveProcesses = vi.fn().mockResolvedValue([{ sessionId: PROCESS_KEY }]);
+
+		await reconcilePendingSteers();
+
+		expect(queue()).toEqual([]);
+		expect(pendingSteerCount()).toBe(1);
+	});
+
+	it('leaves records alone when it cannot tell what is running', async () => {
+		await deliver();
+		maestroProcess.getActiveProcesses = vi.fn().mockRejectedValue(new Error('not ready'));
+
+		await reconcilePendingSteers();
+
+		expect(pendingSteerCount()).toBe(1);
+	});
+
+	it('skips processes another window owns', async () => {
+		await deliver();
+		maestroProcess.getActiveProcesses = vi.fn().mockResolvedValue([]);
+
+		await reconcilePendingSteers(() => false);
+
+		expect(pendingSteerCount()).toBe(1);
+	});
+});
+
+describe('returnPendingSteersToQueue', () => {
+	it('is a no-op for ids that are not parked', () => {
+		const session = steerableSession([]);
+		expect(returnPendingSteersToQueue(session, new Set(['nope']), true)).toBe(session);
 	});
 });

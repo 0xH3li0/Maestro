@@ -16,6 +16,7 @@ import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState }
 import { generateId } from './ids';
 import { steeringTextTooLong } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
+import { isSessionRemote } from './sessionHelpers';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -511,7 +512,11 @@ export type SteerBlockedReason =
 	| 'awaiting-consult'
 	| 'cross-agent-mention'
 	| 'has-agent-context'
-	| 'too-long';
+	| 'too-long'
+	| 'paused'
+	| 'waiting-for-connection'
+	| 'ssh-remote'
+	| 'steer-in-flight';
 
 export interface SteerEligibility {
 	canSteer: boolean;
@@ -555,7 +560,14 @@ export function getSteerEligibility(
 	session: Session,
 	item: Pick<
 		QueuedItem,
-		'tabId' | 'text' | 'images' | 'awaitingConsult' | 'crossAgentMention' | 'agentContext'
+		| 'tabId'
+		| 'text'
+		| 'images'
+		| 'awaitingConsult'
+		| 'crossAgentMention'
+		| 'agentContext'
+		| 'paused'
+		| 'waitingForConnection'
 	>
 ): SteerEligibility {
 	if (!resolveQueuedItemTarget(session, item)) {
@@ -567,6 +579,10 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
+	// The turn runs on another host: a Claude TUI there has no local socket, and an
+	// SSH Codex turn always runs on exec. Main would refuse every attempt, so the
+	// button would be a control that can only decline.
+	if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
 	if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
 		// accepts `turn/steer` while a turn runs. `codex exec` (the default) accepts
@@ -584,6 +600,13 @@ export function getSteerEligibility(
 	// Steering TYPES text into the composer, so an item with nothing to type has
 	// nothing to steer with.
 	if (!item.text?.trim()) return { canSteer: false, blockedReason: 'nothing-to-type' };
+	// A paused item is held on purpose: by the user, or by the steer path itself
+	// after an unconfirmed delivery (where steering it again types it twice). The
+	// card's play button is the way out, not Steer.
+	if (item.paused) return { canSteer: false, blockedReason: 'paused' };
+	if (item.waitingForConnection) {
+		return { canSteer: false, blockedReason: 'waiting-for-connection' };
+	}
 	// An item carrying images cannot be steered without LOSING them. Images reach a
 	// maestro-p turn as `@/path` mentions translated from a stream-json envelope on
 	// stdin (see stream-json-input.ts), and stdin is long closed by the time a turn is
