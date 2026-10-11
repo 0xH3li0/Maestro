@@ -11,9 +11,11 @@
  * (00:00, 06:00, 12:00, 18:00). UTC keeps the names unambiguous across DST
  * changes and machines in other time zones.
  *
- * No `path` import: the renderer bundle has no Node `path`, so joins pick the
- * separator the base directory already uses.
+ * No `path` import: the renderer bundle has no Node `path`, so joins go
+ * through `joinPath`, which keeps the separator the base directory uses.
  */
+
+import { joinPath } from '../formatters';
 
 export const COMPUTER_HISTORY_DIR_NAME = 'computer-history';
 export const SEGMENT_MINUTES = 15;
@@ -31,16 +33,9 @@ export const INDEX_FILE = 'index.jsonl';
 export const SEGMENTS_DIR = 'segments';
 export const DIGESTS_DIR = 'digests';
 
-/** Join path parts using the separator `base` already uses (Windows or POSIX). */
-function joinNative(base: string, ...parts: string[]): string {
-	const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
-	const trimmed = base.replace(/[\\/]+$/, '');
-	return [trimmed, ...parts].join(sep);
-}
-
 /** `<userData>/computer-history` for a given userData directory. */
 export function computerHistoryDir(userDataDir: string): string {
-	return joinNative(userDataDir, COMPUTER_HISTORY_DIR_NAME);
+	return joinPath(userDataDir, COMPUTER_HISTORY_DIR_NAME);
 }
 
 /** Start of the 15-minute UTC window that contains `ms`. */
@@ -106,5 +101,5 @@ export function parseSegmentRelativePath(rel: string): number | null {
 
 /** Resolve a store-relative path (forward slashes) to an absolute one. */
 export function resolveStorePath(storeDir: string, rel: string): string {
-	return joinNative(storeDir, ...rel.split('/'));
+	return joinPath(storeDir, ...rel.split('/'));
 }

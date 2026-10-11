@@ -148,6 +148,7 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 	const windowUntil = focus?.endMs ?? nowMs;
 	const kinds = useMemo(() => kindsForFilters(kindFilters), [kindFilters]);
 	const appsFilter = useMemo(() => [...selectedApps], [selectedApps]);
+	const filterGeneration = useRef(0);
 
 	const refresh = useCallback(() => {
 		setNowMs(Date.now());
@@ -185,6 +186,8 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 	useEffect(() => {
 		if (!api || tab !== 'timeline') return;
 		let cancelled = false;
+		// An older-page request still in flight belongs to the previous filters.
+		filterGeneration.current += 1;
 		setPage(null);
 		setError(null);
 		api
@@ -209,6 +212,7 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 
 	const loadOlder = useCallback(async () => {
 		if (!api || !page || page.events.length === 0) return;
+		const generation = filterGeneration.current;
 		setLoadingMore(true);
 		try {
 			const oldestMs = Date.parse(page.events[0].ts);
@@ -222,6 +226,8 @@ export function ComputerHistoryViewer({ theme, onClose }: ComputerHistoryViewerP
 				grep: debouncedQuery || undefined,
 				limit: PAGE_SIZE,
 			});
+			// The filters changed while this was loading: its rows are not theirs.
+			if (generation !== filterGeneration.current) return;
 			setPage((prev) => {
 				if (!prev) return prev;
 				const seen = new Set(prev.events.map(eventKey));

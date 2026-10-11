@@ -17,8 +17,11 @@
  *    `path.resolve`, symlinks resolved through the nearest existing ancestor,
  *    case-insensitive on macOS and Windows) and refused when it is inside
  *    `<userData>/computer-history` or is the CLI discovery file. Channels that
- *    destroy or move things also refuse an ANCESTOR of those paths, so
- *    `fs:delete <userData>` cannot take the store with it.
+ *    destroy, move, or duplicate a whole tree also refuse an ANCESTOR of those
+ *    paths, so `fs:delete <userData>` cannot take the store with it and
+ *    `fs:copyPath <userData> <elsewhere>` cannot carry it out. On the generic
+ *    `fs:` verbs a call whose arguments are too large or too deep to scan is
+ *    refused rather than waved through.
  * 2. The Computer History flag. `settings:set` writes that would change
  *    `encoreFeatures.computerHistory`, and the marketplace toggle for that
  *    flag, are refused; a browser may not turn recording on or off. The WS
@@ -26,8 +29,10 @@
  *
  * What this does NOT do: the bridge still exposes every other handler to a
  * signed-in browser, which is broad access to the machine by design
- * (web-desktop is the whole app). Only Computer History data and the CLI
- * secret are walled off here.
+ * (web-desktop is the whole app). That includes `process:runCommand` and
+ * terminal tabs, so a signed-in browser can read these files with a shell
+ * command. This guard keeps the web UI's own file surfaces off the store; it
+ * is not a boundary against a signed-in client that sets out to get around it.
  */
 
 import * as fs from 'fs';
@@ -73,11 +78,27 @@ export function setBridgeGuardContextProvider(provider: (() => BridgeGuardContex
 	contextProvider = provider ?? defaultContext;
 }
 
-/** Channels where an ancestor of a protected path is as dangerous as the path. */
-const DESTRUCTIVE_CHANNEL_RE = /(delete|remove|rename|move|trash|unlink|rmdir|wipe|clear)/i;
+/**
+ * Channels where an ancestor of a protected path is as dangerous as the path:
+ * the ones that destroy or move a tree, and the ones that duplicate one
+ * (`fs:copyPath`, `fs:compressFolder`), since a copy of `<userData>` lands the
+ * store somewhere the guard does not protect.
+ */
+const TREE_CHANNEL_RE =
+	/(delete|remove|rename|move|trash|unlink|rmdir|wipe|clear|copy|compress|archive|zip|backup|upload)/i;
 
 const MAX_SCAN_DEPTH = 8;
 const MAX_SCAN_STRINGS = 2000;
+/** Longest path any OS accepts (Windows extended-length paths). */
+const MAX_PATH_CHARS = 32767;
+
+/**
+ * Namespaces whose calls carry a path and a small payload, so arguments too
+ * large or too deep to scan are refused. Other namespaces send big trees by
+ * design (`sessions:setMany` carries every transcript), where refusing would
+ * break ordinary saves.
+ */
+const STRICT_SCAN_CHANNEL_RE = /^fs:/;
 
 function caseFold(p: string, platform: NodeJS.Platform): string {
 	return platform === 'darwin' || platform === 'win32' ? p.toLowerCase() : p;
@@ -107,7 +128,9 @@ function realpathLoose(p: string): string {
 /** Turn an argument string into an absolute path the way a handler would. */
 function toPath(value: string): string | null {
 	let v = value.trim();
-	if (!v || v.length > 4096 || v.includes('\0')) return null;
+	// The cap is the longest path an OS accepts, not a typical one: Windows
+	// collapses `.\` padding in a long path back onto the real file.
+	if (!v || v.length > MAX_PATH_CHARS || v.includes('\0')) return null;
 	if (v.startsWith('file://')) {
 		try {
 			v = fileURLToPath(v);
@@ -126,23 +149,28 @@ function isInside(child: string, parent: string): boolean {
 	return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-/** Every string at any depth in `args` (bounded). */
-function collectStrings(value: unknown, out: string[], depth: number): void {
-	if (out.length >= MAX_SCAN_STRINGS || depth > MAX_SCAN_DEPTH) return;
+/**
+ * Every string at any depth in `args` (bounded). Returns false when a bound
+ * cut the scan short, so some strings were never looked at.
+ */
+function collectStrings(value: unknown, out: string[], depth: number): boolean {
+	if (out.length >= MAX_SCAN_STRINGS || depth > MAX_SCAN_DEPTH) return false;
 	if (typeof value === 'string') {
 		out.push(value);
-		return;
+		return true;
 	}
+	let complete = true;
 	if (Array.isArray(value)) {
-		for (const item of value) collectStrings(item, out, depth + 1);
-		return;
+		for (const item of value) complete = collectStrings(item, out, depth + 1) && complete;
+		return complete;
 	}
 	if (value && typeof value === 'object') {
 		for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-			collectStrings(k, out, depth + 1);
-			collectStrings(v, out, depth + 1);
+			complete = collectStrings(k, out, depth + 1) && complete;
+			complete = collectStrings(v, out, depth + 1) && complete;
 		}
 	}
+	return complete;
 }
 
 export interface ProtectedPathHit {
@@ -169,10 +197,13 @@ export function findProtectedPathArg(
 	const fold = (p: string) => caseFold(realpathLoose(path.resolve(p)), ctx.platform);
 	const protectedRoots = roots.map((r) => ({ raw: r, folded: fold(r) }));
 	const protectedFiles = files.map((f) => ({ raw: f, folded: fold(f) }));
-	const destructive = DESTRUCTIVE_CHANNEL_RE.test(channel);
+	const destructive = TREE_CHANNEL_RE.test(channel);
 
 	const strings: string[] = [];
-	collectStrings(args, strings, 0);
+	const complete = collectStrings(args, strings, 0);
+	if (!complete && STRICT_SCAN_CHANNEL_RE.test(channel) && protectedRoots.length > 0) {
+		return { argument: '(arguments too large to check)', protectedPath: protectedRoots[0].raw };
+	}
 	for (const s of strings) {
 		const resolved = toPath(s);
 		if (!resolved) continue;

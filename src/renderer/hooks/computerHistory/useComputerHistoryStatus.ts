@@ -27,16 +27,19 @@ export function useComputerHistoryStatus(): {
 			return;
 		}
 		let cancelled = false;
+		// A push that lands before the first read resolves is the newer answer.
+		let pushed = false;
 		api
 			.status()
 			.then((next) => {
-				if (!cancelled) setStatus(next);
+				if (!cancelled && !pushed) setStatus(next);
 			})
 			.catch(() => {
 				// Denied over the web bridge, or the service is not up yet: no status.
-				if (!cancelled) setStatus(null);
+				if (!cancelled && !pushed) setStatus(null);
 			});
 		const unsubscribe = api.onStatusChanged((next) => {
+			pushed = true;
 			if (!cancelled) setStatus(next);
 		});
 		return () => {

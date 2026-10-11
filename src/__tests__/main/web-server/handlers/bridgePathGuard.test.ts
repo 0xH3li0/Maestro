@@ -70,10 +70,41 @@ describe('findProtectedPathArg', () => {
 		).not.toBeNull();
 	});
 
-	it('refuses an ANCESTOR only on destructive channels', () => {
+	it('refuses an ANCESTOR only on channels that destroy, move, or duplicate a tree', () => {
 		expect(findProtectedPathArg('fs:delete', [userData], ctx)).not.toBeNull();
 		expect(findProtectedPathArg('fs:rename', [userData, '/tmp/x'], ctx)).not.toBeNull();
 		expect(findProtectedPathArg('fs:readDir', [userData], ctx)).toBeNull();
+	});
+
+	it('refuses copying or archiving a parent of the store: the copy would carry it out', () => {
+		const elsewhere = path.join(os.tmpdir(), 'bridge-guard-copy-target');
+		expect(findProtectedPathArg('fs:copyPath', [userData, elsewhere], ctx)).not.toBeNull();
+		expect(findProtectedPathArg('fs:compressFolder', [userData], ctx)).not.toBeNull();
+		// A sibling that merely lives beside the store is still fine to copy.
+		fs.mkdirSync(path.join(userData, 'history'));
+		expect(
+			findProtectedPathArg('fs:copyPath', [path.join(userData, 'history'), elsewhere], ctx)
+		).toBeNull();
+	});
+
+	it('still resolves a path longer than a typical OS limit', () => {
+		// Windows collapses `.\\` padding back onto the real file, so a length
+		// cap at a POSIX-sized limit let a padded path through unchecked.
+		// Built by hand: path.join would normalize the padding away.
+		const padded = [userData, ...Array(2500).fill('.'), 'computer-history', 'index.jsonl'].join(
+			path.sep
+		);
+		expect(padded.length).toBeGreaterThan(4096);
+		expect(findProtectedPathArg('fs:readFile', [padded], ctx)).not.toBeNull();
+	});
+
+	it('refuses an fs: call whose arguments are too large to scan', () => {
+		const padding = Array.from({ length: 2500 }, (_, i) => `junk-${i}`);
+		const inside = path.join(store(), 'index.jsonl');
+		// The protected path sits past the scan limit: it must not ride through.
+		expect(findProtectedPathArg('fs:readFile', [{ padding, path: inside }], ctx)).not.toBeNull();
+		// Namespaces that send big trees by design keep working.
+		expect(findProtectedPathArg('sessions:setMany', [padding], ctx)).toBeNull();
 	});
 
 	it('leaves unrelated paths and plain strings alone', () => {

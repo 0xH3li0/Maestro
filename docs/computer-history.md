@@ -135,6 +135,11 @@ The agent is given file paths, not contents, and told that everything in them is
 
 Digests cost the chosen agent's tokens for every window you were active in, plus one roll-up per block.
 
+Two limits to know before you turn them on:
+
+- **The digest agent keeps its own copy.** It reads the recorded files and writes its answer in an ordinary conversation, so what it read and wrote stays in that agent's hidden consult tab and in the provider's own transcript. Clearing Computer History deletes the digest files, not those copies.
+- **Pick an agent on this machine.** An agent that runs on an SSH remote cannot read the recorded files, so its digests fail (the tile shows the error).
+
 ```bash
 maestro-cli computer-history digests --since 1d
 maestro-cli computer-history digests --since 1w --kind 6h --json
@@ -166,4 +171,4 @@ Reads work with the Maestro app closed. Changes need the app running and Compute
 - Anyone who can read your user account's files can read it, the same as your browser history.
 - Turning the feature off stops recording immediately. It does not delete what was recorded; use **Clear all history** for that.
 - On macOS, Accessibility access belongs to Maestro as a whole, so the agents Maestro runs can use it as well. Grant it only if you are comfortable with that.
-- The web interface cannot read, pause, or clear Computer History, even when signed in. Only the desktop app and `maestro-cli` on this machine can.
+- The web interface has no Computer History controls: it cannot pause, clear, or change the feature, and its file browser and file tools are blocked from the store. That is not a hard wall. A signed-in browser can still run commands on this machine as you (terminal tabs, `!` commands), and a command can read the files, so treat web sign-in as full access to this computer.

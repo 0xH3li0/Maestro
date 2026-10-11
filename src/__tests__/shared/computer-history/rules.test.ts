@@ -135,6 +135,14 @@ describe('rule input', () => {
 		expect(validateRuleInput('app', '   ')).toMatch(/needs a value/);
 	});
 
+	it('accepts an app display name with spaces: that is how most apps are named', () => {
+		expect(validateRuleInput('app', 'Google Chrome')).toBeNull();
+		expect(validateRuleInput('app', 'Visual Studio Code')).toBeNull();
+		expect(validateRuleInput('app', 'Slack\nrm')).toMatch(/line break/);
+		// A domain still cannot contain one.
+		expect(validateRuleInput('domain', 'bank example.com')).toMatch(/not a domain/);
+	});
+
 	it('rule ids are deterministic', () => {
 		expect(ruleIdFor('app', 'x')).toBe(ruleIdFor('app', 'x'));
 		expect(ruleIdFor('app', 'x')).not.toBe(ruleIdFor('domain', 'x'));

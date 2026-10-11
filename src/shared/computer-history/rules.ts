@@ -119,6 +119,8 @@ export function validateRuleInput(match: CaptureRuleMatch, value: string): strin
 	if (match === 'domain' && !/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(v)) {
 		return `"${value}" is not a domain (expected something like bank.example.com)`;
 	}
-	if (/\s/.test(v)) return `"${value}" contains whitespace`;
+	// App display names contain spaces ("Google Chrome"); only a line break or
+	// tab cannot be part of one. The domain pattern above already excludes spaces.
+	if (/[\r\n\t]/.test(v)) return `"${value}" contains a line break or tab`;
 	return null;
 }
