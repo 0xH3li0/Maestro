@@ -16,7 +16,11 @@ import { ipcRenderer } from 'electron';
 import type { RosterAgent, VoiceEvent, VoiceScope } from '../../shared/acappella/protocol';
 import type { VoiceReadiness } from '../../shared/acappella/readiness';
 import type { VoiceSessionSnapshot } from '../acappella';
-import type { VoiceStartSessionResult, WakeTestEvent } from '../ipc/handlers/acappella';
+import type {
+	VoiceStartSessionResult,
+	WakeTestEvent,
+	WakeTestStartResult,
+} from '../ipc/handlers/acappella';
 import type { GlobalHotkeyStatus } from '../../shared/global-hotkeys';
 import type { VoiceHotkeyRefusalInfo } from '../acappella/hotkeys/voice-hotkeys';
 import type { VoiceModelListing, VoiceRuntimeListing } from '../ipc/handlers/acappella-models';
@@ -537,9 +541,11 @@ export function createVoiceApi() {
 		 * Start a wake-word tuning run: the local detector, no session, so a user can
 		 * say the phrase and watch it fire while moving the sensitivity slider.
 		 *
-		 * @returns false when a session is already running or there is no audio host.
+		 * @returns `started: false` with the sentence to show when the wake word
+		 * cannot fire (a session is running, the runtime or the phrase's detector
+		 * is missing), so the Test button never listens to nothing.
 		 */
-		wakeTest: (payload?: { phrase?: string; sensitivity?: number }): Promise<boolean> =>
+		wakeTest: (payload?: { phrase?: string; sensitivity?: number }): Promise<WakeTestStartResult> =>
 			ipcRenderer.invoke('acappella:wake-test', payload),
 
 		/** End a tuning run and close the microphone it opened. */

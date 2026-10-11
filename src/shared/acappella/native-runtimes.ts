@@ -147,7 +147,7 @@ export const NATIVE_RUNTIMES: readonly NativeRuntimeDescriptor[] = Object.freeze
 	Object.freeze({
 		id: 'onnx',
 		moduleId: 'onnxruntime-node',
-		versionPin: '1.27.0',
+		versionPin: '1.30.0',
 		label: 'ONNX Runtime (Speech-to-Text, Text-to-Speech, and wake word)',
 		// Three slots on one runtime, which is the point: speech-to-text moved here
 		// from a whisper.cpp binding that compiled from source on every platform and
@@ -229,3 +229,21 @@ export function isNativePlatformKey(value: string): value is NativePlatformKey {
 
 /** Every platform key, for the packaging matrix and its report. */
 export const NATIVE_PLATFORM_KEYS = PLATFORM_KEYS as readonly NativePlatformKey[];
+
+/**
+ * One-word verdict for a voice self-test run. Lives here, not beside the
+ * self-test, because the Settings card renders it and the renderer cannot import
+ * a module that reaches the native loader.
+ *
+ * `PASS` only when every runtime this build can use actually loaded. A run where
+ * the speech runtime was never downloaded is not broken (`passed` stays true),
+ * but calling it a pass is what sent a user hunting a bug in a voice mode that
+ * had nothing to run on.
+ */
+export function selfTestVerdict(report: {
+	passed: boolean;
+	entries: ReadonlyArray<{ status: string }>;
+}): 'PASS' | 'FAIL' | 'INCOMPLETE' {
+	if (!report.passed) return 'FAIL';
+	return report.entries.some((entry) => entry.status === 'missing') ? 'INCOMPLETE' : 'PASS';
+}

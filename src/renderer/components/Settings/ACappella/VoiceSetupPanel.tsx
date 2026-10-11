@@ -20,6 +20,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Mic, ShieldCheck } from 'lucide-react';
 
 import {
+	HEY_JARVIS_WAKE_ID,
 	MODEL_SETS,
 	OPENWAKEWORD_BASE_ID,
 	type VoiceModelSetId,
@@ -35,6 +36,7 @@ import { useVoiceModels } from './useVoiceModels';
 import { VoiceInputPicker, useVoiceInputDevices } from '../../ACappella';
 import {
 	SLOT_DEFINITIONS,
+	localModelIdForSlot,
 	useVoiceProviderSelection,
 	type VoiceSlotMode,
 } from './useVoiceProviderSelection';
@@ -55,7 +57,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	// The same hook and the same persisted setting the HUD's quick picker writes,
 	// so the two can never disagree about which microphone is chosen.
 	const inputDevices = useVoiceInputDevices(enabled);
-	const { modes, setMode, loaded } = useVoiceProviderSelection(enabled);
+	const { modes, setMode, loaded, providerIds } = useVoiceProviderSelection(enabled);
 	const [pendingSet, setPendingSet] = useState(false);
 
 	// One bundle: the recogniser and the wake word. The voice and the router
@@ -93,12 +95,15 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 		}
 	}, [models, missingForSet]);
 
-	const wakeWord = listingsById.get(OPENWAKEWORD_BASE_ID);
+	const wakeModels = [OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID]
+		.map((id) => listingsById.get(id))
+		.filter((listing): listing is NonNullable<typeof listing> => listing !== undefined);
 
 	/** One provider slot: the Local/Cloud choice plus its model row. */
 	const renderSlot = (role: VoiceProviderRole) => {
 		const slot = SLOT_DEFINITIONS.find((candidate) => candidate.slot === role)!;
-		const listing = slot.modelId ? listingsById.get(slot.modelId) : undefined;
+		const modelId = localModelIdForSlot(slot, providerIds[role]);
+		const listing = modelId ? listingsById.get(modelId) : undefined;
 		const Icon = slot.icon;
 		return (
 			<>
@@ -137,7 +142,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 							onVerify={(id) => void models.verify(id)}
 						/>
 					)}
-					{modes[role] === 'local' && !slot.modelId && slot.localNote && (
+					{modes[role] === 'local' && !modelId && slot.localNote && (
 						<p className="text-xs-plus opacity-55">{slot.localNote}</p>
 					)}
 				</SectionCard>
@@ -223,19 +228,22 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 							machine and there is no cloud option for it, by design.
 						</p>
 					</div>
-					{wakeWord && (
+					{/* The shared front end, then the default phrase's own detector: both
+					    are downloaded, so both are listed. */}
+					{wakeModels.map((listing) => (
 						<VoiceModelRow
+							key={listing.entry.id}
 							theme={theme}
-							listing={wakeWord}
-							progress={models.progress[OPENWAKEWORD_BASE_ID]}
-							verifyResult={models.verifyResults[OPENWAKEWORD_BASE_ID]}
+							listing={listing}
+							progress={models.progress[listing.entry.id]}
+							verifyResult={models.verifyResults[listing.entry.id]}
 							onDownload={(id) => void models.download(id)}
 							onPause={(id) => void models.pause(id)}
 							onResume={(id) => void models.resume(id)}
 							onCancel={(id) => void models.cancel(id)}
 							onVerify={(id) => void models.verify(id)}
 						/>
-					)}
+					))}
 				</SectionCard>
 			</div>
 		</div>

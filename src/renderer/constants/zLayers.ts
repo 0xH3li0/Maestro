@@ -10,6 +10,10 @@
  * a magic number in each component.
  *
  * Order, lowest to highest:
+ *   VOICE_HUD     - the floating voice HUD; over modals so a live session is
+ *                   never hidden, under everything below
+ *   VOICE_HUD_TOOLTIP - hover help for the HUD's own controls, which a plain
+ *                   tooltip (z 10000) would draw behind the HUD
  *   CONFETTI      - celebration particles; decorative, sits under real UI
  *   TOAST         - notifications, visible over modals so async results aren't lost
  *   QUICK_ACTIONS - the command palette owns the screen while it is open,
@@ -17,6 +21,8 @@
  *   CENTER_FLASH  - momentary "I did the thing" ack; always the top-most pixel
  */
 export const Z_LAYERS = {
+	VOICE_HUD: 90000,
+	VOICE_HUD_TOOLTIP: 90001,
 	CONFETTI: 99998,
 	TOAST: 100000,
 	QUICK_ACTIONS: 100001,

@@ -20,7 +20,7 @@
  * than written into copy that can drift.** See {@link summariseVoiceEgress}.
  */
 
-import { WHISPER_BASE_EN_ID } from './model-catalog';
+import { PARAKEET_TDT_V2_ID, WHISPER_BASE_EN_ID } from './model-catalog';
 import type { NativeRuntimeId } from './native-runtimes';
 import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 
@@ -128,7 +128,15 @@ export interface VoiceProviderDescriptor {
 
 // -- Ids, exported so nothing has to spell one twice ------------------------
 
-export const LOCAL_STT_PROVIDER_ID = 'whisper-local';
+/**
+ * Parakeet TDT, the local speech-to-text DEFAULT. A new id rather than a reuse
+ * of `whisper-local`, so a settings file that explicitly picked Whisper keeps
+ * Whisper and only an unset slot moves to Parakeet.
+ */
+export const LOCAL_STT_PROVIDER_ID = 'parakeet-local';
+
+/** Whisper Base on ONNX. Still selectable; no longer the default. */
+export const WHISPER_STT_PROVIDER_ID = 'whisper-local';
 
 /**
  * The operating system's own voice: `say`, System.Speech, or `espeak-ng`.
@@ -191,7 +199,7 @@ export const OPENAI_REALTIME_PROVIDER_ID = 'openai-realtime';
  * The local trio, by role. Read by the capability gate and by Voice Setup.
  *
  * Also the DEFAULT trio: what an unconfigured install runs. Speech-to-text is
- * the one slot that needs a download (Whisper plus the ONNX runtime, fetched on
+ * the one slot that needs a download (Parakeet plus the ONNX runtime, fetched on
  * consent through Voice Setup); the voice and the router need nothing, so a
  * fresh install can speak and route the moment the recogniser is on disk.
  */
@@ -244,22 +252,34 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 	defineProvider({
 		id: 'echo-stt',
 		role: 'stt',
-		label: 'Echo (development)',
+		label: 'Microphone check (no transcription)',
 		tier: 'mock',
 		requires: { kind: 'none' },
 		egress: 'none',
 		egressService: null,
-		description: 'Hears audio and reports how much of it was speech. Development builds only.',
+		description:
+			'Hears audio and reports how long you spoke, not what you said. A diagnostic for "is my microphone reaching Maestro?".',
 	}),
 	defineProvider({
 		id: LOCAL_STT_PROVIDER_ID,
+		role: 'stt',
+		label: 'Parakeet (local)',
+		tier: 'local',
+		requires: { kind: 'model', modelId: PARAKEET_TDT_V2_ID, runtimeId: 'onnx' },
+		egress: 'none',
+		egressService: null,
+		description:
+			'Fast, accurate English transcription on this machine, with punctuation. No audio leaves it.',
+	}),
+	defineProvider({
+		id: WHISPER_STT_PROVIDER_ID,
 		role: 'stt',
 		label: 'Whisper (local)',
 		tier: 'local',
 		requires: { kind: 'model', modelId: WHISPER_BASE_EN_ID, runtimeId: 'onnx' },
 		egress: 'none',
 		egressService: null,
-		description: 'Transcribes on this machine. No audio leaves it.',
+		description: 'A smaller download than Parakeet, and less accurate. No audio leaves it.',
 	}),
 	defineProvider({
 		id: OPENAI_STT_PROVIDER_ID,
@@ -470,4 +490,21 @@ function formatServiceList(services: VoiceCredentialService[]): string {
 	if (labels.length <= 1) return labels[0] ?? 'a hosted service';
 	if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
 	return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+}
+
+/**
+ * Whether anything a user can pick in this build runs on a native runtime.
+ *
+ * A runtime can be fetchable and still useless: llama.cpp downloads, but the
+ * only provider on it (Qwen3) is unlisted because the payload lacks the
+ * JavaScript half that opens a model. Reporting such a runtime as "not
+ * downloaded yet" would leave every self-test permanently incomplete, nagging
+ * for a download that enables nothing. The wake word is not a catalog provider
+ * but always rides ONNX, so it counts.
+ */
+export function isNativeRuntimeInUse(runtimeId: NativeRuntimeId): boolean {
+	if (runtimeId === 'onnx') return true;
+	return VOICE_PROVIDER_CATALOG.some(
+		(entry) => entry.requires.kind === 'model' && entry.requires.runtimeId === runtimeId
+	);
 }

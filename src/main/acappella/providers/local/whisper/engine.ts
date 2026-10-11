@@ -40,34 +40,11 @@ import {
 	WhisperTokenizer,
 	type WhisperSpecialTokens,
 } from './tokenizer';
+import type { OnnxModule, OnnxSession, OnnxTensor } from '../onnx-types';
 
-/**
- * The ONNX Runtime surface this uses, structurally.
- *
- * Declared rather than imported: `onnxruntime-node` is a downloaded runtime, so
- * a static import would make it a build dependency and defeat the whole reason
- * it is fetched on demand.
- */
-export interface OnnxTensor {
-	readonly dims: readonly number[];
-	readonly data: Float32Array | BigInt64Array | Uint8Array;
-}
-
-export interface OnnxSession {
-	readonly inputNames: readonly string[];
-	readonly outputNames: readonly string[];
-	run(feeds: Record<string, OnnxTensor>): Promise<Record<string, OnnxTensor>>;
-	release?(): Promise<void>;
-}
-
-export interface OnnxModule {
-	InferenceSession: { create(path: string): Promise<OnnxSession> };
-	Tensor: new (
-		type: 'float32' | 'int64' | 'bool',
-		data: Float32Array | BigInt64Array | Uint8Array,
-		dims: readonly number[]
-	) => OnnxTensor;
-}
+// The ONNX Runtime surface is shared with the Parakeet engine. Re-exported so
+// existing importers keep their one import site.
+export type { OnnxModule, OnnxSession, OnnxTensor } from '../onnx-types';
 
 /**
  * Model geometry, read from the checkpoint's `config.json`.

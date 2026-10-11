@@ -38,6 +38,19 @@ vi.mock('../../../../main/acappella/providers/local/whisper-stt', () => ({
 		async stop() {}
 	},
 }));
+vi.mock('../../../../main/acappella/providers/local/parakeet-stt', () => ({
+	ParakeetSttProvider: class {
+		readonly id = 'parakeet-local';
+		readonly label = 'Parakeet (local)';
+		readonly tier = 'local';
+		readonly sampleRate = 16_000;
+		readonly acceptsAudio = true;
+		async start() {}
+		feed() {}
+		async flush() {}
+		async stop() {}
+	},
+}));
 vi.mock('../../../../main/acappella/providers/local/kokoro-tts', () => ({
 	KokoroTtsProvider: class {
 		readonly id = 'kokoro-local';
@@ -167,6 +180,7 @@ import {
 	MOCK_PROVIDER_IDS,
 	buildProviderState,
 	listVoiceProviders,
+	migrateLegacyVoiceProviders,
 	pipelineKey,
 	readVoiceProviderSettings,
 	registerVoiceProvider,
@@ -241,7 +255,7 @@ describe('provider registry', () => {
 
 	it('resolves every slot combination to exactly what was asked for', () => {
 		const choices: Record<VoiceProviderRole, string[]> = {
-			stt: ['mock-stt', 'whisper-local', 'openai-stt'],
+			stt: ['mock-stt', 'parakeet-local', 'whisper-local', 'openai-stt'],
 			tts: ['mock-tts', 'system-tts', 'kokoro-local', 'openai-tts', 'elevenlabs-tts'],
 			brain: ['mock-brain', 'qwen3-local', 'openai-brain', 'anthropic-brain'],
 		};
@@ -537,6 +551,11 @@ describe('provider registry', () => {
 			// Absent takes the built-in phrases; a stored empty string is a
 			// deliberate "no spoken send", so the two stay distinguishable.
 			sendPhrases: undefined,
+			wakePhrase: undefined,
+			wakeWordEnabled: false,
+			wakeSensitivity: undefined,
+			wakeDebounceMs: undefined,
+			wakeEngine: 'classifier',
 		});
 	});
 
@@ -559,6 +578,11 @@ describe('provider registry', () => {
 			// Absent takes the built-in phrases; a stored empty string is a
 			// deliberate "no spoken send", so the two stay distinguishable.
 			sendPhrases: undefined,
+			wakePhrase: undefined,
+			wakeWordEnabled: false,
+			wakeSensitivity: undefined,
+			wakeDebounceMs: undefined,
+			wakeEngine: 'classifier',
 		});
 	});
 
@@ -568,5 +592,92 @@ describe('provider registry', () => {
 		);
 		expect(pipelineKey({ stt: 'a' })).not.toBe(pipelineKey({ stt: 'b' }));
 		expect(pipelineKey({ voiceId: 'x' })).not.toBe(pipelineKey({ voiceId: 'y' }));
+	});
+
+	// -- Legacy settings migration --------------------------------------------
+
+	/** A settings store backed by one in-memory blob. */
+	function blobStore(initial: unknown) {
+		let blob = initial;
+		return {
+			get: (_key: string, defaultValue?: unknown) => blob ?? defaultValue,
+			set: vi.fn((_key: string, value: unknown) => {
+				blob = value;
+			}),
+			read: () => blob as Record<string, unknown>,
+		};
+	}
+
+	it('defaults speech-to-text to Parakeet', () => {
+		expect(DEFAULT_PROVIDER_IDS.stt).toBe('parakeet-local');
+		expect(resolveVoicePipeline().resolvedIds.stt).toBe('parakeet-local');
+	});
+
+	it('clears the mock trio an early build persisted, so the local defaults apply', () => {
+		// The exact blob an upgraded install was found holding: a session that
+		// said "Listening" and printed "Echo utterance 1: 0.6s of speech" forever.
+		const store = blobStore({
+			providers: { stt: ECHO_STT_PROVIDER_ID, tts: 'mock-tts', brain: 'mock-brain' },
+			controls: { conversationalMode: true },
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(true);
+
+		expect(store.read()).toEqual({
+			providers: {},
+			controls: { conversationalMode: true },
+			providersVersion: 3,
+		});
+		const settings = readVoiceProviderSettings(store);
+		expect(resolveVoicePipeline({ settings }).resolvedIds).toEqual(DEFAULT_PROVIDER_IDS);
+	});
+
+	it('keeps a mock provider picked alongside a real engine', () => {
+		// Echo with a real voice is a deliberate microphone check, not a leftover.
+		const store = blobStore({ providers: { stt: ECHO_STT_PROVIDER_ID, tts: 'system-tts' } });
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+		expect(store.read().providers).toEqual({ stt: ECHO_STT_PROVIDER_ID, tts: 'system-tts' });
+		expect(store.read().providersVersion).toBe(3);
+	});
+
+	it('runs once, so a later deliberate choice of the mock trio stands', () => {
+		const store = blobStore({
+			providers: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			providersVersion: 3,
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+		expect(store.set).not.toHaveBeenCalled();
+	});
+
+	it('moves the old default wake phrase, which no detector exists for, to the new default', () => {
+		// Version 2 already ran: only the wake phrase step is still owed.
+		const store = blobStore({
+			providers: { stt: 'parakeet-local' },
+			controls: { wakePhrase: 'Hey Maestro', wakeWordEnabled: true },
+			providersVersion: 2,
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(true);
+		expect(store.read().controls).toEqual({ wakeWordEnabled: true });
+		// The provider step did not run twice.
+		expect(store.read().providers).toEqual({ stt: 'parakeet-local' });
+		expect(store.read().providersVersion).toBe(3);
+	});
+
+	it('keeps a wake phrase the user typed themselves', () => {
+		const store = blobStore({ controls: { wakePhrase: 'okay computer' }, providersVersion: 2 });
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+		expect(store.read().controls).toEqual({ wakePhrase: 'okay computer' });
+	});
+
+	it('does nothing on a store it cannot write', () => {
+		const store = {
+			get: () => ({ providers: { stt: ECHO_STT_PROVIDER_ID, tts: 'mock-tts' } }),
+		};
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(false);
 	});
 });

@@ -24,7 +24,10 @@ import {
 	formatSelfTestReport,
 } from '../../../../main/acappella/runtime/runtime-selftest';
 import type { NativeRuntimeResult } from '../../../../main/acappella/runtime/native-loader';
-import type { NativeRuntimeId } from '../../../../shared/acappella/native-runtimes';
+import {
+	selfTestVerdict,
+	type NativeRuntimeId,
+} from '../../../../shared/acappella/native-runtimes';
 
 /** Module surfaces the real probes accept. */
 const WORKING_MODULES: Record<NativeRuntimeId, unknown> = {
@@ -33,7 +36,9 @@ const WORKING_MODULES: Record<NativeRuntimeId, unknown> = {
 };
 
 function loader(
-	behaviour: Partial<Record<NativeRuntimeId, 'pass' | 'fail' | 'skip' | 'bad-surface' | 'hang'>>
+	behaviour: Partial<
+		Record<NativeRuntimeId, 'pass' | 'fail' | 'skip' | 'missing' | 'bad-surface' | 'hang'>
+	>
 ) {
 	return async (id: NativeRuntimeId): Promise<NativeRuntimeResult<unknown>> => {
 		const mode = behaviour[id] ?? 'pass';
@@ -48,10 +53,20 @@ function loader(
 				moduleId: `mock-${id}`,
 				platform: 'darwin',
 				arch: 'arm64',
-				failure: mode === 'skip' ? 'not-a-dependency' : 'load-failed',
-				message: mode === 'skip' ? 'not part of this build yet' : 'dlopen failed',
+				failure:
+					mode === 'skip'
+						? 'not-a-dependency'
+						: mode === 'missing'
+							? 'not-downloaded'
+							: 'load-failed',
+				message:
+					mode === 'skip'
+						? 'not part of this build yet'
+						: mode === 'missing'
+							? 'not downloaded yet'
+							: 'dlopen failed',
 				suggestedAction: 'do the thing',
-				detail: mode === 'skip' ? undefined : 'symbol not found',
+				detail: mode === 'skip' || mode === 'missing' ? undefined : 'symbol not found',
 			},
 		};
 	};
@@ -95,6 +110,29 @@ describe('runtime-selftest', () => {
 		// A skip is not a failure. Reporting it as one would send someone hunting a
 		// bug that does not exist.
 		expect(report.passed).toBe(true);
+	});
+
+	it('marks a fetchable runtime that was never downloaded as missing, and says the run is incomplete', async () => {
+		// The report a user pasted: ONNX never downloaded, filed as "skipped", run
+		// "passed" - while every local voice slot was dead.
+		const report = await runSelfTest({
+			loadRuntime: loader({ onnx: 'missing' }),
+			readMicPermission: mic,
+		});
+
+		const onnx = report.entries.find((entry) => entry.runtimeId === 'onnx')!;
+		expect(onnx.status).toBe('missing');
+		expect(onnx.failure).toBe('not-downloaded');
+		// Nothing is broken, so it does not FAIL...
+		expect(report.passed).toBe(true);
+		// ...but it is not a pass either.
+		expect(selfTestVerdict(report)).toBe('INCOMPLETE');
+		expect(formatSelfTestReport(report)).toContain('INCOMPLETE');
+	});
+
+	it('calls a run with every runtime loaded a pass', async () => {
+		const report = await runSelfTest({ loadRuntime: loader({}), readMicPermission: mic });
+		expect(selfTestVerdict(report)).toBe('PASS');
 	});
 
 	it('fails a runtime that loads but has lost the API the provider calls', async () => {

@@ -26,7 +26,7 @@
  *      by Whisper, routed by a model that never heard it, spoken in a different
  *      voice. The swap waits for the floor.
  *
- * The defaults are the LOCAL trio (`DEFAULT_PROVIDER_IDS` below): Whisper for
+ * The defaults are the LOCAL trio (`DEFAULT_PROVIDER_IDS` below): Parakeet for
  * speech in, the operating system's own voice for speech out, and the built-in
  * keyword router. Only the first needs a download. The two neural local engines
  * that cannot run in this build yet (Kokoro, Qwen3) stay registered here so the
@@ -36,8 +36,12 @@
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
+import { normalizeWakePhrase } from '../../../shared/acappella/model-catalog';
 import {
+	LEGACY_DEFAULT_WAKE_PHRASE,
+	asWakeEngine,
 	clampSendHoldMs,
+	type WakeEngine,
 	clampTtsVolume,
 	clampTurnSettleMs,
 	parseSendPhrases,
@@ -47,10 +51,12 @@ import {
 	BUILTIN_BRAIN_PROVIDER_ID,
 	KOKORO_TTS_PROVIDER_ID,
 	LOCAL_PROVIDER_IDS,
+	LOCAL_STT_PROVIDER_ID,
 	OPENAI_REALTIME_PROVIDER_ID,
 	OPENAI_TTS_PROVIDER_ID,
 	QWEN3_BRAIN_PROVIDER_ID,
 	SYSTEM_TTS_PROVIDER_ID,
+	WHISPER_STT_PROVIDER_ID,
 } from '../../../shared/acappella/provider-catalog';
 import type {
 	BrainProvider,
@@ -75,6 +81,7 @@ import { OpenAiTtsProvider } from './hosted/openai-tts';
 import { KokoroTtsProvider } from './local/kokoro-tts';
 import { LlamaBrainProvider } from './local/llama-brain';
 import { SystemVoiceTtsProvider } from './local/system-tts';
+import { ParakeetSttProvider } from './local/parakeet-stt';
 import { WhisperSttProvider } from './local/whisper-stt';
 import { MockBrainProvider, MockSttProvider, MockTtsProvider } from './mock';
 import type { MockProviderOptions } from './mock';
@@ -153,6 +160,19 @@ export interface VoiceProviderSettings {
 	 * a loaded Whisper model to swap a headset.
 	 */
 	inputDeviceId?: string;
+	/**
+	 * The global wake phrase, as typed in Voice Controls. Read by the capability
+	 * gate, which reports whether a trained classifier exists for it.
+	 */
+	wakePhrase?: string;
+	/** The Voice Controls "Wake word" toggle. Off unless explicitly stored as on. */
+	wakeWordEnabled?: boolean;
+	/** 0 to 1, higher fires more easily. Undefined takes the detector default. */
+	wakeSensitivity?: number;
+	/** Minimum gap between two hits of the same phrase. */
+	wakeDebounceMs?: number;
+	/** How the wake phrase is detected. See `WakeEngine`. */
+	wakeEngine?: WakeEngine;
 }
 
 export interface VoiceProviderRegistration<R extends VoiceProviderRole = VoiceProviderRole> {
@@ -214,7 +234,7 @@ export const MOCK_PROVIDER_IDS: Record<VoiceProviderRole, string> = {
  * utterance ever routed and no agent ever answered. Every part looked healthy and
  * the feature did nothing, which is the worst failure a default can produce.
  *
- * Only speech-to-text needs a download. Whisper and its runtime are fetched on
+ * Only speech-to-text needs a download. Parakeet and its runtime are fetched on
  * consent through Voice Setup, and until they are on disk the capability gate
  * refuses BY NAME and points at the download. The voice is the operating
  * system's own and the router is built in, so the moment the recogniser lands
@@ -308,7 +328,15 @@ registerVoiceProvider({
 
 registerVoiceProvider({
 	role: 'stt',
-	id: 'whisper-local',
+	id: LOCAL_STT_PROVIDER_ID,
+	label: 'Parakeet (local)',
+	tier: 'local',
+	create: () => new ParakeetSttProvider(),
+});
+
+registerVoiceProvider({
+	role: 'stt',
+	id: WHISPER_STT_PROVIDER_ID,
 	label: 'Whisper (local)',
 	tier: 'local',
 	create: () => new WhisperSttProvider(),
@@ -576,6 +604,94 @@ function unresolved<R extends VoiceProviderRole>(
 // Settings
 // ---------------------------------------------------------------------------
 
+/**
+ * Version of the stored voice settings. Each step below runs once, in order, and
+ * the version is stamped so a later deliberate choice is never undone by it.
+ *
+ *   2. Clear the mock provider trio an early build persisted.
+ *   3. Move the old default wake phrase ("hey maestro") to the new one.
+ */
+export const VOICE_PROVIDERS_SETTINGS_VERSION = 3;
+
+/**
+ * Speech-to-text ids an early build wrote as its DEFAULT, alongside the silent
+ * mock voice. Neither transcribes a word.
+ */
+const LEGACY_DEFAULT_STT_IDS = new Set<string>([MOCK_PROVIDER_IDS.stt, ECHO_STT_PROVIDER_ID]);
+
+/**
+ * Clear voice settings nobody actually chose.
+ *
+ * Step 2: early builds defaulted to the mock tier and persisted the whole trio
+ * on first save: `echo-stt` (reports how long you spoke, transcribes nothing)
+ * plus `mock-tts` (silent) plus the built-in router. When the default moved to
+ * the local tier, those stored ids kept winning over it, so an upgraded install
+ * opened the microphone, said "Listening", printed "Echo utterance 3: 1.7s of
+ * speech", and never answered. Only that exact trio is cleared - a user who
+ * picked any one of them deliberately alongside a real engine keeps it.
+ *
+ * Step 3: the Voice Controls panel saved its defaults, so the old default wake
+ * phrase sits in settings verbatim. No detector exists for it, so it is cleared
+ * and the new default applies. Any other phrase is the user's own and stays.
+ *
+ * @returns true when either step changed something.
+ */
+export function migrateLegacyVoiceProviders(store: {
+	get: (key: string, defaultValue?: unknown) => unknown;
+	set?: (key: string, value: unknown) => void;
+}): boolean {
+	if (!store.set) return false;
+	const stored = store.get(ACAPPELLA_SETTINGS_KEY, {}) as Record<string, unknown> | undefined;
+	if (!stored || typeof stored !== 'object') return false;
+	const version = typeof stored.providersVersion === 'number' ? stored.providersVersion : 0;
+	if (version >= VOICE_PROVIDERS_SETTINGS_VERSION) return false;
+
+	let changed = false;
+	const next: Record<string, unknown> = { ...stored };
+
+	if (version < 2) {
+		const providers = (stored.providers ?? {}) as Record<string, unknown>;
+		const isLegacyMockTrio =
+			typeof providers.stt === 'string' &&
+			LEGACY_DEFAULT_STT_IDS.has(providers.stt) &&
+			providers.tts === MOCK_PROVIDER_IDS.tts &&
+			(providers.brain === undefined || providers.brain === MOCK_PROVIDER_IDS.brain);
+		const nextProviders = { ...providers };
+		if (isLegacyMockTrio) {
+			delete nextProviders.stt;
+			delete nextProviders.tts;
+			delete nextProviders.brain;
+			changed = true;
+			logger.info(
+				'Cleared the legacy mock voice providers so the local defaults apply',
+				LOG_CONTEXT
+			);
+		}
+		next.providers = nextProviders;
+	}
+
+	if (version < 3) {
+		const controls = stored.controls as Record<string, unknown> | undefined;
+		if (
+			controls &&
+			typeof controls.wakePhrase === 'string' &&
+			normalizeWakePhrase(controls.wakePhrase) === LEGACY_DEFAULT_WAKE_PHRASE
+		) {
+			const nextControls = { ...controls };
+			delete nextControls.wakePhrase;
+			next.controls = nextControls;
+			changed = true;
+			logger.info('Moved the wake phrase off the old default, which has no detector', LOG_CONTEXT);
+		}
+	}
+
+	store.set(ACAPPELLA_SETTINGS_KEY, {
+		...next,
+		providersVersion: VOICE_PROVIDERS_SETTINGS_VERSION,
+	});
+	return changed;
+}
+
 /** Read the persisted provider selection. Anything malformed reads as unset. */
 export function readVoiceProviderSettings(store: {
 	get: (key: string, defaultValue: unknown) => unknown;
@@ -609,6 +725,20 @@ export function readVoiceProviderSettings(store: {
 		sendHoldMs: clampSendHoldMs(controls.sendHoldMs),
 		sendPhrases: parseSendPhrases(controls.sendPhrases),
 		inputDeviceId: asProviderId(audio.inputDeviceId),
+		wakePhrase: asProviderId(controls.wakePhrase),
+		// Always-on listening is consent, so only a literal `true` turns it on.
+		wakeWordEnabled: controls.wakeWordEnabled === true,
+		wakeSensitivity:
+			typeof controls.wakeSensitivity === 'number' &&
+			controls.wakeSensitivity >= 0 &&
+			controls.wakeSensitivity <= 1
+				? controls.wakeSensitivity
+				: undefined,
+		wakeDebounceMs:
+			typeof controls.wakeDebounceMs === 'number' && controls.wakeDebounceMs >= 0
+				? controls.wakeDebounceMs
+				: undefined,
+		wakeEngine: asWakeEngine(controls.wakeEngine),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
 		brain: asProviderId(providers.brain),

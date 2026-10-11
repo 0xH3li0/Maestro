@@ -665,7 +665,7 @@ const mockMaestro = {
 			capability: 'tap-only',
 			note: 'Tap to toggle the microphone.',
 		}),
-		wakeTest: vi.fn().mockResolvedValue(true),
+		wakeTest: vi.fn().mockResolvedValue({ started: true }),
 		wakeTestStop: vi.fn().mockResolvedValue(undefined),
 		onWakeTest: vi.fn().mockReturnValue(() => {}),
 		credentials: {

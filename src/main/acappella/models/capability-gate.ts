@@ -23,7 +23,13 @@
  * the gate getting in the way rather than doing its job.
  */
 
-import { OPENWAKEWORD_BASE_ID, getVoiceModel } from '../../../shared/acappella/model-catalog';
+import {
+	OPENWAKEWORD_BASE_ID,
+	PARAKEET_TDT_V2_ID,
+	findPretrainedWakePhrase,
+	getVoiceModel,
+} from '../../../shared/acappella/model-catalog';
+import { DEFAULT_WAKE_PHRASE } from '../../../shared/acappella/voice-controls';
 import {
 	credentialLabel,
 	voiceProviderRequirement,
@@ -48,7 +54,7 @@ import {
 	type SystemVoiceUnavailable,
 } from '../providers/local/system-tts';
 import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
-import { getStatus, type ModelStatus } from './model-store';
+import { getStatus, modelFilePath, type ModelStatus } from './model-store';
 
 /**
  * Provider ids for the local tier.
@@ -60,8 +66,32 @@ import { getStatus, type ModelStatus } from './model-store';
  */
 export { LOCAL_PROVIDER_IDS } from '../../../shared/acappella/provider-catalog';
 
-/** The wake word slot has one implementation and it is always local. */
+/** The wake word slot's classifier engine (openWakeWord). Always local. */
 export const WAKE_WORD_PROVIDER_ID = 'openwakeword-local';
+
+/**
+ * The wake word slot's transcription engine: Parakeet transcribes each burst of
+ * speech and the phrase is matched in the text. Also always local.
+ */
+export const TRANSCRIPTION_WAKE_PROVIDER_ID = 'transcription-wake-local';
+
+/** The id of the always-present global wake phrase. */
+export const GLOBAL_WAKE_PHRASE_ID = 'global';
+
+/**
+ * Where a wake phrase's trained classifier lives, or undefined when none exists.
+ *
+ * openWakeWord is a shared front end (mel spectrogram, embedding) plus one small
+ * classifier PER PHRASE. Only the phrases in `PRETRAINED_WAKE_PHRASES` have one,
+ * each as its own catalog model; any other phrase is scored by nothing and can
+ * never fire. Both the detector that loads the classifier and the gate that
+ * reports on it resolve it here. Defined in this module rather than the
+ * detector's because the detector already imports this one.
+ */
+export function wakeClassifierPath(phrase: string): string | undefined {
+	const pretrained = findPretrainedWakePhrase(phrase);
+	return pretrained ? modelFilePath(pretrained.modelId, pretrained.file) : undefined;
+}
 
 /**
  * The microphone slot's "provider" id.
@@ -86,6 +116,9 @@ export const MICROPHONE_PROVIDER_ID = 'system-microphone';
 function requirementFor(providerId: string): VoiceProviderRequirement {
 	if (providerId === WAKE_WORD_PROVIDER_ID) {
 		return { kind: 'model', modelId: OPENWAKEWORD_BASE_ID, runtimeId: 'onnx' };
+	}
+	if (providerId === TRANSCRIPTION_WAKE_PROVIDER_ID) {
+		return { kind: 'model', modelId: PARAKEET_TDT_V2_ID, runtimeId: 'onnx' };
 	}
 	return voiceProviderRequirement(providerId);
 }
@@ -197,7 +230,11 @@ export async function resolveVoiceReadiness(
 }
 
 function providerForSlot(slot: VoiceSlot, settings: VoiceProviderSettings): string {
-	if (slot === 'wake-word') return WAKE_WORD_PROVIDER_ID;
+	if (slot === 'wake-word') {
+		return settings.wakeEngine === 'transcription'
+			? TRANSCRIPTION_WAKE_PROVIDER_ID
+			: WAKE_WORD_PROVIDER_ID;
+	}
 	if (slot === 'microphone') return MICROPHONE_PROVIDER_ID;
 	return settings[slot] ?? DEFAULT_PROVIDER_IDS[slot];
 }
@@ -326,6 +363,19 @@ async function resolveSlot(
 		const status = await readModelStatus(requirement.modelId);
 
 		if (status.status === 'installed') {
+			// The transcription engine matches any phrase, so only the classifier
+			// engine needs a model trained for the phrase.
+			if (slot === 'wake-word' && providerId === WAKE_WORD_PROVIDER_ID) {
+				// The front end alone scores nothing: without the phrase's own
+				// classifier the detector listens forever and never fires, which is
+				// exactly what a Test button that never lights up looks like.
+				const classifierVerdict = await resolveWakeClassifier(
+					providerId,
+					options.settings?.wakePhrase ?? DEFAULT_WAKE_PHRASE,
+					readModelStatus
+				);
+				if (classifierVerdict) return classifierVerdict;
+			}
 			return { slot, providerId, satisfied: true, requiredModelId: requirement.modelId };
 		}
 		if (status.status === 'corrupt') {
@@ -380,6 +430,60 @@ async function resolveSlot(
 	}
 
 	return { slot, providerId, satisfied: true };
+}
+
+/**
+ * The wake phrase's own classifier, after the shared front end is known good.
+ *
+ * Returns null when the phrase has a pretrained classifier that is installed;
+ * otherwise the verdict to report. A phrase with no classifier at all is
+ * `wake-phrase-untrained`, because no download fixes it; a pretrained one that
+ * is merely missing is an ordinary download.
+ */
+async function resolveWakeClassifier(
+	providerId: string,
+	phrase: string,
+	readModelStatus: (modelId: string) => Promise<ModelStatus>
+): Promise<VoiceSlotReadiness | null> {
+	const label = SLOT_LABELS['wake-word'];
+	const pretrained = findPretrainedWakePhrase(phrase);
+	if (!pretrained) {
+		return {
+			slot: 'wake-word',
+			providerId,
+			satisfied: false,
+			reason: 'wake-phrase-untrained',
+			detail: `${label}: no detector has been trained for "${phrase}", so it cannot fire.`,
+			suggestedAction: `Use "${DEFAULT_WAKE_PHRASE}", or start sessions with the hotkey or the microphone button.`,
+		};
+	}
+
+	const model = getVoiceModel(pretrained.modelId);
+	const modelName = model?.displayName ?? pretrained.modelId;
+	const status = await readModelStatus(pretrained.modelId);
+	if (status.status === 'installed') return null;
+	if (status.status === 'corrupt') {
+		return {
+			slot: 'wake-word',
+			providerId,
+			satisfied: false,
+			reason: 'model-corrupt',
+			requiredModelId: pretrained.modelId,
+			detail: `${label}: ${modelName} is installed but failed verification${
+				status.detail ? ` (${status.detail})` : ''
+			}.`,
+			suggestedAction: 'Re-verify or re-download it in Settings > Plugins > A Cappella > Models.',
+		};
+	}
+	return {
+		slot: 'wake-word',
+		providerId,
+		satisfied: false,
+		reason: 'model-not-installed',
+		requiredModelId: pretrained.modelId,
+		detail: `${label}: ${modelName} is not installed.`,
+		suggestedAction: 'Download it in Settings > Plugins > A Cappella > Voice Setup.',
+	};
 }
 
 // Re-exported so a caller that already has the gate does not need a second

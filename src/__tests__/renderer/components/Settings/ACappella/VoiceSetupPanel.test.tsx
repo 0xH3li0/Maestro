@@ -16,8 +16,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { VoiceSetupPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceSetupPanel';
 import {
+	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
 	OPENWAKEWORD_BASE_ID,
+	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
 	VOICE_MODEL_CATALOG,
 	WHISPER_BASE_EN_ID,
@@ -54,10 +56,10 @@ describe('VoiceSetupPanel', () => {
 			blocking: [
 				{
 					slot: 'stt',
-					providerId: 'whisper-local',
+					providerId: 'parakeet-local',
 					satisfied: false,
 					reason: 'model-not-installed',
-					detail: 'Speech-to-Text: Whisper Base (English) is not installed.',
+					detail: 'Speech-to-Text: Parakeet TDT 0.6B (English) is not installed.',
 					suggestedAction: 'Download it in Settings.',
 				},
 			],
@@ -87,15 +89,19 @@ describe('VoiceSetupPanel', () => {
 	it('renders the bill of materials from the frozen catalog', async () => {
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
-		const whisper = getVoiceModel(WHISPER_BASE_EN_ID)!;
-		await screen.findByText(whisper.displayName);
+		const parakeet = getVoiceModel(PARAKEET_TDT_V2_ID)!;
+		await screen.findByText(parakeet.displayName);
 
 		// Name, license, and install path are all on screen before anything is
 		// downloaded. That is the consent surface.
-		expect(screen.getAllByText(whisper.license).length).toBeGreaterThan(0);
+		expect(screen.getAllByText(parakeet.license).length).toBeGreaterThan(0);
 		expect(
-			screen.getByText(`/tmp/models/acappella/${whisper.id}/${whisper.files[0].path}`)
+			screen.getByText(`/tmp/models/acappella/${parakeet.id}/${parakeet.files[0].path}`)
 		).toBeInTheDocument();
+		// Whisper is selectable, but not the default, so it is not offered here.
+		expect(
+			screen.queryByText(getVoiceModel(WHISPER_BASE_EN_ID)!.displayName)
+		).not.toBeInTheDocument();
 		expect(screen.getByText(getVoiceModel(OPENWAKEWORD_BASE_ID)!.displayName)).toBeInTheDocument();
 		// The voice and the router download nothing, so their slots say so instead
 		// of showing a model row - and the two models nothing can read are not
@@ -109,7 +115,17 @@ describe('VoiceSetupPanel', () => {
 	it('states why voice mode is not ready', async () => {
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
-		await screen.findByText(/Whisper Base \(English\) is not installed/);
+		await screen.findByText(/Parakeet TDT 0\.6B \(English\) is not installed/);
+	});
+
+	it('shows the model the SELECTED recogniser needs, not the default one', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			providers: { stt: 'whisper-local' },
+		});
+
+		render(<VoiceSetupPanel theme={mockTheme} enabled />);
+
+		await screen.findByText(getVoiceModel(WHISPER_BASE_EN_ID)!.displayName);
 	});
 
 	it('starts a download only when the Download button is pressed', async () => {
@@ -136,20 +152,22 @@ describe('VoiceSetupPanel', () => {
 		const requested = vi
 			.mocked(voiceModels().download)
 			.mock.calls.map((call: unknown[]) => call[0]);
-		expect([...requested].sort()).toEqual([WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID].sort());
+		expect([...requested].sort()).toEqual(
+			[PARAKEET_TDT_V2_ID, OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID].sort()
+		);
 	});
 
 	it('offers Re-verify and Re-download for a corrupt model', async () => {
 		const listings = notInstalledListings().map((listing) =>
-			listing.entry.id === WHISPER_BASE_EN_ID
+			listing.entry.id === PARAKEET_TDT_V2_ID
 				? {
 						...listing,
 						status: {
 							...listing.status,
 							status: 'corrupt' as const,
-							detail: 'ggml-base.en.bin is 10 bytes, expected 147964211',
+							detail: 'encoder-model.int8.onnx is 10 bytes, expected 652184014',
 							manifest: {
-								id: WHISPER_BASE_EN_ID,
+								id: PARAKEET_TDT_V2_ID,
 								revision: 'abc',
 								sha256: 'abc',
 								bytes: 1,

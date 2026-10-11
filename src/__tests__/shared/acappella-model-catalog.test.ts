@@ -10,9 +10,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
 	MODEL_SETS,
 	OPENWAKEWORD_BASE_ID,
+	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
 	VOICE_MODEL_CATALOG,
 	WHISPER_BASE_EN_ID,
@@ -20,14 +22,24 @@ import {
 	getModelSetEntries,
 	getVoiceModel,
 	isVoiceModelId,
+	findPretrainedWakePhrase,
+	normalizeWakePhrase,
 	sumModelBytes,
 } from '../../shared/acappella/model-catalog';
+import { DEFAULT_WAKE_PHRASE } from '../../shared/acappella/voice-controls';
 import { formatSize } from '../../shared/formatters';
 
 describe('voice model catalog', () => {
-	it('contains the four models the phase specifies', () => {
+	it('contains every model A Cappella can install', () => {
 		expect(VOICE_MODEL_CATALOG.map((entry) => entry.id).sort()).toEqual(
-			[KOKORO_82M_ID, OPENWAKEWORD_BASE_ID, QWEN3_1_7B_ID, WHISPER_BASE_EN_ID].sort()
+			[
+				HEY_JARVIS_WAKE_ID,
+				KOKORO_82M_ID,
+				OPENWAKEWORD_BASE_ID,
+				PARAKEET_TDT_V2_ID,
+				QWEN3_1_7B_ID,
+				WHISPER_BASE_EN_ID,
+			].sort()
 		);
 	});
 
@@ -94,10 +106,11 @@ describe('voice model catalog', () => {
 	});
 
 	it('bundles exactly the models the local trio can run', () => {
-		// The recogniser and the wake word. The voice is the system's own and the
-		// router is built in, so neither downloads anything.
+		// The default recogniser (Parakeet) and the wake word. The voice is the
+		// system's own and the router is built in, so neither downloads anything.
+		// Whisper is selectable but not bundled: one recogniser is enough.
 		expect([...MODEL_SETS['hands-free-local'].modelIds].sort()).toEqual(
-			[WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID].sort()
+			[PARAKEET_TDT_V2_ID, OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID].sort()
 		);
 	});
 
@@ -109,7 +122,12 @@ describe('voice model catalog', () => {
 			expect(getVoiceModel(id)?.pending).toEqual(expect.any(String));
 			for (const set of Object.values(MODEL_SETS)) expect(set.modelIds).not.toContain(id);
 		}
-		for (const id of [WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID]) {
+		for (const id of [
+			PARAKEET_TDT_V2_ID,
+			WHISPER_BASE_EN_ID,
+			OPENWAKEWORD_BASE_ID,
+			HEY_JARVIS_WAKE_ID,
+		]) {
 			expect(getVoiceModel(id)?.pending).toBeUndefined();
 		}
 	});
@@ -125,6 +143,7 @@ describe('voice model catalog', () => {
 
 	it('looks models up by id and rejects anything else', () => {
 		expect(getVoiceModel(WHISPER_BASE_EN_ID)?.role).toBe('stt');
+		expect(getVoiceModel(PARAKEET_TDT_V2_ID)?.role).toBe('stt');
 		expect(getVoiceModel('../../etc/passwd')).toBeUndefined();
 		expect(isVoiceModelId(KOKORO_82M_ID)).toBe(true);
 		expect(isVoiceModelId('nope')).toBe(false);
@@ -135,5 +154,21 @@ describe('voice model catalog', () => {
 		expect(sumModelBytes([WHISPER_BASE_EN_ID, 'nope'])).toBe(
 			getVoiceModel(WHISPER_BASE_EN_ID)!.bytes
 		);
+	});
+
+	it('has a pretrained classifier for the default wake phrase', () => {
+		// The default must be a phrase something can detect. "hey maestro" shipped
+		// as the default with no model behind it and could never fire.
+		const pretrained = findPretrainedWakePhrase(DEFAULT_WAKE_PHRASE);
+		expect(pretrained?.modelId).toBe(HEY_JARVIS_WAKE_ID);
+		expect(getVoiceModel(pretrained!.modelId)?.files.map((file) => file.path)).toContain(
+			pretrained!.file
+		);
+	});
+
+	it('matches a wake phrase regardless of case and punctuation', () => {
+		expect(findPretrainedWakePhrase('Hey, Jarvis!')?.modelId).toBe(HEY_JARVIS_WAKE_ID);
+		expect(findPretrainedWakePhrase('hey maestro')).toBeUndefined();
+		expect(normalizeWakePhrase('  Hey,   JARVIS. ')).toBe('hey jarvis');
 	});
 });

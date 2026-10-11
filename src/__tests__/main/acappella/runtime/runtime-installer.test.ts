@@ -312,6 +312,16 @@ describe('runtime store, after an install', () => {
 		expect(await installedRuntimeEntry('onnx')).toBeNull();
 	});
 
+	it('refuses to load a runtime installed from an older pin', async () => {
+		// The pin moves when the old runtime is wrong, so a stale install must read
+		// as not installed rather than load and quietly misbehave.
+		const manifestPath = path.join(runtimeDir('onnx'), 'manifest.json');
+		const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+		await fs.writeFile(manifestPath, JSON.stringify({ ...manifest, sha256: 'f'.repeat(64) }));
+
+		expect(await installedRuntimeEntry('onnx')).toBeNull();
+	});
+
 	it('uninstalls cleanly', async () => {
 		await removeRuntime('onnx');
 

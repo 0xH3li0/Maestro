@@ -175,6 +175,13 @@ export async function isRuntimeInstalled(id: NativeRuntimeId): Promise<boolean> 
 export async function installedRuntimeEntry(id: NativeRuntimeId): Promise<string | null> {
 	const manifest = await readRuntimeManifest(id);
 	if (!manifest) return null;
+	// A runtime from an older build's pin is not loaded: the pin moves because the
+	// old one is wrong (ONNX Runtime 1.27 computes openWakeWord's embedding graph
+	// incorrectly, so the wake word scored zero on a clear phrase). Loading it
+	// anyway is a feature that looks installed and silently does nothing; refusing
+	// it reports "not downloaded", and the Download button fetches the new pin.
+	const artifact = artifactForThisPlatform(id);
+	if (artifact && manifest.sha256 !== artifact.sha256) return null;
 
 	const entry = path.join(runtimeDir(id), manifest.entry);
 	const binary = path.join(runtimeDir(id), manifest.binary);

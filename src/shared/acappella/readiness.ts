@@ -44,6 +44,10 @@ export const VOICE_SLOT_UNSATISFIED_REASONS = [
 	'runtime-unavailable',
 	'mic-permission-denied',
 	'mic-permission-restricted',
+	// The wake word front end is installed but no detector was ever trained for
+	// the phrase, so it can never fire. Distinct from `model-not-installed`
+	// because no download fixes it.
+	'wake-phrase-untrained',
 ] as const;
 
 export type VoiceSlotUnsatisfiedReason = (typeof VOICE_SLOT_UNSATISFIED_REASONS)[number];

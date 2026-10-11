@@ -146,9 +146,11 @@ function defineModel(draft: ModelDraft): VoiceModelEntry {
 // The catalog
 // ---------------------------------------------------------------------------
 
+export const PARAKEET_TDT_V2_ID = 'parakeet-tdt-0.6b-v2';
 export const WHISPER_BASE_EN_ID = 'whisper-base-en';
 export const KOKORO_82M_ID = 'kokoro-82m';
 export const OPENWAKEWORD_BASE_ID = 'openwakeword-base';
+export const HEY_JARVIS_WAKE_ID = 'openwakeword-hey-jarvis';
 export const QWEN3_1_7B_ID = 'qwen3-1.7b-instruct-q4km';
 
 /**
@@ -158,6 +160,48 @@ export const QWEN3_1_7B_ID = 'qwen3-1.7b-instruct-q4km';
  * progression rather than as a wall of gigabytes.
  */
 export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
+	defineModel({
+		id: PARAKEET_TDT_V2_ID,
+		displayName: 'Parakeet TDT 0.6B (English)',
+		role: 'stt',
+		// NVIDIA's Parakeet TDT 0.6B v2, exported to ONNX by the onnx-asr project.
+		// The local default: it gets agent names, casing, and punctuation right
+		// where Whisper Base does not, and decodes a few seconds of speech in
+		// about 150 ms. The int8 graphs, because the fp32 encoder is 2.4 GB for no
+		// audible gain on dictated commands. See `providers/local/parakeet/engine.ts`.
+		repo: 'istupakov/parakeet-tdt-0.6b-v2-onnx',
+		revision: '0bbb45a3365852604aef28b538a8f066f4ccaa85',
+		license: 'CC-BY-4.0',
+		licenseUrl: 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2',
+		requiredFor: 'local-speech-to-text',
+		description:
+			'Fast, accurate English speech recognition that runs on the CPU. Transcribes on this machine, so no audio leaves it.',
+		files: [
+			{
+				// The NeMo log-mel front end, as a graph, so it is never re-derived by hand.
+				path: 'nemo128.onnx',
+				sha256: 'a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f',
+				bytes: 139764,
+			},
+			{
+				path: 'encoder-model.int8.onnx',
+				sha256: '3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155',
+				bytes: 652184014,
+			},
+			{
+				path: 'decoder_joint-model.int8.onnx',
+				sha256: 'a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3',
+				bytes: 8998286,
+			},
+			{
+				// Not an LFS object, so this is the SHA-256 of the bytes served at the
+				// pinned revision rather than an LFS oid.
+				path: 'vocab.txt',
+				sha256: 'ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d',
+				bytes: 9384,
+			},
+		],
+	}),
 	defineModel({
 		id: WHISPER_BASE_EN_ID,
 		displayName: 'Whisper Base (English)',
@@ -217,6 +261,32 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 				path: 'embedding_model.onnx',
 				sha256: '70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f',
 				bytes: 1326578,
+			},
+		],
+	}),
+	defineModel({
+		id: HEY_JARVIS_WAKE_ID,
+		displayName: 'Wake phrase: "Hey Jarvis"',
+		role: 'wake-word',
+		// openWakeWord's own pretrained "hey jarvis" classifier (release v0.5.1).
+		// Served from a pinned Hugging Face mirror so it rides the same pinned
+		// resolve URL as every other model; the hash is the one published with the
+		// official GitHub release asset, verified byte for byte against the mirror.
+		repo: 'harvestsu/openwakeword-onnx',
+		revision: '93d1bd6f4f48750cb6a76206ce5bd92d846820c8',
+		// The openWakeWord CODE is Apache-2.0, but its pretrained models are not:
+		// they are non-commercial. Stated here so Voice Setup shows it before the
+		// download rather than burying it in a README.
+		license: 'CC-BY-NC-SA-4.0',
+		licenseUrl: 'https://github.com/dscripka/openWakeWord#license',
+		requiredFor: 'hands-free-wake-word',
+		description:
+			'The detector for the default wake phrase, "hey jarvis". Runs on this machine on top of the wake word front end.',
+		files: [
+			{
+				path: 'hey_jarvis_v0.1.onnx',
+				sha256: '94a13cfe60075b132f6a472e7e462e8123ee70861bc3fb58434a73712ee0d2cb',
+				bytes: 1271370,
 			},
 		],
 	}),
@@ -331,7 +401,7 @@ export const MODEL_SETS: Readonly<Record<VoiceModelSetId, VoiceModelSet>> = Obje
 		'hands-free-local',
 		'Local speech',
 		"Speech recognition and the wake word run on this machine. Replies use your computer's own voice and routing is built in, so nothing else is needed and nothing leaves this machine.",
-		[WHISPER_BASE_EN_ID, OPENWAKEWORD_BASE_ID]
+		[PARAKEET_TDT_V2_ID, OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID]
 	),
 });
 
@@ -352,4 +422,49 @@ export function formatModelSetSize(setId: VoiceModelSetId): string {
 /** Total bytes of an arbitrary selection of models. Unknown ids contribute zero. */
 export function sumModelBytes(ids: readonly string[]): number {
 	return ids.reduce((total, id) => total + (getVoiceModel(id)?.bytes ?? 0), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Pretrained wake phrases
+// ---------------------------------------------------------------------------
+
+/**
+ * A wake phrase that has a trained classifier in the catalog.
+ *
+ * openWakeWord detects only phrases it was trained on: the front end
+ * (`openwakeword-base`) is shared, and each phrase needs its own small model.
+ * This table is the whole list of phrases a fresh install can wake on with the
+ * classifier engine. Any other phrase needs the transcription engine, which
+ * matches the phrase in Parakeet's text instead.
+ */
+export interface PretrainedWakePhrase {
+	/** What the user says, lower case. */
+	readonly phrase: string;
+	/** Catalog model holding the classifier. */
+	readonly modelId: string;
+	/** The classifier file inside that model's directory. */
+	readonly file: string;
+}
+
+export const PRETRAINED_WAKE_PHRASES: readonly PretrainedWakePhrase[] = Object.freeze([
+	Object.freeze({
+		phrase: 'hey jarvis',
+		modelId: HEY_JARVIS_WAKE_ID,
+		file: 'hey_jarvis_v0.1.onnx',
+	}),
+]);
+
+/** Lower case, punctuation stripped, single spaces: how phrases are compared. */
+export function normalizeWakePhrase(text: string): string {
+	return text
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}\s]/gu, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+/** The pretrained classifier for a phrase, or undefined when none was trained for it. */
+export function findPretrainedWakePhrase(text: string): PretrainedWakePhrase | undefined {
+	const wanted = normalizeWakePhrase(text);
+	return PRETRAINED_WAKE_PHRASES.find((entry) => entry.phrase === wanted);
 }

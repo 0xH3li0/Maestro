@@ -37,7 +37,9 @@ The load-bearing fact: every failure in this area is invisible in development. A
 | Runtime      | Package            | Version | Slots                 | Prebuilds                                             | Electron rebuild |
 | ------------ | ------------------ | ------- | --------------------- | ----------------------------------------------------- | ---------------- |
 | llama.cpp    | `node-llama-cpp`   | 3.20.0  | Conductor Brain       | Prebuilt for all four targets via `@node-llama-cpp/*` | No               |
-| ONNX Runtime | `onnxruntime-node` | 1.27.0  | STT + TTS + wake word | Prebuilt, `bin/napi-v6/<platform>/<arch>/`            | No               |
+| ONNX Runtime | `onnxruntime-node` | 1.30.0  | STT + TTS + wake word | Prebuilt, `bin/napi-v6/<platform>/<arch>/`            | No               |
+
+ONNX Runtime is pinned to 1.30.0, not the 1.27.0 it started on: 1.27 computes openWakeWord's embedding graph incorrectly, so the wake word scored a clear phrase at 0.0001 (1.29 and 1.30 score 0.999). A runtime installed from an older pin is refused at load time and re-downloaded. Neither 1.27 nor 1.30 publishes a darwin-x64 binary.
 
 Neither needs `electron-rebuild`. Both are Node-API addons, and Node-API is ABI-stable across Node and Electron by design, which is why they are absent from the `postinstall` rebuild list that carries `node-pty` and `better-sqlite3`. Adding a non-Node-API addon later means setting `requiresElectronRebuild: true` AND adding it to that list; the registry test fails if the two disagree.
 

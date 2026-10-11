@@ -11,8 +11,38 @@
  * two files drifting to different values.
  */
 
-/** The phrase a fresh install listens for. */
-export const DEFAULT_WAKE_PHRASE = 'hey maestro';
+/**
+ * The phrase a fresh install listens for.
+ *
+ * "hey jarvis" because it is the phrase a trained classifier SHIPS for (see
+ * `PRETRAINED_WAKE_PHRASES` in model-catalog.ts). "hey maestro" was the default
+ * before that, and nothing could ever detect it: openWakeWord fires only on
+ * phrases it was trained on, and no "hey maestro" model exists.
+ */
+export const DEFAULT_WAKE_PHRASE = 'hey jarvis';
+
+/** The old default, which no classifier exists for. Migrated away from on upgrade. */
+export const LEGACY_DEFAULT_WAKE_PHRASE = 'hey maestro';
+
+/**
+ * How the wake phrase is detected.
+ *
+ * - `classifier`: openWakeWord with a model trained for the phrase. Tiny, near
+ *   free on the CPU, and the right default, but it only fires on phrases a model
+ *   was trained for (`PRETRAINED_WAKE_PHRASES`).
+ * - `transcription`: the local speech recogniser transcribes each short burst of
+ *   speech and the phrase is matched in the text. Any phrase works with no
+ *   training, at the cost of keeping Parakeet loaded (about 1 GB) and running it
+ *   on every burst of speech while hands-free is on. Still entirely local.
+ */
+export type WakeEngine = 'classifier' | 'transcription';
+
+export const DEFAULT_WAKE_ENGINE: WakeEngine = 'classifier';
+
+/** Anything unrecognised reads as the default. */
+export function asWakeEngine(value: unknown): WakeEngine {
+	return value === 'transcription' ? 'transcription' : DEFAULT_WAKE_ENGINE;
+}
 
 /**
  * How eagerly a phrase fires, 0 to 1. Higher means easier: the score has to

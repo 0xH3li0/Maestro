@@ -32,6 +32,7 @@ import {
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
 } from '../../../shared/acappella/native-runtimes';
+import { selfTestVerdict } from '../../../shared/acappella/native-runtimes';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import { getMicPermission } from '../permissions/mic-permission';
 import {
@@ -46,8 +47,12 @@ import {
  * build yet, which is a true and useful thing for a support report to say. It is
  * reported separately from `fail` so a bug report cannot read as three broken
  * runtimes when nothing is broken.
+ *
+ * `missing` is the runtime this build CAN fetch but has not. Nothing is broken,
+ * so it does not fail the run either, but it is not "skipped": every local voice
+ * slot that rides it is dead until it is downloaded, and the summary says so.
  */
-export type RuntimeSelfTestStatus = 'pass' | 'fail' | 'skipped';
+export type RuntimeSelfTestStatus = 'pass' | 'fail' | 'skipped' | 'missing';
 
 export interface RuntimeSelfTestEntry {
 	runtimeId: NativeRuntimeId;
@@ -71,7 +76,7 @@ export interface RuntimeSelfTestReport {
 	/** Null on a platform Maestro ships no installer for. */
 	platformKey: NativePlatformKey | null;
 	entries: RuntimeSelfTestEntry[];
-	/** True when nothing FAILED. A skipped runtime does not fail the run. */
+	/** True when nothing FAILED. A skipped or missing runtime does not fail the run. */
 	passed: boolean;
 	microphone: {
 		permission: MicPermission;
@@ -205,10 +210,15 @@ async function testRuntime(
 		// A runtime that is not a dependency yet is not a broken installation, and
 		// a support report that says "fail" for it would send someone hunting a bug
 		// that does not exist.
-		const skipped = result.error.failure === 'not-a-dependency';
+		const status: RuntimeSelfTestStatus =
+			result.error.failure === 'not-a-dependency'
+				? 'skipped'
+				: result.error.failure === 'not-downloaded'
+					? 'missing'
+					: 'fail';
 		return {
 			...base,
-			status: skipped ? 'skipped' : 'fail',
+			status,
 			failure: result.error.failure,
 			durationMs: deps.now() - started,
 			detail: result.error.detail
@@ -265,9 +275,9 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | type
 
 /** The report as lines, for a log or a pasted bug report. */
 export function formatSelfTestReport(report: RuntimeSelfTestReport): string {
-	const header = `A Cappella voice self-test on ${report.platform}-${report.arch}: ${
-		report.passed ? 'PASS' : 'FAIL'
-	}`;
+	const header = `A Cappella voice self-test on ${report.platform}-${report.arch}: ${selfTestVerdict(
+		report
+	)}`;
 	const rows = report.entries.map(
 		(entry) =>
 			`  ${entry.status.toUpperCase().padEnd(7)} ${entry.label} (${entry.moduleId}) ${entry.durationMs} ms${

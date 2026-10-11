@@ -127,8 +127,15 @@ export interface NativeRuntimeDependency {
 
 /** `3.20.0`, matching `versionPin` for the `llama` runtime. */
 const LLAMA_VERSION = '3.20.0';
-/** `1.27.0`, matching `versionPin` for the `onnx` runtime. */
-const ONNX_VERSION = '1.27.0';
+/**
+ * `1.30.0`, matching `versionPin` for the `onnx` runtime.
+ *
+ * Not 1.27.0, which was pinned first and is WRONG for openWakeWord: it computes
+ * the embedding graph differently (same mel frames in, different embeddings
+ * out), so the classifier scored a clear "hey jarvis" at 0.0001 where 1.29 and
+ * 1.30 score 0.999. Neither version publishes a darwin-x64 binary.
+ */
+const ONNX_VERSION = '1.30.0';
 
 /**
  * The `@node-llama-cpp/*` package serving each platform.
@@ -184,8 +191,8 @@ const ONNX_BIN_DIR: Readonly<Record<NativePlatformKey, string>> = Object.freeze(
  * "which of these share a file" in their head to check one.
  */
 const ONNX_TARBALL_URL = `https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-${ONNX_VERSION}.tgz`;
-const ONNX_TARBALL_SHA256 = 'c3779c01c59832f8c03e2c392ac3af10bf08579f1822e8b1c63cc451edb302a2';
-const ONNX_TARBALL_BYTES = 100_893_124;
+const ONNX_TARBALL_SHA256 = '6e3390d6b783e7be946fad629292799da28d0b42f84856e50d2c1b0383291e75';
+const ONNX_TARBALL_BYTES = 113_507_888;
 
 /**
  * `onnxruntime-node`'s own runtime dependency.
@@ -203,8 +210,8 @@ const ONNX_DEPENDENCIES: readonly NativeRuntimeDependency[] = Object.freeze([
 	Object.freeze({
 		name: 'onnxruntime-common',
 		url: `https://registry.npmjs.org/onnxruntime-common/-/onnxruntime-common-${ONNX_VERSION}.tgz`,
-		sha256: '37faaa5883b7f317b0f357ae8b2f4f8c8d97d177638be12cbcdf8239d75bbd7b',
-		bytes: 66_082,
+		sha256: '7906c439e0d3e0f4048caa23b64cdfadc0f455c377f579ce1ab2a4b778f07d5f',
+		bytes: 66_795,
 	}),
 ]);
 

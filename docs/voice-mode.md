@@ -38,12 +38,13 @@ There are three independent slots plus one alternative pipeline shape:
 
 ![Voice Providers panel with the audio destination statement](./screenshots/acappella-voice-providers.png)
 
-Each slot is configured and validated on its own. A missing Whisper model does not stop you using a hosted Brain, and **no path anywhere silently substitutes one provider for another**. If a slot cannot run, the session refuses with a specific reason instead of quietly routing your microphone somewhere you did not choose.
+Each slot is configured and validated on its own. A missing speech model does not stop you using a hosted Brain, and **no path anywhere silently substitutes one provider for another**. If a slot cannot run, the session refuses with a specific reason instead of quietly routing your microphone somewhere you did not choose.
 
 ### The providers, and what leaves your machine
 
 | Provider                               | Slot            | Leaves this machine               |
 | -------------------------------------- | --------------- | --------------------------------- |
+| Parakeet (local)                       | Speech-to-Text  | Nothing                           |
 | Whisper (local)                        | Speech-to-Text  | Nothing                           |
 | OpenAI (hosted)                        | Speech-to-Text  | **Your audio**, to OpenAI         |
 | System voice (built in)                | Text-to-Speech  | Nothing                           |
@@ -55,7 +56,7 @@ Each slot is configured and validated on its own. A missing Whisper model does n
 | Mock providers                         | Any             | Nothing (no microphone, no model) |
 | **OpenAI Realtime** (speech-to-speech) | All three       | **Your audio**, to OpenAI         |
 
-**The defaults need one download and no key.** Speech recognition is Whisper on this machine. Replies are spoken by the voice already built into your computer (`say` on macOS, the Windows speech API, `espeak-ng` on Linux). Routing is the built-in keyword router: it sends an utterance to the agent you named, or to the agent you are talking to, and reads the first sentences of the reply back as written. Switch the Brain to a hosted model when you want it to understand a request rather than match a name.
+**The defaults need one download and no key.** Speech recognition is Parakeet on this machine: fast, English-only, and it gets names, casing, and punctuation right. Whisper stays in the list as a smaller, less accurate alternative. Replies are spoken by the voice already built into your computer (`say` on macOS, the Windows speech API, `espeak-ng` on Linux). Routing is the built-in keyword router: it sends an utterance to the agent you named, or to the agent you are talking to, and reads the first sentences of the reply back as written. Switch the Brain to a hosted model when you want it to understand a request rather than match a name.
 
 **One OpenAI key runs a whole hosted trio.** Switching every slot to hosted picks OpenAI for all three, so you do not need a second account to hear replies. ElevenLabs stays in the Text-to-Speech list for anyone who prefers its voices.
 
@@ -98,12 +99,12 @@ download nothing.
 	size you actually download.
 </Warning>
 
-| Model                  | Role           | Size     | License    |
-| ---------------------- | -------------- | -------- | ---------- |
-| Whisper Base (English) | Speech-to-Text | 208.5 MB | Apache-2.0 |
-| openWakeWord Base      | Wake word      | 2.4 MB   | Apache-2.0 |
+| Model                       | Role           | Size     | License    |
+| --------------------------- | -------------- | -------- | ---------- |
+| Parakeet TDT 0.6B (English) | Speech-to-Text | 661.3 MB | CC-BY-4.0  |
+| openWakeWord Base           | Wake word      | 2.4 MB   | Apache-2.0 |
 
-Voice Setup offers them as one bundle, **Local speech**, and the button always shows the total of what is still **missing** rather than the size of the whole set. With the ONNX Runtime engine the first download is roughly 310 MB.
+Voice Setup offers them as one bundle, **Local speech**, and the button always shows the total of what is still **missing** rather than the size of the whole set. With the ONNX Runtime engine the first download is roughly 765 MB. Whisper Base (208.5 MB, Apache-2.0) is offered on its own row if you pick it as your recogniser.
 
 Every file is downloaded from a pinned revision and checked against a SHA-256 recorded in the app, so a model that was tampered with in transit fails to install rather than quietly running.
 

@@ -24,6 +24,7 @@ import {
 	WhisperSttProvider,
 	sanitizeTranscript,
 } from '../../../../main/acappella/providers/local/whisper-stt';
+import { ParakeetSttProvider } from '../../../../main/acappella/providers/local/parakeet-stt';
 import {
 	KokoroTtsProvider,
 	styleVectorFor,
@@ -232,6 +233,89 @@ describe('WhisperSttProvider', () => {
 
 		expect(finals).toEqual(['typed instead of spoken']);
 		expect(harness.transcribe).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Parakeet
+// ---------------------------------------------------------------------------
+
+describe('ParakeetSttProvider', () => {
+	/**
+	 * The streaming policy is shared with Whisper (`chunked-stt.ts`) and covered
+	 * above; these pin what is Parakeet's own: its identity, its runtime, and
+	 * that a failure is reported as Parakeet rather than as the shared base.
+	 */
+	function parakeetEngine(text = 'Open the auth tab.') {
+		const transcribe = vi.fn(async () => text);
+		return {
+			transcribe,
+			engine: { load: vi.fn(async () => {}), unload: vi.fn(async () => {}), transcribe },
+		};
+	}
+
+	it('is the local default recogniser, on the ONNX runtime', async () => {
+		const seen: string[] = [];
+		const provider = new ParakeetSttProvider({
+			engine: parakeetEngine().engine,
+			loadRuntime: (async (id: string) => {
+				seen.push(id);
+				return {} as never;
+			}) as never,
+		});
+
+		expect(provider.id).toBe('parakeet-local');
+		expect(provider.tier).toBe('local');
+		expect(provider.acceptsAudio).toBe(true);
+		await provider.start(recorder().callbacks);
+		expect(seen).toEqual(['onnx']);
+	});
+
+	it('publishes the final, punctuation and all, on endpointing', async () => {
+		const harness = parakeetEngine('Ask the Philosopher agent to summarize.');
+		const provider = new ParakeetSttProvider({
+			engine: harness.engine,
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 0,
+		});
+		const { callbacks, finals } = recorder();
+
+		await provider.start(callbacks);
+		provider.feed(frame());
+		await provider.flush();
+
+		expect(finals).toEqual(['Ask the Philosopher agent to summarize.']);
+	});
+
+	it('names itself when a decode fails', async () => {
+		const provider = new ParakeetSttProvider({
+			engine: {
+				load: vi.fn(async () => {}),
+				unload: vi.fn(async () => {}),
+				transcribe: async () => {
+					throw new Error('reshape failed');
+				},
+			},
+			loadRuntime: async () => ({}) as never,
+			partialIntervalMs: 0,
+		});
+		const { callbacks, errors } = recorder();
+
+		await provider.start(callbacks);
+		provider.feed(frame());
+		await provider.flush();
+
+		expect(errors[0]).toMatchObject({ kind: 'unavailable', providerId: 'parakeet-local' });
+		expect(errors[0].message).toContain('Parakeet could not transcribe');
+	});
+
+	it('reports a runtime that will not load as its own failure', async () => {
+		const provider = new ParakeetSttProvider({ loadRuntime: failingRuntime as never });
+
+		await expect(provider.start(recorder().callbacks)).rejects.toMatchObject({
+			kind: 'unavailable',
+			providerId: 'parakeet-local',
+		});
 	});
 });
 

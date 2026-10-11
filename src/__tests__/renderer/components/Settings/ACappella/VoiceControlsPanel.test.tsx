@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { VoiceControlsPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceControlsPanel';
 import type { Shortcut } from '../../../../../renderer/types';
@@ -113,5 +113,39 @@ describe('VoiceControlsPanel hotkey rows', () => {
 		await waitFor(() => {
 			expect(screen.getAllByText(/J$/).length).toBeGreaterThan(0);
 		});
+	});
+});
+
+describe('VoiceControlsPanel wake word Test', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockShortcuts = {};
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({});
+		vi.mocked(voice().getRoster).mockResolvedValue([]);
+		vi.mocked(voice().hotkeyStatus).mockResolvedValue({ statuses: [], note: '' });
+	});
+
+	it('shows why the phrase cannot fire instead of listening forever', async () => {
+		vi.mocked(voice().wakeTest).mockResolvedValue({
+			started: false,
+			reason: 'Wake word: no detector has been trained for the wake phrase, so it cannot fire.',
+		});
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+
+		expect(await screen.findByText(/cannot fire/)).toBeTruthy();
+		// Refused, so the button never flips to a listening state.
+		expect(screen.queryByRole('button', { name: 'Stop test' })).toBeNull();
+	});
+
+	it('listens when the main process starts the run', async () => {
+		vi.mocked(voice().wakeTest).mockResolvedValue({ started: true });
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+
+		expect(await screen.findByRole('button', { name: 'Stop test' })).toBeTruthy();
+		expect(screen.getByText('Listening. Say the phrase.')).toBeTruthy();
 	});
 });

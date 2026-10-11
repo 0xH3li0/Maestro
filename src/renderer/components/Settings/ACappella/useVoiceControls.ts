@@ -30,6 +30,9 @@ import {
 	DEFAULT_WAKE_DEBOUNCE_MS,
 	DEFAULT_WAKE_PHRASE,
 	DEFAULT_WAKE_SENSITIVITY,
+	DEFAULT_WAKE_ENGINE,
+	asWakeEngine,
+	type WakeEngine,
 } from '../../../../shared/acappella/voice-controls';
 import { useVoiceUiStore } from '../../../stores/voiceUiStore';
 
@@ -54,6 +57,8 @@ export interface VoiceControlSettings {
 	wakeSensitivity: number;
 	/** Minimum gap between two hits of the same phrase. */
 	wakeDebounceMs: number;
+	/** Trained classifier (default) or transcription matching. See `WakeEngine`. */
+	wakeEngine: WakeEngine;
 	/** Per-agent phrases, keyed by agent session id. */
 	agentPhrases: AgentWakePhrase[];
 	/** The configurable stop phrase. "nevermind" is always armed alongside it. */
@@ -80,6 +85,7 @@ export const DEFAULT_VOICE_CONTROLS: VoiceControlSettings = {
 	wakePhrase: DEFAULT_WAKE_PHRASE,
 	wakeSensitivity: DEFAULT_WAKE_SENSITIVITY,
 	wakeDebounceMs: DEFAULT_WAKE_DEBOUNCE_MS,
+	wakeEngine: DEFAULT_WAKE_ENGINE,
 	agentPhrases: [],
 	stopPhrase: DEFAULT_STOP_PHRASE,
 	stopWordEnabled: true,
@@ -136,6 +142,7 @@ export function readVoiceControls(
 		wakePhrase: asString(raw.wakePhrase, DEFAULT_VOICE_CONTROLS.wakePhrase),
 		wakeSensitivity: asNumber(raw.wakeSensitivity, DEFAULT_VOICE_CONTROLS.wakeSensitivity),
 		wakeDebounceMs: asNumber(raw.wakeDebounceMs, DEFAULT_VOICE_CONTROLS.wakeDebounceMs),
+		wakeEngine: asWakeEngine(raw.wakeEngine),
 		agentPhrases: asAgentPhrases(raw.agentPhrases),
 		stopPhrase: asString(raw.stopPhrase, DEFAULT_VOICE_CONTROLS.stopPhrase),
 		stopWordEnabled: raw.stopWordEnabled !== false,
@@ -192,6 +199,7 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 				wakePhrase: next.wakePhrase,
 				wakeSensitivity: next.wakeSensitivity,
 				wakeDebounceMs: next.wakeDebounceMs,
+				wakeEngine: next.wakeEngine,
 				agentPhrases: next.agentPhrases,
 				stopPhrase: next.stopPhrase,
 				stopWordEnabled: next.stopWordEnabled,

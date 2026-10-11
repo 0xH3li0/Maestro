@@ -28,6 +28,7 @@ import { Minus, MicOff } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { Z_LAYERS } from '../../constants/zLayers';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { useEventListener } from '../../hooks/utils/useEventListener';
@@ -397,8 +398,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 			<div
 				ref={setRootRef}
 				data-testid="voice-hud"
-				className="fixed z-[90000] rounded-lg border shadow-xl select-none overflow-hidden"
+				className="fixed rounded-lg border shadow-xl select-none overflow-hidden"
 				style={{
+					zIndex: Z_LAYERS.VOICE_HUD,
 					top: placement.top,
 					left: placement.left,
 					width: HUD_WIDTH,

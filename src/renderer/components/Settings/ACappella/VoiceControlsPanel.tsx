@@ -22,6 +22,7 @@ import { Keyboard, Mic, Radio, Square } from 'lucide-react';
 
 import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import {
+	DEFAULT_WAKE_PHRASE,
 	FALLBACK_STOP_PHRASE,
 	MAX_HOLD_THRESHOLD_MS,
 	MAX_SEND_HOLD_MS,
@@ -29,6 +30,7 @@ import {
 	MIN_SEND_HOLD_MS,
 	MIN_TURN_SETTLE_MS,
 	MIN_HOLD_THRESHOLD_MS,
+	type WakeEngine,
 } from '../../../../shared/acappella/voice-controls';
 import {
 	VOICE_AGENT_HOTKEY_ID,
@@ -43,6 +45,8 @@ import type { Theme } from '../../../types';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
+import { ToggleButtonGroup } from '../../ToggleButtonGroup';
+import { findPretrainedWakePhrase } from '../../../../shared/acappella/model-catalog';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { useVoiceControls } from './useVoiceControls';
@@ -57,6 +61,11 @@ const HOTKEY_IDS = [VOICE_CONDUCTOR_HOTKEY_ID, VOICE_AGENT_HOTKEY_ID] as const;
 
 /** How long a Test run listens before closing the microphone on its own. */
 const WAKE_TEST_TIMEOUT_MS = 15_000;
+
+const WAKE_ENGINE_OPTIONS: Array<{ value: WakeEngine; label: string }> = [
+	{ value: 'classifier', label: 'Trained model' },
+	{ value: 'transcription', label: 'Transcription' },
+];
 
 export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) {
 	const controls = useVoiceControls(enabled);
@@ -122,11 +131,13 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 
 	const startTest = useCallback(async () => {
 		setTestHit(null);
-		const started = await window.maestro.voice
+		const result = await window.maestro.voice
 			.wakeTest({ phrase: controls.wakePhrase, sensitivity: controls.wakeSensitivity })
-			.catch(() => false);
-		if (!started) {
-			setTestHit('Test needs an idle session and the wake model installed.');
+			.catch((error: Error) => ({ started: false as const, reason: error.message }));
+		if (!result.started) {
+			// The main process says WHY, so a phrase that cannot fire is never
+			// mistaken for one that was said too quietly.
+			setTestHit(result.reason);
 			return;
 		}
 		setTesting(true);
@@ -179,6 +190,30 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 							color: theme.colors.textMain,
 						}}
 					/>
+
+					<div className="space-y-1">
+						<div className="text-xs opacity-70">Detection</div>
+						<ToggleButtonGroup
+							options={WAKE_ENGINE_OPTIONS}
+							value={controls.wakeEngine}
+							onChange={(next) => void controls.update({ wakeEngine: next })}
+							theme={theme}
+						/>
+						<p className="text-xs-plus opacity-55">
+							{controls.wakeEngine === 'classifier'
+								? 'A small model trained for the phrase. Near-zero CPU, but it only knows the phrases it was trained on.'
+								: 'Transcribes each burst of speech locally and matches the phrase in the text. Any phrase works; keeps the speech model loaded (about 1 GB).'}
+						</p>
+						{/* The classifier engine fires on trained phrases only. Saying so here
+						    beats a Test button that listens and never lights up. */}
+						{controls.wakeEngine === 'classifier' &&
+							!findPretrainedWakePhrase(controls.wakePhrase) && (
+								<p className="text-xs-plus" style={{ color: theme.colors.warning }}>
+									No trained model exists for &ldquo;{controls.wakePhrase}&rdquo;. Use &ldquo;
+									{DEFAULT_WAKE_PHRASE}&rdquo;, or switch Detection to Transcription.
+								</p>
+							)}
+					</div>
 
 					<div className="flex items-center gap-3">
 						<label className="text-xs opacity-70" htmlFor="acappella-wake-sensitivity">

@@ -18,11 +18,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Brain, MessageSquare, Volume2, type LucideIcon } from 'lucide-react';
 
-import { WHISPER_BASE_EN_ID } from '../../../../shared/acappella/model-catalog';
+import { PARAKEET_TDT_V2_ID } from '../../../../shared/acappella/model-catalog';
 import {
 	HOSTED_PROVIDER_IDS,
 	LOCAL_PROVIDER_IDS,
 	getVoiceProvider,
+	voiceProviderRequirement,
 } from '../../../../shared/acappella/provider-catalog';
 import type { VoicePipelineShape, VoiceProviderRole } from '../../../../shared/acappella/providers';
 import {
@@ -81,7 +82,7 @@ export const SLOT_DEFINITIONS: readonly VoiceSlotDefinition[] = [
 		title: 'Where your speech is transcribed',
 		description:
 			'Local keeps every sample of your voice on this machine. Hosted sends audio to a service you configure.',
-		modelId: WHISPER_BASE_EN_ID,
+		modelId: PARAKEET_TDT_V2_ID,
 		icon: MessageSquare,
 	},
 	{
@@ -104,6 +105,21 @@ export const SLOT_DEFINITIONS: readonly VoiceSlotDefinition[] = [
 		icon: Brain,
 	},
 ];
+
+/**
+ * The model a slot's LOCAL choice needs, given what the slot is set to.
+ *
+ * The selected provider's own requirement wins, so a user who picked Whisper
+ * sees the Whisper row rather than the default recogniser's. A slot set to a
+ * provider that needs no model (or to a cloud one) shows the slot's default.
+ */
+export function localModelIdForSlot(
+	slot: VoiceSlotDefinition,
+	providerId: string | undefined
+): string | undefined {
+	const requirement = providerId ? voiceProviderRequirement(providerId) : undefined;
+	return requirement?.kind === 'model' ? requirement.modelId : slot.modelId;
+}
 
 export interface VoiceProviderSelection {
 	/** What each slot is set to. Unset slots report the mock tier's id. */

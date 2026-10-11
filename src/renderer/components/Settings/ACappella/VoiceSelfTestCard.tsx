@@ -16,6 +16,7 @@ import { useCallback, useState } from 'react';
 import { Stethoscope } from 'lucide-react';
 
 import type { RuntimeSelfTestReport } from '../../../../main/acappella/runtime/runtime-selftest';
+import { selfTestVerdict } from '../../../../shared/acappella/native-runtimes';
 import type { Theme } from '../../../types';
 import { flashCopiedToClipboard } from '../../../utils/flashCopiedToClipboard';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
@@ -69,8 +70,11 @@ export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 	const statusColor = (status: string): string => {
 		if (status === 'pass') return theme.colors.success;
 		if (status === 'fail') return theme.colors.error;
+		if (status === 'missing') return theme.colors.warning;
 		return theme.colors.textMain;
 	};
+
+	const verdict = report ? selfTestVerdict(report) : null;
 
 	return (
 		<div data-setting-id="encore-a-cappella-self-test">
@@ -119,10 +123,18 @@ export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 					<div className="space-y-1 select-text">
 						<div
 							className="text-xs"
-							style={{ color: statusColor(report.passed ? 'pass' : 'fail') }}
+							style={{
+								color: statusColor(
+									verdict === 'PASS' ? 'pass' : verdict === 'FAIL' ? 'fail' : 'missing'
+								),
+							}}
 						>
-							{report.passed ? 'All runtimes responded' : 'One or more runtimes failed'} on{' '}
-							{report.platform}-{report.arch}
+							{verdict === 'PASS'
+								? 'All runtimes responded'
+								: verdict === 'FAIL'
+									? 'One or more runtimes failed'
+									: 'A runtime is not downloaded yet, so local voice cannot run. Download it in Voice Setup'}{' '}
+							on {report.platform}-{report.arch}
 						</div>
 						{report.entries.map((entry) => (
 							<div key={entry.runtimeId} className="text-xs-plus flex flex-wrap gap-1">

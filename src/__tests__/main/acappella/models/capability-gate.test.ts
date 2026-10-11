@@ -115,10 +115,11 @@ import {
 } from '../../../../shared/acappella/readiness';
 import type { NativeRuntimeUnavailable } from '../../../../main/acappella/runtime/native-loader';
 import {
+	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
 	OPENWAKEWORD_BASE_ID,
 	QWEN3_1_7B_ID,
-	WHISPER_BASE_EN_ID,
+	PARAKEET_TDT_V2_ID,
 } from '../../../../shared/acappella/model-catalog';
 
 type StatusKind = ModelStatus['status'];
@@ -170,7 +171,7 @@ describe('capability-gate', () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
 				readModelStatus: statusReader({
-					[WHISPER_BASE_EN_ID]: 'not-installed',
+					[PARAKEET_TDT_V2_ID]: 'not-installed',
 					[KOKORO_82M_ID]: 'not-installed',
 					[QWEN3_1_7B_ID]: 'not-installed',
 				}),
@@ -184,13 +185,13 @@ describe('capability-gate', () => {
 		it('reports model-not-installed with a download action', async () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: ALL_LOCAL,
-				readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'not-installed' }),
+				readModelStatus: statusReader({ [PARAKEET_TDT_V2_ID]: 'not-installed' }),
 			});
 
 			const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
 			expect(stt.satisfied).toBe(false);
 			expect(stt.reason).toBe('model-not-installed');
-			expect(stt.requiredModelId).toBe(WHISPER_BASE_EN_ID);
+			expect(stt.requiredModelId).toBe(PARAKEET_TDT_V2_ID);
 			expect(stt.detail).toContain('is not installed');
 			expect(stt.suggestedAction).toContain('Download');
 			expect(readiness.canStartSession).toBe(false);
@@ -199,7 +200,7 @@ describe('capability-gate', () => {
 		it('reports model-corrupt with a re-verify action', async () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: ALL_LOCAL,
-				readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'corrupt' }),
+				readModelStatus: statusReader({ [PARAKEET_TDT_V2_ID]: 'corrupt' }),
 			});
 
 			const stt = readiness.slots.find((slot) => slot.slot === 'stt')!;
@@ -270,7 +271,7 @@ describe('capability-gate', () => {
 				settings: ALL_LOCAL,
 				// Model missing AND runtime broken: the runtime wins, because
 				// downloading 200 MB does not fix a binary that will not load.
-				readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'not-installed' }),
+				readModelStatus: statusReader({ [PARAKEET_TDT_V2_ID]: 'not-installed' }),
 				readRuntimeFailure: (runtimeId) =>
 					runtimeId === 'onnx'
 						? {
@@ -355,6 +356,43 @@ describe('capability-gate', () => {
 			expect(wake.providerId).toBe(WAKE_WORD_PROVIDER_ID);
 		});
 
+		it('refuses hands-free when the phrase has no trained detector, even with the model installed', async () => {
+			// The front end alone scores nothing. Reporting the slot satisfied here is
+			// how a Test button listened forever and never lit up.
+			const readiness = await resolveVoiceReadiness({
+				settings: { ...ALL_LOCAL, wakePhrase: 'hey maestro' },
+				readModelStatus: statusReader(),
+			});
+
+			expect(readiness.canStartSession).toBe(true);
+			expect(readiness.canRunHandsFree).toBe(false);
+			const wake = readiness.slots.find((slot) => slot.slot === 'wake-word')!;
+			expect(wake.reason).toBe('wake-phrase-untrained');
+			expect(wake.detail).toContain('hey maestro');
+			expect(wake.suggestedAction).toContain('hey jarvis');
+		});
+
+		it("asks for the default phrase's detector when only the front end is installed", async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader({ [HEY_JARVIS_WAKE_ID]: 'not-installed' }),
+			});
+
+			const wake = readiness.slots.find((slot) => slot.slot === 'wake-word')!;
+			expect(wake.reason).toBe('model-not-installed');
+			// A download fixes this one, so the panel can offer the button.
+			expect(wake.requiredModelId).toBe(HEY_JARVIS_WAKE_ID);
+		});
+
+		it('is satisfied by the default phrase once its detector is installed', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader(),
+			});
+
+			expect(readiness.canRunHandsFree).toBe(true);
+		});
+
 		it('is always local: no setting can point it at a cloud provider', async () => {
 			const readiness = await resolveVoiceReadiness({
 				// Deliberately hostile settings: nothing here may reach the wake word.
@@ -386,7 +424,7 @@ describe('capability-gate', () => {
 							const readiness = await resolveVoiceReadiness({
 								settings: { ...ALL_LOCAL, stt },
 								readModelStatus: statusReader({
-									[WHISPER_BASE_EN_ID]: disk,
+									[PARAKEET_TDT_V2_ID]: disk,
 									[KOKORO_82M_ID]: disk,
 									[QWEN3_1_7B_ID]: disk,
 									[OPENWAKEWORD_BASE_ID]: disk,
@@ -505,7 +543,7 @@ describe('capability-gate', () => {
 				() =>
 					resolveVoiceReadiness({
 						settings: ALL_LOCAL,
-						readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'not-installed' }),
+						readModelStatus: statusReader({ [PARAKEET_TDT_V2_ID]: 'not-installed' }),
 					}),
 			],
 			[
@@ -513,7 +551,7 @@ describe('capability-gate', () => {
 				() =>
 					resolveVoiceReadiness({
 						settings: ALL_LOCAL,
-						readModelStatus: statusReader({ [WHISPER_BASE_EN_ID]: 'corrupt' }),
+						readModelStatus: statusReader({ [PARAKEET_TDT_V2_ID]: 'corrupt' }),
 					}),
 			],
 			[
@@ -554,6 +592,14 @@ describe('capability-gate', () => {
 					}),
 			],
 			[
+				'wake-phrase-untrained',
+				() =>
+					resolveVoiceReadiness({
+						settings: { ...ALL_LOCAL, wakePhrase: 'hey maestro' },
+						readModelStatus: statusReader(),
+					}),
+			],
+			[
 				'mic-permission-restricted',
 				() =>
 					resolveVoiceReadiness({
@@ -591,7 +637,7 @@ describe('capability-gate', () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: ALL_LOCAL,
 				readModelStatus: statusReader({
-					[WHISPER_BASE_EN_ID]: 'not-installed',
+					[PARAKEET_TDT_V2_ID]: 'not-installed',
 					[OPENWAKEWORD_BASE_ID]: 'corrupt',
 				}),
 				handsFreeEnabled: true,

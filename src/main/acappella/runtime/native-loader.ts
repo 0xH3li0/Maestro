@@ -32,6 +32,7 @@ import {
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
 } from '../../../shared/acappella/native-runtimes';
+import { isNativeRuntimeInUse } from '../../../shared/acappella/provider-catalog';
 import { isNativeRuntimeDownloadable } from '../../../shared/acappella/runtime-artifacts';
 import { isWindows } from '../../../shared/platformDetection';
 
@@ -44,6 +45,11 @@ import { isWindows } from '../../../shared/platformDetection';
  */
 export type NativeRuntimeFailureKind =
 	| 'not-a-dependency'
+	// Fetchable for this platform but not fetched yet. Separate from
+	// `not-a-dependency` because the remedy is a Download button, not a newer
+	// build, and a self-test that filed it under "not part of this build" read as
+	// a healthy machine while every local voice slot was dead.
+	| 'not-downloaded'
 	| 'unsupported-platform'
 	| 'module-not-found'
 	| 'load-failed';
@@ -330,14 +336,19 @@ function declineBeforeLoading(
 		// yet, and the recovery is the same Download button that fetches the
 		// models (so `readinessErrorMessage` states the two as one instruction);
 		// one it cannot fetch is genuinely not part of this build.
-		const downloadable = key !== null && isNativeRuntimeDownloadable(descriptor.id, key);
+		// "Downloadable" also requires that something listed in this build runs on
+		// it; a runtime nothing can use is not part of this build, fetchable or not.
+		const downloadable =
+			key !== null &&
+			isNativeRuntimeDownloadable(descriptor.id, key) &&
+			isNativeRuntimeInUse(descriptor.id);
 		return {
 			kind: 'runtime-unavailable',
 			runtimeId: descriptor.id,
 			moduleId: descriptor.moduleId,
 			platform: process.platform,
 			arch: process.arch,
-			failure: 'not-a-dependency',
+			failure: downloadable ? 'not-downloaded' : 'not-a-dependency',
 			message: downloadable
 				? `${descriptor.label} is not downloaded yet.`
 				: `${descriptor.label} is not part of this build yet.`,
