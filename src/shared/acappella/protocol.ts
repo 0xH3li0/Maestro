@@ -537,6 +537,24 @@ export interface ScopeChangeEvent extends VoiceEventBase {
 	scope: VoiceScope;
 }
 
+/**
+ * The microphone was gated shut, or opened again, without the session ending.
+ *
+ * `listen-start` and `listen-stop` describe the SESSION: it stays in
+ * `listening` across a pause, so it can still answer, speak, and be re-bound.
+ * This describes the DEVICE. Paused means no audio is being captured: the HUD's
+ * hands-free toggle switched off, or push-to-talk with the button up. A client
+ * that showed "Listening" from `listen-start` alone would be claiming a hot
+ * microphone over a closed one.
+ *
+ * Sent only on a change, and before the session's first `listen-start` when it
+ * opens paused, so no consumer ever opens a device it then has to close.
+ */
+export interface ListenGateEvent extends VoiceEventBase {
+	type: 'listen-gate';
+	paused: boolean;
+}
+
 /** Roster snapshot, sent on subscribe and on change. */
 export interface AgentRosterEvent extends VoiceEventBase {
 	type: 'agent-roster';
@@ -565,6 +583,7 @@ export type VoiceEvent =
 	| ProviderStateEvent
 	| TabStateEvent
 	| ScopeChangeEvent
+	| ListenGateEvent
 	| AgentRosterEvent;
 
 export type VoiceEventType = VoiceEvent['type'];
@@ -611,6 +630,7 @@ export const VOICE_EVENT_DIRECTIONS: Record<VoiceEventType, VoiceEventDirection>
 	'provider-state': 'service-to-client',
 	'tab-state': 'service-to-client',
 	'scope-change': 'service-to-client',
+	'listen-gate': 'service-to-client',
 	'agent-roster': 'service-to-client',
 };
 

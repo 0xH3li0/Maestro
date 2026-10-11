@@ -18,7 +18,7 @@ import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { beginVoiceSession, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
-import { notifyToast } from '../../stores/notificationStore';
+import { notifyVoiceStartFailed } from '../../services/voiceListening';
 import { talkWithDocument } from '../../services/documentVoice';
 import { focusAiTabInSession } from '../../utils/tabHelpers';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
@@ -119,15 +119,7 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		try {
 			await beginVoiceSession({ kind: 'agent', sessionId: agentSessionId });
 		} catch (error) {
-			// A refusal here is expected and specific: the capability gate says a
-			// model is missing, or the microphone was denied. It reaches the user as
-			// a toast rather than as silence, because the menu entry they clicked
-			// otherwise appears to do nothing at all.
-			notifyToast({
-				color: 'orange',
-				title: 'Voice session could not start',
-				message: (error as Error).message,
-			});
+			notifyVoiceStartFailed(error);
 		}
 	}, [agentSessionId, enabled, setDismissed, setMinimized]);
 
@@ -146,11 +138,7 @@ export function useVoiceAgentActions(session: Session | undefined): VoiceAgentAc
 		try {
 			await beginVoiceSession();
 		} catch (error) {
-			notifyToast({
-				color: 'orange',
-				title: 'Voice session could not start',
-				message: (error as Error).message,
-			});
+			notifyVoiceStartFailed(error);
 		}
 	}, [enabled, setDismissed, setMinimized]);
 

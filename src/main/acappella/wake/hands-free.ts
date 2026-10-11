@@ -50,6 +50,12 @@ export interface HandsFreeSettings {
 	debounceMs?: number;
 	/** Classifier (default) or transcription. */
 	engine?: WakeEngine;
+	/**
+	 * When the phrase's own model was last trained from the user's recordings, or
+	 * null when it has none. Part of what a detector is built from: retraining
+	 * the phrase has to replace the detector that loaded the old model.
+	 */
+	modelRevision?: number | null;
 }
 
 export interface HandsFreeDeps {
@@ -58,9 +64,11 @@ export interface HandsFreeDeps {
 	canRunHandsFree(): Promise<boolean>;
 	getSessionState(): VoiceSessionState;
 	/**
-	 * Whether a dictation is recording through the microphone right now. While
-	 * it is, the wake word stands down: a dictated "hey jarvis" is text for a
-	 * text box, not a wake. Read on every `sync`, so the answer is never a copy.
+	 * Whether another feature is recording through the microphone right now: a
+	 * dictation, or a wake phrase being recorded for training. While one is, the
+	 * wake word stands down: a dictated "hey jarvis" is text for a text box, and
+	 * a phrase said twenty times for the trainer is not twenty wakes. Read on
+	 * every `sync`, so the answer is never a copy.
 	 */
 	isMicrophoneBorrowed?(): boolean;
 	/** Open the floor for a wake-word session. Rejections are logged, not thrown. */
@@ -155,7 +163,7 @@ export class HandsFreeListener {
 				}
 			}
 			// A session holding the floor owns the microphone now, and so does a
-			// dictation that borrowed it; closing it here would cut either off
+			// feature that borrowed it; closing it here would cut either off
 			// mid-sentence.
 			await this.disarm({
 				closeMicrophone: refusal !== SESSION_ACTIVE && refusal !== MICROPHONE_BORROWED,
@@ -246,11 +254,14 @@ export class HandsFreeListener {
 }
 
 const SESSION_ACTIVE = 'a voice session holds the floor';
-const MICROPHONE_BORROWED = 'a dictation is using the microphone';
+const MICROPHONE_BORROWED = 'another feature is using the microphone';
 
 /** What a detector is built from; when this changes the armed one is stale. */
 function armKey(settings: HandsFreeSettings): string {
-	return [settings.phrase ?? '', settings.engine ?? 'classifier', settings.sensitivity ?? ''].join(
-		'|'
-	);
+	return [
+		settings.phrase ?? '',
+		settings.engine ?? 'classifier',
+		settings.sensitivity ?? '',
+		settings.modelRevision ?? '',
+	].join('|');
 }

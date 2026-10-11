@@ -249,6 +249,95 @@ describe('VoiceAudioBridge capture lifecycle', () => {
 	});
 });
 
+describe('VoiceAudioBridge microphone gate', () => {
+	it('closes the device on a pause and leaves the reply playing', () => {
+		const h = harness();
+		ready(h);
+
+		h.session.emit({ type: 'listen-gate', paused: true });
+
+		// `stop-capture` alone. A session ending also flushes playback; a pause must
+		// not, or "stop hearing me" becomes "stop talking" mid-sentence.
+		expect(h.kinds()).toEqual(['stop-capture']);
+	});
+
+	it('reopens the device when the gate lifts on a listening session', () => {
+		const h = harness();
+		ready(h);
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.commands.length = 0;
+
+		h.session.emit({ type: 'listen-gate', paused: false });
+
+		expect(h.kinds()).toEqual(['start-capture']);
+	});
+
+	it('keeps the device shut when the floor comes back after a reply', () => {
+		// The session re-announces `listen-start` at the end of every turn. That is
+		// its state; while paused, the device stays the user's call.
+		const h = harness();
+		ready(h);
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.commands.length = 0;
+
+		h.session.listen();
+
+		expect(h.kinds()).not.toContain('start-capture');
+	});
+
+	it('never opens the device for a session that starts gated', () => {
+		const h = harness();
+		h.bridge.handleStatus({ kind: 'ready' });
+
+		// The order the service emits them in: the gate first, then the floor.
+		h.session.state = 'listening';
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.session.listen();
+
+		expect(h.kinds()).not.toContain('start-capture');
+	});
+
+	it('waits for the floor when the gate lifts mid-reply', () => {
+		const h = harness();
+		ready(h);
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.commands.length = 0;
+
+		h.session.state = 'speaking';
+		h.session.emit({ type: 'listen-gate', paused: false });
+		expect(h.kinds()).not.toContain('start-capture');
+
+		// The reply ends, the floor comes back, and nothing is in the way now.
+		h.session.listen();
+		expect(h.kinds()).toContain('start-capture');
+	});
+
+	it('lifts the gate with the session it was shut in', () => {
+		const h = harness();
+		ready(h);
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.session.state = 'idle';
+		h.session.emit({ type: 'listen-stop', reason: 'stopped' });
+		h.commands.length = 0;
+
+		// The next session opens hot unless it says otherwise.
+		h.session.listen();
+
+		expect(h.kinds()).toContain('start-capture');
+	});
+
+	it('does not re-request capture for a paused session when the host boots late', () => {
+		const h = harness();
+		h.session.listen();
+		h.session.emit({ type: 'listen-gate', paused: true });
+		h.commands.length = 0;
+
+		h.bridge.handleStatus({ kind: 'ready' });
+
+		expect(h.kinds()).not.toContain('start-capture');
+	});
+});
+
 describe('VoiceAudioBridge frame routing', () => {
 	it('feeds captured audio to the recogniser while listening', () => {
 		const h = harness();

@@ -15,6 +15,12 @@
 import { ipcRenderer } from 'electron';
 import type { RosterAgent, VoiceEvent, VoiceScope } from '../../shared/acappella/protocol';
 import type { VoiceReadiness } from '../../shared/acappella/readiness';
+import type { VoiceSendWait } from '../../shared/acappella/listen-mode';
+import type {
+	WakeEnrollmentEvent,
+	WakeEnrollmentReply,
+	WakeEnrollmentRequest,
+} from '../../shared/acappella/wake-enrollment';
 import type { VoiceSessionSnapshot } from '../acappella';
 import type {
 	VoiceStartSessionResult,
@@ -435,8 +441,17 @@ export function createVoiceApi() {
 		 * Returns the snapshot plus any provider substitutions: a role that fell
 		 * back to the mock tier is reported here, never applied silently.
 		 */
-		start: (scope?: VoiceScope): Promise<VoiceStartSessionResult> =>
-			ipcRenderer.invoke('acappella:start-session', scope),
+		start: (
+			scope?: VoiceScope,
+			options?: {
+				/**
+				 * Open with the microphone gated shut: push-to-talk, started by
+				 * something other than a press. See {@link setListening}.
+				 */
+				paused?: boolean;
+			}
+		): Promise<VoiceStartSessionResult> =>
+			ipcRenderer.invoke('acappella:start-session', scope, options),
 
 		/** End the session and return to idle. Safe to call when already idle. */
 		stop: (): Promise<void> => ipcRenderer.invoke('acappella:stop-session'),
@@ -465,6 +480,33 @@ export function createVoiceApi() {
 		 * letting go of the push-to-talk key does.
 		 */
 		endUtterance: (): Promise<void> => ipcRenderer.invoke('acappella:end-utterance'),
+
+		/**
+		 * Open or shut the microphone WITHOUT ending the session.
+		 *
+		 * `{ listening: false }` pauses and drops a half-said thought;
+		 * `{ listening: true }` resumes. Push-to-talk is the same call with a
+		 * modifier at each end: `{ listening: true, hold: true }` on the press (the
+		 * release, not a pause, ends the thought) and `{ listening: false, send:
+		 * true }` on the release (what was said goes now).
+		 *
+		 * @returns false when no session is running, so the caller starts one.
+		 */
+		setListening: (payload: {
+			listening: boolean;
+			hold?: boolean;
+			send?: boolean;
+		}): Promise<boolean> => ipcRenderer.invoke('acappella:set-listening', payload),
+
+		/** The send wait in force: the stored default, or what the HUD picked over it. */
+		getSendWait: (): Promise<VoiceSendWait> => ipcRenderer.invoke('acappella:get-send-wait'),
+
+		/**
+		 * Pick a send wait for now, without changing the stored default. Null
+		 * returns to the default. Applies from the next thing said.
+		 */
+		setSendWait: (waitMs: number | null): Promise<VoiceSendWait> =>
+			ipcRenderer.invoke('acappella:set-send-wait', waitMs),
 
 		/**
 		 * Re-bind the live session: `{ kind: 'agent', sessionId, tabId }` is Tab
@@ -579,6 +621,28 @@ export function createVoiceApi() {
 				handler(hit);
 			ipcRenderer.on('acappella:wake-test', wrappedHandler);
 			return () => ipcRenderer.removeListener('acappella:wake-test', wrappedHandler);
+		},
+
+		/**
+		 * Wake phrase enrollment: record a phrase the user wants to wake on, record
+		 * some ordinary speech, train, and manage what is on disk. One request
+		 * shape covers every verb (`WakeEnrollmentRequest`); a refusal comes back as
+		 * `ok: false` with the sentence to show.
+		 */
+		wakeEnrollment: (request: WakeEnrollmentRequest): Promise<WakeEnrollmentReply> =>
+			ipcRenderer.invoke('acappella:wake-enrollment', request),
+
+		/**
+		 * Progress from wake phrase enrollment: the phrase's status after every
+		 * change, the microphone level while recording, and training progress.
+		 *
+		 * @returns Cleanup function to unsubscribe.
+		 */
+		onWakeEnrollment: (handler: (event: WakeEnrollmentEvent) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, update: WakeEnrollmentEvent) =>
+				handler(update);
+			ipcRenderer.on('acappella:wake-enrollment', wrappedHandler);
+			return () => ipcRenderer.removeListener('acappella:wake-enrollment', wrappedHandler);
 		},
 
 		/**

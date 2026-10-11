@@ -219,6 +219,13 @@ export function createTranscript(container: HTMLElement): TranscriptHandle {
 					addRow('system', `Listening (${event.sttProviderId}).`);
 					return;
 
+				// The desktop shut or reopened its microphone without ending the
+				// session. Said here so the row above does not go on claiming a
+				// hot microphone.
+				case 'listen-gate':
+					addRow('system', event.paused ? 'Microphone paused.' : 'Microphone open.');
+					return;
+
 				case 'partial-transcript': {
 					const row = pendingRow('user') ?? addRow('user', '', true);
 					setText(row, event.text);

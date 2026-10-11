@@ -4,12 +4,14 @@
  * What matters here: it is invisible and inert while the Encore Feature is off,
  * it renders what the event stream says (not what the caller hoped), listening
  * and speaking are distinguishable, and closing it ENDS the session rather than
- * leaving an open floor behind an invisible surface.
+ * leaving an open floor behind an invisible surface. Closing is also the ONLY
+ * thing that takes it away: the talk button shuts the microphone and keeps the
+ * session, and a session that ends on its own leaves the widget where it was.
  */
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, act, fireEvent, within } from '@testing-library/react';
 import {
 	DEV_HARNESS_STORAGE_KEY,
 	VoiceHud,
@@ -18,10 +20,12 @@ import {
 import { useVoiceSessionStore } from '../../../../renderer/stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../../../renderer/stores/voiceUiStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { LayerStackProvider, useLayerStack } from '../../../../renderer/contexts/LayerStackContext';
 import type { LayerStackAPI } from '../../../../renderer/hooks';
 import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { createMockSession } from '../../../helpers/mockSession';
 
 const SESSION = 'voice-1';
 
@@ -110,6 +114,16 @@ function startSession(): void {
 	);
 }
 
+/** Put one agent with one tab on screen, so Tab and Agent mode have a target. */
+function seedAgentForTab(): void {
+	act(() => {
+		useSessionStore.setState({
+			activeSessionId: 'agent-1',
+			sessions: [createMockSession({ id: 'agent-1', activeTabId: 'tab-1' })],
+		});
+	});
+}
+
 beforeEach(() => {
 	seq = 0;
 	vi.clearAllMocks();
@@ -123,6 +137,9 @@ beforeEach(() => {
 		minimized: false,
 		muted: false,
 		loaded: true,
+		listenMode: 'hands-free',
+		sendWait: null,
+		tabCyclesMode: false,
 	});
 });
 
@@ -266,12 +283,12 @@ describe('VoiceHud rendering', () => {
 		const held = event('partial-transcript', {
 			text: 'what color is snow',
 			stability: 0.95,
-			held: { settlesInMs: 30_000, sendPhrases: ['good to go', 'send it'] },
+			held: { settlesInMs: 30_000, sendPhrases: ['go maestro', 'send it'] },
 		});
 		emit({ ...held, ts: Date.now() } as VoiceEvent);
 
 		const notice = screen.getByTestId('voice-hud-held');
-		expect(notice.textContent).toContain('good to go');
+		expect(notice.textContent).toContain('go maestro');
 		expect(notice.textContent).toMatch(/sends in \d+s/);
 
 		fireEvent.click(screen.getByTestId('voice-hud-send-now'));
@@ -830,6 +847,8 @@ describe('VoiceHud controls', () => {
 		expect(useVoiceUiStore.getState().transcriptVisible).toBe(true);
 		expect(screen.getByTestId('voice-transcript')).toBeTruthy();
 		expect(useVoiceUiStore.getState().transcriptVisible).toBe(true);
+		// The write goes through the shared settings queue, a few ticks behind the click.
+		await flushLayout();
 		expect(window.maestro.settings.set).toHaveBeenCalledWith(
 			'acappella',
 			expect.objectContaining({ ui: expect.objectContaining({ transcriptVisible: true }) })
@@ -875,22 +894,365 @@ describe('VoiceHud controls', () => {
 		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
 	});
 
-	it('the talk button toggles on a tap', async () => {
-		renderHud({ showDevHarness: true });
+	it('hands-free: a click shuts the microphone and keeps the session and the HUD', async () => {
+		renderHud();
+		startSession();
 		const talk = screen.getByTestId('voice-hud-talk');
+		expect(talk.textContent).toContain('Listening');
 
 		await act(async () => {
-			fireEvent.pointerDown(talk, { button: 0 });
-			fireEvent.pointerUp(talk);
+			fireEvent.click(talk);
 		});
+
+		expect(window.maestro.voice.setListening).toHaveBeenCalledWith({
+			listening: false,
+			send: false,
+		});
+		// The whole point: the button is not a hang-up.
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+	});
+
+	it('hands-free: follows the gate, and a second click opens the microphone again', async () => {
+		renderHud();
+		startSession();
+		emit(event('listen-gate', { paused: true }));
+
+		const talk = screen.getByTestId('voice-hud-talk');
+		expect(talk.textContent).toContain('Not listening');
+		expect(talk.getAttribute('aria-pressed')).toBe('false');
+		// A paused session must not draw the live meter of an open microphone.
+		expect(screen.getByTestId('voice-indicator-paused')).toBeTruthy();
+		expect(screen.queryByTestId('voice-indicator-listening')).toBeNull();
+
+		await act(async () => {
+			fireEvent.click(talk);
+		});
+		expect(window.maestro.voice.setListening).toHaveBeenCalledWith({
+			listening: true,
+			hold: false,
+		});
+
+		emit(event('listen-gate', { paused: false }));
+		expect(talk.textContent).toContain('Listening');
+		expect(screen.getByTestId('voice-indicator-listening')).toBeTruthy();
+	});
+
+	it('starts a session when there is none left to resume', async () => {
+		renderHud({ showDevHarness: true });
+		vi.mocked(window.maestro.voice.setListening).mockResolvedValueOnce(false);
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-talk'));
+		});
+		// The gate answers first, then the start: two awaited hops behind the click.
+		await flushLayout();
+
 		expect(window.maestro.voice.start).toHaveBeenCalledTimes(1);
+	});
+
+	it('the hand button switches to push-to-talk, remembers it, and shuts a live microphone', async () => {
+		renderHud();
+		startSession();
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-listen-mode'));
+		});
+		// The preference is written before the live microphone is told.
+		await flushLayout();
+
+		expect(useVoiceUiStore.getState().listenMode).toBe('push-to-talk');
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			'acappella',
+			expect.objectContaining({ ui: expect.objectContaining({ listenMode: 'push-to-talk' }) })
+		);
+		// Push-to-talk with the button up is a closed microphone, starting now.
+		expect(window.maestro.voice.setListening).toHaveBeenCalledWith({ listening: false });
+		// The label follows main's answer, never the request: the gate is announced.
+		emit(event('listen-gate', { paused: true }));
+		expect(screen.getByTestId('voice-hud-talk').textContent).toContain('Hold to talk');
+	});
+
+	it('push-to-talk: the press opens the microphone and the release sends', async () => {
+		vi.useFakeTimers();
+		try {
+			useVoiceUiStore.setState({ listenMode: 'push-to-talk' });
+			renderHud();
+			startSession();
+			emit(event('listen-gate', { paused: true }));
+			const talk = screen.getByTestId('voice-hud-talk');
+
+			await act(async () => {
+				fireEvent.pointerDown(talk, { button: 0 });
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(window.maestro.voice.setListening).toHaveBeenLastCalledWith({
+				listening: true,
+				hold: true,
+			});
+			expect(talk.textContent).toContain('Talking');
+
+			await act(async () => {
+				fireEvent.pointerUp(talk);
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(window.maestro.voice.setListening).toHaveBeenLastCalledWith({
+				listening: false,
+				send: true,
+			});
+			// Releasing sends; it does not hang up.
+			expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('push-to-talk: a click alone never toggles the microphone', async () => {
+		useVoiceUiStore.setState({ listenMode: 'push-to-talk' });
+		renderHud();
+		startSession();
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-talk'));
+		});
+
+		expect(window.maestro.voice.setListening).not.toHaveBeenCalled();
+	});
+
+	/** Open the send panel from its chip and hand back the wait slider. */
+	async function openSendPanel(): Promise<HTMLInputElement> {
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-wait-chip'));
+		});
+		return within(screen.getByTestId('voice-hud-wait')).getByRole('slider') as HTMLInputElement;
+	}
+
+	async function slideTo(slider: HTMLInputElement, stopIndex: number): Promise<void> {
+		await act(async () => {
+			fireEvent.change(slider, { target: { value: String(stopIndex) } });
+		});
+	}
+
+	it('shows the send wait and lets it be changed for this conversation', async () => {
+		renderHud();
+		startSession();
+		await flushLayout();
+
+		const chip = screen.getByTestId('voice-hud-wait-chip');
+		expect(chip.textContent).toContain('900ms');
+		expect(screen.queryByTestId('voice-hud-wait')).toBeNull();
+
+		const slider = await openSendPanel();
+		// The stored default (900 ms) is no shipped stop, so it is a stop of its
+		// own: the thumb sits exactly on the wait in force and reads it out.
+		expect(slider.value).toBe('0');
+		expect(slider.getAttribute('aria-valuetext')).toBe('900ms');
+		expect(screen.getByTestId('voice-hud-wait-default')).toBeTruthy();
+
+		// The ladder is 900ms, 1s, 2s, 3s, 5s, ...
+		await slideTo(slider, 4);
+		expect(window.maestro.voice.setSendWait).toHaveBeenCalledWith(5000);
+		expect(screen.getByTestId('voice-hud-wait-chip').textContent).toContain('5s');
+		expect(slider.getAttribute('aria-valuetext')).toBe('5s');
+
+		// The way back clears the override rather than storing the default's number.
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-wait-reset'));
+		});
+		expect(window.maestro.voice.setSendWait).toHaveBeenLastCalledWith(null);
+		expect(screen.queryByTestId('voice-hud-wait-reset')).toBeNull();
+	});
+
+	it('reads the default stop as "no override" when the slider is dragged back onto it', async () => {
+		renderHud();
+		startSession();
+		await flushLayout();
+
+		const slider = await openSendPanel();
+		await slideTo(slider, 4);
+		await slideTo(slider, 0);
+
+		// 900 would pin today's default; null keeps following the setting.
+		expect(window.maestro.voice.setSendWait).toHaveBeenLastCalledWith(null);
+	});
+
+	it('edits the send phrase in the HUD and stores it as the setting', async () => {
+		renderHud();
+		startSession();
+		await flushLayout();
+		await openSendPanel();
+
+		const input = screen.getByTestId('voice-hud-send-phrases') as HTMLInputElement;
+		expect(input.value).toBe('go maestro');
+
+		const wroteControls = expect.objectContaining({ controls: expect.anything() });
+		const readsBefore = vi.mocked(window.maestro.voice.getSendWait).mock.calls.length;
+
+		fireEvent.change(input, { target: { value: 'ship it,  roll out ,' } });
+		// Not per keystroke: half a phrase is not a phrase anyone means.
+		expect(window.maestro.settings.set).not.toHaveBeenCalledWith('acappella', wroteControls);
+
+		await act(async () => {
+			fireEvent.blur(input);
+		});
+		await flushLayout();
+
+		// Stored the way main parses it, and only this one field of `controls`.
+		expect(window.maestro.settings.set).toHaveBeenCalledWith(
+			'acappella',
+			expect.objectContaining({ controls: { sendPhrases: 'ship it, roll out' } })
+		);
+		expect(input.value).toBe('ship it, roll out');
+		// The HUD re-reads what main made of it instead of re-deriving the list.
+		expect(vi.mocked(window.maestro.voice.getSendWait).mock.calls.length).toBeGreaterThan(
+			readsBefore
+		);
+	});
+
+	it('writes nothing when the send phrase field is left as it was', async () => {
+		renderHud();
+		startSession();
+		await flushLayout();
+		await openSendPanel();
+
+		const input = screen.getByTestId('voice-hud-send-phrases');
+		await act(async () => {
+			fireEvent.blur(input);
+		});
+		await flushLayout();
+
+		expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+			'acappella',
+			expect.objectContaining({ controls: expect.anything() })
+		);
+	});
+
+	it('disables the send wait in push-to-talk, where the release is the send', async () => {
+		useVoiceUiStore.setState({ listenMode: 'push-to-talk' });
+		renderHud();
+		startSession();
+		await flushLayout();
+
+		expect(screen.getByTestId('voice-hud-wait-chip')).toHaveProperty('disabled', true);
+	});
+});
+
+describe('VoiceHud stays until Escape', () => {
+	it('stays on screen after its session ends on its own', () => {
+		renderHud();
+		startSession();
+		emit(event('listen-stop', { reason: 'stopped' }));
+
+		// A timeout or a stop word ended the session. The widget stays, showing a
+		// closed microphone, rather than vanishing from under whoever was reading it.
+		expect(screen.getByTestId('voice-hud')).toBeTruthy();
+		expect(screen.getByTestId('voice-hud-talk').textContent).toContain('Not listening');
+		expect(screen.queryByTestId('voice-indicator-listening')).toBeNull();
+	});
+
+	it('is taken away by the ESC pill, and does not come back for the ended session', async () => {
+		renderHud();
+		startSession();
+		emit(event('listen-stop', { reason: 'stopped' }));
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-close'));
+		});
+
+		expect(screen.queryByTestId('voice-hud')).toBeNull();
+		// The "just for now" wait goes with it.
+		expect(window.maestro.voice.setSendWait).toHaveBeenCalledWith(null);
+	});
+});
+
+describe('VoiceHud Tab key', () => {
+	function pressTab(init: KeyboardEventInit = {}): KeyboardEvent {
+		const key = new KeyboardEvent('keydown', {
+			key: 'Tab',
+			bubbles: true,
+			cancelable: true,
+			...init,
+		});
+		act(() => {
+			window.dispatchEvent(key);
+		});
+		return key;
+	}
+
+	it('walks Tab / Agent / Conductor in the order the switch draws them', () => {
+		renderHud();
+		startSession();
+		seedAgentForTab();
+
+		// Conductor is selected; forward wraps to Tab.
+		const key = pressTab();
+		expect(key.defaultPrevented).toBe(true);
+		expect(window.maestro.voice.setScope).toHaveBeenLastCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+			tabId: 'tab-1',
+		});
+
+		// Shift+Tab goes the other way: Conductor -> Agent.
+		pressTab({ shiftKey: true });
+		expect(window.maestro.voice.setScope).toHaveBeenLastCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+		});
+	});
+
+	it('leaves a Tab that something else already claimed', () => {
+		renderHud();
+		startSession();
+		seedAgentForTab();
+
+		const key = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+		key.preventDefault();
+		act(() => {
+			window.dispatchEvent(key);
+		});
+
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+	});
+
+	it('leaves Tab to a text field inside the HUD, where it moves focus', async () => {
+		renderHud();
+		startSession();
+		seedAgentForTab();
+		await flushLayout();
+
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-wait-chip'));
+		});
+		// Typing a send phrase and tabbing out must not re-bind the session.
+		fireEvent.keyDown(screen.getByTestId('voice-hud-send-phrases'), { key: 'Tab' });
+
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+	});
+
+	it('does nothing while the HUD is minimized or has no live session', () => {
+		renderHud();
+		startSession();
+		seedAgentForTab();
+
+		act(() => useVoiceUiStore.getState().setMinimized(true));
+		expect(pressTab().defaultPrevented).toBe(false);
+
+		act(() => useVoiceUiStore.getState().setMinimized(false));
+		emit(event('listen-stop', { reason: 'stopped' }));
+		expect(pressTab().defaultPrevented).toBe(false);
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+	});
+
+	it('publishes the claim so a composer that only swallows Tab can yield it', () => {
+		renderHud();
+		expect(useVoiceUiStore.getState().tabCyclesMode).toBe(false);
 
 		startSession();
-		await act(async () => {
-			fireEvent.pointerDown(talk, { button: 0 });
-			fireEvent.pointerUp(talk);
-		});
-		expect(window.maestro.voice.stop).toHaveBeenCalledTimes(1);
+		expect(useVoiceUiStore.getState().tabCyclesMode).toBe(true);
+
+		act(() => useVoiceUiStore.getState().setMinimized(true));
+		expect(useVoiceUiStore.getState().tabCyclesMode).toBe(false);
 	});
 });
 

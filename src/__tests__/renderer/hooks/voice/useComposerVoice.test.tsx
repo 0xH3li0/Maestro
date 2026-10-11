@@ -50,7 +50,12 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	webSpeechDisabled = false;
 	useVoiceSessionStore.getState().reset();
-	useVoiceUiStore.setState({ wakePhrases: {}, loaded: true });
+	useVoiceUiStore.setState({
+		wakePhrases: {},
+		loaded: true,
+		minimized: false,
+		listenMode: 'hands-free',
+	});
 });
 
 afterEach(() => {
@@ -125,13 +130,17 @@ describe('with A Cappella on', () => {
 		expect(webSpeechDisabled).toBe(true);
 	});
 
-	it('ends the session on a second press rather than starting a second one', async () => {
+	it('brings a minimized HUD back on a second press, and keeps the session listening', async () => {
+		// The regression: minimizing the HUD and reaching for the microphone again
+		// ended the session the user had asked to keep. Only Escape on the HUD
+		// closes a voice session; this button opens and restores.
 		const { result, rerender } = render(true);
 		act(() => {
 			useVoiceSessionStore.setState({
 				state: 'listening',
 				scope: { kind: 'agent', sessionId: 'agent-1' },
 			});
+			useVoiceUiStore.setState({ minimized: true });
 		});
 		rerender();
 
@@ -140,7 +149,41 @@ describe('with A Cappella on', () => {
 			result.current.toggle();
 		});
 
-		expect(window.maestro.voice.stop).toHaveBeenCalledTimes(1);
+		expect(useVoiceUiStore.getState().minimized).toBe(false);
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
 		expect(window.maestro.voice.start).not.toHaveBeenCalled();
+	});
+
+	it('un-dismisses the HUD too, without starting a second session', async () => {
+		const { result, rerender } = render(true);
+		act(() => {
+			useVoiceSessionStore.setState({
+				state: 'listening',
+				scope: { kind: 'agent', sessionId: 'agent-1' },
+				dismissed: true,
+			});
+		});
+		rerender();
+
+		await act(async () => {
+			result.current.toggle();
+		});
+
+		expect(useVoiceSessionStore.getState().dismissed).toBe(false);
+		expect(window.maestro.voice.start).not.toHaveBeenCalled();
+	});
+
+	it('starts gated in push-to-talk, so the microphone is not open before the first hold', async () => {
+		useVoiceUiStore.setState({ listenMode: 'push-to-talk' });
+		const { result } = render(true);
+
+		await act(async () => {
+			result.current.toggle();
+		});
+
+		expect(window.maestro.voice.start).toHaveBeenCalledWith(
+			{ kind: 'agent', sessionId: 'agent-1' },
+			{ paused: true }
+		);
 	});
 });

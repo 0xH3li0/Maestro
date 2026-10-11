@@ -382,6 +382,41 @@ describe('capability-gate', () => {
 			expect(wake.reason).toBe('wake-phrase-untrained');
 			expect(wake.detail).toContain('hey maestro');
 			expect(wake.suggestedAction).toContain('hey jarvis');
+			// And the way out that needs nobody else's model.
+			expect(wake.suggestedAction).toMatch(/Train it from your own voice/);
+		});
+
+		it('allows hands-free on a phrase the user trained from their own recordings', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: { ...ALL_LOCAL, wakePhrase: 'hey maestro' },
+				readModelStatus: statusReader(),
+				hasEnrolledWakePhrase: (phrase) => phrase === 'hey maestro',
+			});
+
+			expect(readiness.canRunHandsFree).toBe(true);
+			expect(readiness.slots.find((slot) => slot.slot === 'wake-word')!.satisfied).toBe(true);
+		});
+
+		it('needs no pretrained detector for a phrase the user trained, even the default one', async () => {
+			// The user's own recordings outrank the pretrained classifier, so its
+			// absence is not something to ask them to download.
+			const readiness = await resolveVoiceReadiness({
+				settings: ALL_LOCAL,
+				readModelStatus: statusReader({ [HEY_JARVIS_WAKE_ID]: 'not-installed' }),
+				hasEnrolledWakePhrase: () => true,
+			});
+
+			expect(readiness.canRunHandsFree).toBe(true);
+		});
+
+		it('still needs the front end for a phrase the user trained', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: { ...ALL_LOCAL, wakePhrase: 'hey maestro' },
+				readModelStatus: statusReader({ [OPENWAKEWORD_BASE_ID]: 'not-installed' }),
+				hasEnrolledWakePhrase: () => true,
+			});
+
+			expect(readiness.canRunHandsFree).toBe(false);
 		});
 
 		it("asks for the default phrase's detector when only the front end is installed", async () => {

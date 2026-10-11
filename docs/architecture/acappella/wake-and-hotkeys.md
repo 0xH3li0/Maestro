@@ -71,6 +71,49 @@ Three orchestration properties the model does not provide:
   "...what's the status". Wire the detector to the AUDIO PIPELINE's ring so there
   is one buffer rather than two.
 
+### A phrase the user records themselves
+
+openWakeWord's classifiers are trained on thousands of synthetic clips per
+phrase, so only shipped phrases have one. A phrase of the user's own is handled
+by ENROLLMENT: about 20 recordings of the phrase and 30 seconds of other speech,
+recorded in Voice Controls or brought as WAV files by `maestro-cli voice wake`.
+
+The classifier slot in the chain is then filled by a matcher instead of a graph.
+Both satisfy the same internal `WakeClassifier` (a classifier window in, a score
+from 0 to 1 out), so the scorer, the detector, debounce and the sensitivity
+slider do not know which they hold.
+
+```
+audio -> mel -> embedding -> [ pretrained ONNX classifier | enrolled matcher ] -> score
+         \__ wake-front-end.ts __/
+```
+
+The matcher is nearest-example, not a trained head. A logistic or MLP head
+fitted to a user-sized data set learns "is not the 30 seconds of other speech I
+was shown" and fires on the first sentence it has not heard. On four synthetic
+voices it produced three to six times the false alarms of the matcher at the
+same recall. What a small data set supports is: keep every recording as an
+example, several times over with pace, level, noise and preceding speech varied;
+score live audio by cosine similarity to the nearest example in the embedding
+space; and use the other speech only to find the threshold.
+
+| Step      | What happens                                                                                                           | Where                    |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Segment   | Each burst of speech becomes one recording. No button per take.                                                        | `speech-burst.ts`        |
+| Examples  | Each recording, as recorded and five varied copies, through the SAME front end stream the live scorer uses.            | `wake-trainer.ts`        |
+| Weighting | Each compared frame counts by how much of its 760 ms the phrase accounts for, so preceding speech does not decide it.  | `wakeFrameWeights()`     |
+| Outliers  | A recording unlike the rest (a cough the detector took for the phrase) is left out.                                    | `wake-trainer.ts`        |
+| Threshold | Each recording scored against the OTHERS; the other speech scored against all. 0.5 sits between, biased to recordings. | `wake-trainer.ts`        |
+| Score     | Per hop: centre, normalise, dot with every example, logistic. A few hundred thousand multiply-adds.                    | `enrolled-wake-model.ts` |
+
+An enrolled phrase outranks a pretrained one for the same words, in the scorer
+and in the capability gate alike. Retraining bumps `trainedAt`, which is part of
+the always-on listener's arm key, so the armed detector is replaced.
+
+The recordings are kept (`userData/acappella/wake-phrases/<key>/`) because they
+are the only thing a model can be rebuilt from. They never leave the machine,
+and deleting the phrase deletes them, with voice switched on or off.
+
 ## Stop word versus barge-in
 
 The single most important distinction in this subsystem.
@@ -156,14 +199,20 @@ be tuned by saying the phrase instead of by guessing.
 
 ## Files
 
-| File                                                                | Owns                                               |
-| ------------------------------------------------------------------- | -------------------------------------------------- |
-| `src/shared/global-hotkeys.ts`                                      | Hotkey ids, labels, defaults, status shape         |
-| `src/shared/acappella/voice-controls.ts`                            | Shipped phrases and timing numbers, both processes |
-| `src/main/global-hotkey-manager.ts`                                 | `GlobalHotkeyRegistry`                             |
-| `src/main/acappella/hotkeys/press-hold.ts`                          | Tap vs hold classification                         |
-| `src/main/acappella/hotkeys/voice-hotkeys.ts`                       | The two hotkeys' semantics                         |
-| `src/main/acappella/hotkeys/index.ts`                               | Electron / settings wiring                         |
-| `src/main/acappella/wake/wake-detector.ts`                          | openWakeWord detector and the ONNX scorer          |
-| `src/main/acappella/wake/stop-word.ts`                              | Stop phrases, arming rule, teardown                |
-| `src/renderer/components/Settings/ACappella/VoiceControlsPanel.tsx` | The settings surface                               |
+| File                                                                | Owns                                                            |
+| ------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `src/shared/global-hotkeys.ts`                                      | Hotkey ids, labels, defaults, status shape                      |
+| `src/shared/acappella/voice-controls.ts`                            | Shipped phrases and timing numbers, both processes              |
+| `src/main/global-hotkey-manager.ts`                                 | `GlobalHotkeyRegistry`                                          |
+| `src/main/acappella/hotkeys/press-hold.ts`                          | Tap vs hold classification                                      |
+| `src/main/acappella/hotkeys/voice-hotkeys.ts`                       | The two hotkeys' semantics                                      |
+| `src/main/acappella/hotkeys/index.ts`                               | Electron / settings wiring                                      |
+| `src/main/acappella/wake/wake-detector.ts`                          | openWakeWord detector and the ONNX scorer                       |
+| `src/main/acappella/wake/stop-word.ts`                              | Stop phrases, arming rule, teardown                             |
+| `src/main/acappella/wake/wake-front-end.ts`                         | The mel and embedding stream both scorers and the trainer share |
+| `src/main/acappella/wake/wake-enrollment-service.ts`                | Recording, training, and the one request entry point            |
+| `src/main/acappella/wake/wake-trainer.ts`                           | Recordings in, matcher out                                      |
+| `src/main/acappella/wake/enrolled-wake-model.ts`                    | The matcher's model and scoring                                 |
+| `src/main/acappella/wake/wake-enrollment-store.ts`                  | Recordings and models on disk                                   |
+| `src/shared/acappella/wake-enrollment.ts`                           | Limits, naming, wire types, both processes                      |
+| `src/renderer/components/Settings/ACappella/VoiceControlsPanel.tsx` | The settings surface                                            |

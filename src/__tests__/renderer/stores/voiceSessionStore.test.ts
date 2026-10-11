@@ -396,3 +396,104 @@ describe('voiceSessionStore snapshot catch-up', () => {
 		expect(useVoiceSessionStore.getState().state).toBe('listening');
 	});
 });
+
+describe('voiceSessionStore microphone gate', () => {
+	it('follows the gate without moving the session state', () => {
+		apply(wake(), listenStart(), event('listen-gate', { paused: true }));
+
+		// Still `listening` as far as the session goes: it can answer, speak and be
+		// re-bound. Only the device changed.
+		expect(useVoiceSessionStore.getState().state).toBe('listening');
+		expect(useVoiceSessionStore.getState().listenPaused).toBe(true);
+
+		apply(event('listen-gate', { paused: false }));
+		expect(useVoiceSessionStore.getState().listenPaused).toBe(false);
+	});
+
+	it('drops the meter and the live hypothesis when the microphone shuts', () => {
+		apply(
+			wake(),
+			listenStart(),
+			event('audio-level', { level: 0.4, speech: true }),
+			event('partial-transcript', { text: 'half a sen', stability: 0.4 }),
+			event('listen-gate', { paused: true })
+		);
+
+		const state = useVoiceSessionStore.getState();
+		expect(state.audioLevel).toBe(0);
+		expect(state.speechDetected).toBe(false);
+		expect(state.partialTranscript).toBe('');
+	});
+
+	it('does not carry the gate past the session it was shut in', () => {
+		apply(
+			wake(),
+			listenStart(),
+			event('listen-gate', { paused: true }),
+			event('listen-stop', { reason: 'stopped' })
+		);
+		expect(useVoiceSessionStore.getState().listenPaused).toBe(false);
+	});
+
+	it('opens a new session hot unless that session says otherwise', () => {
+		apply(wake(), listenStart(), event('listen-gate', { paused: true }));
+		apply(
+			event(
+				'wake',
+				{ source: 'client-button', scope: { kind: 'conductor' } },
+				{ sessionId: 'voice-session-2', seq: 1 }
+			)
+		);
+		expect(useVoiceSessionStore.getState().listenPaused).toBe(false);
+	});
+
+	it('takes the gate from a catch-up snapshot', () => {
+		useVoiceSessionStore.getState().applySnapshot({
+			sessionId: SESSION,
+			state: 'listening',
+			scope: { kind: 'conductor' },
+			seq: 3,
+			listenPaused: true,
+			providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+		});
+		expect(useVoiceSessionStore.getState().listenPaused).toBe(true);
+	});
+});
+
+describe('voiceSessionStore surfaced (the HUD stays until it is closed)', () => {
+	it('is false until a session has actually been live', () => {
+		expect(useVoiceSessionStore.getState().surfaced).toBe(false);
+		// The mount-time catch-up read on a service that never ran.
+		useVoiceSessionStore.getState().applySnapshot(null);
+		expect(useVoiceSessionStore.getState().surfaced).toBe(false);
+	});
+
+	it('outlives the session, so its HUD does not vanish when the session ends', () => {
+		apply(wake(), listenStart(), event('listen-stop', { reason: 'stopped' }));
+
+		expect(useVoiceSessionStore.getState().state).toBe('idle');
+		expect(useVoiceSessionStore.getState().surfaced).toBe(true);
+	});
+
+	it('is ended by closing the HUD, and only by that', () => {
+		apply(wake(), listenStart(), event('listen-stop', { reason: 'stopped' }));
+
+		useVoiceSessionStore.getState().setDismissed(true);
+		expect(useVoiceSessionStore.getState().surfaced).toBe(false);
+
+		// Un-dismissing must not invent a HUD for a session that is long gone.
+		useVoiceSessionStore.getState().setDismissed(false);
+		expect(useVoiceSessionStore.getState().surfaced).toBe(false);
+	});
+
+	it('is set by a snapshot of a live session, for a window that reloaded mid-session', () => {
+		useVoiceSessionStore.getState().applySnapshot({
+			sessionId: SESSION,
+			state: 'listening',
+			scope: { kind: 'conductor' },
+			seq: 3,
+			providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+		});
+		expect(useVoiceSessionStore.getState().surfaced).toBe(true);
+	});
+});

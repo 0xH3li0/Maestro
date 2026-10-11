@@ -629,6 +629,21 @@ const mockMaestro = {
 		interrupt: vi.fn().mockResolvedValue(true),
 		endUtterance: vi.fn().mockResolvedValue(undefined),
 		setScope: vi.fn().mockResolvedValue(true),
+		// True means "there was a live session to gate". A test that wants the
+		// start-a-session branch overrides it with false.
+		setListening: vi.fn().mockResolvedValue(true),
+		getSendWait: vi.fn().mockResolvedValue({
+			waitMs: 900,
+			defaultMs: 900,
+			overridden: false,
+			sendPhrases: ['go maestro'],
+		}),
+		setSendWait: vi.fn().mockImplementation(async (waitMs: number | null) => ({
+			waitMs: waitMs ?? 900,
+			defaultMs: 900,
+			overridden: waitMs !== null,
+			sendPhrases: ['go maestro'],
+		})),
 		stopWord: vi.fn().mockResolvedValue(undefined),
 		// The microphone picker. `system-default` is the shipped state: no explicit
 		// choice, follow the OS.
@@ -670,6 +685,8 @@ const mockMaestro = {
 		wakeTest: vi.fn().mockResolvedValue({ started: true }),
 		wakeTestStop: vi.fn().mockResolvedValue(undefined),
 		onWakeTest: vi.fn().mockReturnValue(() => {}),
+		wakeEnrollment: vi.fn().mockResolvedValue({ ok: true, status: null }),
+		onWakeEnrollment: vi.fn().mockReturnValue(() => {}),
 		credentials: {
 			list: vi.fn().mockResolvedValue([]),
 			set: vi.fn().mockResolvedValue({ ok: true }),

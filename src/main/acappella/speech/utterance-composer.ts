@@ -91,6 +91,16 @@ export interface ComposedUtterance {
 }
 
 export interface UtteranceComposerOptions extends Partial<UtteranceComposerConfig> {
+	/**
+	 * The live configuration, read at the start of every fragment.
+	 *
+	 * Layered over the static fields above, so a wait the user changes
+	 * mid-conversation applies to the next thing they say. A getter is the only
+	 * way that can be true: the composer outlives every session of the service
+	 * that owns it, so a value copied at construction is the wait the app
+	 * launched with for as long as the app runs.
+	 */
+	getConfig?: () => Partial<UtteranceComposerConfig>;
 	/** The assembled thought, once the user has stopped adding to it. */
 	onSettled: (utterance: ComposedUtterance) => void;
 	/**
@@ -99,8 +109,32 @@ export interface UtteranceComposerOptions extends Partial<UtteranceComposerConfi
 	 * The HUD renders this as a growing partial: without it the transcript blanks
 	 * between fragments and a composing session looks like one that stopped
 	 * listening.
+	 *
+	 * `hold` is null while a push-to-talk control is down: nothing is counting
+	 * down, because the release is what sends it.
 	 */
-	onComposing?: (text: string, hold: ComposerHold) => void;
+	onComposing?: (text: string, hold: ComposerHold | null) => void;
+}
+
+/**
+ * Fill in and sanitise a partial config.
+ *
+ * The cap can never be tighter than the wait it is backstopping. A 30 s hold
+ * under a 30 s cap fires the cap first and splits the thought - the exact
+ * failure the hold exists to prevent - because the cap starts on the first
+ * fragment while the settle restarts on every one. The multiple is slack for
+ * the fragments themselves, not a tuned number.
+ */
+export function resolveUtteranceComposerConfig(
+	overrides: Partial<UtteranceComposerConfig> = {}
+): UtteranceComposerConfig {
+	const settleMs = Math.max(0, overrides.settleMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.settleMs);
+	const maxHoldMs = Math.max(0, overrides.maxHoldMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.maxHoldMs);
+	return {
+		settleMs,
+		maxHoldMs: maxHoldMs === 0 ? 0 : Math.max(maxHoldMs, settleMs * 4),
+		sendPhrases: overrides.sendPhrases ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.sendPhrases,
+	};
 }
 
 interface Buffered {
@@ -111,30 +145,30 @@ interface Buffered {
 }
 
 export class UtteranceComposer {
-	private readonly config: UtteranceComposerConfig;
+	/** The config in force for the current fragment. Refreshed by {@link add}. */
+	private config: UtteranceComposerConfig;
+	private readonly staticConfig: Partial<UtteranceComposerConfig>;
+	private readonly getConfig?: () => Partial<UtteranceComposerConfig>;
 	private readonly onSettled: (utterance: ComposedUtterance) => void;
-	private readonly onComposing?: (text: string, hold: ComposerHold) => void;
+	private readonly onComposing?: (text: string, hold: ComposerHold | null) => void;
 
 	private buffer: Buffered | null = null;
 	/** Set by {@link armImmediateSettle}: the next fragment ends the thought. */
 	private immediateSettle = false;
+	/** Set by {@link holdOpen}: only a release (or a send phrase) ends the thought. */
+	private heldOpen = false;
 	private settleTimer: ReturnType<typeof setTimeout> | null = null;
 	private holdTimer: ReturnType<typeof setTimeout> | null = null;
 	private disposed = false;
 
 	constructor(options: UtteranceComposerOptions) {
-		const settleMs = Math.max(0, options.settleMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.settleMs);
-		const maxHoldMs = Math.max(0, options.maxHoldMs ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.maxHoldMs);
-		this.config = {
-			settleMs,
-			// The cap can never be tighter than the wait it is backstopping. A 30 s
-			// hold under a 30 s cap fires the cap first and splits the thought - the
-			// exact failure the hold exists to prevent - because the cap starts on the
-			// first fragment while the settle restarts on every one. The multiple is
-			// slack for the fragments themselves, not a tuned number.
-			maxHoldMs: maxHoldMs === 0 ? 0 : Math.max(maxHoldMs, settleMs * 4),
-			sendPhrases: options.sendPhrases ?? DEFAULT_UTTERANCE_COMPOSER_CONFIG.sendPhrases,
+		this.staticConfig = {
+			settleMs: options.settleMs,
+			maxHoldMs: options.maxHoldMs,
+			sendPhrases: options.sendPhrases,
 		};
+		this.getConfig = options.getConfig;
+		this.config = this.readConfig();
 		this.onSettled = options.onSettled;
 		this.onComposing = options.onComposing;
 	}
@@ -156,6 +190,10 @@ export class UtteranceComposer {
 		// An empty final is the recogniser reporting silence. Joining it would put a
 		// stray space in the prompt and restart the clock for nothing.
 		if (!fragment) return;
+
+		// Per fragment, so a wait changed mid-thought governs the clock this
+		// fragment restarts.
+		this.config = this.readConfig();
 
 		// "fix the auth bug, good to go" is a request and a send signal in one
 		// breath. The signal is removed before the rest is buffered, because what
@@ -181,6 +219,14 @@ export class UtteranceComposer {
 			return;
 		}
 
+		// The control is still down, so this is a pause inside the sentence and not
+		// its end. No clock runs: a settle timer here would send half a request
+		// while the user is still holding the button to finish it.
+		if (this.heldOpen) {
+			this.onComposing?.(this.pending, null);
+			return;
+		}
+
 		// Zero settle is "compose nothing": dispatch on arrival, which is what the
 		// session did before this module existed.
 		if (this.config.settleMs === 0) {
@@ -194,6 +240,24 @@ export class UtteranceComposer {
 		});
 		this.restartSettleTimer();
 		this.startHoldTimer();
+	}
+
+	/**
+	 * A push-to-talk control went down: the release ends this thought, not a pause.
+	 *
+	 * Until {@link armImmediateSettle} (the release), fragments are collected with
+	 * no settle clock and no hold cap. A send phrase still sends, because saying
+	 * "send it" means the same thing whether or not a button is held.
+	 *
+	 * It also disarms a release left armed by the LAST hold. That flag outlives a
+	 * release that found nothing in flight, and carried into this hold it would
+	 * end the new sentence on its first pause.
+	 */
+	holdOpen(): void {
+		if (this.disposed) return;
+		this.heldOpen = true;
+		this.immediateSettle = false;
+		this.clearTimers();
 	}
 
 	/**
@@ -212,6 +276,7 @@ export class UtteranceComposer {
 	 */
 	armImmediateSettle(): void {
 		if (this.disposed) return;
+		this.heldOpen = false;
 		if (this.buffer) {
 			// Nothing may be in flight at all, so the buffer must not be left waiting
 			// on a fragment that never comes. A late final still settles on arrival,
@@ -241,11 +306,22 @@ export class UtteranceComposer {
 		this.clearTimers();
 		this.buffer = null;
 		this.immediateSettle = false;
+		this.heldOpen = false;
 	}
 
 	dispose(): void {
 		this.disposed = true;
 		this.cancel();
+	}
+
+	/** The static options with the live getter layered over them, sanitised. */
+	private readConfig(): UtteranceComposerConfig {
+		const live = this.getConfig?.() ?? {};
+		return resolveUtteranceComposerConfig({
+			settleMs: live.settleMs ?? this.staticConfig.settleMs,
+			maxHoldMs: live.maxHoldMs ?? this.staticConfig.maxHoldMs,
+			sendPhrases: live.sendPhrases ?? this.staticConfig.sendPhrases,
+		});
 	}
 
 	/** Add one fragment to the buffer, creating it when this is the first. */

@@ -1,12 +1,14 @@
 /**
  * The one thing in the HUD you are meant to read from across the room.
  *
- * Five states have to be distinguishable, and they have to be distinguishable by
+ * Six states have to be distinguishable, and they have to be distinguishable by
  * more than hue: they are all drawn from the same theme accent, and a
  * colour-only difference is no difference at all to a large minority of users.
  * So each state differs in SHAPE and in MOTION as well:
  *
  *   idle-armed  an outlined ring around a radio glyph, still
+ *   paused      a DASHED neutral ring around a struck-through microphone, still:
+ *               a session is open and the microphone is not
  *   listening   an outlined ring around a microphone, filled by a disc that
  *               tracks the real input level
  *   thinking    an outlined ring around a spinner
@@ -27,7 +29,7 @@
  */
 
 import { memo } from 'react';
-import { AlertTriangle, Loader2, Mic, Radio, Volume2 } from 'lucide-react';
+import { AlertTriangle, Loader2, Mic, MicOff, Radio, Volume2 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
 import {
@@ -143,6 +145,29 @@ export const VoiceIndicator = memo(function VoiceIndicator({
 					}}
 				/>
 				<Mic className="relative" style={{ width: glyph, height: glyph }} />
+			</div>
+		);
+	}
+
+	if (state === 'paused') {
+		// Neutral, never accent: accent is the colour of a hot microphone, and this
+		// is the one state whose whole meaning is that it is not one. Dashed and
+		// struck through so it differs from idle by shape, not by a shade of grey.
+		return (
+			<div
+				data-testid="voice-indicator-paused"
+				data-motion="static"
+				aria-label={label}
+				title={title}
+				role="img"
+				className="rounded-full flex items-center justify-center shrink-0"
+				style={{
+					...box,
+					border: `2px dashed ${theme.colors.border}`,
+					color: theme.colors.textDim,
+				}}
+			>
+				<MicOff style={{ width: glyph, height: glyph }} />
 			</div>
 		);
 	}

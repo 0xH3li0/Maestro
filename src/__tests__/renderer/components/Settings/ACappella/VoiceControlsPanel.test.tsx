@@ -149,3 +149,67 @@ describe('VoiceControlsPanel wake word Test', () => {
 		expect(screen.getByText('Listening. Say the phrase.')).toBeTruthy();
 	});
 });
+
+describe('VoiceControlsPanel send phrases', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockShortcuts = {};
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({});
+		vi.mocked(voice().getRoster).mockResolvedValue([]);
+		vi.mocked(voice().hotkeyStatus).mockResolvedValue({ statuses: [], note: '' });
+	});
+
+	const phrasesInput = () => screen.getByLabelText('Send phrases') as HTMLInputElement;
+
+	it('offers the field without "Wait for me to say send", leading with the new default', async () => {
+		// A send phrase ends a request in both modes. Hidden behind the toggle it
+		// worked for everyone and could be changed by almost no one.
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+
+		await waitFor(() => {
+			expect(phrasesInput().value).toBe("go maestro, that's it, send it, go ahead, make it so");
+		});
+		expect(screen.queryByLabelText('Send after')).toBeNull();
+	});
+
+	it('reads the old shipped list as never chosen, and an edited one as chosen', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			controls: { sendPhrases: "good to go, that's it, send it, go ahead, make it so" },
+		});
+		const { unmount } = render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await waitFor(() => {
+			expect(phrasesInput().value.startsWith('go maestro')).toBe(true);
+		});
+		unmount();
+
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			controls: { sendPhrases: 'good to go' },
+		});
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await waitFor(() => {
+			expect(phrasesInput().value).toBe('good to go');
+		});
+	});
+
+	it('stores an edit as that one field, not as the whole form', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({
+			providers: { stt: 'parakeet-local' },
+			controls: { wakePhrase: 'okay computer' },
+		});
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await waitFor(() => {
+			expect(phrasesInput().value.startsWith('go maestro')).toBe(true);
+		});
+
+		fireEvent.change(phrasesInput(), { target: { value: 'ship it' } });
+
+		// Saving every field here is what froze the old default phrases, and the
+		// old default wake phrase before them, into settings nobody had chosen.
+		await waitFor(() => {
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('acappella', {
+				providers: { stt: 'parakeet-local' },
+				controls: { wakePhrase: 'okay computer', sendPhrases: 'ship it' },
+			});
+		});
+	});
+});

@@ -23,6 +23,7 @@
  * - get_settings: Fetch current web settings
  * - set_setting: Modify a single setting (allowlisted keys only)
  * - acappella_signal: WebRTC signaling for a paired A Cappella voice device
+ * - voice_wake_enrollment: record, train and manage a user's own wake phrase
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  *
@@ -49,6 +50,7 @@ import {
 	handleCrossAgentAsk,
 } from './commands';
 import { ACAPPELLA_SIGNAL_MESSAGE, handleACappellaSignal } from './acappellaSignal';
+import { VOICE_WAKE_ENROLLMENT_MESSAGE, handleVoiceWakeEnrollment } from './voiceWake';
 import {
 	handleGetSessions,
 	handleCreateSession,
@@ -774,6 +776,10 @@ export class WebSocketMessageHandler {
 
 			case 'notify_speak':
 				void handleNotifySpeak(this.ctx, client, message);
+				break;
+
+			case VOICE_WAKE_ENROLLMENT_MESSAGE:
+				void handleVoiceWakeEnrollment(this.ctx, client, message);
 				break;
 
 			case 'local_models_semantic_index_status':

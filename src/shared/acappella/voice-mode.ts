@@ -134,6 +134,35 @@ export function applyAgentScope(
 /** The three modes a user switches between. Document conversations are opened, not switched to. */
 export type SwitchableVoiceMode = Exclude<VoiceMode, 'document'>;
 
+/** In the order the HUD draws them, which is also the order Tab walks them. */
+export const SWITCHABLE_VOICE_MODES: readonly SwitchableVoiceMode[] = ['tab', 'agent', 'conductor'];
+
+/**
+ * The mode a scope shows as in the switch.
+ *
+ * A document conversation is a tab binding that also knows its file, so it reads
+ * as Tab; switching away from it leaves the document behind.
+ */
+export function switchableVoiceMode(scope: VoiceScope | null | undefined): SwitchableVoiceMode {
+	const mode = voiceScopeMode(scope);
+	return mode === 'document' ? 'tab' : mode;
+}
+
+/**
+ * The mode one step along from `mode`, wrapping at both ends.
+ *
+ * One function for the Tab key and Shift+Tab, so the key walks the switch in the
+ * order it is drawn rather than in an order re-derived beside it.
+ */
+export function stepSwitchableVoiceMode(
+	mode: SwitchableVoiceMode,
+	direction: 1 | -1 = 1
+): SwitchableVoiceMode {
+	const count = SWITCHABLE_VOICE_MODES.length;
+	const index = SWITCHABLE_VOICE_MODES.indexOf(mode);
+	return SWITCHABLE_VOICE_MODES[(index + direction + count) % count];
+}
+
 export interface ModeTargetContext {
 	/** The live session's binding. */
 	scope: VoiceScope | null;

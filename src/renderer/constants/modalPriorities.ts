@@ -367,6 +367,11 @@ export const MODAL_PRIORITIES = {
 	 * goes back to the extensions grid instead of closing the whole modal). */
 	EXTENSION_DETAILS: 452,
 
+	/** Wake phrase training dialog, opened from Voice Controls inside Settings.
+	 * Above Settings so Escape closes the dialog (and its microphone) and leaves
+	 * Settings open; below CONFIRM so "delete these recordings?" layers on top. */
+	WAKE_PHRASE_TRAINING: 453,
+
 	/** Settings modal */
 	SETTINGS: 450,
 

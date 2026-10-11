@@ -1,6 +1,6 @@
 /**
  * What the voice HUD is showing, reduced from the nine-state session machine to
- * the five things a person can actually read at a glance.
+ * the six things a person can actually read at a glance.
  *
  * The session machine is the truth (`session-state.ts`), but it is engineering
  * truth: `transcribing`, `routing`, and `dispatching` are three different pieces
@@ -18,15 +18,24 @@
 import type { VoiceSessionState } from './session-state';
 
 /**
- * The five readable states.
+ * The six readable states.
  *
  *   - `idle-armed`  nothing is being captured; the wake word may still be armed.
+ *   - `paused`      the session is live and waiting, with the microphone gated
+ *                   shut: hands-free switched off, or push-to-talk with the
+ *                   button up.
  *   - `listening`   the floor is open and audio is being consumed.
  *   - `thinking`    the utterance is being transcribed, routed, or worked on.
  *   - `speaking`    a reply is coming out of the speakers.
  *   - `error`       a classified failure the user has to read.
  */
-export type VoiceHudVisualState = 'idle-armed' | 'listening' | 'thinking' | 'speaking' | 'error';
+export type VoiceHudVisualState =
+	| 'idle-armed'
+	| 'paused'
+	| 'listening'
+	| 'thinking'
+	| 'speaking'
+	| 'error';
 
 const STATE_MAP: Record<VoiceSessionState, VoiceHudVisualState> = {
 	idle: 'idle-armed',
@@ -45,13 +54,21 @@ const STATE_MAP: Record<VoiceSessionState, VoiceHudVisualState> = {
 	error: 'error',
 };
 
-export function voiceHudVisualState(state: VoiceSessionState): VoiceHudVisualState {
-	return STATE_MAP[state];
+/**
+ * @param paused Whether the microphone is gated shut (`listen-gate`). It only
+ *               changes the answer where the session would otherwise read as
+ *               listening: a paused session that is thinking or speaking is
+ *               still doing exactly that.
+ */
+export function voiceHudVisualState(state: VoiceSessionState, paused = false): VoiceHudVisualState {
+	const visual = STATE_MAP[state];
+	return paused && visual === 'listening' ? 'paused' : visual;
 }
 
 /** Short label, spoken English. Also the accessible name of the indicator. */
 export const VOICE_HUD_STATE_LABELS: Record<VoiceHudVisualState, string> = {
 	'idle-armed': 'Idle',
+	paused: 'Paused',
 	listening: 'Listening',
 	thinking: 'Thinking',
 	speaking: 'Speaking',
@@ -67,6 +84,7 @@ export const VOICE_HUD_STATE_LABELS: Record<VoiceHudVisualState, string> = {
  */
 export const VOICE_HUD_STATE_DESCRIPTIONS: Record<VoiceHudVisualState, string> = {
 	'idle-armed': 'Not listening. The microphone is closed.',
+	paused: 'Paused. The session is open and the microphone is closed.',
 	listening: 'Listening. The microphone is open.',
 	thinking: 'Working on what you said.',
 	speaking: 'Speaking a reply.',

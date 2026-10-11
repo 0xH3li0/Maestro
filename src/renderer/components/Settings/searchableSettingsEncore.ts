@@ -376,7 +376,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'wait for me to say send',
 			'send command',
 			'hold until send',
-			'good to go',
+			'go maestro',
 			'freeform',
 			'dictation',
 			'a cappella',
@@ -399,10 +399,12 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Send phrases',
 		description:
-			'The spoken phrases that end a held voice request, heard only at the end of a sentence and removed before the request is sent',
+			'The spoken phrases that send a voice request right away, heard only at the end of a sentence and removed before the request is sent',
 		keywords: [
 			'send phrases',
-			'good to go',
+			'send phrase',
+			'go phrase',
+			'go maestro',
 			"that's it",
 			'send it',
 			'go ahead',
@@ -541,6 +543,23 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		description:
 			'The always-on listener for the wake and stop words. Always local and always required for hands-free; there is no cloud option, by design',
 		keywords: ['wake word', 'stop word', 'hands free', 'always on', 'openwakeword', 'hey maestro'],
+	},
+	{
+		id: 'encore-a-cappella-wake-phrase-training',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Train a wake phrase',
+		description:
+			'Teach the wake word any phrase by saying it a couple of dozen times. Trained on this machine from your own voice, with nothing uploaded',
+		keywords: [
+			'train wake word',
+			'custom wake word',
+			'own wake word',
+			'record wake phrase',
+			'enroll',
+			'my voice',
+			'wake phrase training',
+		],
 	},
 	{
 		id: 'encore-a-cappella-agent-wake-phrases',

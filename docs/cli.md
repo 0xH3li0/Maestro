@@ -1747,6 +1747,43 @@ External (CLI/web) callers are capped to **5 seconds** for Center Flash and **60
 
 Both commands support `--json` for scripting. Toasts respect the user's notification settings (audio feedback, OS desktop notifications) configured in the app.
 
+### Voice
+
+`maestro-cli voice wake` teaches the A Cappella wake word a phrase from your own recordings. It is the command-line form of **Train** in Settings > Plugins > A Cappella > Voice Controls, and it reaches the same code, so a recording started here and one started in Settings are the same recording. See [Training your own wake phrase](./voice-mode#training-your-own-wake-phrase) for what the training does.
+
+```bash
+# Record the phrase with the microphone. Each time you say it is one recording.
+maestro-cli voice wake record "hey scout"
+maestro-cli voice wake stop
+
+# Record about 30 seconds of ordinary speech that is NOT the phrase.
+maestro-cli voice wake record "hey scout" --background
+maestro-cli voice wake stop
+
+# Or bring recordings as 16-bit PCM WAV files: one take of the phrase per file.
+maestro-cli voice wake add "hey scout" takes/*.wav
+maestro-cli voice wake add "hey scout" --background talking.wav
+
+# Train, then see what it measured.
+maestro-cli voice wake train "hey scout"
+maestro-cli voice wake status "hey scout"
+
+# Everything that has been recorded, and housekeeping.
+maestro-cli voice wake list
+maestro-cli voice wake undo "hey scout"              # drop the newest recording
+maestro-cli voice wake clear-background "hey scout"  # record the other speech again
+maestro-cli voice wake remove "hey scout"            # delete the model and every recording
+```
+
+`record` opens the microphone on the computer running Maestro and returns at once; `stop` ends the run and closes it. A run that hears nothing for 45 seconds closes itself. `add` is the route for an agent, which has no microphone: it skips a file the app will not take (too short, too long, not a WAV) and says why, and it exits non-zero only when no file was added. `train` waits until training finishes.
+
+Training needs at least 8 recordings of the phrase and 12 seconds of other speech. When the app refuses a request on purpose (a voice session holds the microphone, there is not enough recorded yet, A Cappella is switched off) the command prints the reason and exits non-zero. `status`, `list`, `stop`, and `remove` work with A Cappella switched off.
+
+| Flag           | Description                                                             |
+| -------------- | ----------------------------------------------------------------------- |
+| `--background` | `record` and `add`: the audio is ordinary speech, not the phrase        |
+| `--json`       | JSON output for scripting: `{"success":true,"status":{...}}` or `error` |
+
 ### Configuring Auto-Run
 
 Set up and optionally launch an auto-run session with one or more markdown documents. Documents must be `.md` files containing `- [ ]` checkbox tasks.

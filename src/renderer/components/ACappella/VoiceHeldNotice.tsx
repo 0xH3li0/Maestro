@@ -2,7 +2,7 @@
  * The HUD line shown while a finished sentence is held before it is sent.
  *
  * Hold-until-send keeps a request for up to thirty seconds waiting for a send
- * phrase ("send it", "good to go"). Without this line the HUD showed the text
+ * phrase ("go maestro", "send it"). Without this line the HUD showed the text
  * and then nothing happened for half a minute, which is indistinguishable from
  * a session that heard you and ignored you. It says what it is waiting for,
  * counts down to the automatic send, and offers the send itself as a button.

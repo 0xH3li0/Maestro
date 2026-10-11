@@ -23,6 +23,7 @@ vi.mock('electron', () => ({
 
 import { createVoiceApi } from '../../../main/preload/acappella';
 import type { VoiceEvent } from '../../../shared/acappella/protocol';
+import type { WakeEnrollmentEvent } from '../../../shared/acappella/wake-enrollment';
 
 describe('A Cappella Preload API', () => {
 	beforeEach(() => {
@@ -35,16 +36,57 @@ describe('A Cappella Preload API', () => {
 
 		const result = await api.start({ kind: 'agent', sessionId: 'agent-1' });
 
-		expect(mockInvoke).toHaveBeenCalledWith('acappella:start-session', {
-			kind: 'agent',
-			sessionId: 'agent-1',
-		});
+		expect(mockInvoke).toHaveBeenCalledWith(
+			'acappella:start-session',
+			{ kind: 'agent', sessionId: 'agent-1' },
+			undefined
+		);
 		expect(result).toEqual({ snapshot: { state: 'listening' }, substitutions: [] });
 	});
 
 	it('starts a conductor session when no scope is given', async () => {
 		createVoiceApi().start();
-		expect(mockInvoke).toHaveBeenCalledWith('acappella:start-session', undefined);
+		expect(mockInvoke).toHaveBeenCalledWith('acappella:start-session', undefined, undefined);
+	});
+
+	it('passes a gated start through, for push-to-talk', async () => {
+		createVoiceApi().start({ kind: 'conductor' }, { paused: true });
+		expect(mockInvoke).toHaveBeenCalledWith(
+			'acappella:start-session',
+			{ kind: 'conductor' },
+			{ paused: true }
+		);
+	});
+
+	it('opens and shuts the microphone without ending the session', async () => {
+		mockInvoke.mockResolvedValue(true);
+		const api = createVoiceApi();
+
+		await expect(api.setListening({ listening: true, hold: true })).resolves.toBe(true);
+		expect(mockInvoke).toHaveBeenLastCalledWith('acappella:set-listening', {
+			listening: true,
+			hold: true,
+		});
+
+		await api.setListening({ listening: false, send: true });
+		expect(mockInvoke).toHaveBeenLastCalledWith('acappella:set-listening', {
+			listening: false,
+			send: true,
+		});
+	});
+
+	it('reads and picks the send wait', async () => {
+		const api = createVoiceApi();
+
+		api.getSendWait();
+		expect(mockInvoke).toHaveBeenLastCalledWith('acappella:get-send-wait');
+
+		api.setSendWait(5000);
+		expect(mockInvoke).toHaveBeenLastCalledWith('acappella:set-send-wait', 5000);
+
+		// Null is how the HUD returns to the stored default.
+		api.setSendWait(null);
+		expect(mockInvoke).toHaveBeenLastCalledWith('acappella:set-send-wait', null);
 	});
 
 	it('stops a session', async () => {
@@ -97,5 +139,33 @@ describe('A Cappella Preload API', () => {
 
 		cleanup();
 		expect(mockRemoveListener).toHaveBeenCalledWith('acappella:event', wrapped);
+	});
+
+	it('sends every wake phrase enrollment verb down one channel', async () => {
+		mockInvoke.mockResolvedValue({ ok: true, status: null });
+		const api = createVoiceApi();
+
+		await api.wakeEnrollment({ action: 'record', phrase: 'hey scout', kind: 'phrase' });
+		await api.wakeEnrollment({ action: 'train', phrase: 'hey scout' });
+
+		expect(mockInvoke.mock.calls).toEqual([
+			['acappella:wake-enrollment', { action: 'record', phrase: 'hey scout', kind: 'phrase' }],
+			['acappella:wake-enrollment', { action: 'train', phrase: 'hey scout' }],
+		]);
+	});
+
+	it('subscribes to wake phrase enrollment progress and unsubscribes the same listener', () => {
+		const handler = vi.fn();
+		const cleanup = createVoiceApi().onWakeEnrollment(handler);
+
+		expect(mockOn).toHaveBeenCalledWith('acappella:wake-enrollment', expect.any(Function));
+		const [, wrapped] = mockOn.mock.calls[0] as [string, (...args: unknown[]) => void];
+
+		const event: WakeEnrollmentEvent = { type: 'level', key: 'hey-scout-1', level: 0.2 };
+		wrapped({}, event);
+		expect(handler).toHaveBeenCalledWith(event);
+
+		cleanup();
+		expect(mockRemoveListener).toHaveBeenCalledWith('acappella:wake-enrollment', wrapped);
 	});
 });

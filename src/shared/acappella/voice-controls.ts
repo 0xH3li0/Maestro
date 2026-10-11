@@ -109,8 +109,27 @@ export const MAX_TURN_SETTLE_MS = 3000;
  * Here rather than beside the matcher in `main/acappella/speech/send-phrase.ts`
  * because the settings panel seeds its input from this list, and the renderer
  * cannot import from the main process.
+ *
+ * The FIRST entry is the one every surface quotes ("say 'go maestro' to send"),
+ * so it is the phrase a user learns. It names the app on purpose, as the stop
+ * phrase does: "good to go" led this list before, and it is something people
+ * say at the end of an ordinary sentence without meaning "send".
  */
 export const DEFAULT_SEND_PHRASES = [
+	'go maestro',
+	"that's it",
+	'send it',
+	'go ahead',
+	'make it so',
+] as const;
+
+/**
+ * The list that shipped before "go maestro" led it. Migrated away from on
+ * upgrade, because the Voice Controls panel used to save every field whenever
+ * any one of them changed, so this sits in settings verbatim for people who
+ * never chose it.
+ */
+export const LEGACY_DEFAULT_SEND_PHRASES = [
 	'good to go',
 	"that's it",
 	'send it',
@@ -163,6 +182,24 @@ export function parseSendPhrases(value: unknown): string[] | undefined {
 		.split(',')
 		.map((phrase) => phrase.trim())
 		.filter((phrase) => phrase.length > 0);
+}
+
+/** A send-phrase list as it is stored and typed: comma separated. */
+export function formatSendPhrases(phrases: readonly string[]): string {
+	return phrases.join(', ');
+}
+
+/**
+ * Whether a stored value is the old shipped list, saved by the panel rather
+ * than typed by the user. Compared phrase by phrase after parsing, so spacing
+ * around the commas does not make a saved default look like a choice.
+ */
+export function isLegacyDefaultSendPhrases(value: unknown): boolean {
+	const phrases = parseSendPhrases(value);
+	if (!phrases || phrases.length !== LEGACY_DEFAULT_SEND_PHRASES.length) return false;
+	return phrases.every(
+		(phrase, index) => phrase.toLowerCase() === LEGACY_DEFAULT_SEND_PHRASES[index]
+	);
 }
 
 /**

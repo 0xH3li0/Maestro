@@ -140,15 +140,26 @@ vi.mock('../../../../main/stores/getters', () => ({
 	getSessionsStore: vi.fn(),
 }));
 
+import * as fsPromises from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+
 import { getSessionsStore } from '../../../../main/stores/getters';
 import {
+	ACAPPELLA_WAKE_ENROLLMENT_CHANNEL,
 	disposeACappellaAudioBridge,
 	registerACappellaHandlers,
 	resetACappellaHandlerState,
 	shutdownACappellaForDisable,
 	stopVoiceSessionForClosedWindow,
 	type VoiceStartSessionResult,
+	type WakeTestStartResult,
 } from '../../../../main/ipc/handlers/acappella';
+import { setWakeEnrollmentRoot } from '../../../../main/acappella/wake/wake-enrollment-store';
+import type {
+	WakeEnrollmentEvent,
+	WakeEnrollmentReply,
+} from '../../../../shared/acappella/wake-enrollment';
 import {
 	ACAPPELLA_AUDIO_FRAME_CHANNEL,
 	ACAPPELLA_AUDIO_FRAME_SAMPLES,
@@ -181,7 +192,7 @@ type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 /** Settings the gate and the provider registry both read. */
 interface FakeSettings {
 	encoreFeatures?: Record<string, unknown>;
-	acappella?: { providers?: Record<string, string> };
+	acappella?: { providers?: Record<string, string>; controls?: Record<string, unknown> };
 }
 
 let settings: FakeSettings;
@@ -313,11 +324,15 @@ describe('A Cappella IPC handlers - registration', () => {
 				'acappella:stop-session',
 				'acappella:submit-utterance',
 				'acappella:interrupt',
+				'acappella:set-listening',
+				'acappella:get-send-wait',
+				'acappella:set-send-wait',
 				'acappella:stop-word',
 				'acappella:get-roster',
 				'acappella:get-state',
 				'acappella:open-mic-settings',
 				'acappella:mic-permission',
+				'acappella:wake-enrollment',
 			])
 		);
 	});
@@ -786,6 +801,129 @@ describe('A Cappella IPC handlers - input', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The microphone gate and the send wait
+// ---------------------------------------------------------------------------
+
+describe('A Cappella IPC handlers - microphone gate', () => {
+	it('shuts the microphone and keeps the session', async () => {
+		await handlerFor('acappella:start-session')({});
+		broadcasts = [];
+
+		await expect(handlerFor('acappella:set-listening')({}, { listening: false })).resolves.toBe(
+			true
+		);
+
+		// A pause is not a hang-up: the session is still there to resume.
+		expect(getVoiceSessionService()?.getState()).toBe('listening');
+		expect(getVoiceSessionService()?.getSnapshot().listenPaused).toBe(true);
+		expect(voiceEvents().map((event) => event.type)).toContain('listen-gate');
+	});
+
+	it('reports false with no session, so the caller starts one', async () => {
+		await expect(handlerFor('acappella:set-listening')({}, { listening: true })).resolves.toBe(
+			false
+		);
+	});
+
+	it('rejects a payload that does not say which way the gate goes', async () => {
+		await handlerFor('acappella:start-session')({});
+
+		await expect(handlerFor('acappella:set-listening')({}, {})).rejects.toThrow('InvalidListening');
+		await expect(handlerFor('acappella:set-listening')({}, undefined)).rejects.toThrow(
+			'InvalidListening'
+		);
+	});
+
+	it('opens a session gated only on a literal paused: true', async () => {
+		const gated = (await handlerFor('acappella:start-session')({}, undefined, {
+			paused: true,
+		})) as VoiceStartSessionResult;
+		expect(gated.snapshot.listenPaused).toBe(true);
+		await handlerFor('acappella:stop-session')({});
+
+		// Anything else opens hot. A malformed option must not produce a session
+		// that looks live and hears nothing.
+		const hot = (await handlerFor('acappella:start-session')({}, undefined, {
+			paused: 'yes',
+		})) as VoiceStartSessionResult;
+		expect(hot.snapshot.listenPaused).toBe(false);
+	});
+
+	it('is refused while the feature is off', async () => {
+		settings.encoreFeatures = { aCappella: false };
+
+		await expect(handlerFor('acappella:set-listening')({}, { listening: true })).rejects.toThrow(
+			'ACappellaDisabled'
+		);
+	});
+});
+
+describe('A Cappella IPC handlers - send wait', () => {
+	it('reports the stored default until the HUD picks something', async () => {
+		settings.acappella = { ...(settings.acappella as object), controls: { turnSettleMs: 1200 } };
+
+		await expect(handlerFor('acappella:get-send-wait')({})).resolves.toMatchObject({
+			waitMs: 1200,
+			defaultMs: 1200,
+			overridden: false,
+		});
+	});
+
+	it('uses the long backstop as the default when requests are held for a send phrase', async () => {
+		settings.acappella = {
+			...(settings.acappella as object),
+			controls: { holdUntilSend: true, sendHoldMs: 20_000, turnSettleMs: 1200 },
+		};
+
+		await expect(handlerFor('acappella:get-send-wait')({})).resolves.toMatchObject({
+			waitMs: 20_000,
+			defaultMs: 20_000,
+		});
+	});
+
+	it('lets the HUD override the wait without touching the stored default', async () => {
+		settings.acappella = { ...(settings.acappella as object), controls: { turnSettleMs: 1200 } };
+
+		await expect(handlerFor('acappella:set-send-wait')({}, 5000)).resolves.toMatchObject({
+			waitMs: 5000,
+			defaultMs: 1200,
+			overridden: true,
+		});
+		// The read agrees with the write, and Settings still holds what it held.
+		await expect(handlerFor('acappella:get-send-wait')({})).resolves.toMatchObject({
+			waitMs: 5000,
+			overridden: true,
+		});
+		expect(
+			(settings.acappella as { controls: { turnSettleMs: number } }).controls.turnSettleMs
+		).toBe(1200);
+	});
+
+	it('returns to the default on null, and on anything that is not a wait', async () => {
+		await handlerFor('acappella:set-send-wait')({}, 5000);
+		await expect(handlerFor('acappella:set-send-wait')({}, null)).resolves.toMatchObject({
+			overridden: false,
+		});
+
+		await handlerFor('acappella:set-send-wait')({}, 5000);
+		await expect(handlerFor('acappella:set-send-wait')({}, 'soon')).resolves.toMatchObject({
+			overridden: false,
+		});
+	});
+
+	it('names the phrases that send before the wait runs out', async () => {
+		settings.acappella = {
+			...(settings.acappella as object),
+			controls: { sendPhrases: 'ship it, over' },
+		};
+
+		await expect(handlerFor('acappella:get-send-wait')({})).resolves.toMatchObject({
+			sendPhrases: ['ship it', 'over'],
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Audio host transport
 // ---------------------------------------------------------------------------
 
@@ -958,6 +1096,153 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 		// A session with no audio host is text-in, which is exactly what the mock
 		// tier promises; it must not reach for a device that is not there.
 		expect(audioCommands()).toEqual([]);
+	});
+
+	// -- Wake phrase enrollment: recording a phrase with no session behind it ---
+
+	describe('wake phrase enrollment', () => {
+		let enrollmentRoot: string;
+
+		const enroll = (request: unknown) =>
+			handlerFor('acappella:wake-enrollment')({}, request) as Promise<WakeEnrollmentReply>;
+
+		function enrollmentEvents(): WakeEnrollmentEvent[] {
+			return broadcasts
+				.filter((entry) => entry.channel === ACAPPELLA_WAKE_ENROLLMENT_CHANNEL)
+				.map((entry) => entry.args[0] as WakeEnrollmentEvent);
+		}
+
+		function pushSilence(count: number): void {
+			const listener = listenerFor(ACAPPELLA_AUDIO_FRAME_CHANNEL);
+			for (let seq = 1; seq <= count; seq++) {
+				listener(
+					{ sender: audioHost.webContents },
+					{
+						seq,
+						capturedAt: seq * 20,
+						rms: 0,
+						pcm: new Int16Array(ACAPPELLA_AUDIO_FRAME_SAMPLES).buffer,
+					}
+				);
+			}
+		}
+
+		beforeEach(async () => {
+			enrollmentRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'wake-enrollment-ipc-'));
+			setWakeEnrollmentRoot(enrollmentRoot);
+		});
+
+		afterEach(async () => {
+			await enroll({ action: 'stop' });
+			setWakeEnrollmentRoot(null);
+			await fsPromises.rm(enrollmentRoot, { recursive: true, force: true });
+		});
+
+		it('records a take through the audio host without starting a voice session', async () => {
+			broadcasts = [];
+
+			const started = await enroll({ action: 'record', phrase: 'hey scout', kind: 'phrase' });
+			expect(started).toMatchObject({ ok: true, status: { recording: 'phrase', clips: 0 } });
+			expect(audioCommands().map((command) => command.kind)).toEqual(['start-capture']);
+
+			// Half a second of quiet, 600 ms of voice, then enough quiet to end it.
+			pushSilence(25);
+			pushFrames(30);
+			pushSilence(40);
+			const stopped = await enroll({ action: 'stop' });
+
+			expect(stopped).toMatchObject({ ok: true, status: { clips: 1, recording: null } });
+			expect(audioCommands().map((command) => command.kind)).toEqual([
+				'start-capture',
+				'stop-capture',
+			]);
+			expect(enrollmentEvents().some((event) => event.type === 'level')).toBe(true);
+			// No session was started and nothing was published on the voice stream.
+			expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
+			expect(voiceEvents()).toEqual([]);
+		});
+
+		it('asks again for the microphone when the audio host finishes booting mid-run', async () => {
+			await enroll({ action: 'record', phrase: 'hey scout', kind: 'phrase' });
+
+			pushStatus({ kind: 'ready' });
+
+			expect(audioCommands().map((command) => command.kind)).toEqual([
+				'start-capture',
+				'start-capture',
+			]);
+		});
+
+		it('will not record under a live voice session, and leaves its microphone alone', async () => {
+			await handlerFor('acappella:start-session')({});
+			vi.mocked(audioHost.webContents.send).mockClear();
+
+			const result = await enroll({ action: 'record', phrase: 'hey scout', kind: 'phrase' });
+
+			expect(result).toMatchObject({ ok: false });
+			expect((result as { reason: string }).reason).toMatch(/End the voice session first/);
+			expect(audioCommands()).toEqual([]);
+		});
+
+		it("keeps the wake word Test and a recording out of each other's way", async () => {
+			await enroll({ action: 'record', phrase: 'hey scout', kind: 'phrase' });
+
+			const test = (await handlerFor('acappella:wake-test')({}, {})) as WakeTestStartResult;
+
+			expect(test).toMatchObject({ started: false });
+			expect((test as { reason: string }).reason).toMatch(/Finish recording the phrase first/);
+		});
+
+		it('refuses dictation while a phrase is being recorded', async () => {
+			await enroll({ action: 'record', phrase: 'hey scout', kind: 'phrase' });
+
+			const result = await (dictation.microphones.at(-1) as DictationMicrophone).start();
+
+			expect(result).toMatchObject({ started: false, code: 'busy' });
+		});
+
+		it('refuses a request it does not know rather than guessing', async () => {
+			expect(await enroll({ action: 'upload', phrase: 'hey scout' })).toEqual({
+				ok: false,
+				reason: 'Unknown wake phrase request.',
+			});
+		});
+
+		it('lists the phrases that have recordings', async () => {
+			await enroll({ action: 'record', phrase: 'Hey Scout', kind: 'phrase' });
+			pushSilence(25);
+			pushFrames(30);
+			pushSilence(40);
+			await enroll({ action: 'stop' });
+
+			expect(await enroll({ action: 'list' })).toEqual({
+				ok: true,
+				status: null,
+				phrases: ['Hey Scout'],
+			});
+		});
+
+		it('reads, stops and deletes with the feature off, but will not record or train', async () => {
+			// Switching voice off must still be able to close a microphone and remove
+			// a recording of the user's voice. The refusal is an answer, not a throw:
+			// the same entry point serves `maestro-cli voice wake`.
+			settings.encoreFeatures = { aCappella: false };
+			const off = { ok: false, reason: expect.stringMatching(/switched off/) };
+
+			await expect(enroll({ action: 'status', phrase: 'hey scout' })).resolves.toMatchObject({
+				ok: true,
+				status: { clips: 0, model: null },
+			});
+			await expect(enroll({ action: 'stop' })).resolves.toMatchObject({ ok: true });
+			await expect(enroll({ action: 'remove', phrase: 'hey scout' })).resolves.toMatchObject({
+				ok: true,
+			});
+			await expect(
+				enroll({ action: 'record', phrase: 'hey scout', kind: 'phrase' })
+			).resolves.toEqual(off);
+			await expect(enroll({ action: 'train', phrase: 'hey scout' })).resolves.toEqual(off);
+			expect(audioCommands()).toEqual([]);
+		});
 	});
 
 	// -- Dictation's microphone: the capture path with no session behind it ----

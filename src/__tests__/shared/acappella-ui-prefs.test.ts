@@ -49,6 +49,14 @@ describe('readVoiceUiPrefs', () => {
 		expect(readVoiceUiPrefs({ transcriptVisible: true }).transcriptVisible).toBe(true);
 	});
 
+	it('remembers push-to-talk, and reads anything else as hands-free', () => {
+		expect(readVoiceUiPrefs({}).listenMode).toBe('hands-free');
+		expect(readVoiceUiPrefs({ listenMode: 'push-to-talk' }).listenMode).toBe('push-to-talk');
+		// A hand-edited or future value must not strand the HUD in a mode its
+		// button cannot express.
+		expect(readVoiceUiPrefs({ listenMode: 'walkie' }).listenMode).toBe('hands-free');
+	});
+
 	it('rejects a minimize behaviour it does not recognise', () => {
 		expect(readVoiceUiPrefs({ minimizeBehavior: 'close' }).minimizeBehavior).toBe('manual');
 		expect(readVoiceUiPrefs({ minimizeBehavior: 'auto-idle' }).minimizeBehavior).toBe('auto-idle');
@@ -128,6 +136,21 @@ describe('voiceHudVisualState', () => {
 		for (const state of ['idle', 'arming', 'speaking', 'routing', 'error'] as const) {
 			expect(voiceHudIsHotMic(voiceHudVisualState(state))).toBe(false);
 		}
+	});
+
+	it('reads a gated microphone as paused, and never as a hot one', () => {
+		// The session is still `listening` across a pause. The HUD must not be:
+		// this is the one place the pair becomes an answer about the device.
+		expect(voiceHudVisualState('listening', true)).toBe('paused');
+		expect(voiceHudVisualState('interrupted', true)).toBe('paused');
+		expect(voiceHudIsHotMic(voiceHudVisualState('listening', true))).toBe(false);
+	});
+
+	it('leaves a paused session that is working or speaking exactly as it is', () => {
+		expect(voiceHudVisualState('dispatching', true)).toBe('thinking');
+		expect(voiceHudVisualState('speaking', true)).toBe('speaking');
+		expect(voiceHudVisualState('idle', true)).toBe('idle-armed');
+		expect(voiceHudVisualState('error', true)).toBe('error');
 	});
 
 	it('has a label for every visual state', () => {

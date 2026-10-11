@@ -23,12 +23,13 @@
  * second one.
  */
 
-import { VoiceActivityDetector } from '../audio/vad';
+import { SpeechBurstSegmenter } from '../audio/speech-burst';
 import { TRANSCRIPTION_WAKE_PROVIDER_ID } from '../models/capability-gate';
 import { getSpeechToTextPool } from '../../local-models/speech-to-text';
 import { PARAKEET_TDT_V2_ID } from '../../../shared/local-models/model-catalog';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
+import { int16ToFloat32 } from '../../../shared/audio/pcm';
 import type { WakeEngine } from '../../../shared/acappella/voice-controls';
 import { logger } from '../../utils/logger';
 import type { WakePhrase, WakePhraseScorer } from './wake-detector';
@@ -112,19 +113,10 @@ export interface WakeTranscriber {
  * scoring policy can be tested with a fake transcriber and generated audio.
  */
 export function createTranscriptionScorer(transcriber: WakeTranscriber): WakePhraseScorer {
-	const vad = new VoiceActivityDetector();
-	const preSpeechSamples = (PRE_SPEECH_MS / 1000) * SAMPLE_RATE;
-	const maxBurstSamples = (MAX_BURST_MS / 1000) * SAMPLE_RATE;
 	const minBurstSamples = (MIN_BURST_MS / 1000) * SAMPLE_RATE;
 
-	/** Recent silence, so a burst starts a little before its onset. */
-	let lead: Float32Array[] = [];
-	let leadSamples = 0;
-	/** The burst being collected, or null between bursts. */
-	let burst: Float32Array[] | null = null;
-	let burstSamples = 0;
-	/** Whether this burst already went to the recogniser (it was cut at the cap). */
-	let burstDecoded = false;
+	/** The phrases the hop being scored was asked about; a burst is decoded against these. */
+	let armed: readonly WakePhrase[] = [];
 	/** Scores waiting to be reported on the next hop, then cleared. */
 	let pending: Record<string, number> = {};
 	let decoding = false;
@@ -151,15 +143,13 @@ export function createTranscriptionScorer(transcriber: WakeTranscriber): WakePhr
 			});
 	}
 
-	function concat(chunks: Float32Array[], total: number): Float32Array {
-		const out = new Float32Array(total);
-		let offset = 0;
-		for (const chunk of chunks) {
-			out.set(chunk, offset);
-			offset += chunk.length;
-		}
-		return out;
-	}
+	// A burst is decoded once: at the cap when the speaker keeps going (the
+	// phrase, if any, is at the start), otherwise when the speech ends.
+	const segmenter = new SpeechBurstSegmenter({
+		preSpeechMs: PRE_SPEECH_MS,
+		maxBurstMs: MAX_BURST_MS,
+		onBurst: (burst) => decode(int16ToFloat32(burst.pcm), armed),
+	});
 
 	return {
 		tier: 'local',
@@ -168,6 +158,7 @@ export function createTranscriptionScorer(transcriber: WakeTranscriber): WakePhr
 			// would only be debounced, but a stale miss could hide a new hit.
 			const report = pending;
 			pending = {};
+			armed = phrases;
 
 			for (let offset = 0; offset < hop.length; offset += ACAPPELLA_AUDIO_FRAME_SAMPLES) {
 				const frame = hop.subarray(offset, offset + ACAPPELLA_AUDIO_FRAME_SAMPLES);
@@ -175,42 +166,7 @@ export function createTranscriptionScorer(transcriber: WakeTranscriber): WakePhr
 				for (let i = 0; i < frame.length; i++) {
 					pcm[i] = Math.max(-INT16_SCALE, Math.min(INT16_SCALE - 1, frame[i] * INT16_SCALE));
 				}
-				const result = vad.process(pcm);
-				const copy = Float32Array.from(frame);
-
-				if (burst) {
-					if (!burstDecoded) {
-						burst.push(copy);
-						burstSamples += copy.length;
-					}
-					if (!burstDecoded && burstSamples >= maxBurstSamples) {
-						// Cut at the cap: the phrase, if any, is at the start.
-						burstDecoded = true;
-						decode(concat(burst, burstSamples), phrases);
-					}
-					if (result.event?.type === 'speech-end') {
-						if (!burstDecoded) decode(concat(burst, burstSamples), phrases);
-						burst = null;
-						burstSamples = 0;
-						burstDecoded = false;
-					}
-					continue;
-				}
-
-				if (result.event?.type === 'speech-start') {
-					burst = [...lead, copy];
-					burstSamples = leadSamples + copy.length;
-					burstDecoded = false;
-					lead = [];
-					leadSamples = 0;
-					continue;
-				}
-
-				lead.push(copy);
-				leadSamples += copy.length;
-				while (leadSamples > preSpeechSamples && lead.length > 1) {
-					leadSamples -= lead.shift()!.length;
-				}
+				segmenter.pushFrame(pcm);
 			}
 			return report;
 		},

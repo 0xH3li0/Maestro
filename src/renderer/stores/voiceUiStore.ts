@@ -31,15 +31,12 @@ import {
 	DEFAULT_HOLD_THRESHOLD_MS,
 	resolveHoldThresholdMs,
 } from '../../shared/acappella/voice-controls';
-
-/** Settings key holding everything A Cappella persists. Mirrors the main-side constant. */
-const ACAPPELLA_SETTINGS_KEY = 'acappella';
-
-interface StoredBlob {
-	ui?: Record<string, unknown>;
-	controls?: { agentPhrases?: unknown; holdThresholdMs?: unknown };
-	[key: string]: unknown;
-}
+import type { VoiceListenMode, VoiceSendWait } from '../../shared/acappella/listen-mode';
+import {
+	patchVoiceSettingsSection,
+	readVoiceSettingsBlob,
+	type VoiceSettingsBlob,
+} from '../services/voiceSettings';
 
 interface VoiceUiState extends VoiceUiPrefs {
 	/** False until the stored blob has been read once. */
@@ -68,6 +65,22 @@ interface VoiceUiState extends VoiceUiPrefs {
 	 * gestures wearing one name.
 	 */
 	holdThresholdMs: number;
+	/**
+	 * The send wait in force, mirrored from main, or null before the first read.
+	 *
+	 * Main owns it (the stored default plus the HUD's override, see
+	 * `acappella:get-send-wait`); this is the copy the wait chip and its picker
+	 * draw from, replaced whole by every read and every write.
+	 */
+	sendWait: VoiceSendWait | null;
+	/**
+	 * The HUD is on screen, on top, with a live session: Tab cycles its mode.
+	 *
+	 * Published by the HUD rather than derived by each reader, because it is the
+	 * exact condition the HUD's own Tab listener is enabled under, and a second
+	 * derivation would drift. See {@link voiceHudClaimsTab}.
+	 */
+	tabCyclesMode: boolean;
 }
 
 interface VoiceUiActions {
@@ -79,13 +92,31 @@ interface VoiceUiActions {
 	setMinimizeBehavior: (behavior: VoiceHudMinimizeBehavior) => Promise<void>;
 	setMinimized: (minimized: boolean) => void;
 	setMuted: (muted: boolean) => void;
+	/**
+	 * Remember hands-free or push-to-talk. Persists only: what the choice does to
+	 * a live microphone is `setVoiceListenMode` in `services/voiceListening.ts`,
+	 * which is what every surface should call.
+	 */
+	setListenMode: (mode: VoiceListenMode) => Promise<void>;
+	/** Re-read the send wait. The stored default can change in Settings at any time. */
+	refreshSendWait: () => Promise<void>;
+	/** Pick a wait for now, or null to return to the stored default. */
+	setSendWait: (waitMs: number | null) => Promise<void>;
+	/**
+	 * Store the send phrases, as typed (comma separated). Unlike the wait this is
+	 * the SETTING, not a "just for now": a phrase is something a person learns,
+	 * and one that reverted when the HUD closed would be a phrase that stops
+	 * working without saying so. An empty string turns the spoken send off.
+	 */
+	setSendPhrases: (phrases: string) => Promise<void>;
+	setTabCyclesMode: (tabCyclesMode: boolean) => void;
 	/** Re-read the wake-phrase mirror after `useVoiceControls` writes one. */
 	refreshWakePhrases: () => Promise<void>;
 }
 
 export type VoiceUiStore = VoiceUiState & VoiceUiActions;
 
-function phrasesFromBlob(blob: StoredBlob | undefined): Record<string, string> {
+function phrasesFromBlob(blob: VoiceSettingsBlob | undefined): Record<string, string> {
 	const raw = blob?.controls?.agentPhrases;
 	if (!Array.isArray(raw)) return {};
 	const out: Record<string, string> = {};
@@ -99,23 +130,9 @@ function phrasesFromBlob(blob: StoredBlob | undefined): Record<string, string> {
 	return out;
 }
 
-async function readBlob(): Promise<StoredBlob> {
-	return ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ?? {}) as StoredBlob;
-}
-
-/**
- * Read-modify-write the `ui` section.
- *
- * Whole-blob, like every other A Cappella writer: providers, voices, controls,
- * and prefs live in one object, so writing only this section would drop the
- * rest.
- */
-async function persistUi(patch: Partial<VoiceUiPrefs>): Promise<void> {
-	const stored = await readBlob();
-	await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, {
-		...stored,
-		ui: { ...(stored.ui ?? {}), ...patch },
-	});
+/** Write `ui` fields. Patch-only and queued: see `services/voiceSettings.ts`. */
+function persistUi(patch: Partial<VoiceUiPrefs>): Promise<void> {
+	return patchVoiceSettingsSection('ui', patch);
 }
 
 export const useVoiceUiStore = create<VoiceUiStore>()((set, get) => ({
@@ -125,6 +142,8 @@ export const useVoiceUiStore = create<VoiceUiStore>()((set, get) => ({
 	muted: false,
 	wakePhrases: {},
 	holdThresholdMs: DEFAULT_HOLD_THRESHOLD_MS,
+	sendWait: null,
+	tabCyclesMode: false,
 
 	/**
 	 * Once, and only once.
@@ -138,7 +157,7 @@ export const useVoiceUiStore = create<VoiceUiStore>()((set, get) => ({
 	 */
 	load: async () => {
 		if (get().loaded) return;
-		const stored = await readBlob();
+		const stored = await readVoiceSettingsBlob();
 		set({
 			...readVoiceUiPrefs(stored.ui),
 			wakePhrases: phrasesFromBlob(stored),
@@ -170,8 +189,30 @@ export const useVoiceUiStore = create<VoiceUiStore>()((set, get) => ({
 
 	setMuted: (muted) => set({ muted }),
 
+	setListenMode: async (listenMode) => {
+		set({ listenMode });
+		await persistUi({ listenMode });
+	},
+
+	refreshSendWait: async () => {
+		set({ sendWait: await window.maestro.voice.getSendWait() });
+	},
+
+	setSendWait: async (waitMs) => {
+		set({ sendWait: await window.maestro.voice.setSendWait(waitMs) });
+	},
+
+	setSendPhrases: async (phrases) => {
+		await patchVoiceSettingsSection('controls', { sendPhrases: phrases });
+		// Main parses the stored string, so the list the HUD shows is re-read from
+		// it rather than re-derived here: one parser, and the mirror cannot drift.
+		await get().refreshSendWait();
+	},
+
+	setTabCyclesMode: (tabCyclesMode) => set({ tabCyclesMode }),
+
 	refreshWakePhrases: async () => {
-		set({ wakePhrases: phrasesFromBlob(await readBlob()) });
+		set({ wakePhrases: phrasesFromBlob(await readVoiceSettingsBlob()) });
 	},
 }));
 
@@ -184,3 +225,17 @@ export const selectWakePhraseFor =
 	(agentSessionId: string) =>
 	(s: VoiceUiStore): string | null =>
 		s.wakePhrases[agentSessionId] ?? null;
+
+/**
+ * Whether the voice HUD will cycle Tab / Agent / Conductor on the next Tab press.
+ *
+ * For a text surface that swallows Tab only to keep focus from wandering - the
+ * AI composer does - and has no use for the key itself. The HUD's listener runs
+ * in the bubble phase and stands down for a key somebody already claimed, so
+ * such a surface asks this first and lets the key through. A surface that USES
+ * Tab (a completion popup, a shell line, an editor's indent) never asks, and
+ * keeps it.
+ */
+export function voiceHudClaimsTab(): boolean {
+	return useVoiceUiStore.getState().tabCyclesMode;
+}

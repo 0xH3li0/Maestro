@@ -58,6 +58,7 @@ const ALL_EVENT_TYPES: VoiceEventType[] = [
 	'provider-state',
 	'tab-state',
 	'scope-change',
+	'listen-gate',
 	'agent-roster',
 ];
 

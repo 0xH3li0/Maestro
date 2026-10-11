@@ -11,6 +11,8 @@
  * and the tests need to widen a half-written blob without a DOM.
  */
 
+import { DEFAULT_VOICE_LISTEN_MODE, asVoiceListenMode, type VoiceListenMode } from './listen-mode';
+
 /** Where the user dragged the HUD, in viewport pixels from the top-left. */
 export interface VoiceHudPosition {
 	top: number;
@@ -37,6 +39,14 @@ export interface VoiceUiPrefs {
 	/** Remembered HUD position, or null for the default bottom-right placement. */
 	hudPosition: VoiceHudPosition | null;
 	minimizeBehavior: VoiceHudMinimizeBehavior;
+	/**
+	 * Hands-free or push-to-talk, as last chosen with the HUD's hand button.
+	 *
+	 * Remembered because it is a habit, not a per-conversation choice: someone who
+	 * talks in a shared room wants push-to-talk every time, and re-picking it on
+	 * every session is a microphone that opens hot before they can.
+	 */
+	listenMode: VoiceListenMode;
 }
 
 export const DEFAULT_VOICE_UI_PREFS: VoiceUiPrefs = {
@@ -46,6 +56,7 @@ export const DEFAULT_VOICE_UI_PREFS: VoiceUiPrefs = {
 	transcriptVisible: false,
 	hudPosition: null,
 	minimizeBehavior: 'manual',
+	listenMode: DEFAULT_VOICE_LISTEN_MODE,
 };
 
 /** A position is only usable if both numbers are real. Half a position is none. */
@@ -64,6 +75,7 @@ export function readVoiceUiPrefs(stored: Record<string, unknown> | undefined): V
 		transcriptVisible: raw.transcriptVisible === true,
 		hudPosition: readVoiceHudPosition(raw.hudPosition),
 		minimizeBehavior: raw.minimizeBehavior === 'auto-idle' ? 'auto-idle' : 'manual',
+		listenMode: asVoiceListenMode(raw.listenMode),
 	};
 }
 

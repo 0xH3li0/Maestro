@@ -51,19 +51,19 @@ describe('UtteranceComposer', () => {
 	});
 
 	it('reports how long a held thought waits and what sends it now', () => {
-		// The HUD reads this to say "say 'good to go' to send, or it sends in 30s",
+		// The HUD reads this to say "say 'go maestro' to send, or it sends in 30s",
 		// so a held request never looks like a session that ignored you.
 		const holds: Array<{ settlesInMs: number; sendPhrases: string[] }> = [];
 		const composer = new UtteranceComposer({
 			settleMs: 30_000,
-			sendPhrases: ['good to go'],
+			sendPhrases: ['go maestro'],
 			onSettled: () => undefined,
 			onComposing: (_text, hold) => holds.push(hold),
 		});
 
 		composer.add('what color is snow', 0.9);
 
-		expect(holds).toEqual([{ settlesInMs: 30_000, sendPhrases: ['good to go'] }]);
+		expect(holds).toEqual([{ settlesInMs: 30_000, sendPhrases: ['go maestro'] }]);
 	});
 
 	it('dispatches nothing while the user is still talking', () => {
@@ -146,17 +146,17 @@ describe('UtteranceComposer', () => {
 		it('sends without waiting for the settle timer', () => {
 			const { composer, settled } = makeComposer({ settleMs: 30_000 });
 
-			composer.add('fix the auth bug, good to go', 1);
+			composer.add('fix the auth bug, go maestro', 1);
 
 			// No timer advanced: the whole point is not waiting.
 			expect(settled).toHaveLength(1);
-			expect(settled[0].sentBy).toBe('good to go');
+			expect(settled[0].sentBy).toBe('go maestro');
 		});
 
 		it('strips the phrase, so the agent gets the request and not the signal', () => {
 			const { composer, settled } = makeComposer({ settleMs: 30_000 });
 
-			composer.add('fix the auth bug, good to go', 1);
+			composer.add('fix the auth bug, go maestro', 1);
 
 			expect(settled[0].text).toBe('fix the auth bug');
 		});
@@ -179,7 +179,7 @@ describe('UtteranceComposer', () => {
 			// prompt, which is worse than doing nothing.
 			const { composer, settled } = makeComposer({ settleMs: 30_000 });
 
-			composer.add('good to go', 1);
+			composer.add('go maestro', 1);
 
 			expect(settled).toEqual([]);
 			expect(composer.composing).toBe(false);
@@ -208,7 +208,7 @@ describe('UtteranceComposer', () => {
 		it('can be switched off entirely', () => {
 			const { composer, settled } = makeComposer({ settleMs: 30_000, sendPhrases: [] });
 
-			composer.add('fix the auth bug, good to go', 1);
+			composer.add('fix the auth bug, go maestro', 1);
 
 			expect(settled).toEqual([]);
 		});
@@ -376,5 +376,159 @@ describe('UtteranceComposer', () => {
 		vi.advanceTimersByTime(SETTLE * 5);
 
 		expect(settled).toEqual([]);
+	});
+	describe('a live configuration', () => {
+		it('applies a changed wait to the next fragment, not the next composer', () => {
+			// The composer outlives every session of the service that owns it, so a
+			// wait copied at construction is the wait the app launched with forever.
+			// The HUD's wait picker only works because this is read per fragment.
+			let settleMs = 900;
+			const settled: ComposedUtterance[] = [];
+			const composer = new UtteranceComposer({
+				getConfig: () => ({ settleMs }),
+				onSettled: (utterance) => settled.push(utterance),
+			});
+
+			composer.add('first request', 0.9);
+			vi.advanceTimersByTime(900);
+			expect(settled).toHaveLength(1);
+
+			settleMs = 5000;
+			composer.add('second request', 0.9);
+			vi.advanceTimersByTime(4900);
+			expect(settled).toHaveLength(1);
+			vi.advanceTimersByTime(100);
+			expect(settled).toHaveLength(2);
+		});
+
+		it('reports the live wait to the HUD', () => {
+			const holds: number[] = [];
+			const composer = new UtteranceComposer({
+				getConfig: () => ({ settleMs: 10_000 }),
+				onSettled: () => undefined,
+				onComposing: (_text, hold) => {
+					if (hold) holds.push(hold.settlesInMs);
+				},
+			});
+
+			composer.add('hold this', 0.9);
+
+			expect(holds).toEqual([10_000]);
+		});
+
+		it('lets the getter win over the static value it was built with', () => {
+			const { settled } = (() => {
+				const settled: ComposedUtterance[] = [];
+				const composer = new UtteranceComposer({
+					settleMs: 30_000,
+					getConfig: () => ({ settleMs: 0 }),
+					onSettled: (utterance) => settled.push(utterance),
+				});
+				composer.add('send on arrival', 0.9);
+				return { settled };
+			})();
+
+			expect(settled.map((u) => u.text)).toEqual(['send on arrival']);
+		});
+	});
+
+	describe('a push-to-talk hold', () => {
+		it('sends nothing on a pause while the control is still down', () => {
+			// The failure this prevents: a breath mid-sentence endpoints the
+			// recogniser, the settle timer fires, and half a request is dispatched
+			// while the user is still holding the button to finish it.
+			const { composer, settled } = makeComposer({ settleMs: 900 });
+
+			composer.holdOpen();
+			composer.add('look at the auth module', 0.9);
+			vi.advanceTimersByTime(60_000);
+
+			expect(settled).toEqual([]);
+			expect(composer.pending).toBe('look at the auth module');
+		});
+
+		it('sends the whole thought on release', () => {
+			const { composer, settled } = makeComposer({ settleMs: 900 });
+
+			composer.holdOpen();
+			composer.add('look at the auth module', 0.9);
+			vi.advanceTimersByTime(5000);
+			composer.add('and tell me why the refresh fails', 0.8);
+			composer.armImmediateSettle();
+
+			expect(settled).toHaveLength(1);
+			expect(settled[0].text).toBe('look at the auth module and tell me why the refresh fails');
+			expect(settled[0].sentBy).toBe('release');
+		});
+
+		it('reports the growing text with no countdown, because nothing is counting down', () => {
+			const holds: unknown[] = [];
+			const composer = new UtteranceComposer({
+				settleMs: 900,
+				onSettled: () => undefined,
+				onComposing: (_text, hold) => holds.push(hold),
+			});
+
+			composer.holdOpen();
+			composer.add('still talking', 0.9);
+
+			expect(holds).toEqual([null]);
+		});
+
+		it('still honours a send phrase said while holding', () => {
+			const { composer, settled } = makeComposer({ settleMs: 900 });
+
+			composer.holdOpen();
+			composer.add('fix the auth bug, send it', 0.9);
+
+			expect(settled.map((u) => u.text)).toEqual(['fix the auth bug']);
+		});
+
+		it('disarms a release left over from the last hold', () => {
+			// A release that found nothing in flight leaves the next fragment armed to
+			// settle on arrival. Carried into the next hold, it would end the new
+			// sentence at its first pause.
+			const { composer, settled } = makeComposer({ settleMs: 900 });
+
+			composer.holdOpen();
+			composer.armImmediateSettle();
+
+			composer.holdOpen();
+			composer.add('first half', 0.9);
+			expect(settled).toEqual([]);
+
+			composer.add('second half', 0.9);
+			composer.armImmediateSettle();
+			expect(settled.map((u) => u.text)).toEqual(['first half second half']);
+		});
+
+		it('goes back to the settle timer once the hold is over', () => {
+			const { composer, settled } = makeComposer({ settleMs: 900 });
+
+			composer.holdOpen();
+			composer.add('held', 0.9);
+			composer.armImmediateSettle();
+			expect(settled).toHaveLength(1);
+
+			// The tail flag from that release settles the next fragment on arrival,
+			// as it always has; the one after it is back on the clock.
+			composer.add('tail', 0.9);
+			expect(settled).toHaveLength(2);
+			composer.add('hands-free again', 0.9);
+			expect(settled).toHaveLength(2);
+			vi.advanceTimersByTime(900);
+			expect(settled).toHaveLength(3);
+		});
+
+		it('is ended by a cancel', () => {
+			const { composer, settled } = makeComposer({ settleMs: 900 });
+
+			composer.holdOpen();
+			composer.cancel();
+			composer.add('after the cancel', 0.9);
+			vi.advanceTimersByTime(900);
+
+			expect(settled.map((u) => u.text)).toEqual(['after the cancel']);
+		});
 	});
 });

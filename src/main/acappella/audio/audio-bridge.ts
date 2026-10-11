@@ -96,6 +96,12 @@ export class VoiceAudioBridge {
 	private hostReady = false;
 	/** Last volume asked for, replayed on `ready`. Null means never set. */
 	private playbackVolume: number | null = null;
+	/**
+	 * The session gated the microphone shut (`listen-gate`). While set, a
+	 * `listen-start` opens nothing: the floor coming back after a reply is the
+	 * session's state, and the device stays the user's call.
+	 */
+	private paused = false;
 	private disposed = false;
 
 	constructor(options: VoiceAudioBridgeOptions) {
@@ -245,10 +251,24 @@ export class VoiceAudioBridge {
 	 */
 	private handleEvent(event: VoiceEvent): void {
 		switch (event.type) {
+			case 'listen-gate':
+				this.paused = event.paused;
+				if (event.paused) {
+					this.pipeline.pause();
+					this.meter.reset();
+				} else if (this.options.session.getState() === 'listening') {
+					// Any other state reaches `listen-start` on its own, and that is
+					// what opens the device once the gate is no longer in the way.
+					this.startCapture();
+				}
+				break;
 			case 'listen-start':
-				this.startCapture();
+				if (!this.paused) this.startCapture();
 				break;
 			case 'listen-stop':
+				// Only the end of the session lifts the gate. It belongs to the
+				// session it was closed in, and the next one opens hot unless told.
+				if (event.reason === 'stopped' || event.reason === 'error') this.paused = false;
 				this.pipeline.stop();
 				this.meter.reset();
 				break;

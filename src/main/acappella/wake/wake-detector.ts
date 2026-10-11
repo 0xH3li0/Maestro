@@ -29,8 +29,8 @@
  */
 
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
-import { OPENWAKEWORD_BASE_ID } from '../../../shared/local-models/model-catalog';
 import type { VoiceScope } from '../../../shared/acappella/protocol';
+import { wakePhraseKey } from '../../../shared/acappella/wake-enrollment';
 import {
 	DEFAULT_WAKE_DEBOUNCE_MS,
 	DEFAULT_WAKE_PHRASE,
@@ -40,13 +40,16 @@ import {
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { AudioFrameRing } from '../audio/audio-pipeline';
+import { GLOBAL_WAKE_PHRASE_ID, wakeClassifierPath } from '../models/capability-gate';
+import { scoreEnrolledWakeWindow } from './enrolled-wake-model';
+import { loadEnrolledWakeModel } from './wake-enrollment-store';
 import {
-	GLOBAL_WAKE_PHRASE_ID,
-	WAKE_WORD_PROVIDER_ID,
-	wakeClassifierPath,
-} from '../models/capability-gate';
-import { modelFilePath } from '../../local-models/model-store';
-import { loadVoiceRuntime } from '../providers/local/runtime';
+	WAKE_CLASSIFIER_WINDOW,
+	WAKE_HOP_SAMPLES,
+	WakeFrontEnd,
+	loadWakeFrontEndModels,
+	releaseWakeFrontEndModels,
+} from './wake-front-end';
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -61,12 +64,9 @@ export {
 // their one import site.
 export { GLOBAL_WAKE_PHRASE_ID } from '../models/capability-gate';
 
-/**
- * openWakeWord's hop: 1280 samples at 16 kHz, which is four of our 20 ms frames.
- * The models are trained on this cadence, so it is a property of the graph and
- * not a tuning knob.
- */
-export const WAKE_HOP_SAMPLES = 1280;
+// openWakeWord's hop is four of our 20 ms frames. Defined with the rest of the
+// front end's shape; re-exported so importers keep their one import site.
+export { WAKE_HOP_SAMPLES } from './wake-front-end';
 
 const FRAMES_PER_HOP = Math.ceil(WAKE_HOP_SAMPLES / ACAPPELLA_AUDIO_FRAME_SAMPLES);
 
@@ -490,49 +490,6 @@ export function createWakeDetector(options: WakeDetectorOptions): WakeDetector {
 // The ONNX scorer
 // ---------------------------------------------------------------------------
 
-/** The `onnxruntime-node` surface used here, structurally. */
-interface OnnxTensorCtor {
-	new (type: string, data: Float32Array, dims: number[]): OnnxTensor;
-}
-
-interface OnnxTensor {
-	data: Float32Array;
-	dims: readonly number[];
-}
-
-interface OnnxSession {
-	inputNames: readonly string[];
-	outputNames: readonly string[];
-	run(feeds: Record<string, OnnxTensor>): Promise<Record<string, OnnxTensor>>;
-	release?(): Promise<void>;
-}
-
-interface OnnxRuntime {
-	InferenceSession: { create(path: string): Promise<OnnxSession> };
-	Tensor: OnnxTensorCtor;
-}
-
-/** Mel frames the embedding graph consumes at once. A property of the trained model. */
-const EMBEDDING_WINDOW_MEL_FRAMES = 76;
-
-/** Embeddings the per-phrase classifier consumes at once. Also a property of the model. */
-const CLASSIFIER_WINDOW_EMBEDDINGS = 16;
-
-/** Mel bins openWakeWord's front end produces. */
-const MEL_BINS = 32;
-
-/**
- * Samples of the previous hop fed in front of each new one.
- *
- * The mel graph is unpadded with a 160-sample stride, so a 1280-sample hop on
- * its own yields fewer frames than the hop covers. openWakeWord's reference
- * streams the last 480 samples ahead of each hop and keeps the newest frames.
- */
-const MEL_CONTEXT_SAMPLES = 480;
-
-/** Mel frames per 80 ms hop: one per 160-sample stride. */
-const MEL_FRAMES_PER_HOP = 8;
-
 /**
  * Hops allowed to wait behind a slow inference chain before the stream is reset.
  * About two seconds: past that the scores describe audio the user finished
@@ -541,55 +498,41 @@ const MEL_FRAMES_PER_HOP = 8;
 const MAX_PENDING_HOPS = 25;
 
 /**
- * The real openWakeWord front end: mel spectrogram, then embedding, then one
- * small classifier per phrase.
+ * What decides whether a window is a phrase. Two kinds exist and the scorer
+ * does not care which it holds: a pretrained openWakeWord graph, or the matcher
+ * built from a user's own recordings.
+ */
+interface WakeClassifier {
+	/** @returns 0 to 1. */
+	score(window: Float32Array, width: number): Promise<number>;
+	release?(): Promise<void>;
+}
+
+/**
+ * The real openWakeWord scorer: the shared front end (`wake-front-end.ts`), then
+ * one classifier per phrase.
  *
  * Returns null when the runtime or the model files are missing, which is the
  * ordinary state of a machine that has not opted into hands-free. The caller
  * runs the detector inert rather than failing: the capability gate is where a
  * missing model becomes a sentence the user can act on.
  *
- * A phrase's classifier is resolved from its TEXT through `wakeClassifierPath`:
- * only pretrained phrases have one. A phrase with no classifier is simply never
- * scored, so a custom phrase that was never trained cannot fire on another
- * phrase's model.
- *
- * **The front end must match openWakeWord's reference exactly**, and it did not:
- * three departures together scored a clear "hey jarvis" at 0.009 where the
- * reference scores 0.999. The mel graph takes samples at INT16 scale (not
- * [-1, 1]); each hop needs the previous 480 samples in front of it; and the mel
- * output is rescaled `x / 10 + 2` before the embedding graph sees it.
+ * A phrase's classifier is resolved from its TEXT. A phrase the user recorded
+ * themselves is scored by the matcher built from those recordings, and that
+ * wins over a pretrained classifier for the same words: the user's own
+ * recordings are the more specific answer to "what does it sound like when I
+ * say this". Otherwise `wakeClassifierPath` finds the pretrained graph, which
+ * only a few phrases have. A phrase with neither is simply never scored, so it
+ * cannot fire on another phrase's model.
  */
 export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
-	let ort: OnnxRuntime;
-	try {
-		ort = await loadVoiceRuntime<OnnxRuntime>('onnx', WAKE_WORD_PROVIDER_ID);
-	} catch (err) {
-		logger.info(`Wake word runtime unavailable: ${(err as Error).message}`, LOG_CONTEXT);
-		return null;
-	}
+	const models = await loadWakeFrontEndModels();
+	if (!models) return null;
+	const { ort } = models;
+	const stream = new WakeFrontEnd(models);
 
-	let melSession: OnnxSession;
-	let embeddingSession: OnnxSession;
-	try {
-		melSession = await ort.InferenceSession.create(
-			modelFilePath(OPENWAKEWORD_BASE_ID, 'melspectrogram.onnx')
-		);
-		embeddingSession = await ort.InferenceSession.create(
-			modelFilePath(OPENWAKEWORD_BASE_ID, 'embedding_model.onnx')
-		);
-	} catch (err) {
-		logger.info(`Wake word models unavailable: ${(err as Error).message}`, LOG_CONTEXT);
-		return null;
-	}
-
-	/** Keyed by classifier file, so two phrase ids sharing a phrase share a session. */
-	const classifiers = new Map<string, OnnxSession | null>();
-	/** Rolling mel frames, and rolling embeddings. Both are the model's own memory. */
-	const melRing: Float32Array[] = [];
-	const embeddingRing: Float32Array[] = [];
-	/** The tail of the previous hop, at int16 scale, fed in front of the next one. */
-	let context = new Float32Array(0);
+	/** Keyed by what the classifier was built from, so two phrase ids sharing a phrase share one. */
+	const classifiers = new Map<string, WakeClassifier | null>();
 	/** The scores from the last completed classifier window, per phrase. */
 	let latest: Record<string, number> = {};
 	/**
@@ -600,13 +543,24 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 	const pending: Array<{ hop: Float32Array; phrases: readonly WakePhrase[] }> = [];
 	let draining = false;
 
-	function resetStream(): void {
-		melRing.length = 0;
-		embeddingRing.length = 0;
-		context = new Float32Array(0);
-	}
+	async function classifierFor(phrase: WakePhrase): Promise<WakeClassifier | null> {
+		const enrolledKey = `enrolled:${wakePhraseKey(phrase.phrase)}`;
+		if (!classifiers.has(enrolledKey)) {
+			const model = await loadEnrolledWakeModel(phrase.phrase);
+			classifiers.set(
+				enrolledKey,
+				model ? { score: async (window) => scoreEnrolledWakeWindow(model, window) } : null
+			);
+			if (model) {
+				logger.info(
+					`Wake phrase '${phrase.phrase}' uses the model trained from ${model.report.clipsUsed} recordings`,
+					LOG_CONTEXT
+				);
+			}
+		}
+		const enrolled = classifiers.get(enrolledKey);
+		if (enrolled) return enrolled;
 
-	async function classifierFor(phrase: WakePhrase): Promise<OnnxSession | null> {
 		const path = wakeClassifierPath(phrase.phrase);
 		if (!path) {
 			if (!classifiers.has(`untrained:${phrase.id}`)) {
@@ -620,72 +574,42 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 		}
 		const cached = classifiers.get(path);
 		if (cached !== undefined) return cached;
-		let session: OnnxSession | null = null;
+		let classifier: WakeClassifier | null = null;
 		try {
-			session = await ort.InferenceSession.create(path);
+			const session = await ort.InferenceSession.create(path);
+			classifier = {
+				async score(window, width) {
+					const out = await session.run({
+						[session.inputNames[0]]: new ort.Tensor('float32', window, [
+							1,
+							WAKE_CLASSIFIER_WINDOW,
+							width,
+						]),
+					});
+					return out[session.outputNames[0]].data[0];
+				},
+				release: async () => session.release?.(),
+			};
 		} catch (err) {
 			logger.info(
 				`Wake classifier for '${phrase.phrase}' could not be opened: ${(err as Error).message}`,
 				LOG_CONTEXT
 			);
 		}
-		classifiers.set(path, session);
-		return session;
+		classifiers.set(path, classifier);
+		return classifier;
 	}
 
 	async function advance(hop: Float32Array, phrases: readonly WakePhrase[]): Promise<void> {
-		// Int16 scale, previous tail in front.
-		const input = new Float32Array(context.length + hop.length);
-		input.set(context, 0);
-		for (let i = 0; i < hop.length; i++) input[context.length + i] = hop[i] * 32768;
-		context = input.slice(Math.max(0, input.length - MEL_CONTEXT_SAMPLES));
-
-		const melOut = await melSession.run({
-			[melSession.inputNames[0]]: new ort.Tensor('float32', input, [1, input.length]),
-		});
-		const mel = melOut[melSession.outputNames[0]];
-		const frames: Float32Array[] = [];
-		for (let i = 0; i + MEL_BINS <= mel.data.length; i += MEL_BINS) {
-			const frame = mel.data.slice(i, i + MEL_BINS);
-			for (let j = 0; j < frame.length; j++) frame[j] = frame[j] / 10 + 2;
-			frames.push(frame);
-		}
-		// The context overlaps the previous hop; only the newest frames are new.
-		melRing.push(...frames.slice(-MEL_FRAMES_PER_HOP));
-		while (melRing.length > EMBEDDING_WINDOW_MEL_FRAMES) melRing.shift();
-		if (melRing.length < EMBEDDING_WINDOW_MEL_FRAMES) return;
-
-		const melWindow = new Float32Array(EMBEDDING_WINDOW_MEL_FRAMES * MEL_BINS);
-		melRing.forEach((frame, index) => melWindow.set(frame, index * MEL_BINS));
-		const embedOut = await embeddingSession.run({
-			[embeddingSession.inputNames[0]]: new ort.Tensor('float32', melWindow, [
-				1,
-				EMBEDDING_WINDOW_MEL_FRAMES,
-				MEL_BINS,
-				1,
-			]),
-		});
-		const embedding = embedOut[embeddingSession.outputNames[0]];
-		embeddingRing.push(Float32Array.from(embedding.data));
-		while (embeddingRing.length > CLASSIFIER_WINDOW_EMBEDDINGS) embeddingRing.shift();
-		if (embeddingRing.length < CLASSIFIER_WINDOW_EMBEDDINGS) return;
-
-		const width = embeddingRing[0].length;
-		const window = new Float32Array(CLASSIFIER_WINDOW_EMBEDDINGS * width);
-		embeddingRing.forEach((vector, index) => window.set(vector, index * width));
+		const window = await stream.push(hop);
+		if (!window) return;
+		const width = window.length / WAKE_CLASSIFIER_WINDOW;
 
 		const next: Record<string, number> = {};
 		for (const phrase of phrases) {
-			const session = await classifierFor(phrase);
-			if (!session) continue;
-			const out = await session.run({
-				[session.inputNames[0]]: new ort.Tensor('float32', window, [
-					1,
-					CLASSIFIER_WINDOW_EMBEDDINGS,
-					width,
-				]),
-			});
-			next[phrase.id] = out[session.outputNames[0]].data[0];
+			const classifier = await classifierFor(phrase);
+			if (!classifier) continue;
+			next[phrase.id] = await classifier.score(window, width);
 		}
 		latest = next;
 	}
@@ -699,7 +623,7 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 					await advance(hop, phrases);
 				} catch (err) {
 					logger.warn(`Wake inference failed: ${(err as Error).message}`, LOG_CONTEXT);
-					resetStream();
+					stream.reset();
 				}
 			}
 		} finally {
@@ -722,7 +646,7 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 				// The CPU is not keeping up. Start the stream over rather than score a
 				// window stitched from two different moments.
 				pending.length = 0;
-				resetStream();
+				stream.reset();
 			}
 			pending.push({ hop: Float32Array.from(hop), phrases });
 			if (!draining) void drain();
@@ -731,10 +655,9 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 		async dispose() {
 			latest = {};
 			pending.length = 0;
-			resetStream();
-			await melSession.release?.();
-			await embeddingSession.release?.();
-			for (const session of classifiers.values()) await session?.release?.();
+			stream.reset();
+			await releaseWakeFrontEndModels(models);
+			for (const classifier of classifiers.values()) await classifier?.release?.();
 			classifiers.clear();
 		},
 	};

@@ -33,10 +33,8 @@
  *     reaches for a hosted recogniser.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
-
-import { decodeWavPcm16, int16ToFloat32 } from '../../shared/audio/pcm';
+import { int16ToFloat32 } from '../../shared/audio/pcm';
+import { readPcmWavFile } from '../utils/wav-file';
 import type {
 	DictationInterruption,
 	DictationRefusalCode,
@@ -96,33 +94,11 @@ const MAX_AUDIO_FILE_BYTES = 512 * 1024 * 1024;
 export async function transcribeAudioFileRequest(
 	filePath: unknown
 ): Promise<SpeechToTextTaskResult> {
-	if (typeof filePath !== 'string' || filePath.trim() === '' || !path.isAbsolute(filePath)) {
-		throw new Error('An absolute path to a WAV file is required.');
-	}
-	let size: number;
-	try {
-		const stat = await fs.stat(filePath);
-		if (!stat.isFile()) throw new Error(`Not a file: ${filePath}`);
-		size = stat.size;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-			throw new Error(`No such file: ${filePath}`);
-		}
-		throw error;
-	}
-	if (size > MAX_AUDIO_FILE_BYTES) {
-		throw new Error(
-			`${filePath} is larger than the ${MAX_AUDIO_FILE_BYTES / (1024 * 1024)} MB a transcription reads.`
-		);
-	}
-
-	let clip: { sampleRate: number; pcm: Int16Array };
-	try {
-		clip = decodeWavPcm16(await fs.readFile(filePath));
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
-		throw new Error(`${reason}. Dictation reads 16-bit PCM WAV files.`);
-	}
+	const clip = await readPcmWavFile(filePath, {
+		maxBytes: MAX_AUDIO_FILE_BYTES,
+		purpose: 'a transcription',
+		reader: 'Dictation',
+	});
 	return transcribeClip(int16ToFloat32(clip.pcm), clip.sampleRate);
 }
 

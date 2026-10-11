@@ -212,6 +212,33 @@ describe('capture lifecycle', () => {
 		]);
 	});
 
+	it('pauses by closing the microphone only, leaving speech alone', () => {
+		const h = harness();
+		h.pipeline.start();
+
+		h.pipeline.pause();
+
+		// No flush: the session is still live, and a reply being spoken when the
+		// user gates the microphone is one they are still listening to.
+		expect(h.commands).toEqual([{ kind: 'start-capture' }, { kind: 'stop-capture' }]);
+		expect(h.pipeline.isRunning).toBe(false);
+	});
+
+	it('reopens after a pause, and ignores frames in between', () => {
+		const h = harness();
+		h.session.state = 'listening';
+		h.pipeline.start();
+		h.pipeline.pause();
+
+		h.push(tone(), 3);
+		expect(h.stt.fed).toHaveLength(0);
+
+		h.pipeline.start();
+		h.push(tone(), 3);
+		expect(h.stt.fed).toHaveLength(3);
+		expect(commandsOfKind(h.commands, 'start-capture')).toHaveLength(2);
+	});
+
 	it('is idempotent in both directions', () => {
 		const h = harness();
 		h.pipeline.start();

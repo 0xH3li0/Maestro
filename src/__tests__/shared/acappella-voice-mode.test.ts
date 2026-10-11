@@ -8,8 +8,11 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	SWITCHABLE_VOICE_MODES,
 	applyAgentScope,
 	scopeForMode,
+	stepSwitchableVoiceMode,
+	switchableVoiceMode,
 	tabScopeDecision,
 	voiceScopeMode,
 	voiceScopeTabId,
@@ -231,5 +234,29 @@ describe('scopeForMode', () => {
 				})
 			)
 		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' });
+	});
+});
+
+describe('stepping through the modes (the Tab key)', () => {
+	it('walks them in the order the switch draws them, wrapping at both ends', () => {
+		expect(SWITCHABLE_VOICE_MODES).toEqual(['tab', 'agent', 'conductor']);
+
+		expect(stepSwitchableVoiceMode('tab')).toBe('agent');
+		expect(stepSwitchableVoiceMode('agent')).toBe('conductor');
+		expect(stepSwitchableVoiceMode('conductor')).toBe('tab');
+
+		expect(stepSwitchableVoiceMode('tab', -1)).toBe('conductor');
+		expect(stepSwitchableVoiceMode('conductor', -1)).toBe('agent');
+	});
+
+	it('reads a document conversation as Tab, which is where the switch shows it', () => {
+		expect(switchableVoiceMode(null)).toBe('conductor');
+		expect(switchableVoiceMode({ kind: 'agent', sessionId: 'philosopher' })).toBe('agent');
+		expect(switchableVoiceMode({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' })).toBe(
+			'tab'
+		);
+		expect(
+			switchableVoiceMode({ kind: 'document', sessionId: 'philosopher', path: '/p/notes.md' })
+		).toBe('tab');
 	});
 });

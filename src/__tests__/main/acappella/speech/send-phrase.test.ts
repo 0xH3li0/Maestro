@@ -16,10 +16,10 @@ import {
 
 describe('matchSendPhrase', () => {
 	it('strips the phrase and keeps the request', () => {
-		const match = matchSendPhrase('fix the auth bug, good to go');
+		const match = matchSendPhrase('fix the auth bug, go maestro');
 
 		expect(match?.text).toBe('fix the auth bug');
-		expect(match?.phrase).toBe('good to go');
+		expect(match?.phrase).toBe('go maestro');
 	});
 
 	it('returns empty text when the whole turn was the signal', () => {
@@ -74,7 +74,7 @@ describe('matchSendPhrase', () => {
 	});
 
 	it('handles a symbol between the request and the phrase', () => {
-		expect(matchSendPhrase('fix the bug -- good to go')?.text).toBe('fix the bug');
+		expect(matchSendPhrase('fix the bug -- go maestro')?.text).toBe('fix the bug');
 	});
 
 	it('ships phrases that are natural to say', () => {

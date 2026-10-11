@@ -96,7 +96,17 @@ import {
 	type AgentOutputTap,
 } from '../../acappella/speech';
 import { readVoiceReadiness } from './acappella-models';
-import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
+import {
+	DEFAULT_SEND_PHRASES,
+	DEFAULT_TTS_VOLUME,
+	DEFAULT_WAKE_PHRASE,
+} from '../../../shared/acappella/voice-controls';
+import type { WakeEnrollmentReply } from '../../../shared/acappella/wake-enrollment';
+import {
+	clampSendWaitOverrideMs,
+	resolveSendWait,
+	type VoiceSendWait,
+} from '../../../shared/acappella/listen-mode';
 import {
 	isACappellaEnabled,
 	requireACappellaEnabled,
@@ -131,6 +141,12 @@ import {
 import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
 import { installVoiceHotkeys, type VoiceHotkeyInstallation } from '../../acappella/hotkeys';
 import { HandsFreeListener } from '../../acappella/wake/hands-free';
+import {
+	WakeEnrollmentService,
+	registerWakeEnrollmentService,
+	runWakeEnrollmentRequest,
+} from '../../acappella/wake/wake-enrollment-service';
+import { enrolledWakeRevision } from '../../acappella/wake/wake-enrollment-store';
 import { ClipCapture } from '../../acappella/audio/clip-capture';
 import { NoticeSpeech } from '../../acappella/audio/notice-speech';
 import { registerDictationMicrophone } from '../../local-models/dictation';
@@ -188,6 +204,13 @@ export const ACAPPELLA_WAKE_TEST_CHANNEL = 'acappella:wake-test';
  * a fake session in every client's event stream.
  */
 export const ACAPPELLA_INPUT_DEVICES_CHANNEL = 'acappella:input-devices';
+
+/**
+ * The wake phrase enrollment channel: recording progress, microphone level, and
+ * training progress for a phrase the user is teaching the wake word. Events are
+ * `WakeEnrollmentEvent` from `shared/acappella/wake-enrollment`.
+ */
+export const ACAPPELLA_WAKE_ENROLLMENT_CHANNEL = 'acappella:wake-enrollment';
 
 /** What the wake-word tuning affordance pushes while it is running. */
 export interface WakeTestEvent {
@@ -360,6 +383,15 @@ let voiceHotkeys: VoiceHotkeyInstallation | null = null;
  * have fired", not "please start listening to me".
  */
 let wakeTestDetector: WakeDetector | null = null;
+
+/**
+ * Wake phrase enrollment: recording a phrase the user wants to wake on, and
+ * training it. Module state because a capture run holds the one microphone, and
+ * every other borrower of it has to be able to ask whether one is live. See
+ * `acappella/wake/wake-enrollment-service.ts`.
+ */
+let wakeEnrollment: WakeEnrollmentService | null = null;
+let releaseWakeEnrollment: (() => void) | null = null;
 
 /**
  * The always-on wake word behind the Voice Controls toggle. Module state for the
@@ -675,14 +707,13 @@ async function buildService(
 		getProviderState: () => buildProviderState(resolution),
 		// How long a sentence is held before it counts as a finished thought. Read
 		// through the getter so tuning it lands on the next thought rather than the
-		// next session.
+		// next session. `resolveSendWait` is the one place the stored default
+		// (settle, or the long hold-until-send backstop) meets the HUD's override,
+		// so the wait the HUD shows is the wait the composer runs.
 		getUtteranceComposerConfig: () => {
 			const settings = readVoiceProviderSettings(deps.settingsStore);
 			return {
-				// Hold mode swaps the short "did they stop talking" guess for a long
-				// backstop, because in that mode the send phrase is how a request
-				// finishes and the timer only catches the times you forget to say it.
-				settleMs: settings.holdUntilSend ? settings.sendHoldMs : settings.turnSettleMs,
+				settleMs: readSendWait(deps).waitMs,
 				sendPhrases: settings.sendPhrases,
 			};
 		},
@@ -740,6 +771,25 @@ async function buildService(
 	});
 	ensureAudioBridge(service, deps);
 	return service;
+}
+
+/**
+ * The send wait the HUD picked, or null to use the stored default.
+ *
+ * In memory on purpose. Settings holds the default; this is the "just for now"
+ * on top of it, so a wait stretched for one long dictation does not quietly
+ * become the wait every later conversation gets. The HUD clears it when it is
+ * closed, and a restart clears it regardless.
+ */
+let sendWaitOverrideMs: number | null = null;
+
+/** The send wait in force, and where it came from. */
+function readSendWait(deps: ACappellaHandlerDependencies): VoiceSendWait {
+	return resolveSendWait(
+		readVoiceProviderSettings(deps.settingsStore),
+		sendWaitOverrideMs,
+		DEFAULT_SEND_PHRASES
+	);
 }
 
 /** Whether the latest `route-decision` came from a Brain (false in Tab mode). */
@@ -923,7 +973,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	const wrappedStart = withIpcErrorLogging(
 		handlerOpts('startSession'),
-		async (rawScope: unknown, windowId: VoiceWindowId): Promise<VoiceStartSessionResult> => {
+		async (
+			rawScope: unknown,
+			windowId: VoiceWindowId,
+			paused: boolean
+		): Promise<VoiceStartSessionResult> => {
 			const scope = parseScope(rawScope);
 			// The microphone is asked for HERE and nowhere earlier. Not at app
 			// launch, not when the Encore Feature is switched on: a first run that
@@ -944,6 +998,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 				scope,
 				source: 'client-button',
 				windowId,
+				paused,
 			});
 			return { snapshot, substitutions };
 		}
@@ -1189,11 +1244,14 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 				sensitivity: settings.wakeSensitivity,
 				debounceMs: settings.wakeDebounceMs,
 				engine: settings.wakeEngine,
+				// Retraining the phrase replaces the model the armed detector loaded.
+				modelRevision: enrolledWakeRevision(settings.wakePhrase ?? DEFAULT_WAKE_PHRASE),
 			};
 		},
 		canRunHandsFree: async () => (await readVoiceReadiness(settingsStore)).canRunHandsFree,
 		getSessionState: () => getVoiceSessionService()?.getState() ?? 'idle',
-		isMicrophoneBorrowed: () => clipCapture?.isActive ?? false,
+		isMicrophoneBorrowed: () =>
+			(clipCapture?.isActive ?? false) || (wakeEnrollment?.isRecording ?? false),
 		startSession: () =>
 			floorSession.startSession({ scope: { kind: 'conductor' }, source: 'wake-word' }),
 		ensureAudioHost: () => {
@@ -1234,6 +1292,12 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 					message: 'The wake word Test is using the microphone. Stop it, then dictate.',
 				};
 			}
+			if (wakeEnrollment?.isRecording) {
+				return {
+					code: 'busy',
+					message: 'A wake phrase is being recorded. Finish that, then dictate.',
+				};
+			}
 			return null;
 		},
 		// The always-on wake word reads `isActive` and stands down or re-arms.
@@ -1258,6 +1322,40 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		},
 	});
 	releaseDictationMicrophone ??= registerDictationMicrophone(clipCapture);
+
+	// Wake phrase enrollment borrows the same microphone, under the same rules:
+	// one consumer at a time, and never out from under a live session.
+	wakeEnrollment ??= new WakeEnrollmentService({
+		emit: (event) => deps.safeSend(ACAPPELLA_WAKE_ENROLLMENT_CHANNEL, event),
+		microphoneBusyReason: () => {
+			if ((getVoiceSessionService()?.getState() ?? 'idle') !== 'idle') {
+				return 'End the voice session first, then record the phrase.';
+			}
+			if (clipCapture?.isActive) return 'Finish the dictation first, then record the phrase.';
+			if (wakeTestDetector) return 'Stop the wake word Test first, then record the phrase.';
+			if (!deps.audioHostDeps) return 'There is no audio host to capture the microphone through.';
+			return null;
+		},
+		openMicrophone: async () => {
+			await requestMicPermission();
+			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+			startWakeTestCapture(deps);
+			// The always-on wake word reads `isRecording` and stands down.
+			void handsFree?.sync();
+		},
+		closeMicrophone: async () => {
+			// Never close a microphone a session is using.
+			if ((getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+				sendAudioHostCommand({ kind: 'stop-capture' });
+			}
+			void handsFree?.sync();
+		},
+		// A newly trained phrase may be the one hands-free is waiting to arm on.
+		onModelChanged: () => void handsFree?.sync(),
+	});
+	releaseWakeEnrollment ??= registerWakeEnrollmentService(wakeEnrollment, () =>
+		isACappellaEnabled(settingsStore)
+	);
 
 	// Spoken notices' speaker. Not gated on the Encore flag either, and like the
 	// dictation microphone it only READS the session's state, to stay silent
@@ -1358,6 +1456,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		async (): Promise<void> => stopWakeTest()
 	);
 
+	const wrappedWakeEnrollment = withIpcErrorLogging(
+		handlerOpts('wakeEnrollment'),
+		async (request: unknown): Promise<WakeEnrollmentReply> => runWakeEnrollmentRequest(request)
+	);
+
 	const wrappedCorrectRoute = withIpcErrorLogging(
 		handlerOpts('correctRoute'),
 		// The HUD's "wrong tab" control. Returns false when there is nothing to
@@ -1393,12 +1496,19 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	ipcMain.handle(
 		'acappella:start-session',
-		async (event, scope: unknown): Promise<VoiceStartSessionResult> => {
+		async (event, scope: unknown, options: unknown): Promise<VoiceStartSessionResult> => {
 			requireEnabled(settingsStore);
 			// Resolved HERE rather than inside the wrapped handler, because
 			// `withIpcErrorLogging` strips the event and the sender is the only
 			// evidence of which window the user actually clicked in.
-			return wrappedStart(event, scope, deps.resolveVoiceWindowId?.(event?.sender) ?? null);
+			return wrappedStart(
+				event,
+				scope,
+				deps.resolveVoiceWindowId?.(event?.sender) ?? null,
+				// Only a literal `true` opens gated: an absent or malformed option must
+				// not produce a session that looks live and hears nothing.
+				(options as { paused?: unknown } | null | undefined)?.paused === true
+			);
 		}
 	);
 
@@ -1426,6 +1536,38 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		audioBridge?.endUtterance();
 		getVoiceSessionService()?.endUtteranceNow();
 	});
+
+	// Open or shut the microphone without ending the session: the HUD's hands-free
+	// toggle, and both ends of its push-to-talk hold. Returns false when there is
+	// no live session to gate, which is how the HUD knows to start one instead.
+	ipcMain.handle('acappella:set-listening', async (_event, payload: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		const { listening, hold, send } = (payload ?? {}) as Record<string, unknown>;
+		if (typeof listening !== 'boolean') throw new Error('InvalidListening');
+		const service = getVoiceSessionService();
+		if (!service) return false;
+		// The release half of push-to-talk is the same two-part gesture as
+		// `end-utterance`: flush the recogniser so the tail of the sentence is
+		// decoded, then settle the composer on it. Flushed BEFORE the gate shuts,
+		// while the audio it needs is still the audio the recogniser holds.
+		if (!listening && send === true) audioBridge?.endUtterance();
+		return service.setListening(listening, { hold: hold === true, send: send === true });
+	});
+
+	// Ungated read: the HUD draws the wait chip from it, and a chip that threw
+	// while the feature was being switched off would blank the control row.
+	ipcMain.handle('acappella:get-send-wait', async (): Promise<VoiceSendWait> => readSendWait(deps));
+
+	// The HUD's quick wait picker. Null (or anything malformed) returns to the
+	// stored default. Applies from the next fragment: the composer reads it live.
+	ipcMain.handle(
+		'acappella:set-send-wait',
+		async (_event, waitMs: unknown): Promise<VoiceSendWait> => {
+			requireEnabled(settingsStore);
+			sendWaitOverrideMs = clampSendWaitOverrideMs(waitMs);
+			return readSendWait(deps);
+		}
+	);
 
 	ipcMain.handle('acappella:interrupt', async (event, source: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
@@ -1532,6 +1674,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	// switching the feature off must still be able to close it.
 	ipcMain.handle('acappella:wake-test-stop', wrappedWakeTestStop);
 
+	// One channel for every enrollment verb, and no gate here: the entry point
+	// decides which verbs need voice switched on, so `maestro-cli voice wake`
+	// reaching it over the bridge is held to exactly the same rule.
+	ipcMain.handle('acappella:wake-enrollment', wrappedWakeEnrollment);
+
 	// The audio host's own control link. `on`, not `handle`: frames arrive fifty
 	// times a second and nothing about them needs a reply, so a promise round trip
 	// per 20 ms of audio would be pure overhead.
@@ -1547,6 +1694,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		// The tuning run taps the same frames rather than opening a second capture:
 		// there is one microphone, and two consumers of it is one device conflict.
 		if (wakeTestDetector) wakeTestDetector.pushFrame(new Int16Array(frame.pcm));
+		else if (wakeEnrollment?.isRecording) wakeEnrollment.pushFrame(new Int16Array(frame.pcm));
 		else handsFree?.pushFrame(new Int16Array(frame.pcm));
 		// A dictated clip taps them too, for the same reason.
 		if (clipCapture?.isActive) clipCapture.pushFrame(new Int16Array(frame.pcm));
@@ -1564,7 +1712,8 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		// A tuning run started before the host finished booting; see startWakeTestCapture.
 		if ((status as AudioHostStatus).kind === 'ready') {
 			markAcappellaAudioHostReady();
-			if (wakeTestDetector) startWakeTestCapture(deps);
+			// So did a wake phrase recording: same command, same replay.
+			if (wakeTestDetector || wakeEnrollment?.isRecording) startWakeTestCapture(deps);
 			else handsFree?.onAudioHostReady();
 		}
 	});
@@ -1684,6 +1833,8 @@ export async function shutdownACappellaForDisable(): Promise<void> {
 	// disposed pipeline still matches settings and reuse it.
 	activeProviderKey = null;
 	activeSubstitutions = [];
+	// A "just for now" wait does not outlive the feature being switched off.
+	sendWaitOverrideMs = null;
 }
 
 /**
@@ -1712,6 +1863,9 @@ async function startWakeTest(
 	}
 	if (clipCapture?.isActive) {
 		return { started: false, reason: 'Finish the dictation first, then test the wake word.' };
+	}
+	if (wakeEnrollment?.isRecording) {
+		return { started: false, reason: 'Finish recording the phrase first, then test it.' };
 	}
 	if (!deps.audioHostDeps) {
 		return { started: false, reason: 'There is no audio host to capture the microphone through.' };
@@ -1832,6 +1986,7 @@ async function stopWakeTest(): Promise<void> {
 export function resetACappellaHandlerState(): void {
 	activeProviderKey = null;
 	activeSubstitutions = [];
+	sendWaitOverrideMs = null;
 	agentOutputTap?.dispose();
 	agentOutputTap = null;
 	voiceHotkeys?.dispose();
@@ -1840,6 +1995,10 @@ export function resetACappellaHandlerState(): void {
 	transport = null;
 	void handsFree?.dispose();
 	handsFree = null;
+	void wakeEnrollment?.dispose();
+	wakeEnrollment = null;
+	releaseWakeEnrollment?.();
+	releaseWakeEnrollment = null;
 	releaseDictationMicrophone?.();
 	releaseDictationMicrophone = null;
 	clipCapture = null;

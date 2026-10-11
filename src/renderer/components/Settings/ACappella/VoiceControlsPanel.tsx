@@ -22,6 +22,7 @@ import { Keyboard, Mic, Radio, Square } from 'lucide-react';
 
 import type { RosterAgent } from '../../../../shared/acappella/protocol';
 import {
+	DEFAULT_SEND_PHRASES,
 	DEFAULT_WAKE_PHRASE,
 	FALLBACK_STOP_PHRASE,
 	MAX_HOLD_THRESHOLD_MS,
@@ -30,6 +31,7 @@ import {
 	MIN_SEND_HOLD_MS,
 	MIN_TURN_SETTLE_MS,
 	MIN_HOLD_THRESHOLD_MS,
+	formatSendPhrases,
 	type WakeEngine,
 } from '../../../../shared/acappella/voice-controls';
 import {
@@ -50,6 +52,8 @@ import { findPretrainedWakePhrase } from '../../../../shared/acappella/voice-mod
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { useVoiceControls } from './useVoiceControls';
+import { useWakeEnrollment } from './useWakeEnrollment';
+import { WakePhraseTrainingRow } from './WakePhraseTraining';
 
 export interface VoiceControlsPanelProps {
 	theme: Theme;
@@ -62,6 +66,9 @@ const HOTKEY_IDS = [VOICE_CONDUCTOR_HOTKEY_ID, VOICE_AGENT_HOTKEY_ID] as const;
 /** How long a Test run listens before closing the microphone on its own. */
 const WAKE_TEST_TIMEOUT_MS = 15_000;
 
+/** The shipped phrases, shown in an emptied field so the format is never a guess. */
+const SEND_PHRASES_PLACEHOLDER = formatSendPhrases(DEFAULT_SEND_PHRASES.slice(0, 3));
+
 const WAKE_ENGINE_OPTIONS: Array<{ value: WakeEngine; label: string }> = [
 	{ value: 'classifier', label: 'Trained model' },
 	{ value: 'transcription', label: 'Transcription' },
@@ -69,6 +76,9 @@ const WAKE_ENGINE_OPTIONS: Array<{ value: WakeEngine; label: string }> = [
 
 export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) {
 	const controls = useVoiceControls(enabled);
+	const enrollment = useWakeEnrollment(controls.wakePhrase, enabled);
+	/** Whether the phrase has a model trained from the user's own recordings. */
+	const enrolled = enrollment.status?.model != null;
 	const { shortcuts, setShortcuts } = useSettings();
 	const [statuses, setStatuses] = useState<GlobalHotkeyStatus[]>([]);
 	const [capabilityNote, setCapabilityNote] = useState<string>('');
@@ -207,12 +217,29 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 						{/* The classifier engine fires on trained phrases only. Saying so here
 						    beats a Test button that listens and never lights up. */}
 						{controls.wakeEngine === 'classifier' &&
+							!enrolled &&
 							!findPretrainedWakePhrase(controls.wakePhrase) && (
 								<p className="text-xs-plus" style={{ color: theme.colors.warning }}>
-									No trained model exists for &ldquo;{controls.wakePhrase}&rdquo;. Use &ldquo;
-									{DEFAULT_WAKE_PHRASE}&rdquo;, or switch Detection to Transcription.
+									No trained model exists for &ldquo;{controls.wakePhrase}&rdquo;. Train it from
+									your own voice below, use &ldquo;{DEFAULT_WAKE_PHRASE}&rdquo;, or switch Detection
+									to Transcription.
 								</p>
 							)}
+					</div>
+
+					<div data-setting-id="encore-a-cappella-wake-phrase-training">
+						<WakePhraseTrainingRow
+							theme={theme}
+							enabled={enabled}
+							phrase={controls.wakePhrase}
+							engine={controls.wakeEngine}
+							enrollment={enrollment}
+							test={{
+								running: testing,
+								message: testHit,
+								toggle: () => void (testing ? stopTest() : startTest()),
+							}}
+						/>
 					</div>
 
 					<div className="flex items-center gap-3">
@@ -476,8 +503,8 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 								Wait for me to say send
 							</div>
 							<p className="text-xs opacity-70 mt-0.5">
-								Speak for as long as you like. Nothing goes to an agent until you say one of the
-								send phrases below, or you stop talking for the pause below.
+								Speak for as long as you like. Nothing goes to an agent until you say a send phrase,
+								or you stop talking for the pause below.
 							</p>
 						</div>
 						<ToggleSwitch
@@ -490,53 +517,55 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 					</div>
 
 					{controls.holdUntilSend && (
-						<>
-							<div
-								className="flex items-center gap-3"
-								data-setting-id="encore-a-cappella-send-hold"
-							>
-								<label className="text-xs opacity-70 w-28" htmlFor="acappella-send-hold">
-									Send after
-								</label>
-								<input
-									id="acappella-send-hold"
-									type="range"
-									min={MIN_SEND_HOLD_MS}
-									max={MAX_SEND_HOLD_MS}
-									step={5_000}
-									disabled={!enabled}
-									value={controls.sendHoldMs}
-									onChange={(event) =>
-										void controls.update({ sendHoldMs: Number(event.target.value) })
-									}
-									className="flex-1"
-								/>
-								<span className="text-xs tabular-nums opacity-70">
-									{Math.round(controls.sendHoldMs / 1000)}s
-								</span>
-							</div>
-
-							<label className="block text-xs opacity-70" htmlFor="acappella-send-phrases">
-								Send phrases
+						<div className="flex items-center gap-3" data-setting-id="encore-a-cappella-send-hold">
+							<label className="text-xs opacity-70 w-28" htmlFor="acappella-send-hold">
+								Send after
 							</label>
 							<input
-								id="acappella-send-phrases"
-								data-setting-id="encore-a-cappella-send-phrases"
-								type="text"
+								id="acappella-send-hold"
+								type="range"
+								min={MIN_SEND_HOLD_MS}
+								max={MAX_SEND_HOLD_MS}
+								step={5_000}
 								disabled={!enabled}
-								value={controls.sendPhrases}
-								onChange={(event) => void controls.update({ sendPhrases: event.target.value })}
-								placeholder="good to go, that's it, send it"
-								className="w-full rounded border bg-transparent px-2 py-1 text-xs outline-none"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								value={controls.sendHoldMs}
+								onChange={(event) =>
+									void controls.update({ sendHoldMs: Number(event.target.value) })
+								}
+								className="flex-1"
 							/>
-							<p className="text-xs-plus opacity-55">
-								Comma separated, and only heard at the END of a sentence - so &quot;that&apos;s it
-								exactly, now fix the tests&quot; keeps listening. The phrase is removed before the
-								request is sent. Leave this empty to send only on the pause.
-							</p>
-						</>
+							<span className="text-xs tabular-nums opacity-70">
+								{Math.round(controls.sendHoldMs / 1000)}s
+							</span>
+						</div>
 					)}
+
+					{/* Outside the toggle above on purpose. A send phrase ends a request in
+					    BOTH modes: with the toggle off it beats the short settle window,
+					    with it on it is how a held request finishes. Hidden behind the
+					    toggle, the phrase worked for everyone and could be changed by
+					    almost no one. */}
+					<label className="block text-xs opacity-70" htmlFor="acappella-send-phrases">
+						Send phrases
+					</label>
+					<input
+						id="acappella-send-phrases"
+						data-setting-id="encore-a-cappella-send-phrases"
+						type="text"
+						disabled={!enabled}
+						value={controls.sendPhrases}
+						onChange={(event) => void controls.update({ sendPhrases: event.target.value })}
+						placeholder={SEND_PHRASES_PLACEHOLDER}
+						className="w-full rounded border bg-transparent px-2 py-1 text-xs outline-none disabled:opacity-50"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					/>
+					<p className="text-xs-plus opacity-55">
+						Say one to send a request right away instead of waiting out the pause. Comma separated,
+						and only heard at the END of a sentence - so &quot;that&apos;s it exactly, now fix the
+						tests&quot; keeps listening. The phrase is removed before the request is sent, and the
+						first one is the phrase the HUD reminds you of. Leave this empty to send only on the
+						pause.
+					</p>
 
 					<div className="flex items-center gap-3" data-setting-id="encore-a-cappella-turn-settle">
 						<label className="text-xs opacity-70 w-28" htmlFor="acappella-turn-settle">

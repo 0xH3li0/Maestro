@@ -94,6 +94,8 @@ beforeEach(() => {
 		minimized: false,
 		muted: false,
 		loaded: true,
+		listenMode: 'hands-free',
+		sendWait: null,
 	});
 	setReducedMotion(false);
 });
@@ -192,8 +194,9 @@ describe('Keyboard reachability', () => {
 
 		for (const testId of [
 			'voice-hud-talk',
+			'voice-hud-listen-mode',
+			'voice-hud-wait-chip',
 			'voice-hud-interrupt',
-			'voice-hud-stop',
 			'voice-hud-transcript-toggle',
 			'voice-hud-mute',
 			'voice-hud-minimize',
@@ -216,14 +219,54 @@ describe('Keyboard reachability', () => {
 		expect(document.activeElement).toBe(document.body);
 	});
 
-	it('toggles the session from the keyboard alone', () => {
+	it('toggles the microphone from the keyboard alone', async () => {
 		renderHud();
 		startSession();
 		const talk = screen.getByTestId('voice-hud-talk');
-		act(() => {
-			talk.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+		// Hands-free is a plain button: Enter and Space activate it as a click, so
+		// the keyboard path is the mouse path rather than a second handler.
+		await act(async () => {
+			talk.click();
 		});
-		expect(window.maestro.voice.stop).toHaveBeenCalled();
+		expect(window.maestro.voice.setListening).toHaveBeenCalledWith({
+			listening: false,
+			send: false,
+		});
+		// Shutting the microphone is not hanging up.
+		expect(window.maestro.voice.stop).not.toHaveBeenCalled();
+	});
+
+	it('holds push-to-talk from the keyboard: down opens, up sends', async () => {
+		vi.useFakeTimers();
+		try {
+			useVoiceUiStore.setState({ listenMode: 'push-to-talk' });
+			renderHud();
+			startSession();
+			const talk = screen.getByTestId('voice-hud-talk');
+
+			await act(async () => {
+				talk.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+				// A held key repeats; a repeat must not be a second press.
+				talk.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, repeat: true }));
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(window.maestro.voice.setListening).toHaveBeenCalledTimes(1);
+			expect(window.maestro.voice.setListening).toHaveBeenLastCalledWith({
+				listening: true,
+				hold: true,
+			});
+
+			await act(async () => {
+				talk.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true }));
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(window.maestro.voice.setListening).toHaveBeenLastCalledWith({
+				listening: false,
+				send: true,
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

@@ -56,6 +56,7 @@ import {
 	type WakeEngine,
 	clampTtsVolume,
 	clampTurnSettleMs,
+	isLegacyDefaultSendPhrases,
 	parseSendPhrases,
 } from '../../../shared/acappella/voice-controls';
 import {
@@ -685,7 +686,7 @@ function unresolved<R extends VoiceProviderRole>(
  *   3. Move the old default wake phrase ("hey maestro") to the new one.
  *   4. Move a stored local Brain (`qwen3-local`) to the `voice-routing` assignment.
  */
-export const VOICE_PROVIDERS_SETTINGS_VERSION = 4;
+export const VOICE_PROVIDERS_SETTINGS_VERSION = 5;
 
 /** Settings key of the Local Models task assignments, read here for the Brain. */
 const LOCAL_MODEL_ASSIGNMENTS_KEY = 'localModelAssignments';
@@ -719,6 +720,11 @@ const LEGACY_DEFAULT_STT_IDS = new Set<string>([MOCK_PROVIDER_IDS.stt, ECHO_STT_
  * a dropdown, but a settings file could name it, and that file ran Qwen3. It
  * keeps doing so: the choice moves to the assignment (unless the task already
  * has one, which is the newer decision) and the stored provider id is cleared.
+ *
+ * Step 5: the same panel saved the old send-phrase list, which led with "good to
+ * go". The default now leads with "go maestro", and a stored copy of the old
+ * list would keep winning over it. Only that exact list is cleared; an edited
+ * list, and an emptied one, are the user's own and stay.
  *
  * @returns true when any step changed something.
  */
@@ -789,6 +795,18 @@ export function migrateLegacyVoiceProviders(store: {
 			next.providers = nextProviders;
 			changed = true;
 			logger.info('Moved the stored local Brain to the voice-routing assignment', LOG_CONTEXT);
+		}
+	}
+
+	if (version < 5) {
+		// `next.controls`, not `stored.controls`: step 3 may already have replaced it.
+		const controls = next.controls as Record<string, unknown> | undefined;
+		if (controls && isLegacyDefaultSendPhrases(controls.sendPhrases)) {
+			const nextControls = { ...controls };
+			delete nextControls.sendPhrases;
+			next.controls = nextControls;
+			changed = true;
+			logger.info('Moved the send phrases off the old default list', LOG_CONTEXT);
 		}
 	}
 

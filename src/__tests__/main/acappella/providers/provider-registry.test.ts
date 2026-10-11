@@ -637,7 +637,7 @@ describe('provider registry', () => {
 		expect(store.read()).toEqual({
 			providers: {},
 			controls: { conversationalMode: true },
-			providersVersion: 4,
+			providersVersion: 5,
 		});
 		const settings = readVoiceProviderSettings(store);
 		expect(resolveVoicePipeline({ settings }).resolvedIds).toEqual(DEFAULT_PROVIDER_IDS);
@@ -649,13 +649,13 @@ describe('provider registry', () => {
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
 		expect(store.read().providers).toEqual({ stt: ECHO_STT_PROVIDER_ID, tts: 'system-tts' });
-		expect(store.read().providersVersion).toBe(4);
+		expect(store.read().providersVersion).toBe(5);
 	});
 
 	it('runs once, so a later deliberate choice of the mock trio stands', () => {
 		const store = blobStore({
 			providers: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
-			providersVersion: 4,
+			providersVersion: 5,
 		});
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
@@ -674,7 +674,7 @@ describe('provider registry', () => {
 		expect(store.read().controls).toEqual({ wakeWordEnabled: true });
 		// The provider step did not run twice.
 		expect(store.read().providers).toEqual({ stt: 'parakeet-local' });
-		expect(store.read().providersVersion).toBe(4);
+		expect(store.read().providersVersion).toBe(5);
 	});
 
 	it('keeps a wake phrase the user typed themselves', () => {
@@ -682,6 +682,51 @@ describe('provider registry', () => {
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
 		expect(store.read().controls).toEqual({ wakePhrase: 'okay computer' });
+	});
+
+	it('moves the old default send phrases, which the panel saved, to the new default', () => {
+		// Version 4 already ran: only the send phrase step is still owed.
+		const store = blobStore({
+			controls: {
+				sendPhrases: "good to go, that's it, send it, go ahead, make it so",
+				holdUntilSend: true,
+			},
+			providersVersion: 4,
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(true);
+		expect(store.read().controls).toEqual({ holdUntilSend: true });
+		// Absent reads as the defaults, which now lead with the new phrase.
+		expect(readVoiceProviderSettings(store).sendPhrases).toBeUndefined();
+		expect(store.read().providersVersion).toBe(5);
+	});
+
+	it('keeps send phrases the user edited, and a list they emptied', () => {
+		const edited = blobStore({
+			controls: { sendPhrases: 'good to go, ship it' },
+			providersVersion: 4,
+		});
+		expect(migrateLegacyVoiceProviders(edited)).toBe(false);
+		expect(edited.read().controls).toEqual({ sendPhrases: 'good to go, ship it' });
+
+		// Empty is a decision: the spoken send is off, and it stays off.
+		const emptied = blobStore({ controls: { sendPhrases: '' }, providersVersion: 4 });
+		expect(migrateLegacyVoiceProviders(emptied)).toBe(false);
+		expect(readVoiceProviderSettings(emptied).sendPhrases).toEqual([]);
+	});
+
+	it('clears the old wake phrase and the old send phrases in one pass', () => {
+		// Step 5 reads the controls step 3 already rewrote, not the stored copy.
+		const store = blobStore({
+			controls: {
+				wakePhrase: 'hey maestro',
+				sendPhrases: "good to go,that's it,send it,go ahead,make it so",
+			},
+			providersVersion: 2,
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(true);
+		expect(store.read().controls).toEqual({});
 	});
 
 	it('does nothing on a store it cannot write', () => {
@@ -707,7 +752,7 @@ describe('provider registry', () => {
 
 		expect(store.read('acappella')).toEqual({
 			providers: { stt: 'parakeet-local' },
-			providersVersion: 4,
+			providersVersion: 5,
 		});
 		expect(store.read('localModelAssignments')).toEqual({
 			'voice-routing': { type: 'local', modelId: 'qwen3-1.7b-instruct-q4km' },
@@ -728,7 +773,7 @@ describe('provider registry', () => {
 
 		// The assignment is the newer decision; only the dead provider id goes.
 		expect(store.read('localModelAssignments')).toEqual(assigned);
-		expect(store.read('acappella')).toEqual({ providers: {}, providersVersion: 4 });
+		expect(store.read('acappella')).toEqual({ providers: {}, providersVersion: 5 });
 	});
 
 	it('leaves a voice-specific Brain and the assignments alone', () => {
@@ -739,7 +784,7 @@ describe('provider registry', () => {
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
 		expect(store.read('acappella')).toEqual({
 			providers: { brain: 'openai-brain' },
-			providersVersion: 4,
+			providersVersion: 5,
 		});
 		expect(store.read('localModelAssignments')).toBeUndefined();
 	});

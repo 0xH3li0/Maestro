@@ -20,6 +20,8 @@ import {
 	DEFAULT_HOLD_THRESHOLD_MS,
 	DEFAULT_CONVERSATIONAL_MODE,
 	DEFAULT_SEND_PHRASES,
+	formatSendPhrases,
+	isLegacyDefaultSendPhrases,
 	DEFAULT_HOLD_UNTIL_SEND,
 	DEFAULT_SEND_HOLD_MS,
 	clampSendHoldMs,
@@ -34,13 +36,11 @@ import {
 	asWakeEngine,
 	type WakeEngine,
 } from '../../../../shared/acappella/voice-controls';
+import { patchVoiceSettingsSection, readVoiceSettingsBlob } from '../../../services/voiceSettings';
 import { useVoiceUiStore } from '../../../stores/voiceUiStore';
 
 /** The idle timeout in the unit the panel shows. Stored in ms, shown in seconds. */
 const DEFAULT_IDLE_TIMEOUT_SECONDS = DEFAULT_IDLE_TIMEOUT_MS / 1000;
-
-/** Settings key holding everything A Cappella persists. Mirrors the main-side constant. */
-const ACAPPELLA_SETTINGS_KEY = 'acappella';
 
 /** One agent's wake phrase, so saying it jumps straight into that agent's context. */
 export interface AgentWakePhrase {
@@ -94,7 +94,7 @@ export const DEFAULT_VOICE_CONTROLS: VoiceControlSettings = {
 	conversationalMode: DEFAULT_CONVERSATIONAL_MODE,
 	holdUntilSend: DEFAULT_HOLD_UNTIL_SEND,
 	sendHoldMs: DEFAULT_SEND_HOLD_MS,
-	sendPhrases: DEFAULT_SEND_PHRASES.join(', '),
+	sendPhrases: formatSendPhrases(DEFAULT_SEND_PHRASES),
 	idleTimeoutSeconds: DEFAULT_IDLE_TIMEOUT_SECONDS,
 };
 
@@ -105,11 +105,6 @@ export interface VoiceControls extends VoiceControlSettings {
 	setAgentPhrase: (agentSessionId: string, phrase: string) => Promise<void>;
 	/** False until the stored blob has been read, so a panel can say so. */
 	loaded: boolean;
-}
-
-interface StoredBlob {
-	controls?: Record<string, unknown>;
-	[key: string]: unknown;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -152,13 +147,31 @@ export function readVoiceControls(
 		holdUntilSend: raw.holdUntilSend === true,
 		sendHoldMs: clampSendHoldMs(raw.sendHoldMs),
 		// An absent value takes the defaults; a stored empty string is a deliberate
-		// "no spoken send", so the two must not collapse into each other.
+		// "no spoken send", so the two must not collapse into each other. The old
+		// shipped list reads as absent too: the startup migration clears it, and
+		// this covers a blob read before that has run.
 		sendPhrases:
-			typeof raw.sendPhrases === 'string' ? raw.sendPhrases : DEFAULT_SEND_PHRASES.join(', '),
+			typeof raw.sendPhrases === 'string' && !isLegacyDefaultSendPhrases(raw.sendPhrases)
+				? raw.sendPhrases
+				: DEFAULT_VOICE_CONTROLS.sendPhrases,
 		// Stored in milliseconds because that is what `FloorControlConfig` speaks;
 		// shown in seconds because that is what people speak.
 		idleTimeoutSeconds: Math.round(asNumber(raw.idleTimeoutMs, DEFAULT_IDLE_TIMEOUT_MS) / 1000),
 	};
+}
+
+/**
+ * A patch of panel fields as the fields `controls` stores.
+ *
+ * The same names, with one exception: the idle timeout is stored in
+ * MILLISECONDS because that is the unit `FloorControlConfig` speaks, and shown
+ * in seconds because that is the unit people speak.
+ */
+export function toStoredControls(patch: Partial<VoiceControlSettings>): Record<string, unknown> {
+	const { idleTimeoutSeconds, ...stored } = patch;
+	return idleTimeoutSeconds === undefined
+		? stored
+		: { ...stored, idleTimeoutMs: Math.max(0, Math.round(idleTimeoutSeconds * 1000)) };
 }
 
 export function useVoiceControls(enabled: boolean): VoiceControls {
@@ -168,11 +181,9 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 	useEffect(() => {
 		let cancelled = false;
 		void (async () => {
-			const stored = (await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) as
-				| StoredBlob
-				| undefined;
+			const stored = await readVoiceSettingsBlob();
 			if (cancelled) return;
-			setSettings(readVoiceControls(stored?.controls));
+			setSettings(readVoiceControls(stored.controls));
 			setLoaded(true);
 		})();
 		return () => {
@@ -181,51 +192,20 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 	}, [enabled]);
 
 	/**
-	 * Read-modify-write against the whole blob.
-	 *
-	 * A Cappella keeps providers, voices, and controls in one object, so writing
-	 * only the section being changed would drop the rest. The idle timeout is
-	 * stored in MILLISECONDS because that is the unit `FloorControlConfig` speaks;
-	 * the panel shows seconds because that is the unit people speak.
-	 */
-	const persist = useCallback(async (next: VoiceControlSettings) => {
-		const stored = ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ??
-			{}) as StoredBlob;
-		await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, {
-			...stored,
-			controls: {
-				...(stored.controls ?? {}),
-				wakeWordEnabled: next.wakeWordEnabled,
-				wakePhrase: next.wakePhrase,
-				wakeSensitivity: next.wakeSensitivity,
-				wakeDebounceMs: next.wakeDebounceMs,
-				wakeEngine: next.wakeEngine,
-				agentPhrases: next.agentPhrases,
-				stopPhrase: next.stopPhrase,
-				stopWordEnabled: next.stopWordEnabled,
-				holdThresholdMs: next.holdThresholdMs,
-				turnSettleMs: next.turnSettleMs,
-				conversationalMode: next.conversationalMode,
-				holdUntilSend: next.holdUntilSend,
-				sendHoldMs: next.sendHoldMs,
-				sendPhrases: next.sendPhrases,
-				idleTimeoutMs: Math.max(0, Math.round(next.idleTimeoutSeconds * 1000)),
-			},
-		});
-	}, []);
-
-	/**
 	 * Next state is computed from the CURRENT render's settings rather than
 	 * inside the state updater. An updater that also wrote to disk would run
 	 * twice under StrictMode and persist the same change twice.
+	 *
+	 * Only the patched fields are written (`toStoredControls`). This used to save
+	 * all fifteen on every change, which froze every default the panel happened
+	 * to be showing into the user's settings the first time they moved a slider.
 	 */
 	const update = useCallback(
 		async (patch: Partial<VoiceControlSettings>) => {
-			const next = { ...settings, ...patch };
-			setSettings(next);
-			await persist(next);
+			setSettings({ ...settings, ...patch });
+			await patchVoiceSettingsSection('controls', toStoredControls(patch));
 		},
-		[persist, settings]
+		[settings]
 	);
 
 	const setAgentPhrase = useCallback(
@@ -236,15 +216,14 @@ export function useVoiceControls(enabled: boolean): VoiceControls {
 			const agentPhrases = phrase.trim()
 				? [...rest, { agentSessionId, phrase: phrase.trim() }]
 				: rest;
-			const next = { ...settings, agentPhrases };
-			setSettings(next);
-			await persist(next);
+			setSettings({ ...settings, agentPhrases });
+			await patchVoiceSettingsSection('controls', { agentPhrases });
 			// The Left Bar draws a badge per agent from a mirror of this list. There
 			// is no settings-change broadcast, so the one writer tells it directly -
 			// otherwise a phrase just assigned shows no badge until the next restart.
 			await useVoiceUiStore.getState().refreshWakePhrases();
 		},
-		[persist, settings]
+		[settings]
 	);
 
 	return { ...settings, update, setAgentPhrase, loaded };

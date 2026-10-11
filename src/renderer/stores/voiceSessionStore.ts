@@ -35,8 +35,9 @@ import {
 	isDocumentScope,
 	voiceScopeAgentId,
 } from '../../shared/acappella/document-scope';
-import type { VoiceSessionState } from '../../shared/acappella/session-state';
+import { isVoiceSessionActive, type VoiceSessionState } from '../../shared/acappella/session-state';
 import { useVoiceDiagnosticsStore } from './voiceDiagnosticsStore';
+import { useVoiceUiStore } from './voiceUiStore';
 
 // ============================================================================
 // Types
@@ -110,6 +111,8 @@ export interface VoiceSnapshotLike {
 	 * the same as null, which the primary window shows.
 	 */
 	windowId?: VoiceWindowId;
+	/** Whether the microphone is gated shut. Optional for the same reason. */
+	listenPaused?: boolean;
 }
 
 interface VoiceSessionStoreState {
@@ -184,6 +187,27 @@ interface VoiceSessionStoreState {
 	feed: VoiceFeedEntry[];
 	/** The user closed the HUD. Cleared when a new session starts. */
 	dismissed: boolean;
+	/**
+	 * The microphone is gated shut while the session stays alive (`listen-gate`):
+	 * hands-free switched off, or push-to-talk with the button up.
+	 *
+	 * Its own field rather than a session state, because the session really is
+	 * still `listening` - it can answer, speak, and be re-bound. What changed is
+	 * the device, and `voiceHudVisualState(state, listenPaused)` is how every
+	 * surface turns the pair into one honest answer about the microphone.
+	 */
+	listenPaused: boolean;
+	/**
+	 * A session has been live since the HUD was last closed.
+	 *
+	 * What keeps the HUD on screen after its session ends. Only Escape (the close
+	 * control) takes the HUD away: a session that timed out, or was switched off
+	 * from the talk button, leaves the surface where it was, showing that the
+	 * microphone is closed and one click from open again. Derived from the
+	 * session here, never set by a component, so a window that reloaded
+	 * mid-session agrees with one that watched it start.
+	 */
+	surfaced: boolean;
 }
 
 interface VoiceSessionStoreActions {
@@ -250,6 +274,8 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	roster: [],
 	feed: [],
 	dismissed: false,
+	listenPaused: false,
+	surfaced: false,
 };
 
 /**
@@ -274,6 +300,8 @@ function freshSessionFields(sessionId: string): Partial<VoiceSessionStoreState> 
 		error: null,
 		feed: [],
 		dismissed: false,
+		// A new session opens hot unless its own `listen-gate` says otherwise.
+		listenPaused: false,
 	};
 }
 
@@ -345,6 +373,16 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					// before it knows whether the session belongs to it.
 					patch.windowId = event.windowId ?? null;
 					break;
+				case 'listen-gate':
+					patch.listenPaused = event.paused;
+					if (event.paused) {
+						// Nothing is arriving to move the meter or finish the hypothesis.
+						patch.audioLevel = 0;
+						patch.speechDetected = false;
+						patch.partialTranscript = '';
+						patch.heldUtterance = null;
+					}
+					break;
 				case 'scope-change':
 					// Switched from the HUD mid-session: the header and the switch
 					// follow, and the next utterance goes where this says.
@@ -369,6 +407,8 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					// belongs to whichever event comes next.
 					if (event.reason === 'stopped') {
 						patch.state = 'idle';
+						// The gate belongs to the session that just ended.
+						patch.listenPaused = false;
 						// An error describes the session that carried it. A refusal from a
 						// session the user has since ended is describing nothing, and the
 						// HUD renders whenever `error` is set - so keeping it here left a
@@ -502,7 +542,10 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				});
 			}
 
-			return { ...base, ...patch };
+			const next = { ...base, ...patch };
+			// Sticky until the HUD is closed: see the field's own comment.
+			if (isVoiceSessionActive(next.state)) next.surfaced = true;
+			return next;
 		}),
 
 	applySnapshot: (snapshot) =>
@@ -525,6 +568,7 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					// saw the `wake` that carries it, and without it that window would
 					// decide it does not own a session that is in fact its own.
 					windowId: snapshot.windowId ?? null,
+					surfaced: prev.surfaced || isVoiceSessionActive(prev.state),
 				};
 			}
 			const changed = snapshot.sessionId !== prev.sessionId;
@@ -533,6 +577,8 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 				...(changed ? freshSessionFields(snapshot.sessionId) : {}),
 				state: snapshot.state,
 				scope: snapshot.scope,
+				listenPaused: snapshot.listenPaused === true,
+				surfaced: prev.surfaced || isVoiceSessionActive(snapshot.state),
 				windowId: snapshot.windowId ?? null,
 				// Adopt the snapshot's seq as the baseline: a client that joins
 				// mid-session has not lost events, it simply was not there.
@@ -543,7 +589,9 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 
 	setSubstitutions: (substitutions) => set({ substitutions }),
 
-	setDismissed: (dismissed) => set({ dismissed }),
+	// Closing is what ends `surfaced`; un-dismissing must not invent a HUD for a
+	// session that was never live here.
+	setDismissed: (dismissed) => set(dismissed ? { dismissed, surfaced: false } : { dismissed }),
 
 	reset: () => set({ ...EMPTY_STATE }),
 }));
@@ -563,8 +611,25 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
  * leaking back in at the last hop. Anything that starts a session goes through
  * here so there is no second place to forget.
  */
-export async function beginVoiceSession(scope?: VoiceScope): Promise<void> {
-	const result = await window.maestro.voice.start(scope);
+export async function beginVoiceSession(
+	scope?: VoiceScope,
+	options: {
+		/**
+		 * Open the microphone whatever the listen mode says. For the one caller
+		 * whose start IS the user opening it: the HUD's talk button.
+		 */
+		open?: boolean;
+	} = {}
+): Promise<void> {
+	// Push-to-talk means the microphone is open only while the button is held, so
+	// a session started by anything else (the composer microphone, the palette,
+	// the Left Bar menu) opens gated. Decided here because this is the one way a
+	// surface starts a session: a trigger that forgot to ask would open a hot
+	// microphone in the mode that exists to prevent one.
+	const paused = !options.open && useVoiceUiStore.getState().listenMode === 'push-to-talk';
+	const result = paused
+		? await window.maestro.voice.start(scope, { paused: true })
+		: await window.maestro.voice.start(scope);
 	const store = useVoiceSessionStore.getState();
 	store.applySnapshot(result.snapshot);
 	store.setSubstitutions(result.substitutions);

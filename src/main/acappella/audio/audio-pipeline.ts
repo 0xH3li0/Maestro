@@ -269,10 +269,30 @@ export class AudioPipeline {
 	 */
 	stop(): void {
 		if (!this.running) return;
-		this.running = false;
-		this.options.sendCommand({ kind: 'stop-capture' });
+		this.closeCapture();
 		this.options.sendCommand({ kind: 'flush' });
 		this.ducked = false;
+	}
+
+	/**
+	 * Close the microphone and leave speech alone.
+	 *
+	 * The session is still live: a reply being spoken when the user gates the
+	 * microphone (`listen-gate`) is one they are still listening to, and flushing
+	 * it would turn "stop hearing me" into "stop talking".
+	 */
+	pause(): void {
+		if (!this.running) return;
+		// A duck is lifted by the frame that follows the candidate, and no more
+		// frames are coming. Left in place, the reply would play out at the ducked
+		// gain with nothing ever restoring it.
+		if (this.ducked) this.setDuck(false);
+		this.closeCapture();
+	}
+
+	private closeCapture(): void {
+		this.running = false;
+		this.options.sendCommand({ kind: 'stop-capture' });
 		this.logDropSummary();
 		this.resetRun();
 	}

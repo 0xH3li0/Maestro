@@ -136,14 +136,42 @@ Both live in **Voice Controls**.
 ### Wake word
 
 - Default phrase: **"hey jarvis"**, the phrase a trained detector ships for. Say it and a Conductor session opens without stealing focus from whatever you are working in.
-- **Detection** picks how the phrase is heard. **Trained model** (the default) is tiny and nearly free on the CPU, but it only knows the phrases it was trained on. **Transcription** works for any phrase you type: the local speech model transcribes each burst of speech and matches the phrase in the text, at the cost of keeping that model loaded (about 1 GB) while hands-free is on.
+- **Detection** picks how the phrase is heard. **Trained model** (the default) is tiny and nearly free on the CPU, but it only knows phrases it has a model for: "hey jarvis" out of the box, plus any phrase you [train from your own voice](#training-your-own-wake-phrase). **Transcription** works for any phrase you type with no training: the local speech model transcribes each burst of speech and matches the phrase in the text, at the cost of keeping that model loaded (about 1 GB) while hands-free is on.
 - **Sensitivity** is a single slider. Higher fires more easily.
 - **Test** runs the detector with no session behind it, so you can tune the sensitivity by saying the phrase instead of guessing, restarting, and guessing again. A test run closes the microphone on its own after 15 seconds.
 - **Per-agent wake phrases.** Any agent can be given its own phrase, and saying it opens a session bound directly to that agent, skipping routing entirely.
 
-The trained-model engine needs the openWakeWord front end (2.4 MB) plus the phrase's own detector (1.3 MB for "hey jarvis"). If either is missing, or the phrase has no trained detector, **Test** says exactly which instead of listening to nothing.
+The trained-model engine needs the openWakeWord front end (2.4 MB) plus the phrase's own detector: the 1.3 MB download for "hey jarvis", or the one you trained. If either is missing, or the phrase has no detector, **Test** says exactly which instead of listening to nothing.
 
 ![Wake word settings, with a slot reporting exactly which model it is missing](./screenshots/acappella-wake-word.png)
+
+### Training your own wake phrase
+
+Any phrase can be a wake phrase if you teach it to Maestro. Type the phrase, press **Train** under it, and work down the dialog:
+
+1. **Say the phrase.** Press **Record** and say the phrase, wait a second, and say it again. Every time you say it becomes one recording; there is no button per take. About 20 is the target and 8 is the minimum. Say it the ways you really will: closer to the microphone and further away, quicker, quieter. **Remove last** drops a take that was a cough.
+2. **Read the passage aloud.** About 30 seconds of ordinary speech (12 is the minimum). This is how Maestro learns what is NOT the phrase. The passage uses each word of your phrase separately, never the whole phrase, so "hey, how is it going" does not wake it. Do not say the whole phrase in this step.
+3. **Train.** It takes a few seconds. Nothing is downloaded or uploaded.
+
+The result is one of three verdicts, with the numbers behind it:
+
+| Verdict                              | What it means                                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| Stands well apart from other speech  | Every recording sounds more like the other recordings than anything in the passage does, with room to spare.        |
+| Usable. Expect to adjust sensitivity | They are apart, but not by much. Use **Test** and the sensitivity slider.                                           |
+| Too close to other speech            | Something in the passage sounds as much like the phrase as the phrase does. Record more, or choose a longer phrase. |
+
+Press **Test** in the dialog to try it straight away, and **Improve** later to add recordings and train again. Training always uses every recording you have made.
+
+Things worth knowing:
+
+- **It learns your voice.** It compares what the microphone hears with your own recordings, so it mostly responds to you and may not respond to someone else saying the same words. A downloaded phrase like "hey jarvis" was trained on thousands of voices and works for anyone.
+- **Longer phrases work better.** Two or three words with distinct sounds ("hey maestro", "okay scout") stand apart from ordinary speech far more than one short word does.
+- **Your recordings stay on this machine.** They are kept, so that adding more next week retrains from all of them, and they are never sent anywhere. **Delete recordings and model** in the dialog removes them, and works even with voice switched off.
+- **Detection must be set to Trained model.** Transcription matches the phrase in text and does not use what you trained.
+- **A trained phrase outranks a downloaded one.** If you train "hey jarvis" yourself, your recordings are what is used.
+
+From the command line, `maestro-cli voice wake` does the same things: `record` and `stop` use the microphone, `add` takes WAV files instead, and `train`, `status`, `list`, and `remove` do what their names say. See the [CLI guide](./cli#voice).
 
 ### Stop word
 
@@ -163,7 +191,7 @@ Wake phrases are only listened for while the session is cold, and stop phrases o
 
 ## Who you are talking to
 
-A session is in one of three modes, shown as **Tab / Agent / Conductor** under the HUD's header. Click one to switch; the session keeps running and the new mode applies from the next thing you say.
+A session is in one of three modes, shown as **Tab / Agent / Conductor** under the HUD's header. Click one to switch, or press `Tab` while the HUD is up to step to the next one (`Shift+Tab` steps back); the session keeps running and the new mode applies from the next thing you say. A completion popup, a shell line, and an editor that indents with `Tab` all keep the key.
 
 | Mode          | Where your words go                                                                                                                                | Who decides                                                                   |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -173,7 +201,7 @@ A session is in one of three modes, shown as **Tab / Agent / Conductor** under t
 
 Switching picks a sensible target for you: **Agent** binds to the agent your last request went to (or the one on screen), and **Tab** pins the tab your last request landed in (or that agent's active tab). The header always names where the next sentence will land.
 
-How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the composer microphone, the **Talk to Current Agent** hotkey, and the Left Bar menu open in **Agent** mode. After that, the HUD's **Talk** button reopens in whatever mode you last used.
+How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the composer microphone, the **Talk to Current Agent** hotkey, and the Left Bar menu open in **Agent** mode. After that, the HUD's talk button reopens in whatever mode you last used.
 
 ## The two hotkeys
 
@@ -191,7 +219,7 @@ Rebind either one in **Voice Controls** or in the **Shortcuts** tab; they are tw
 	to close it. Electron reports key presses but not key releases, so true press-and-hold on a global
 	hotkey would need a native module Maestro does not ship. Rather than fake it, Voice Controls says
 	which behaviour you are getting. The HUD's talk button and a paired phone's button do have a real
-	release event, so press-and-hold works there.
+	release event, so press-and-hold works there: switch the HUD to push-to-talk with its hand button.
 </Note>
 
 ![Stop word, hotkeys, and the tap-versus-hold threshold](./screenshots/acappella-stop-word-hotkeys.png)
@@ -223,9 +251,27 @@ A document conversation is an ordinary AI tab, tagged with the file it is about,
 
 A small draggable HUD appears. It remembers where you put it.
 
-The indicator has five states, told apart by shape and motion as well as colour: **idle**, **listening** (with a live input level), **thinking**, **speaking**, and **error**. Under `prefers-reduced-motion` all of it goes static.
+The indicator has six states, told apart by shape and motion as well as colour: **idle**, **paused** (the session is open and the microphone is closed), **listening** (with a live input level), **thinking**, **speaking**, and **error**. Under `prefers-reduced-motion` all of it goes static.
 
-- **Minimize collapses the HUD and leaves the session running. Close ends the session.** They are deliberately different: an open microphone with no visible surface is exactly what the close button exists to prevent.
+### The control row
+
+| Control         | What it does                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Talk button** | Hands-free: click to open the microphone, click again to shut it. Push-to-talk: hold while you speak, release to send. It never ends the session |
+| **Hand**        | Switches between hands-free and push-to-talk. The choice is remembered                                                                           |
+| **Timer chip**  | Shows the send wait and opens the send panel: a slider for the wait and a field for the send phrase. Hands-free only                             |
+| **Stop square** | Cuts off a reply that is being spoken and keeps the session. Available only while the assistant is speaking                                      |
+| **Transcript**  | Shows or hides the scrollback                                                                                                                    |
+| **Speaker**     | Mutes spoken replies for this session. They still appear in the transcript                                                                       |
+
+**Hands-free** keeps the microphone open. A request is sent when you end it with a send phrase ("go maestro" by default) or when you pause for the **send wait**. The wait's default comes from **Voice Controls** (the settle window, or the long backstop when requests are held for a send phrase). The timer chip opens a slider that changes it for the conversation you are in without touching that default: drag from 1s to 2m, and drag back onto the default stop, or click **Default**, to return to it. The wait you picked is dropped when you close the HUD.
+
+The same panel has the **send phrase** field. Type your own phrase, or several separated by commas, and press `Enter`. Unlike the wait this is the stored setting, the same list as **Send phrases** in **Voice Controls**, so it stays after the HUD closes. A phrase is heard only at the end of a sentence and is removed before the request is sent. Empty the field to send on the pause alone.
+
+**Push-to-talk** opens the microphone only while the talk button is held. A pause in the middle of the sentence sends nothing; letting go sends all of it. A session started some other way in this mode (the composer microphone, the palette) opens with the microphone closed and waits for the first hold.
+
+- **Only `Esc` closes the HUD**, from the keyboard or the ESC pill, and closing ends the session. Shutting the microphone with the talk button keeps the session, its transcript, and its mode. A session that ends on its own (the idle timeout, the stop word) leaves the HUD where it was, showing a closed microphone one click from open.
+- **Minimize collapses the HUD and leaves the session running**, microphone included. The Left Bar shows the indicator, and the composer microphone brings the HUD back; it does not end the session.
 - The **transcript** panel shows what was heard, what was sent, and which agent and tab each turn landed in. Route chips jump you straight to that tab, reopening it if you had closed or snoozed it.
 - A session that hears nothing goes cold on its own. The idle timeout defaults to **60 seconds** and is adjustable.
 
@@ -296,14 +342,15 @@ If you already run an overlay network such as Tailscale, that is the whole answe
 
 ## Troubleshooting
 
-| Symptom                                     | Likely cause                                                                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| The hotkey does nothing                     | Another application owns the combination. Voice Controls shows the real registration state and names the conflict.       |
-| The wake word never fires                   | The openWakeWord model is not installed, or the sensitivity is too low. Use **Test** to tune it by voice.                |
-| A session refuses to start                  | Open Voice Providers. Each slot reports its own specific reason: a missing model, a missing key, or a denied microphone. |
-| Speech works but replies are silent         | Check the assistant volume in Voice and Speed. It is separate from the system volume and has its own floor.              |
-| A phone pairs but no audio arrives          | The media path is separate from signaling. Check the connection path shown on the device row; cellular needs TURN.       |
-| Voice was disabled but disk is still in use | The Models page stays available when the feature is off, and offers to reclaim the model directory.                      |
+| Symptom                                              | Likely cause                                                                                                                                    |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| The hotkey does nothing                              | Another application owns the combination. Voice Controls shows the real registration state and names the conflict.                              |
+| The wake word never fires                            | The openWakeWord model is not installed, or the sensitivity is too low. Use **Test** to tune it by voice.                                       |
+| A phrase you trained fires too easily, or not enough | Move the sensitivity slider and use **Test**. If it still misfires, press **Improve** and add recordings in the conditions where it goes wrong. |
+| A session refuses to start                           | Open Voice Providers. Each slot reports its own specific reason: a missing model, a missing key, or a denied microphone.                        |
+| Speech works but replies are silent                  | Check the assistant volume in Voice and Speed. It is separate from the system volume and has its own floor.                                     |
+| A phone pairs but no audio arrives                   | The media path is separate from signaling. Check the connection path shown on the device row; cellular needs TURN.                              |
+| Voice was disabled but disk is still in use          | The Models page stays available when the feature is off, and offers to reclaim the model directory.                                             |
 
 Two tools on the **Models** page are worth reaching for before filing a bug, and both are safe to run at any time:
 

@@ -73,9 +73,13 @@ export function useComposerVoice({
 
 	const toggle = useCallback(() => {
 		if (usesACappella) {
-			void (voiceActions.hasVoiceFloor
-				? voiceActions.endVoiceSession()
-				: voiceActions.talkToAgent());
+			// With a session already bound to this agent, the button brings its HUD
+			// back (it may be minimized) and never ends it: only Escape on the HUD
+			// closes a voice session. It used to hang up here, so minimizing the HUD
+			// and reaching for the microphone again silently stopped the listening
+			// the user had asked to keep.
+			if (voiceActions.hasVoiceFloor) voiceActions.showHud();
+			else void voiceActions.talkToAgent();
 			return;
 		}
 		webSpeech.toggleVoiceInput();

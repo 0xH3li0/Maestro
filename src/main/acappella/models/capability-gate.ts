@@ -62,6 +62,7 @@ import {
 } from '../providers/local/system-tts';
 import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
 import { getStatus, modelFilePath, type ModelStatus } from '../../local-models/model-store';
+import { hasEnrolledWakeModel } from '../wake/wake-enrollment-store';
 
 /**
  * Provider ids for the local tier.
@@ -205,6 +206,12 @@ export interface ResolveVoiceReadinessOptions {
 	 * one the `voice-routing` assignment selects.
 	 */
 	readTaskReadiness?: (taskId: LocalModelTaskId) => Promise<LocalModelTaskReadiness>;
+	/**
+	 * Whether the user trained a wake phrase from their own recordings. Defaults
+	 * to the enrollment store. Injected so a test describes a machine without
+	 * writing a model to disk.
+	 */
+	hasEnrolledWakePhrase?: (phrase: string) => boolean;
 }
 
 /**
@@ -390,7 +397,8 @@ async function resolveSlot(
 				const classifierVerdict = await resolveWakeClassifier(
 					providerId,
 					options.settings?.wakePhrase ?? DEFAULT_WAKE_PHRASE,
-					readModelStatus
+					readModelStatus,
+					options.hasEnrolledWakePhrase ?? hasEnrolledWakeModel
 				);
 				if (classifierVerdict) return classifierVerdict;
 			}
@@ -552,9 +560,15 @@ async function resolveAssignedSource(
 async function resolveWakeClassifier(
 	providerId: string,
 	phrase: string,
-	readModelStatus: (modelId: string) => Promise<ModelStatus>
+	readModelStatus: (modelId: string) => Promise<ModelStatus>,
+	hasEnrolledWakePhrase: (phrase: string) => boolean
 ): Promise<VoiceSlotReadiness | null> {
 	const label = SLOT_LABELS['wake-word'];
+	// A phrase the user recorded themselves needs nothing but the front end,
+	// which the caller has already found installed. It also outranks a pretrained
+	// classifier for the same words, exactly as it does in the detector.
+	if (hasEnrolledWakePhrase(phrase)) return null;
+
 	const pretrained = findPretrainedWakePhrase(phrase);
 	if (!pretrained) {
 		return {
@@ -563,7 +577,7 @@ async function resolveWakeClassifier(
 			satisfied: false,
 			reason: 'wake-phrase-untrained',
 			detail: `${label}: no detector has been trained for "${phrase}", so it cannot fire.`,
-			suggestedAction: `Use "${DEFAULT_WAKE_PHRASE}", or start sessions with the hotkey or the microphone button.`,
+			suggestedAction: `Train it from your own voice under Voice Controls, switch Detection to Transcription, or use "${DEFAULT_WAKE_PHRASE}".`,
 		};
 	}
 

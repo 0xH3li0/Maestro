@@ -161,6 +161,44 @@ describe('HandsFreeListener', () => {
 		expect(deps.stopCapture).not.toHaveBeenCalled();
 	});
 
+	it('replaces the detector when the phrase is retrained', async () => {
+		// The armed detector loaded the old model; nothing else about the settings
+		// changed, so only the revision can say it is stale.
+		const { listener, deps, settings, detectors } = harness();
+		settings.modelRevision = 1000;
+		await listener.sync();
+		expect(detectors.created).toHaveLength(1);
+
+		await listener.sync();
+		expect(detectors.created).toHaveLength(1);
+
+		settings.modelRevision = 2000;
+		await listener.sync();
+
+		expect(detectors.created).toHaveLength(2);
+		expect(detectors.created[0].detector.stop).toHaveBeenCalled();
+		expect(listener.isListening).toBe(true);
+		// The microphone stays open across the swap.
+		expect(deps.stopCapture).not.toHaveBeenCalled();
+	});
+
+	it('stands down while a wake phrase is being recorded, without closing its microphone', async () => {
+		let borrowed = false;
+		const { listener, deps } = harness({ isMicrophoneBorrowed: () => borrowed });
+		await listener.sync();
+		expect(listener.isListening).toBe(true);
+
+		borrowed = true;
+		await listener.sync();
+
+		expect(listener.isListening).toBe(false);
+		expect(deps.stopCapture).not.toHaveBeenCalled();
+
+		borrowed = false;
+		await listener.sync();
+		expect(listener.isListening).toBe(true);
+	});
+
 	it('re-arms once the session it opened has ended', async () => {
 		const { listener, deps, detectors, setState } = harness();
 		await listener.sync();

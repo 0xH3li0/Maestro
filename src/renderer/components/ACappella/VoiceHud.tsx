@@ -17,6 +17,18 @@
  * indicator behind, and the button that looks like an exit must actually close
  * the floor.
  *
+ * **Only Escape closes it.** Escape and the ESC pill are the one way the widget
+ * leaves the screen. The talk button shuts the MICROPHONE and keeps the session;
+ * a session that ends on its own (the idle timeout, the stop word) leaves the
+ * widget where it was, showing a closed microphone one click from open. A
+ * control row where one button quietly hangs up, or a panel that vanishes while
+ * someone is reading it, is a surface people stop trusting.
+ *
+ * **Tab walks Tab / Agent / Conductor** while the widget is up, on top, and has
+ * a live session to re-bind. The listener runs in the bubble phase and stands
+ * down for a key something else already claimed, so a completion popup, a shell
+ * line and an editor's indent all keep their Tab.
+ *
  * The widget is draggable and remembers where it was put, through
  * `usePointerDrag` (the same gesture the Concerto surfaces use) and the `ui`
  * section of the A Cappella settings blob.
@@ -30,6 +42,7 @@ import { readableTextOn } from '../../../shared/colorContrast';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
@@ -44,11 +57,13 @@ import {
 	type VoiceHudPosition,
 } from '../../../shared/acappella/ui-prefs';
 import { DEFAULT_TTS_VOLUME } from '../../../shared/acappella/voice-controls';
+import { VOICE_LISTEN_MODE_LABELS } from '../../../shared/acappella/listen-mode';
 import type { MicIssue } from '../../../shared/acappella/protocol';
 import { micSettingsLabel, micSettingsUrl } from '../../../shared/acappella/mic-settings';
 import { getPlatform } from '../../utils/platformUtils';
 import { selectVoiceRemoteDevice, useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { useVoiceUiStore } from '../../stores/voiceUiStore';
+import { closeVoiceMic, openVoiceMic, toggleVoiceListenMode } from '../../services/voiceListening';
 import { EscCloseButton } from '../ui/EscCloseButton';
 import { VoiceDevHarness } from './VoiceDevHarness';
 import { VoiceHudControls } from './VoiceHudControls';
@@ -56,6 +71,8 @@ import { VoiceIndicator } from './VoiceIndicator';
 import { VoiceTranscript } from './VoiceTranscript';
 import { VoiceHeldNotice } from './VoiceHeldNotice';
 import { VoiceModeSwitch } from './VoiceModeSwitch';
+import { VoiceWaitPicker } from './VoiceWaitPicker';
+import { useVoiceModeSwitch } from './useVoiceModeSwitch';
 import { useVoiceScope } from './useVoiceScope';
 import { useOwnsVoiceSession } from './useOwnsVoiceSession';
 import { VoiceInputPicker } from './VoiceInputPicker';
@@ -132,6 +149,8 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const sttHearsAudio = useVoiceSessionStore((s) => s.sttHearsAudio);
 	const lostEvents = useVoiceSessionStore((s) => s.lostEvents);
 	const dismissed = useVoiceSessionStore((s) => s.dismissed);
+	const listenPaused = useVoiceSessionStore((s) => s.listenPaused);
+	const surfaced = useVoiceSessionStore((s) => s.surfaced);
 	/**
 	 * The paired device holding the floor, or null for this machine's own
 	 * microphone. Rendered next to the state so a Mac at home visibly reflects
@@ -151,7 +170,13 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const minimizeBehavior = useVoiceUiStore((s) => s.minimizeBehavior);
 	const muted = useVoiceUiStore((s) => s.muted);
 	const setMuted = useVoiceUiStore((s) => s.setMuted);
-	const holdThresholdMs = useVoiceUiStore((s) => s.holdThresholdMs);
+	const listenMode = useVoiceUiStore((s) => s.listenMode);
+	const sendWait = useVoiceUiStore((s) => s.sendWait);
+	const refreshSendWait = useVoiceUiStore((s) => s.refreshSendWait);
+	const setSendWait = useVoiceUiStore((s) => s.setSendWait);
+	const setSendPhrases = useVoiceUiStore((s) => s.setSendPhrases);
+	const setTabCyclesMode = useVoiceUiStore((s) => s.setTabCyclesMode);
+	const [waitPickerOpen, setWaitPickerOpen] = useState(false);
 
 	const scope = useVoiceScope(theme);
 	// `HTMLElement`, not `HTMLDivElement`: the collapsed form is a button, and the
@@ -169,7 +194,11 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	const [harnessOptedIn] = useState(devHarnessOptedIn);
 	const devHarness = showDevHarness ?? harnessOptedIn;
 	const active = isVoiceSessionActive(state);
-	const visualState = voiceHudVisualState(state);
+	const visualState = voiceHudVisualState(state, listenPaused);
+	// The one answer to "is the microphone open": a live session whose gate is
+	// not shut. Never `active` alone, which stays true across a pause.
+	const micOpen = active && !listenPaused;
+	const modeSwitch = useVoiceModeSwitch();
 
 	// Live geometry. Seeded from the remembered position, or parked bottom-right.
 	const [position, setPosition] = useState<VoiceHudPosition | null>(null);
@@ -237,27 +266,50 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 
 	// Escape and the ESC pill do exactly the same thing, from one callback: end
 	// the session, then hide. Stopping an already-idle session is a no-op in the
-	// service, so closing the harness (idle, HUD open) works too.
+	// service, so closing the harness (idle, HUD open) works too. It is also the
+	// ONLY thing that hides the widget, and it takes the "just for now" wait with
+	// it, so the next conversation starts on the stored default.
 	const handleClose = useCallback(() => {
 		void actions.stop();
 		setMinimized(false);
 		setDismissed(true);
-	}, [actions, setDismissed, setMinimized]);
+		setWaitPickerOpen(false);
+		void setSendWait(null).catch(() => undefined);
+	}, [actions, setDismissed, setMinimized, setSendWait]);
 
-	// The other button. It does NOT touch the session.
+	// The other button. It does NOT touch the session, or the microphone.
 	const handleMinimize = useCallback(() => setMinimized(true), [setMinimized]);
 
-	// Talk restarts in the mode the last session ended in, so a user who switched
-	// to Tab mode is not quietly dropped back to the Conductor by stopping and
-	// starting again.
-	const lastScope = useVoiceSessionStore((s) => s.scope);
-	const handleStart = useCallback(() => {
-		void actions.start(lastScope ?? undefined);
-	}, [actions, lastScope]);
+	// The talk button. Both shut the microphone and keep the session; opening
+	// resumes it, or starts one when the last one has ended. See
+	// `services/voiceListening.ts` for why the two are queued behind each other.
+	const handleOpenMic = useCallback(({ hold }: { hold: boolean }) => {
+		void openVoiceMic({ hold });
+	}, []);
+	const handleCloseMic = useCallback(({ send }: { send: boolean }) => {
+		void closeVoiceMic({ send });
+	}, []);
 
-	const handleStop = useCallback(() => {
-		void actions.stop();
-	}, [actions]);
+	const handleToggleListenMode = useCallback(() => {
+		// The wait belongs to hands-free. Left open across the switch it would be a
+		// picker for a timer push-to-talk never runs.
+		setWaitPickerOpen(false);
+		void toggleVoiceListenMode();
+	}, []);
+
+	const handlePickWait = useCallback(
+		(waitMs: number | null) => {
+			void setSendWait(waitMs).catch(() => undefined);
+		},
+		[setSendWait]
+	);
+
+	const handleSetSendPhrases = useCallback(
+		(phrases: string) => {
+			void setSendPhrases(phrases).catch(() => undefined);
+		},
+		[setSendPhrases]
+	);
 
 	const handleInterrupt = useCallback(() => {
 		void actions.interrupt();
@@ -313,8 +365,48 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// Only while this window owns the surface: enumerating devices in every window
 	// would have each one subscribing to a list none of them is showing.
 	const inputDevices = useVoiceInputDevices(enabled && ownsSession);
+	// `surfaced` is what keeps the widget up after its session ends: once a
+	// session has been live here, only the close control takes the HUD away.
 	const visible =
-		enabled && !dismissed && (devHarness || (ownsSession && (active || !!error || !!micIssue)));
+		enabled &&
+		!dismissed &&
+		(devHarness || (ownsSession && (active || surfaced || !!error || !!micIssue)));
+
+	// Read when the widget comes up rather than once at mount: the default behind
+	// the wait chip is a setting, and it can change between two conversations.
+	useEffect(() => {
+		if (visible) void refreshSendWait().catch(() => undefined);
+	}, [refreshSendWait, visible]);
+	// And again when the send panel opens: it edits the send phrase, which
+	// Settings can also change while the widget is already up, and a field seeded
+	// from a stale copy would write that copy back over the newer one.
+	useEffect(() => {
+		if (waitPickerOpen) void refreshSendWait().catch(() => undefined);
+	}, [refreshSendWait, waitPickerOpen]);
+
+	// Tab walks Tab / Agent / Conductor. Only with a live session (the switch is
+	// not drawn without one, and there is nothing to re-bind), only while the
+	// widget is actually on screen, and only on top: a modal opened over the HUD
+	// needs Tab for its own focus order.
+	const isTopLayer = useIsTopLayer(MODAL_PRIORITIES.VOICE_HUD);
+	const tabCyclesMode = visible && !minimized && active && isTopLayer;
+	useEffect(() => {
+		setTabCyclesMode(tabCyclesMode);
+		return () => setTabCyclesMode(false);
+	}, [setTabCyclesMode, tabCyclesMode]);
+	useEventListener(
+		'keydown',
+		(event) => {
+			const key = event as KeyboardEvent;
+			if (key.key !== 'Tab' || key.metaKey || key.ctrlKey || key.altKey) return;
+			// Bubble phase on purpose: whatever uses Tab for itself (a completion
+			// popup, a shell line, an editor's indent) has already said so.
+			if (key.defaultPrevented) return;
+			key.preventDefault();
+			modeSwitch.cycle(key.shiftKey ? -1 : 1);
+		},
+		{ enabled: tabCyclesMode }
+	);
 
 	// Non-blocking: the HUD floats over the workspace while the user keeps typing,
 	// so it takes neither focus nor the lower layers' clicks, and it never traps
@@ -383,9 +475,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 			aria-atomic="true"
 			className="sr-only"
 		>
-			{`${stateLabel}. ${VOICE_HUD_STATE_DESCRIPTIONS[visualState]} Bound to ${scope.label}${
-				scope.tabLabel ? `, tab ${scope.tabLabel}` : ''
-			}.`}
+			{`${stateLabel}. ${VOICE_HUD_STATE_DESCRIPTIONS[visualState]} ${
+				VOICE_LISTEN_MODE_LABELS[listenMode]
+			}. Bound to ${scope.label}${scope.tabLabel ? `, tab ${scope.tabLabel}` : ''}.`}
 		</div>
 	);
 
@@ -411,7 +503,8 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 					left: placement.left,
 					width: HUD_WIDTH,
 					backgroundColor: theme.colors.bgSidebar,
-					borderColor: active ? theme.colors.accent : theme.colors.border,
+					// Accent means a hot microphone, so it follows the gate, not the session.
+					borderColor: micOpen ? theme.colors.accent : theme.colors.border,
 					color: theme.colors.textMain,
 					// Hidden until the first placement lands, so the widget does not flash
 					// in the top-left corner on the frame before its position is known.
@@ -562,15 +655,31 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 					<VoiceInputPicker theme={theme} devices={inputDevices} compact />
 				</div>
 
+				{/* The send panel (wait slider and send phrase), opened from the chip in
+				    the row below it. Hands-free only: in push-to-talk the release is
+				    the send. */}
+				{waitPickerOpen && sendWait && listenMode === 'hands-free' && (
+					<VoiceWaitPicker
+						theme={theme}
+						sendWait={sendWait}
+						onPick={handlePickWait}
+						onSetPhrases={handleSetSendPhrases}
+					/>
+				)}
+
 				<VoiceHudControls
 					theme={theme}
 					state={visualState}
-					active={active}
+					micOpen={micOpen}
+					listenMode={listenMode}
+					sendWait={sendWait}
+					waitPickerOpen={waitPickerOpen}
 					transcriptVisible={transcriptVisible}
 					muted={muted}
-					holdThresholdMs={holdThresholdMs}
-					onStart={handleStart}
-					onStop={handleStop}
+					onOpenMic={handleOpenMic}
+					onCloseMic={handleCloseMic}
+					onToggleListenMode={handleToggleListenMode}
+					onToggleWaitPicker={() => setWaitPickerOpen((open) => !open)}
 					onInterrupt={handleInterrupt}
 					onToggleTranscript={() => void toggleTranscript()}
 					onToggleMute={handleToggleMute}

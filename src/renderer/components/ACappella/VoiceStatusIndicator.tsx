@@ -48,6 +48,7 @@ export const VoiceStatusIndicator = memo(function VoiceStatusIndicator({
 }: VoiceStatusIndicatorProps) {
 	const enabled = useSettingsStore(selectACappellaEnabled);
 	const state = useVoiceSessionStore((s) => s.state);
+	const listenPaused = useVoiceSessionStore((s) => s.listenPaused);
 	const minimized = useVoiceUiStore((s) => s.minimized);
 	const setMinimized = useVoiceUiStore((s) => s.setMinimized);
 	const scope = useVoiceScope(theme);
@@ -62,7 +63,9 @@ export const VoiceStatusIndicator = memo(function VoiceStatusIndicator({
 	// between the click and the service confirming the session is gone.
 	if (!enabled || !ownsSession || !isVoiceSessionActive(state) || !minimized) return null;
 
-	const visualState = voiceHudVisualState(state);
+	// With the gate, so a minimized session with its microphone shut does not sit
+	// in the Left Bar drawing a live meter.
+	const visualState = voiceHudVisualState(state, listenPaused);
 	const stateLabel = VOICE_HUD_STATE_LABELS[visualState];
 
 	// Bordered pill, matching the now-playing indicator beside it, so the two read

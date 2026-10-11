@@ -1027,6 +1027,136 @@ describe('VoiceSessionService speech', () => {
 	});
 });
 
+describe('VoiceSessionService microphone gate', () => {
+	/** A recogniser that listens to a room, so finals go through the composer. */
+	function listeningHarness(settleMs: number): Harness {
+		const h = makeHarness({ getUtteranceComposerConfig: () => ({ settleMs }) });
+		(h.stt as unknown as { acceptsAudio: boolean }).acceptsAudio = true;
+		return h;
+	}
+
+	function final(h: Harness, text: string) {
+		(h.stt.callbacks as { onFinal: (t: string, c: number) => void }).onFinal(text, 0.9);
+	}
+
+	it('shuts the microphone without ending the session', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		expect(h.service.setListening(false)).toBe(true);
+
+		// The whole point: a pause is not a hang-up. The session is still there to
+		// be resumed, re-bound, or answered.
+		expect(h.service.getState()).toBe('listening');
+		expect(h.service.getSnapshot().listenPaused).toBe(true);
+		expect(h.events.at(-1)).toMatchObject({ type: 'listen-gate', paused: true });
+		expect(h.types()).not.toContain('listen-stop');
+	});
+
+	it('opens it again, and says so once', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.service.setListening(false);
+		h.service.setListening(true);
+		h.service.setListening(true);
+
+		expect(h.service.getSnapshot().listenPaused).toBe(false);
+		// One event per change: a client must not be told twice that nothing moved.
+		expect(h.events.filter((e) => e.type === 'listen-gate')).toHaveLength(2);
+	});
+
+	it('refuses when there is no session, so the caller starts one', () => {
+		const h = makeHarness();
+
+		expect(h.service.setListening(true)).toBe(false);
+		expect(h.service.setListening(false)).toBe(false);
+		expect(h.events).toEqual([]);
+	});
+
+	it('drops a half-said thought on a plain pause', async () => {
+		// Reaching for the off switch mid-sentence is the opposite of "send it".
+		const h = listeningHarness(40);
+		await start(h);
+
+		final(h, 'half a sentence');
+		h.service.setListening(false);
+		await new Promise((resolve) => setTimeout(resolve, 80));
+
+		expect(h.executor).not.toHaveBeenCalled();
+	});
+
+	it('holds a push-to-talk thought across pauses and sends it on release', async () => {
+		const h = listeningHarness(40);
+		await start(h);
+
+		h.service.setListening(true, { hold: true });
+		final(h, 'look at the auth module');
+		// Well past the settle window: the button is still down, so nothing goes.
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		expect(h.executor).not.toHaveBeenCalled();
+
+		final(h, 'and say why the refresh is failing');
+		h.service.setListening(false, { send: true });
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		expect(h.executor).toHaveBeenCalledTimes(1);
+		const finals = h.events.filter((e) => e.type === 'final-transcript');
+		expect(finals[0].type === 'final-transcript' && finals[0].text).toBe(
+			'look at the auth module and say why the refresh is failing'
+		);
+		// Sent, and the microphone is shut behind it.
+		expect(h.service.getSnapshot().listenPaused).toBe(true);
+	});
+
+	it('announces a gated start before the first listen-start', async () => {
+		// Push-to-talk, started by something other than a press. Nothing following
+		// the stream may open a device it then has to close.
+		const h = makeHarness();
+		await h.service.startSession({ scope: { kind: 'conductor' }, paused: true });
+
+		const types = h.types();
+		expect(types.indexOf('listen-gate')).toBeGreaterThan(-1);
+		expect(types.indexOf('listen-gate')).toBeLessThan(types.indexOf('listen-start'));
+		expect(h.service.getSnapshot().listenPaused).toBe(true);
+	});
+
+	it('does not carry the gate into the next session', async () => {
+		const h = makeHarness();
+		await start(h);
+		h.service.setListening(false);
+		await h.service.stopSession('user');
+
+		await start(h);
+
+		expect(h.service.getSnapshot().listenPaused).toBe(false);
+	});
+
+	it('opening over a reply cuts the reply and keeps the floor', async () => {
+		const h = makeHarness();
+		await start(h);
+		h.service.submitUtterance('what changed');
+		await vi.waitFor(() => expect(h.service.getState()).toBe('dispatching'));
+		h.service.setListening(false);
+		h.events.length = 0;
+
+		h.service.subscribe((event) => {
+			if (event.type === 'speak-sentence' && event.index === 0) {
+				h.service.setListening(true, { hold: true });
+			}
+		});
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: AGENT_REPLY,
+		});
+
+		expect(h.types()).toContain('barge-in');
+		expect(h.service.getSnapshot().listenPaused).toBe(false);
+		await vi.waitFor(() => expect(h.service.getState()).toBe('listening'));
+	});
+});
+
 describe('VoiceSessionService barge-in versus stop', () => {
 	let h: Harness;
 

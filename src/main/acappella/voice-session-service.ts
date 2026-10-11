@@ -298,6 +298,11 @@ export interface VoiceSessionSnapshot {
 	windowId: VoiceWindowId;
 	/** Last `seq` emitted. A client whose next event skips this has lost events. */
 	seq: number;
+	/**
+	 * Whether the microphone is gated shut (`listen-gate`), for a client that
+	 * joined after the event went out. False while idle.
+	 */
+	listenPaused: boolean;
 	startedAt: number | null;
 	providerIds: { stt: string; tts: string; brain: string };
 	/**
@@ -361,6 +366,12 @@ export class VoiceSessionService {
 	private state: VoiceSessionState = 'idle';
 	/** A teardown is in flight. Guards the await inside `stopSession`. */
 	private stopping = false;
+	/**
+	 * The microphone is gated shut while the session stays alive. See
+	 * {@link setListening}. Announced as `listen-gate`, never inferred from state:
+	 * a paused session is still `listening` as far as the state machine goes.
+	 */
+	private listenPaused = false;
 	private sessionId: string | null = null;
 	private scope: VoiceScope | null = null;
 	/**
@@ -470,7 +481,7 @@ export class VoiceSessionService {
 			// Read through the getter so a settings change takes effect on the next
 			// thought rather than on the next session: a person who finds it too
 			// eager will tune it mid-conversation, which is when they notice.
-			...options.getUtteranceComposerConfig?.(),
+			getConfig: options.getUtteranceComposerConfig,
 			onSettled: ({ text, confidence, durationMs, sentBy, fragments }) => {
 				// The floor can close between the last fragment and the settle. Every
 				// path that closes it cancels the composer, so this is belt and braces
@@ -490,8 +501,13 @@ export class VoiceSessionService {
 			// of one sentence and make a composing session look like a stalled one.
 			// `held` tells the HUD this is a finished sentence waiting to be sent,
 			// so it can say how to send it instead of looking stalled.
+			// Absent while a push-to-talk control is down: nothing is counting down.
 			onComposing: (text, hold) =>
-				this.emit('partial-transcript', { text, stability: 0.95, held: hold }),
+				this.emit('partial-transcript', {
+					text,
+					stability: 0.95,
+					...(hold ? { held: hold } : {}),
+				}),
 		});
 		this.bargeIn = new BargeInController({
 			// Both default to no-ops: the audio pipeline ducks on a candidate frame
@@ -543,6 +559,7 @@ export class VoiceSessionService {
 			origin: this.origin,
 			windowId: this.windowId,
 			seq: this.seq,
+			listenPaused: this.listenPaused,
 			startedAt: this.startedAt,
 			providerIds: {
 				stt: this.providers.stt.id,
@@ -584,6 +601,12 @@ export class VoiceSessionService {
 		 * here would silently reassign a session started from a background window.
 		 */
 		windowId?: VoiceWindowId;
+		/**
+		 * Open with the microphone gated shut: a session started in push-to-talk
+		 * mode by something other than a press. The device is never opened, so
+		 * there is no moment of hot microphone before the first hold.
+		 */
+		paused?: boolean;
 	}): Promise<VoiceSessionSnapshot> {
 		if (this.state !== 'idle') {
 			await this.stopSession('replaced');
@@ -644,6 +667,13 @@ export class VoiceSessionService {
 			return this.getSnapshot();
 		}
 
+		// Ahead of the first `listen-start`, so nothing that follows the stream
+		// opens a device it would then have to close.
+		if (params.paused) {
+			this.listenPaused = true;
+			this.emit('listen-gate', { paused: true });
+		}
+
 		this.transition('listening');
 		this.emit('listen-start', {
 			scope: params.scope,
@@ -700,6 +730,9 @@ export class VoiceSessionService {
 		this.scope = null;
 		this.origin = { kind: 'local' };
 		this.windowId = null;
+		// The gate belongs to the session it was closed in. Carried over, the next
+		// session would open deaf with nothing on screen having asked for that.
+		this.listenPaused = false;
 		this.startedAt = null;
 		this.recentUtterances = [];
 		// A question nobody answered, and a dispatch nobody can correct any more:
@@ -1215,6 +1248,58 @@ export class VoiceSessionService {
 	 */
 	endUtteranceNow(): void {
 		this.composer.armImmediateSettle();
+	}
+
+	/**
+	 * Open or shut the microphone without ending the session.
+	 *
+	 * The session stays in whatever state it is in - it can still dispatch, answer
+	 * and be re-bound - and only the device follows. Two gestures drive it:
+	 *
+	 *   - **Hands-free.** `open` resumes, shut pauses. Pausing DROPS a
+	 *     half-collected thought: the user reached for the off switch mid-sentence,
+	 *     and sending what they were in the middle of saying is the opposite of
+	 *     what that click means.
+	 *   - **Push-to-talk.** `hold` on the way in means the release, not a pause,
+	 *     ends the thought. `send` on the way out is that release: what was said
+	 *     goes now. The recogniser is flushed separately, exactly as for
+	 *     {@link endUtteranceNow}.
+	 *
+	 * Opening over a reply is "stop talking and listen", the same reading floor
+	 * control gives a press, and never the destructive one.
+	 *
+	 * @returns false when there is no live session to gate.
+	 */
+	setListening(open: boolean, options: { hold?: boolean; send?: boolean } = {}): boolean {
+		if (!this.sessionId || this.state === 'idle' || this.state === 'error' || this.stopping) {
+			return false;
+		}
+
+		if (open) {
+			if (this.state === 'speaking') this.interrupt('client-button');
+			if (options.hold) this.composer.holdOpen();
+			// A resume has nothing buffered to keep (the pause dropped it), and what it
+			// must not inherit is a release armed before the pause.
+			else if (this.listenPaused) this.composer.cancel();
+			this.setListenPaused(false);
+			return true;
+		}
+
+		if (options.send) this.composer.armImmediateSettle();
+		else this.composer.cancel();
+		this.setListenPaused(true);
+		return true;
+	}
+
+	/** Whether the microphone is gated shut. False while idle. */
+	isListenPaused(): boolean {
+		return this.listenPaused;
+	}
+
+	private setListenPaused(paused: boolean): void {
+		if (this.listenPaused === paused) return;
+		this.listenPaused = paused;
+		this.emit('listen-gate', { paused });
 	}
 
 	/**
