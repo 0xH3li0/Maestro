@@ -328,6 +328,19 @@ export function createProcessCoreApi() {
 		},
 
 		/**
+		 * Subscribe to the transcript-observed outcome of a steer (absorbed, queued,
+		 * dropped). Arrives after `steer()` resolved `delivered`; see SteeringVerdict.
+		 */
+		onSteeringVerdict: (
+			callback: (sessionId: string, verdict: SteeringResultFrame) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, verdict: SteeringResultFrame) =>
+				callback(sessionId, verdict);
+			ipcRenderer.on('process:steering-verdict', handler);
+			return () => ipcRenderer.removeListener('process:steering-verdict', handler);
+		},
+
+		/**
 		 * Subscribe to thinking/streaming content chunks from AI agents
 		 * Emitted when agents produce partial text events (isPartial: true)
 		 * Renderer decides whether to display based on tab's showThinking setting

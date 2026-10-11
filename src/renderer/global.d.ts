@@ -427,6 +427,10 @@ interface MaestroAPI {
 		) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
+		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
+		onSteeringVerdict: (
+			callback: (sessionId: string, verdict: SteeringResultFrame) => void
+		) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
 		onToolExecution: (
 			callback: (

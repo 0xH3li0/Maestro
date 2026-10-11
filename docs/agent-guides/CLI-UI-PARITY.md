@@ -294,42 +294,48 @@ a design constraint; they are simply not built yet.
    Deliberately not mirrored: these open modals over `useGitAgentActions`, and an
    agent already has `git` and `gh` in its shell, which is strictly more capable.
    Only the modal-opening is unavailable, not the capability.
-7. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
+7. **Steer a queued message into a running Claude turn.** The Steer button on a
+   queued card has no CLI verb yet. The flow is `steerQueuedItem()` in
+   `src/renderer/services/chatSteering.ts`, which owns the queue removal and the
+   later re-queue, so a `steer` verb must route to it over the WS bridge rather
+   than call `process:steer` directly - calling main alone would type the text
+   and leave the card queued to send a second time.
+8. **Wizard and interactive pickers** (New Agent Wizard, Fuzzy File Search,
    Tab Switcher, Search: Messages). These are interactive by definition; the
    underlying data is reachable through `list`, `session show`, and
    `director-notes history`.
-8. **Auto Run state in a CLI-built support package.** The desktop's Create
+9. **Auto Run state in a CLI-built support package.** The desktop's Create
    Debug Package hands main a snapshot of the renderer's in-memory batch store
    (`captureAutoRunSnapshots()`). `support-package` and
    `feedback submit --support-package` are built in main with no renderer round
    trip, so that section reads "unavailable". The Feedback modal's own support
    package checkbox has the same gap today. Closing it needs a main-to-renderer
    request with a response channel.
-9. **Context: Compact, Merge Into, Send to Agent.** The WS messages
-   (`summarize_context`, `merge_context`, `transfer_context`) and the preload
-   listeners exist, but NO renderer code subscribes to
-   `onRemoteSummarizeContext` / `onRemoteMergeContext` /
-   `onRemoteTransferContext`, so every call times out. Closing it means wiring
-   those listeners to the same hooks the tab overlay menu uses, then adding
-   `tab compact / merge / transfer`. Do not wrap the dead messages.
-10. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
+10. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+    (`summarize_context`, `merge_context`, `transfer_context`) and the preload
+    listeners exist, but NO renderer code subscribes to
+    `onRemoteSummarizeContext` / `onRemoteMergeContext` /
+    `onRemoteTransferContext`, so every call times out. Closing it means wiring
+    those listeners to the same hooks the tab overlay menu uses, then adding
+    `tab compact / merge / transfer`. Do not wrap the dead messages.
+11. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
     `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
     legacy `${sessionId}-ai` process id, which misses per-tab processes
     (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
     then add `interrupt <agent> [--tab]`.
-11. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
+12. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
     an element already rendered in a transcript or document
     (`openZoomViewer(element)`), and a transcript element has no address the
     CLI can name. The capability is still reachable: `open-file <image>` opens
     the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
     an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
     viewing; there is no result for an agent to read back.
-12. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
+13. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
     document dropdown's height via `useResizableDropdownHeight`, the Document
     Graph preview width via `usePersistedPanelWidth`). Pure view preferences
     with nothing for an agent to act on; the values never reach main, so a
     verb needs a renderer round trip. Double-click on the grip resets them.
-13. **Log in to a provider account** (Usage Dashboard quota row "Log in",
+14. **Log in to a provider account** (Usage Dashboard quota row "Log in",
     palette "Reauthenticate Provider"). The login is an interactive OAuth or
     device-code flow in a PTY, so there is nothing a non-interactive verb could
     complete. The capability is reachable from an agent's shell as

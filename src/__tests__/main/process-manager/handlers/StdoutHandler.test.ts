@@ -1107,6 +1107,40 @@ describe('StdoutHandler', () => {
 
 	// ── normalizeUsageToDelta (tested via outputParser path) ───────────────
 
+	describe('chat steering verdicts (maestro-p stdout)', () => {
+		function claudeContext() {
+			const ctx = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const verdictSpy = vi.fn();
+			ctx.emitter.on('steering-verdict', verdictSpy);
+			return { ...ctx, verdictSpy };
+		}
+
+		it('forwards a steering frame and keeps it out of the transcript', () => {
+			const { handler, sessionId, verdictSpy, bufferManager } = claudeContext();
+
+			sendJsonLine(handler, sessionId, { type: 'steering', id: 's1', verdict: 'dropped' });
+
+			expect(verdictSpy).toHaveBeenCalledWith(sessionId, {
+				type: 'steering',
+				id: 's1',
+				verdict: 'dropped',
+			});
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('drops a malformed steering frame instead of forwarding it', () => {
+			const { handler, sessionId, verdictSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, { type: 'steering', id: 's1', verdict: 'exploded' });
+
+			expect(verdictSpy).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('in-turn API error notices (Claude Code)', () => {
 		// Captured live: Claude Code emitted this mid-turn, retried the call itself,
 		// and kept working. Raising it at once put the tab into the blocking error

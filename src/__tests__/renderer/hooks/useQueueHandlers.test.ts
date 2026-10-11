@@ -989,6 +989,8 @@ describe('useQueueHandlers', () => {
 			return useSessionStore.getState().sessions[0];
 		}
 
+		// The full verdict lifecycle (absorbed / queued / dropped / exit) is covered
+		// in services/chatSteering.test.ts; these pin that the hook reaches it.
 		it('sends to the tab process key and drops the item once delivered', async () => {
 			// Claude has the text; keeping it queued would send it a second time.
 			steer.mockResolvedValue({ type: 'steering', id: 'x', verdict: 'delivered' });
