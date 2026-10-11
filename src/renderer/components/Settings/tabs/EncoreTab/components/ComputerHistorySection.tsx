@@ -9,20 +9,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-	AlertTriangle,
-	Archive,
-	Ban,
-	Eye,
-	ScrollText,
-	Shield,
-	Trash2,
-	type LucideIcon,
-} from 'lucide-react';
+import { AlertTriangle, Archive, Ban, Eye, ScrollText, Shield, Trash2 } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from '../../DisplayTab/components/SectionCard';
 import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
+import { ActionButton } from './ActionButton';
 import { CaptureRulesEditor } from '../../../../ComputerHistory/CaptureRulesEditor';
 import { useComputerHistoryStatus } from '../../../../../hooks/computerHistory/useComputerHistoryStatus';
 import { useSessionStore } from '../../../../../stores/sessionStore';
@@ -52,39 +44,6 @@ const HOUR_MS = 60 * 60_000;
 
 function errorText(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
-}
-
-function ActionButton({
-	theme,
-	icon: Icon,
-	label,
-	onClick,
-	destructive,
-	disabled,
-}: {
-	theme: Theme;
-	icon?: LucideIcon;
-	label: string;
-	onClick: () => void;
-	destructive?: boolean;
-	disabled?: boolean;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium border disabled:opacity-50"
-			style={{
-				borderColor: destructive ? theme.colors.error : theme.colors.border,
-				color: destructive ? theme.colors.error : theme.colors.textMain,
-				backgroundColor: theme.colors.bgActivity,
-			}}
-		>
-			{Icon && <Icon className="w-3.5 h-3.5" />}
-			{label}
-		</button>
-	);
 }
 
 export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {

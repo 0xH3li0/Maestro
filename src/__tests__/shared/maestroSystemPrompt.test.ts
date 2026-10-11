@@ -14,6 +14,7 @@ import {
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
+	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 } from '../../shared/plugins/first-party';
 import type { TemplateContext } from '../../shared/templateVariables';
 
@@ -50,12 +51,54 @@ describe('systemPromptSectionsFor', () => {
 		const allOn = Object.fromEntries(
 			FIRST_PARTY_PLUGIN_DEFINITIONS.map((def) => [def.encoreFlag, true])
 		);
+		const allReady = FIRST_PARTY_PLUGIN_DEFINITIONS.map((def) => def.encoreFlag);
 		const expected = FIRST_PARTY_PLUGIN_DEFINITIONS.filter((def) => def.systemPromptSection).map(
 			(def) => def.systemPromptSection!.promptId
 		);
-		expect(systemPromptSectionsFor(allOn, { isSsh: false }).map((ref) => ref.promptId)).toEqual(
-			expected
-		);
+		expect(
+			systemPromptSectionsFor(allOn, { isSsh: false, readyFlags: allReady }).map(
+				(ref) => ref.promptId
+			)
+		).toEqual(expected);
+	});
+
+	describe('a section that requires its feature to be ready (MaestroRun)', () => {
+		const section = { pluginId: MAESTRO_RUN_FIRST_PARTY_PLUGIN.id, promptId: 'maestro-run-system' };
+
+		it('declares the gate', () => {
+			expect(MAESTRO_RUN_FIRST_PARTY_PLUGIN.systemPromptSection).toEqual({
+				promptId: 'maestro-run-system',
+				localOnly: true,
+				requiresReady: true,
+			});
+		});
+
+		it('is left out when the flag is on but the builder did not vouch for it', () => {
+			// Enabling the tile is not enough: the launcher is not installed or not granted yet.
+			expect(systemPromptSectionsFor({ maestroRun: true }, { isSsh: false })).toEqual([]);
+			expect(
+				systemPromptSectionsFor({ maestroRun: true }, { isSsh: false, readyFlags: [] })
+			).toEqual([]);
+		});
+
+		it('is included once the builder names it ready', () => {
+			expect(
+				systemPromptSectionsFor({ maestroRun: true }, { isSsh: false, readyFlags: ['maestroRun'] })
+			).toEqual([section]);
+		});
+
+		it('stays out when ready but the flag is off, or the agent is on an SSH remote', () => {
+			expect(
+				systemPromptSectionsFor({ maestroRun: false }, { isSsh: false, readyFlags: ['maestroRun'] })
+			).toEqual([]);
+			expect(
+				systemPromptSectionsFor({ maestroRun: true }, { isSsh: true, readyFlags: ['maestroRun'] })
+			).toEqual([]);
+		});
+
+		it('does not gate a section that never asked for it', () => {
+			expect(systemPromptSectionsFor({ computerHistory: true }, { isSsh: false })).toHaveLength(1);
+		});
 	});
 });
 

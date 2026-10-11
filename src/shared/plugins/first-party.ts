@@ -42,7 +42,8 @@ export type FirstPartyEncoreFlag =
 	| 'groupsPlus'
 	| 'webLogin'
 	| 'computerHistory'
-	| 'quickChat';
+	| 'quickChat'
+	| 'maestroRun';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -114,6 +115,9 @@ export interface FirstPartyUsageGuide {
 	docsSlug?: string;
 }
 
+/** A host operating system, as `process.platform` names it. */
+export type FirstPartyPlatform = 'darwin' | 'win32' | 'linux';
+
 export interface FirstPartyPluginDefinition {
 	/** Stable, reverse-DNS plugin identity (`com.maestro.*`). */
 	id: string;
@@ -136,6 +140,13 @@ export interface FirstPartyPluginDefinition {
 	releaseDate: string;
 	/** Supervised background services the feature runs (empty when none). */
 	backgroundServices: readonly FirstPartyBackgroundService[];
+	/**
+	 * The host operating systems the feature exists on. Absent means all of
+	 * them. A feature is not offered anywhere else: no marketplace tile, no
+	 * `maestro-cli encore enable`, and its main-process service does nothing.
+	 * Ask through `isFirstPartyPluginAvailableOn`, never by reading this field.
+	 */
+	platforms?: readonly FirstPartyPlatform[];
 	/** How to actually use the feature once it is on. */
 	usage?: FirstPartyUsageGuide;
 	/**
@@ -148,8 +159,21 @@ export interface FirstPartyPluginDefinition {
 	 *
 	 * `localOnly` sections are skipped for SSH-remote agents, whose shell
 	 * cannot reach paths on the Maestro machine.
+	 *
+	 * `requiresReady` sections need more than the flag: the builder must also
+	 * vouch that the feature's setup is complete (see `readyFlags` on
+	 * `systemPromptSectionsFor`). Agents are told about a tool only once it
+	 * works, never the moment a tile is switched on.
 	 */
-	systemPromptSection?: { promptId: string; localOnly?: boolean };
+	systemPromptSection?: { promptId: string; localOnly?: boolean; requiresReady?: boolean };
+}
+
+/** Whether a first-party feature exists on `platform` (`process.platform`). */
+export function isFirstPartyPluginAvailableOn(
+	def: Pick<FirstPartyPluginDefinition, 'platforms'>,
+	platform: string
+): boolean {
+	return !def.platforms || (def.platforms as readonly string[]).includes(platform);
 }
 
 /** Stable first-party plugin identity for Pianola's plugin-backed Encore surface. */
@@ -979,6 +1003,87 @@ export const QUICK_CHAT_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 };
 
 /**
+ * MaestroRun runs host-side: the main process downloads the signed launcher,
+ * verifies it, and puts it in place. Nothing goes through the broker; the
+ * permissions below are the honest disclosure of what that host code does.
+ */
+export const MAESTRO_RUN_FIRST_PARTY_PLUGIN_ID = 'com.maestro.maestro-run';
+
+export const MAESTRO_RUN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: MAESTRO_RUN_FIRST_PARTY_PLUGIN_ID,
+	name: 'MaestroRun',
+	description:
+		'Give your scheduled scripts one Full Disk Access grant that survives every Python, Node, or Homebrew upgrade.',
+	firstParty: true,
+	category: 'automation',
+	platforms: ['darwin'],
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the MaestroRun Encore flag before installing or checking the launcher.',
+		},
+		{
+			capability: 'net:fetch',
+			scope: 'github.com',
+			reason:
+				'Read the MaestroRun release list and download the signed launcher and its checksum from GitHub.',
+		},
+		{
+			capability: 'net:fetch',
+			scope: 'githubusercontent.com',
+			reason: 'Follow the GitHub release-asset redirect to the CDN when downloading the launcher.',
+		},
+		{
+			capability: 'fs:write',
+			scope: '~/Applications/MaestroRun.app',
+			reason:
+				'Put the verified MaestroRun.app in place, or update the copy that is already installed.',
+		},
+	],
+	// NOTE: `process:spawn` is deliberately ABSENT (same doctrine as Symphony
+	// and Computer History): the codesign, spctl, ditto and `maestro-run doctor`
+	// calls are HOST-OWNED with fixed argv. Agents run the launcher themselves,
+	// from their own shell, once the system prompt tells them it is ready.
+	settingsNamespace: 'maestroRun',
+	encoreFlag: 'maestroRun',
+	releaseDate: '2026-10-11',
+	backgroundServices: [],
+	systemPromptSection: { promptId: 'maestro-run-system', localOnly: true, requiresReady: true },
+	usage: {
+		overview: [
+			'A script gets Full Disk Access through its interpreter, and Homebrew and most version managers sign their interpreters ad hoc. macOS pins that grant to one exact build, so every upgrade silently kills it and your launchd or cron job starts failing.',
+			'MaestroRun is a small launcher signed with a Developer ID. You grant Full Disk Access once, to MaestroRun. It then runs only the scripts you approved, at the contents you approved, and hands them the grant. The interpreter can change as often as it likes.',
+			'Maestro installs the right build for this Mac, checks its signature and notarization, and walks you through the grant. Agents are told about MaestroRun only after that is done.',
+		],
+		steps: [
+			{
+				title: 'Install',
+				body: 'Maestro downloads the newest release for this Mac from GitHub, verifies the checksum, the signature and the notarization, and puts MaestroRun.app in ~/Applications. Nothing from the download runs before those checks pass.',
+			},
+			{
+				title: 'Grant Full Disk Access',
+				body: 'macOS has no prompt for this permission. Maestro opens System Settings on the Full Disk Access list; switch MaestroRun on. If it is not in the list, reveal it in Finder and drag it in.',
+			},
+			{
+				title: 'Use it',
+				body: 'Ask any agent to move a scheduled script onto MaestroRun. The agent shows you the script and its interpreter and waits for your yes before it approves anything.',
+			},
+		],
+		agentCommands: [
+			{ label: 'Check setup', command: 'maestro-cli maestro-run status' },
+			{ label: 'Install or update the launcher', command: 'maestro-cli maestro-run install' },
+			{ label: 'Open the Full Disk Access list', command: 'maestro-cli maestro-run grant' },
+		],
+		notes: [
+			'MaestroRun is a registry and a tamper check, not a sandbox. Everything an approved script starts inherits every privacy permission MaestroRun holds.',
+			'Turning this off stops telling agents about MaestroRun. It does not remove MaestroRun.app or its grant, because your scheduled jobs may depend on both.',
+			'An edited script stops running (exit 126) until it is approved again. That is the point: a rewritten script loses the grant until you have looked at it.',
+		],
+		docsSlug: 'maestro-run',
+	},
+};
+
+/**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
  */
@@ -995,6 +1100,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	QUICK_CHAT_FIRST_PARTY_PLUGIN,
+	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -1018,4 +1124,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,
+	maestroRun: MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 };

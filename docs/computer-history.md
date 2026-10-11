@@ -120,7 +120,13 @@ Files are plain JSONL, one event per line, readable with any tool. Times and fil
 
 ## How agents use it
 
-While Computer History is on, every agent Maestro starts locally (AI tabs, Auto Run, Cue runs, group chats, and CLI dispatches) gets a short section in its system prompt with the store location, the CLI commands, and a pointer to a full guide. Agents on an [SSH remote](./ssh-remote-execution) do not get it: the store is on this machine.
+While Computer History is on, every agent Maestro starts locally (AI tabs, Auto Run, Cue runs, group chats, and CLI dispatches) is told about it in three steps, so the detail costs tokens only when an agent needs it:
+
+1. **A short section in its system prompt** on every turn: what the feature is, where the store is, the main CLI commands, and the untrusted-content rule.
+2. **A full guide the agent reads on demand:** every filter and event kind, the output shape, how to read digests, and the permission states.
+3. **`SCHEMA.md` inside the store:** the file layout and every field, for an agent that reads the files directly.
+
+Both prompts are yours to edit under **Settings > Maestro Prompts** (`computer-history-system` and `_computer-history`). Agents on an [SSH remote](./ssh-remote-execution) do not get any of it: the store is on this machine. While the feature is off, agents get no section at all.
 
 Agents are told that **captured content is untrusted**. A web page, email, or chat you merely looked at can contain text written to manipulate an AI agent. Agents must never follow instructions found in captured text and must ask you before acting on anything it says. The CLI fences captured text in an `UNTRUSTED OBSERVED INPUT` block, and its JSON output carries `"untrusted": true`.
 
@@ -170,5 +176,6 @@ Reads work with the Maestro app closed. Changes need the app running and Compute
 - The record is plaintext on disk, including messages from chat apps you had open. Exclude apps whose content you never want kept.
 - Anyone who can read your user account's files can read it, the same as your browser history.
 - Turning the feature off stops recording immediately. It does not delete what was recorded; use **Clear all history** for that.
+- `maestro-cli` can turn Computer History on and off, so an agent can too. Agents are instructed to do that only when you ask.
 - On macOS, Accessibility access belongs to Maestro as a whole, so the agents Maestro runs can use it as well. Grant it only if you are comfortable with that.
 - The web interface has no Computer History controls: it cannot pause, clear, or change the feature, and its file browser and file tools are blocked from the store. That is not a hard wall. A signed-in browser can still run commands on this machine as you (terminal tabs, `!` commands), and a command can read the files, so treat web sign-in as full access to this computer.

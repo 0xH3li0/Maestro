@@ -7,8 +7,11 @@ import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_QUICK_CHAT_SETTINGS,
 	QUICK_CHAT_MAX_MESSAGES,
+	QUICK_CHAT_MIN_EXPANDED_HEIGHT,
+	QUICK_CHAT_MIN_WIDTH,
 	logsToQuickChatMessages,
 	resolveQuickChatSettings,
+	validateQuickChatBoundsRequest,
 } from '../../shared/quickChat';
 
 const log = (id: string, source: string, text: string) => ({ id, timestamp: 1, source, text });
@@ -100,5 +103,35 @@ describe('logsToQuickChatMessages', () => {
 		const messages = logsToQuickChatMessages(logs);
 		expect(messages).toHaveLength(QUICK_CHAT_MAX_MESSAGES);
 		expect(messages[messages.length - 1].text).toBe(`m${QUICK_CHAT_MAX_MESSAGES + 4}`);
+	});
+});
+
+describe('validateQuickChatBoundsRequest', () => {
+	it('accepts a size, a spot, or both', () => {
+		expect(validateQuickChatBoundsRequest({ width: 600 })).toBeNull();
+		expect(validateQuickChatBoundsRequest({ height: 500 })).toBeNull();
+		expect(validateQuickChatBoundsRequest({ x: -1200, y: 40 })).toBeNull();
+		expect(validateQuickChatBoundsRequest({ x: 0, y: 0, width: 700, height: 600 })).toBeNull();
+	});
+
+	it('refuses an empty request', () => {
+		expect(validateQuickChatBoundsRequest({})).toMatch(/at least one/);
+	});
+
+	it('refuses half a position', () => {
+		expect(validateQuickChatBoundsRequest({ x: 10 })).toMatch(/together/);
+		expect(validateQuickChatBoundsRequest({ y: 10, width: 600 })).toMatch(/together/);
+	});
+
+	it('refuses a non-number', () => {
+		expect(validateQuickChatBoundsRequest({ width: Number('wide') })).toMatch(/numbers/);
+		expect(validateQuickChatBoundsRequest({ x: 1, y: Infinity })).toMatch(/numbers/);
+	});
+
+	it('refuses a size below what a drag allows', () => {
+		expect(validateQuickChatBoundsRequest({ width: QUICK_CHAT_MIN_WIDTH - 1 })).toMatch(/Width/);
+		expect(validateQuickChatBoundsRequest({ height: QUICK_CHAT_MIN_EXPANDED_HEIGHT - 1 })).toMatch(
+			/Height/
+		);
 	});
 });

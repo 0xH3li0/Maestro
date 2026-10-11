@@ -72,6 +72,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
 		expect(variables).toContain('{{COMPUTER_HISTORY_DIR}}');
+		expect(variables).toContain('{{MAESTRO_RUN_PATH}}');
 		expect(variables).toContain('{{TAB_ID}}');
 		expect(variables).toContain('{{TAB_NAME}}');
 		expect(variables).toContain('{{TOOL_TYPE}}');
@@ -274,6 +275,16 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('History: {{AGENT_HISTORY_PATH}}', context);
 			expect(result).toBe('History: ');
+		});
+
+		it('should replace {{MAESTRO_RUN_PATH}} with maestroRunPath, and with nothing when unset', () => {
+			const context = createTestContext({
+				maestroRunPath: '/a/MaestroRun.app/Contents/MacOS/maestro-run',
+			});
+			expect(substituteTemplateVariables('[{{MAESTRO_RUN_PATH}}]', context)).toBe(
+				'[/a/MaestroRun.app/Contents/MacOS/maestro-run]'
+			);
+			expect(substituteTemplateVariables('[{{MAESTRO_RUN_PATH}}]', createTestContext())).toBe('[]');
 		});
 
 		it('should replace {{COMPUTER_HISTORY_DIR}} with computerHistoryDir', () => {

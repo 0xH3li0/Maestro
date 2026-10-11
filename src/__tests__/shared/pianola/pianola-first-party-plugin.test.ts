@@ -150,6 +150,7 @@ describe('first-party plugin registry', () => {
 			['webLogin', 'com.maestro.web-login'],
 			['computerHistory', 'com.maestro.computer-history'],
 			['quickChat', 'com.maestro.quick-chat'],
+			['maestroRun', 'com.maestro.maestro-run'],
 		]);
 	});
 

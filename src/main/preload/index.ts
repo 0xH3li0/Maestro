@@ -20,6 +20,7 @@ import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
 import { createComputerHistoryApi } from './computerHistory';
+import { createMaestroRunApi } from './maestroRun';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -129,6 +130,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Computer History API (desktop-only; the web bridge refuses these channels)
 	computerHistory: createComputerHistoryApi(),
+
+	// MaestroRun API (macOS launcher install + Full Disk Access walkthrough)
+	maestroRun: createMaestroRunApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -307,6 +311,7 @@ export {
 	createWebLoginApi,
 	// Computer History
 	createComputerHistoryApi,
+	createMaestroRunApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,

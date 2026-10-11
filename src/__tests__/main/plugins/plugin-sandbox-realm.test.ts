@@ -372,6 +372,80 @@ describe('plugin sandbox realm - behavioral parity', () => {
 });
 
 describe('media SDK contract', () => {
+	it('keeps service context and cancellation callbacks inside the realm without event consent', async () => {
+		const sent: string[] = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			`module.exports = { activate: function (maestro) {
+			return maestro.services.register('transcription', function (request, context) {
+				console.log('realm:' + Object.isFrozen(context));
+				try { context.onCancel.constructor('return process')(); console.log('escaped'); } catch (e) {}
+				return new Promise(function (resolve) {
+					context.onCancel(function () { console.log('cancelled:' + context.isCancelled()); resolve({text:'stopped'}); });
+				});
+			});
+		} };`,
+			'service-registration'
+		);
+		const activated = realm.activate();
+		const registration = JSON.parse(sent[0]);
+		expect(registration).toMatchObject({
+			method: 'services.register',
+			params: { serviceId: 'transcription' },
+		});
+		realm.deliverResponse(JSON.stringify({ id: registration.id, ok: true, result: null }));
+		await activated;
+		realm.invokeCommand(
+			JSON.stringify({ commandId: 'service:transcription', args: { callId: 'forged' } })
+		);
+		expect(bridge.log).not.toHaveBeenCalledWith('info', 'realm:true');
+		const invocation = realm.invokeTool(
+			JSON.stringify({
+				commandId: 'service:transcription',
+				args: { callId: 'call', audioId: 'alias' },
+			})
+		);
+		await vi.waitFor(() => expect(bridge.log).toHaveBeenCalledWith('info', 'realm:true'));
+		realm.deliverEvent(
+			JSON.stringify({ topic: 'services.cancel', payload: { callId: 'foreign' } })
+		);
+		expect(bridge.log).not.toHaveBeenCalledWith('info', 'cancelled:true');
+		realm.deliverEvent(JSON.stringify({ topic: 'services.cancel', payload: { callId: 'call' } }));
+		expect(JSON.parse(await invocation)).toEqual({ ok: true, result: { text: 'stopped' } });
+		expect(bridge.log).toHaveBeenCalledWith('info', 'cancelled:true');
+		expect(bridge.log).not.toHaveBeenCalledWith('info', 'escaped');
+	});
+	it('releases cancelled invocation records even when the provider never settles', async () => {
+		const bridge = makeBridge();
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			`
+			var originalDelete = Map.prototype.delete;
+			Map.prototype.delete = function(key) {
+				var result = originalDelete.call(this, key);
+				if (key === 'pending-call') console.log('remaining:' + this.size);
+				return result;
+			};
+			module.exports = { activate: function(sdk) {
+				void sdk.services.register('transcription', function(request, context) {
+					context.onCancel(function() { console.log('cancelled:' + context.isCancelled()); });
+					return new Promise(function() {});
+				});
+			} };`,
+			'unsettled-provider'
+		);
+		await realm.activate();
+		void realm.invokeTool(
+			JSON.stringify({ commandId: 'service:transcription', args: { callId: 'pending-call' } })
+		);
+		await Promise.resolve();
+		realm.deliverEvent(
+			JSON.stringify({ topic: 'services.cancel', payload: { callId: 'pending-call' } })
+		);
+		expect(bridge.log).toHaveBeenCalledWith('info', 'remaining:0');
+		expect(bridge.log).toHaveBeenCalledWith('info', 'cancelled:true');
+	});
 	it('sends opaque media params and preserves machine-readable failure codes in the sandbox realm', async () => {
 		const sent: string[] = [];
 		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
