@@ -276,6 +276,10 @@ maestro-cli send <agent-id> <message> [-s, --session <id>]
 Options:
 
 - `--session <id>` - Resume an existing agent session for multi-turn conversations
+- `--no-history` - Skip writing the History entry
+- `--no-synopsis` - Skip the synopsis turn; the History entry carries the response
+
+Every send writes one History entry on the target agent (`recordSendHistory` in `src/cli/commands/send.ts`). `resolveSendOrigin` picks the kind from the environment the command inherited: `CUE` when `MAESTRO_QUERY_SOURCE` is `cue`, `AGENT` (with `sourceAgentName`) when a caller identity is present, `USER` otherwise.
 
 Response format:
 

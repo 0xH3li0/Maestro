@@ -66,6 +66,7 @@ import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/se
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
+import { QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -89,9 +90,10 @@ describe('send command', () => {
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
 		// A test run started from an agent's own shell inherits its caller
-		// identity, which would turn every entry here into an AGENT entry. Blank
-		// reads as absent.
+		// identity and its turn's origin, which would turn every entry here into
+		// an AGENT or CUE entry. Blank reads as absent.
 		vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, '');
+		vi.stubEnv(QUERY_SOURCE_ENV_VAR, '');
 	});
 
 	afterEach(() => {
@@ -601,6 +603,61 @@ describe('send command', () => {
 
 			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
 			expect(entry).toMatchObject({ type: 'AGENT', sourceAgentName: 'agent-gone-9' });
+		});
+
+		it('writes a CUE entry and keeps the turn Cue-sourced when Cue started the send', async () => {
+			vi.stubEnv(QUERY_SOURCE_ENV_VAR, 'cue');
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Triaged the queue.',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Triage', { synopsis: false });
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ querySource: 'cue' });
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'CUE',
+				summary: 'Triaged the queue.',
+				success: true,
+			});
+			expect(entry.sourceAgentName).toBeUndefined();
+			// Setting these would pair the entry with the run's own `cue_events`
+			// row and hide that row from the History panel.
+			expect(entry.cueTriggerName).toBeUndefined();
+			expect(entry.cueEventType).toBeUndefined();
+		});
+
+		it('records a Cue-started send as CUE even when an agent ran the command', async () => {
+			vi.stubEnv(QUERY_SOURCE_ENV_VAR, 'cue');
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-caller-1');
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({ success: false, error: 'boom' });
+
+			await send('agent-abc', 'Do it', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ type: 'CUE', success: false, summary: 'Send failed: boom' });
+			expect(entry.sourceAgentName).toBeUndefined();
+			errSpy.mockRestore();
+		});
+
+		it('leaves the turn origin unset for a send a user-sourced turn ran', async () => {
+			vi.stubEnv(QUERY_SOURCE_ENV_VAR, 'user');
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.querySource).toBeUndefined();
+			expect(vi.mocked(addHistoryEntry).mock.calls[0][0].type).toBe('USER');
 		});
 
 		it('writes a USER entry with no sender when no agent is calling', async () => {

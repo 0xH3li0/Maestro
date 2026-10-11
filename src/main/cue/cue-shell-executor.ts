@@ -25,6 +25,7 @@ import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
 import type { StopHandle } from '../../shared/maestro-lib/control/termination';
+import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 
 export interface CueShellExecutionConfig {
 	runId: string;
@@ -165,6 +166,11 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		}
 		spawnEnv.PATH = shellPath || buildSpawnPath();
 	}
+
+	// A shell action is not an agent turn, but what it launches can start one
+	// (`maestro-cli send`). Claiming the origin here is what lets that turn be
+	// recorded as Cue's instead of as something the user typed.
+	spawnEnv[QUERY_SOURCE_ENV_VAR] = 'cue';
 
 	return new Promise<CueRunResult>((resolve) => {
 		let child: ChildProcess;

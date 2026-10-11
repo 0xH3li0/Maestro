@@ -12,6 +12,7 @@ import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcom
 import { withMaestroClient } from '../services/maestro-client';
 import { installInterruptHandler } from '../utils/interrupt';
 import { readCallerIdentity } from '../../shared/agentDelegation';
+import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 
@@ -48,6 +49,27 @@ function fallbackSummary(text: string): string {
 		: firstLine;
 }
 
+/** Who started a send: a Cue run, another agent, or the user at a shell. */
+type SendOrigin = { kind: 'cue' } | { kind: 'agent'; agentName: string } | { kind: 'user' };
+
+/**
+ * Read who started this send from the environment its shell inherited.
+ *
+ * Cue wins: a run Cue started (a shell action, or an agent Cue woke) stamps
+ * `MAESTRO_QUERY_SOURCE=cue`, and that describes where the whole chain began.
+ * Otherwise the caller identity every desktop agent spawn stamps names the
+ * agent whose shell ran the command. With neither it is the user, or a script
+ * of theirs, at a shell.
+ */
+function resolveSendOrigin(env: NodeJS.ProcessEnv): SendOrigin {
+	if (env[QUERY_SOURCE_ENV_VAR]?.trim() === 'cue') return { kind: 'cue' };
+	const caller = readCallerIdentity(env);
+	if (!caller) return { kind: 'user' };
+	// A caller whose agent is gone by now still asked; its id is the only name
+	// left for it.
+	return { kind: 'agent', agentName: getSessionById(caller.agentId)?.name ?? caller.agentId };
+}
+
 /**
  * Record a `send` turn in the agent's History, the same file the desktop's
  * History panel reads (and watches, so an open app shows it live).
@@ -60,12 +82,16 @@ function fallbackSummary(text: string): string {
  * without a synopsis turn. Failures here never fail the send: the caller
  * already has its response on stdout, so they only warn on stderr.
  *
- * WHO asked decides the kind. A send run from another agent's shell (the
- * caller identity every desktop agent spawn stamps into its environment) is an
- * AGENT entry naming that agent, the same kind a consult writes: an ordinary
- * turn whose only difference from a user's is who asked, and one whose
- * pass/fail the panel marks. With no calling agent it is the user, or a script
- * of theirs, at a shell, so it stays a USER entry.
+ * WHO asked decides the kind (`resolveSendOrigin`). A send Cue started is a
+ * CUE entry. A send run from another agent's shell is an AGENT entry naming
+ * that agent, the same kind a consult writes: an ordinary turn whose only
+ * difference from a user's is who asked. Both kinds carry the panel's
+ * pass/fail mark. Anything else is a USER entry.
+ *
+ * A CUE entry deliberately sets no `cueTriggerName` / `cueEventType`: the
+ * History read pairs a CUE entry in this file with the `cue_events` row
+ * sharing those two fields and hides the row (`dropCueRowsAlreadyInJsonl`),
+ * so a send to the subscription's own agent would hide the run that sent it.
  */
 async function recordSendHistory(
 	agent: SessionInfo,
@@ -73,6 +99,7 @@ async function recordSendHistory(
 	result: AgentResult,
 	elapsedTimeMs: number,
 	options: SendOptions,
+	origin: SendOrigin,
 	signal: AbortSignal
 ): Promise<void> {
 	try {
@@ -111,16 +138,11 @@ async function recordSendHistory(
 			}
 		}
 
-		const caller = readCallerIdentity(process.env);
-		// A caller whose agent is gone by now still asked; its id is the only
-		// name left for it.
-		const sourceAgentName = caller
-			? (getSessionById(caller.agentId)?.name ?? caller.agentId)
-			: undefined;
+		const sourceAgentName = origin.kind === 'agent' ? origin.agentName : undefined;
 
 		const entry: HistoryEntry = {
 			id: generateUUID(),
-			type: sourceAgentName ? 'AGENT' : 'USER',
+			type: origin.kind === 'cue' ? 'CUE' : sourceAgentName ? 'AGENT' : 'USER',
 			timestamp: Date.now(),
 			// Nothing in the panel draws `sourceAgentName`, so the summary names
 			// the sender, as a consult's "Consulted by" does.
@@ -260,6 +282,7 @@ export async function send(
 	// instead of orphaning it; a second Ctrl+C exits immediately. The handler
 	// stays installed through the History write, so a Ctrl+C during the
 	// synopsis turn stops that turn too and the entry falls back to the response.
+	const origin = resolveSendOrigin(process.env);
 	const interrupt = installInterruptHandler();
 	let result: AgentResult;
 	try {
@@ -276,6 +299,9 @@ export async function send(
 				spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
+					// A send Cue started is still Cue's turn on this agent. Left
+					// unset otherwise, so the turn keeps the default origin.
+					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
 					customModel: agent.customModel,
 					customEffort: agent.customEffort,
 					customArgs: agent.customArgs,
@@ -296,7 +322,15 @@ export async function send(
 		console.log(JSON.stringify(response, null, 2));
 
 		if (options.history !== false) {
-			await recordSendHistory(agent, message, result, elapsedTimeMs, options, interrupt.signal);
+			await recordSendHistory(
+				agent,
+				message,
+				result,
+				elapsedTimeMs,
+				options,
+				origin,
+				interrupt.signal
+			);
 		}
 	} finally {
 		interrupt.dispose();
