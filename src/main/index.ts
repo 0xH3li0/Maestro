@@ -1370,16 +1370,21 @@ app
 
 				const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
 
-				// Resolve the agent's binary path using the agent detector.
-				// Without this, Cue falls back to the bare command name (e.g., 'claude')
-				// which fails with ENOENT when spawn() can't find it on PATH.
-				let resolvedAgentPath = agentConfigValues.customPath as string | undefined;
-				if (!resolvedAgentPath && agentDetector) {
-					const detectedAgent = await agentDetector.getAgent(storedSession.toolType);
-					if (detectedAgent?.available && detectedAgent.path) {
-						resolvedAgentPath = detectedAgent.path;
-					}
-				}
+				// Resolve the agent's binary the way a tab spawn does: the agent's
+				// own custom path, then the provider's, then the detector's. Without
+				// the last rung Cue falls back to the bare command name (e.g.
+				// 'claude'), which fails with ENOENT when spawn() can't find it on PATH.
+				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
+				const resolvedAgentPath = await resolveCueAgentBinary({
+					sessionCustomPath: storedSession.customPath,
+					providerCustomPath: agentConfigValues.customPath as string | undefined,
+					sshEnabled: !!storedSession.sessionSshRemoteConfig?.enabled,
+					getDetectedPath: async () => {
+						const detectedAgent = await agentDetector?.getAgent(storedSession.toolType);
+						return detectedAgent?.available ? detectedAgent.path : undefined;
+					},
+					onWarn: (message) => logger.warn(message, 'Cue', { sessionId: storedSession.id }),
+				});
 
 				// The subscription's tier / model / effort outranks the agent's own
 				// config for this run only. A tier or effort the provider cannot
