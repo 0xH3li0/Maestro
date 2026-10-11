@@ -77,7 +77,6 @@ describe('a model voice shares with another consumer', () => {
 		// which the task list already names beside the model.
 		expect(voiceModelUsageLabel(QWEN3_1_7B_ID)).toBeUndefined();
 		expect(voiceModelUsageLabel(PARAKEET_TDT_V2_ID)).toBe('Voice (speech-to-text)');
-		expect(voiceModelUsageLabel(KOKORO_82M_ID)).toBeUndefined();
 	});
 });
 
@@ -217,8 +216,9 @@ describe('voiceModelUsageLabel', () => {
 		expect(voiceModelUsageLabel(HEY_JARVIS_WAKE_ID)).toBe('Voice (wake word)');
 	});
 
-	it('is undefined for a pending voice model and for a non-voice model', () => {
-		expect(voiceModelUsageLabel(KOKORO_82M_ID)).toBeUndefined();
+	it('names the voice slot of the neural voice, and nothing for a non-voice model', () => {
+		// Kokoro speaks since its phoneme front end shipped, so voice is a user.
+		expect(voiceModelUsageLabel(KOKORO_82M_ID)).toBe('Voice (text-to-speech)');
 		expect(voiceModelUsageLabel(BGE_SMALL_EN_ID)).toBeUndefined();
 		expect(voiceModelUsageLabel('not-a-model')).toBeUndefined();
 	});

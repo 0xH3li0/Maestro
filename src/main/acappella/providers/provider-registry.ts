@@ -385,13 +385,11 @@ registerVoiceProvider({
 	create: () => new SystemVoiceTtsProvider(),
 });
 
-// Registered but UNLISTED: absent from the shared catalog, so no dropdown offers
-// it and nothing resolves to it unless a settings file names it outright. See
-// KOKORO_TTS_PROVIDER_ID for why it cannot speak in this build.
+// The downloadable neural voice. Not the default: see KOKORO_TTS_PROVIDER_ID.
 registerVoiceProvider({
 	role: 'tts',
 	id: KOKORO_TTS_PROVIDER_ID,
-	label: 'Kokoro (local)',
+	label: 'Kokoro (local neural voice)',
 	tier: 'local',
 	// No voice id is threaded through: Kokoro ships exactly one voice pack in the
 	// model catalog, and handing it an id chosen for ElevenLabs would point it at

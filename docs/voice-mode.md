@@ -80,11 +80,11 @@ Hosted providers need an API key, entered in **Voice Providers**. Keys are store
 </Note>
 
 <Note>
-	Two more local engines exist in the code but are not offered yet, and the settings do not list
-	them: the **Kokoro** neural voice needs a phoneme front end that is not part of this build, and a
-	**local model** as the Conductor Brain is held back because the one text model in the catalog
-	(Qwen3 1.7B) does not yet route a request to the agent it names. If you downloaded either on an
-	earlier build, the Models page still shows it so you can remove it.
+	**Kokoro**, a neural voice that runs on this machine, is a Text-to-Speech choice once you download
+	it (326 MB, from [Local Models](./local-models#the-neural-voice)). The system voice stays the
+	default because it needs no download. A **local model** as the Conductor Brain is still held
+	back: the one text model in the catalog (Qwen3 1.7B) does not route a request to the agent it
+	names. Use an endpoint, the built-in router, or a hosted Brain for routing.
 </Note>
 
 ## Downloading the models

@@ -418,11 +418,14 @@ describe('KokoroTtsProvider', () => {
 		return chunks;
 	}
 
-	it('refuses, by name, when there is no phoneme front end', async () => {
+	it('refuses, by name, when the phoneme front end cannot load', async () => {
 		const runtime = onnxRuntime();
 		const provider = new KokoroTtsProvider({
 			loadRuntime: runtime.loadRuntime,
 			modelPath: '/tmp/kokoro.onnx',
+			// No `phonemize` injected, so the real front end is built from the
+			// model's tokenizer file, which is not there.
+			tokenizerPath: '/tmp/no-such-kokoro-model/tokenizer.json',
 			readVoicePack,
 		});
 
@@ -448,6 +451,48 @@ describe('KokoroTtsProvider', () => {
 		expect(chunks.map((chunk) => chunk.text)).toEqual(['First one.', 'Second one.']);
 		expect(chunks[0].sampleRate).toBe(24_000);
 		expect(runtime.run).toHaveBeenCalledTimes(2);
+	});
+
+	it('speaks a sentence longer than the model takes in one run, as several', async () => {
+		const runtime = onnxRuntime();
+		// 1200 ids for one sentence, with a punctuation id (9) every 100.
+		const long = Array.from({ length: 1200 }, (_, index) => (index % 100 === 99 ? 9 : 1));
+		const provider = new KokoroTtsProvider({
+			phonemize: () => long,
+			boundaries: { punctuation: new Set([9]), space: undefined },
+			loadRuntime: runtime.loadRuntime,
+			modelPath: '/tmp/kokoro.onnx',
+			readVoicePack,
+		});
+
+		const chunks = await collect(provider.speak('One long sentence.', { utteranceId: 'u1' }));
+
+		// Fed whole, 1200 ids fails the inference. Cut at punctuation it is three
+		// runs of at most 510, joined into ONE chunk for the one sentence.
+		expect(chunks).toHaveLength(1);
+		expect(runtime.run).toHaveBeenCalledTimes(3);
+		const lengths = runtime.run.mock.calls.map(
+			([feeds]) => (feeds as { input_ids: { dims: number[] } }).input_ids.dims[1] - 2
+		);
+		expect(lengths).toEqual([500, 500, 200]);
+		// 240 float samples per mocked run, as 16-bit PCM.
+		expect(chunks[0].audio?.byteLength).toBe(3 * 240 * 2);
+	});
+
+	it('says nothing, and fails nothing, for a sentence with nothing speakable in it', async () => {
+		const runtime = onnxRuntime();
+		const provider = new KokoroTtsProvider({
+			phonemize: (text) => (text.startsWith('Real') ? [1, 2, 3] : []),
+			loadRuntime: runtime.loadRuntime,
+			modelPath: '/tmp/kokoro.onnx',
+			readVoicePack,
+		});
+
+		const chunks = await collect(provider.speak('(). Real words.', { utteranceId: 'u1' }));
+
+		// Not a run of two pad tokens: the empty sentence is skipped.
+		expect(chunks.map((chunk) => chunk.text)).toEqual(['Real words.']);
+		expect(runtime.run).toHaveBeenCalledTimes(1);
 	});
 
 	it('cancels a run without delivering the sentence it interrupted', async () => {

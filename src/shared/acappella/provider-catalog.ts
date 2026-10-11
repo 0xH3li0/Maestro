@@ -20,7 +20,11 @@
  * than written into copy that can drift.** See {@link summariseVoiceEgress}.
  */
 
-import { PARAKEET_TDT_V2_ID, WHISPER_BASE_EN_ID } from '../local-models/model-catalog';
+import {
+	KOKORO_82M_ID,
+	PARAKEET_TDT_V2_ID,
+	WHISPER_BASE_EN_ID,
+} from '../local-models/model-catalog';
 import type { NativeRuntimeId } from '../local-models/native-runtimes';
 import type { LocalModelTaskId } from '../local-models/tasks';
 import type { VoiceProviderRole, VoiceProviderTier } from './providers';
@@ -148,20 +152,22 @@ export const WHISPER_STT_PROVIDER_ID = 'whisper-local';
 /**
  * The operating system's own voice: `say`, System.Speech, or `espeak-ng`.
  *
- * The local Text-to-Speech DEFAULT, and the reason it is the default rather
- * than the downloaded neural voice is that the neural voice cannot speak yet
- * (see {@link KOKORO_TTS_PROVIDER_ID}). This one needs no download and no key,
- * and nothing leaves the machine, so "enable the feature and talk" is true on
- * every desktop Maestro ships on.
+ * The local Text-to-Speech DEFAULT, rather than the downloaded neural voice
+ * ({@link KOKORO_TTS_PROVIDER_ID}), because this one needs no download and no
+ * key, and nothing leaves the machine, so "enable the feature and talk" is
+ * true on every desktop Maestro ships on.
  */
 export const SYSTEM_TTS_PROVIDER_ID = 'system-tts';
 
 /**
- * Kokoro, the downloadable neural voice. Registered and runnable in code, but
- * NOT listed in the catalog below: it takes phoneme ids, and the
- * grapheme-to-phoneme front end it needs is not part of this build, so choosing
- * it refused every reply. It returns to the list in the commit that ships the
- * front end. The id stays exported for the provider class and its tests.
+ * Kokoro, the downloadable neural voice. It takes phoneme ids, so it speaks
+ * through a grapheme-to-phoneme front end (espeak-ng, via the `phonemizer`
+ * package: `src/main/acappella/providers/local/kokoro/`). Until that shipped it
+ * was registered but unlisted, because choosing it refused every reply.
+ *
+ * The system voice stays the DEFAULT: it needs no download. Kokoro is the
+ * choice for someone who wants a better local voice and will fetch 326 MB for
+ * it. English only, one voice.
  */
 export const KOKORO_TTS_PROVIDER_ID = 'kokoro-local';
 
@@ -344,10 +350,17 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		description:
 			"Speaks with your computer's own voice. Nothing to download, and nothing leaves this machine.",
 	}),
-	// Kokoro (`kokoro-local`) is NOT listed on purpose. See KOKORO_TTS_PROVIDER_ID:
-	// it needs a phoneme front end this build does not have, so listing it put a
-	// choice in the dropdown that refused every reply. The model stays in the
-	// model catalog so an existing download can be seen and removed.
+	defineProvider({
+		id: KOKORO_TTS_PROVIDER_ID,
+		role: 'tts',
+		label: 'Kokoro (local neural voice)',
+		tier: 'local',
+		requires: { kind: 'model', modelId: KOKORO_82M_ID, runtimeId: 'onnx' },
+		egress: 'none',
+		egressService: null,
+		description:
+			'A neural voice that runs on this machine, in American English. A 326 MB download; nothing leaves this machine.',
+	}),
 	defineProvider({
 		id: OPENAI_TTS_PROVIDER_ID,
 		role: 'tts',

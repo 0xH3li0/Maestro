@@ -235,10 +235,9 @@ the only module allowed to import a concrete provider. Two rules are non-negotia
    costs the user a permission prompt. `echo-stt` is still selectable and is still the right answer
    to "is my microphone reaching Maestro?" - it is a diagnostic, not a default.
 
-   Kokoro (`kokoro-local`) is registered but deliberately absent from the shared catalog, and so
-   from every dropdown: it needs a grapheme-to-phoneme front end this build does not have. Listing
-   a provider that refuses every session reads as "voice is broken"; it returns to the catalog in
-   the commit that makes it runnable.
+   Kokoro (`kokoro-local`) is listed as a local voice that needs its model. It was absent from
+   the catalog until its grapheme-to-phoneme front end shipped, because listing a provider that
+   refuses every session reads as "voice is broken". The system voice stays the default.
 
    The Brain slot has a second input. A local model or an endpoint routes because it is ASSIGNED
    to the Local Models `voice-routing` task, not because a provider id was stored. When that

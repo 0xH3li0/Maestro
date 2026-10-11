@@ -139,11 +139,15 @@ describe('local model catalog', () => {
 		);
 	});
 
-	it('records pending only for models nothing in this build can read', () => {
-		for (const id of [KOKORO_82M_ID]) {
-			expect(getLocalModel(id)?.pending).toEqual(expect.any(String));
-		}
+	it('marks no model pending: every catalog entry runs in this build', () => {
+		// `pending` is for weights nothing here can read, and it hides a model from
+		// every surface. Both models that carried it now run and are measured on
+		// real hardware, so the catalog has no such entry. The field stays for the
+		// next model that lands ahead of its engine.
+		expect(LOCAL_MODEL_CATALOG.filter((entry) => entry.pending)).toEqual([]);
 		for (const id of [
+			// Speaks since its phoneme front end shipped (`kokoro-e2e.test.ts`).
+			KOKORO_82M_ID,
 			// Installable since the llama runtime was proven on real hardware. What it
 			// is NOT offered for is a per-task fact (`unofferedLocalModels`).
 			QWEN3_1_7B_ID,

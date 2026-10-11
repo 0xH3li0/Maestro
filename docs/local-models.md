@@ -40,11 +40,6 @@ Every file comes from a pinned revision and is checked against a SHA-256 recorde
 
 **Removing a model a task uses warns first.** The warning names the tasks that would stop working, and you choose **Remove anyway** or **Keep it**.
 
-<Warning>
-	One entry is listed but not usable yet: **Kokoro 82M** needs a phoneme front end that is not part
-	of this build. Its row says so, and replies use your computer's own voice.
-</Warning>
-
 ### The text model
 
 **Qwen3 1.7B** is the one text model Maestro runs itself. It is small and fast (a tab name in about a quarter of a second on Apple Silicon), and that size decides what it is offered for:
@@ -54,6 +49,12 @@ Every file comes from a pinned revision and is checked against a SHA-256 recorde
 - **Not offered for voice routing.** It sent requests that named an agent to the Conductor instead of to that agent.
 
 The Assignments picker leaves it out of those two tasks. For them, use an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
+
+### The neural voice
+
+**Kokoro 82M** is a neural text-to-speech voice that runs on this machine: American English, one voice (Heart). It speaks about six times faster than real time on Apple Silicon. Choose it under **Text-to-Speech** in the A Cappella voice settings, and it is also the voice [spoken notices](#spoken-notices) use when it is the voice you chose there. The system voice stays the default, because it needs no download.
+
+Kokoro reads text through espeak-ng, which turns words into the sounds the model was trained on. espeak-ng ships inside Maestro (it is small, and plain JavaScript) under the GPL, version 3 or later; see `THIRD-PARTY-NOTICES.md` in the repository.
 
 ### Engines
 

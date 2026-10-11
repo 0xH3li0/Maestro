@@ -1220,6 +1220,66 @@ CLI: `maestro-cli models run dictation --audio <file.wav>` reaches `transcribeAu
 (`local_models_transcribe` on the bridge), which decodes a 16-bit PCM WAV and calls
 `transcribeClip()`. An agent has no microphone, so it brings the audio as a file.
 
+## The Kokoro voice
+
+Kokoro 82M is the catalog's one text-to-speech model. It is a voice PROVIDER
+(`src/main/acappella/providers/local/kokoro-tts.ts`, `kokoro-local`), not a task: voice picks it in
+its Text-to-Speech slot, and spoken notices use it when that slot holds a local voice
+(`noticeTtsProviderId()`).
+
+It takes phoneme ids, so text reaches it through a front end in
+`src/main/acappella/providers/local/kokoro/`:
+
+| Module         | What it does                                                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `text.ts`      | Normalizes text (years, clock times, money, decimals, quotes) and maps espeak's phonemes onto Kokoro's. A rule-for-rule port of kokoro-js `phonemize.js` (Apache-2.0). |
+| `espeak.ts`    | Loads espeak-ng from the `phonemizer` package and removes the process error handlers it adds.                                                                          |
+| `tokens.ts`    | Reads the vocabulary from the model's `tokenizer.json`, maps phonemes to ids, and cuts a long sequence into runs of at most 510.                                       |
+| `front-end.ts` | Joins the three: text in, ids out.                                                                                                                                     |
+
+Three things that are easy to get wrong, each found while building it:
+
+- **`phonemizer` registers two process-wide error handlers on import** (`uncaughtException` and
+  `unhandledRejection`, both rethrowing). In a process with its own handlers, any later uncaught
+  error anywhere then exits with code 7. `withoutAddedErrorHandlers()` records the listeners before
+  the load and removes what the load added. espeak works the same without them.
+- **A sentence is not a safe unit.** The model takes at most 510 ids between its pad tokens; 511
+  fails the inference in ONNX Runtime. 240 characters of digits phonemize to about 1500. So
+  `splitTokenRuns()` cuts at clause punctuation, then at a space, then mid-word, each run takes the
+  style row for ITS length, and the audio is joined into one chunk for the sentence.
+- **The text rules are not tidied.** The whitespace collapse replaces only its first match, and
+  parentheses become guillemets the vocabulary then drops. The voice was trained on text prepared
+  by exactly these rules, so they are kept as they are and pinned by a golden test.
+
+The vocabulary is `tokenizer.json` from the model repo, pinned and hashed in the catalog like the
+weights (3,497 bytes). espeak-ng is GPL-3.0-or-later inside an Apache-2.0 package; the notice is in
+`THIRD-PARTY-NOTICES.md`.
+
+### Result: 2026-10-11, darwin-arm64
+
+`src/__tests__/main/acappella/providers/kokoro-e2e.test.ts` (`MAESTRO_LOCAL_MODEL_E2E=1`) installs
+the model through `installLocalModel()` and speaks through the real provider. The reference is
+kokoro-js 1.2.1, the implementation the front end is ported from, for "Hello world, this is a
+test." on the `af_heart` voice.
+
+| Check                                             | Result                                                  |
+| ------------------------------------------------- | ------------------------------------------------------- |
+| Token ids                                         | The reference's 30 ids, exactly                         |
+| Samples                                           | 56400 at 24 kHz (2.35 s), the reference's count exactly |
+| RMS level                                         | 0.06735, the reference's value on ONNX Runtime 1.30     |
+| Same text twice                                   | The same samples                                        |
+| First sentence, model not yet loaded              | 804 ms                                                  |
+| Same sentence, warm                               | 406 ms, about 5.8 times faster than real time           |
+| A sentence of 1511 ids (240 characters of digits) | 75.4 s of audio in 10.9 s, in runs of at most 510       |
+| "In 1999 it cost $9.99 at 3:05."                  | 5.55 s: the numbers are spelled out, not read as digits |
+
+The golden ids are also checked on every ordinary test run
+(`kokoro-front-end.test.ts`), with the real espeak and the real vocabulary and no model download.
+
+**Not measured:** how it sounds to a person (the comparison is to the reference's numbers, not a
+listening test), a recognizer round trip, Windows, Linux, an Intel Mac, and loading inside the
+packaged Electron app.
+
 ## Voice routing: the Conductor Brain on an assignment
 
 The A Cappella Conductor Brain decides which agent and tab a spoken request is for. A local model or
@@ -2146,6 +2206,11 @@ button. Each shows its catalog `pending` text ("Not usable yet"). Qwen3 is the o
 generation model in the catalog, so on a new profile the nine tasks that take a text model can run
 only on an endpoint or on the Utility Agent. This is the state recorded under "Llama runtime on
 real hardware".
+
+**No longer true, later the same day.** Both rows now have a Download button: Qwen3 1.7B lost its
+`pending` note once it was measured on the housekeeping tasks (see "housekeeping tasks" above), and
+Kokoro 82M once its phoneme front end shipped (see "The Kokoro voice" below). The smoke test was
+not repeated after those changes.
 
 **Not run.**
 

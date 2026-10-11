@@ -79,8 +79,19 @@ describe('the provider catalog', () => {
 	it('does not list the engines this build cannot run', () => {
 		// Registered in the provider registry, absent from the dropdown: a choice
 		// that refuses every session reads as "voice is broken".
-		expect(getVoiceProvider('kokoro-local')).toBeUndefined();
 		expect(getVoiceProvider('conductor-agent')).toBeUndefined();
+	});
+
+	it('lists Kokoro as a local voice that needs its model, and keeps the system voice the default', () => {
+		// Listed since its phoneme front end shipped. A download the user chooses,
+		// so it is never what "enable voice and talk" resolves to.
+		expect(getVoiceProvider('kokoro-local')).toMatchObject({
+			role: 'tts',
+			tier: 'local',
+			requires: { kind: 'model', modelId: 'kokoro-82m', runtimeId: 'onnx' },
+			egress: 'none',
+		});
+		expect(LOCAL_PROVIDER_IDS.tts).toBe('system-tts');
 	});
 
 	it('describes the two Local Models Brains without offering them as provider choices', () => {

@@ -215,11 +215,12 @@ function defineSet(
  * One set, and it is exactly the downloads the local trio needs: the recogniser
  * and the wake word. The voice is the operating system's own and the router is
  * built in, so neither costs a download. Kokoro and Qwen3 are deliberately NOT
- * in it. Kokoro cannot run in this build (see its `pending` note). Qwen3 runs,
- * but it is not offered for voice routing (see `unofferedLocalModels` on that
- * task), so a voice bundle that fetched a gigabyte of weights voice would not
- * use would be a lie on the Download button. It is installed from the Local
- * Models tab, for the tasks it is good at.
+ * in it. Kokoro is the better local voice, but the system voice already
+ * speaks, so its 326 MB is a choice the user makes in the Text-to-Speech
+ * picker, not part of "make voice work". Qwen3 is not offered for voice
+ * routing (see `unofferedLocalModels` on that task), so a voice bundle that
+ * fetched a gigabyte of weights voice would not use would be a lie on the
+ * Download button. Both are installed from the Local Models tab.
  */
 export const MODEL_SETS: Readonly<Record<VoiceModelSetId, VoiceModelSet>> = Object.freeze({
 	'hands-free-local': defineSet(

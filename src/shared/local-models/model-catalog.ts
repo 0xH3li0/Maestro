@@ -306,11 +306,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		license: 'Apache-2.0',
 		licenseUrl: 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX',
 		description:
-			'Speech synthesis with one bundled voice. Replies are spoken from this machine rather than streamed from a service.',
-		// The model takes phoneme ids and the grapheme-to-phoneme front end it
-		// needs is not in this build. Until it is, the system voice speaks instead.
-		pending:
-			"Not usable yet: the phoneme front end this voice needs is not part of this build. Replies use your computer's own voice instead.",
+			'A neural voice that speaks replies and spoken notices from this machine, in American English. One bundled voice (Heart).',
+		// Speaks since the phoneme front end shipped (espeak-ng through the
+		// `phonemizer` package, `src/main/acappella/providers/local/kokoro/`).
 		files: [
 			{
 				path: 'onnx/model.onnx',
@@ -321,6 +319,13 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 				path: 'voices/af_heart.bin',
 				sha256: 'd583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b',
 				bytes: 522240,
+			},
+			// The phoneme vocabulary. Small, but the model is unusable without it:
+			// its ids are what the front end maps phonemes onto.
+			{
+				path: 'tokenizer.json',
+				sha256: '77a02c8e164413299b4b4c403b14f8e0e1c1b727db4d46a09d6327b861060a34',
+				bytes: 3497,
 			},
 		],
 	}),
