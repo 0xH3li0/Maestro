@@ -185,7 +185,7 @@ function extractCopilotSessionId(parsed: unknown): string | null {
 }
 
 /** Extract the status string from a tool execution state object. */
-function getToolStatus(toolState: unknown): string | null {
+export function getToolStatus(toolState: unknown): string | null {
 	if (!toolState || typeof toolState !== 'object') {
 		return null;
 	}

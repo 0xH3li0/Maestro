@@ -203,15 +203,25 @@ export interface CotTurnStartPayload {
  *
  * A long block is written in pieces. Records of this kind that share
  * `providerMessageId` and `blockIndex` are pieces of one block: join their
- * `text` in `seq` order.
+ * `text` in `seq` order. The pieces need not lie next to each other.
  */
 export interface CotThinkingPayload {
 	kind: 'thinking';
 	text: string;
 	/** The provider's id for the message the block came from. */
 	providerMessageId?: string;
-	/** Index of the block within that message. */
+	/**
+	 * Which block this is. With a `providerMessageId` it is the block's place
+	 * in that message, from 0. Without one, Maestro numbers the turn's
+	 * reasoning and reply blocks itself, from 0. Either way the pair names one
+	 * block within its turn.
+	 */
 	blockIndex?: number;
+	/**
+	 * Set when a subagent produced the block: the `toolCallId` of the tool call
+	 * that started that subagent. Absent for the agent's own blocks.
+	 */
+	parentToolCallId?: string;
 }
 
 /**
@@ -226,6 +236,8 @@ export interface CotRedactedThinkingPayload {
 	/** Hash of that same payload. */
 	sha256: string;
 	providerMessageId?: string;
+	/** As on `thinking`: the tool call that started the subagent, if any. */
+	parentToolCallId?: string;
 }
 
 /**
@@ -236,7 +248,10 @@ export interface CotTextPayload {
 	kind: 'text';
 	text: string;
 	providerMessageId?: string;
+	/** As on `thinking`. */
 	blockIndex?: number;
+	/** As on `thinking`: the tool call that started the subagent, if any. */
+	parentToolCallId?: string;
 }
 
 /** The agent asked to run a tool. */
@@ -244,12 +259,15 @@ export interface CotToolCallPayload {
 	kind: 'tool-call';
 	/** Pairs the call with its `tool-result`, when the provider gives an id. */
 	toolCallId?: string;
+	/** The tool's name. Empty when the provider gave none. */
 	toolName: string;
 	/**
 	 * The arguments as the provider sent them. Any JSON value, and `null` when
 	 * the provider sent none, so the field is always present on disk.
 	 */
 	input: unknown;
+	/** As on `thinking`: the tool call that started the subagent, if any. */
+	parentToolCallId?: string;
 }
 
 /** What a tool call came back with. */
@@ -257,12 +275,18 @@ export interface CotToolResultPayload {
 	kind: 'tool-result';
 	toolCallId?: string;
 	status: 'completed' | 'failed';
-	/** The output as text, cut at `COT_TOOL_OUTPUT_CAP_BYTES`. */
+	/**
+	 * The output as text, cut at `COT_TOOL_OUTPUT_CAP_BYTES`. Output the
+	 * provider sent as text is kept as it came. Output it sent as structured
+	 * data is written as canonical JSON (keys sorted, no spaces).
+	 */
 	output: string;
-	/** Hash of the FULL output, before any cut. */
+	/** Hash of the FULL output text, as UTF-8, before any cut. */
 	outputSha256: string;
 	/** Bytes cut from `output`. Absent when the output fit under the cap. */
 	truncatedBytes?: number;
+	/** As on `thinking`: the tool call that started the subagent, if any. */
+	parentToolCallId?: string;
 }
 
 /** Token and cost figures the provider reported for the turn. */
@@ -302,9 +326,10 @@ export interface CotCaptureGapPayload {
 	kind: 'capture-gap';
 	/**
 	 * Why records are missing. Known values: `write-failed:<error code>` (for
-	 * example `write-failed:ENOSPC`), `head-mismatch-on-start`, and
-	 * `app-restarted-mid-turn`. Left open so a new cause does not need a
-	 * format change.
+	 * example `write-failed:ENOSPC`), `head-mismatch-on-start`,
+	 * `app-restarted-mid-turn`, and `unrecognized-block:<block type>` (the
+	 * provider sent a kind of content this version of Maestro cannot record).
+	 * Left open so a new cause does not need a format change.
 	 */
 	reason: string;
 	/** How many records were lost, when Maestro knows the count. */

@@ -195,6 +195,23 @@ describe('cotExport record format', () => {
 			}
 		});
 
+		it('can name the subagent on every kind a subagent produces', () => {
+			// Typed as records, so a kind that loses the field stops compiling.
+			const fromSubagent: CotRecord[] = [
+				{ ...SAMPLES.thinking, parentToolCallId: 'toolu_task' },
+				{ ...SAMPLES['redacted-thinking'], parentToolCallId: 'toolu_task' },
+				{ ...SAMPLES.text, parentToolCallId: 'toolu_task' },
+				{ ...SAMPLES['tool-call'], parentToolCallId: 'toolu_task' },
+				{ ...SAMPLES['tool-result'], parentToolCallId: 'toolu_task' },
+			];
+
+			for (const record of fromSubagent) {
+				expect(JSON.parse(JSON.stringify(record))).toEqual(record);
+			}
+			// The agent's own blocks do not carry it.
+			expect(SAMPLES.text).not.toHaveProperty('parentToolCallId');
+		});
+
 		it('keeps its payload fields when the hash fields are taken off', () => {
 			const { prevHash, hash, ...rest } = SAMPLES['tool-call'];
 			const unsealed: CotUnsealedRecord = rest;
