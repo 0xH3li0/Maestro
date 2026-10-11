@@ -2,7 +2,10 @@
 /* global module */
 let sdk;
 module.exports = {
-	/** @param {MaestroSdk} maestro */
+	/**
+	 * Register the refresh command and consent-gated transcription handler using host-owned media aliases.
+	 * @param {MaestroSdk} maestro The brokered host SDK; registration errors reject activation.
+	 */
 	async activate(maestro) {
 		sdk = maestro;
 		maestro.commands.register('refresh', async () => {
@@ -48,6 +51,7 @@ module.exports = {
 			};
 		});
 	},
+	/** Unregister after activation, awaiting the host's call drains; unregister failures reject deactivation. */
 	async deactivate() {
 		if (sdk) await sdk.services.unregister('transcription');
 	},
