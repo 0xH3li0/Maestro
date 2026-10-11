@@ -133,8 +133,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (id: unknown): Promise<{ success: boolean; error?: string }> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
-			await manager.stopAndDrain(id);
-			const result = manager.uninstall(id);
+			const result = await manager.uninstall(id);
 			// Authoritative removal in the ledger too (tombstone), so a restored folder
 			// is recognized as removed-by-user and cannot silently re-enable.
 			authStore.uninstall(id);

@@ -215,7 +215,7 @@ describe('FC1 trusted-to-run gate', () => {
 });
 
 describe('settings panel activation boundary', () => {
-	it('requires trust, enable and live ui:panel consent and removes HTML on disable/uninstall', () => {
+	it('requires trust, enable and live ui:panel consent and removes HTML on disable/uninstall', async () => {
 		let grants = [{ capability: 'ui:panel' as const }];
 		const manager = new PluginManager({
 			isEnabled: () => true,
@@ -238,7 +238,7 @@ describe('settings panel activation boundary', () => {
 		manager.setEnabled('settings.trusted', false);
 		expect(manager.getContributions().panels).toEqual([]);
 		manager.setEnabled('settings.trusted', true);
-		manager.uninstall('settings.trusted');
+		await manager.uninstall('settings.trusted');
 		expect(manager.getPanelHtml('settings.trusted/config')).toBeNull();
 	});
 });
@@ -298,6 +298,80 @@ describe('explicit service startup dependencies', () => {
 				cleanup.resolve();
 				await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2));
 				expect(sandbox.isRunning('mandatory.consumer')).toBe(true);
+			}
+		}
+	);
+
+	it.each(['update', 'uninstall', 'update-then-uninstall'] as const)(
+		'does not restart old code while %s waits for a dependency drain',
+		async (operation) => {
+			let available = true;
+			const gate = Promise.withResolvers<void>();
+			const sandbox = makeSandbox();
+			const start = sandbox.start;
+			const stop = sandbox.stop;
+			sandbox.stop = vi.fn((id) => {
+				stop(id);
+				return gate.promise;
+			});
+			const requirement = {
+				id: 'voice',
+				provider: 'example.media',
+				service: 'transcription',
+				contract: 'maestro.audio.transcribe' as const,
+				version: '^1.0.0',
+			};
+			const source = writeCodePlugin('mandatory.consumer', { requires: [requirement] });
+			signPluginDir(source, trustedSigner);
+			const replacement = path.join(workDir, 'replacement');
+			fs.cpSync(source, replacement, { recursive: true });
+			const manifest = JSON.parse(fs.readFileSync(path.join(replacement, 'plugin.json'), 'utf8'));
+			manifest.version = '2.0.0';
+			fs.writeFileSync(path.join(replacement, 'plugin.json'), JSON.stringify(manifest));
+			fs.writeFileSync(
+				path.join(replacement, 'main.js'),
+				'module.exports = { activate() { /* new */ } };'
+			);
+			signPluginDir(replacement, trustedSigner);
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [trustedSigner.publicKeyB64],
+				serviceAvailable: () => available,
+			});
+			manager.refresh();
+			manager.setEnabled('mandatory.consumer', true);
+			const startImpl = vi.mocked(start).getMockImplementation()!;
+			const startedVersions: string[] = [];
+			vi.mocked(start).mockImplementation((id, dir, entry) => {
+				const version = JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf8')).version;
+				startedVersions.push(version);
+				startImpl(id, dir, entry);
+			});
+			available = false;
+			manager.reconcileServiceDependencies();
+			const pending =
+				operation === 'update-then-uninstall'
+					? Promise.all([manager.update(replacement), manager.uninstall('mandatory.consumer')])
+					: operation === 'update'
+						? manager.update(replacement)
+						: manager.uninstall('mandatory.consumer');
+			await Promise.resolve();
+			if (operation !== 'update') expect(fs.existsSync(source)).toBe(true);
+			available = true;
+			manager.reconcileServiceDependencies();
+			expect(start).toHaveBeenCalledTimes(1);
+			gate.resolve();
+			await pending;
+			await Promise.resolve();
+			await Promise.resolve();
+			if (operation === 'update') {
+				expect(start).toHaveBeenCalledTimes(2);
+				expect(startedVersions).toEqual(['2.0.0']);
+				expect(manager.getRegistry().records[0].manifest?.version).toBe('2.0.0');
+			} else {
+				expect(start).toHaveBeenCalledTimes(1);
+				expect(fs.existsSync(source)).toBe(false);
 			}
 		}
 	);

@@ -65,7 +65,7 @@ function fakeManager() {
 		getRequestedPermissions: vi.fn(() => []),
 		setEnabled: vi.fn(() => emptyRegistry),
 		stopAndDrain: vi.fn(async () => {}),
-		uninstall: vi.fn(() => ({ success: true })),
+		uninstall: vi.fn(async () => ({ success: true })),
 	};
 }
 
@@ -133,7 +133,7 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		expect(manager.setEnabled).toHaveBeenCalledWith('some-plugin', true);
 	});
 
-	it.each(['plugins:set-enabled', 'plugins:revoke-grants', 'plugins:uninstall'])(
+	it.each(['plugins:set-enabled', 'plugins:revoke-grants'])(
 		'%s waits for the stop/cleanup barrier before acknowledging the mutation',
 		async (channel) => {
 			const manager = register(true);
@@ -147,21 +147,33 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 			);
 			await vi.waitFor(() => expect(manager.stopAndDrain).toHaveBeenCalledWith('some-plugin'));
 			expect(finished).toBe(false);
-			if (channel === 'plugins:uninstall') expect(manager.uninstall).not.toHaveBeenCalled();
 			gate.resolve();
 			await pending;
 			expect(finished).toBe(true);
-			if (channel === 'plugins:uninstall')
-				expect(manager.uninstall).toHaveBeenCalledWith('some-plugin');
 		}
 	);
-	it('does not uninstall files or claim success when stop cleanup fails', async () => {
+	it('awaits the manager-owned uninstall mutation before acknowledging removal', async () => {
 		const manager = register(true);
-		manager.stopAndDrain.mockRejectedValue(new Error('MediaProcessFailed'));
+		const gate = Promise.withResolvers<{ success: boolean }>();
+		manager.uninstall.mockReturnValue(gate.promise);
+		let finished = false;
+		const pending = Promise.resolve(handlers.get('plugins:uninstall')!(event, 'some-plugin')).then(
+			() => {
+				finished = true;
+			}
+		);
+		await vi.waitFor(() => expect(manager.uninstall).toHaveBeenCalledWith('some-plugin'));
+		expect(finished).toBe(false);
+		gate.resolve({ success: true });
+		await pending;
+		expect(finished).toBe(true);
+	});
+	it('does not acknowledge uninstall when the manager mutation fails', async () => {
+		const manager = register(true);
+		manager.uninstall.mockRejectedValue(new Error('MediaProcessFailed'));
 		await expect(handlers.get('plugins:uninstall')!(event, 'some-plugin')).rejects.toThrow(
 			'MediaProcessFailed'
 		);
-		expect(manager.uninstall).not.toHaveBeenCalled();
 	});
 
 	it('mutation channels reject a path-traversal plugin id (InvalidPluginId) and never reach the manager', async () => {

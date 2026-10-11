@@ -43,6 +43,7 @@ import {
 	isSafePluginFolderName,
 	readGrants,
 } from './plugin-store-main';
+import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { verifyPluginSignature } from './plugin-signature';
 import {
 	extractPluginArchive,
@@ -118,6 +119,8 @@ export interface InstallResult {
  */
 export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
+	private readonly mutationQueue = createKeyedWriteQueue();
+	private readonly pendingMutations = new Map<string, number>();
 	private pluginFingerprints = new Map<string, string>();
 	private watchRoot: fs.FSWatcher | null = null;
 	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
@@ -309,6 +312,7 @@ export class PluginManager {
 	 */
 	private isRunnable(record: PluginRecord): boolean {
 		return (
+			!this.pendingMutations.has(record.id) &&
 			record.enabled &&
 			record.loadStatus === 'ok' &&
 			!!record.manifest &&
@@ -358,12 +362,14 @@ export class PluginManager {
 	 */
 	private reconcileSandboxes(
 		previousFingerprints = this.pluginFingerprints,
-		nextFingerprints = this.pluginFingerprints
+		nextFingerprints = this.pluginFingerprints,
+		onlyPluginId?: string
 	): void {
 		const sandbox = this.deps.sandbox;
 		if (!sandbox) return;
 		const shouldRun = new Set<string>();
 		for (const record of this.registry.records) {
+			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
 			if (!this.isRunnable(record) || !record.manifest?.entry) continue;
 			shouldRun.add(record.id);
 			const fingerprintChanged =
@@ -382,7 +388,8 @@ export class PluginManager {
 		// Stop anything running that should no longer run (disabled, uninstalled,
 		// or now-invalid), using the sandbox's own view of what is alive.
 		for (const id of sandbox.runningIds()) {
-			if (!shouldRun.has(id)) sandbox.stop(id);
+			if (!shouldRun.has(id) && (onlyPluginId === undefined || onlyPluginId === id))
+				sandbox.stop(id);
 		}
 	}
 
@@ -604,89 +611,107 @@ export class PluginManager {
 		if (!isSafePluginFolderName(id)) {
 			throw new Error(`plugin id "${id}" is not a safe folder name`);
 		}
-		const dir = pluginsDir();
-		const dest = path.join(dir, id);
-		// Update is not install: the id must already be installed on disk.
-		if (!fs.existsSync(dest)) {
-			throw new Error(`plugin "${id}" is not installed; install it before updating`);
-		}
-		const installed = validatePluginManifest(this.readManifest(dest)).manifest;
-		if (!installed) {
-			throw new Error(`installed plugin "${id}" has an unreadable manifest; cannot update`);
-		}
-		// Require a strictly newer version. Refuse a downgrade or an equal version.
-		if (!semver.valid(manifest.version) || !semver.valid(installed.version)) {
-			throw new Error(
-				`cannot compare versions "${installed.version}" -> "${manifest.version}" (not valid semver)`
-			);
-		}
-		if (!semver.gt(manifest.version, installed.version)) {
-			throw new Error(
-				`update version ${manifest.version} is not newer than installed ${installed.version}`
-			);
-		}
-		// Reject a source tree containing symlinks (same escape guard as install()).
-		if (containsSymlink(sourceDir)) {
-			throw new Error('plugin source contains symlinks, which are not allowed');
-		}
-		// Stage the new tree on the SAME filesystem (inside the plugins dir) so the
-		// rename into place is a real atomic move everywhere.
-		fs.mkdirSync(dir, { recursive: true });
-		const staging = fs.mkdtempSync(path.join(dir, `.update-${id}-`));
-		const staged = path.join(staging, id);
-		const backup = path.join(staging, `${id}.old`);
-		try {
-			// dereference:false keeps the copy faithful; we already rejected symlinks.
-			fs.cpSync(sourceDir, staged, { recursive: true });
-			// Stop the running sandbox before swapping files (mirrors uninstall's stop
-			// path); refresh() below restarts it if the new version is still runnable.
-			await this.stopAndDrain(id);
-			// Move the old dir aside, then move the new one into place. If the second
-			// rename fails, restore the old dir so we never leave a partial state.
-			fs.renameSync(dest, backup);
-			try {
-				fs.renameSync(staged, dest);
-			} catch (swapError) {
-				fs.renameSync(backup, dest);
-				throw swapError;
+		return this.mutatePlugin(id, async () => {
+			const dir = pluginsDir();
+			const dest = path.join(dir, id);
+			// Update is not install: the id must already be installed on disk.
+			if (!fs.existsSync(dest)) {
+				throw new Error(`plugin "${id}" is not installed; install it before updating`);
 			}
-		} finally {
-			fs.rmSync(staging, { recursive: true, force: true });
-		}
-		// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
-		// signature trust from scratch. The enable toggle survives because we never
-		// touched the persisted state, so an enabled plugin stays enabled.
-		return this.refresh();
+			const installed = validatePluginManifest(this.readManifest(dest)).manifest;
+			if (!installed) {
+				throw new Error(`installed plugin "${id}" has an unreadable manifest; cannot update`);
+			}
+			// Require a strictly newer version. Refuse a downgrade or an equal version.
+			if (!semver.valid(manifest.version) || !semver.valid(installed.version)) {
+				throw new Error(
+					`cannot compare versions "${installed.version}" -> "${manifest.version}" (not valid semver)`
+				);
+			}
+			if (!semver.gt(manifest.version, installed.version)) {
+				throw new Error(
+					`update version ${manifest.version} is not newer than installed ${installed.version}`
+				);
+			}
+			// Reject a source tree containing symlinks (same escape guard as install()).
+			if (containsSymlink(sourceDir)) {
+				throw new Error('plugin source contains symlinks, which are not allowed');
+			}
+			// Stage the new tree on the SAME filesystem (inside the plugins dir) so the
+			// rename into place is a real atomic move everywhere.
+			fs.mkdirSync(dir, { recursive: true });
+			const staging = fs.mkdtempSync(path.join(dir, `.update-${id}-`));
+			const staged = path.join(staging, id);
+			const backup = path.join(staging, `${id}.old`);
+			try {
+				// dereference:false keeps the copy faithful; we already rejected symlinks.
+				fs.cpSync(sourceDir, staged, { recursive: true });
+				// Stop the running sandbox before swapping files (mirrors uninstall's stop
+				// path); refresh() below restarts it if the new version is still runnable.
+				await this.stopAndDrain(id);
+				// Move the old dir aside, then move the new one into place. If the second
+				// rename fails, restore the old dir so we never leave a partial state.
+				fs.renameSync(dest, backup);
+				try {
+					fs.renameSync(staged, dest);
+				} catch (swapError) {
+					fs.renameSync(backup, dest);
+					throw swapError;
+				}
+			} finally {
+				fs.rmSync(staging, { recursive: true, force: true });
+			}
+			// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
+			// signature trust from scratch. The enable toggle survives because we never
+			// touched the persisted state, so an enabled plugin stays enabled.
+			return this.refresh();
+		});
 	}
 
 	/**
 	 * Uninstall a plugin: remove its directory and forget its persisted toggle.
 	 * No-op (success:false) when the id is unknown.
 	 */
-	uninstall(id: string): { success: boolean; error?: string } {
-		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
-		const record = this.registry.records.find((r) => r.id === id);
-		if (!record) return { success: false, error: `plugin "${id}" is not installed` };
-		// Defense in depth: only delete inside the plugins dir.
-		const dir = pluginsDir();
-		const resolved = path.resolve(record.source);
-		if (resolved !== path.resolve(dir, path.basename(resolved)) || !resolved.startsWith(dir)) {
-			return { success: false, error: 'refusing to remove a path outside the plugins directory' };
+	uninstall(id: string): Promise<{ success: boolean; error?: string }> {
+		return this.mutatePlugin(id, async () => {
+			if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
+			const record = this.registry.records.find((r) => r.id === id);
+			if (!record) return { success: false, error: `plugin "${id}" is not installed` };
+			// Defense in depth: only delete inside the plugins dir.
+			const dir = pluginsDir();
+			const resolved = path.resolve(record.source);
+			if (resolved !== path.resolve(dir, path.basename(resolved)) || !resolved.startsWith(dir)) {
+				return { success: false, error: 'refusing to remove a path outside the plugins directory' };
+			}
+			// Stop any running sandbox for this plugin before removing its files, then
+			// purge everything it owns: enable toggle, permission grants, and (via the
+			// injected host-data purge) its KV store, plugins.<id>.* settings, and live
+			// event subscriptions - so uninstall leaves nothing behind (invariant #8).
+			await this.stopAndDrain(id);
+			fs.rmSync(resolved, { recursive: true, force: true });
+			forgetPlugin(id);
+			forgetGrants(id);
+			this.deps.purgePluginData?.(id);
+			this.pluginFingerprints.delete(id);
+			this.registry = removeRecord(this.registry, id);
+			this.syncPluginWatchers();
+			this.deps.onChange?.(this.registry);
+			return { success: true };
+		});
+	}
+
+	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */
+	private async mutatePlugin<T>(id: string, operation: () => Promise<T>): Promise<T> {
+		this.pendingMutations.set(id, (this.pendingMutations.get(id) ?? 0) + 1);
+		try {
+			return await this.mutationQueue.enqueue(id, operation);
+		} finally {
+			const remaining = (this.pendingMutations.get(id) ?? 1) - 1;
+			if (remaining > 0) this.pendingMutations.set(id, remaining);
+			else this.pendingMutations.delete(id);
+			this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, id);
+			this.reconcileServiceDependencies();
 		}
-		// Stop any running sandbox for this plugin before removing its files, then
-		// purge everything it owns: enable toggle, permission grants, and (via the
-		// injected host-data purge) its KV store, plugins.<id>.* settings, and live
-		// event subscriptions - so uninstall leaves nothing behind (invariant #8).
-		this.deps.sandbox?.stop(id);
-		fs.rmSync(resolved, { recursive: true, force: true });
-		forgetPlugin(id);
-		forgetGrants(id);
-		this.deps.purgePluginData?.(id);
-		this.pluginFingerprints.delete(id);
-		this.registry = removeRecord(this.registry, id);
-		this.syncPluginWatchers();
-		this.deps.onChange?.(this.registry);
-		return { success: true };
 	}
 
 	/** Host mutation barrier: stop invalidates immediately; await confirms exit and media cleanup. */
