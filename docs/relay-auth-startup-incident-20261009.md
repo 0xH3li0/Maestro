@@ -49,7 +49,7 @@ mitigation remains a separate operational choice.
 ## Activation
 
 The fix is integrated in upstream PR #1652 on the existing fork branch
-`feat/relay-host-contract`, now updated to rc `90efdb6bf5`, including merge
+`feat/relay-host-contract`, now updated to rc `0b18857a5c`, including merge
 `62d4f246e8` (#1742).
 The current CLI retains rc's canonical `maestro-lib` launch, stream, accounting,
 and process ownership; the supervisor adds startup and completion deadlines.
