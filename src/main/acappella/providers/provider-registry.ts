@@ -367,7 +367,7 @@ registerVoiceProvider({
 	create: () => new KokoroTtsProvider(),
 });
 
-// Registered but UNLISTED, for the same reason. See QWEN3_BRAIN_PROVIDER_ID.
+// Registered but UNLISTED. See QWEN3_BRAIN_PROVIDER_ID for why.
 registerVoiceProvider({
 	role: 'brain',
 	id: QWEN3_BRAIN_PROVIDER_ID,

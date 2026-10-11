@@ -26,7 +26,7 @@ import type { NativeRuntimeResult } from '../../../main/local-models/runtime/nat
 import type { NativeRuntimeId } from '../../../shared/local-models/native-runtimes';
 
 const WORKING_MODULES: Record<NativeRuntimeId, unknown> = {
-	llama: { getLlama: () => undefined },
+	llama: { getLlama: async () => ({ gpu: 'metal', dispose: async () => undefined }) },
 	onnx: { InferenceSession: {}, env: { versions: { common: '1.27.0' } } },
 };
 

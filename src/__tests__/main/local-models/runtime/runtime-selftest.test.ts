@@ -24,9 +24,19 @@ import {
 	type NativeRuntimeId,
 } from '../../../../shared/local-models/native-runtimes';
 
+/** A node-llama-cpp surface whose `getLlama()` resolves the given backend. */
+function llamaModule(llama: Record<string, unknown>) {
+	return {
+		getLlama: vi.fn(async (_options?: Record<string, unknown>) => ({
+			dispose: vi.fn(async () => undefined),
+			...llama,
+		})),
+	};
+}
+
 /** Module surfaces the real probes accept. */
 const WORKING_MODULES: Record<NativeRuntimeId, unknown> = {
-	llama: { getLlama: () => undefined },
+	llama: llamaModule({ gpu: 'metal', buildType: 'prebuilt' }),
 	onnx: { InferenceSession: {}, env: { versions: { common: '1.27.0' } } },
 };
 
@@ -139,6 +149,94 @@ describe('runtime-selftest', () => {
 	it('reports the probe detail on success, so a version reaches the report', async () => {
 		const report = await runRuntimeSelfTest({ loadRuntime: loader({}) });
 		expect(report.entries.find((entry) => entry.runtimeId === 'onnx')?.detail).toContain('1.27.0');
+	});
+
+	describe('llama probe', () => {
+		/** Run the self-test with the given node-llama-cpp module and return the llama row. */
+		async function llamaRow(module: unknown) {
+			const report = await runRuntimeSelfTest({
+				loadRuntime: async (id) =>
+					id === 'llama' ? { ok: true, module } : { ok: true, module: WORKING_MODULES[id] },
+				timeoutMs: 50,
+			});
+			return report.entries.find((entry) => entry.runtimeId === 'llama')!;
+		}
+
+		it('calls getLlama() and reports the backend it initialized', async () => {
+			const module = llamaModule({ gpu: 'metal', buildType: 'prebuilt' });
+			const row = await llamaRow(module);
+
+			expect(row.status).toBe('pass');
+			expect(row.detail).toBe('llama.cpp backend: Metal');
+			expect(module.getLlama).toHaveBeenCalledTimes(1);
+		});
+
+		it('never lets node-llama-cpp compile llama.cpp from source', async () => {
+			// The default outside Electron is `build: 'auto'`, which answers a
+			// prebuilt that fails to load with a cmake build. A diagnostic must not.
+			const module = llamaModule({ gpu: false });
+			await llamaRow(module);
+
+			expect(module.getLlama.mock.calls[0][0]).toMatchObject({
+				build: 'never',
+				skipDownload: true,
+			});
+		});
+
+		it.each([
+			['cuda', 'CUDA'],
+			['vulkan', 'Vulkan'],
+			[false, 'CPU'],
+			// A backend this build does not know is reported as itself, never as CPU.
+			['rocm', 'rocm'],
+		])('names a %s backend as %s', async (gpu, label) => {
+			const row = await llamaRow(llamaModule({ gpu }));
+			expect(row.detail).toBe(`llama.cpp backend: ${label}`);
+		});
+
+		it('says so when the binary was a local build rather than the prebuilt', async () => {
+			const row = await llamaRow(llamaModule({ gpu: 'cuda', buildType: 'localBuild' }));
+			expect(row.detail).toBe('llama.cpp backend: CUDA, local build');
+		});
+
+		it('disposes the backend it loaded', async () => {
+			const dispose = vi.fn(async () => undefined);
+			await llamaRow(llamaModule({ gpu: 'metal', dispose }));
+			expect(dispose).toHaveBeenCalledTimes(1);
+		});
+
+		it('still passes when disposing the backend throws', async () => {
+			const row = await llamaRow(
+				llamaModule({
+					gpu: 'metal',
+					dispose: async () => {
+						throw new Error('already disposed');
+					},
+				})
+			);
+			expect(row.status).toBe('pass');
+		});
+
+		it('fails with the binding error when getLlama() cannot load the native binary', async () => {
+			// The JavaScript half imports fine and the platform binary does not: the
+			// exact case a getLlama-present check used to call a pass.
+			const row = await llamaRow({
+				getLlama: async () => {
+					throw new Error('NoBinaryFoundError: no prebuilt binary for darwin-arm64');
+				},
+			});
+
+			expect(row.status).toBe('fail');
+			expect(row.failure).toBe('probe-failed');
+			expect(row.detail).toContain('NoBinaryFoundError');
+		});
+
+		it('times out a getLlama() that never settles', async () => {
+			const row = await llamaRow({ getLlama: () => new Promise(() => undefined) });
+
+			expect(row.status).toBe('fail');
+			expect(row.failure).toBe('timeout');
+		});
 	});
 
 	it('times out instead of hanging, which is the bug it is diagnosing', async () => {

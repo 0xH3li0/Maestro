@@ -17,8 +17,9 @@
  *     consumer will do actually succeeded in this installation, on this
  *     platform, from this code-signed bundle.
  *   - **It loads no model.** A probe touches the module's own surface (its
- *     version, its constructor) and nothing on disk. A self-test that needed
- *     1.4 GB of models could not be run by the person who most needs to run it.
+ *     version, its constructor, llama.cpp's compute backend) and never a model
+ *     file. A self-test that needed 1.4 GB of models could not be run by the
+ *     person who most needs to run it.
  *   - **It cannot hang.** Every probe races a timeout, because "the button did
  *     nothing" is precisely the bug being diagnosed, and a diagnostic that
  *     reproduces it is not a diagnostic.
@@ -39,6 +40,7 @@ import {
 	type NativeRuntimeFailureKind,
 	type NativeRuntimeResult,
 } from './native-loader';
+import { LLAMA_GET_OPTIONS, llamaBackendLabel, type LlamaBackendInfo } from './llama-options';
 
 /**
  * `skipped` is not a soft failure: it means the runtime is not part of this
@@ -85,8 +87,11 @@ export interface RuntimeSelfTestReport {
  * `node-llama-cpp`'s types here would put the package back into the static
  * import graph, which is the exact thing `native-loader.ts` exists to prevent.
  */
+interface LlamaInstance extends LlamaBackendInfo {
+	dispose?(): Promise<void> | void;
+}
 interface LlamaModule {
-	getLlama?: unknown;
+	getLlama?: (options?: Record<string, unknown>) => Promise<LlamaInstance>;
 }
 interface OnnxModule {
 	InferenceSession?: unknown;
@@ -106,11 +111,25 @@ const PROBE_TIMEOUT_MS = 15_000;
  */
 const PROBES: Record<NativeRuntimeId, (module: unknown) => Promise<string>> = {
 	llama: async (module) => {
-		const llama = module as LlamaModule;
-		if (typeof llama.getLlama !== 'function') {
+		const { getLlama } = module as LlamaModule;
+		if (typeof getLlama !== 'function') {
 			throw new Error('node-llama-cpp loaded but exposes no getLlama()');
 		}
-		return 'getLlama() present';
+		// The JavaScript half importing proves nothing about the native half:
+		// `getLlama()` is what dlopens the platform binary and initializes the
+		// compute backend, so it is the call a missing or unsigned binary fails.
+		// Same options as the text-generation path, so this is that load path.
+		const llama = await getLlama({ ...LLAMA_GET_OPTIONS });
+		const backend = llamaBackendLabel(llama);
+		const build = llama.buildType === 'localBuild' ? ', local build' : '';
+		// The backend holds threads and, on a GPU, device memory. A diagnostic
+		// must not leave either behind.
+		try {
+			await llama.dispose?.();
+		} catch {
+			/* best-effort: the load already succeeded, which is what was asked */
+		}
+		return `llama.cpp backend: ${backend}${build}`;
 	},
 	onnx: async (module) => {
 		const onnx = module as OnnxModule;

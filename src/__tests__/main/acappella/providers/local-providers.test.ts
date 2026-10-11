@@ -453,23 +453,52 @@ describe('LlamaBrainProvider', () => {
 		const prompt = vi.fn(async () => reply);
 		const contextDispose = vi.fn();
 		const modelDispose = vi.fn();
-		const module = {
-			getLlama: async () => ({
-				loadModel: async () => ({
-					createContext: async () => ({
-						getSequence: () => ({}),
+		const getLlama = vi.fn(async (_options?: Record<string, unknown>) => ({
+			loadModel: async () => ({
+				// Like node-llama-cpp's default context: ONE sequence, handed back only
+				// when it is disposed. A sequence taken and never returned is how the
+				// second turn failed with "No sequences left" on real hardware.
+				createContext: async () => {
+					let sequenceHeld = false;
+					return {
+						getSequence: () => {
+							if (sequenceHeld) throw new Error('No sequences left');
+							sequenceHeld = true;
+							return {
+								dispose: () => {
+									sequenceHeld = false;
+								},
+							};
+						},
 						dispose: contextDispose,
-					}),
-					dispose: modelDispose,
-				}),
-				createGrammarForJsonSchema: async () => ({}),
+					};
+				},
+				dispose: modelDispose,
 			}),
+			createGrammarForJsonSchema: async () => ({}),
+		}));
+		const module = {
+			getLlama,
 			LlamaChatSession: class {
+				private readonly options: {
+					contextSequence: { dispose(): void };
+					autoDisposeSequence?: boolean;
+				};
 				prompt = prompt;
+				constructor(options: {
+					contextSequence: { dispose(): void };
+					autoDisposeSequence?: boolean;
+				}) {
+					this.options = options;
+				}
+				dispose() {
+					if (this.options.autoDisposeSequence) this.options.contextSequence.dispose();
+				}
 			},
 		};
 		return {
 			module,
+			getLlama,
 			prompt,
 			contextDispose,
 			modelDispose,
@@ -526,6 +555,36 @@ describe('LlamaBrainProvider', () => {
 		expect(runtime.prompt).toHaveBeenCalledTimes(2);
 		// One load, two turns: per-turn latency is inference only.
 		expect(runtime.modelDispose).not.toHaveBeenCalled();
+	});
+
+	it('gives the context sequence back after every turn', async () => {
+		const runtime = llamaRuntime(decision);
+		const provider = new LlamaBrainProvider({
+			loadRuntime: runtime.loadRuntime,
+			modelPath: '/tmp/qwen.gguf',
+			idleUnloadMs: 0,
+		});
+		const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
+
+		// Three turns on one context, which has one sequence: each turn must return it.
+		await provider.route('one', context);
+		await provider.route('two', context);
+		await expect(provider.route('three', context)).resolves.toMatchObject({
+			target: { sessionId: 'agent-backend' },
+		});
+	});
+
+	it('never lets node-llama-cpp compile llama.cpp from source', async () => {
+		const runtime = llamaRuntime(decision);
+		const provider = new LlamaBrainProvider({
+			loadRuntime: runtime.loadRuntime,
+			modelPath: '/tmp/qwen.gguf',
+			idleUnloadMs: 0,
+		});
+
+		await provider.route('one', { roster: ROSTER, scope: { kind: 'conductor' } });
+
+		expect(runtime.getLlama.mock.calls[0][0]).toMatchObject({ build: 'never', skipDownload: true });
 	});
 
 	it('unloads after the idle window and reloads on the next turn', async () => {

@@ -32,6 +32,7 @@ import type {
 import type { RouteDecision } from '../../../../shared/acappella/route-decision';
 import { ROUTE_DECISION_JSON_SCHEMA } from '../../../../shared/acappella/route-decision';
 import { modelFilePath } from '../../../local-models/model-store';
+import { LLAMA_GET_OPTIONS } from '../../../local-models/runtime/llama-options';
 import {
 	buildConverseUserPrompt,
 	buildRouteUserPrompt,
@@ -188,7 +189,7 @@ export class LlamaBrainProvider implements BrainProvider {
 		const modelPath = this.modelPathOverride ?? modelFilePath(QWEN3_1_7B_ID, MODEL_FILE);
 
 		try {
-			const llama = await module.getLlama();
+			const llama = await module.getLlama({ ...LLAMA_GET_OPTIONS });
 			const model = await llama.loadModel({ modelPath });
 			const context = await model.createContext({ contextSize: CONTEXT_SIZE });
 			// Built once, reused per turn: compiling a grammar is not free and the
@@ -227,6 +228,11 @@ export class LlamaBrainProvider implements BrainProvider {
 		const session = new brain.ChatSession({
 			contextSequence: brain.context.getSequence(),
 			systemPrompt,
+			// The context has ONE sequence, and a session does not give it back on
+			// dispose unless told to. Without this the first turn holds it forever
+			// and every later turn fails with "No sequences left" - found by the
+			// on-device E2E, which the mocked unit tests could not see.
+			autoDisposeSequence: true,
 		});
 
 		try {

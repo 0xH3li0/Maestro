@@ -170,11 +170,12 @@ export const KOKORO_TTS_PROVIDER_ID = 'kokoro-local';
 export const BUILTIN_BRAIN_PROVIDER_ID = 'mock-brain';
 
 /**
- * Qwen3 through llama.cpp. Registered and runnable in code, but NOT listed in
- * the catalog below: the runtime payload it downloads carries only the native
- * binary, and the JavaScript half of `node-llama-cpp` (28 packages) is neither
- * bundled nor fetched, so the model could not be opened on any machine. It
- * returns to the list with the commit that ships that runtime properly.
+ * Qwen3 through llama.cpp. Registered and runnable, but NOT listed in the
+ * catalog below. The runtime now ships whole and loads (Metal, about 0.6 s per
+ * grammar-constrained turn on Apple Silicon), but the on-device check routed
+ * explicit agent names ("tell the frontend agent ...") to the Conductor with a
+ * clarifying question instead of to the agent. It returns to the list when it
+ * routes a named agent correctly; see docs/architecture/local-models.md.
  */
 export const QWEN3_BRAIN_PROVIDER_ID = 'qwen3-local';
 

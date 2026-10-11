@@ -82,20 +82,21 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 
 ### Main (`src/main/local-models/`)
 
-| File                           | Responsibility                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `paths.ts`                     | `LOCAL_MODELS_DIRNAME`, `LOCAL_RUNTIMES_DIRNAME`, `localModelsDataDir()`: the only place roots resolve |
-| `model-store.ts`               | Install layout, manifests, `isInstalled`, `verify`, `remove`, `totalFootprint`                         |
-| `model-downloader.ts`          | Resumable range downloads, streaming SHA-256, pause/resume/cancel, progress                            |
-| `runtime/native-loader.ts`     | Loads a downloaded runtime; refuses with the consumer's download and self-test locations               |
-| `runtime/runtime-consumers.ts` | Consumer registry: which runtimes a consumer uses and where its UI lives                               |
-| `runtime/load-runtime.ts`      | `loadLocalRuntime()`: the consumer entry point, throws `LocalModelError`                               |
-| `runtime/runtime-installer.ts` | Fetches and verifies a runtime tarball and its dependencies                                            |
-| `runtime/runtime-store.ts`     | Runtime install layout and footprint                                                                   |
-| `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()` (no microphone; voice adds that itself)        |
-| `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                 |
-| `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)  |
-| `storage-migration.ts`         | One-time move of the legacy `acappella/` roots (below)                                                 |
+| File                           | Responsibility                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `paths.ts`                     | `LOCAL_MODELS_DIRNAME`, `LOCAL_RUNTIMES_DIRNAME`, `localModelsDataDir()`: the only place roots resolve  |
+| `model-store.ts`               | Install layout, manifests, `isInstalled`, `verify`, `remove`, `totalFootprint`                          |
+| `model-downloader.ts`          | Resumable range downloads, streaming SHA-256, pause/resume/cancel, progress                             |
+| `runtime/native-loader.ts`     | Loads a downloaded runtime; refuses with the consumer's download and self-test locations                |
+| `runtime/runtime-consumers.ts` | Consumer registry: which runtimes a consumer uses and where its UI lives                                |
+| `runtime/load-runtime.ts`      | `loadLocalRuntime()`: the consumer entry point, throws `LocalModelError`                                |
+| `runtime/runtime-installer.ts` | Fetches and verifies a runtime tarball and its dependencies                                             |
+| `runtime/runtime-store.ts`     | Runtime install layout and footprint                                                                    |
+| `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()`; the llama probe initializes the real backend   |
+| `runtime/llama-options.ts`     | `LLAMA_GET_OPTIONS` (never compile from source) and `llamaBackendLabel()`, shared by every `getLlama()` |
+| `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
+| `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)   |
+| `storage-migration.ts`         | One-time move of the legacy `acappella/` roots (below)                                                  |
 
 ### IPC and renderer
 
@@ -164,6 +165,60 @@ llama.cpp source bundle). A manifest whose entry or binary path no longer matche
 stale, so an install made before this layout is re-downloaded rather than loaded. How the closure
 was resolved and what was left out (optional `@reflink/reflink`, the `postinstall` script) is
 written at the top of `llama-dependencies.ts`; see [[packaging-notes]] for the background.
+
+Every `getLlama()` call passes `LLAMA_GET_OPTIONS` (`runtime/llama-options.ts`):
+`build: 'never'` and `skipDownload: true`. Outside Electron node-llama-cpp defaults to
+`build: 'auto'`, which answers a prebuilt binary that fails to load by fetching llama.cpp and
+compiling it with cmake. The download already carries the prebuilt for this platform, so a binary
+that does not load is reported as a named failure instead.
+
+## Llama runtime on real hardware
+
+Importing `node-llama-cpp` proves only the JavaScript half. The `llama` self-test probe therefore
+calls `getLlama()` (which dlopens the platform binary and initializes the compute backend), reports
+the backend (`Metal`, `CUDA`, `Vulkan`, or `CPU`, plus `local build` when it was not the prebuilt),
+and disposes it. It still loads no model.
+
+The on-device check is `src/__tests__/main/local-models/llama-e2e.test.ts`, skipped unless
+`MAESTRO_LOCAL_MODEL_E2E=1`:
+
+```bash
+MAESTRO_LOCAL_MODEL_E2E=1 env -u MAESTRO_USER_DATA npx vitest run src/__tests__/main/local-models/llama-e2e.test.ts
+```
+
+It installs the `llama` runtime and `qwen3-1.7b-instruct-q4km` through `service.ts` into a scratch
+data dir (`$TMPDIR/maestro-local-model-e2e`, kept between runs; override with
+`MAESTRO_LOCAL_MODEL_E2E_DIR`), runs the real self-test, routes two utterances through
+`LlamaBrainProvider.route()` with the JSON-schema grammar, then drives node-llama-cpp directly to
+measure throughput. Results are written to `llama-e2e-results.json` in that dir. vitest's module VM
+cannot run the loader's `new Function` import, so the test swaps in a plain `import()` via
+`__setNativeImporter`; the entry path and its file-URL conversion are the same.
+
+### Result: 2026-10-10, darwin-arm64 (Apple Silicon, 128 GB unified memory)
+
+| Measurement                             | Value                                                               |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| Runtime install (41.4 MB, 117 tarballs) | 6.9 s, first run                                                    |
+| Model download (1.1 GB GGUF)            | 414.5 s, first run, then verified in 0.5 s                          |
+| Self-test                               | PASS, `llama.cpp backend: Metal` (prebuilt), 1.6 s cold, 0.2 s warm |
+| Model load + 4096-token context         | 0.77 s                                                              |
+| Route, cold (load + grammar turn)       | 1.39 s                                                              |
+| Route, warm (grammar turn only)         | 0.56 to 0.59 s                                                      |
+| Unconstrained generation                | 76 tokens in 0.41 s, about 185 tokens/s                             |
+| Memory                                  | RSS +1.49 GB; llama.cpp reports 1.80 GB used (unified memory)       |
+
+**The grammar path works.** Both routed turns came back as schema-valid `RouteDecision`s.
+
+**Routing quality is not proven.** On a two-agent roster (Backend, Frontend), "tell the frontend
+agent to fix the navbar padding" and "ask backend to add rate limiting to login" both came back as
+`target: "conductor"` with a clarifying question, not routed to the named agent. That is a model or
+prompt problem, not a load problem; the provider stays hidden in the picker until it routes an
+explicit agent name correctly.
+
+**Bug the run found.** `LlamaBrainProvider` took a context sequence per turn and never gave it back,
+so the second turn on a loaded model failed with `No sequences left`. The chat session now passes
+`autoDisposeSequence: true`, and the unit-test mock models a one-sequence context so the regression
+is caught without hardware.
 
 ## Related
 
