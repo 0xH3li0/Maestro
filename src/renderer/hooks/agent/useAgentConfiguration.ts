@@ -69,9 +69,12 @@ export interface UseAgentConfigurationReturn {
 	setSelectedAgent: (agentId: string | null) => void;
 	handleAgentChange: (agentId: string) => void;
 
-	// Config expansion
+	// Config expansion: the provider config panel is showing, so the selected
+	// agent's config and models are loaded (and reloaded on a provider change).
 	isConfigExpanded: boolean;
 	toggleConfigExpanded: () => void;
+	/** For a form whose config panel shows with a tab rather than an expander. */
+	setConfigExpanded: (expanded: boolean) => void;
 
 	// Custom config
 	customPath: string;
@@ -79,7 +82,7 @@ export interface UseAgentConfigurationReturn {
 	customArgs: string;
 	setCustomArgs: (args: string) => void;
 	customEnvVars: Record<string, string>;
-	setCustomEnvVars: (vars: Record<string, string>) => void;
+	setCustomEnvVars: Dispatch<SetStateAction<Record<string, string>>>;
 	/**
 	 * Env vars the user switched off. Held separately from `customEnvVars` so a
 	 * parked var never reaches a spawn - see Session.customEnvVarsDisabled.
@@ -200,6 +203,7 @@ export function useAgentConfiguration(
 		setCustomPath('');
 		setCustomArgs('');
 		setCustomEnvVars({});
+		setCustomEnvVarsDisabled({});
 		setEnableMaestroP(false);
 		setMaestroPMode('dynamic');
 		setMaestroPPath('');
@@ -338,6 +342,7 @@ export function useAgentConfiguration(
 			setCustomPath('');
 			setCustomArgs('');
 			setCustomEnvVars({});
+			setCustomEnvVarsDisabled({});
 			setEnableMaestroP(false);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -405,6 +410,7 @@ export function useAgentConfiguration(
 		// Config expansion
 		isConfigExpanded,
 		toggleConfigExpanded,
+		setConfigExpanded: setIsConfigExpanded,
 
 		// Custom config
 		customPath,

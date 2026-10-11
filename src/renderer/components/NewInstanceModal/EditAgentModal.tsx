@@ -22,6 +22,7 @@ import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
 import {
@@ -47,7 +48,6 @@ import { SUPPORTED_AGENTS } from './types';
 import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
-import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
@@ -738,48 +738,12 @@ export function EditAgentModal({
 
 	// Shared by the Provider tab's config panel (which hides them) and the
 	// Environment tab (which draws them): one set of handlers over two records.
-	const envVarProps = {
+	const envVarProps = agentEnvVarHandlers({
 		customEnvVars,
 		customEnvVarsDisabled,
-		onEnvVarToggle: (key: string, nextEnabled: boolean) => {
-			// Move the var between the two records, value intact.
-			const from = nextEnabled ? customEnvVarsDisabled : customEnvVars;
-			const setFrom = nextEnabled ? setCustomEnvVarsDisabled : setCustomEnvVars;
-			const setTo = nextEnabled ? setCustomEnvVars : setCustomEnvVarsDisabled;
-			const value = from[key] ?? '';
-			const remaining = { ...from };
-			delete remaining[key];
-			setFrom(remaining);
-			setTo((prev) => ({ ...prev, [key]: value }));
-		},
-		onEnvVarKeyChange: (oldKey: string, newKey: string, value: string, enabled?: boolean) => {
-			const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
-			setVars((prev) => {
-				const newVars = { ...prev };
-				delete newVars[oldKey];
-				newVars[newKey] = value;
-				return newVars;
-			});
-		},
-		onEnvVarValueChange: (key: string, value: string, enabled?: boolean) => {
-			const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
-			setVars((prev) => ({ ...prev, [key]: value }));
-		},
-		onEnvVarRemove: (key: string, enabled?: boolean) => {
-			const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
-			setVars((prev) => {
-				const newVars = { ...prev };
-				delete newVars[key];
-				return newVars;
-			});
-		},
-		onEnvVarAdd: () => {
-			setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
-		},
-		onEnvVarsBlur: () => {
-			/* Saved on modal save */
-		},
-	};
+		setCustomEnvVars,
+		setCustomEnvVarsDisabled,
+	});
 
 	if (!isOpen || !session) return null;
 

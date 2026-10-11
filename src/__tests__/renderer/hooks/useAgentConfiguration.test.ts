@@ -257,6 +257,29 @@ describe('useAgentConfiguration', () => {
 				expect(result.current.agentConfig).toEqual({ model: 'opus' });
 			});
 		});
+
+		it('sets the expansion directly for a form that shows the panel on a tab', async () => {
+			const { result } = renderHook(() =>
+				useAgentConfiguration({ enabled: true, autoSelect: true })
+			);
+			await waitFor(() => {
+				expect(result.current.isDetecting).toBe(false);
+			});
+			expect(mockGetConfig).not.toHaveBeenCalled();
+
+			act(() => {
+				result.current.setConfigExpanded(true);
+			});
+			expect(result.current.isConfigExpanded).toBe(true);
+			await waitFor(() => {
+				expect(result.current.agentConfig).toEqual({ model: 'opus' });
+			});
+
+			act(() => {
+				result.current.setConfigExpanded(false);
+			});
+			expect(result.current.isConfigExpanded).toBe(false);
+		});
 	});
 
 	describe('custom config state', () => {
@@ -315,6 +338,7 @@ describe('useAgentConfiguration', () => {
 				result.current.setCustomPath('/custom');
 				result.current.setCustomArgs('--x');
 				result.current.setCustomEnvVars({ K: 'V' });
+				result.current.setCustomEnvVarsDisabled({ PARKED: 'P' });
 			});
 
 			expect(result.current.hasCustomization).toBe(true);
@@ -328,6 +352,8 @@ describe('useAgentConfiguration', () => {
 			expect(result.current.customPath).toBe('');
 			expect(result.current.customArgs).toBe('');
 			expect(result.current.customEnvVars).toEqual({});
+			// A parked var belongs to the old provider as much as a live one does.
+			expect(result.current.customEnvVarsDisabled).toEqual({});
 			expect(result.current.hasCustomization).toBe(false);
 		});
 	});
@@ -491,6 +517,7 @@ describe('useAgentConfiguration', () => {
 				result.current.setCustomPath('/path');
 				result.current.setCustomArgs('--arg');
 				result.current.setCustomEnvVars({ K: 'V' });
+				result.current.setCustomEnvVarsDisabled({ PARKED: 'P' });
 				result.current.toggleConfigExpanded();
 			});
 
@@ -503,6 +530,8 @@ describe('useAgentConfiguration', () => {
 			expect(result.current.customPath).toBe('');
 			expect(result.current.customArgs).toBe('');
 			expect(result.current.customEnvVars).toEqual({});
+			// Parked vars too, or they ride into the next form the modal opens.
+			expect(result.current.customEnvVarsDisabled).toEqual({});
 			expect(result.current.isConfigExpanded).toBe(false);
 			expect(result.current.detectedAgents).toEqual([]);
 			expect(result.current.isDetecting).toBe(true);

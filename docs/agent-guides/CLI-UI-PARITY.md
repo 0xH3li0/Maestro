@@ -426,6 +426,15 @@ a design constraint; they are simply not built yet.
     `listLocalRuntimes()` / `installLocalRuntime()`, and a model's Download
     button and `models install` fetch its runtime with it through
     `installLocalModel()`.)
+16. **Group Chat moderator settings** (the moderator form's Provider,
+    Environment and SSH tabs: path, args, model, Claude token source, env vars
+    with parked rows, SSH remote). `group-chat start --moderator <agent>` picks
+    the moderator's provider and nothing else; the rest is reachable only
+    through the modal, whose Save hands `ModeratorConfig` to `groupChat:update`.
+    Closing it means a `group-chat update` verb over that same handler, with
+    flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
+    `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
+    below.
 
 ### Audit backlog (2026-09-27)
 

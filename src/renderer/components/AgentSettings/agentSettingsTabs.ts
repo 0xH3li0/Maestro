@@ -50,6 +50,8 @@ export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = [
 export const AGENT_SETTINGS_FIELD_TAB: Readonly<Record<string, AgentSettingsTabId>> = {
 	name: 'general',
 	group: 'general',
+	// The Group Chat moderator picker sits on General, beside the chat name.
+	moderator: 'general',
 	directory: 'general',
 	workingDir: 'general',
 	additionalDirectories: 'general',
