@@ -19,7 +19,10 @@
  *     `models:remove-all`, and `models:footprint` stay callable with the flag
  *     off, following the `stop-session` precedent: a feature that hides the
  *     button that frees 1.4 GB the moment you stop wanting the feature is a
- *     feature that keeps your disk hostage.
+ *     feature that keeps your disk hostage. `models:remove-all` and
+ *     `models:footprint` are scoped by `isVoiceReclaimableModelDir`, so the
+ *     models another consumer runs (embeddings, the injection classifier)
+ *     survive voice being switched off.
  *
  * Progress is BROADCAST on `models:progress`, matching the multi-window
  * invariant in `src/main/utils/safe-send.ts`. Throttling happens at the source
@@ -55,7 +58,10 @@ import {
 	type LocalModelListing,
 	type LocalRuntimeListing,
 } from '../../local-models/service';
-import { voiceSlotsForRuntime } from '../../../shared/acappella/voice-models';
+import {
+	isVoiceReclaimableModelDir,
+	voiceSlotsForRuntime,
+} from '../../../shared/acappella/voice-models';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 
@@ -182,11 +188,11 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 	);
 	const wrappedRemoveAll = withIpcErrorLogging(
 		handlerOpts('removeAll'),
-		async (): Promise<number> => removeAllLocalModels()
+		async (): Promise<number> => removeAllLocalModels(isVoiceReclaimableModelDir)
 	);
 	const wrappedFootprint = withIpcErrorLogging(
 		handlerOpts('footprint'),
-		async (): Promise<ModelFootprint> => localModelsFootprint()
+		async (): Promise<ModelFootprint> => localModelsFootprint(isVoiceReclaimableModelDir)
 	);
 	const wrappedReadiness = withIpcErrorLogging(
 		handlerOpts('readiness'),

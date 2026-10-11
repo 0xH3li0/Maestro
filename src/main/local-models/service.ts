@@ -32,6 +32,7 @@ import {
 	removeAll,
 	totalFootprint,
 	verify,
+	type ModelDirFilter,
 	type ModelFootprint,
 	type ModelStatus,
 	type VerifyResult,
@@ -130,14 +131,28 @@ export async function removeLocalModel(rawId: unknown): Promise<number> {
 	return remove(id);
 }
 
-/** Delete every installed model. Resolves to the bytes reclaimed. */
-export async function removeAllLocalModels(): Promise<number> {
-	await getModelDownloader().cancelAll();
-	return removeAll();
+/**
+ * Delete every installed model, or only the directories `include` picks.
+ * Resolves to the bytes reclaimed.
+ */
+export async function removeAllLocalModels(include?: ModelDirFilter): Promise<number> {
+	const downloader = getModelDownloader();
+	if (include) {
+		// Cancel only what is about to be deleted: a download another consumer
+		// started must keep running.
+		await Promise.all(
+			LOCAL_MODEL_CATALOG.filter((entry) => include(entry.id)).map((entry) =>
+				downloader.cancel(entry.id)
+			)
+		);
+	} else {
+		await downloader.cancelAll();
+	}
+	return removeAll(include);
 }
 
-export function localModelsFootprint(): Promise<ModelFootprint> {
-	return totalFootprint();
+export function localModelsFootprint(include?: ModelDirFilter): Promise<ModelFootprint> {
+	return totalFootprint(include);
 }
 
 /**

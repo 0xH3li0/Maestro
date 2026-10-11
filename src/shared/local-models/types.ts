@@ -38,6 +38,57 @@ export interface LocalModelFile {
 	readonly bytes: number;
 }
 
+/**
+ * Where an encoder model's graph and tokenizer live inside its install
+ * directory. Shared by every kind that runs a tokenizer in front of an ONNX
+ * graph, because a model's files are not always at the root (an `onnx/`
+ * subdirectory is common) and a service must never guess which `.onnx` in the
+ * file list is the graph rather than its external weights.
+ */
+export interface LocalEncoderGraph {
+	/** The ONNX graph to load. Always one of the entry's `files[].path`. */
+	readonly modelFile: string;
+	/**
+	 * Directory holding `tokenizer.json` (and `tokenizer_config.json`), relative
+	 * to the install directory. Empty string for the root.
+	 */
+	readonly tokenizerDir: string;
+	/** The model's token window. Longer input is truncated or windowed by the caller. */
+	readonly maxTokens: number;
+	/** The graph output the service reads. */
+	readonly outputName: string;
+}
+
+/**
+ * How an embedding model's per-token states become one vector.
+ *
+ * - `cls`: the first token's hidden state (BERT-style retrieval models).
+ * - `mean`: the attention-masked average of every token's hidden state.
+ * - `graph`: the graph already pools (and projects) and `outputName` is the
+ *   finished sentence embedding. Re-pooling its token states instead would skip
+ *   the projection layers and produce vectors in the wrong space.
+ */
+export type LocalEmbeddingPooling = 'cls' | 'mean' | 'graph';
+
+export interface LocalEmbeddingSpec extends LocalEncoderGraph {
+	/** Width of the vector the service returns. */
+	readonly dimensions: number;
+	readonly pooling: LocalEmbeddingPooling;
+	/** L2-normalize so cosine similarity is a dot product. */
+	readonly normalize: true;
+	/** Prepended to a search query before tokenizing, for models trained with one. */
+	readonly queryPrefix?: string;
+	/** Prepended to an indexed document before tokenizing, for models trained with one. */
+	readonly documentPrefix?: string;
+}
+
+export interface LocalClassifierSpec extends LocalEncoderGraph {
+	/** Label per output index, in the graph's logit order (the model's `id2label`). */
+	readonly labels: readonly string[];
+	/** The label that means "flag this". Always one of `labels`. */
+	readonly positiveLabel: string;
+}
+
 export interface LocalModelEntry {
 	/** Stable id. Also the install directory name, so it must be filename-safe. */
 	readonly id: string;
@@ -72,4 +123,8 @@ export interface LocalModelEntry {
 	 * is the one download this table must never invite.
 	 */
 	readonly pending?: string;
+	/** How to run the model. Present exactly when `kind` is `embedding`. */
+	readonly embedding?: LocalEmbeddingSpec;
+	/** How to run the model. Present exactly when `kind` is `classifier`. */
+	readonly classifier?: LocalClassifierSpec;
 }

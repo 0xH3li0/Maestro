@@ -2,7 +2,8 @@
  * @file acappella-runtimes.test.ts
  *
  * The native-runtime IPC channels: `runtimes:list`, `runtimes:install`,
- * `runtimes:footprint`, and `runtimes:remove-all`.
+ * `runtimes:footprint`, and `runtimes:remove-all`, plus the scoping of the
+ * model reclaim pair (`models:footprint`, `models:remove-all`) to voice's models.
  *
  * These exist because a downloaded MODEL is inert without an engine to read it.
  * The local tier used to be unreachable for exactly that reason - the model
@@ -52,8 +53,22 @@ vi.mock('../../../../main/local-models/runtime/native-loader', () => ({
 
 // The model half of this handler module reaches for a downloader singleton and
 // the capability gate; neither is what these tests are about.
+const downloader = vi.hoisted(() => ({
+	onProgress: vi.fn(() => () => {}),
+	download: vi.fn(),
+	cancel: vi.fn(async () => false),
+	cancelAll: vi.fn(async () => {}),
+}));
 vi.mock('../../../../main/local-models/model-downloader', () => ({
-	getModelDownloader: () => ({ onProgress: vi.fn(() => () => {}), download: vi.fn() }),
+	getModelDownloader: () => downloader,
+}));
+
+// Only the reclaim half of the store is replaced: the scoping filter the
+// handler passes is what the model-reclaim tests inspect.
+vi.mock('../../../../main/local-models/model-store', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/local-models/model-store')>()),
+	removeAll: vi.fn(async () => 5_000),
+	totalFootprint: vi.fn(async () => ({ bytes: 5_000, models: [] })),
 }));
 
 import {
@@ -70,6 +85,12 @@ import {
 	runtimesFootprint,
 } from '../../../../main/local-models/runtime/runtime-store';
 import { resetNativeRuntimes } from '../../../../main/local-models/runtime/native-loader';
+import { removeAll, totalFootprint } from '../../../../main/local-models/model-store';
+import {
+	BGE_SMALL_EN_ID,
+	PARAKEET_TDT_V2_ID,
+	PROMPT_GUARD_2_22M_ID,
+} from '../../../../shared/local-models/model-catalog';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -266,6 +287,31 @@ describe('A Cappella runtime IPC handlers', () => {
 			// longer exist.
 			await handlerFor('runtimes:remove-all')({});
 			expect(resetNativeRuntimes).toHaveBeenCalled();
+		});
+
+		it('reclaims only voice models, sparing models another consumer runs', async () => {
+			// Switching voice off must not delete the classifier the injection screen
+			// runs on, and the offer must quote only what it will free.
+			settings = {};
+			await expect(handlerFor('models:footprint')({})).resolves.toEqual({
+				bytes: 5_000,
+				models: [],
+			});
+			await expect(handlerFor('models:remove-all')({})).resolves.toBe(5_000);
+
+			const footprintFilter = vi.mocked(totalFootprint).mock.calls[0][0]!;
+			const removeFilter = vi.mocked(removeAll).mock.calls[0][0]!;
+			for (const include of [footprintFilter, removeFilter]) {
+				expect(include(PARAKEET_TDT_V2_ID)).toBe(true);
+				expect(include('retired-model')).toBe(true);
+				expect(include(PROMPT_GUARD_2_22M_ID)).toBe(false);
+				expect(include(BGE_SMALL_EN_ID)).toBe(false);
+			}
+			// Only downloads about to be deleted are cancelled.
+			expect(downloader.cancelAll).not.toHaveBeenCalled();
+			const cancelled = downloader.cancel.mock.calls.map(([id]) => id);
+			expect(cancelled).toContain(PARAKEET_TDT_V2_ID);
+			expect(cancelled).not.toContain(PROMPT_GUARD_2_22M_ID);
 		});
 	});
 });

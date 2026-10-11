@@ -20,6 +20,7 @@ import {
 	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
 	WHISPER_BASE_EN_ID,
+	getLocalModel,
 	sumModelBytes,
 } from '../local-models/model-catalog';
 import {
@@ -63,6 +64,19 @@ export const VOICE_MODEL_CAPABILITIES: Readonly<Record<string, VoiceModelCapabil
 /** The voice capability a model unlocks, or undefined for a non-voice model. */
 export function voiceModelCapability(modelId: string): VoiceModelCapability | undefined {
 	return VOICE_MODEL_CAPABILITIES[modelId];
+}
+
+/**
+ * Whether a model directory is voice's to delete when the user reclaims disk
+ * after switching voice off.
+ *
+ * Voice models, plus directories no catalog entry claims any more (a model since
+ * dropped from the catalog has no other owner to keep it). A catalog model that
+ * voice does not use (an embedding model, the injection classifier) belongs to
+ * another consumer and is spared.
+ */
+export function isVoiceReclaimableModelDir(id: string): boolean {
+	return voiceModelCapability(id) !== undefined || getLocalModel(id) === undefined;
 }
 
 // ---------------------------------------------------------------------------

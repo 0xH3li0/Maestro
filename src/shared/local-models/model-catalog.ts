@@ -35,17 +35,22 @@
  */
 
 import type { NativeRuntimeId } from './native-runtimes';
-import type { LocalModelEntry, LocalModelKind } from './types';
+import type {
+	LocalClassifierSpec,
+	LocalEmbeddingSpec,
+	LocalEncoderGraph,
+	LocalModelEntry,
+	LocalModelKind,
+} from './types';
 
 /** Build the pinned resolve URL for a repo file. */
 function hfUrl(repo: string, revision: string, path: string): string {
 	return `https://huggingface.co/${repo}/resolve/${revision}/${path}`;
 }
 
-interface ModelDraft {
+interface ModelDraftBase {
 	id: string;
 	displayName: string;
-	kind: LocalModelKind;
 	runtime: NativeRuntimeId;
 	repo: string;
 	revision: string;
@@ -54,6 +59,56 @@ interface ModelDraft {
 	description: string;
 	files: Array<{ path: string; sha256: string; bytes: number }>;
 	pending?: string;
+}
+
+/**
+ * A draft carries its run spec exactly when its kind needs one, so an embedding
+ * model without pooling metadata, or a classifier without labels, does not
+ * compile.
+ */
+type ModelDraft =
+	| (ModelDraftBase & { kind: 'embedding'; embedding: LocalEmbeddingSpec })
+	| (ModelDraftBase & { kind: 'classifier'; classifier: LocalClassifierSpec })
+	| (ModelDraftBase & { kind: Exclude<LocalModelKind, 'embedding' | 'classifier'> });
+
+/**
+ * Check that an encoder spec points at files the entry actually downloads. A
+ * spec naming a graph or tokenizer outside the file list would verify clean and
+ * then fail to load, so it is refused when the catalog module loads.
+ */
+function assertEncoderGraphFiles(draft: ModelDraftBase, graph: LocalEncoderGraph): void {
+	const paths = new Set(draft.files.map((file) => file.path));
+	const tokenizerPath = graph.tokenizerDir
+		? `${graph.tokenizerDir}/tokenizer.json`
+		: 'tokenizer.json';
+	for (const required of [graph.modelFile, tokenizerPath]) {
+		if (!paths.has(required)) {
+			throw new Error(`Model "${draft.id}" needs "${required}" but does not download it.`);
+		}
+	}
+}
+
+/** Freeze the kind-specific run spec, validating it against the file list. */
+function freezeRunSpec(draft: ModelDraft): Pick<LocalModelEntry, 'embedding' | 'classifier'> {
+	if (draft.kind === 'embedding') {
+		assertEncoderGraphFiles(draft, draft.embedding);
+		return { embedding: Object.freeze({ ...draft.embedding }) };
+	}
+	if (draft.kind === 'classifier') {
+		assertEncoderGraphFiles(draft, draft.classifier);
+		if (!draft.classifier.labels.includes(draft.classifier.positiveLabel)) {
+			throw new Error(
+				`Model "${draft.id}" flags "${draft.classifier.positiveLabel}", which is not one of its labels.`
+			);
+		}
+		return {
+			classifier: Object.freeze({
+				...draft.classifier,
+				labels: Object.freeze([...draft.classifier.labels]),
+			}),
+		};
+	}
+	return {};
 }
 
 /**
@@ -85,6 +140,7 @@ function defineModel(draft: ModelDraft): LocalModelEntry {
 		files: Object.freeze(files),
 		bytes: files.reduce((total, file) => total + file.bytes, 0),
 		...(draft.pending ? { pending: draft.pending } : {}),
+		...freezeRunSpec(draft),
 	});
 }
 
@@ -98,6 +154,10 @@ export const KOKORO_82M_ID = 'kokoro-82m';
 export const OPENWAKEWORD_BASE_ID = 'openwakeword-base';
 export const HEY_JARVIS_WAKE_ID = 'openwakeword-hey-jarvis';
 export const QWEN3_1_7B_ID = 'qwen3-1.7b-instruct-q4km';
+export const BGE_SMALL_EN_ID = 'bge-small-en-v1.5';
+export const EMBEDDINGGEMMA_300M_ID = 'embeddinggemma-300m';
+export const PROMPT_GUARD_2_22M_ID = 'prompt-guard-2-22m';
+export const DEBERTA_INJECTION_V2_ID = 'deberta-v3-base-prompt-injection-v2';
 
 /**
  * Every model Maestro can install, in the order a setup surface lists them.
@@ -285,6 +345,241 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 				path: 'Qwen3-1.7B-Q4_K_M.gguf',
 				sha256: 'b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897',
 				bytes: 1107409472,
+			},
+		],
+	}),
+
+	// Embedding and classifier models. Small JSON files (configs, tokenizers
+	// under a few MB) are not LFS objects in these repos, so their hashes are the
+	// SHA-256 of the bytes served at the pinned revision rather than LFS oids.
+
+	defineModel({
+		id: BGE_SMALL_EN_ID,
+		displayName: 'BGE Small (English)',
+		kind: 'embedding',
+		runtime: 'onnx',
+		// BAAI's bge-small-en-v1.5, exported to ONNX by Xenova. The default
+		// embedding model: 384 dimensions, a 34 MB download, and quick on the CPU.
+		// `model_quantized.onnx` is the q8 graph transformers.js loads by default.
+		repo: 'Xenova/bge-small-en-v1.5',
+		revision: 'ea104dacec62c0de699686887e3f920caeb4f3e3',
+		license: 'MIT',
+		licenseUrl: 'https://huggingface.co/BAAI/bge-small-en-v1.5',
+		description:
+			'Turns text into vectors so history, transcripts, and documents can be found by meaning. Small and fast, and runs on this machine.',
+		embedding: {
+			modelFile: 'onnx/model_quantized.onnx',
+			tokenizerDir: '',
+			maxTokens: 512,
+			outputName: 'last_hidden_state',
+			dimensions: 384,
+			pooling: 'cls',
+			normalize: true,
+			// BGE v1.5 retrieves well without an instruction; documents and queries
+			// are embedded as written.
+		},
+		files: [
+			{
+				path: 'onnx/model_quantized.onnx',
+				sha256: '6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4',
+				bytes: 34014426,
+			},
+			{
+				path: 'tokenizer.json',
+				sha256: 'd241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66',
+				bytes: 711396,
+			},
+			{
+				path: 'tokenizer_config.json',
+				sha256: '9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3',
+				bytes: 366,
+			},
+			{
+				path: 'special_tokens_map.json',
+				sha256: 'b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3',
+				bytes: 125,
+			},
+			{
+				path: 'config.json',
+				sha256: 'fa73f90bf92c8cace1fbcb709626306f2bdbc9ea3e5b5f94b440df9b6aa56350',
+				bytes: 683,
+			},
+		],
+	}),
+	defineModel({
+		id: EMBEDDINGGEMMA_300M_ID,
+		displayName: 'EmbeddingGemma 300M',
+		kind: 'embedding',
+		runtime: 'onnx',
+		// Google's EmbeddingGemma, ONNX export by onnx-community. The quality
+		// option: 768 dimensions (Matryoshka-truncatable to 512, 256, or 128) and a
+		// 2048-token window. The q4 graph keeps its weights in an external
+		// `.onnx_data` file beside it, which ONNX Runtime opens by relative path, so
+		// both must land in the same `onnx/` directory.
+		//
+		// The graph pools and projects itself: its `sentence_embedding` output is
+		// the finished vector. Mean-pooling `last_hidden_state` instead would skip
+		// the dense projection layers. It is trained with task prefixes, so a query
+		// and a document are embedded differently.
+		repo: 'onnx-community/embeddinggemma-300m-ONNX',
+		revision: '5090578d9565bb06545b4552f76e6bc2c93e4a66',
+		// Distributed under the Gemma Terms of Use, which require passing the terms
+		// (and the prohibited use policy) along with the model.
+		license: 'Gemma',
+		licenseUrl: 'https://ai.google.dev/gemma/terms',
+		description:
+			'Higher-quality search by meaning with a longer reading window. A larger download than BGE Small, and runs on this machine.',
+		embedding: {
+			modelFile: 'onnx/model_q4.onnx',
+			tokenizerDir: '',
+			maxTokens: 2048,
+			outputName: 'sentence_embedding',
+			dimensions: 768,
+			pooling: 'graph',
+			normalize: true,
+			queryPrefix: 'task: search result | query: ',
+			documentPrefix: 'title: none | text: ',
+		},
+		files: [
+			{
+				path: 'onnx/model_q4.onnx',
+				sha256: 'ad1dfee81a70f7944b9b9d1cc6e48075b832881cf33fab2f2b248be78f3f0043',
+				bytes: 519322,
+			},
+			{
+				path: 'onnx/model_q4.onnx_data',
+				sha256: '599962c3143b040de2dd05e5975be3e9091dd067cacc6a8f7186e3203bab9e02',
+				bytes: 196725760,
+			},
+			{
+				path: 'tokenizer.json',
+				sha256: '4dda02faaf32bc91031dc8c88457ac272b00c1016cc679757d1c441b248b9c47',
+				bytes: 20323312,
+			},
+			{
+				path: 'tokenizer_config.json',
+				sha256: '3ca953eea6c3c9fcda9cf3df22949ff18b216f7c74bd6459230f3f1013953f3a',
+				bytes: 1156830,
+			},
+			{
+				path: 'special_tokens_map.json',
+				sha256: '2f7b0adf4fb469770bb1490e3e35df87b1dc578246c5e7e6fc76ecf33213a397',
+				bytes: 662,
+			},
+			{
+				path: 'config.json',
+				sha256: '6e1f06404b7163e0325ed2ea3e6781cde50f4a50b31780a95ad0d30e8404d77b',
+				bytes: 1765,
+			},
+		],
+	}),
+	defineModel({
+		id: PROMPT_GUARD_2_22M_ID,
+		displayName: 'Llama Prompt Guard 2 22M',
+		kind: 'classifier',
+		runtime: 'onnx',
+		// Meta's Llama Prompt Guard 2 (22M, DeBERTa-xsmall), the default
+		// prompt-injection classifier. Meta's own repo is gated, so this is
+		// gravitee-io's ONNX re-upload. A third-party mirror is trustworthy here
+		// ONLY because the revision and every hash below are pinned: the bytes
+		// cannot change without this table changing too. `model.quant.onnx` is
+		// their quantized graph (72 MB against 284 MB unquantized).
+		//
+		// License: the Llama 4 Community License. Redistribution or a product
+		// built with it must display "Built with Llama" and carry the notice
+		// "Llama 4 is licensed under the Llama 4 Community License, Copyright ©
+		// Meta Platforms, Inc. All Rights Reserved." The user docs repeat this.
+		repo: 'gravitee-io/Llama-Prompt-Guard-2-22M-onnx',
+		revision: 'da68d0f6023c7aeaf6b256eec549de295d5e8740',
+		license: 'Llama-4-Community-License',
+		licenseUrl: 'https://www.llama.com/llama4/license/',
+		description:
+			'Scores untrusted text, such as an issue comment, for prompt injection before an agent reads it. Small, and runs on this machine.',
+		classifier: {
+			modelFile: 'model.quant.onnx',
+			tokenizerDir: '',
+			maxTokens: 512,
+			outputName: 'logits',
+			labels: ['BENIGN', 'MALICIOUS'],
+			positiveLabel: 'MALICIOUS',
+		},
+		files: [
+			{
+				path: 'model.quant.onnx',
+				sha256: '38c3f03e30a4d5d229aeb7bf638e778322f8179d0ed0d4953eb22f88d8e0cf6b',
+				bytes: 72542430,
+			},
+			{
+				path: 'tokenizer.json',
+				sha256: '92c8b45d0b12ae0dd9680fbfe9804503542c377d65838558cd0b48a795385dde',
+				bytes: 8649291,
+			},
+			{
+				path: 'tokenizer_config.json',
+				sha256: 'b1c18af55c6bab08e20873c67d7dc5783eda002a7934f543c4db33f3f89c5099',
+				bytes: 1475,
+			},
+			{
+				path: 'special_tokens_map.json',
+				sha256: 'b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21',
+				bytes: 970,
+			},
+			{
+				path: 'config.json',
+				sha256: 'db1a6dabb734766632a009e17fa72ac4d110505f4be0651654dafc30002461cc',
+				bytes: 1006,
+			},
+		],
+	}),
+	defineModel({
+		id: DEBERTA_INJECTION_V2_ID,
+		displayName: 'DeBERTa v3 Prompt Injection v2',
+		kind: 'classifier',
+		runtime: 'onnx',
+		// ProtectAI's fine-tuned DeBERTa-v3-base, the alternative classifier: a
+		// permissive license, at about ten times Prompt Guard's download. Its ONNX
+		// export and the tokenizer that matches it live in the repo's `onnx/`
+		// directory, so the files keep that prefix and the tokenizer is read from
+		// there.
+		repo: 'protectai/deberta-v3-base-prompt-injection-v2',
+		revision: '90c9989b1a342275dd0d1a95aad283c04e075671',
+		license: 'Apache-2.0',
+		licenseUrl: 'https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2',
+		description:
+			'An alternative prompt-injection classifier under a permissive license. A much larger download than Prompt Guard, and runs on this machine.',
+		classifier: {
+			modelFile: 'onnx/model.onnx',
+			tokenizerDir: 'onnx',
+			maxTokens: 512,
+			outputName: 'logits',
+			labels: ['SAFE', 'INJECTION'],
+			positiveLabel: 'INJECTION',
+		},
+		files: [
+			{
+				path: 'onnx/model.onnx',
+				sha256: 'f0ea7f239f765aedbde7c9e163a7cb38a79c5b8853d3f76db5152172047b228c',
+				bytes: 738563188,
+			},
+			{
+				path: 'onnx/tokenizer.json',
+				sha256: '752fe5f0d5678ad563e1bd2ecc1ddf7a3ba7e2024d0ac1dba1a72975e26dff2f',
+				bytes: 8648886,
+			},
+			{
+				path: 'onnx/tokenizer_config.json',
+				sha256: '77d3dd1a9c30397a06545251ed9274bd92e4a85feb98497eeed50c920f962274',
+				bytes: 1392,
+			},
+			{
+				path: 'onnx/special_tokens_map.json',
+				sha256: 'b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21',
+				bytes: 970,
+			},
+			{
+				path: 'onnx/config.json',
+				sha256: '3093743035223c46b1497a72e939e56fa0a50afbd7bafbf7eb8aad060b8d23f8',
+				bytes: 1014,
 			},
 		],
 	}),

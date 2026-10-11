@@ -10,11 +10,15 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	BGE_SMALL_EN_ID,
+	DEBERTA_INJECTION_V2_ID,
+	EMBEDDINGGEMMA_300M_ID,
 	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
 	LOCAL_MODEL_CATALOG,
 	OPENWAKEWORD_BASE_ID,
 	PARAKEET_TDT_V2_ID,
+	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 	WHISPER_BASE_EN_ID,
 	getLocalModel,
@@ -23,6 +27,10 @@ import {
 	sumModelBytes,
 } from '../../shared/local-models/model-catalog';
 import { NATIVE_RUNTIMES } from '../../shared/local-models/native-runtimes';
+import { MODEL_SETS } from '../../shared/acappella/voice-models';
+
+const EMBEDDING_IDS = [BGE_SMALL_EN_ID, EMBEDDINGGEMMA_300M_ID];
+const CLASSIFIER_IDS = [PROMPT_GUARD_2_22M_ID, DEBERTA_INJECTION_V2_ID];
 
 describe('local model catalog', () => {
 	it('contains every model Maestro can install', () => {
@@ -34,6 +42,8 @@ describe('local model catalog', () => {
 				PARAKEET_TDT_V2_ID,
 				QWEN3_1_7B_ID,
 				WHISPER_BASE_EN_ID,
+				...EMBEDDING_IDS,
+				...CLASSIFIER_IDS,
 			].sort()
 		);
 	});
@@ -120,6 +130,8 @@ describe('local model catalog', () => {
 				OPENWAKEWORD_BASE_ID,
 				PARAKEET_TDT_V2_ID,
 				WHISPER_BASE_EN_ID,
+				...EMBEDDING_IDS,
+				...CLASSIFIER_IDS,
 			].sort()
 		);
 	});
@@ -133,8 +145,102 @@ describe('local model catalog', () => {
 			WHISPER_BASE_EN_ID,
 			OPENWAKEWORD_BASE_ID,
 			HEY_JARVIS_WAKE_ID,
+			...EMBEDDING_IDS,
+			...CLASSIFIER_IDS,
 		]) {
 			expect(getLocalModel(id)?.pending).toBeUndefined();
+		}
+	});
+
+	it('carries a run spec exactly when the kind needs one', () => {
+		for (const entry of LOCAL_MODEL_CATALOG) {
+			expect(entry.embedding !== undefined).toBe(entry.kind === 'embedding');
+			expect(entry.classifier !== undefined).toBe(entry.kind === 'classifier');
+		}
+		for (const id of EMBEDDING_IDS) expect(getLocalModel(id)?.kind).toBe('embedding');
+		for (const id of CLASSIFIER_IDS) expect(getLocalModel(id)?.kind).toBe('classifier');
+		for (const id of [...EMBEDDING_IDS, ...CLASSIFIER_IDS]) {
+			expect(getLocalModel(id)?.runtime).toBe('onnx');
+		}
+	});
+
+	it('points every encoder spec at a graph and tokenizer the entry downloads', () => {
+		for (const entry of LOCAL_MODEL_CATALOG) {
+			const spec = entry.embedding ?? entry.classifier;
+			if (!spec) continue;
+			const paths = entry.files.map((file) => file.path);
+			expect(paths).toContain(spec.modelFile);
+			expect(spec.modelFile).toMatch(/\.onnx$/);
+			const tokenizerDir = spec.tokenizerDir ? `${spec.tokenizerDir}/` : '';
+			expect(paths).toContain(`${tokenizerDir}tokenizer.json`);
+			expect(paths).toContain(`${tokenizerDir}tokenizer_config.json`);
+			expect(spec.maxTokens).toBeGreaterThan(0);
+			expect(spec.outputName).toBeTruthy();
+			expect(Object.isFrozen(spec)).toBe(true);
+		}
+	});
+
+	it('downloads the external weights beside a graph that needs them', () => {
+		// The q4 EmbeddingGemma graph keeps its weights in `.onnx_data`, opened by
+		// relative path, so both must sit in the same directory.
+		const gemma = getLocalModel(EMBEDDINGGEMMA_300M_ID)!;
+		const paths = gemma.files.map((file) => file.path);
+		expect(paths).toContain(`${gemma.embedding!.modelFile}_data`);
+	});
+
+	it('records the pooling and dimensions each embedding model needs', () => {
+		const bge = getLocalModel(BGE_SMALL_EN_ID)!.embedding!;
+		expect(bge).toMatchObject({
+			dimensions: 384,
+			pooling: 'cls',
+			normalize: true,
+			outputName: 'last_hidden_state',
+		});
+		expect(bge.queryPrefix).toBeUndefined();
+		const gemma = getLocalModel(EMBEDDINGGEMMA_300M_ID)!.embedding!;
+		// The graph pools and projects itself; re-pooling its token states would
+		// skip the projection.
+		expect(gemma).toMatchObject({
+			dimensions: 768,
+			pooling: 'graph',
+			normalize: true,
+			outputName: 'sentence_embedding',
+			maxTokens: 2048,
+		});
+		expect(gemma.queryPrefix).toBe('task: search result | query: ');
+		expect(gemma.documentPrefix).toBe('title: none | text: ');
+	});
+
+	it('names each classifier label in logit order, with a flagged label among them', () => {
+		for (const id of CLASSIFIER_IDS) {
+			const spec = getLocalModel(id)!.classifier!;
+			expect(spec.labels).toContain(spec.positiveLabel);
+			expect(spec.maxTokens).toBe(512);
+			expect(spec.outputName).toBe('logits');
+			expect(Object.isFrozen(spec.labels)).toBe(true);
+		}
+		expect(getLocalModel(PROMPT_GUARD_2_22M_ID)!.classifier!.labels).toEqual([
+			'BENIGN',
+			'MALICIOUS',
+		]);
+		expect(getLocalModel(PROMPT_GUARD_2_22M_ID)!.classifier!.positiveLabel).toBe('MALICIOUS');
+		expect(getLocalModel(DEBERTA_INJECTION_V2_ID)!.classifier!.labels).toEqual([
+			'SAFE',
+			'INJECTION',
+		]);
+	});
+
+	it('reads the ProtectAI tokenizer from the onnx directory it was exported with', () => {
+		const spec = getLocalModel(DEBERTA_INJECTION_V2_ID)!.classifier!;
+		expect(spec.tokenizerDir).toBe('onnx');
+		expect(spec.modelFile).toBe('onnx/model.onnx');
+	});
+
+	it('keeps embedding and classifier models out of every voice bundle', () => {
+		for (const set of Object.values(MODEL_SETS)) {
+			for (const id of [...EMBEDDING_IDS, ...CLASSIFIER_IDS]) {
+				expect(set.modelIds).not.toContain(id);
+			}
 		}
 	});
 });

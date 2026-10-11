@@ -159,6 +159,9 @@ A Cappella keeps everything that is about voice and imports everything that is a
   startup.
 - `src/main/ipc/handlers/acappella-models.ts`: the legacy `models:*` / `runtimes:*` channels. They
   delegate every call to `service.ts` and add only the Encore gate, readiness, and voice `slots`.
+  `models:remove-all` and `models:footprint` pass `isVoiceReclaimableModelDir`, so reclaiming
+  voice's disk deletes voice models and orphaned directories but spares models another consumer
+  runs (embeddings, the injection classifier).
 - `useVoiceModels()` / `useVoiceRuntimes()`: thin wrappers over the core hooks.
 
 ## The llama runtime layout
@@ -245,6 +248,40 @@ the reply parsed), `source`, sleep-aware `durationMs`, and token counts when kno
 | Endpoints by exact id, enabled only     | An assignment stores the full id; a prefix that later matches two servers must not pick one.                                                          |
 | Temperature defaults to 0               | Housekeeping output should be reproducible.                                                                                                           |
 | Failures are classified, never swapped  | `LocalModelError` (`model-unsupported`, `model-not-installed`, `runtime-unavailable`, `generation-failed`, `cancelled`) or `LocalModelEndpointError`. |
+
+## Embedding and classifier models
+
+Both kinds run on ONNX Runtime behind a tokenizer (`loadTokenizer()` in `tokenizer.ts`). An entry of
+either kind carries a run spec beside its files, and `defineModel` refuses one whose graph or
+tokenizer is not in its own file list:
+
+- `embedding`: `modelFile`, `tokenizerDir`, `maxTokens`, `outputName`, `dimensions`, `pooling`
+  (`cls`, `mean`, or `graph`), `normalize`, optional `queryPrefix` / `documentPrefix`.
+- `classifier`: the same four graph fields plus `labels` (logit order, from `id2label`) and
+  `positiveLabel`.
+
+| Model                             | Kind       | Repo (pinned)                                                | Download | Run spec                                                    | License                   |
+| --------------------------------- | ---------- | ------------------------------------------------------------ | -------- | ----------------------------------------------------------- | ------------------------- |
+| BGE Small (English), default      | embedding  | `Xenova/bge-small-en-v1.5` @ `ea104dac`                      | 35 MB    | 384 dims, `cls` over `last_hidden_state`, 512 tokens        | MIT                       |
+| EmbeddingGemma 300M               | embedding  | `onnx-community/embeddinggemma-300m-ONNX` @ `5090578d`       | 219 MB   | 768 dims, `graph` (`sentence_embedding`), 2048 tokens       | Gemma Terms of Use        |
+| Llama Prompt Guard 2 22M, default | classifier | `gravitee-io/Llama-Prompt-Guard-2-22M-onnx` @ `da68d0f6`     | 81 MB    | `BENIGN` / `MALICIOUS` over `logits`, 512 tokens            | Llama 4 Community License |
+| DeBERTa v3 Prompt Injection v2    | classifier | `protectai/deberta-v3-base-prompt-injection-v2` @ `90c9989b` | 747 MB   | `SAFE` / `INJECTION` over `logits`, 512 tokens, `onnx/` dir | Apache-2.0                |
+
+Notes a consumer must not re-derive:
+
+- **EmbeddingGemma pools inside the graph.** Its `sentence_embedding` output already applies the
+  dense projection; mean-pooling `last_hidden_state` would skip it. Its q4 weights live in
+  `onnx/model_q4.onnx_data`, opened by relative path, so it installs beside the graph. It is trained
+  with task prefixes (`task: search result | query: ` and `title: none | text: `).
+- **Prompt Guard comes from a third-party mirror.** Meta's repo is gated; the mirror is trusted only
+  because the revision and every hash are pinned. The Llama 4 Community License requires "Built
+  with Llama" to be displayed and the notice "Llama 4 is licensed under the Llama 4 Community
+  License, Copyright © Meta Platforms, Inc. All Rights Reserved." to travel with it. The user docs
+  repeat this.
+- Graph input and output names were checked by loading the BGE and Prompt Guard graphs in ONNX
+  Runtime: BGE takes `input_ids`, `attention_mask`, `token_type_ids` and returns
+  `last_hidden_state`; Prompt Guard takes `input_ids`, `attention_mask` and returns `logits`.
+- None of these is part of voice's `hands-free-local` bundle.
 
 ## Tasks and assignments
 

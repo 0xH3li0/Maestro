@@ -423,8 +423,11 @@ export async function remove(id: string): Promise<number> {
  * Walks the models root rather than the catalog, so a directory left behind by a
  * model that has since been dropped from the catalog is still counted and still
  * reclaimable. Disk the user cannot see is disk they cannot get back.
+ *
+ * `include` narrows the walk to the directories one consumer owns, so a
+ * consumer's reclaim offer reports exactly the bytes its `removeAll` would free.
  */
-export async function totalFootprint(): Promise<ModelFootprint> {
+export async function totalFootprint(include?: ModelDirFilter): Promise<ModelFootprint> {
 	const root = modelsRoot();
 	let entries: Dirent[];
 	try {
@@ -436,25 +439,36 @@ export async function totalFootprint(): Promise<ModelFootprint> {
 
 	const models: Array<{ id: string; bytes: number }> = [];
 	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
+		if (!entry.isDirectory() || (include && !include(entry.name))) continue;
 		models.push({ id: entry.name, bytes: await dirBytes(path.join(root, entry.name)) });
 	}
 
 	return { bytes: models.reduce((total, model) => total + model.bytes, 0), models };
 }
 
+/** Picks model directories by name (the model id, or a stray directory's name). */
+export type ModelDirFilter = (id: string) => boolean;
+
 /**
- * Delete every local model directory. The reclaim-disk action behind the
- * Encore Feature being switched off; scoped to the models root so it can never
- * reach anything else in the data dir. Every model in the catalog today is one
- * voice uses; once a model ships that only another consumer needs, this has to
- * learn which ids to spare.
+ * Delete local model directories; scoped to the models root so it can never
+ * reach anything else in the data dir.
+ *
+ * With no filter, every directory goes (the Local Models "remove all"). A
+ * consumer reclaiming its own disk passes `include` so it spares models another
+ * consumer still needs: switching voice off must not delete the classifier the
+ * prompt-injection screen runs on.
  *
  * @returns bytes reclaimed.
  */
-export async function removeAll(): Promise<number> {
-	const footprint = await totalFootprint();
-	await fs.rm(modelsRoot(), { recursive: true, force: true });
+export async function removeAll(include?: ModelDirFilter): Promise<number> {
+	const footprint = await totalFootprint(include);
+	if (!include) {
+		await fs.rm(modelsRoot(), { recursive: true, force: true });
+		return footprint.bytes;
+	}
+	for (const model of footprint.models) {
+		await fs.rm(path.join(modelsRoot(), model.id), { recursive: true, force: true });
+	}
 	return footprint.bytes;
 }
 

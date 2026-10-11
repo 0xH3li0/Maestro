@@ -13,11 +13,15 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+	BGE_SMALL_EN_ID,
+	DEBERTA_INJECTION_V2_ID,
+	EMBEDDINGGEMMA_300M_ID,
 	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
 	LOCAL_MODEL_CATALOG,
 	OPENWAKEWORD_BASE_ID,
 	PARAKEET_TDT_V2_ID,
+	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 	WHISPER_BASE_EN_ID,
 	getLocalModel,
@@ -29,6 +33,7 @@ import {
 	findPretrainedWakePhrase,
 	formatModelSetSize,
 	getModelSetEntries,
+	isVoiceReclaimableModelDir,
 	normalizeWakePhrase,
 	runtimesForSlot,
 	voiceModelCapability,
@@ -39,12 +44,37 @@ import { DEFAULT_WAKE_PHRASE } from '../../shared/acappella/voice-controls';
 import { formatSize } from '../../shared/formatters';
 
 describe('voice models', () => {
-	it('tags every catalog model with the voice capability it unlocks', () => {
-		for (const entry of LOCAL_MODEL_CATALOG) expect(voiceModelCapability(entry.id)).toBeTruthy();
+	it('tags every voice-kind catalog model with the voice capability it unlocks', () => {
+		for (const entry of LOCAL_MODEL_CATALOG) {
+			// Kinds voice has a slot for are voice models; embeddings and classifiers
+			// belong to other consumers and carry no voice capability.
+			expect(voiceModelCapability(entry.id) !== undefined).toBe(voiceSlotForModel(entry) !== null);
+		}
 		expect(voiceModelCapability(QWEN3_1_7B_ID)).toBe('local-conductor-brain');
 		expect(voiceModelCapability('nope')).toBeUndefined();
 		// No capability may point at a model the core catalog does not have.
 		for (const id of Object.keys(VOICE_MODEL_CAPABILITIES)) expect(getLocalModel(id)).toBeDefined();
+	});
+
+	it("reclaims voice models and orphaned directories, never another consumer's models", () => {
+		for (const id of [
+			PARAKEET_TDT_V2_ID,
+			WHISPER_BASE_EN_ID,
+			OPENWAKEWORD_BASE_ID,
+			HEY_JARVIS_WAKE_ID,
+		]) {
+			expect(isVoiceReclaimableModelDir(id)).toBe(true);
+		}
+		// A directory no catalog entry claims has no other owner to keep it.
+		expect(isVoiceReclaimableModelDir('retired-model')).toBe(true);
+		for (const id of [
+			BGE_SMALL_EN_ID,
+			EMBEDDINGGEMMA_300M_ID,
+			PROMPT_GUARD_2_22M_ID,
+			DEBERTA_INJECTION_V2_ID,
+		]) {
+			expect(isVoiceReclaimableModelDir(id)).toBe(false);
+		}
 	});
 
 	it('maps model kinds onto voice slots', () => {

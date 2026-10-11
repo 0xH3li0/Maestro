@@ -332,6 +332,30 @@ describe('model-store', () => {
 			expect(await totalFootprint()).toEqual({ bytes: 0, models: [] });
 		});
 
+		it('scopes removeAll and the footprint to the directories a consumer owns', async () => {
+			// A consumer reclaiming its own disk must spare models another consumer
+			// still runs, and its offer must quote exactly what it will free.
+			await writeFilesOfDeclaredLength(wakeWord.id);
+			await writeFilesOfDeclaredLength(whisper.id);
+			const orphan = path.join(tempRoot.dir, 'models', 'retired-model');
+			await fs.mkdir(orphan, { recursive: true });
+			await fs.writeFile(path.join(orphan, 'weights.bin'), Buffer.alloc(2048));
+			const include = (id: string) => id !== whisper.id;
+
+			const scoped = await totalFootprint(include);
+			expect(scoped.models.map((model) => model.id).sort()).toEqual(
+				[wakeWord.id, 'retired-model'].sort()
+			);
+			expect(scoped.bytes).toBe(wakeWord.bytes + 2048);
+
+			const reclaimed = await removeAll(include);
+
+			expect(reclaimed).toBe(scoped.bytes);
+			const left = await totalFootprint();
+			expect(left.models.map((model) => model.id)).toEqual([whisper.id]);
+			expect(left.bytes).toBe(whisper.bytes);
+		});
+
 		it('removeAll deletes only the models root', async () => {
 			await writeFilesOfDeclaredLength(wakeWord.id);
 			const neighbour = path.join(tempRoot.dir, 'plugins');
