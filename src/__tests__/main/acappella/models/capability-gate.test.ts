@@ -638,7 +638,7 @@ describe('capability-gate', () => {
 				reason: 'provider-unreachable',
 				detail: 'Conductor Brain: Voice routing has no model assigned.',
 			});
-			expect(brain.suggestedAction).toContain('Settings > Local Models');
+			expect(brain.suggestedAction).toContain('Settings > Models > System One');
 			expect(readiness.canStartSession).toBe(false);
 		});
 

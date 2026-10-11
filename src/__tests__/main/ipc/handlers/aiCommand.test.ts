@@ -337,7 +337,7 @@ describe('aiCommand IPC handler', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/switched off/);
-			expect(result.error).toMatch(/Local Models/);
+			expect(result.error).toMatch(/Settings > Models > System Two/);
 			// Off is the user choosing no model: the tab's provider is not used instead.
 			expect(mockGroomContext).not.toHaveBeenCalled();
 		});

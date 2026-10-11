@@ -1,7 +1,7 @@
 /**
  * One model's row: bill of materials, install state, and the actions for it.
  *
- * Shared by the Local Models tab, Voice Setup, and A Cappella's Models page so
+ * Shared by the Models tab, Voice Setup, and A Cappella's Models page so
  * no two surfaces can describe the same model differently. Everything shown here comes from the frozen
  * catalog plus a disk stat; nothing in this component can start a download by
  * rendering, which is the property the panel test asserts.

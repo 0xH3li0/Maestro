@@ -27,7 +27,7 @@ const OFF = {
 	assignment: { type: 'off' },
 	state: 'off',
 	detail: 'Cue gate is off.',
-	suggestedAction: 'Assign it a local model or an endpoint in Settings > Local Models.',
+	suggestedAction: 'Assign it a local model or an endpoint in Settings > Models > System One.',
 };
 const READY = {
 	taskId: 'cue-gate',
@@ -99,7 +99,7 @@ describe('CueGateField', () => {
 
 		const note = await screen.findByTestId('cue-gate-not-ready');
 		expect(note).toHaveTextContent('Cue gate is off.');
-		expect(note).toHaveTextContent('Settings > Local Models');
+		expect(note).toHaveTextContent('Settings > Models > System One');
 		expect(note).toHaveTextContent('Until then, every event starts a run unchecked.');
 		expect(screen.queryByTestId('cue-gate-ready')).not.toBeInTheDocument();
 	});

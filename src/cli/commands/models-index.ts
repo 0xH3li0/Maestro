@@ -5,7 +5,7 @@
 //
 // It runs in the desktop over the WS bridge and answers with the same record
 // the `localModels:semanticIndex:status` IPC channel does, which is what
-// Settings -> Local Models draws. It reads memory only: no file, no model.
+// Settings > Models draws. It reads memory only: no file, no model.
 //
 // The indexer has no "start" verb, here or in the app. It runs whenever
 // Semantic search is assigned a source (`maestro-cli models assign

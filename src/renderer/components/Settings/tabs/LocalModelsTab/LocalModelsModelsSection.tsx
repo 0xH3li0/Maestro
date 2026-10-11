@@ -1,5 +1,5 @@
 /**
- * LocalModelsModelsSection - the Models section of the Local Models tab.
+ * LocalModelsModelsSection - the Models section of the Models tab.
  *
  * Every catalog model, installed or not, grouped by kind, each on the shared
  * `LocalModelRow` that Voice Setup also draws. The disk total sits on top so

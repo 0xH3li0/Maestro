@@ -3,7 +3,7 @@
 //
 // Every verb runs in the desktop over the WS bridge, through the same service
 // functions (`src/main/local-models/service.ts`) as the `localModels:*` IPC
-// channels the Settings -> Local Models rows call, so the CLI and the app read
+// channels the Settings > Models rows call, so the CLI and the app read
 // the same model store, write through the same downloader (a download started
 // in one is joined by the other, never duplicated), and hash with the same
 // verifier. The CLI only decides what the Settings row decides before it calls:
@@ -27,6 +27,7 @@ import {
 	LOCAL_MODEL_KIND_ORDER,
 } from '../../shared/local-models/model-catalog';
 import { tasksUsingLocalModel } from '../../shared/local-models/tasks';
+import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import type { LocalModelEntry, LocalModelKind } from '../../shared/local-models/types';
 import { voiceModelUsageLabel } from '../../shared/acappella/voice-models';
 import type { LocalModelListing, LocalRuntimeEnsureResult } from '../../main/local-models/service';
@@ -193,7 +194,7 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 
 	if (!options.json) {
 		console.log(
-			`Downloading ${entry.displayName} (${formatSize(entry.bytes)}), and its engine if that is missing. Progress shows in Settings -> Local Models.`
+			`Downloading ${entry.displayName} (${formatSize(entry.bytes)}), and its engine if that is missing. Progress shows in ${modelsSettingsLocation('library')}.`
 		);
 	}
 	const reply = await send<{

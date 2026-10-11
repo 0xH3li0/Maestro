@@ -333,7 +333,7 @@ describe('TabCleanupModal', () => {
 		expect(await screen.findByText('Tab cleanup suggestions is off')).toBeInTheDocument();
 		expect(screen.getByText(/Assign it a local model or an endpoint/)).toBeInTheDocument();
 
-		fireEvent.click(screen.getByText('Open Local Models Settings'));
+		fireEvent.click(screen.getByText('Open Models Settings'));
 
 		expect(onClose).toHaveBeenCalledTimes(1);
 		expect(openSettings).toHaveBeenCalledWith('local-models');

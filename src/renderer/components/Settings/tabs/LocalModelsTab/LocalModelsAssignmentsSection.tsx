@@ -1,14 +1,12 @@
 /**
- * LocalModelsAssignmentsSection - the Assignments section of the Local Models
- * tab: one row per task in `LOCAL_MODEL_TASKS`, each with a source picker and
- * the task's readiness.
+ * LocalModelsAssignmentsSection - the task assignments of one system in the
+ * Models tab: one row per task in `tasksForSystem(system)`, each with a source
+ * picker and the task's readiness. System One and System Two each mount one.
  *
- * The Utility Agent controls sit on top because they DEFINE one of the
- * picker's choices: a task assigned "Utility Agent" runs on whatever is set
- * there.
- *
- * The semantic index card sits below for the mirror-image reason: it is what
- * one of the rows (Semantic search) builds once it is assigned a source.
+ * The semantic index card sits below the System One rows because it is what
+ * one of them (Semantic search) builds once it is assigned a source. The
+ * Utility Agent controls, which define the picker's "Utility Agent" choice,
+ * belong to System Two and are mounted by the tab, not here.
  *
  * Nothing about readiness is decided here. Every verdict comes from the main
  * process (`resolveTaskReadiness`, through `useLocalModelTaskReadiness`), the
@@ -25,14 +23,14 @@ import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, Download, Loader2, Power, RefreshCw } from 'lucide-react';
 
 import {
-	LOCAL_MODEL_TASK_IDS,
-	LOCAL_MODEL_TASKS,
 	formatLocalModelAssignmentSpec,
 	localModelAssignmentProblem,
 	parseLocalModelAssignmentSpec,
 	resolveLocalModelAssignment,
+	tasksForSystem,
 	withLocalModelAssignment,
 	type LocalModelAssignment,
+	type LocalModelSystem,
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 } from '../../../../../shared/local-models/tasks';
@@ -49,10 +47,11 @@ import { AssignmentOptionElements } from './AssignmentOptionElements';
 import { buildAssignmentOptionGroups } from './assignmentOptions';
 import { downloadPercent, isActive } from './LocalModelRow';
 import { SemanticIndexSettings } from './SemanticIndexSettings';
-import { UtilityAgentSettings } from './UtilityAgentSettings';
 
 export interface LocalModelsAssignmentsSectionProps {
 	theme: Theme;
+	/** Which system's tasks this section lists. */
+	system: LocalModelSystem;
 	/** The tab's one `useLocalModels()` instance. */
 	models: LocalModelsState;
 	/** The tab's one `useLocalModelEndpoints()` instance. */
@@ -61,9 +60,11 @@ export interface LocalModelsAssignmentsSectionProps {
 
 export function LocalModelsAssignmentsSection({
 	theme,
+	system,
 	models,
 	endpoints,
 }: LocalModelsAssignmentsSectionProps) {
+	const tasks = useMemo(() => tasksForSystem(system), [system]);
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
 	const setLocalModelAssignments = useSettingsStore((s) => s.setLocalModelAssignments);
 	// The last refused pick per task, shown under its row until the next pick.
@@ -102,8 +103,10 @@ export function LocalModelsAssignmentsSection({
 	);
 
 	return (
-		<div className="select-none space-y-3" data-testid="local-models-assignments-section">
-			<UtilityAgentSettings theme={theme} />
+		<div
+			className="select-none space-y-3"
+			data-testid={`local-models-assignments-section-${system}`}
+		>
 			<SectionCard theme={theme} className="space-y-4">
 				{readiness.error && (
 					<div
@@ -114,23 +117,25 @@ export function LocalModelsAssignmentsSection({
 						<span>Could not check task readiness: {readiness.error}</span>
 					</div>
 				)}
-				{LOCAL_MODEL_TASK_IDS.map((taskId) => (
+				{tasks.map((task) => (
 					<TaskAssignmentRow
-						key={taskId}
+						key={task.id}
 						theme={theme}
-						task={LOCAL_MODEL_TASKS[taskId]}
-						assignment={resolveLocalModelAssignment(assignments, taskId)}
+						task={task}
+						assignment={resolveLocalModelAssignment(assignments, task.id)}
 						models={models}
 						endpoints={endpoints}
-						readiness={readiness.readiness[taskId]}
+						readiness={readiness.readiness[task.id]}
 						checking={readiness.loading}
-						problem={problems[taskId]}
-						onChoose={(spec) => choose(taskId, spec)}
+						problem={problems[task.id]}
+						onChoose={(spec) => choose(task.id, spec)}
 						onRecheck={readiness.refresh}
 					/>
 				))}
 			</SectionCard>
-			<SemanticIndexSettings theme={theme} />
+			{tasks.some((task) => task.id === 'semantic-search') && (
+				<SemanticIndexSettings theme={theme} />
+			)}
 		</div>
 	);
 }

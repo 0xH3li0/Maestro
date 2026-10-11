@@ -22,7 +22,7 @@
  *   - The Conductor Brain picker shows the Brain in force. A model on one of the
  *     user's endpoints is chosen by assigning it to the Local Models
  *     `voice-routing` task, so picking one here writes that assignment, and an
- *     assignment made in Settings > Local Models or from the CLI shows up here.
+ *     assignment made in Settings > Models or from the CLI shows up here.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';

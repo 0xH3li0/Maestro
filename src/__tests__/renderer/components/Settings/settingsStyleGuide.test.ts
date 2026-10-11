@@ -217,7 +217,7 @@ describe('Settings style guide', () => {
 			['ShortcutsTab', 'tabs/ShortcutsTab.tsx'],
 			['EncoreTab', 'tabs/EncoreTab/EncoreTab.tsx'],
 			['EnvironmentTab', 'tabs/EnvironmentTab.tsx'],
-			['LocalModelsTab', 'tabs/LocalModelsTab/LocalModelsTab.tsx'],
+			['ModelsSettingsTab', 'tabs/LocalModelsTab/ModelsSettingsTab.tsx'],
 		];
 
 		it.each(TAB_ROOTS)('%s spaces its sections with space-y-5', (_name, relative) => {

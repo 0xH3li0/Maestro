@@ -41,6 +41,7 @@ import {
 	type AiCommandHost,
 } from '../../../shared/aiCommand';
 import { localModelAssignmentSourceLabel } from '../../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../../shared/local-models/settings-location';
 import { getConfiguredLocalModelEndpoints } from '../../local-models/endpoint-service';
 import { runLocalTask } from '../../local-models/task-router';
 import { captureException } from '../../utils/sentry';
@@ -305,8 +306,7 @@ async function suggestWithAssignedModel(
 		case 'off':
 			return {
 				success: false,
-				error:
-					'AI command mode is switched off. Pick a source for it in Settings > Local Models > Assignments.',
+				error: `AI command mode is switched off. Pick a source for it in ${taskAssignmentLocation('ai-command')}.`,
 			};
 		case 'cancelled':
 			logger.warn('Command suggestion on the assigned model timed out', LOG_CONTEXT, {

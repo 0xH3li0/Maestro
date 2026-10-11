@@ -95,7 +95,7 @@ describe('evaluateCueGate', () => {
 		const check = await evaluateCueGate(REQUEST);
 		expect(check.status).toBe('unavailable');
 		expect(check.reason).toMatch(/Cue gate is off/);
-		expect(check.reason).toMatch(/Settings > Local Models > Assignments/);
+		expect(check.reason).toMatch(/Settings > Models > System One/);
 	});
 
 	it('is unavailable with the router reason when the assigned model cannot run', async () => {

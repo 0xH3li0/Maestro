@@ -31,6 +31,7 @@ import {
 	localModelAssignmentSourceLabel,
 	resolveLocalModelAssignment,
 } from '../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 import { snoozedEntryLabel, type SnoozedEntryLabelSource } from '../../shared/snooze';
 import {
 	TAB_CLEANUP_REPLY_SCHEMA,
@@ -55,7 +56,7 @@ const LOG_CONTEXT = '[TabCleanup]';
 const TASK_ID = 'tab-cleanup';
 
 /** Where a person assigns the task's source, for refusal text. */
-const ASSIGNMENT_LOCATION = 'Settings > Local Models > Assignments';
+const ASSIGNMENT_LOCATION = taskAssignmentLocation(TASK_ID);
 
 /** Room for the suggestion cap at about forty tokens a row, as JSON. */
 const TAB_CLEANUP_MAX_TOKENS = 900;

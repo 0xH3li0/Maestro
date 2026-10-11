@@ -39,6 +39,7 @@ import {
 } from '../../shared/audio/pcm';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { getLocalModel } from '../../shared/local-models/model-catalog';
+import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import { logger } from '../utils/logger';
 import { transcribeWithLocalModelEndpoint } from './endpoint-service';
 import { isLocalModelError, LocalModelError, throwIfLocalModelCancelled } from './errors';
@@ -376,7 +377,7 @@ async function transcribeOnLocalModel(
 			`${modelName(modelId)} failed on this clip: ${(error as Error).message}`,
 			{
 				code: 'generation-failed',
-				recovery: 'Try again. If it keeps failing, verify the model in Local Models settings.',
+				recovery: `Try again. If it keeps failing, verify the model in ${modelsSettingsLocation('library')}.`,
 				consumerId: CONSUMER_ID,
 				cause: error,
 			}

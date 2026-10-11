@@ -4,7 +4,7 @@
  * A model is a file of weights; an engine is the native library that reads it
  * (ONNX Runtime for speech, embeddings and classifiers; llama.cpp for text).
  * Engines are downloaded, not bundled, so a model can be installed and verified
- * and still not run. This card is where the Local Models tab says so and fixes
+ * and still not run. This card is where the Models tab says so and fixes
  * it: before it existed the only Install button for an engine lived in Voice
  * Setup, so a text model fetched here reported "engine not installed" with
  * nothing in the tab that could act on it.

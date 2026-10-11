@@ -37,6 +37,7 @@ import {
 	localModelAssignmentSourceLabel,
 	resolveLocalModelAssignment,
 } from '../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 import { getPrompt } from '../prompt-manager';
 import { logger } from '../utils/logger';
 import { execGit } from '../utils/remote-git';
@@ -49,7 +50,7 @@ const LOG_CONTEXT = '[GitDrafts]';
 const TASK_ID = 'git-drafts';
 
 /** Where a person assigns the task's source, for refusal text. */
-const ASSIGNMENT_LOCATION = 'Settings > Local Models > Assignments';
+const ASSIGNMENT_LOCATION = taskAssignmentLocation(TASK_ID);
 
 /** A title and a short body, as JSON. */
 const GIT_DRAFT_MAX_TOKENS = 700;

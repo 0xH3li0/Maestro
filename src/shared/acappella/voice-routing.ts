@@ -5,7 +5,7 @@
  * **One stored value per kind of choice, never two for the same one.** A local
  * model or an endpoint is chosen by ASSIGNING it to the `voice-routing` task
  * (`localModelAssignments`), the same setting every other Local Models task
- * uses, so Settings > Local Models, `maestro-cli models assign`, and the voice
+ * uses, so Settings > Models, `maestro-cli models assign`, and the voice
  * panels all read and write one record. The built-in router and the hosted
  * Brains are not Local Models sources, so they stay where they were
  * (`acappella.providers.brain`) and apply while the assignment is `off`.

@@ -26,6 +26,7 @@ import type {
 	CueInjectionScoreRequest,
 } from '../../shared/cue/injection-screen';
 import { LOCAL_MODEL_TASKS } from '../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 import { logger } from '../utils/logger';
 import { runClassifierTask } from './task-router';
 
@@ -34,7 +35,7 @@ const LOG_CONTEXT = '[CueInjectionScreen]';
 const TASK_ID = 'injection-screen';
 
 /** Where a person assigns the task's source, for refusal text. */
-const ASSIGNMENT_LOCATION = 'Settings > Local Models > Assignments';
+const ASSIGNMENT_LOCATION = taskAssignmentLocation(TASK_ID);
 
 /**
  * How long one value may take. Long enough for a cold classifier to load and

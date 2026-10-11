@@ -7,7 +7,7 @@
  * Three things on screen: the mode (off by default), a Test button that speaks
  * a sample line through the same path a real notice takes, and one line saying
  * what a notice will SAY, which depends on the Spoken notices task in
- * Settings > Local Models: a summary when a model is assigned and ready, the
+ * Settings > Models: a summary when a model is assigned and ready, the
  * plain "<agent name> finished" otherwise.
  */
 
@@ -29,6 +29,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import type { Theme } from '../types';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { Spinner } from './ui/Spinner';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 
 const TASK_ID = 'spoken-notices';
 
@@ -146,7 +147,7 @@ export function SpokenNoticesSetting({ theme }: SpokenNoticesSettingProps) {
 					data-testid="spoken-notices-plain"
 				>
 					The line is {PLAIN_LINE}. To add a short summary of what the agent did, assign a model to
-					Spoken notices in Settings &gt; Local Models.
+					Spoken notices in {taskAssignmentLocation('spoken-notices')}.
 				</p>
 			)}
 

@@ -1,2 +1,2 @@
-export { LocalModelsTab } from './LocalModelsTab';
-export type { LocalModelsTabProps } from './LocalModelsTab';
+export { ModelsSettingsTab } from './ModelsSettingsTab';
+export type { ModelsSettingsTabProps } from './ModelsSettingsTab';

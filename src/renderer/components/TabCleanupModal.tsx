@@ -303,7 +303,7 @@ export function TabCleanupModal({ theme, onClose }: TabCleanupModalProps) {
 									className={MODAL_BUTTON_SECONDARY_CLASS}
 									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								>
-									Open Local Models Settings
+									Open Models Settings
 								</button>
 							) : undefined
 						}

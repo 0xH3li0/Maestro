@@ -37,6 +37,7 @@
  */
 
 import { KOKORO_82M_ID } from '../../../../shared/local-models/model-catalog';
+import { modelsSettingsLocation } from '../../../../shared/local-models/settings-location';
 import { KOKORO_TTS_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type {
@@ -238,7 +239,7 @@ export class KokoroTtsProvider implements TtsProvider {
 				this.boundaries = frontEnd.vocab;
 			} catch (error) {
 				throw new VoiceProviderError(
-					'The Kokoro voice could not load its phoneme front end. Re-verify the model in Settings > Local Models, or switch Text-to-Speech to the system voice.',
+					`The Kokoro voice could not load its phoneme front end. Re-verify the model in ${modelsSettingsLocation('library')}, or switch Text-to-Speech to the system voice.`,
 					{ kind: 'unavailable', providerId: this.id, cause: error }
 				);
 			}
@@ -256,7 +257,7 @@ export class KokoroTtsProvider implements TtsProvider {
 		} catch (error) {
 			this.session = null;
 			throw new VoiceProviderError(
-				'The Kokoro voice could not be opened. Re-verify it in Settings > Local Models.',
+				`The Kokoro voice could not be opened. Re-verify it in ${modelsSettingsLocation('library')}.`,
 				{ kind: 'unavailable', providerId: this.id, cause: error }
 			);
 		}

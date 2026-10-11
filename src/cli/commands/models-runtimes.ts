@@ -17,6 +17,7 @@ import { formatSuccess } from '../output/formatter';
 import { formatSize } from '../../shared/formatters';
 import { getLocalModel } from '../../shared/local-models/model-catalog';
 import { getNativeRuntime, NATIVE_RUNTIMES } from '../../shared/local-models/native-runtimes';
+import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import type { LocalRuntimeListing } from '../../main/local-models/service';
 
 /** A runtime is tens of megabytes across many tarballs; the reply comes when it is usable. */
@@ -100,7 +101,9 @@ export async function modelsRuntimesInstall(runtimeId: string, options: JsonOpti
 	}
 
 	if (!options.json) {
-		console.log(`Installing ${descriptor.label}. Progress shows in Settings -> Local Models.`);
+		console.log(
+			`Installing ${descriptor.label}. Progress shows in ${modelsSettingsLocation('library')}.`
+		);
 	}
 	const reply = await send<{
 		success: boolean;

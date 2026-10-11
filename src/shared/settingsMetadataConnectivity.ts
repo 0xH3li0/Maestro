@@ -7,6 +7,7 @@
  */
 
 import type { SettingMetadata } from './settingsMetadata';
+import { taskAssignmentLocation } from './local-models/settings-location';
 
 export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Notifications ---
@@ -50,8 +51,7 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'notifications',
 	},
 	spokenNotices: {
-		description:
-			'Speak one line aloud when an agent finishes a turn, with a local voice. Options: off (default), unfocused (only while no Maestro window has focus), always. The line is "<agent name> finished" unless the Spoken notices task in Settings > Local Models is assigned a model, which adds a short summary. Never speaks while a voice session is live.',
+		description: `Speak one line aloud when an agent finishes a turn, with a local voice. Options: off (default), unfocused (only while no Maestro window has focus), always. The line is "<agent name> finished" unless the Spoken notices task in ${taskAssignmentLocation('spoken-notices')} is assigned a model, which adds a short summary. Never speaks while a voice session is live.`,
 		type: 'string',
 		default: 'off',
 		category: 'notifications',

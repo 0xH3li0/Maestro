@@ -28,6 +28,7 @@ import {
 	type CueGateRequest,
 } from '../../shared/cue/gate';
 import { LOCAL_MODEL_TASKS } from '../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 import { getPrompt } from '../prompt-manager';
 import { logger } from '../utils/logger';
 import { runLocalTask } from './task-router';
@@ -37,7 +38,7 @@ const LOG_CONTEXT = '[CueGate]';
 const TASK_ID = 'cue-gate';
 
 /** Where a person assigns the task's source, for refusal text. */
-const ASSIGNMENT_LOCATION = 'Settings > Local Models > Assignments';
+const ASSIGNMENT_LOCATION = taskAssignmentLocation(TASK_ID);
 
 /** One short sentence and a boolean, as JSON. */
 const CUE_GATE_MAX_TOKENS = 200;

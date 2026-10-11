@@ -76,7 +76,7 @@ describe('scoreCueInjectionText', () => {
 		const result = await scoreCueInjectionText(REQUEST);
 		expect(result.status).toBe('off');
 		expect(result).toMatchObject({
-			reason: expect.stringContaining('Settings > Local Models > Assignments'),
+			reason: expect.stringContaining('Settings > Models > System One'),
 		});
 	});
 

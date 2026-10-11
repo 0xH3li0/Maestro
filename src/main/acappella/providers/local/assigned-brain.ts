@@ -50,6 +50,7 @@ import {
 	type LocalTaskUnavailable,
 } from '../../../local-models/task-router';
 import { getLocalTextEngine, type LocalTextEngine } from '../../../local-models/text-gen';
+import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../../utils/sleep-tracker';
 import {
 	buildConverseUserPrompt,
@@ -75,8 +76,7 @@ const CONVERSE_MAX_TOKENS = 300;
 export const ASSIGNED_BRAIN_TURN_TIMEOUT_MS = 30_000;
 
 /** What to tell the user when the slot is filled but the assignment names no model. */
-const NOT_ASSIGNED_MESSAGE =
-	'Voice routing has no model assigned. Assign one in Settings > Local Models, or pick another Conductor Brain in Settings > Plugins > A Cappella > Voice Providers.';
+const NOT_ASSIGNED_MESSAGE = `Voice routing has no model assigned. Assign one in ${taskAssignmentLocation('voice-routing')}, or pick another Conductor Brain in Settings > Plugins > A Cappella > Voice Providers.`;
 
 export type AssignedBrainProviderId =
 	| typeof QWEN3_BRAIN_PROVIDER_ID

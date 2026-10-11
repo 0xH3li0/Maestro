@@ -309,7 +309,7 @@ describe('suggestTabCleanup', () => {
 
 		expect(result).toMatchObject({ success: false, status: 'off' });
 		expect(result.success === false && result.error).toMatch(
-			/Tab cleanup suggestions is off.*Settings > Local Models > Assignments/
+			/Tab cleanup suggestions is off.*Settings > Models > System One/
 		);
 		expect(sessions).not.toHaveBeenCalled();
 		expect(runLocalTask).not.toHaveBeenCalled();

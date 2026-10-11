@@ -964,8 +964,8 @@ describe('buildTabCommands: Tab Cleanup Suggestions', () => {
 	});
 });
 
-describe('buildSupportCommands: Local Models settings', () => {
-	it('opens Settings on the Local Models tab and closes the palette', () => {
+describe('buildSupportCommands: Models settings', () => {
+	it('opens Settings on the Models tab and closes the palette', () => {
 		const setQuickActionOpen = vi.fn();
 		const setSettingsModalOpen = vi.fn();
 		const setSettingsTab = vi.fn();
@@ -989,7 +989,7 @@ describe('buildSupportCommands: Local Models settings', () => {
 		});
 
 		const entry = commands.find((c) => c.id === 'openLocalModelsSettings');
-		expect(entry?.label).toBe('Open Local Models Settings');
+		expect(entry?.label).toBe('Open Models Settings');
 		entry!.action();
 
 		expect(setSettingsModalOpen).toHaveBeenCalledWith(true);

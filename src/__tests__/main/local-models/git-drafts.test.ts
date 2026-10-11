@@ -100,7 +100,7 @@ describe('draftPullRequest', () => {
 
 		expect(result).toMatchObject({ success: false, status: 'off' });
 		expect(result.success === false && result.error).toMatch(
-			/Git drafts is off.*Settings > Local Models > Assignments/
+			/Git drafts is off.*Settings > Models > System Two/
 		);
 		expect(execGit).not.toHaveBeenCalled();
 		expect(runLocalTask).not.toHaveBeenCalled();

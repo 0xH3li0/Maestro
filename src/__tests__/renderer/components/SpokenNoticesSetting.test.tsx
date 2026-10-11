@@ -117,7 +117,7 @@ describe('SpokenNoticesSetting', () => {
 
 		const note = await screen.findByTestId('spoken-notices-plain');
 		expect(note).toHaveTextContent('"<agent name> finished"');
-		expect(note).toHaveTextContent('Settings > Local Models');
+		expect(note).toHaveTextContent('Settings > Models > System Two');
 	});
 
 	it('names the model that writes the summary when the task is ready', async () => {

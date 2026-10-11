@@ -44,6 +44,7 @@ import { useDictationStore } from '../stores/dictationStore';
 import { notifyToast } from '../stores/notificationStore';
 import { dictationTargetForElement, type DictationTarget } from '../utils/dictationTargets';
 import { getPlatform } from '../utils/platformUtils';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 
 /** Raised by the keyboard handler when the `dictate` chord goes down. */
 export const DICTATION_SHORTCUT_PRESS_EVENT = 'maestro:dictationShortcutPress';
@@ -279,8 +280,7 @@ function deliver(result: DictationResult, target: DictationTarget | null): void 
 			notifyToast({
 				color: 'yellow',
 				title: TOAST_TITLE,
-				message:
-					'Dictation was switched off while recording. Assign it a model in Settings -> Local Models.',
+				message: `Dictation was switched off while recording. Assign it a model in ${taskAssignmentLocation('dictation')}.`,
 			});
 			return;
 		case 'unavailable':

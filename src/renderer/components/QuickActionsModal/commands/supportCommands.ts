@@ -95,8 +95,8 @@ export function buildSupportCommands({
 		},
 		{
 			id: 'openLocalModelsSettings',
-			label: 'Open Local Models Settings',
-			subtext: 'Models, endpoints, and which model runs each task',
+			label: 'Open Models Settings',
+			subtext: 'Library, sources, System One and Two, and the gateway',
 			action: () => {
 				setSettingsModalOpen(true);
 				setSettingsTab('local-models');

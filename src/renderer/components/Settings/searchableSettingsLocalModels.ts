@@ -1,7 +1,7 @@
 /**
- * Local Models tab searchable-settings entries.
+ * Models tab searchable-settings entries.
  *
- * One entry per section of `LocalModelsTab`, plus the Utility Agent controls
+ * One entry per section of `ModelsSettingsTab`, plus the Utility Agent controls
  * and the semantic index card inside Assignments; each `id` matches a rendered
  * `data-setting-id`.
  */
@@ -9,7 +9,7 @@
 import type { SearchableSetting } from './searchableSettings';
 
 const TAB = 'local-models' as const;
-const TAB_LABEL = 'Local Models';
+const TAB_LABEL = 'Models';
 
 export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 	{

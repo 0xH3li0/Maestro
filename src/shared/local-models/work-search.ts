@@ -21,6 +21,7 @@ import {
 	type EmbeddingSourceType,
 	type SemanticIndexProgress,
 } from './embedding-index';
+import { taskAssignmentLocation } from './settings-location';
 
 export const WORK_SEARCH_MODES = ['text', 'semantic'] as const;
 
@@ -161,8 +162,7 @@ export type WorkSearchResult =
 	| { status: 'cancelled' };
 
 /** What a surface says when Semantic search is assigned no source. */
-export const WORK_SEARCH_OFF_REASON =
-	'Semantic search is off. Assign it a source in Settings > Local Models > Assignments.';
+export const WORK_SEARCH_OFF_REASON = `Semantic search is off. Assign it a source in ${taskAssignmentLocation('semantic-search')}.`;
 
 /**
  * Validate a request that crossed a transport (IPC, the CLI bridge). Throws

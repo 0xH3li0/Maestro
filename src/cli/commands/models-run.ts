@@ -32,6 +32,10 @@ import {
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
 } from '../../shared/local-models/tasks';
+import {
+	MODELS_SETTINGS_LOCATION,
+	taskAssignmentLocation,
+} from '../../shared/local-models/settings-location';
 import type { PullRequestDraftResult } from '../../shared/gitDrafts';
 import type {
 	LocalTaskInput,
@@ -79,7 +83,9 @@ function describeVerdict(
 	const label = isLocalModelTaskId(taskId) ? LOCAL_MODEL_TASKS[taskId].label : taskId;
 	switch (result.status) {
 		case 'off':
-			return `${label} is off. Assign it a local model or an endpoint in Settings -> Local Models.`;
+			return `${label} is off. Assign it a local model or an endpoint in ${
+				isLocalModelTaskId(taskId) ? taskAssignmentLocation(taskId) : MODELS_SETTINGS_LOCATION
+			}.`;
 		case 'use-utility-agent':
 			return `${label} is assigned to the Utility Agent, which runs inside the app, not through models run.`;
 		case 'unavailable':

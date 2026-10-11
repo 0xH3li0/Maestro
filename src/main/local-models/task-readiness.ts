@@ -32,6 +32,7 @@ import {
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 import type {
 	LocalModelTaskReadiness,
 	LocalModelTaskUnreadyReason,
@@ -51,9 +52,6 @@ import {
 } from './runtime/native-loader';
 import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { readLocalModelAssignments } from './sources';
-
-/** Where a person assigns a task's source, for recovery sentences. */
-const ASSIGNMENT_LOCATION = 'Settings -> Local Models';
 
 const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
 	'text-gen': 'text-generation',
@@ -154,7 +152,7 @@ async function resolveForAssignment(
 				detail: `${task.label} is off.`,
 				suggestedAction: `Assign it ${
 					endpointServesNeed(task.needs) ? 'a local model or an endpoint' : 'a local model'
-				} in ${ASSIGNMENT_LOCATION}.`,
+				} in ${taskAssignmentLocation(task.id)}.`,
 			};
 		case 'utility-agent':
 			return {
@@ -194,14 +192,14 @@ async function resolveLocal(
 		return unavailable(
 			'model-unknown',
 			`"${modelId}" is not a model in this build's catalog.`,
-			`Assign ${needLabel} model from the Local Models catalog in ${ASSIGNMENT_LOCATION}.`
+			`Assign ${needLabel} model from the Local Models catalog in ${taskAssignmentLocation(task.id)}.`
 		);
 	}
 	if (entry.kind !== task.needs) {
 		return unavailable(
 			'model-wrong-kind',
 			`${entry.displayName} is not ${needLabel} model, which ${task.label} needs.`,
-			`Assign ${needLabel} model in ${ASSIGNMENT_LOCATION}.`
+			`Assign ${needLabel} model in ${taskAssignmentLocation(task.id)}.`
 		);
 	}
 
@@ -255,7 +253,7 @@ async function resolveEndpoint(
 		return unavailable(
 			'endpoint-unsupported',
 			`${task.label} needs ${aNeed(task.needs)} model, which an endpoint cannot serve.`,
-			`Assign a local model in ${ASSIGNMENT_LOCATION}.`
+			`Assign a local model in ${taskAssignmentLocation(task.id)}.`
 		);
 	}
 
@@ -265,12 +263,12 @@ async function resolveEndpoint(
 			? unavailable(
 					'endpoint-disabled',
 					found.message,
-					`Enable it in the endpoint list, or assign another source in ${ASSIGNMENT_LOCATION}.`
+					`Enable it in the endpoint list, or assign another source in ${taskAssignmentLocation(task.id)}.`
 				)
 			: unavailable(
 					'endpoint-unknown',
 					found.message,
-					`Add the endpoint again (maestro-cli models endpoints add), or assign another source in ${ASSIGNMENT_LOCATION}.`
+					`Add the endpoint again (maestro-cli models endpoints add), or assign another source in ${taskAssignmentLocation(task.id)}.`
 				);
 	}
 

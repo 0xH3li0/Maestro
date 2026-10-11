@@ -42,6 +42,7 @@ import type {
 	LocalModelTaskUnreadyReason,
 } from '../../../shared/local-models/task-readiness';
 import type { LocalModelTaskId } from '../../../shared/local-models/tasks';
+import { taskAssignmentLocation } from '../../../shared/local-models/settings-location';
 import { resolveTaskReadiness } from '../../local-models/task-readiness';
 import { hasCredential } from '../providers/credentials';
 import type { MicPermission } from '../../../shared/acappella/protocol';
@@ -487,7 +488,7 @@ const TASK_REASON_TO_SLOT_REASON: Record<LocalModelTaskUnreadyReason, VoiceSlotU
  * assigned source is.
  *
  * The verdict is the core's (`resolveTaskReadiness`), restated for the slot, so
- * this panel, Settings > Local Models, and `maestro-cli models status` cannot
+ * this panel, Settings > Models, and `maestro-cli models status` cannot
  * disagree about whether the assigned model can route. It is never satisfied by
  * a different source: an assignment that is off, or that cannot run, leaves the
  * slot unsatisfied and says which model or endpoint it was.
@@ -544,8 +545,7 @@ async function resolveAssignedSource(
 		satisfied: false,
 		reason: 'provider-unreachable',
 		detail: `${label}: ${readiness.label} has no model assigned.`,
-		suggestedAction:
-			'Assign one in Settings > Local Models, or pick another Conductor Brain in Settings > Plugins > A Cappella > Voice Providers.',
+		suggestedAction: `Assign one in ${taskAssignmentLocation(readiness.taskId)}, or pick another Conductor Brain in Settings > Plugins > A Cappella > Voice Providers.`,
 	};
 }
 

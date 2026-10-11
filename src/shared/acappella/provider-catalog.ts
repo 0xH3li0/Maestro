@@ -27,6 +27,7 @@ import {
 } from '../local-models/model-catalog';
 import type { NativeRuntimeId } from '../local-models/native-runtimes';
 import type { LocalModelTaskId } from '../local-models/tasks';
+import { taskAssignmentLocation } from '../local-models/settings-location';
 import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 
 // ---------------------------------------------------------------------------
@@ -463,8 +464,7 @@ export const ASSIGNED_BRAIN_PROVIDERS: readonly VoiceProviderDescriptor[] = Obje
 		requires: { kind: 'local-models-task', taskId: 'voice-routing' },
 		egress: 'none',
 		egressService: null,
-		description:
-			'Routes with a text model on this machine, assigned to Voice routing in Settings > Local Models. Nothing leaves it.',
+		description: `Routes with a text model on this machine, assigned to Voice routing in ${taskAssignmentLocation('voice-routing')}. Nothing leaves it.`,
 	}),
 	defineProvider({
 		id: ENDPOINT_BRAIN_PROVIDER_ID,

@@ -23,6 +23,7 @@
  */
 
 import { getLocalModel } from '../../shared/local-models/model-catalog';
+import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import type { LocalEncoderGraph, LocalModelEntry } from '../../shared/local-models/types';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { LocalModelError } from './errors';
@@ -318,7 +319,7 @@ export function encoderRunFailure(
 ): LocalModelError {
 	return new LocalModelError(`${entry.displayName} ${detail}`, {
 		code: 'generation-failed',
-		recovery: 'Try again. If it keeps failing, verify the model in Local Models settings.',
+		recovery: `Try again. If it keeps failing, verify the model in ${modelsSettingsLocation('library')}.`,
 		consumerId,
 		...(cause !== undefined ? { cause } : {}),
 	});

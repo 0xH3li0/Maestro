@@ -39,6 +39,7 @@ import {
 	useVoiceProviderSelection,
 	type VoiceSlotMode,
 } from './useVoiceProviderSelection';
+import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
 
 export interface VoiceSetupPanelProps {
 	theme: Theme;
@@ -150,8 +151,9 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 					)}
 					{modes[role] === 'local' && assigned && (
 						<p className="text-xs-plus opacity-55 select-text">
-							Routes with {assigned.label}, the model assigned to Voice routing in Settings &gt;
-							Local Models. Choose a different Conductor Brain in Voice Providers below.
+							Routes with {assigned.label}, the model assigned to Voice routing in{' '}
+							{taskAssignmentLocation('voice-routing')}. Choose a different Conductor Brain in Voice
+							Providers below.
 						</p>
 					)}
 					{modes[role] === 'local' && !assigned && !modelId && slot.localNote && (

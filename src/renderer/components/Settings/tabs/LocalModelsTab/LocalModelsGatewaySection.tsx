@@ -1,5 +1,5 @@
 /**
- * LocalModelsGatewaySection - the Gateway section of the Local Models tab: a
+ * LocalModelsGatewaySection - the Gateway section of the Models tab: a
  * table of agents, each with the gateway its provider traffic goes through.
  *
  * A gateway is an HTTP proxy (Headroom, LiteLLM, or one of your own) set as

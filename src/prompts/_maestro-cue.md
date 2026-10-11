@@ -346,7 +346,7 @@ subscriptions:
 
 ### Gate (`gate`)
 
-Any subscription may carry a `gate`: one sentence in plain language that the event must meet before a run starts. A local model (the **Cue gate** task in Settings > Local Models) reads the event payload and answers yes or no. A "no" starts nothing and records a `gated` event with the reason in the Activity Log.
+Any subscription may carry a `gate`: one sentence in plain language that the event must meet before a run starts. A local model (the **Cue gate** task in Settings > Models > System One) reads the event payload and answers yes or no. A "no" starts nothing and records a `gated` event with the reason in the Activity Log.
 
 ```yaml
 - name: triage-comments
@@ -374,7 +374,7 @@ Any subscription may carry a `gate`: one sentence in plain language that the eve
 
 ### Injection screen (`screen_injection`)
 
-Some variables carry text other people wrote: `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_TASK_CONTENT}}`, `{{CUE_TASK_LIST}}`, and every `{{CUE_WEBHOOK_*}}` variable except the path. A subscription can have a local classifier (the **Prompt-injection screen** task in Settings > Local Models) score that text before a run starts. A score at or above `injection_threshold` (default 0.8) blocks the run and records a `blocked` event.
+Some variables carry text other people wrote: `{{CUE_GH_TITLE}}`, `{{CUE_GH_BODY}}`, `{{CUE_NEW_COMMENTS}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_TASK_CONTENT}}`, `{{CUE_TASK_LIST}}`, and every `{{CUE_WEBHOOK_*}}` variable except the path. A subscription can have a local classifier (the **Prompt-injection screen** task in Settings > Models > System One) score that text before a run starts. A score at or above `injection_threshold` (default 0.8) blocks the run and records a `blocked` event.
 
 ```yaml
 - name: reply-to-comments

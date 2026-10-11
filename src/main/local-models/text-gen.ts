@@ -27,6 +27,7 @@
  */
 
 import { getLocalModel } from '../../shared/local-models/model-catalog';
+import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import { extractJsonObject } from '../../shared/jsonUtils';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
@@ -457,7 +458,7 @@ export class LocalTextEngine {
 				`${modelLabel(loaded.modelId)} failed on this request: ${(error as Error).message}`,
 				{
 					code: 'generation-failed',
-					recovery: 'Try again. If it keeps failing, verify the model in Local Models settings.',
+					recovery: `Try again. If it keeps failing, verify the model in ${modelsSettingsLocation('library')}.`,
 					consumerId: CONSUMER_ID,
 					cause: error,
 				}

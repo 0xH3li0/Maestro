@@ -753,7 +753,7 @@ describe('SettingsModal', () => {
 
 	describe('keyboard tab navigation', () => {
 		// Sidebar is alphabetized by label, so the order under no LLM flag is:
-		// About, AI Commands, Display, Environment, General, Local Models, Maestro Prompts,
+		// About, AI Commands, Display, Environment, General, Maestro Prompts, Models,
 		// Notifications, Plugins, Shortcuts, SSH Hosts, Themes.
 		it('should navigate to next tab with Cmd+Shift+] from default (general)', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
@@ -765,16 +765,24 @@ describe('SettingsModal', () => {
 			// Start on general tab
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+] - alphabetically the next tab after General is Local Models
+			// Press Cmd+Shift+] - alphabetically the next tab after General is Maestro Prompts
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Local Models tab should now be the active sidebar entry, with its shell rendered
-			expect(screen.getByTitle('Local Models')).toHaveClass('font-bold');
-			expect(screen.getByTestId('local-models-tab')).toBeInTheDocument();
+			expect(screen.getByTitle('Maestro Prompts')).toHaveClass('font-bold');
+
+			// And the one after that is Models, with its shell rendered
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTitle('Models')).toHaveClass('font-bold');
+			expect(screen.getByTestId('models-settings-tab')).toBeInTheDocument();
 		});
 
 		it('should navigate to previous tab with Cmd+Shift+[ from shortcuts', async () => {

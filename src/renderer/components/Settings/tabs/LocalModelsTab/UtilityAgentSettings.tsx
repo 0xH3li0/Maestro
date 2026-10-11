@@ -84,7 +84,7 @@ export function UtilityAgentSettings({ theme }: UtilityAgentSettingsProps) {
 				    dimming and drops contrast below 3:1 in most themes
 				    (CLAUDE-SETTINGS.md rule 1). Descriptions inherit textMain. */}
 				<div className="text-xs opacity-50">
-					What the Utility Agent choice below runs on. Route auxiliary tasks (tab naming, context
+					What a task set to Utility Agent above runs on. Route auxiliary tasks (tab naming, context
 					grooming) to a cheaper or faster agent instead of the session agent, or leave as Default
 					to keep using each tab's own agent.
 				</div>

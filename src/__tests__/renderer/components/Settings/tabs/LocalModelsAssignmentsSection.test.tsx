@@ -1,8 +1,7 @@
 /**
- * Tests for LocalModelsAssignmentsSection - one row per Local Models task with
- * a source picker filtered by the task's need, the main process's readiness
- * verdict inline, and the Utility Agent controls that define the picker's
- * "Utility Agent" choice.
+ * Tests for LocalModelsAssignmentsSection - one row per task of one system,
+ * with a source picker filtered by the task's need and the main process's
+ * readiness verdict inline.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -15,7 +14,7 @@ import { LocalModelsAssignmentsSection } from '../../../../../renderer/component
 import { buildAssignmentOptionGroups } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/assignmentOptions';
 import { useLocalModelEndpoints, useLocalModels } from '../../../../../renderer/hooks/localModels';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
-import { LOCAL_MODEL_TASKS } from '../../../../../shared/local-models/tasks';
+import { LOCAL_MODEL_TASKS, tasksForSystem } from '../../../../../shared/local-models/tasks';
 import {
 	BGE_SMALL_EN_ID,
 	LOCAL_MODEL_CATALOG,
@@ -73,11 +72,29 @@ const api = () => window.maestro.localModels as unknown as Record<string, Return
 const endpointsApi = () =>
 	window.maestro.localModels.endpoints as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
-/** The section takes the tab's hook state; this stands in for the tab. */
+/**
+ * The section takes the tab's hook state; this stands in for the tab. It mounts
+ * both systems so a test can reach any task's row.
+ */
 function Section() {
 	const models = useLocalModels();
 	const endpoints = useLocalModelEndpoints();
-	return <LocalModelsAssignmentsSection theme={theme} models={models} endpoints={endpoints} />;
+	return (
+		<>
+			<LocalModelsAssignmentsSection
+				theme={theme}
+				system="one"
+				models={models}
+				endpoints={endpoints}
+			/>
+			<LocalModelsAssignmentsSection
+				theme={theme}
+				system="two"
+				models={models}
+				endpoints={endpoints}
+			/>
+		</>
+	);
 }
 
 function optionLabels(taskLabel: string): string[] {
@@ -188,11 +205,23 @@ describe('LocalModelsAssignmentsSection', () => {
 		expect(api().download).toHaveBeenCalledTimes(1);
 	});
 
-	it('renders the Utility Agent controls that define the picker choice', async () => {
-		render(<Section />);
-		expect(document.querySelector('[data-setting-id="local-models-utility-agent"]')).not.toBeNull();
-		expect(screen.getByLabelText('Agent')).toBeInTheDocument();
-		await waitFor(() => expect(window.maestro.agents.detect).toHaveBeenCalled());
+	it('lists one row per task of its system, and only those', () => {
+		const models = { listings: [], progress: {} } as never;
+		const endpoints = { endpoints: [], models: {} } as never;
+		render(
+			<LocalModelsAssignmentsSection
+				theme={theme}
+				system="two"
+				models={models}
+				endpoints={endpoints}
+			/>
+		);
+		const rows = screen
+			.getAllByTestId(/^local-models-task-(?!readiness|recovery)/)
+			.map((row) => row.getAttribute('data-testid'));
+		expect(rows).toEqual(tasksForSystem('two').map((task) => `local-models-task-${task.id}`));
+		// The semantic index card belongs to System One's Semantic search row.
+		expect(screen.queryByTestId('semantic-index-settings')).toBeNull();
 	});
 });
 

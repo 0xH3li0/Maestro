@@ -1,5 +1,5 @@
 /**
- * LocalModelsEndpointsSection - the Endpoints section of the Local Models tab.
+ * LocalModelsEndpointsSection - the Endpoints section of the Models tab.
  *
  * The user's configured model servers (Ollama, LM Studio, any OpenAI-compatible
  * URL), each with its kind, base URL, an enabled switch, the models it serves,
