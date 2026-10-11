@@ -30,6 +30,17 @@ describe('systemPromptSectionsFor', () => {
 		]);
 	});
 
+	// Concerto ships OFF. Its routing section used to sit in the base prompt, so
+	// every agent was told to answer on a stage that dropped the payload.
+	it('carries the Concerto routing section only while Concerto is on, SSH included', () => {
+		const ids = (flags: unknown, isSsh: boolean) =>
+			systemPromptSectionsFor(flags, { isSsh }).map((ref) => ref.promptId);
+		expect(ids({ concerto: true }, false)).toEqual(['concerto-system']);
+		expect(ids({ concerto: true }, true)).toEqual(['concerto-system']);
+		expect(ids({ concerto: false }, false)).toEqual([]);
+		expect(ids({}, false)).toEqual([]);
+	});
+
 	it('returns nothing when the flag is off', () => {
 		expect(systemPromptSectionsFor({ computerHistory: false }, { isSsh: false })).toEqual([]);
 	});

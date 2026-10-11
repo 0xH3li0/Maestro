@@ -37,7 +37,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useBracketTabCycle } from '../hooks/utils/useBracketTabCycle';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
+import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
@@ -133,6 +133,7 @@ function formatLastModified(timestamp: number): string {
 const AUTO_RUN_MODES: readonly ('spec' | 'goal')[] = ['spec', 'goal'];
 
 export function BatchRunnerModal(props: BatchRunnerModalProps) {
+	const templateVariables = useAvailableTemplateVariables();
 	const {
 		theme,
 		onClose,
@@ -1059,8 +1060,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 					{/* Start: Now / At a set time. Spec-Driven only - a scheduled run is
 					    stored as a Cue autorun subscription keyed on a document list, and
-					    Goal-Driven runs have no documents to key on. */}
-					{!goalMode && (
+					    Goal-Driven runs have no documents to key on. Scheduling is a Cue
+					    feature, so the control exists only while Maestro Cue is on. */}
+					{!goalMode && maestroCueEnabled && (
 						<ScheduleRunSection
 							theme={theme}
 							value={scheduledStart}
@@ -1188,7 +1190,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 											at runtime.
 										</p>
 										<div className="grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto scrollbar-thin">
-											{TEMPLATE_VARIABLES.map(({ variable, description }) => (
+											{templateVariables.map(({ variable, description }) => (
 												<div key={variable} className="flex items-center gap-2 py-0.5">
 													<code
 														className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"

@@ -1,6 +1,7 @@
 import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
 import type { AdditionalDirectory } from './types';
+import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -316,6 +317,9 @@ export interface TemplateContext {
 // List of all available template variables for documentation (alphabetically sorted)
 // Variables marked as autoRunOnly are only shown in Auto Run contexts, not in AI Commands settings
 // Variables marked as cueOnly are only shown in Cue automation contexts
+// Variables marked with an encoreFlag (and every cueOnly one, which belongs to
+// Maestro Cue) are listed only while that Encore Feature is on: read the list
+// through availableTemplateVariables()
 export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{ADDITIONAL_DIRECTORIES}}',
@@ -328,10 +332,12 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{COMPUTER_HISTORY_DIR}}',
 		description: 'Computer History store path (empty for SSH agents)',
+		encoreFlag: 'computerHistory',
 	},
 	{
 		variable: '{{MAESTRO_RUN_PATH}}',
 		description: 'MaestroRun launcher path (empty until installed and granted)',
+		encoreFlag: 'maestroRun',
 	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
@@ -538,6 +544,22 @@ export const TEMPLATE_VARIABLES = [
 export const TEMPLATE_VARIABLES_GENERAL = TEMPLATE_VARIABLES.filter(
 	(v) => !v.autoRunOnly && !v.cueOnly
 );
+
+/**
+ * Drop the variables of every Encore Feature that is switched off, for the
+ * pickers and help panels that LIST variables. Substitution is unaffected: a
+ * prompt that already names one still resolves it (to an empty string).
+ */
+export function availableTemplateVariables<T extends { encoreFlag?: string; cueOnly?: boolean }>(
+	variables: readonly T[],
+	encoreFeatures: unknown
+): T[] {
+	const flags = resolveEncoreFeatures(encoreFeatures);
+	return variables.filter((v) => {
+		const flag = v.encoreFlag ?? (v.cueOnly ? 'maestroCue' : undefined);
+		return !flag || flags[flag as keyof EncoreFeatureDefaults] === true;
+	});
+}
 
 /**
  * Substitute template variables in a string with actual values
