@@ -1844,6 +1844,10 @@ export interface EncoreFeatureFlags {
 	// Quick Chat - a floating chat window summoned by a system-wide hotkey. ON by
 	// default. Optional so older fixtures and persisted settings remain valid.
 	quickChat?: boolean;
+	// MaestroRun - installs the signed macOS launcher that holds Full Disk Access
+	// for scheduled scripts. macOS only, off by default. Optional so older
+	// fixtures and persisted settings remain valid.
+	maestroRun?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

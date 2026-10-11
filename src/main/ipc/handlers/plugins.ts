@@ -25,6 +25,7 @@ import { setPanelHtmlProvider } from '../../plugins/plugin-panel-host';
 import { getFirstPartyBridge, type FirstPartyBridgeState } from '../../plugins/first-party-bridge';
 import {
 	FIRST_PARTY_PLUGINS,
+	isFirstPartyPluginAvailableOn,
 	type FirstPartyEncoreFlag,
 } from '../../../shared/plugins/first-party';
 
@@ -224,6 +225,17 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				throw new Error('InvalidFirstPartyFlag');
 			}
 			if (typeof enabled !== 'boolean') throw new Error('InvalidEnabledFlag');
+			// A feature that does not exist on this OS cannot be switched on here,
+			// whatever the caller's own platform check said. Off is always allowed.
+			if (
+				enabled &&
+				!isFirstPartyPluginAvailableOn(
+					FIRST_PARTY_PLUGINS[flag as FirstPartyEncoreFlag],
+					process.platform
+				)
+			) {
+				throw new Error('FirstPartyPlatformUnsupported');
+			}
 			const bridge = getFirstPartyBridge(flag as FirstPartyEncoreFlag);
 			if (!bridge) throw new Error('FirstPartyBridgeUnavailable');
 			return bridge.setEnabled(enabled);

@@ -195,6 +195,67 @@ describe('prepareMaestroSystemPrompt', () => {
 			);
 		});
 
+		describe('MaestroRun', () => {
+			const LAUNCHER = '/Users/me/Applications/MaestroRun.app/Contents/MacOS/maestro-run';
+			const readyPath = () =>
+				(window as any).maestro.maestroRun.readyPath as ReturnType<typeof vi.fn>;
+
+			beforeEach(() => {
+				prompts['maestro-run-system'] = 'RUN {{MAESTRO_RUN_PATH}}';
+				readyPath().mockReset();
+				readyPath().mockResolvedValue(null);
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: false, maestroRun: true },
+				});
+			});
+
+			afterEach(() => {
+				delete prompts['maestro-run-system'];
+			});
+
+			it('is left out while the tile is on but the launcher is not ready', async () => {
+				const result = await prepareMaestroSystemPrompt({ session: baseSession });
+				expect(result).toBe('BASE');
+				expect(readyPath()).toHaveBeenCalledTimes(1);
+				expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith('maestro-run-system');
+			});
+
+			it('is appended with the launcher path once main says ready', async () => {
+				readyPath().mockResolvedValue(LAUNCHER);
+				const result = await prepareMaestroSystemPrompt({ session: baseSession });
+				expect(result).toBe(`BASE\n\n---\n\nRUN ${LAUNCHER}`);
+			});
+
+			it('asks main on every spawn, so a new or revoked grant shows up at once', async () => {
+				readyPath().mockResolvedValueOnce(LAUNCHER).mockResolvedValueOnce(null);
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toContain('RUN');
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+			});
+
+			it('does not ask main at all while the feature is off', async () => {
+				readyPath().mockResolvedValue(LAUNCHER);
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: false, maestroRun: false },
+				});
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+				expect(readyPath()).not.toHaveBeenCalled();
+			});
+
+			it('is never given to an SSH agent', async () => {
+				readyPath().mockResolvedValue(LAUNCHER);
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
+				});
+				expect(result).toBe('BASE');
+				expect(readyPath()).not.toHaveBeenCalled();
+			});
+
+			it('reads a failed check as not ready', async () => {
+				readyPath().mockRejectedValue(new Error('main not ready'));
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+			});
+		});
+
 		it('skips a section whose prompt fails to load', async () => {
 			enableComputerHistory();
 			delete prompts['computer-history-system'];

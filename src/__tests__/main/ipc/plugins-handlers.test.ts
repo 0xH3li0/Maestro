@@ -317,8 +317,13 @@ describe('plugins:first-party-set-enabled routes the marketplace toggle through 
 		return { encore, supervisor };
 	}
 
+	const realPlatform = process.platform;
+	const setPlatform = (value: string) =>
+		Object.defineProperty(process, 'platform', { value, configurable: true });
+
 	afterEach(() => {
 		setFirstPartyBridges({});
+		setPlatform(realPlatform);
 	});
 
 	it('enable flips the flag through the bridge and reconciles the supervisor', async () => {
@@ -413,9 +418,67 @@ describe('plugins:first-party-set-enabled routes the marketplace toggle through 
 		setFirstPartyBridges(bridges);
 		const handler = handlers.get('plugins:first-party-set-enabled');
 
+		// macOS is the one host every first-party feature exists on (MaestroRun is
+		// macOS only), so pin it: this must cover every flag on every CI leg.
+		setPlatform('darwin');
 		for (const flag of Object.keys(FIRST_PARTY_PLUGINS)) {
 			await expect(handler!(event, flag, true)).resolves.toMatchObject({ enabled: true });
 			expect(encore[flag]).toBe(true);
 		}
+	});
+
+	describe('a feature that does not exist on this operating system', () => {
+		function maestroRunBridge() {
+			const encore: Record<string, unknown> = { maestroRun: false };
+			let ledger: PermissionGrant[] = [];
+			const bridge = new FirstPartyPluginBridge(FIRST_PARTY_PLUGINS.maestroRun, {
+				settingsStore: {
+					get: (key: string) => (key === 'encoreFeatures' ? { ...encore } : undefined),
+					set: (_key: string, value: unknown) => {
+						if (value && typeof value === 'object') Object.assign(encore, value);
+					},
+				},
+				readGrants: () => ledger,
+				mintFirstPartyGrants: (def) => {
+					ledger = grantsFromRequests([...def.permissions], Date.now());
+				},
+				revokeGrants: () => {
+					ledger = [];
+				},
+			});
+			setFirstPartyBridges({ maestroRun: bridge });
+			return encore;
+		}
+
+		it.each(['win32', 'linux'])('refuses to enable MaestroRun on %s', async (platform) => {
+			register(true);
+			const encore = maestroRunBridge();
+			setPlatform(platform);
+			const handler = handlers.get('plugins:first-party-set-enabled');
+
+			await expect(handler!(event, 'maestroRun', true)).rejects.toThrow(
+				'FirstPartyPlatformUnsupported'
+			);
+			expect(encore.maestroRun).toBe(false);
+		});
+
+		it('enables MaestroRun on macOS', async () => {
+			register(true);
+			const encore = maestroRunBridge();
+			setPlatform('darwin');
+			const handler = handlers.get('plugins:first-party-set-enabled');
+
+			await expect(handler!(event, 'maestroRun', true)).resolves.toMatchObject({ enabled: true });
+			expect(encore.maestroRun).toBe(true);
+		});
+
+		it('always allows switching it off', async () => {
+			register(true);
+			maestroRunBridge();
+			setPlatform('linux');
+			const handler = handlers.get('plugins:first-party-set-enabled');
+
+			await expect(handler!(event, 'maestroRun', false)).resolves.toMatchObject({ enabled: false });
+		});
 	});
 });

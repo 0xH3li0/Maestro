@@ -42,6 +42,8 @@ import {
 	createComputerHistorySupervisorHooks,
 } from './computer-history';
 import { createComputerHistoryForApp } from './computer-history/bootstrap';
+import { getMaestroRunService } from './maestro-run';
+import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
@@ -643,6 +645,11 @@ store.onDidChange('encoreFeatures', () => {
 	void getComputerHistoryService()
 		?.reconcile()
 		.catch((err) => void captureException(err, { operation: 'computerHistory:flagChange' }));
+	// MaestroRun follows the same signal: inspect the launcher when its flag
+	// turns on, stop polling for the grant when it turns off.
+	void getMaestroRunService()
+		?.reconcile()
+		.catch((err) => void captureException(err, { operation: 'maestroRun:flagChange' }));
 });
 
 // Collectors for a support (debug) package. One object shared by the debug and
@@ -1665,6 +1672,13 @@ app
 			},
 		});
 
+		// MaestroRun: construct the one service (IPC, the CLI's WS verbs, and the
+		// system-prompt builder all reach it). macOS only; inert elsewhere.
+		createMaestroRunForApp({
+			settingsStore: store as unknown as { get: (key: string) => unknown },
+			safeSend,
+		});
+
 		// Plugin manager: discovers installed community plugins, tracks their
 		// enable state, verifies signatures, and (tier 1) runs their sandboxed
 		// code. Self-gates on encoreFeatures.plugins. The permission broker is the
@@ -1731,6 +1745,16 @@ app
 				// Computer History: `computerHistory.observer` - the accessibility
 				// helper plus the segment writer. Disable/revoke stops both.
 				computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
+				// MaestroRun: no long-running service, only the bounded poll that
+				// watches for the Full Disk Access grant. Disable/revoke stops it.
+				maestroRun: {
+					reconcile: () => {
+						void getMaestroRunService()
+							?.reconcile()
+							.catch((err) => void captureException(err, { operation: 'maestroRun:reconcile' }));
+					},
+					stopAll: () => getMaestroRunService()?.stopWatching(),
+				},
 			};
 		const firstPartyBridges: Partial<Record<FirstPartyEncoreFlag, FirstPartyPluginBridge>> = {};
 		for (const flag of Object.keys(FIRST_PARTY_PLUGINS) as FirstPartyEncoreFlag[]) {
@@ -3183,6 +3207,15 @@ app
 				logger.error(`Computer History failed to start at boot: ${err}`, 'Startup');
 			});
 
+		// Inspect MaestroRun when its Encore flag is on, so the first agent
+		// spawned after launch already knows whether the launcher is ready.
+		void getMaestroRunService()
+			?.reconcile()
+			.catch((err) => {
+				void captureException(err, { operation: 'maestroRun:boot' });
+				logger.error(`MaestroRun check failed at boot: ${err}`, 'Startup');
+			});
+
 		// Start the Pianola supervisor unconditionally: it self-gates on the
 		// pianola Encore flag (reconcile kills everything and spawns nothing when
 		// off), and starting it always means its file-watch reconcile picks up
@@ -3400,6 +3433,8 @@ quitHandler = createQuitHandler({
 			.catch((error) => {
 				void captureException(error, { operation: 'shutdown:computerHistory' });
 			});
+		// Stop polling for the MaestroRun grant.
+		getMaestroRunService()?.dispose();
 		// Tear down plugin hot-reload watching and running sandboxes.
 		pluginManager?.stopWatching();
 		pluginManager?.stopAllSandboxes();
