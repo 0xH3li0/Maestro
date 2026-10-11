@@ -59,6 +59,7 @@ import {
 	registerACappellaHandlers,
 	stopVoiceSessionForClosedWindow,
 	registerACappellaModelsHandlers,
+	registerLocalModelsHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
 	registerCoworkingHandlers,
@@ -393,6 +394,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		settingsStore: deps.settingsStore,
 		safeSend: deps.safeSend,
 	});
+
+	// Register the core Local Models handlers (`localModels:*`). Ungated, because
+	// Local Models is a core service voice is only one consumer of; the A Cappella
+	// channels above delegate to the same service. Equally free: nothing reaches
+	// the network until the user presses Download or Install.
+	registerLocalModelsHandlers({ safeSend: deps.safeSend });
 
 	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
 	// The manager is constructed during core-service init above; guard for types.

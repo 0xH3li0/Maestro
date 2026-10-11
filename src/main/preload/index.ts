@@ -72,6 +72,7 @@ import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createVoiceApi } from './acappella';
 import { createVoiceAudioHostApi } from './acappellaAudio';
+import { createLocalModelsApi } from './localModels';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -288,6 +289,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// A Cappella audio host control link (only the hidden audio window uses it)
 	voiceAudioHost: createVoiceAudioHostApi(),
+
+	// Local Models API (core model + native runtime manager; ungated, voice is one consumer)
+	localModels: createLocalModelsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -398,6 +402,8 @@ export {
 	// A Cappella Voice
 	createVoiceApi,
 	createVoiceAudioHostApi,
+	// Local Models
+	createLocalModelsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -694,3 +700,7 @@ export type {
 	// From acappellaAudio
 	VoiceAudioHostApi,
 } from './acappellaAudio';
+export type {
+	// From localModels
+	LocalModelsApi,
+} from './localModels';

@@ -214,6 +214,7 @@ import type { AgentRunApi } from '../main/preload/agentRun';
 import type { VoiceApi } from '../main/preload/acappella';
 import type { VoiceSelfTestResponse } from '../main/preload/debug';
 import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
+import type { LocalModelsApi } from '../main/preload/localModels';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
@@ -4985,6 +4986,13 @@ interface MaestroAPI {
 	 * Encore flag is off.
 	 */
 	voice: VoiceApi;
+
+	/**
+	 * Local Models: the core catalog, downloader, and native runtime manager.
+	 * Ungated (a core service, not an Encore Feature); `voice.models` reaches the
+	 * same main-process service behind the A Cappella flag.
+	 */
+	localModels: LocalModelsApi;
 
 	/**
 	 * A Cappella audio host control link. Only the hidden audio window

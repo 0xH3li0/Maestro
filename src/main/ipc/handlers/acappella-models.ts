@@ -1,9 +1,12 @@
 /**
  * A Cappella model IPC handlers.
  *
- * The transport in front of the model store, the downloader, and the capability
- * gate. Thin by the same rule as `acappella.ts`: every policy that matters lives
- * in `src/main/acappella/models/`, and this file only turns channels into calls.
+ * Voice's gated transport in front of the core Local Models service
+ * (`src/main/local-models/service.ts`) plus the capability gate. Every model and
+ * runtime operation delegates to that service, which the ungated core channels
+ * in `local-models.ts` also call, so there is one implementation behind both.
+ * This file adds only what is voice's own: the Encore gate, readiness, and the
+ * voice slots on a runtime listing.
  *
  * Two properties this module is responsible for:
  *
@@ -25,45 +28,33 @@
 
 import { ipcMain } from 'electron';
 
-import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../shared/local-models/model-catalog';
-import type { LocalModelEntry } from '../../../shared/local-models/types';
 import type { VoiceReadiness } from '../../../shared/acappella/readiness';
 import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import { resolveVoiceReadiness } from '../../acappella/models/capability-gate';
-import {
-	getModelDownloader,
-	type DownloadProgress,
-	type DownloadResult,
-} from '../../local-models/model-downloader';
-import {
-	installPathFor,
-	listStatuses,
-	remove,
-	removeAll,
-	totalFootprint,
-	verify,
-	type ModelFootprint,
-	type ModelStatus,
-	type VerifyResult,
-} from '../../local-models/model-store';
+import type { DownloadProgress, DownloadResult } from '../../local-models/model-downloader';
+import type { ModelFootprint, VerifyResult } from '../../local-models/model-store';
 import { readVoiceProviderSettings } from '../../acappella/providers/provider-registry';
 import { registerACappellaRuntimeConsumer } from '../../acappella/runtime-consumer';
+import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-installer';
 import {
-	installNativeRuntime,
-	type RuntimeInstallProgress,
-} from '../../local-models/runtime/runtime-installer';
-import {
-	artifactForThisPlatform,
-	isRuntimeInstalled,
-	isRuntimeStale,
-	removeAllRuntimes,
-	runtimesFootprint,
-} from '../../local-models/runtime/runtime-store';
-import { resetNativeRuntimes } from '../../local-models/runtime/native-loader';
-import {
-	NATIVE_RUNTIMES,
-	type NativeRuntimeId,
-} from '../../../shared/local-models/native-runtimes';
+	cancelLocalModel,
+	downloadLocalModel,
+	installLocalRuntime,
+	listLocalModels,
+	listLocalRuntimes,
+	localModelsFootprint,
+	localRuntimesFootprint,
+	onLocalModelProgress,
+	onLocalRuntimeInstallProgress,
+	pauseLocalModel,
+	removeAllLocalModels,
+	removeAllLocalRuntimes,
+	removeLocalModel,
+	resumeLocalModel,
+	verifyLocalModel,
+	type LocalModelListing,
+	type LocalRuntimeListing,
+} from '../../local-models/service';
 import { voiceSlotsForRuntime } from '../../../shared/acappella/voice-models';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -78,15 +69,9 @@ export const ACAPPELLA_RUNTIME_PROGRESS_CHANNEL = 'runtimes:progress';
 
 /**
  * One catalog entry joined to what is on disk. This is the row Voice Setup
- * renders: the bill of materials and its install state in one object, so the UI
- * never has to correlate two lists.
+ * renders; it is the core listing, unchanged.
  */
-export interface VoiceModelListing {
-	entry: LocalModelEntry;
-	status: ModelStatus;
-	/** Absolute install paths, one per catalog file, for the "where does this go" line. */
-	installPaths: string[];
-}
+export type VoiceModelListing = LocalModelListing;
 
 export interface ACappellaModelsHandlerDependencies {
 	settingsStore: {
@@ -103,12 +88,6 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 
 /** The Encore gate. See `src/shared/acappella/feature-flag.ts`. */
 const requireEnabled = requireACappellaEnabled;
-
-/** Reject anything that is not a catalog id before it can reach a path join. */
-function requireModelId(raw: unknown): string {
-	if (typeof raw !== 'string' || !getLocalModel(raw)) throw new Error('UnknownVoiceModel');
-	return raw;
-}
 
 /**
  * Readiness for the current settings.
@@ -130,44 +109,17 @@ export async function readVoiceReadiness(
 }
 
 /**
- * One native runtime joined to what is on disk.
- *
- * The runtime counterpart of {@link VoiceModelListing}, and the same idea: the
- * bill of materials and its install state in one object, so Voice Setup never
- * correlates two lists. `downloadable` is false on a platform with no published
- * payload, which is a different answer from "not installed yet" and needs
- * different words in front of the user.
+ * One native runtime joined to what is on disk, plus the voice slots that stop
+ * working without it. The core listing names the MODELS that need a runtime;
+ * which voice slot those models fill is voice's own derivation.
  */
-export interface VoiceRuntimeListing {
-	id: NativeRuntimeId;
-	label: string;
+export interface VoiceRuntimeListing extends LocalRuntimeListing {
 	/** Slots that stop working without it. */
 	slots: string[];
-	installed: boolean;
-	/** Installed, but not the payload this build expects. */
-	stale: boolean;
-	downloadable: boolean;
-	/** Compressed download size for this platform. Zero when not downloadable. */
-	bytes: number;
 }
 
-/** Reject anything that is not a known runtime id before it reaches a path join. */
-function requireRuntimeId(raw: unknown): NativeRuntimeId {
-	const known = NATIVE_RUNTIMES.some((runtime) => runtime.id === raw);
-	if (typeof raw !== 'string' || !known) throw new Error('UnknownVoiceRuntime');
-	return raw as NativeRuntimeId;
-}
-
-/**
- * Installs in flight, keyed by runtime.
- *
- * `installNativeRuntime` clears its staging directory on entry, so two
- * concurrent installs of the same runtime would delete each other's partial
- * download and race to rename onto the same target. Sharing the promise makes a
- * second request join the first instead - which is also what the user means when
- * an impatient second click lands on a download that is already running.
- */
-const runtimeInstalls = new Map<NativeRuntimeId, Promise<void>>();
+/** Unsubscribes from the previous registration, so re-registering never doubles broadcasts. */
+let releaseProgressListeners: (() => void) | null = null;
 
 /**
  * Register the A Cappella model handlers.
@@ -183,78 +135,59 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 	// answer, and whether or not the feature is on (see `runtime-consumer.ts`).
 	registerACappellaRuntimeConsumer();
 
-	// Subscribed once, for the life of the app. The downloader is a singleton and
-	// its listener set would otherwise grow one entry per registration.
-	getModelDownloader().onProgress((progress: DownloadProgress) => {
+	// Re-registering drops the previous listeners, so broadcasts never double.
+	releaseProgressListeners?.();
+	const releaseModel = onLocalModelProgress((progress: DownloadProgress) => {
 		safeSend(ACAPPELLA_MODEL_PROGRESS_CHANNEL, progress);
 	});
+	// Fanned out by the service, so an install started from the core channels is
+	// visible to Voice Setup too.
+	const releaseRuntime = onLocalRuntimeInstallProgress((progress: RuntimeInstallProgress) => {
+		safeSend(ACAPPELLA_RUNTIME_PROGRESS_CHANNEL, progress);
+	});
+	releaseProgressListeners = () => {
+		releaseModel();
+		releaseRuntime();
+	};
 
+	// Every model call is the core service's. Listing is a pure disk read against
+	// the frozen catalog: no metadata request, no HEAD, no revision lookup.
 	const wrappedList = withIpcErrorLogging(
 		handlerOpts('list'),
-		// A pure disk read against the frozen catalog. No metadata request, no HEAD,
-		// no revision lookup: the catalog already knows every size and hash, which is
-		// the whole reason it is pinned.
-		async (): Promise<VoiceModelListing[]> => {
-			const statuses = await listStatuses();
-			return LOCAL_MODEL_CATALOG.map((entry, index) => ({
-				entry,
-				status: statuses[index],
-				installPaths: entry.files.map((file) => installPathFor(entry, file)),
-			}));
-		}
+		async (): Promise<VoiceModelListing[]> => listLocalModels()
 	);
-
 	const wrappedDownload = withIpcErrorLogging(
 		handlerOpts('download'),
-		async (rawId: unknown): Promise<DownloadResult> =>
-			getModelDownloader().download(requireModelId(rawId))
+		async (rawId: unknown): Promise<DownloadResult> => downloadLocalModel(rawId)
 	);
-
 	const wrappedPause = withIpcErrorLogging(
 		handlerOpts('pause'),
-		async (rawId: unknown): Promise<boolean> => getModelDownloader().pause(requireModelId(rawId))
+		async (rawId: unknown): Promise<boolean> => pauseLocalModel(rawId)
 	);
-
 	const wrappedResume = withIpcErrorLogging(
 		handlerOpts('resume'),
-		async (rawId: unknown): Promise<DownloadResult> =>
-			getModelDownloader().resume(requireModelId(rawId))
+		async (rawId: unknown): Promise<DownloadResult> => resumeLocalModel(rawId)
 	);
-
 	const wrappedCancel = withIpcErrorLogging(
 		handlerOpts('cancel'),
-		async (rawId: unknown): Promise<boolean> => getModelDownloader().cancel(requireModelId(rawId))
+		async (rawId: unknown): Promise<boolean> => cancelLocalModel(rawId)
 	);
-
 	const wrappedVerify = withIpcErrorLogging(
 		handlerOpts('verify'),
-		async (rawId: unknown): Promise<VerifyResult> => verify(requireModelId(rawId))
+		async (rawId: unknown): Promise<VerifyResult> => verifyLocalModel(rawId)
 	);
-
 	const wrappedRemove = withIpcErrorLogging(
 		handlerOpts('remove'),
-		async (rawId: unknown): Promise<number> => {
-			const id = requireModelId(rawId);
-			// Cancel first: deleting the directory under a live writer would let the
-			// writer recreate the file it was told to stop writing.
-			await getModelDownloader().cancel(id);
-			return remove(id);
-		}
+		async (rawId: unknown): Promise<number> => removeLocalModel(rawId)
 	);
-
 	const wrappedRemoveAll = withIpcErrorLogging(
 		handlerOpts('removeAll'),
-		async (): Promise<number> => {
-			await getModelDownloader().cancelAll();
-			return removeAll();
-		}
+		async (): Promise<number> => removeAllLocalModels()
 	);
-
 	const wrappedFootprint = withIpcErrorLogging(
 		handlerOpts('footprint'),
-		async (): Promise<ModelFootprint> => totalFootprint()
+		async (): Promise<ModelFootprint> => localModelsFootprint()
 	);
-
 	const wrappedReadiness = withIpcErrorLogging(
 		handlerOpts('readiness'),
 		async (): Promise<VoiceReadiness> => readVoiceReadiness(settingsStore)
@@ -302,80 +235,36 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 
 	// -- Native runtimes ------------------------------------------------------
 	//
-	// Same shape as the model channels above, and for the same reason: the local
-	// tier needs a runtime as well as a model, and shipping ~250 MB of inference
-	// binaries in every installer for a feature that is off by default is exactly
-	// the cost `runtime-artifacts.ts` exists to avoid. So the runtime is fetched on
-	// consent too, from a pinned npm tarball whose SHA-256 is in the build.
+	// Same shape as the model channels above: the local tier needs a runtime as
+	// well as a model, fetched on consent from a pinned npm tarball whose SHA-256
+	// is in the build. The service owns the shared in-flight install and the
+	// loader reset; voice only adds the slots each runtime serves.
 
 	const wrappedRuntimeList = withIpcErrorLogging(
 		handlerOpts('runtimes:list'),
-		// A disk read against a frozen table, exactly like `models:list`. No HEAD,
-		// no registry lookup: the artifact table already knows every size and hash.
 		async (): Promise<VoiceRuntimeListing[]> =>
-			Promise.all(
-				NATIVE_RUNTIMES.map(async (runtime) => {
-					// `artifactForThisPlatform` resolves the platform key itself, so this
-					// cannot disagree with what the installer will actually fetch.
-					const artifact = artifactForThisPlatform(runtime.id);
-					return {
-						id: runtime.id,
-						label: runtime.label,
-						slots: voiceSlotsForRuntime(runtime.id),
-						installed: await isRuntimeInstalled(runtime.id),
-						stale: await isRuntimeStale(runtime.id),
-						downloadable: artifact !== null,
-						bytes: artifact?.bytes ?? 0,
-					};
-				})
-			)
+			(await listLocalRuntimes()).map((listing) => ({
+				...listing,
+				slots: voiceSlotsForRuntime(listing.id),
+			}))
 	);
 
 	const wrappedRuntimeInstall = withIpcErrorLogging(
 		handlerOpts('runtimes:install'),
 		async (rawId: unknown): Promise<boolean> => {
-			const id = requireRuntimeId(rawId);
-
-			const existing = runtimeInstalls.get(id);
-			if (existing) {
-				await existing;
-				return true;
-			}
-
-			const install = installNativeRuntime(id, {
-				onProgress: (progress: RuntimeInstallProgress) => {
-					safeSend(ACAPPELLA_RUNTIME_PROGRESS_CHANNEL, progress);
-				},
-			})
-				.then(() => {
-					// The loader remembers failures so it does not retry a dlopen on every
-					// utterance. That memory is now stale in the good direction: the thing
-					// it could not find is on disk. Without this the user downloads a
-					// runtime and voice keeps refusing until the app restarts.
-					resetNativeRuntimes();
-				})
-				.finally(() => {
-					runtimeInstalls.delete(id);
-				});
-
-			runtimeInstalls.set(id, install);
-			await install;
+			await installLocalRuntime(rawId);
 			return true;
 		}
 	);
 
 	const wrappedRuntimeFootprint = withIpcErrorLogging(
 		handlerOpts('runtimes:footprint'),
-		async (): Promise<number> => runtimesFootprint()
+		async (): Promise<number> => localRuntimesFootprint()
 	);
 
 	const wrappedRuntimeRemoveAll = withIpcErrorLogging(
 		handlerOpts('runtimes:remove-all'),
-		async (): Promise<void> => {
-			await removeAllRuntimes();
-			// Whatever is currently dlopened points at files that no longer exist.
-			resetNativeRuntimes();
-		}
+		async (): Promise<void> => removeAllLocalRuntimes()
 	);
 
 	ipcMain.handle('runtimes:list', async (event): Promise<VoiceRuntimeListing[]> => {

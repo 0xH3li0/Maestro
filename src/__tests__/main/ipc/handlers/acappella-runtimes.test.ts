@@ -53,7 +53,7 @@ vi.mock('../../../../main/local-models/runtime/native-loader', () => ({
 // The model half of this handler module reaches for a downloader singleton and
 // the capability gate; neither is what these tests are about.
 vi.mock('../../../../main/local-models/model-downloader', () => ({
-	getModelDownloader: () => ({ onProgress: vi.fn(), download: vi.fn() }),
+	getModelDownloader: () => ({ onProgress: vi.fn(() => () => {}), download: vi.fn() }),
 }));
 
 import {
@@ -230,9 +230,9 @@ describe('A Cappella runtime IPC handlers', () => {
 
 		it('rejects an id that is not a known runtime before it can reach a path join', async () => {
 			await expect(handlerFor('runtimes:install')({}, '../../etc/passwd')).rejects.toThrow(
-				'UnknownVoiceRuntime'
+				'UnknownLocalRuntime'
 			);
-			await expect(handlerFor('runtimes:install')({}, 42)).rejects.toThrow('UnknownVoiceRuntime');
+			await expect(handlerFor('runtimes:install')({}, 42)).rejects.toThrow('UnknownLocalRuntime');
 			expect(installNativeRuntime).not.toHaveBeenCalled();
 		});
 

@@ -79,6 +79,7 @@ import {
 	registerACappellaModelsHandlers,
 	ACappellaModelsHandlerDependencies,
 } from './acappella-models';
+import { registerLocalModelsHandlers, LocalModelsHandlerDependencies } from './local-models';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
@@ -165,6 +166,8 @@ export { registerACappellaHandlers, stopVoiceSessionForClosedWindow };
 export type { ACappellaHandlerDependencies };
 export { registerACappellaModelsHandlers };
 export type { ACappellaModelsHandlerDependencies };
+export { registerLocalModelsHandlers };
+export type { LocalModelsHandlerDependencies };
 export { registerPluginsHandlers };
 export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
