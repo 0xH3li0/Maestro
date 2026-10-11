@@ -389,6 +389,7 @@ export class PluginSandboxHost {
 			if (typeof timer.unref === 'function') timer.unref();
 			const signal = options?.signal;
 			const detach = () => signal?.removeEventListener('abort', abort);
+			/** Reject and detach the pending provider RPC on abort; native/media draining remains host-owned. */
 			const abort = () => {
 				record.pendingTools.delete(id);
 				clearTimeout(timer);
@@ -548,6 +549,7 @@ export class PluginSandboxHost {
 		if (typeof msg.id !== 'number' || !isHostMethod(msg.method)) return;
 		const request = msg as unknown as HostRequest;
 
+		/** Sanitize media/service failures to public codes and bound the serialized reply before sending it. */
 		const respond = (res: Omit<HostResponse, 'id'>): void => {
 			if (request.method.startsWith('media.') && !res.ok) {
 				const code = (MEDIA_ERROR_CODES as readonly string[]).includes(res.error ?? '')
