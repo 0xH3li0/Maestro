@@ -1046,7 +1046,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
 			} else if (
-				ctx.isShortcut(e, 'computerHistory') &&
+				// A Ctrl+Cmd chord: isShortcut folds the two modifiers into one and
+				// would fire this on plain Cmd+H (macOS Hide) and Ctrl+H.
+				ctx.isPaneShortcut(e, 'computerHistory') &&
 				canOpenComputerHistory(ctx.encoreFeatures)
 			) {
 				e.preventDefault();
