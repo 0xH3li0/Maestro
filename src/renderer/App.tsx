@@ -154,7 +154,7 @@ import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
 import { notifyCenterFlash } from './stores/centerFlashStore';
 import { useComposerInputStore } from './stores/composerInputStore';
-import { useModalActions, useModalStore } from './stores/modalStore';
+import { getModalActions, useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { WindowProvider, useWindowContextOptional } from './contexts/WindowContext';
 import { GitShortcutActionsBridge } from './components/GitShortcutActionsBridge';
@@ -530,8 +530,25 @@ function MaestroConsoleInner() {
 	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
 	useEffect(() => {
-		if (!encoreFeatures.pianola) setPianolaModalOpen(false);
-	}, [encoreFeatures.pianola, setPianolaModalOpen]);
+		if (!encoreFeatures.pianola) {
+			setPianolaModalOpen(false);
+			// The AgentRun Dashboard is Pianola's ledger view: its cancel / retry /
+			// merge actions are refused by main without this flag.
+			setAgentRunDashboardOpen(false);
+		}
+	}, [encoreFeatures.pianola, setPianolaModalOpen, setAgentRunDashboardOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.directorNotes) setDirectorNotesOpen(false);
+	}, [encoreFeatures.directorNotes, setDirectorNotesOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.computerHistory) getModalActions().setComputerHistoryOpen(false);
+	}, [encoreFeatures.computerHistory]);
+
+	useEffect(() => {
+		if (!encoreFeatures.concerto) getModalActions().setConcertoStageOpen(false);
+	}, [encoreFeatures.concerto]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
@@ -3475,7 +3492,7 @@ function MaestroConsoleInner() {
 						setLogViewerOpen={setLogViewerOpen}
 						setProcessMonitorOpen={setProcessMonitorOpen}
 						setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
-						setAgentRunDashboardOpen={setAgentRunDashboardOpen}
+						setAgentRunDashboardOpen={encoreFeatures.pianola ? setAgentRunDashboardOpen : undefined}
 						setActiveRightTab={setActiveRightTab}
 						setAgentSessionsOpen={setAgentSessionsOpen}
 						setMemoryViewerOpen={setMemoryViewerOpen}

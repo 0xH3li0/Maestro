@@ -31,6 +31,7 @@ import {
 	KEYBOARD_MASTERY_LEVELS,
 	collectBoundShortcuts,
 } from '../../../renderer/constants/keyboardMastery';
+import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 
@@ -1763,8 +1764,16 @@ describe('settingsStore', () => {
 
 		// The denominator is the shortcuts that actually have a chord bound, so the
 		// ids used here have to be real ones - made-up ids count for nothing.
-		const boundShortcutIds = () =>
-			collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS).map((s) => s.id);
+		// It also leaves out the chord of an Encore Feature that is switched off:
+		// the keyboard handler refuses it, so it can never be fired either.
+		const boundShortcutIds = () => {
+			const encoreFeatures = useSettingsStore.getState().encoreFeatures;
+			return collectBoundShortcuts(
+				availableShortcuts(DEFAULT_SHORTCUTS, encoreFeatures),
+				TAB_SHORTCUTS,
+				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
+			).map((s) => s.id);
+		};
 
 		it('recordShortcutUsage detects level-up', () => {
 			const bound = boundShortcutIds();

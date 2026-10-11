@@ -237,6 +237,7 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'general-group-cue-entries',
+		requiresEncore: 'maestroCue',
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Group Cue History Entries',
