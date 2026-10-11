@@ -5,6 +5,7 @@ import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
 import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
+import type { CodexTransport } from '../../shared/codexTransport';
 
 /**
  * Kill/interrupt handle for server-backed processes that have no OS child
@@ -87,6 +88,11 @@ export interface ProcessConfig {
 	 *  never runs and the renderer falls back to streamed commentary instead
 	 *  of the authoritative final answer / context window snapshot. */
 	agentSessionId?: string;
+	/** Resolved Codex transport for this turn (`resolveCodexTransport`). Set by
+	 *  the desktop spawn handler from the persisted agent record; anything other
+	 *  than `'app-server'` (including absent) means `codex exec`. A preference:
+	 *  the spawner still runs exec for turns app-server cannot carry. */
+	codexTransport?: CodexTransport;
 }
 
 /**

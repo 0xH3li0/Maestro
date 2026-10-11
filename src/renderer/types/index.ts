@@ -63,6 +63,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { CodexTransport } from '../../shared/codexTransport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1599,6 +1600,12 @@ export interface Session {
 	// the spawner uses the bundled script (`process.resourcesPath/maestro-p.js`
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).
 	maestroPPath?: string;
+	// Per-session Codex transport (Codex only). 'app-server' runs local
+	// interactive chat turns on `codex app-server` so the Steer button can reach
+	// them mid-turn; SSH, image, Auto Run and Cue turns stay on `codex exec`.
+	// Absent means 'exec'. Experimental. Always read it through
+	// `resolveCodexTransport` in shared/codexTransport, never directly.
+	codexTransport?: CodexTransport;
 
 	// Agent Resilience (auto-retry). Both default ON - `undefined` reads as
 	// enabled via `resilienceEnabled` in shared/agentConstants, so existing
