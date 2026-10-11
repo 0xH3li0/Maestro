@@ -26,6 +26,7 @@ import {
 	resolveSystemPromptDelivery,
 	type SystemPromptDelivery,
 } from '../../shared/maestro-lib/launch/prompt-delivery';
+import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
@@ -337,7 +338,9 @@ function resolveAgentOverrides(
  * exported in the shell that runs the command survives; the user's own vars
  * override it; and the prompt goes on the command line on every host. The
  * CLI's own inputs: SSH remotes read from disk, and batch-mode vars always on
- * (every CLI spawn is a batch spawn).
+ * (every CLI spawn is a batch spawn). A desktop-backed local turn with live
+ * global settings uses the canonical desktop environment rules, including
+ * blank-value unsets; its prompt delivery and standalone CLI behavior remain unchanged.
  */
 function planCliLaunch(
 	toolType: ToolType,
@@ -356,7 +359,7 @@ function planCliLaunch(
 		sshRemoteConfig?: AgentSshRemoteConfig;
 	}
 ): AgentLaunchPlanResult {
-	return buildAgentLaunchPlan({
+	const result = buildAgentLaunchPlan({
 		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
@@ -364,12 +367,7 @@ function planCliLaunch(
 		cwd: input.cwd,
 		prompt: input.prompt,
 		agentCustomEnvVars: input.agentCustomEnvVars,
-		globalShellEnvVars: input.globalEnvVars,
-		// Desktop-backed local turns receive the live global layer below provider/session overrides.
-		sessionCustomEnvVars:
-			input.globalEnvVars && !input.sshRemoteConfig?.enabled
-				? { ...input.globalEnvVars, ...(input.sessionCustomEnvVars ?? input.agentCustomEnvVars) }
-				: input.sessionCustomEnvVars,
+		sessionCustomEnvVars: input.sessionCustomEnvVars,
 		readOnlyMode: input.readOnlyMode,
 		batchMode: true,
 		isResuming: input.isResuming,
@@ -377,6 +375,19 @@ function planCliLaunch(
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
+	// Desktop-backed local turns use the same blank-unset, path expansion and
+	// environment layering as desktop spawns. The prompt still follows the CLI
+	// wire format, and standalone/remote launches keep their existing rules.
+	if (result.ok && result.plan.target.kind === 'local' && input.globalEnvVars !== undefined) {
+		result.plan.env = buildChildProcessEnv(
+			result.plan.envVars,
+			input.isResuming,
+			input.globalEnvVars,
+			undefined,
+			input.querySource
+		);
+	}
+	return result;
 }
 
 /**
