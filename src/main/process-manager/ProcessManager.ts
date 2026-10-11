@@ -414,7 +414,8 @@ export class ProcessManager extends EventEmitter {
 
 		try {
 			if (process.sdkController) {
-				// Server-backed (OpenCode SDK) process: abort the in-flight turn.
+				// Server-backed process (OpenCode SDK, Codex app-server): interrupt the
+				// in-flight turn over its protocol; the controller escalates if needed.
 				process.sdkController.interrupt();
 				return true;
 			} else if (process.isTerminal && process.ptyProcess) {
@@ -493,10 +494,11 @@ export class ProcessManager extends EventEmitter {
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (proc.sdkController) {
-				// Server-backed (OpenCode SDK) process: no OS child to signal. Abort
-				// the turn and tear down the SSE subscription; the stream ending emits
-				// the exit event. Fall through to the map deletion below.
-				proc.sdkController.kill();
+				// Server-backed process (OpenCode SDK, Codex app-server): the stop
+				// starts with a protocol call. The controller tears its transport down
+				// (and runs the stop ladder on any child it owns); the exit event
+				// follows from there. Fall through to the map deletion below.
+				proc.sdkController.kill({ sync, shutdown });
 			} else if (proc.isTerminal && proc.ptyProcess) {
 				stopProcess(
 					{ pty: proc.ptyProcess, pid: proc.pid },

@@ -103,3 +103,28 @@ export interface CodexAppServerTurn {
 export interface CodexAppServerThread {
 	id: string;
 }
+
+/**
+ * What a running app-server turn exposes on its `ManagedProcess`, for the
+ * steering phase: the ids `turn/steer` needs, the channel to send it on, and
+ * the `userMessage` items that tell an absorbed steer from a dropped one.
+ */
+export interface CodexAppServerProcessHandle {
+	/** The thread (provider session) id, once `thread/start` or `thread/resume` answered. */
+	readonly threadId: string | null;
+	/** The running turn's id; null before `turn/start` answers and after the turn ends. */
+	readonly activeTurnId: string | null;
+	/**
+	 * Send a request to this turn's server. Rejects with `CodexRpcRequestError`
+	 * (carrying the server's error code) or `CodexRpcTransportError`.
+	 */
+	sendRequest<T = unknown>(
+		method: string,
+		params?: unknown,
+		options?: { timeoutMs?: number }
+	): Promise<T>;
+	/** Subscribe to `userMessage` items completing in the active turn. Returns an unsubscribe. */
+	onUserMessage(
+		listener: (message: { turnId: string; itemId: string; text: string }) => void
+	): () => void;
+}

@@ -1,0 +1,503 @@
+/**
+ * Tests for src/main/process-manager/spawners/CodexAppServerSpawner.ts
+ *
+ * A fake `codex app-server` child replays the recorded fixtures in
+ * `src/__tests__/fixtures/codex-app-server/`: every line the spawner writes is
+ * matched against the fixture's next `send` line, and the `recv` lines that
+ * follow it are written back on stdout. The real StdoutHandler / ExitHandler /
+ * CodexOutputParser run downstream, so a test sees what the renderer would.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { EventEmitter } from 'events';
+import { PassThrough, Writable } from 'stream';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+const mockSpawn = vi.fn();
+
+vi.mock('child_process', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('child_process')>();
+	return {
+		...actual,
+		spawn: (...args: unknown[]) => mockSpawn(...args),
+		default: { ...actual, spawn: (...args: unknown[]) => mockSpawn(...args) },
+	};
+});
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
+
+const mockStopProcess = vi.fn(() => ({ stage: () => undefined, dispose: () => {} }));
+vi.mock('../../../shared/maestro-lib/control/termination', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../shared/maestro-lib/control/termination')>();
+	return { ...actual, stopProcess: (...args: unknown[]) => mockStopProcess(...(args as [])) };
+});
+
+import { CodexAppServerSpawner } from '../../../main/process-manager/spawners/CodexAppServerSpawner';
+import { DataBufferManager } from '../../../main/process-manager/handlers/DataBufferManager';
+import type { ManagedProcess, ProcessConfig } from '../../../main/process-manager/types';
+import type { CodexAppServerMessage } from '../../../main/codex-app-server/protocol';
+
+// ── Fixtures ───────────────────────────────────────────────────────────────
+
+interface FixtureLine {
+	dir: 'send' | 'recv';
+	msg: CodexAppServerMessage;
+}
+
+const FIXTURES = join(__dirname, '..', '..', 'fixtures', 'codex-app-server');
+
+function loadFixture(name: string): FixtureLine[] {
+	return readFileSync(join(FIXTURES, `${name}.jsonl`), 'utf8')
+		.split('\n')
+		.filter((line) => line.trim().length > 0)
+		.map((line) => JSON.parse(line) as FixtureLine);
+}
+
+function recvNotifications(fixture: FixtureLine[], method: string) {
+	return fixture.filter(
+		({ dir, msg }) => dir === 'recv' && msg.method === method && msg.id === undefined
+	);
+}
+
+function finalAgentMessage(fixture: FixtureLine[]): string {
+	const items = recvNotifications(fixture, 'item/completed')
+		.map(({ msg }) => (msg.params as { item: { type: string; text?: string } }).item)
+		.filter((item) => item.type === 'agentMessage');
+	return items[items.length - 1].text as string;
+}
+
+// ── Fake app-server child ─────────────────────────────────────────────────
+
+type ClientMessage = CodexAppServerMessage & { jsonrpc?: string };
+
+class FakeAppServer extends EventEmitter {
+	pid = 4242;
+	exitCode: number | null = null;
+	signalCode: NodeJS.Signals | null = null;
+	killed = false;
+	stdout = new PassThrough();
+	stderr = new PassThrough();
+	stdin: Writable;
+	/** Every line the spawner wrote, decoded. */
+	written: ClientMessage[] = [];
+	/** Client lines the script did not expect. */
+	unexpected: ClientMessage[] = [];
+
+	constructor(private onClientMessage: (msg: ClientMessage, server: FakeAppServer) => void) {
+		super();
+		let pending = '';
+		this.stdin = new Writable({
+			write: (chunk, _encoding, callback) => {
+				pending += chunk.toString();
+				let newline = pending.indexOf('\n');
+				while (newline !== -1) {
+					const line = pending.slice(0, newline);
+					pending = pending.slice(newline + 1);
+					if (line.trim()) {
+						const msg = JSON.parse(line) as ClientMessage;
+						this.written.push(msg);
+						this.onClientMessage(msg, this);
+					}
+					newline = pending.indexOf('\n');
+				}
+				callback();
+			},
+			final: (callback) => {
+				callback();
+				this.exit(0);
+			},
+		});
+	}
+
+	send(msg: CodexAppServerMessage): void {
+		this.stdout.write(JSON.stringify(msg) + '\n');
+	}
+
+	exit(code: number): void {
+		if (this.exitCode !== null) return;
+		this.exitCode = code;
+		this.stdout.end();
+		this.stderr.end();
+		setImmediate(() => this.emit('close', code, null));
+	}
+
+	sent(method: string): ClientMessage[] {
+		return this.written.filter((msg) => msg.method === method);
+	}
+
+	responseTo(id: number | string): ClientMessage | undefined {
+		return this.written.find((msg) => msg.id === id && msg.method === undefined);
+	}
+}
+
+/**
+ * Drive a fake server from a fixture: each client line must match the next
+ * `send` line (same method, or a response with the same id); the `recv` lines
+ * after it are then written back.
+ */
+function fixtureDriver(fixture: FixtureLine[]) {
+	let cursor = 0;
+	const matches = (expected: CodexAppServerMessage, actual: ClientMessage) =>
+		expected.method !== undefined
+			? expected.method === actual.method
+			: actual.method === undefined && expected.id === actual.id;
+
+	return {
+		/** Method of the `send` line the script is waiting for, if any. */
+		waitingFor: () => fixture[cursor]?.msg.method,
+		onClientMessage: (msg: ClientMessage, server: FakeAppServer) => {
+			const next = fixture[cursor];
+			if (!next || next.dir !== 'send' || !matches(next.msg, msg)) {
+				server.unexpected.push(msg);
+				return;
+			}
+			cursor++;
+			while (cursor < fixture.length && fixture[cursor].dir === 'recv') {
+				server.send(fixture[cursor].msg);
+				cursor++;
+			}
+		},
+	};
+}
+
+// ── Harness ────────────────────────────────────────────────────────────────
+
+const BYPASS_ARGS = [
+	'-C',
+	'/tmp/codex-project',
+	'exec',
+	'--json',
+	'--dangerously-bypass-approvals-and-sandbox',
+	'--skip-git-repo-check',
+];
+const READ_ONLY_ARGS = [
+	'-C',
+	'/tmp/codex-project',
+	'exec',
+	'--json',
+	'--sandbox',
+	'read-only',
+	'--skip-git-repo-check',
+];
+
+let sessionCounter = 0;
+
+function createHarness(server: FakeAppServer | (() => FakeAppServer)) {
+	const processes = new Map<string, ManagedProcess>();
+	const emitter = new EventEmitter();
+	const bufferManager = new DataBufferManager(processes, emitter);
+	const fallbackToCli = vi.fn(() => ({ pid: 999, success: true }));
+	const spawner = new CodexAppServerSpawner(processes, emitter, bufferManager, fallbackToCli, {
+		clientVersion: '1.2.3',
+	});
+	mockSpawn.mockImplementation(() => (typeof server === 'function' ? server() : server));
+
+	const data: string[] = [];
+	const sessionIds: string[] = [];
+	const errors: unknown[] = [];
+	emitter.on('data', (_sid: string, text: string) => data.push(text));
+	emitter.on('session-id', (_sid: string, id: string) => sessionIds.push(id));
+	emitter.on('agent-error', (_sid: string, error: unknown) => errors.push(error));
+
+	const sessionId = `codex-agent-${++sessionCounter}-ai-tab`;
+	const exited = new Promise<number>((resolve) => {
+		emitter.on('exit', (sid: string, code: number) => {
+			if (sid === sessionId) resolve(code);
+		});
+	});
+
+	const config = (overrides: Partial<ProcessConfig> = {}): ProcessConfig => ({
+		sessionId,
+		toolType: 'codex',
+		cwd: '/tmp/codex-project',
+		command: '/usr/local/bin/codex',
+		args: BYPASS_ARGS,
+		prompt: 'Reply with the word OK',
+		tabId: 'tab',
+		...overrides,
+	});
+
+	return {
+		processes,
+		emitter,
+		spawner,
+		fallbackToCli,
+		data,
+		sessionIds,
+		errors,
+		sessionId,
+		exited,
+		config,
+	};
+}
+
+beforeEach(() => {
+	mockSpawn.mockReset();
+	mockStopProcess.mockClear();
+});
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+describe('CodexAppServerSpawner', () => {
+	it('runs a plain turn on app-server and exits 0 with the final answer', async () => {
+		const fixture = loadFixture('plain-turn');
+		const driver = fixtureDriver(fixture);
+		const server = new FakeAppServer(driver.onClientMessage);
+		const h = createHarness(server);
+
+		const result = h.spawner.spawn(h.config());
+		expect(result).toEqual({ pid: 4242, success: true });
+		expect(h.processes.get(h.sessionId)?.codexAppServer).toBeDefined();
+
+		expect(await h.exited).toBe(0);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+		expect(server.unexpected).toEqual([]);
+
+		// Same binary as exec, launched as the app-server subcommand, in the spawn cwd.
+		const [command, args, options] = mockSpawn.mock.calls[0];
+		expect(command).toBe('/usr/local/bin/codex');
+		expect(args).toEqual(['app-server']);
+		expect(options.cwd).toBe('/tmp/codex-project');
+
+		const initialize = server.sent('initialize')[0];
+		expect(initialize.params).toEqual({
+			clientInfo: { name: 'maestro', version: '1.2.3' },
+			capabilities: { experimentalApi: true },
+		});
+		expect(server.sent('initialized')).toHaveLength(1);
+		expect(server.sent('thread/start')[0].params).toEqual({
+			cwd: '/tmp/codex-project',
+			approvalPolicy: 'never',
+			sandbox: 'danger-full-access',
+		});
+		expect(server.sent('turn/start')[0].params).toEqual({
+			threadId: '01a129a3-ae2d-7a03-a717-b7374d497e31',
+			input: [{ type: 'text', text: 'Reply with the word OK' }],
+		});
+
+		expect(h.data.join('')).toContain(finalAgentMessage(fixture));
+		expect(h.sessionIds).toEqual(['01a129a3-ae2d-7a03-a717-b7374d497e31']);
+		expect(h.errors).toEqual([]);
+		// The turn closed stdin and the child left on its own: no stop ladder.
+		expect(mockStopProcess).not.toHaveBeenCalled();
+		expect(h.processes.has(h.sessionId)).toBe(false);
+	});
+
+	it('maps model, effort and other -c overrides from the exec args', async () => {
+		const server = new FakeAppServer(fixtureDriver(loadFixture('plain-turn')).onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(
+			h.config({
+				args: [
+					...BYPASS_ARGS,
+					'-m',
+					'gpt-5.3-codex',
+					'-c',
+					'model_reasoning_effort="high"',
+					'-c',
+					'model_reasoning_summary=auto',
+				],
+			})
+		);
+		expect(await h.exited).toBe(0);
+
+		expect(mockSpawn.mock.calls[0][1]).toEqual([
+			'app-server',
+			'-c',
+			'model_reasoning_effort="high"',
+			'-c',
+			'model_reasoning_summary=auto',
+		]);
+		expect(server.sent('thread/start')[0].params).toMatchObject({ model: 'gpt-5.3-codex' });
+		expect(server.sent('turn/start')[0].params).toMatchObject({ effort: 'high', summary: 'auto' });
+	});
+
+	it('resumes a thread with thread/resume when the exec args carry a resume id', async () => {
+		const fixture = loadFixture('resumed-turn');
+		const resumeId = (
+			fixture.find(({ msg }) => msg.method === 'thread/resume')!.msg.params as {
+				threadId: string;
+			}
+		).threadId;
+		const server = new FakeAppServer(fixtureDriver(fixture).onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config({ args: [...BYPASS_ARGS, 'resume', resumeId] }));
+		expect(await h.exited).toBe(0);
+
+		expect(server.sent('thread/start')).toEqual([]);
+		expect(server.sent('thread/resume')[0].params).toEqual({
+			cwd: '/tmp/codex-project',
+			approvalPolicy: 'never',
+			sandbox: 'danger-full-access',
+			threadId: resumeId,
+			excludeTurns: true,
+		});
+		// Resume sends no thread/started; the id still reaches the tab.
+		expect(h.sessionIds).toEqual([resumeId]);
+		expect(h.data.join('')).toContain(finalAgentMessage(fixture));
+	});
+
+	it('declines every approval request in read-only mode', async () => {
+		const fixture = loadFixture('approval-request');
+		const server = new FakeAppServer(fixtureDriver(fixture).onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config({ args: READ_ONLY_ARGS }));
+		expect(await h.exited).toBe(0);
+
+		expect(server.sent('thread/start')[0].params).toEqual({
+			cwd: '/tmp/codex-project',
+			approvalPolicy: 'never',
+			sandbox: 'read-only',
+		});
+		const requestId = fixture.find(
+			({ dir, msg }) => dir === 'recv' && msg.method === 'item/commandExecution/requestApproval'
+		)!.msg.id as number;
+		expect(server.responseTo(requestId)).toEqual({
+			jsonrpc: '2.0',
+			id: requestId,
+			result: { decision: 'decline' },
+		});
+		expect(server.unexpected).toEqual([]);
+	});
+
+	it('answers every server request, granting approvals with full access and erroring on unknown methods', async () => {
+		const threadId = 'thread-1';
+		const turnId = 'turn-1';
+		const server = new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') s.send({ id: msg.id, result: {} });
+			if (msg.method === 'thread/start')
+				s.send({ id: msg.id, result: { thread: { id: threadId } } });
+			if (msg.method === 'turn/start') {
+				s.send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
+				s.send({ method: 'turn/started', params: { threadId, turn: { id: turnId } } });
+				s.send({
+					id: 0,
+					method: 'item/commandExecution/requestApproval',
+					params: { threadId, turnId, itemId: 'call_1' },
+				});
+				s.send({ id: 1, method: 'attestation/generate', params: {} });
+			}
+			if (msg.method === undefined && msg.id === 1) {
+				s.send({
+					method: 'item/completed',
+					params: { threadId, turnId, item: { type: 'agentMessage', id: 'msg_1', text: 'done' } },
+				});
+				s.send({
+					method: 'turn/completed',
+					params: { threadId, turn: { id: turnId, status: 'completed' } },
+				});
+			}
+		});
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config());
+		expect(await h.exited).toBe(0);
+
+		expect(server.responseTo(0)).toMatchObject({ result: { decision: 'accept' } });
+		expect(server.responseTo(1)).toMatchObject({ error: { code: -32601 } });
+		expect(h.data.join('')).toContain('done');
+	});
+
+	it('sends turn/interrupt on Stop and ends the turn cleanly', async () => {
+		const fixture = loadFixture('interrupted-turn');
+		const driver = fixtureDriver(fixture);
+		const server = new FakeAppServer(driver.onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config());
+		await vi.waitFor(() => {
+			expect(driver.waitingFor()).toBe('turn/interrupt');
+			expect(h.processes.get(h.sessionId)?.codexAppServer?.activeTurnId).toBeTruthy();
+		});
+
+		const managed = h.processes.get(h.sessionId)!;
+		// What ProcessManager.interrupt() does for a controller-backed process.
+		managed.interrupted = true;
+		managed.sdkController!.interrupt();
+
+		expect(await h.exited).toBe(0);
+		const expected = fixture.find(({ msg }) => msg.method === 'turn/interrupt')!.msg.params;
+		expect(server.sent('turn/interrupt')[0].params).toEqual(expected);
+		expect(server.unexpected).toEqual([]);
+		expect(h.errors).toEqual([]);
+	});
+
+	it('kill() runs the stop ladder on the child', async () => {
+		const driver = fixtureDriver(loadFixture('interrupted-turn'));
+		const server = new FakeAppServer(driver.onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config());
+		await vi.waitFor(() => expect(driver.waitingFor()).toBe('turn/interrupt'));
+
+		h.processes.get(h.sessionId)!.sdkController!.kill({ sync: true });
+		expect(mockStopProcess).toHaveBeenCalledWith(
+			{ child: server },
+			expect.objectContaining({ from: 'terminate', upTo: 'kill', blocking: true })
+		);
+	});
+
+	it('falls back to exec when the handshake fails', async () => {
+		const server = new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') {
+				s.send({ id: msg.id, error: { code: -32603, message: 'boom' } });
+			}
+		});
+		const h = createHarness(server);
+		const config = h.config();
+
+		h.spawner.spawn(config);
+		await vi.waitFor(() => expect(h.fallbackToCli).toHaveBeenCalledWith(config));
+
+		expect(server.sent('turn/start')).toEqual([]);
+		expect(h.processes.has(h.sessionId)).toBe(false);
+		expect(mockStopProcess).toHaveBeenCalledWith(
+			{ child: server },
+			expect.objectContaining({ from: 'terminate' })
+		);
+		expect(h.errors).toEqual([]);
+		// The abandoned child's exit reports nothing: exec owns the turn now.
+		const exitSpy = vi.fn();
+		h.emitter.on('exit', exitSpy);
+		server.exit(1);
+		await new Promise((resolve) => setImmediate(resolve));
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it('falls back to exec when the binary cannot be started', async () => {
+		const server = new FakeAppServer(() => {});
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config());
+		server.exitCode = null;
+		setImmediate(() =>
+			server.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+		);
+
+		await vi.waitFor(() => expect(h.fallbackToCli).toHaveBeenCalledTimes(1));
+		expect(h.errors).toEqual([]);
+	});
+
+	it('hands turns it cannot carry straight to exec', () => {
+		const h = createHarness(new FakeAppServer(() => {}));
+
+		h.spawner.spawn(h.config({ args: [...BYPASS_ARGS, '--add-dir', '/tmp/other'] }));
+		h.spawner.spawn(h.config({ images: ['data:image/png;base64,AAAA'] }));
+
+		expect(h.fallbackToCli).toHaveBeenCalledTimes(2);
+		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+});

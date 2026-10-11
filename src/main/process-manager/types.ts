@@ -6,17 +6,24 @@ import type { AgentError } from '../../shared/types';
 import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { CodexAppServerProcessHandle } from '../codex-app-server/protocol';
 
 /**
- * Kill/interrupt handle for server-backed processes that have no OS child
- * (currently the OpenCode SDK path). ProcessManager routes kill()/interrupt()
- * here when `ManagedProcess.sdkController` is set.
+ * Kill/interrupt handle for server-backed processes, whose stop starts with a
+ * protocol call rather than a signal: the OpenCode SDK path (no OS child) and
+ * the Codex app-server path (`turn/interrupt`, then the stop ladder on its
+ * child). ProcessManager routes kill()/interrupt() here when
+ * `ManagedProcess.sdkController` is set.
  */
 export interface SdkProcessController {
 	/** Abort the in-flight turn; the session/stream stays alive. */
 	interrupt: () => void;
-	/** Hard stop: abort the turn and tear down the event subscription. */
-	kill: () => void;
+	/**
+	 * Hard stop: abort the turn and tear down the transport. `sync` and
+	 * `shutdown` carry `ProcessManager.kill()`'s options through to a
+	 * controller that owns an OS child.
+	 */
+	kill: (options?: { sync?: boolean; shutdown?: boolean }) => void;
 }
 
 /**
@@ -181,6 +188,8 @@ export interface ManagedProcess {
 	opencodeSessionId?: string;
 	/** OpenCode SDK client bound to the shared server, for abort calls. */
 	opencodeClient?: OpencodeClient;
+	/** Codex app-server turn state (thread id, turn id, request channel) for steering. */
+	codexAppServer?: CodexAppServerProcessHandle;
 	/** Monotonic spawn number for this session id, claimed at registration.
 	 *  Lets a late event from a killed process recognize that a newer spawn owns
 	 *  the session even after that newer spawn has removed its own map entry.

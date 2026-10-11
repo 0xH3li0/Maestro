@@ -163,3 +163,16 @@ spawn codex app-server (one child per turn)
 - Auto Run, Cue, and CLI batch spawns (`maestro-cli` / `agent-spawner.ts`). None of them can be steered from the UI, so they gain nothing.
 - Group chat (moderator and participants).
 - Spawns that pass `--add-dir` write grants, until a mapping exists.
+
+## Implementation map
+
+| Concern                                              | Module                                                                                       |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Wire types, line classification, the steering handle | `src/main/codex-app-server/protocol.ts` (`CodexAppServerProcessHandle`)                      |
+| Exec args -> protocol params (whitelist, else exec)  | `src/main/codex-app-server/invocation.ts` (`parseCodexAppServerInvocation`)                  |
+| Server-to-client request answers                     | `src/main/codex-app-server/server-requests.ts` (`answerCodexServerRequest`)                  |
+| Request ids, pending table, error shapes             | `src/main/codex-app-server/rpc-client.ts` (`CodexRpcRequestError` carries the server `code`) |
+| Notification -> exec line                            | `src/main/codex-app-server/event-translator.ts`                                              |
+| Child, handshake, lifecycle, fallback                | `src/main/process-manager/spawners/CodexAppServerSpawner.ts`                                 |
+
+`-c key=value` overrides are passed to the `codex app-server` child itself (it accepts `-c` and parses the value as TOML, like exec), so their semantics are unchanged; `model_reasoning_effort` / `model_reasoning_summary` additionally become `turn/start` `effort` / `summary`. Any exec arg the parser does not know sends the turn to exec rather than dropping the arg. Stop is `sdkController.interrupt()`: `turn/interrupt`, then the `stopProcess()` ladder if the child is still there after `CODEX_APP_SERVER_EXIT_GRACE_MS`.
