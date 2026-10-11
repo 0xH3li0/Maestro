@@ -380,14 +380,16 @@ describe('VoiceHud rendering', () => {
 		);
 	});
 
-	it('pins Tab mode to the tab the last request landed in', () => {
+	it('binds Tab mode to the tab on screen, not the tab the last request landed in', () => {
+		seedTwoAgents();
 		renderHud();
 		startSession();
+		// An earlier Conductor request went to another agent's tab entirely.
 		emit(
 			event('dispatch', {
-				agentSessionId: 'agent-1',
+				agentSessionId: 'agent-2',
 				agentName: 'Backend',
-				tabId: 'tab-7',
+				tabId: 'tab-9',
 				tabName: 'Auth Refactor',
 				action: 'focused',
 				promptSent: true,
@@ -399,8 +401,62 @@ describe('VoiceHud rendering', () => {
 		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
 			kind: 'agent',
 			sessionId: 'agent-1',
-			tabId: 'tab-7',
+			tabId: 'tab-1',
 		});
+	});
+
+	it('binds Agent mode to the agent on screen', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		emit(
+			event('dispatch', {
+				agentSessionId: 'agent-2',
+				agentName: 'Backend',
+				tabId: 'tab-9',
+				tabName: 'Auth Refactor',
+				action: 'focused',
+				promptSent: true,
+			})
+		);
+
+		fireEvent.click(screen.getByTestId('voice-hud-mode-agent'));
+
+		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+		});
+	});
+
+	it('re-picking the mode that is on points it at what is on screen', () => {
+		// An agent's own wake phrase binds to that agent whatever is in front, and
+		// nothing moves it until the user does. Clicking the lit pill is the user
+		// saying "this one".
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		emit(event('scope-change', { scope: { kind: 'agent', sessionId: 'agent-2' } }));
+		vi.mocked(window.maestro.voice.setScope).mockClear();
+
+		fireEvent.click(screen.getByTestId('voice-hud-mode-agent'));
+
+		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+		});
+	});
+
+	it('re-picking the mode that is on sends nothing when the binding already matches', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		emit(event('scope-change', { scope: { kind: 'agent', sessionId: 'agent-1', tabId: 'tab-1' } }));
+		vi.mocked(window.maestro.voice.setScope).mockClear();
+
+		fireEvent.click(screen.getByTestId('voice-hud-mode-tab'));
+
+		// Re-binding clears the Conductor's pending question, so it is not free.
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
 	});
 
 	it('follows a mode switch from the service, naming the pinned tab', () => {

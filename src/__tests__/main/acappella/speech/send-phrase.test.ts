@@ -14,6 +14,13 @@ import {
 	normalisePhrase,
 } from '../../../../main/acappella/speech/send-phrase';
 
+/**
+ * Everyday phrases a user might add. The matcher's rules are shown on these
+ * rather than on the shipped default, which is one phrase chosen because nobody
+ * says it by accident.
+ */
+const EVERYDAY = ["that's it", 'send it', 'go ahead'];
+
 describe('matchSendPhrase', () => {
 	it('strips the phrase and keeps the request', () => {
 		const match = matchSendPhrase('fix the auth bug, go maestro');
@@ -25,7 +32,7 @@ describe('matchSendPhrase', () => {
 	it('returns empty text when the whole turn was the signal', () => {
 		// The common case: you pause, then say it on its own. Everything already
 		// buffered is the request.
-		const match = matchSendPhrase("That's it.");
+		const match = matchSendPhrase("That's it.", EVERYDAY);
 
 		expect(match).not.toBeNull();
 		expect(match?.text).toBe('');
@@ -34,21 +41,23 @@ describe('matchSendPhrase', () => {
 	it('does NOT fire mid-sentence', () => {
 		// Agreeing and then carrying on is not a send signal. Only position tells
 		// these apart, which is why the match is anchored to the end.
-		expect(matchSendPhrase("that's it, the bug is in the auth module")).toBeNull();
-		expect(matchSendPhrase('go ahead and look at the tests')).toBeNull();
+		expect(matchSendPhrase("that's it, the bug is in the auth module", EVERYDAY)).toBeNull();
+		expect(matchSendPhrase('go ahead and look at the tests', EVERYDAY)).toBeNull();
+		expect(matchSendPhrase('go maestro, then fix the tests')).toBeNull();
 	});
 
 	it('ignores casing, punctuation and apostrophes the recogniser chose', () => {
 		// Whether a transcript contains an apostrophe is a property of the engine,
 		// not of the speaker.
-		expect(matchSendPhrase('run the tests. Thats it')?.text).toBe('run the tests');
-		expect(matchSendPhrase("run the tests, that's IT!")?.text).toBe('run the tests');
+		expect(matchSendPhrase('run the tests. Thats it', EVERYDAY)?.text).toBe('run the tests');
+		expect(matchSendPhrase("run the tests, that's IT!", EVERYDAY)?.text).toBe('run the tests');
+		expect(matchSendPhrase('run the tests. Go, Maestro!')?.text).toBe('run the tests');
 	});
 
 	it('keeps the original wording of the request', () => {
 		// Normalising is for MATCHING. The surviving text becomes a prompt, so the
 		// user's capitals and punctuation have to come through untouched.
-		const match = matchSendPhrase('Look at OAuth in the API repo, send it');
+		const match = matchSendPhrase('Look at OAuth in the API repo, send it', EVERYDAY);
 
 		expect(match?.text).toBe('Look at OAuth in the API repo');
 	});
@@ -77,9 +86,16 @@ describe('matchSendPhrase', () => {
 		expect(matchSendPhrase('fix the bug -- go maestro')?.text).toBe('fix the bug');
 	});
 
-	it('ships phrases that are natural to say', () => {
-		for (const phrase of DEFAULT_SEND_PHRASES) {
-			expect(matchSendPhrase(`do the work, ${phrase}`)?.text).toBe('do the work');
+	it('ships one phrase, and it fires', () => {
+		expect([...DEFAULT_SEND_PHRASES]).toEqual(['go maestro']);
+		expect(matchSendPhrase('do the work, go maestro')?.text).toBe('do the work');
+	});
+
+	it('does not send on the everyday phrases the default list used to hold', () => {
+		// Each of these ends ordinary sentences. Shipped switched on, a request
+		// that closed with "...so go ahead" lost two words and went early.
+		for (const phrase of ['good to go', ...EVERYDAY, 'make it so']) {
+			expect(matchSendPhrase(`do the work, ${phrase}`)).toBeNull();
 		}
 	});
 });

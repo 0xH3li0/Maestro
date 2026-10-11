@@ -179,62 +179,110 @@ describe('scopeForMode', () => {
 		expect(scopeForMode('conductor', context())).toEqual({ kind: 'conductor' });
 	});
 
-	it('binds Agent mode to the agent the last request went to, before the one on screen', () => {
+	it('binds Agent mode to the agent on screen, before the one already bound or last sent to', () => {
+		// Picking Agent means "this agent". The bound agent and the last dispatch
+		// are where the session HAS been, not where the user is.
 		expect(
 			scopeForMode(
 				'agent',
 				context({
+					scope: { kind: 'agent', sessionId: 'archivist', tabId: 'a-main' },
 					lastDispatch: { agentSessionId: 'backend', tabId: 'b-auth' },
 					focusedAgentId: 'philosopher',
 				})
 			)
+		).toEqual({ kind: 'agent', sessionId: 'philosopher' });
+	});
+
+	it('with no agent on screen, falls back to the bound agent, then the last one sent to', () => {
+		expect(
+			scopeForMode(
+				'agent',
+				context({
+					scope: { kind: 'agent', sessionId: 'archivist', tabId: 'a-main' },
+					lastDispatch: { agentSessionId: 'backend', tabId: 'b-auth' },
+				})
+			)
+		).toEqual({ kind: 'agent', sessionId: 'archivist' });
+		expect(
+			scopeForMode(
+				'agent',
+				context({ lastDispatch: { agentSessionId: 'backend', tabId: 'b-auth' } })
+			)
 		).toEqual({ kind: 'agent', sessionId: 'backend' });
 	});
 
-	it('falls back to the agent on screen, and refuses when there is none', () => {
-		expect(scopeForMode('agent', context({ focusedAgentId: 'philosopher' }))).toEqual({
-			kind: 'agent',
-			sessionId: 'philosopher',
-		});
+	it('refuses Agent and Tab mode when there is no agent at all', () => {
 		expect(scopeForMode('agent', context())).toBeNull();
 		expect(scopeForMode('tab', context())).toBeNull();
 	});
 
-	it('pins Tab mode to the tab the last request landed in', () => {
+	it('binds Tab mode to the tab in front, not the tab the last request landed in', () => {
+		// The failure this replaced: looking at one conversation, picking Tab, and
+		// pinning a different one because an earlier request went there.
 		expect(
 			scopeForMode(
 				'tab',
 				context({
 					scope: { kind: 'agent', sessionId: 'philosopher' },
 					lastDispatch: { agentSessionId: 'philosopher', tabId: 'p-ideas' },
+					focusedAgentId: 'philosopher',
 					activeTabOf: () => 'p-main',
-				})
-			)
-		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-ideas' });
-	});
-
-	it('pins Tab mode to the agent’s active tab when nothing has been sent', () => {
-		expect(
-			scopeForMode(
-				'tab',
-				context({
-					scope: { kind: 'agent', sessionId: 'philosopher' },
-					activeTabOf: (agent) => (agent === 'philosopher' ? 'p-main' : null),
 				})
 			)
 		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' });
 	});
 
-	it('keeps the bound agent rather than following a dispatch to another one', () => {
+	it('binds Tab mode to the on-screen agent’s tab, leaving the bound agent behind', () => {
 		expect(
 			scopeForMode(
 				'tab',
 				context({
 					scope: { kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
-					lastDispatch: { agentSessionId: 'backend', tabId: 'b-auth' },
+					focusedAgentId: 'backend',
+					activeTabOf: (agent) => (agent === 'backend' ? 'b-auth' : 'p-main'),
+				})
+			)
+		).toEqual({ kind: 'agent', sessionId: 'backend', tabId: 'b-auth' });
+	});
+
+	it('with no conversation in front, keeps the pinned tab, then the last one sent to', () => {
+		// A tiled file pane has no conversation behind it. The mode still binds.
+		expect(
+			scopeForMode(
+				'tab',
+				context({
+					scope: { kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
+					lastDispatch: { agentSessionId: 'philosopher', tabId: 'p-ideas' },
+					focusedAgentId: 'philosopher',
 				})
 			)
 		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' });
+		expect(
+			scopeForMode(
+				'tab',
+				context({
+					scope: { kind: 'agent', sessionId: 'philosopher' },
+					lastDispatch: { agentSessionId: 'philosopher', tabId: 'p-ideas' },
+					focusedAgentId: 'philosopher',
+				})
+			)
+		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-ideas' });
+	});
+
+	it('never borrows a tab from a different agent', () => {
+		// The pin and the last dispatch belong to other agents, and the agent on
+		// screen has no conversation in front: there is nothing to bind to.
+		expect(
+			scopeForMode(
+				'tab',
+				context({
+					scope: { kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
+					lastDispatch: { agentSessionId: 'archivist', tabId: 'a-main' },
+					focusedAgentId: 'backend',
+				})
+			)
+		).toBeNull();
 	});
 });
 

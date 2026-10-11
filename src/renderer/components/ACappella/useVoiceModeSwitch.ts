@@ -7,16 +7,16 @@
  * there is no agent to bind to.
  *
  * Switching re-binds the session without ending it; the new mode applies from
- * the next thing you say. The agent and tab it binds to come from what you were
- * just doing (`scopeForMode`), so Conductor -> Agent lands on the agent your
- * last request went to, and Agent -> Tab pins the tab it landed in. From there
- * the binding follows the user to another agent or tab: see
+ * the next thing you say. The agent and tab it binds to are the ones on screen
+ * (`scopeForMode`): picking Agent means this agent, picking Tab means this tab.
+ * From there the binding follows the user to another agent or tab: see
  * `useVoiceScopeFollow`.
  */
 
 import { useCallback } from 'react';
 
 import {
+	scopeFollowingFocus,
 	scopeForMode,
 	stepSwitchableVoiceMode,
 	switchableVoiceMode,
@@ -27,6 +27,7 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { resolveFocusedAiTabId } from '../../utils/panelLayout';
+import { readVoiceFocus } from './useVoiceScopeFollow';
 
 export interface VoiceModeSwitch {
 	/** The mode the switch shows. A document conversation reads as Tab. */
@@ -53,11 +54,11 @@ export function useVoiceModeSwitch(): VoiceModeSwitch {
 
 	const targetFor = useCallback(
 		(next: SwitchableVoiceMode) => {
-			const { activeSessionId, sessions } = useSessionStore.getState();
+			const { sessions } = useSessionStore.getState();
 			return scopeForMode(next, {
 				scope,
 				lastDispatch,
-				focusedAgentId: activeSessionId || null,
+				focusedAgentId: readVoiceFocus().agentSessionId,
 				// The same answer the follow rule uses (`useVoiceScopeFollow`), so
 				// picking Tab mode and then moving tabs agree about "this tab".
 				activeTabOf: (agentId) =>
@@ -69,9 +70,18 @@ export function useVoiceModeSwitch(): VoiceModeSwitch {
 
 	const switchTo = useCallback(
 		(next: SwitchableVoiceMode) => {
+			// Picking the mode that is already on changes no mode, but it is still a
+			// request for "this agent" or "this tab": a session an agent's own wake
+			// phrase opened is bound to an agent that may not be the one on screen,
+			// and this is how the user points it at what they are looking at. Nothing
+			// is sent when the binding already matches.
+			if (next === mode && !isDocument) {
+				const followed = scopeFollowingFocus(scope, readVoiceFocus());
+				if (followed) void window.maestro.voice.setScope(followed);
+				return;
+			}
 			// Leaving a document conversation for plain Tab mode is a real change even
-			// though both read as Tab, so it is the one same-value switch that runs.
-			if (next === mode && !isDocument) return;
+			// though both read as Tab, so it runs the full switch below.
 			const target = targetFor(next);
 			if (!target) {
 				notifyCenterFlash({
@@ -83,7 +93,7 @@ export function useVoiceModeSwitch(): VoiceModeSwitch {
 			}
 			void window.maestro.voice.setScope(target);
 		},
-		[isDocument, mode, targetFor]
+		[isDocument, mode, scope, targetFor]
 	);
 
 	const cycle = useCallback(

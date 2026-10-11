@@ -163,7 +163,10 @@ describe('UtteranceComposer', () => {
 
 		it('sends everything buffered when the phrase is a turn of its own', () => {
 			// The way it is actually said: you talk, you pause, then you say it.
-			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+			const { composer, settled } = makeComposer({
+				settleMs: 30_000,
+				sendPhrases: ["that's it"],
+			});
 
 			composer.add('look at the auth module', 1);
 			composer.add('and say why the refresh fails', 1);
@@ -186,7 +189,10 @@ describe('UtteranceComposer', () => {
 		});
 
 		it('does not fire on a phrase said mid-sentence', () => {
-			const { composer, settled } = makeComposer({ settleMs: 30_000 });
+			const { composer, settled } = makeComposer({
+				settleMs: 30_000,
+				sendPhrases: ["that's it"],
+			});
 
 			composer.add("that's it exactly, the auth module is the problem", 1);
 
@@ -476,7 +482,7 @@ describe('UtteranceComposer', () => {
 		});
 
 		it('still honours a send phrase said while holding', () => {
-			const { composer, settled } = makeComposer({ settleMs: 900 });
+			const { composer, settled } = makeComposer({ settleMs: 900, sendPhrases: ['send it'] });
 
 			composer.holdOpen();
 			composer.add('fix the auth bug, send it', 0.9);

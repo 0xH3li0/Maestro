@@ -67,7 +67,7 @@ const HOTKEY_IDS = [VOICE_CONDUCTOR_HOTKEY_ID, VOICE_AGENT_HOTKEY_ID] as const;
 const WAKE_TEST_TIMEOUT_MS = 15_000;
 
 /** The shipped phrases, shown in an emptied field so the format is never a guess. */
-const SEND_PHRASES_PLACEHOLDER = formatSendPhrases(DEFAULT_SEND_PHRASES.slice(0, 3));
+const SEND_PHRASES_PLACEHOLDER = formatSendPhrases(DEFAULT_SEND_PHRASES);
 
 const WAKE_ENGINE_OPTIONS: Array<{ value: WakeEngine; label: string }> = [
 	{ value: 'classifier', label: 'Trained model' },
@@ -561,10 +561,9 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 					/>
 					<p className="text-xs-plus opacity-55">
 						Say one to send a request right away instead of waiting out the pause. Comma separated,
-						and only heard at the END of a sentence - so &quot;that&apos;s it exactly, now fix the
-						tests&quot; keeps listening. The phrase is removed before the request is sent, and the
-						first one is the phrase the HUD reminds you of. Leave this empty to send only on the
-						pause.
+						and only heard at the END of a sentence - so &quot;go maestro, then fix the tests&quot;
+						keeps listening. The phrase is removed before the request is sent, and the first one is
+						the phrase the HUD reminds you of. Leave this empty to send only on the pause.
 					</p>
 
 					<div className="flex items-center gap-3" data-setting-id="encore-a-cappella-turn-settle">

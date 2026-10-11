@@ -173,21 +173,25 @@ export interface ModeTargetContext {
 	lastDispatch: { agentSessionId: string; tabId: string } | null;
 	/** The agent on screen, or null. */
 	focusedAgentId: string | null;
-	/** An agent's active AI tab, or null when unknown. */
+	/** The conversation tab in front of an agent, or null when there is none. */
 	activeTabOf: (agentSessionId: string) => string | null;
 }
 
 /**
- * The binding for a mode, resolved from what the user is doing right now, or
- * null when there is nothing to bind to (Agent or Tab mode with no agent).
+ * The binding for a mode, resolved from what the user is looking at, or null
+ * when there is nothing to bind to (Agent or Tab mode with no agent).
  *
- * The agent, in order: the one this session is already bound to, then the one
- * the last utterance went to (in Conductor mode, "the agent I was just talking
- * to"), then the one on screen.
+ * What is ON SCREEN wins: picking Agent means "this agent" and picking Tab
+ * means "this tab". It used to prefer the agent the session was already bound
+ * to and the tab the last request landed in, so picking Tab while looking at
+ * one conversation could pin a different one, and the only sign was the name in
+ * the HUD header. It is also the same answer {@link scopeFollowingFocus} gives
+ * on the next move, so picking a mode and then moving cannot disagree.
  *
- * The tab, in order: the tab already pinned, then the tab the last utterance
- * landed in (what the HUD header is showing, so pinning it pins what you see
- * named), then that agent's active tab.
+ * The rest are fallbacks for when the screen has no answer. The agent: the one
+ * already bound, then the one the last utterance went to. The tab (no
+ * conversation in front of that agent, e.g. a tiled file pane): the tab already
+ * pinned, then the tab the last utterance landed in.
  */
 export function scopeForMode(
 	mode: SwitchableVoiceMode,
@@ -197,7 +201,7 @@ export function scopeForMode(
 
 	const bound =
 		context.scope && context.scope.kind !== 'conductor' ? context.scope.sessionId : null;
-	const agentSessionId = bound ?? context.lastDispatch?.agentSessionId ?? context.focusedAgentId;
+	const agentSessionId = context.focusedAgentId ?? bound ?? context.lastDispatch?.agentSessionId;
 	if (!agentSessionId) return null;
 
 	if (mode === 'agent') return { kind: 'agent', sessionId: agentSessionId };
@@ -208,7 +212,7 @@ export function scopeForMode(
 			: null;
 	const dispatched =
 		context.lastDispatch?.agentSessionId === agentSessionId ? context.lastDispatch.tabId : null;
-	const tabId = pinned ?? dispatched ?? context.activeTabOf(agentSessionId);
+	const tabId = context.activeTabOf(agentSessionId) ?? pinned ?? dispatched;
 	return tabId ? { kind: 'agent', sessionId: agentSessionId, tabId } : null;
 }
 

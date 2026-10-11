@@ -110,21 +110,21 @@ export const MAX_TURN_SETTLE_MS = 3000;
  * because the settings panel seeds its input from this list, and the renderer
  * cannot import from the main process.
  *
- * The FIRST entry is the one every surface quotes ("say 'go maestro' to send"),
- * so it is the phrase a user learns. It names the app on purpose, as the stop
- * phrase does: "good to go" led this list before, and it is something people
- * say at the end of an ordinary sentence without meaning "send".
+ * ONE phrase, and it names the app on purpose, as the stop phrase does. The
+ * list used to hold five ("good to go", "that's it", "send it", "go ahead",
+ * "make it so"), and every one of them is something people say at the end of an
+ * ordinary sentence without meaning "send": a request that ended "...so go
+ * ahead" lost its last two words and went early. A phrase nobody says by
+ * accident is the only kind that is safe to ship switched on. Anyone who wants
+ * the others back, or their own, types them into the send phrase field.
+ *
+ * Still a list, because the setting is one: the first entry is the phrase every
+ * surface quotes ("say 'go maestro' to send").
  */
-export const DEFAULT_SEND_PHRASES = [
-	'go maestro',
-	"that's it",
-	'send it',
-	'go ahead',
-	'make it so',
-] as const;
+export const DEFAULT_SEND_PHRASES = ['go maestro'] as const;
 
 /**
- * The list that shipped before "go maestro" led it. Migrated away from on
+ * The five-phrase list that shipped before "go maestro". Migrated away from on
  * upgrade, because the Voice Controls panel used to save every field whenever
  * any one of them changed, so this sits in settings verbatim for people who
  * never chose it.

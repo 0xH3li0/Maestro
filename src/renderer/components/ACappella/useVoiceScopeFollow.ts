@@ -33,7 +33,14 @@ import { resolveFocusedAiTabId } from '../../utils/panelLayout';
 /** Separates the two ids in the focus key. Not a character either can contain. */
 const FOCUS_KEY_SEPARATOR = '\n';
 
-function readFocus(): VoiceFocus {
+/**
+ * What the user is looking at right now, read from the store.
+ *
+ * Exported for the mode switch, which binds to the same thing: one reader, so
+ * "this tab" cannot mean one tab when a mode is picked and another on the next
+ * move.
+ */
+export function readVoiceFocus(): VoiceFocus {
 	const state = useSessionStore.getState();
 	// `activeSessionId`, not the selector's fallback to the first agent: with no
 	// agent selected there is nothing on screen to follow.
@@ -79,7 +86,7 @@ export function useVoiceScopeFollow(enabled: boolean): void {
 		if (previous === null || previous === focusKey) return;
 
 		const voice = useVoiceSessionStore.getState();
-		const next = scopeFollowingFocus(voice.scope, readFocus());
+		const next = scopeFollowingFocus(voice.scope, readVoiceFocus());
 		if (!next) return;
 
 		if (isVoiceSessionActive(voice.state)) {

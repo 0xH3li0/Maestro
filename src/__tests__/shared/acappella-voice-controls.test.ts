@@ -18,22 +18,26 @@ import {
 } from '../../shared/acappella/voice-controls';
 
 describe('the shipped send phrases', () => {
-	it('lead with the phrase every surface quotes', () => {
+	it('are one phrase, the one every surface quotes', () => {
 		// The HUD and the held notice name `[0]`, so it is the one a user learns.
-		expect(DEFAULT_SEND_PHRASES[0]).toBe('go maestro');
+		expect([...DEFAULT_SEND_PHRASES]).toEqual(['go maestro']);
 	});
 
-	it('no longer include the phrase people say without meaning "send"', () => {
-		expect(DEFAULT_SEND_PHRASES).not.toContain('good to go');
+	it('share nothing with the old list, whose phrases all end ordinary sentences', () => {
+		for (const phrase of LEGACY_DEFAULT_SEND_PHRASES) {
+			expect(DEFAULT_SEND_PHRASES).not.toContain(phrase);
+		}
 	});
 });
 
 describe('formatSendPhrases', () => {
 	it('round-trips with the parser', () => {
-		const stored = formatSendPhrases(DEFAULT_SEND_PHRASES);
+		const phrases = ['go maestro', 'ship it', "that's all"];
+		const stored = formatSendPhrases(phrases);
 
-		expect(stored).toBe("go maestro, that's it, send it, go ahead, make it so");
-		expect(parseSendPhrases(stored)).toEqual([...DEFAULT_SEND_PHRASES]);
+		expect(stored).toBe("go maestro, ship it, that's all");
+		expect(parseSendPhrases(stored)).toEqual(phrases);
+		expect(formatSendPhrases(DEFAULT_SEND_PHRASES)).toBe('go maestro');
 	});
 
 	it('writes an empty list as the empty string, which is "off" and not "absent"', () => {

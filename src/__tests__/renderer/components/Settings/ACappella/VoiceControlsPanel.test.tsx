@@ -167,7 +167,7 @@ describe('VoiceControlsPanel send phrases', () => {
 		render(<VoiceControlsPanel theme={mockTheme} enabled />);
 
 		await waitFor(() => {
-			expect(phrasesInput().value).toBe("go maestro, that's it, send it, go ahead, make it so");
+			expect(phrasesInput().value).toBe('go maestro');
 		});
 		expect(screen.queryByLabelText('Send after')).toBeNull();
 	});
