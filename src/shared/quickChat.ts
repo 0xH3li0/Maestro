@@ -144,6 +144,11 @@ export interface QuickChatWindowBounds {
 	y?: number;
 	width?: number;
 	expandedHeight?: number;
+	/**
+	 * Whether the window floats above other windows. Unpinned, it is an ordinary
+	 * window that falls behind whatever the user clicks next. Absent means pinned.
+	 */
+	pinned?: boolean;
 }
 
 /** The narrowest the window can be dragged, in either shape. */
@@ -190,6 +195,8 @@ export interface QuickChatStatus {
 	hotkeyRegistered: boolean;
 	/** The window's current bounds, or null before it has been created. */
 	bounds: { x: number; y: number; width: number; height: number } | null;
+	/** Whether the window floats above other windows (see `QuickChatWindowBounds.pinned`). */
+	pinned: boolean;
 	snapshot: QuickChatSnapshot;
 }
 

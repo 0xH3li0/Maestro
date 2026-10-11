@@ -2082,6 +2082,14 @@ Keep the current chat as a visible tab on its agent ("off" makes it ephemeral)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat pin [state]`
+
+Float the window above other windows ("off" lets it fall behind them)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat agent <agent-id>`
 
 Switch Quick Chat to another agent and start a new chat there

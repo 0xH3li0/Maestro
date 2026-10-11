@@ -45,6 +45,7 @@ vi.mock('electron', async () => {
 			this.emit('hide');
 		});
 		focus = vi.fn();
+		moveTop = vi.fn();
 		loadURL = vi.fn();
 		setAlwaysOnTop = vi.fn();
 		setVisibleOnAllWorkspaces = vi.fn();
@@ -100,15 +101,23 @@ type WindowModule = typeof import('../../../main/quick-chat/quick-chat-window');
 type Bounds = { x: number; y: number; width: number; height: number };
 type MockWindow = EventEmitter & {
 	show: ReturnType<typeof vi.fn>;
+	moveTop: ReturnType<typeof vi.fn>;
+	setAlwaysOnTop: ReturnType<typeof vi.fn>;
+	webContents: EventEmitter & { send: ReturnType<typeof vi.fn> };
 	setBounds: (b: Bounds) => void;
 	getBounds: () => Bounds;
-	webContents: EventEmitter;
 	isVisible: () => boolean;
 	minimumSize: number[];
 	maximumSize: number[];
 	close: () => void;
 };
-type SavedBounds = { x?: number; y?: number; width?: number; expandedHeight?: number };
+type SavedBounds = {
+	x?: number;
+	y?: number;
+	width?: number;
+	expandedHeight?: number;
+	pinned?: boolean;
+};
 
 /** An in-memory bounds store, standing in for the window-state store. */
 function makeDeps(initial?: SavedBounds) {
@@ -392,5 +401,71 @@ describe('Quick Chat window bounds', () => {
 
 		mod.showQuickChatWindow(d);
 		expect(lastWindow().getBounds().width).toBe(620);
+	});
+});
+
+describe('Quick Chat window pin', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('floats on top by default', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		expect(lastWindow().setAlwaysOnTop).toHaveBeenCalledWith(true, 'floating');
+		expect(mod.isQuickChatWindowPinned(d)).toBe(true);
+	});
+
+	it('unpins the live window, tells it, and remembers the choice', async () => {
+		const { deps: d, store } = makeDeps({ width: 640 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		mod.setQuickChatWindowPinned(false, d);
+
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(false, 'floating');
+		expect(win.webContents.send).toHaveBeenCalledWith('quickChat:pinned', false);
+		expect(store.value).toEqual({ width: 640, pinned: false });
+		expect(mod.isQuickChatWindowPinned(d)).toBe(false);
+	});
+
+	it('keeps the pin when a later drag saves the bounds', async () => {
+		const { deps: d, store } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatWindowPinned(false, d);
+
+		win.setBounds({ ...win.getBounds(), width: 700 });
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value).toMatchObject({ width: 700, pinned: false });
+	});
+
+	it('opens unpinned after a restart, and still comes to the front when summoned', async () => {
+		const { deps: d } = makeDeps({ pinned: false });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		expect(win.setAlwaysOnTop).toHaveBeenCalledWith(false, 'floating');
+
+		win.emit('ready-to-show');
+		expect(win.moveTop).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not jump a pinned window with moveTop', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		win.emit('ready-to-show');
+		expect(win.moveTop).not.toHaveBeenCalled();
 	});
 });

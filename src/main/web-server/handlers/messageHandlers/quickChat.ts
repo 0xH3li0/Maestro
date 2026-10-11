@@ -88,6 +88,11 @@ export function handleQuickChat(
 		return;
 	}
 
+	if (action === 'pin') {
+		reply({ success: true, status: controller.setPinned(message.pinned !== false) });
+		return;
+	}
+
 	const command = toEngineCommand(message);
 	if (!command) {
 		reply({ success: false, error: `Unknown Quick Chat action: ${action || '(none)'}` });
