@@ -49,7 +49,7 @@ mitigation remains a separate operational choice.
 ## Activation
 
 The fix is integrated in upstream PR #1652 on the existing fork branch
-`feat/relay-host-contract`, now updated to rc `67b38b75d8`, including merge
+`feat/relay-host-contract`, now updated to rc `2bb2a0926e`, including merge
 `62d4f246e8` (#1742).
 The current CLI retains rc's canonical `maestro-lib` launch, stream, accounting,
 and process ownership; the supervisor adds startup and completion deadlines.
@@ -64,9 +64,11 @@ runs, preserve current user work, install the reviewed build and its matching
 bundled CLI, then restart Maestro once. Verify Mira's existing credential-store
 argument survives, run one ordinary Relay request, and exercise a deliberately
 non-authenticated test fixture to confirm a failed result within 125 seconds.
-Do not induce a real keyring outage or remove credentials for this test. Verify
-that the Relay plugin renders the returned failure as a visible error/recovery
-notice. Read-only inspection of the installed Relay entry point confirmed that
+Do not induce a real keyring outage or remove credentials for this test. Acceptance of the specific auth/retry recovery notice requires the agreed
+build to contain the targeted Backstage mapping from `result.error`, and a
+live check that Discord displays that guidance. Without that mapping, the
+expected Discord result is only the generic `agent-failed` notice; do not
+claim acceptance of the specific recovery guidance. Read-only inspection of the installed Relay entry point confirmed that
 it uses `agents.send` and posts a failure to Discord, but currently maps provider
 errors to the generic `agent-failed` notice. A targeted Backstage plugin mapping
 is needed for the specific auth/retry notice; the host now makes that detail

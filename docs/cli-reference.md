@@ -240,6 +240,8 @@ Send a message to an agent and get a JSON response
 | `--require-plugin-tools`           | Fail if a desktop-backed run with plugin tools is unavailable                                                                                           | -       |
 | `--require-tool-receipt <tool-id>` | Require a host-observed delivery receipt from this plugin tool ID                                                                                       | -       |
 | `--no-system-prompt`               | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
+| `--no-history`                     | Do not write a History entry for this turn (written by default, desktop app running or not)                                                             | -       |
+| `--no-synopsis`                    | Skip the synopsis turn; the History entry carries the response instead                                                                                  | -       |
 
 ## `maestro-cli dispatch <agent-id> <message>`
 

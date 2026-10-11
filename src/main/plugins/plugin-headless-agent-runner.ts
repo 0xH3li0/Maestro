@@ -26,6 +26,7 @@ export interface PluginHeadlessRunnerDeps {
 	prepareSystemPrompt: (agent: SessionInfo) => Promise<string | undefined>;
 	issueRunToken: (agentId: string, ttlMs: number, receiptToolId?: string) => string;
 	getRunReceipts?: (token: string) => PluginToolReceipt[];
+	hasRunReceiptOverflow?: (token: string) => boolean;
 	revokeRunToken: (token: string) => void;
 	cliScriptPath: () => string;
 	audit: (agentId: string, resumed: boolean) => void;
@@ -51,7 +52,8 @@ export function createPluginHeadlessAgentRunner(
 			(!local ||
 				!MCP_CONFIG_BY_AGENT[agent.toolType]?.verified ||
 				!deps.hasPluginTools() ||
-				!deps.getRunReceipts)
+				!deps.getRunReceipts ||
+				!deps.hasRunReceiptOverflow)
 		) {
 			return {
 				success: false,
@@ -104,18 +106,29 @@ export function createPluginHeadlessAgentRunner(
 				signal,
 				onProgress,
 			});
+			const receiptsOverflowed =
+				!!receiptToolId && !!runToken && deps.hasRunReceiptOverflow!(runToken);
 			const success =
 				result.success &&
 				typeof result.response === 'string' &&
 				result.response.trim().length > 0 &&
-				!signal?.aborted;
+				!signal?.aborted &&
+				!receiptsOverflowed;
 			return {
 				success,
 				response: success ? result.response! : null,
 				sessionId: result.agentSessionId ?? null,
 				usageStats: result.usageStats,
 				...(receiptToolId && runToken ? { toolReceipts: deps.getRunReceipts!(runToken) } : {}),
-				...(success ? {} : { error: result.error ?? 'Agent run failed or returned no final text' }),
+				...(success
+					? {}
+					: {
+							error:
+								result.error ??
+								(receiptsOverflowed
+									? 'Plugin tool receipt limit exceeded; inspect recorded receipts before retrying'
+									: 'Agent run failed or returned no final text'),
+						}),
 			};
 		} finally {
 			// Revoke authority even if removing the on-disk proof fails.

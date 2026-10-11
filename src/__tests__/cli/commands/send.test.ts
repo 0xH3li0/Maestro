@@ -10,7 +10,7 @@
  * - Unsupported agent types
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 
 const desktop = vi.hoisted(() => ({
@@ -37,6 +37,11 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	detectAgent: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/agent-run-capture', () => ({
+	captureCliRun: vi.fn(async (_input: unknown, run: () => Promise<unknown>) => run()),
+	settlementFromAgentResult: vi.fn(),
+}));
+
 // Mock system-prompt so we can assert it gets called (or skipped on --no-system-prompt)
 vi.mock('../../../cli/services/system-prompt', () => ({
 	prepareMaestroSystemPromptCli: vi.fn(),
@@ -46,6 +51,12 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	addHistoryEntry: vi.fn(),
+}));
+
+// Mock prompt-loader so the synopsis turn gets a fixed prompt
+vi.mock('../../../cli/services/prompt-loader', () => ({
+	getCliPrompt: vi.fn().mockResolvedValue('SYNOPSIS PROMPT'),
 }));
 
 // Mock usage-aggregator
@@ -70,9 +81,11 @@ import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { UnsupportedCommandError } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
+import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
+import { QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -96,6 +109,15 @@ describe('send command', () => {
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+		// A test run started from an agent's own shell inherits its caller
+		// identity and its turn's origin, which would turn every entry here into
+		// an AGENT or CUE entry. Blank reads as absent.
+		vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, '');
+		vi.stubEnv(QUERY_SOURCE_ENV_VAR, '');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	it('falls back to standalone spawning when an older desktop rejects the host verb', async () => {
@@ -110,13 +132,16 @@ describe('send command', () => {
 			agentSessionId: 'provider-1',
 		});
 
-		await send('agent-abc', 'hello', {});
+		await send('agent-abc', 'hello', { synopsis: false });
 
 		expect(spawnAgent).toHaveBeenCalledOnce();
 		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
 			success: true,
 			response: 'standalone answer',
 		});
+		expect(addHistoryEntry).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'USER', fullResponse: 'standalone answer', success: true })
+		);
 	});
 
 	it.each(['opencode', 'factory-droid'] as const)(
@@ -218,13 +243,42 @@ describe('send command', () => {
 			response: '{"messageIds":["123"]}',
 			sessionId: 'provider-1',
 		});
-		await send('agent-abc', 'report', { requirePluginTools: true });
+		await send('agent-abc', 'report', { requirePluginTools: true, synopsis: false });
 		expect(spawnAgent).not.toHaveBeenCalled();
 		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
 			success: true,
 			response: '{"messageIds":["123"]}',
 			sessionId: 'provider-1',
 		});
+	});
+
+	it('records a desktop-backed send with the canonical synopsis without repeating the main prompt', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockResolvedValue({
+			available: true,
+			success: true,
+			response: 'Completed report',
+			sessionId: 'provider-1',
+		});
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: '**Summary:** Reported it.',
+		});
+		await send('agent-abc', 'report', { requirePluginTools: true });
+		expect(desktop.sendCommand).toHaveBeenCalledOnce();
+		expect(spawnAgent).toHaveBeenCalledExactlyOnceWith(
+			'codex',
+			'/path/to/project',
+			'SYNOPSIS PROMPT',
+			'provider-1',
+			expect.objectContaining({ querySource: 'auto', customEffort: 'minimal' })
+		);
+		expect(addHistoryEntry).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'USER', summary: 'Reported it.', success: true })
+		);
 	});
 
 	it('accepts only a host-observed receipt for the requested tool and agent', async () => {
@@ -763,5 +817,371 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	describe('history', () => {
+		const ready = (overrides: Partial<SessionInfo> = {}) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent(overrides));
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		};
+
+		it('writes a USER entry summarized by a synopsis turn resumed on the same session', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Fixed the bug.',
+					agentSessionId: 'session-xyz-789',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response:
+						'**Summary:** Fixed the tooltip clipping in FilePreview.\n\n**Details:** Moved the portal.',
+				});
+
+			await send('agent-abc', 'Fix it', {});
+
+			expect(spawnAgent).toHaveBeenCalledTimes(2);
+			const synopsisCall = vi.mocked(spawnAgent).mock.calls[1];
+			expect(synopsisCall[2]).toBe('SYNOPSIS PROMPT');
+			expect(synopsisCall[3]).toBe('session-xyz-789');
+			expect(synopsisCall[4]).toMatchObject({
+				querySource: 'auto',
+				signal: expect.any(AbortSignal),
+			});
+			expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'USER',
+				sessionId: 'agent-abc-123',
+				agentSessionId: 'session-xyz-789',
+				projectPath: '/path/to/project',
+				success: true,
+				summary: 'Fixed the tooltip clipping in FilePreview.',
+			});
+			expect(typeof entry.elapsedTimeMs).toBe('number');
+			// stdout still carries only the turn's JSON
+			expect(consoleSpy).toHaveBeenCalledTimes(1);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('writes an AGENT entry naming the sender when another agent runs the send', async () => {
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-caller-1');
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockImplementation((id) =>
+				id === 'agent-caller-1'
+					? mockAgent({ id: 'agent-caller-1', name: 'Conductor' })
+					: mockAgent()
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Fixed the bug.',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Fix it', { synopsis: false });
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'AGENT',
+				sessionId: 'agent-abc-123',
+				sourceAgentName: 'Conductor',
+				summary: 'Sent by Conductor: Fixed the bug.',
+				fullResponse: 'Fixed the bug.',
+				success: true,
+			});
+		});
+
+		it('marks a failed send from another agent as a failed AGENT entry', async () => {
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-caller-1');
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockImplementation((id) =>
+				id === 'agent-caller-1'
+					? mockAgent({ id: 'agent-caller-1', name: 'Conductor' })
+					: mockAgent()
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({ success: false, error: 'boom' });
+
+			await send('agent-abc', 'Do it', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'AGENT',
+				success: false,
+				summary: 'Sent by Conductor: Send failed: boom',
+			});
+			errSpy.mockRestore();
+		});
+
+		it('names a calling agent that no longer exists by its id', async () => {
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-gone-9');
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockImplementation((id) =>
+				id === 'agent-gone-9' ? undefined : mockAgent()
+			);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ type: 'AGENT', sourceAgentName: 'agent-gone-9' });
+		});
+
+		it('writes a CUE entry and keeps the turn Cue-sourced when Cue started the send', async () => {
+			vi.stubEnv(QUERY_SOURCE_ENV_VAR, 'cue');
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Triaged the queue.',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Triage', { synopsis: false });
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ querySource: 'cue' });
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				type: 'CUE',
+				summary: 'Triaged the queue.',
+				success: true,
+			});
+			expect(entry.sourceAgentName).toBeUndefined();
+			// Setting these would pair the entry with the run's own `cue_events`
+			// row and hide that row from the History panel.
+			expect(entry.cueTriggerName).toBeUndefined();
+			expect(entry.cueEventType).toBeUndefined();
+		});
+
+		it('records a Cue-started send as CUE even when an agent ran the command', async () => {
+			vi.stubEnv(QUERY_SOURCE_ENV_VAR, 'cue');
+			vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'agent-caller-1');
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({ success: false, error: 'boom' });
+
+			await send('agent-abc', 'Do it', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ type: 'CUE', success: false, summary: 'Send failed: boom' });
+			expect(entry.sourceAgentName).toBeUndefined();
+			errSpy.mockRestore();
+		});
+
+		it('leaves the turn origin unset for a send a user-sourced turn ran', async () => {
+			vi.stubEnv(QUERY_SOURCE_ENV_VAR, 'user');
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.querySource).toBeUndefined();
+			expect(vi.mocked(addHistoryEntry).mock.calls[0][0].type).toBe('USER');
+		});
+
+		it('writes a USER entry with no sender when no agent is calling', async () => {
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.type).toBe('USER');
+			expect(entry.summary).toBe('Done');
+			expect(entry.sourceAgentName).toBeUndefined();
+		});
+
+		it('writes nothing with --no-history', async () => {
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { history: false });
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			expect(addHistoryEntry).not.toHaveBeenCalled();
+		});
+
+		it('skips the synopsis turn with --no-synopsis and uses the response', async () => {
+			ready();
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '\nFirst line of the answer\nmore detail',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.summary).toBe('First line of the answer');
+			expect(entry.fullResponse).toBe('\nFirst line of the answer\nmore detail');
+		});
+
+		it('still writes an entry from the response when the synopsis reports NOTHING_TO_REPORT', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'There are 4 Python files.',
+					agentSessionId: 'session-1',
+				})
+				.mockResolvedValueOnce({ success: true, response: 'NOTHING_TO_REPORT' });
+
+			await send('agent-abc', 'count files', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.summary).toBe('There are 4 Python files.');
+			expect(entry.fullResponse).toBe('There are 4 Python files.');
+		});
+
+		it('falls back to the response when the synopsis turn prints a provider error', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Refactored the parser.',
+					agentSessionId: 'session-1',
+				})
+				.mockResolvedValueOnce({ success: true, response: 'Prompt is too long' });
+
+			await send('agent-abc', 'refactor', {});
+
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry.summary).toBe('Refactored the parser.');
+			expect(entry.fullResponse).toBe('Refactored the parser.');
+		});
+
+		it('still writes an entry from the response when the synopsis turn throws', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Refactored the parser.',
+					agentSessionId: 'session-1',
+				})
+				.mockRejectedValueOnce(new Error('spawn ENOENT'));
+
+			await send('agent-abc', 'refactor', {});
+
+			expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				success: true,
+				summary: 'Refactored the parser.',
+				fullResponse: 'Refactored the parser.',
+			});
+			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('spawn ENOENT'));
+			expect(processExitSpy).not.toHaveBeenCalled();
+			errSpy.mockRestore();
+		});
+
+		it('keeps the agent model for the synopsis when the cheap tier would shrink the context window', async () => {
+			ready({ customModel: 'opus[1m]' });
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ customModel: 'opus[1m]' });
+		});
+
+		it('keeps the synopsis turn read-only after a --read-only send', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Plan', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Planned it.' });
+
+			await send('agent-abc', 'Plan it', { readOnly: true });
+
+			// Both turns run on one session: a synopsis without the flag would hold
+			// full permissions on a conversation the caller asked to keep read-only.
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ readOnlyMode: true });
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ readOnlyMode: true });
+		});
+
+		it('does not make the synopsis turn read-only for an ordinary send', async () => {
+			ready();
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]?.readOnlyMode).toBeUndefined();
+		});
+
+		it('records a failed turn without a synopsis turn', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({ success: false, error: 'boom' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ success: false, summary: 'Send failed: boom' });
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			errSpy.mockRestore();
+		});
+
+		it('records an interrupted turn without a synopsis turn', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+				error: 'Interrupted',
+				outcome: 'interrupted',
+				agentSessionId: 'session-1',
+			});
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(spawnAgent).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({ success: false, summary: 'Send interrupted' });
+			expect(processExitSpy).toHaveBeenCalledWith(130);
+			errSpy.mockRestore();
+		});
+
+		it('keeps the send successful when the history write throws', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+			vi.mocked(addHistoryEntry).mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+
+			await send('agent-abc', 'Do it', { synopsis: false });
+
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+			errSpy.mockRestore();
+		});
 	});
 });

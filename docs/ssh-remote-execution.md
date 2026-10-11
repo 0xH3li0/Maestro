@@ -483,7 +483,7 @@ Multiple team members (`pedbook`, `stephan`, `mattj`) each have Maestro installe
 
 ### Entry Limits
 
-Shared history files respect the **Maximum Log Buffer** setting (Settings → Display). Each hostname's file retains up to this many entries (default: 5,000). When reading another host's file, Maestro reads only the most recent entries up to your own buffer limit.
+Shared history files respect the **Maximum Log Buffer** setting (Settings → Display). Each hostname's file retains up to this many entries (default: 10,000). When reading another host's file, Maestro reads only the most recent entries up to your own buffer limit.
 
 ### Notes
 

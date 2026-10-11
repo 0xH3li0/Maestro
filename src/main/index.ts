@@ -976,7 +976,11 @@ app
 		// Load logger settings first
 		const logLevel = store.get('logLevel', 'info');
 		logger.setLogLevel(logLevel);
-		const maxLogBuffer = store.get('maxLogBuffer', 1000);
+		// Same fallback as the history cap. The renderer reads this value back
+		// through `logger:getMaxLogBuffer` and shows it as the setting, so a
+		// different fallback here made a fresh install display one limit
+		// (1,000) while history was actually trimmed at another.
+		const maxLogBuffer = store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION);
 		logger.setMaxLogBuffer(maxLogBuffer);
 
 		logger.info('Maestro application starting', 'Startup', {
@@ -2545,6 +2549,7 @@ app
 			issueRunToken: (agentId, ttlMs, receiptToolId) =>
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
+			hasRunReceiptOverflow: (token) => pluginToolRunIdentity.hasReceiptOverflowed(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
 			cliScriptPath: resolveMaestroCliScriptPath,
 			audit: (agentId, resumed) =>

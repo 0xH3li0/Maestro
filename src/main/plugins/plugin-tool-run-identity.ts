@@ -96,7 +96,6 @@ export class PluginToolRunIdentity {
 		}
 		if (run.receipts.length >= MAX_RUN_RECEIPTS) {
 			run.receiptsOverflowed = true;
-			run.receipts = [];
 			return;
 		}
 		run.receipts.push({
@@ -110,9 +109,14 @@ export class PluginToolRunIdentity {
 	getReceipts(token: unknown): PluginToolReceipt[] {
 		if (this.resolve(token).callerAgentId === null) return [];
 		const run = this.runs.get(token as string);
-		return run && !run.receiptsOverflowed
+		return run
 			? run.receipts.map((receipt) => ({ ...receipt, messageIds: [...receipt.messageIds] }))
 			: [];
+	}
+
+	hasReceiptOverflowed(token: unknown): boolean {
+		if (this.resolve(token).callerAgentId === null) return false;
+		return this.runs.get(token as string)?.receiptsOverflowed === true;
 	}
 
 	revoke(token: string): void {

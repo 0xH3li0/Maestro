@@ -114,6 +114,27 @@ describe('PluginToolRunIdentity', () => {
 		expect(runs.getReceipts(a)).toEqual([]);
 	});
 
+	it('retains the bounded verified receipts after collection overflows', () => {
+		const runs = new PluginToolRunIdentity();
+		const token = runs.issue('agent-a', 1_000, 'sh.maestro.relay/send');
+		expect(runs.hasReceiptOverflowed(token)).toBe(false);
+		for (let index = 0; index < 18; index++) {
+			runs.recordReceipt(token, 'sh.maestro.relay/send', {
+				messageIds: [String(100 + index)],
+			});
+		}
+		const receipts = runs.getReceipts(token);
+		expect(runs.hasReceiptOverflowed(token)).toBe(true);
+		expect(receipts).toHaveLength(16);
+		expect(receipts[0].messageIds).toEqual(['100']);
+		expect(receipts[15].messageIds).toEqual(['115']);
+		receipts[0].messageIds[0] = '999';
+		expect(runs.getReceipts(token)[0].messageIds).toEqual(['100']);
+		runs.revoke(token);
+		expect(runs.getReceipts(token)).toEqual([]);
+		expect(runs.hasReceiptOverflowed(token)).toBe(false);
+	});
+
 	it('does not accept receipts after the run proof expires', () => {
 		vi.useFakeTimers();
 		try {

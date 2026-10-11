@@ -104,6 +104,11 @@ only when the provider succeeds, the tool remains active, and this run has a
 matching receipt. The ordinary `send` response and plugin `agents.send` API
 are unchanged. A failed run can still carry a receipt for a send completed
 before the failure; do not automatically retry without examining it.
+Collection is bounded to 16 receipts per run. Reaching the limit preserves
+the recorded receipts and stops further collection. An overflow fails the
+required receipt check with an explicit error while returning the retained
+evidence; this bounded list is
+not an exhaustive delivery log for a run that exceeds that limit.
 
 Local Claude API-mode and Codex desktop, Cue, and desktop-backed `maestro-cli send` runs receive the verified MCP config. Claude's interactive maestro-p path is excluded because its Node argv cannot accept the config flag. Cue runs use their configured Maestro agent ID and a distinct provider session. `maestro-cli send` uses a host runner when the desktop plugin service is available; the WebSocket must be both loopback and authenticated with the CLI's per-boot secret. The standalone fallback remains available when that verb is unsupported by an older desktop. A dropped connection after submitting a run is reported as an error instead of starting a duplicate local run. SSH agents receive no local MCP bridge because the desktop discovery socket is not reachable there. Other providers remain unverified and receive no automatic MCP injection.
 

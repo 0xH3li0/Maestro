@@ -24,11 +24,19 @@ describe('plugin headless agent runner', () => {
 				if (prompt === 'real send') {
 					identity.recordReceipt(token, 'sh.maestro.relay/send', { messageIds: ['123'] });
 				}
+				if (prompt === 'overflow') {
+					for (let index = 0; index < 17; index++) {
+						identity.recordReceipt(token, 'sh.maestro.relay/send', {
+							messageIds: [String(100 + index)],
+						});
+					}
+				}
 				return { success: true, response: '{"messageIds":["999"]}' };
 			},
 			prepareSystemPrompt: async () => undefined,
 			issueRunToken: (id, ttl, toolId) => identity.issue(id, ttl, toolId),
 			getRunReceipts: (token) => identity.getReceipts(token),
+			hasRunReceiptOverflow: (token) => identity.hasReceiptOverflowed(token),
 			revokeRunToken: (token) => identity.revoke(token),
 			cliScriptPath: () => '/cli.js',
 			audit: vi.fn(),
@@ -60,35 +68,55 @@ describe('plugin headless agent runner', () => {
 			'sh.maestro.relay/send'
 		);
 		expect(claimedOnly.toolReceipts).toEqual([]);
+		const overflow = await run(
+			'agent-a',
+			'overflow',
+			undefined,
+			undefined,
+			'user',
+			undefined,
+			'sh.maestro.relay/send'
+		);
+		expect(overflow).toMatchObject({
+			success: false,
+			response: null,
+			error: 'Plugin tool receipt limit exceeded; inspect recorded receipts before retrying',
+		});
+		expect(overflow.toolReceipts).toHaveLength(16);
+		expect(overflow.toolReceipts?.[0].messageIds).toEqual(['100']);
+		expect(overflow.toolReceipts?.[15].messageIds).toEqual(['115']);
 	});
 
-	it('refuses a receipt request for an agent without verified MCP injection', async () => {
-		const spawn = vi.fn();
-		const run = createPluginHeadlessAgentRunner({
-			getAgent: () => ({ ...agent, toolType: 'opencode' }),
-			detectAgent: async () => ({ available: true }),
-			hasPluginTools: () => true,
-			spawn,
-			prepareSystemPrompt: async () => undefined,
-			issueRunToken: vi.fn(),
-			getRunReceipts: () => [],
-			revokeRunToken: vi.fn(),
-			cliScriptPath: () => '/cli.js',
-			audit: vi.fn(),
-		});
-		expect(
-			await run(
-				'agent-a',
-				'report',
-				undefined,
-				undefined,
-				'user',
-				undefined,
-				'sh.maestro.relay/send'
-			)
-		).toMatchObject({ success: false, error: 'Authenticated plugin tool receipt unavailable' });
-		expect(spawn).not.toHaveBeenCalled();
-	});
+	it.each(['opencode', 'codex'] as const)(
+		'refuses a receipt request for %s without verified injection or an overflow guard',
+		async (toolType) => {
+			const spawn = vi.fn();
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => ({ ...agent, toolType }),
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				getRunReceipts: () => [],
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			expect(
+				await run(
+					'agent-a',
+					'report',
+					undefined,
+					undefined,
+					'user',
+					undefined,
+					'sh.maestro.relay/send'
+				)
+			).toMatchObject({ success: false, error: 'Authenticated plugin tool receipt unavailable' });
+			expect(spawn).not.toHaveBeenCalled();
+		}
+	);
 
 	it('keeps Relay as host attribution while marking its provider process unattended', async () => {
 		const spawn = vi.fn(async () => ({
@@ -208,6 +236,7 @@ describe('plugin headless agent runner', () => {
 			prepareSystemPrompt: async () => undefined,
 			issueRunToken,
 			getRunReceipts: (token) => identity.getReceipts(token),
+			hasRunReceiptOverflow: (token) => identity.hasReceiptOverflowed(token),
 			revokeRunToken: (token) => identity.revoke(token),
 			cliScriptPath: () => '/cli.js',
 			audit: vi.fn(),

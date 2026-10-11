@@ -71,8 +71,14 @@ describe('PluginPanelFrame theme transfer', () => {
 		);
 		expect(send).not.toHaveBeenCalled();
 		webview.dispatchEvent(new Event('dom-ready'));
-		expect(send).toHaveBeenCalledTimes(1);
-		expect(send.mock.calls[0][1].colorScheme).toBe('light');
+		expect(send).not.toHaveBeenCalled();
+		const newWebview = container.querySelector('webview')!;
+		expect(newWebview).not.toBe(webview);
+		const newSend = vi.fn();
+		Object.assign(newWebview, { send: newSend });
+		newWebview.dispatchEvent(new Event('dom-ready'));
+		expect(newSend).toHaveBeenCalledTimes(1);
+		expect(newSend.mock.calls[0][1].colorScheme).toBe('light');
 	});
 
 	it('routes bridge commands to the current plugin and removes listeners after load failure', () => {
@@ -93,13 +99,18 @@ describe('PluginPanelFrame theme transfer', () => {
 			args: [{ commandId: 'run', args: { value: 1 } }],
 		});
 		fireEvent(webview, command);
+		expect(window.maestro.plugins.invokeCommand).not.toHaveBeenCalled();
+		const newWebview = container.querySelector('webview')!;
+		expect(newWebview).not.toBe(webview);
+		Object.assign(newWebview, { send });
+		fireEvent(newWebview, command);
 		expect(window.maestro.plugins.invokeCommand).toHaveBeenCalledWith('other.tools/run', {
 			value: 1,
 		});
-		fireEvent(webview, new Event('did-fail-load'));
+		fireEvent(newWebview, new Event('did-fail-load'));
 		expect(container.querySelector('webview')).toBeNull();
-		fireEvent(webview, new Event('dom-ready'));
-		fireEvent(webview, command);
+		fireEvent(newWebview, new Event('dom-ready'));
+		fireEvent(newWebview, command);
 		expect(send).not.toHaveBeenCalled();
 		expect(window.maestro.plugins.invokeCommand).toHaveBeenCalledTimes(1);
 	});

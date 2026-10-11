@@ -205,6 +205,7 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 					</div>
 				) : (
 					<webview
+						key={`${panel.pluginId}:${panel.id}`}
 						ref={attachWebview}
 						title={panel.title}
 						partition={pluginPanelPartition(panel.pluginId)}
