@@ -549,7 +549,7 @@ export class PluginSandboxHost {
 		if (typeof msg.id !== 'number' || !isHostMethod(msg.method)) return;
 		const request = msg as unknown as HostRequest;
 
-		/** Sanitize media/service failures to public codes and bound the serialized reply before sending it. */
+		/** Sanitize media/service failures to public codes and send the matching request id; tolerate child exit. */
 		const respond = (res: Omit<HostResponse, 'id'>): void => {
 			if (request.method.startsWith('media.') && !res.ok) {
 				const code = (MEDIA_ERROR_CODES as readonly string[]).includes(res.error ?? '')
