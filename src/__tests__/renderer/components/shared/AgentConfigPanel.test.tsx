@@ -436,6 +436,24 @@ describe('AgentConfigPanel', () => {
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
 		});
+
+		it('should skip the environment variables section when hideEnvVars is set', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						hideEnvVars: true,
+						showBuiltInEnvVars: true,
+						customEnvVars: { MY_VAR: 'x' },
+					})}
+				/>
+			);
+
+			// A tabbed form mounts AgentEnvVarsSection on its Environment tab instead.
+			expect(screen.queryByText('Environment Variables (optional)')).not.toBeInTheDocument();
+			expect(screen.queryByText('MAESTRO_SESSION_RESUMED')).not.toBeInTheDocument();
+			expect(screen.queryByDisplayValue('MY_VAR')).not.toBeInTheDocument();
+			expect(screen.getByText('Custom Arguments (optional)')).toBeInTheDocument();
+		});
 	});
 
 	describe('Claude Token Source selector', () => {

@@ -8,14 +8,12 @@
  * - Detected path (read-only)
  * - Custom path input
  * - Custom arguments input
- * - Environment variables (key-value pairs)
- * - Built-in environment variables (MAESTRO_SESSION_RESUMED)
+ * - Environment variables (`AgentEnvVarsSection`, unless `hideEnvVars`)
  * - Agent-specific config options (contextWindow, model, etc.)
  */
 
 import { useState, useRef, useMemo, useEffect } from 'react';
-import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown, Eye, EyeOff } from 'lucide-react';
-import { GhostIconButton } from '../ui/GhostIconButton';
+import { RefreshCw, ChevronDown } from 'lucide-react';
 import { ToggleButtonGroup } from '../ToggleButtonGroup';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
 import {
@@ -28,20 +26,13 @@ import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/ope
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
-import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
-import { AuthPathValueInput } from './AuthPathValueInput';
-import { EnvVarKeyInput } from './EnvVarKeyInput';
-import { BLANK_ENV_VAR_KEY } from '../../../shared/envVarCatalog';
-import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
+import { AgentEnvVarsSection, type AgentEnvVarsSectionProps } from './AgentEnvVarsSection';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
 // Sentinel value for the installation chooser's "Custom" entry, used when the
 // active path was typed by hand and isn't one of the auto-detected locations.
 const CUSTOM_PATH_OPTION = '__custom__';
-
-// Counter for generating stable IDs for env vars
-let envVarIdCounter = 0;
 
 // Claude token-source selector (claude-code only). Maps the tri-state
 // ClaudeTokenMode onto the segmented control labels plus a one-line hint each.
@@ -69,16 +60,6 @@ const CODEX_TRANSPORT_LABELS: Record<CodexTransport, string> = {
 const CODEX_TRANSPORT_OPTIONS: { value: CodexTransport; label: string }[] = CODEX_TRANSPORTS.map(
 	(value) => ({ value, label: CODEX_TRANSPORT_LABELS[value] })
 );
-
-// Built-in environment variables that Maestro sets automatically
-const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
-	{
-		key: 'MAESTRO_SESSION_RESUMED',
-		description:
-			'Set to "1" when resuming an existing session. Not set for new sessions. Use this in your agent hooks to skip initialization on resumed sessions.',
-		value: '1 (when resuming)',
-	},
-];
 
 // Separate component for text input with optional model dropdown
 // This avoids the browser's native datalist styling issues
@@ -307,7 +288,18 @@ function ModelTextInput({
 	);
 }
 
-export interface AgentConfigPanelProps {
+export interface AgentConfigPanelProps extends Pick<
+	AgentEnvVarsSectionProps,
+	| 'customEnvVars'
+	| 'customEnvVarsDisabled'
+	| 'onEnvVarToggle'
+	| 'onEnvVarKeyChange'
+	| 'onEnvVarValueChange'
+	| 'onEnvVarRemove'
+	| 'onEnvVarAdd'
+	| 'onEnvVarsBlur'
+	| 'showBuiltInEnvVars'
+> {
 	theme: Theme;
 	agent: AgentConfig;
 	// Custom path
@@ -327,30 +319,13 @@ export interface AgentConfigPanelProps {
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
 	onCustomArgsBlur: () => void;
-	// Environment variables
-	customEnvVars: Record<string, string>;
 	/**
-	 * Parked env vars: same shape as `customEnvVars`, but switched off. Pass this
-	 * together with `onEnvVarToggle` to get the per-row eye button; omit both and
-	 * the panel behaves exactly as before (every row is active, no eye).
-	 *
-	 * A parked var is kept OUT of `customEnvVars` on purpose - that is what lets
-	 * every spawn path keep reading one record with no filter.
+	 * Skip the env var section. A tabbed agent form sets this and mounts
+	 * `AgentEnvVarsSection` on its own Environment tab, so the vars are not
+	 * rendered twice. The env props are still required: the panel's callers
+	 * keep one prop shape either way.
 	 */
-	customEnvVarsDisabled?: Record<string, string>;
-	/** Move a var between the active and parked records. `nextEnabled` is the state being switched TO. */
-	onEnvVarToggle?: (key: string, nextEnabled: boolean) => void;
-	/**
-	 * The trailing `enabled` argument on these four says WHICH record the row
-	 * being edited lives in, so the parent knows where to write. It is always
-	 * `true` when the toggle props are omitted, which is why the existing
-	 * two-argument handlers in non-toggling consumers keep working untouched.
-	 */
-	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string, enabled?: boolean) => void;
-	onEnvVarValueChange: (key: string, value: string, enabled?: boolean) => void;
-	onEnvVarRemove: (key: string, enabled?: boolean) => void;
-	onEnvVarAdd: () => void;
-	onEnvVarsBlur: () => void;
+	hideEnvVars?: boolean;
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
 	/**
@@ -379,8 +354,6 @@ export interface AgentConfigPanelProps {
 	refreshingAgent?: boolean;
 	// Optional: compact mode for wizard (less padding)
 	compact?: boolean;
-	// Show built-in environment variables section
-	showBuiltInEnvVars?: boolean;
 	// SSH remote execution enabled for this session
 	isSshEnabled?: boolean;
 	/**
@@ -437,6 +410,7 @@ export function AgentConfigPanel({
 	onEnvVarRemove,
 	onEnvVarAdd,
 	onEnvVarsBlur,
+	hideEnvVars = false,
 	agentConfig,
 	configOptionNotes,
 	onConfigChange,
@@ -488,7 +462,6 @@ export function AgentConfigPanel({
 		refresh: refreshRemoteMaestroP,
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
-	const knownAuthDirs = useKnownAuthDirs(!isSshEnabled);
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -517,94 +490,6 @@ export function AgentConfigPanel({
 			? 'api'
 			: claudeTokenMode;
 	const showMaestroPDetails = displayClaudeTokenMode !== 'api';
-	// Track which built-in env var tooltip is showing
-	const knownEnvVarKeys = useKnownEnvVarKeys();
-	// Set when the user presses "Add Variable", cleared once the new unnamed row
-	// has taken the caret. Not derived from "is this row blank": a blank row can
-	// also arrive from disk, and that one must not steal focus on modal open.
-	const [focusNewEnvVarRow, setFocusNewEnvVarRow] = useState(false);
-	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
-
-	// Track stable IDs for env var entries to prevent focus loss when keys change
-	// Only key edits are deferred to blur - value edits update immediately
-	const envVarIdsRef = useRef<Map<string, number>>(new Map());
-	const pendingKeyEditsRef = useRef<Map<string, string>>(new Map());
-	// Force re-render when pending key edits change
-	const [, forceUpdate] = useState(0);
-
-	// Get or create stable ID for an env var key
-	const getEnvVarId = (key: string): number => {
-		if (!envVarIdsRef.current.has(key)) {
-			envVarIdsRef.current.set(key, ++envVarIdCounter);
-		}
-		return envVarIdsRef.current.get(key)!;
-	};
-
-	// Clean up stale IDs when env vars change (only if not currently being edited).
-	// Parked keys count as current: a toggle only moves a var between the two
-	// records, and dropping its ID there would remount the row mid-click.
-	useMemo(() => {
-		const currentKeys = new Set([
-			...Object.keys(customEnvVars),
-			...Object.keys(customEnvVarsDisabled ?? {}),
-		]);
-		for (const key of envVarIdsRef.current.keys()) {
-			if (!currentKeys.has(key) && !pendingKeyEditsRef.current.has(key)) {
-				envVarIdsRef.current.delete(key);
-				pendingKeyEditsRef.current.delete(key);
-			}
-		}
-	}, [customEnvVars, customEnvVarsDisabled]);
-
-	// Get current display value for env var key (pending edit or actual)
-	const getKeyDisplayValue = (originalKey: string): string => {
-		return pendingKeyEditsRef.current.get(originalKey) ?? originalKey;
-	};
-
-	// Handle key input change (local only, deferred to blur)
-	const handleKeyInputChange = (originalKey: string, newKey: string) => {
-		pendingKeyEditsRef.current.set(originalKey, newKey);
-		forceUpdate((n) => n + 1);
-	};
-
-	// Commit pending key edit on blur
-	const handleKeyBlur = (originalKey: string, currentValue: string, enabled: boolean) => {
-		const pendingKey = pendingKeyEditsRef.current.get(originalKey);
-		pendingKeyEditsRef.current.delete(originalKey);
-
-		// Update the ID map if key changed
-		if (pendingKey !== undefined && pendingKey !== originalKey) {
-			const id = envVarIdsRef.current.get(originalKey);
-			if (id !== undefined) {
-				envVarIdsRef.current.delete(originalKey);
-				envVarIdsRef.current.set(pendingKey, id);
-			}
-			onEnvVarKeyChange(originalKey, pendingKey, currentValue, enabled);
-		}
-		onEnvVarsBlur();
-	};
-
-	// The toggle needs both halves to round-trip a parked var; with only one,
-	// switching a row off would drop its value on the floor.
-	const canToggleEnvVars = Boolean(customEnvVarsDisabled && onEnvVarToggle);
-
-	// One list over both records. Sorting by the stable ID (assigned in first-seen
-	// order and preserved across a toggle) is what keeps a row where it is when
-	// the user switches it off, instead of letting it jump to the parked group.
-	const envVarRows = [
-		...Object.entries(customEnvVars).map(([key, value]) => ({ key, value, enabled: true })),
-		...Object.entries(customEnvVarsDisabled ?? {}).map(([key, value]) => ({
-			key,
-			value,
-			enabled: false,
-		})),
-	]
-		// Resolve every ID up front: `sort` visits pairs in an engine-defined order,
-		// so minting IDs inside the comparator would number the rows by comparison
-		// order rather than by list order.
-		.map((row) => ({ ...row, id: getEnvVarId(row.key) }))
-		.sort((a, b) => a.id - b.id);
-	const envVarKeys = envVarRows.map((row) => row.key);
 
 	// Multi-install chooser state. `activePath` is whatever the Path field
 	// currently resolves to; it may be a hand-typed wrapper (or a tilde path
@@ -911,160 +796,24 @@ export function AgentConfigPanel({
 				</p>
 			</div>
 
-			{/* Custom environment variables input */}
-			<div
-				className={`${padding} rounded border`}
-				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-			>
-				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
-					Environment Variables (optional)
-				</label>
-				<div className="space-y-2">
-					{/* Built-in env vars (read-only, shown when showBuiltInEnvVars is true) */}
-					{showBuiltInEnvVars &&
-						BUILT_IN_ENV_VARS.map((envVar) => (
-							<div
-								key={envVar.key}
-								className="flex gap-2 items-center rounded px-2 py-1.5"
-								style={{ backgroundColor: theme.colors.bgActivity }}
-							>
-								<div
-									className="p-2 rounded text-xs font-mono flex items-center gap-1 whitespace-nowrap"
-									style={{ color: theme.colors.textDim }}
-								>
-									<span>{envVar.key}</span>
-									<div className="relative inline-block">
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												setShowingTooltip(showingTooltip === envVar.key ? null : envVar.key);
-											}}
-											onBlur={() => setTimeout(() => setShowingTooltip(null), 150)}
-											className="p-0.5 rounded hover:bg-white/10 transition-colors"
-											title="What is this?"
-											style={{ color: theme.colors.accent }}
-										>
-											<HelpCircle className="w-3 h-3" />
-										</button>
-										{/* Tooltip */}
-										{showingTooltip === envVar.key && (
-											<div
-												className="absolute left-1/2 bottom-full mb-1 z-50 p-3 rounded shadow-lg text-xs whitespace-normal leading-relaxed"
-												style={{
-													backgroundColor: theme.colors.bgMain,
-													border: `1px solid ${theme.colors.border}`,
-													color: theme.colors.textMain,
-													width: '320px',
-													transform: 'translateX(-50%)',
-												}}
-											>
-												{envVar.description}
-											</div>
-										)}
-									</div>
-								</div>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
-									=
-								</span>
-								<div
-									className="p-2 rounded text-xs font-mono italic whitespace-nowrap"
-									style={{ color: theme.colors.textDim }}
-								>
-									{envVar.value}
-								</div>
-							</div>
-						))}
-					{/* User-defined env vars */}
-					{envVarRows.map(({ key, value, enabled, id }) => {
-						const off = !enabled;
-						return (
-							<div key={`env-var-${id}`} className="flex gap-2 items-center">
-								{canToggleEnvVars && (
-									<GhostIconButton
-										onClick={(e) => {
-											e.stopPropagation();
-											onEnvVarToggle?.(key, off);
-										}}
-										padding="p-2"
-										title={
-											off
-												? `Enable ${key || 'variable'} (currently not passed to this agent)`
-												: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
-										}
-										color={off ? theme.colors.textDim : theme.colors.accent}
-									>
-										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-									</GhostIconButton>
-								)}
-								<EnvVarKeyInput
-									theme={theme}
-									value={getKeyDisplayValue(key)}
-									onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
-									onBlur={() => handleKeyBlur(key, value, enabled)}
-									toolType={agent.id}
-									knownEnvVarKeys={knownEnvVarKeys}
-									usedKeys={envVarKeys}
-									autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
-									onAutoFocused={() => setFocusNewEnvVarRow(false)}
-									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
-									=
-								</span>
-								<AuthPathValueInput
-									envVarKey={key}
-									value={value}
-									knownAuthDirs={knownAuthDirs}
-									onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue, enabled)}
-									onBlur={onEnvVarsBlur}
-									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									containerClassName="flex-[2] min-w-0"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<GhostIconButton
-									onClick={(e) => {
-										e.stopPropagation();
-										onEnvVarRemove(key, enabled);
-									}}
-									padding="p-2"
-									title="Remove variable"
-									color={theme.colors.textDim}
-								>
-									<Trash2 className="w-3 h-3" />
-								</GhostIconButton>
-							</div>
-						);
-					})}
-					{/* Add new env var button */}
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							setFocusNewEnvVarRow(true);
-							onEnvVarAdd();
-						}}
-						className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
-						<Plus className="w-3 h-3" />
-						Add Variable
-					</button>
-				</div>
-				<p className="text-xs opacity-50 mt-2">
-					Agent-specific environment variables (overrides global environment variables from
-					Settings). These are passed to all calls to this agent.
-				</p>
-			</div>
+			{/* Custom environment variables input. Hidden when a tabbed form moves it to its own tab. */}
+			{!hideEnvVars && (
+				<AgentEnvVarsSection
+					theme={theme}
+					toolType={agent.id}
+					customEnvVars={customEnvVars}
+					customEnvVarsDisabled={customEnvVarsDisabled}
+					onEnvVarToggle={onEnvVarToggle}
+					onEnvVarKeyChange={onEnvVarKeyChange}
+					onEnvVarValueChange={onEnvVarValueChange}
+					onEnvVarRemove={onEnvVarRemove}
+					onEnvVarAdd={onEnvVarAdd}
+					onEnvVarsBlur={onEnvVarsBlur}
+					showBuiltInEnvVars={showBuiltInEnvVars}
+					compact={compact}
+					isSshEnabled={isSshEnabled}
+				/>
+			)}
 
 			{/* Agent-specific configuration options (contextWindow, model, etc.) */}
 			{agent.configOptions &&
