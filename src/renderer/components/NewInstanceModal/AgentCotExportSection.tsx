@@ -208,6 +208,14 @@ function CotExportControls({
 				recorded: a turn started from the command line, an answer to another agent's question, and
 				anything a program the agent starts does on its own.
 			</p>
+			<p
+				className="text-xs mb-2"
+				style={{ color: colors.textDim }}
+				data-testid="cot-export-reasoning"
+			>
+				Reasoning is recorded as far as the provider shows it. When a provider returns it encrypted,
+				the log holds proof that a reasoning block existed (its size and hash), not its text.
+			</p>
 
 			{status?.unencrypted && (
 				<div

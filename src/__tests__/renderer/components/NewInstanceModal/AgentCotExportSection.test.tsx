@@ -304,6 +304,14 @@ describe('AgentCotExportSection', () => {
 			);
 		});
 
+		it('says that reasoning a provider returns encrypted is recorded as proof, not as text', async () => {
+			await renderLoaded(createApi());
+
+			expect(screen.getByTestId('cot-export-reasoning')).toHaveTextContent(
+				'Reasoning is recorded as far as the provider shows it. When a provider returns it encrypted, the log holds proof that a reasoning block existed (its size and hash), not its text.'
+			);
+		});
+
 		const UNSUPPORTED = /This provider does not expose its reasoning\./;
 		const INTERACTIVE = /Reasoning may be missing while this agent runs through the interactive/;
 
