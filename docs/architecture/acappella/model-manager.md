@@ -13,8 +13,9 @@ related:
 
 # A Cappella Model Manager
 
-A Cappella is the first Maestro feature that ships a binary payload the user has to fetch. This
-document describes how that stays honest: what is downloaded, when, from where, and how the app
+A Cappella is the first Maestro feature that ships a binary payload the user has to fetch. The
+model and runtime stack itself is the core Local Models service, and voice is one consumer of it;
+see [[local-models]] for the core module layout, storage paths, and migration. This document describes how that stays honest: what is downloaded, when, from where, and how the app
 proves the bytes are what it promised.
 
 ## The four rules
@@ -149,5 +150,6 @@ root only once it is empty. Nothing is re-downloaded and no bytes are deleted.
 
 ## Related
 
+- [[local-models]] - the core service that owns the catalog, stores, runtimes, and `localModels:*` IPC.
 - [[system-overview]] - the provider tiers and the session pipeline these models plug into.
 - [[voice-session-protocol]] - every event, payload, and direction.
