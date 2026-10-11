@@ -7,9 +7,10 @@
  * shape instead: a fuzzy filter over the list, arrow keys to move, Enter to
  * pick, Escape to back out without picking.
  *
- * It renders INSIDE the window, above the composer, because the window is an
- * OS window and nothing can be drawn outside it; QuickChatRoot grows the
- * window while the picker is open so a composer-only window has room for it.
+ * It renders INSIDE the window, just below the header that holds its trigger,
+ * because the window is an OS window and nothing can be drawn outside it;
+ * QuickChatRoot grows the window while the picker is open so a composer-only
+ * window has room for it.
  *
  * With no query the list keeps the order the engine sends (the Left Bar's
  * order) so it reads as the agents the user already knows. With a query it

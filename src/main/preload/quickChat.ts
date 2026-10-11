@@ -35,6 +35,20 @@ export function createQuickChatApi() {
 		/** Grow the window to show the conversation, or shrink it to the composer. */
 		setLayout: (layout: QuickChatLayout): void => ipcRenderer.send('quickChat:setLayout', layout),
 
+		/** Whether the window floats above other windows. */
+		getPinned: (): Promise<boolean> => ipcRenderer.invoke('quickChat:getPinned'),
+
+		/** Float the window above other windows, or let it fall behind them. Resolves with the new state. */
+		setPinned: (pinned: boolean): Promise<boolean> =>
+			ipcRenderer.invoke('quickChat:setPinned', pinned),
+
+		/** Fired when the pin changes from outside the window (`maestro-cli quick-chat pin`). */
+		onPinned: (callback: (pinned: boolean) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, pinned: boolean) => callback(pinned);
+			ipcRenderer.on('quickChat:pinned', handler);
+			return () => ipcRenderer.removeListener('quickChat:pinned', handler);
+		},
+
 		onSnapshot: (callback: (snapshot: QuickChatSnapshot) => void): (() => void) => {
 			const handler = (_event: Electron.IpcRendererEvent, snapshot: QuickChatSnapshot) =>
 				callback(snapshot);

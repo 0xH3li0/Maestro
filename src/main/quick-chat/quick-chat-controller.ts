@@ -31,8 +31,10 @@ import {
 	getQuickChatWindow,
 	getQuickChatWindowBounds,
 	hideQuickChatWindow,
+	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
 	setQuickChatLayout,
+	setQuickChatWindowPinned,
 	setQuickChatWindowBounds,
 	showQuickChatWindow,
 	toggleQuickChatWindow,
@@ -64,6 +66,8 @@ export interface QuickChatController {
 	windowAction(action: QuickChatWindowAction): QuickChatStatus;
 	/** Move or resize the window as a drag would (validated by the caller). */
 	setBounds(request: QuickChatBoundsRequest): QuickChatStatus;
+	/** Float the window above other windows, or let it fall behind them. */
+	setPinned(pinned: boolean): QuickChatStatus;
 	getStatus(): QuickChatStatus;
 }
 
@@ -99,6 +103,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		hotkey: readSettings().hotkey,
 		hotkeyRegistered,
 		bounds: getQuickChatWindowBounds(),
+		pinned: isQuickChatWindowPinned(windowDeps),
 		snapshot,
 	});
 
@@ -149,6 +154,11 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		return getStatus();
 	};
 
+	const setPinned = (pinned: boolean): QuickChatStatus => {
+		setQuickChatWindowPinned(pinned, windowDeps);
+		return getStatus();
+	};
+
 	const syncHotkey = () => {
 		const keys = isEnabled() ? readSettings().hotkey : [];
 		hotkeyRegistered = setNamedGlobalHotkey(HOTKEY_ID, keys, () => windowAction('toggle'));
@@ -168,6 +178,11 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 			windowAction(action)
 		);
 		ipcMain.handle('quickChat:getSnapshot', () => snapshot);
+		ipcMain.handle('quickChat:getPinned', () => isQuickChatWindowPinned(windowDeps));
+		ipcMain.handle('quickChat:setPinned', (_event, pinned: boolean) => {
+			setPinned(pinned === true);
+			return isQuickChatWindowPinned(windowDeps);
+		});
 		ipcMain.on('quickChat:setLayout', (event, next: QuickChatLayout) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
 			setQuickChatLayout(next === 'expanded' ? 'expanded' : 'compact');
@@ -192,6 +207,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		runCommand,
 		windowAction,
 		setBounds,
+		setPinned,
 		getStatus,
 	};
 	activeController = controller;

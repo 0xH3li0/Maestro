@@ -2477,9 +2477,13 @@ quickChatCmd
 	.command('keep [state]')
 	.description('Keep the current chat as a visible tab on its agent ("off" makes it ephemeral)')
 	.option('--json', 'Output as JSON (for scripting)')
-	.action((state: string | undefined, options) =>
-		quickChat('keep', { persistent: state !== 'off' }, options)
-	);
+	.action((state: string | undefined, options) => quickChat('keep', { state }, options));
+
+quickChatCmd
+	.command('pin [state]')
+	.description('Float the window above other windows ("off" lets it fall behind them)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
 
 quickChatCmd
 	.command('agent <agent-id>')

@@ -5,6 +5,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { parseCliBool } from '../utils/parse';
 import {
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
@@ -35,6 +36,7 @@ export type QuickChatAction =
 	| 'send'
 	| 'new'
 	| 'keep'
+	| 'pin'
 	| 'agent'
 	| 'reveal'
 	| 'stop'
@@ -61,6 +63,7 @@ function printStatus(status: QuickChatStatus): void {
 		const { x, y, width, height } = status.bounds;
 		console.log(`Window: ${width}x${height} at ${x},${y}`);
 	}
+	console.log(`Pinned: ${status.pinned ? 'yes, floats above other windows' : 'no'}`);
 	console.log(
 		`Agent: ${snapshot.agentName ?? 'none'}${snapshot.agentId ? ` (${snapshot.agentId})` : ''}`
 	);
@@ -75,7 +78,7 @@ function printStatus(status: QuickChatStatus): void {
 
 export async function quickChat(
 	action: QuickChatAction,
-	args: { text?: string; persistent?: boolean; agent?: string },
+	args: { text?: string; state?: string; agent?: string },
 	options: QuickChatOptions
 ): Promise<void> {
 	const message: Record<string, unknown> = { type: 'quick_chat', action };
@@ -86,7 +89,20 @@ export async function quickChat(
 		}
 		message.text = args.text;
 	}
-	if (action === 'keep') message.persistent = args.persistent !== false;
+	if (action === 'keep' || action === 'pin') {
+		// A bare `pin` / `keep` means on. Anything else must be a real on/off
+		// word: a typo such as `pin of` must not silently pin.
+		let on = true;
+		if (args.state !== undefined) {
+			try {
+				on = parseCliBool(args.state, action);
+			} catch (error) {
+				fail(error instanceof Error ? error.message : String(error), options);
+				return;
+			}
+		}
+		message[action === 'keep' ? 'persistent' : 'pinned'] = on;
+	}
 	if (action === 'bounds') {
 		const request: QuickChatBoundsRequest = {};
 		for (const key of ['x', 'y', 'width', 'height'] as const) {
@@ -124,8 +140,9 @@ export async function quickChat(
 			fail(result.error || `quick-chat ${action} failed`, options);
 			return;
 		}
-		if ((action === 'status' || action === 'bounds') && result.status) printStatus(result.status);
-		else console.log(`Quick Chat: ${action} done`);
+		if ((action === 'status' || action === 'bounds' || action === 'pin') && result.status) {
+			printStatus(result.status);
+		} else console.log(`Quick Chat: ${action} done`);
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options);
 	}
