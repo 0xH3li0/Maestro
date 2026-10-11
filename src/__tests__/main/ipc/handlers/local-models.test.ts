@@ -26,6 +26,10 @@
  *     `maestro-cli models index` prints, and its progress is broadcast once.
  *   - **`search` hands its request to the one search entry** `maestro-cli
  *     search` also reaches, and returns the verdict untouched.
+ *   - **A dictation belongs to the window that started it.** The owner is the
+ *     calling window, a client with no window (the web bridge) is refused
+ *     before any microphone opens, an interruption reaches the owner alone,
+ *     and a window that goes away or reloads takes its recording with it.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -148,8 +152,29 @@ vi.mock('../../../../main/local-models/work-search', () => ({
 	searchPastWorkRequest: vi.fn(async () => ({ status: 'off' })),
 }));
 
+const dictation = vi.hoisted(() => {
+	const listeners = new Set<(ownerId: string, interruption: unknown) => void>();
+	return {
+		listeners,
+		startDictation: vi.fn(async (_ownerId: string) => ({ started: true })),
+		stopDictation: vi.fn(async (_ownerId: string) => ({
+			status: 'ok',
+			text: 'Ship it.',
+			audioMs: 900,
+		})),
+		cancelDictation: vi.fn(async (_ownerId: string) => {}),
+		onDictationInterrupted: vi.fn((listener: (ownerId: string, interruption: unknown) => void) => {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		}),
+	};
+});
+
+vi.mock('../../../../main/local-models/dictation', () => dictation);
+
 import {
 	registerLocalModelsHandlers,
+	DICTATION_INTERRUPTED_CHANNEL,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
 	LOCAL_RUNTIME_PROGRESS_CHANNEL,
 	SEMANTIC_INDEX_PROGRESS_CHANNEL,
@@ -434,5 +459,112 @@ describe('semantic index channels', () => {
 
 		for (const listener of semanticIndex.listeners) listener(semanticIndex.progress);
 		expect(broadcasts).toHaveLength(1);
+	});
+});
+
+describe('dictation channels', () => {
+	/** A window's webContents: an id, a send, and the two lifecycle events. */
+	function fakeWindow(id: number) {
+		const handlers = new Map<string, Array<() => void>>();
+		const listen = (event: string, handler: () => void) => {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		};
+		return {
+			id,
+			send: vi.fn(),
+			isDestroyed: vi.fn(() => false),
+			on: vi.fn(listen),
+			once: vi.fn(listen),
+			emit: (event: string) => {
+				for (const handler of handlers.get(event) ?? []) handler();
+			},
+		};
+	}
+
+	it('starts, stops, and cancels for the calling window', async () => {
+		const sender = fakeWindow(41);
+
+		await expect(handlerFor('localModels:dictation:start')({ sender })).resolves.toEqual({
+			started: true,
+		});
+		await expect(handlerFor('localModels:dictation:stop')({ sender })).resolves.toMatchObject({
+			status: 'ok',
+			text: 'Ship it.',
+		});
+		await handlerFor('localModels:dictation:cancel')({ sender });
+
+		expect(dictation.startDictation).toHaveBeenCalledWith('window:41');
+		expect(dictation.stopDictation).toHaveBeenCalledWith('window:41');
+		expect(dictation.cancelDictation).toHaveBeenCalledWith('window:41');
+	});
+
+	it('refuses a client with no window before any microphone is opened', async () => {
+		// The web bridge invokes handlers with a placeholder event and no sender.
+		await expect(handlerFor('localModels:dictation:start')({})).resolves.toMatchObject({
+			started: false,
+			code: 'no-microphone',
+			message: expect.stringContaining('not available from a browser'),
+		});
+		await expect(handlerFor('localModels:dictation:stop')({})).resolves.toEqual({
+			status: 'idle',
+		});
+		await handlerFor('localModels:dictation:cancel')({});
+
+		expect(dictation.startDictation).not.toHaveBeenCalled();
+		expect(dictation.stopDictation).not.toHaveBeenCalled();
+		expect(dictation.cancelDictation).not.toHaveBeenCalled();
+	});
+
+	it('tells only the owning window that its recording ended, and never broadcasts it', async () => {
+		const owner = fakeWindow(51);
+		const other = fakeWindow(52);
+		await handlerFor('localModels:dictation:start')({ sender: owner });
+		await handlerFor('localModels:dictation:stop')({ sender: other });
+
+		const interruption = { code: 'device-lost', message: 'The microphone stopped.' };
+		for (const listener of dictation.listeners) listener('window:51', interruption);
+
+		expect(owner.send).toHaveBeenCalledWith(DICTATION_INTERRUPTED_CHANNEL, interruption);
+		expect(other.send).not.toHaveBeenCalled();
+		expect(broadcasts).toEqual([]);
+	});
+
+	it('does not send to a window that is already gone', async () => {
+		const owner = fakeWindow(61);
+		await handlerFor('localModels:dictation:start')({ sender: owner });
+		owner.isDestroyed.mockReturnValue(true);
+
+		for (const listener of dictation.listeners) {
+			listener('window:61', { code: 'max-duration', message: 'Stopped.' });
+		}
+		expect(owner.send).not.toHaveBeenCalled();
+	});
+
+	it('cancels a recording whose window reloads or is destroyed', async () => {
+		const sender = fakeWindow(71);
+		await handlerFor('localModels:dictation:start')({ sender });
+		expect(dictation.cancelDictation).not.toHaveBeenCalled();
+
+		sender.emit('did-navigate');
+		expect(dictation.cancelDictation).toHaveBeenCalledWith('window:71');
+
+		sender.emit('destroyed');
+		expect(dictation.cancelDictation).toHaveBeenCalledTimes(2);
+	});
+
+	it('watches a window once however many times it dictates', async () => {
+		const sender = fakeWindow(81);
+		await handlerFor('localModels:dictation:start')({ sender });
+		await handlerFor('localModels:dictation:stop')({ sender });
+		await handlerFor('localModels:dictation:start')({ sender });
+
+		expect(sender.on).toHaveBeenCalledTimes(1);
+		expect(sender.once).toHaveBeenCalledTimes(1);
+	});
+
+	it('listens for interruptions once however many times the handlers are registered', () => {
+		registerLocalModelsHandlers({ safeSend: safeSend as never });
+		registerLocalModelsHandlers({ safeSend: safeSend as never });
+		expect(dictation.listeners.size).toBe(1);
 	});
 });

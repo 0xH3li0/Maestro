@@ -101,6 +101,9 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `onnx-encoder.ts`              | `OnnxEncoderPool`: one idle-unloading ONNX session per encoder model; `encoderFeeds()` by input name    |
 | `embeddings.ts`                | `embedTexts()` for a local model or an endpoint; pooling, prefixes, L2 normalization, batching          |
 | `classifier.ts`                | `classifyText()` on a local classifier; overlapping windows, max positive score across them             |
+| `stt/`                         | Speech-to-text engines (Parakeet, Whisper), the model-to-engine table, `sanitizeTranscript()`           |
+| `speech-to-text.ts`            | `SpeechToTextPool` (one leased engine per model); `transcribeSpeech()` for a model or endpoint          |
+| `dictation.ts`                 | `transcribeClip()`; `startDictation()` / `stopDictation()` over a registered microphone (below)         |
 | `vectors.ts`                   | `l2Normalize()`, `dotProduct()`: import-free vector math shared by the service and the store            |
 | `embedding-store.ts`           | `EmbeddingStore` over `userData/embeddings.db`: upsert, delete, in-memory cosine search (below)         |
 | `text-chunker.ts`              | `chunkText()`: token-counted windows with overlap, ending at sentence ends, bounded per text            |
@@ -110,7 +113,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `semantic-index-startup.ts`    | `startSemanticIndex()`: the indexer over the app's real stores, and its two settings listeners          |
 | `work-search.ts`               | `searchPastWork()`: the one search (by meaning or by text) behind every search surface (below)          |
 | `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                              |
-| `task-router.ts`               | `runLocalTask()` / `runEmbeddingTask()` / `runClassifierTask()`: assignment decides the source; stats   |
+| `task-router.ts`               | `runLocalTask()` and its embedding, classifier, and speech-to-text twins: assignment picks the source   |
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)             |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`          |
 | `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
@@ -125,7 +128,8 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
   drafts), `localModels:semanticIndex:status` (the indexer's progress) and
   `localModels:endpoints:*`, broadcasting on `localModels:progress`,
   `localModels:runtimes:progress` and `localModels:semanticIndex:progress`. It is **not** gated by the A Cappella
-  Encore flag. It is wired in `setupIpcHandlers()`.
+  Encore flag. It is wired in `setupIpcHandlers()`. `localModels:dictation:{start,stop,cancel}`
+  are the one set scoped to a WINDOW: see [Speech-to-text and dictation](#speech-to-text-and-dictation).
 - Preload: `window.maestro.localModels` (with a `.runtimes` sub-namespace), in
   `src/main/preload/localModels.ts`, typed as `LocalModelsApi`.
 - Renderer: `useLocalModels()` and `useLocalRuntimes()` in `src/renderer/hooks/localModels/` own the
@@ -168,8 +172,14 @@ A Cappella keeps everything that is about voice and imports everything that is a
   core model id.
 - `src/main/acappella/models/capability-gate.ts`: voice readiness, reading the core model store.
 - `src/main/acappella/providers/local/runtime.ts`: `loadVoiceRuntime()`, a thin adapter that maps
-  `LocalModelError` to `VoiceProviderError`. Parakeet, Whisper, Kokoro, `llama-brain.ts`, and the
-  openWakeWord detector load runtimes through it and read model files from the core store.
+  `LocalModelError` to `VoiceProviderError`. Kokoro, `llama-brain.ts`, and the openWakeWord detector
+  load runtimes through it and read model files from the core store.
+- The speech-to-text engines are the core's (`src/main/local-models/stt/`). The Parakeet and Whisper
+  providers keep only the live streaming policy (`chunked-stt.ts`) and LEASE their model from the
+  shared `SpeechToTextPool`, as does the transcription wake word, so one loaded copy serves a voice
+  session, the wake word, and a dictated clip.
+- `src/main/acappella/audio/clip-capture.ts`: the audio host's microphone in a mode with no voice
+  session behind it, registered with the core as dictation's microphone.
 - `llama-brain.ts` does not own a model. It runs each turn on the shared `LocalTextEngine`
   (`text-gen.ts`), so voice and housekeeping tasks reuse one resident model; its `unload()` frees
   the model only when Qwen3 is the resident one.
@@ -581,7 +591,9 @@ same assignment, classification, and recording path (`ok` carries `vectors`), an
 `runClassifierTask(taskId, { text })` runs `needs: 'classifier'` tasks (`injection-screen`,
 `secret-screen`) through `classifyText` (`ok` carries the classification). Embedding and classifier
 tasks are in-process only for now: their consumers (semantic search, the Cue screen) live in the
-main process, so there is no IPC or CLI verb for them yet.
+main process, so there is no IPC or CLI verb for them yet. `runSpeechToTextTask(taskId, { audio,
+sampleRate })` runs `needs: 'stt'` tasks (`dictation`) through `transcribeSpeech` on the same path
+(`ok` carries `text` and `audioMs`).
 
 Every call that reaches a model is recorded in the stats database as a `local_model_runs` row (stats
 migration v15: task, source type, model, endpoint id, start, sleep-aware duration, `ok` / `error` /
@@ -613,8 +625,11 @@ Runtime is checked before the model for the same reason the voice gate does: a r
 load is not fixed by a download. Local checks never re-hash and never dlopen; only an endpoint
 assignment reaches the network (one listing inside the 5s list budget, shared by every task on that
 endpoint when all tasks are resolved together). Ollama's bare `name` matches its `name:latest` tag.
-An endpoint can only serve `text-gen` and `embedding` (`ENDPOINT_SERVED_NEEDS` in `tasks.ts`);
+An endpoint can serve `text-gen`, `embedding`, and `stt` (`ENDPOINT_SERVED_NEEDS` in `tasks.ts`);
 `localModelAssignmentProblem()` refuses an endpoint for any other need at save time too.
+Speech-to-text is the one need not every server has a route for, and no list of which servers do
+is shipped: readiness checks that the endpoint lists the assigned model, and a call to a server
+with no `/v1/audio/transcriptions` is reported as exactly that.
 
 Transports: `localModels:taskReadiness(taskId?)` (IPC, `window.maestro.localModels.taskReadiness`)
 and `maestro-cli models status [task-id]` (WS bridge message `local_models_task_readiness`) both call
@@ -958,6 +973,120 @@ the catalog later needs no code change.
 
 **Logging.** A finding is logged by kind and count only. A preview is masked, but a log is not the
 place for even the tail of a credential.
+
+## Speech-to-text and dictation
+
+The local speech models (Parakeet TDT, Whisper Base) are core models with three consumers: a voice
+session's recogniser, the transcription wake word, and a dictated clip.
+
+```mermaid
+flowchart LR
+	subgraph core["src/main/local-models/"]
+		pool["speech-to-text.ts<br/>SpeechToTextPool (leases)"]
+		engines["stt/engines.ts<br/>model id -> engine"]
+		svc["transcribeSpeech(source, audio, rate)"]
+		router["task-router.ts<br/>runSpeechToTextTask('dictation')"]
+		dict["dictation.ts<br/>transcribeClip / start / stop / cancel"]
+		ep["endpoint-client.ts<br/>/v1/audio/transcriptions"]
+	end
+	subgraph voice["src/main/acappella/"]
+		chunked["providers/local/chunked-stt.ts<br/>live streaming policy"]
+		wake["wake/transcription-wake.ts"]
+		clip["audio/clip-capture.ts<br/>microphone, no session"]
+		host["audio host window<br/>(the one capture path)"]
+	end
+	chunked -- lease --> pool
+	wake -- lease --> pool
+	svc -- lease --> pool
+	pool --> engines
+	svc --> ep
+	router --> svc
+	dict --> router
+	clip -- registerDictationMicrophone --> dict
+	host -- 20 ms frames --> clip
+```
+
+### The shared pool: `SpeechToTextPool`
+
+`getSpeechToTextPool().acquire(modelId, consumerId)` returns a LEASE: `transcribe(audio)`,
+`maxSamples`, `release()`. Rules the pool holds for every consumer:
+
+- **One engine per model.** Every lease on a model shares its ONNX sessions. Before the pool, an
+  armed transcription wake word and a voice session each loaded the 650 MB Parakeet encoder.
+- **One decode at a time per model**, across leases. Two greedy loops on one decoder session hand
+  each other's recurrent state back, and ONNX Runtime reports that as a reshape failure. A decode
+  asked for before `release()` still runs; the release queues behind it.
+- **Resident while leased, freed when idle.** A model unloads `DEFAULT_STT_IDLE_UNLOAD_MS` (5
+  minutes) after its last lease is released, so a run of dictated clips does not reload it per clip.
+  This also means a voice session's model now outlives the session by that window.
+- **A missing piece fails as itself**: `model-unsupported`, `model-not-installed`,
+  `runtime-unavailable`, or `generation-failed` (graphs will not open), as a `LocalModelError`.
+  Voice restates it as its own provider's failure (`voiceErrorFromLocalModel`).
+
+`stt/engines.ts` is the one table binding a catalog model id to its engine, its files, and its
+pass limit; a test asserts every catalog `stt` model has a binding.
+
+### One-shot transcription: `transcribeSpeech(source, audio, sampleRate)`
+
+A whole clip of mono float audio on a source. It resamples to 16 kHz once (`resampleFloat32` in
+`src/shared/audio/pcm.ts`, which averages when downsampling so content above the new Nyquist is not
+folded into the speech band), answers a clip under `MIN_CLIP_MS` (200 ms) with an empty transcript
+WITHOUT loading a model, and runs what a recogniser invents for silence through
+`sanitizeTranscript` (`stt/transcript.ts`, shared with voice).
+
+A clip longer than one pass of a local model (60 s for Parakeet, 30 s for Whisper) is cut by
+`splitSpeechWindows()` and EVERY window is transcribed. This differs from a live session on
+purpose: a session keeps the tail of a long utterance, dictation must not lose its start. Each cut
+moves back from the limit (at most 3 s, at most a fifth of the window) to the quietest 20 ms, so a
+word is not split across two decodes.
+
+An `endpoint` source uploads the clip as a 16-bit mono WAV to `/v1/audio/transcriptions`
+(`endpointTranscribe`). A 404 there is restated as "does not offer speech-to-text".
+
+### Dictation: `transcribeClip()` and the microphone seam
+
+`transcribeClip(audio, sampleRate)` is `runSpeechToTextTask('dictation', ...)`: the clip goes
+through the Dictation task's assignment, is recorded in `local_model_runs`, and never falls back.
+
+Recording the clip is the other half. The app window has no microphone (the default session denies
+every media request; only the audio host's webContents is granted), so recording happens in main:
+
+| Call                       | Does                                                                                                  |
+| -------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `startDictation(ownerId)`  | Checks task readiness FIRST, then opens the microphone. Resolves once audio is really being captured. |
+| `stopDictation(ownerId)`   | Closes the microphone, frees the slot, then awaits `transcribeClip()`.                                |
+| `cancelDictation(ownerId)` | Discards a recording, a start still opening, and any transcript still being produced.                 |
+
+The core does not import a capture device. Whoever owns one calls `registerDictationMicrophone()`
+with a `DictationMicrophone` (`start`, `stop`, `cancel`, `onInterrupted`); with none registered a
+dictation is refused as `no-microphone`. Wire shapes (`DictationStartResult`, `DictationResult`,
+`DictationRefusalCode`) are in `src/shared/local-models/dictation.ts`.
+
+The microphone is A Cappella's audio host in a session-less mode, `ClipCapture`
+(`src/main/acappella/audio/clip-capture.ts`):
+
+- **No session, no floor.** It is given no session service. It sends `start-capture` /
+  `stop-capture` to the host and taps the frames the host already ships, like the wake word Test.
+- **Not gated on the Encore flag.** It is built and registered at startup whether or not A Cappella
+  is on. Building it opens no device.
+- **Refused while a voice session is live** (`voice-session-active`): that speech is already being
+  transcribed and dispatched. Also refused during a wake word Test, and the Test during a clip.
+- **The wake word stands down.** `HandsFreeListener` reads `isMicrophoneBorrowed()` on every `sync`
+  and disarms without closing the device, so a dictated wake phrase does not open a session.
+- **It uses the voice input device setting**: one microphone choice, not two.
+- **A recording that ends on its own keeps its audio.** A lost device or the 5 minute cap
+  (`DICTATION_MAX_CLIP_MS`) closes the microphone at once and reports a `DictationInterruption`; the
+  owner's `stop()` still returns the transcript of what was captured.
+
+Transport: `localModels:dictation:{start,stop,cancel}` (`window.maestro.localModels.dictation`). A
+dictation is owned by the window that started it (`window:<webContents id>`): only that window can
+stop it, its interruption is sent to that window alone on `localModels:dictation:interrupted`
+(never broadcast), and it is cancelled if the window is destroyed or reloads. A web-desktop client
+reaches handlers with no sender; it is refused as `no-microphone`, because the microphone is on the
+computer running Maestro and not where that person is speaking.
+
+Known gaps: there is no text box affordance yet (the next phase adds it), and no `maestro-cli` verb
+transcribes an audio file through `transcribeClip()`.
 
 ## Related
 

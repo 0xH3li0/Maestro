@@ -62,6 +62,21 @@ vi.mock('../../../../main/acappella/audio-host-window', async (importOriginal) =
 		isAcappellaAudioHostContents: vi.fn(() => audioHost.isHostContents),
 	};
 });
+/**
+ * The core dictation service is not under test here; what is, is that these
+ * handlers hand it a microphone. The registration is captured so a test can
+ * drive that microphone exactly as the service would.
+ */
+const dictation = vi.hoisted(() => ({
+	microphones: [] as unknown[],
+	unregister: vi.fn(),
+}));
+vi.mock('../../../../main/local-models/dictation', () => ({
+	registerDictationMicrophone: vi.fn((device: unknown) => {
+		dictation.microphones.push(device);
+		return dictation.unregister;
+	}),
+}));
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -101,6 +116,7 @@ import {
 	getVoiceSessionService,
 } from '../../../../main/acappella';
 import type { RosterAgent, VoiceEvent } from '../../../../shared/acappella/protocol';
+import type { DictationMicrophone } from '../../../../main/local-models/dictation';
 import type { VoiceSessionSnapshot } from '../../../../main/acappella';
 import type { StoredSession } from '../../../../main/stores/types';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -892,6 +908,112 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 		// A session with no audio host is text-in, which is exactly what the mock
 		// tier promises; it must not reach for a device that is not there.
 		expect(audioCommands()).toEqual([]);
+	});
+
+	// -- Dictation's microphone: the capture path with no session behind it ----
+
+	describe('the dictation microphone', () => {
+		const CAPTURE_START: AudioHostStatus = {
+			kind: 'capture-start',
+			device: { deviceId: 'default', label: 'Built-in Microphone' },
+			contextSampleRate: 48_000,
+		};
+
+		/** The microphone the latest registration handed the dictation service. */
+		function microphone(): DictationMicrophone {
+			return dictation.microphones.at(-1) as DictationMicrophone;
+		}
+
+		/** Open the microphone the way the dictation service does. */
+		async function startRecording(): Promise<void> {
+			const starting = microphone().start();
+			await vi.waitFor(() =>
+				expect(audioCommands().map((command) => command.kind)).toContain('start-capture')
+			);
+			pushStatus(CAPTURE_START);
+			await expect(starting).resolves.toEqual({ started: true });
+		}
+
+		it('records a clip through the audio host without starting a voice session', async () => {
+			broadcasts = [];
+			await startRecording();
+			pushFrames(10);
+
+			const clip = await microphone().stop();
+
+			expect(clip.sampleRate).toBe(ACAPPELLA_AUDIO_SAMPLE_RATE);
+			expect(clip.audio).toHaveLength(10 * ACAPPELLA_AUDIO_FRAME_SAMPLES);
+			expect(audioCommands().map((command) => command.kind)).toEqual([
+				'start-capture',
+				'stop-capture',
+			]);
+			// No session was started, the floor never opened, and nothing was
+			// published on the voice event stream.
+			expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
+			expect(voiceEvents()).toEqual([]);
+		});
+
+		it('is offered with the A Cappella Encore Feature switched off', async () => {
+			// Dictation is a core Local Models feature that only borrows this capture
+			// path, so the Encore gate on the voice channels does not apply to it.
+			settings.encoreFeatures = {};
+
+			await startRecording();
+			pushFrames(3);
+
+			expect((await microphone().stop()).audio).toHaveLength(3 * ACAPPELLA_AUDIO_FRAME_SAMPLES);
+		});
+
+		it('is refused while a voice session is using the microphone', async () => {
+			await handlerFor('acappella:start-session')({});
+			vi.mocked(audioHost.webContents.send).mockClear();
+
+			await expect(microphone().start()).resolves.toMatchObject({
+				started: false,
+				code: 'voice-session-active',
+			});
+			// Refused before anything was asked of the device.
+			expect(audioCommands()).toEqual([]);
+		});
+
+		it('leaves the microphone open for a voice session that started during the clip', async () => {
+			await startRecording();
+			await handlerFor('acappella:start-session')({});
+			vi.mocked(audioHost.webContents.send).mockClear();
+
+			await microphone().stop();
+
+			// The session owns the device now; closing it would cut it off.
+			expect(audioCommands().map((command) => command.kind)).not.toContain('stop-capture');
+		});
+
+		it('records nothing from a sender that is not the audio host', async () => {
+			await startRecording();
+
+			audioHost.isHostContents = false;
+			pushFrames(5);
+			audioHost.isHostContents = true;
+
+			expect((await microphone().stop()).audio).toHaveLength(0);
+		});
+
+		it('has no microphone to open without a host window', async () => {
+			vi.clearAllMocks();
+			resetACappellaHandlerState();
+			register();
+
+			await expect(microphone().start()).resolves.toMatchObject({
+				started: false,
+				code: 'no-microphone',
+			});
+			expect(audioCommands()).toEqual([]);
+		});
+
+		it('unregisters the microphone when the handler state is reset', () => {
+			dictation.unregister.mockClear();
+			resetACappellaHandlerState();
+			expect(dictation.unregister).toHaveBeenCalledTimes(1);
+		});
 	});
 });
 

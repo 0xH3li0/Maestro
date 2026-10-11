@@ -26,8 +26,8 @@ import {
 	type OnnxModule,
 	type OnnxSession,
 	type OnnxTensor,
-} from '../../../../main/acappella/providers/local/whisper/engine';
-import { WHISPER_EN_SPECIAL_TOKENS } from '../../../../main/acappella/providers/local/whisper/tokenizer';
+} from '../../../../main/local-models/stt/whisper/engine';
+import { WHISPER_EN_SPECIAL_TOKENS } from '../../../../main/local-models/stt/whisper/tokenizer';
 
 const { layers, heads, headDim } = WHISPER_BASE_GEOMETRY;
 
@@ -162,7 +162,7 @@ function engineFor(pieces: string[]): WhisperEngine {
 		encoderPath: '/models/onnx/encoder_model.onnx',
 		decoderPath: '/models/onnx/decoder_model_merged_q4.onnx',
 		tokenizerJson: JSON.stringify({ model: { vocab: vocabFor(pieces) } }),
-		providerId: 'whisper-local',
+		consumerId: 'whisper-local',
 	});
 }
 
@@ -245,7 +245,7 @@ describe('WhisperEngine', () => {
 			encoderPath: '/models/onnx/encoder_model.onnx',
 			decoderPath: '/models/onnx/decoder_model_merged_q4.onnx',
 			tokenizerJson: JSON.stringify({ model: { vocab: vocabFor([' loop']) } }),
-			providerId: 'whisper-local',
+			consumerId: 'whisper-local',
 			maxTokens: 5,
 		});
 		await looping.load(neverEnding.module);
@@ -265,12 +265,13 @@ describe('WhisperEngine', () => {
 	it('refuses to transcribe before it has loaded', async () => {
 		const engine = engineFor([' hello']);
 		await expect(engine.transcribe(AUDIO)).rejects.toMatchObject({
-			kind: 'unavailable',
-			providerId: 'whisper-local',
+			name: 'LocalModelError',
+			code: 'generation-failed',
+			consumerId: 'whisper-local',
 		});
 	});
 
-	it('reports a model that will not open as unavailable, pointing at the Models page', async () => {
+	it('reports a model that will not open as a failed model, pointing at where to verify it', async () => {
 		const engine = engineFor([' hello']);
 		const module: OnnxModule = {
 			InferenceSession: {
@@ -281,7 +282,11 @@ describe('WhisperEngine', () => {
 			Tensor: FakeTensor as unknown as OnnxModule['Tensor'],
 		};
 
-		await expect(engine.load(module)).rejects.toMatchObject({ kind: 'unavailable' });
+		await expect(engine.load(module)).rejects.toMatchObject({
+			name: 'LocalModelError',
+			code: 'generation-failed',
+			recovery: expect.stringContaining('Verify or re-download'),
+		});
 		// A half-loaded engine must not look ready afterwards.
 		expect(engine.ready).toBe(false);
 	});
@@ -320,7 +325,7 @@ describe('WhisperEngine loop guards', () => {
 			tokenizerJson: JSON.stringify({
 				model: { vocab: vocabFor([' zero', ' a', ' b', ' c', ' d', ' e', ' f']) },
 			}),
-			providerId: 'whisper-local',
+			consumerId: 'whisper-local',
 		});
 		await engine.load(looping.module);
 
@@ -340,7 +345,7 @@ describe('WhisperEngine loop guards', () => {
 			tokenizerJson: JSON.stringify({
 				model: { vocab: vocabFor(Array.from({ length: 41 }, (_, i) => ` t${i}`)) },
 			}),
-			providerId: 'whisper-local',
+			consumerId: 'whisper-local',
 		});
 		await engine.load(neverEnding.module);
 

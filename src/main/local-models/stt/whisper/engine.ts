@@ -27,7 +27,8 @@
  * spelled out at its only call site rather than left to a reader to infer.
  */
 
-import { VoiceProviderError } from '../../../../../shared/acappella/provider-errors';
+import { LocalModelError } from '../../errors';
+import { runtimeSetupLocation } from '../../runtime/runtime-consumers';
 import {
 	WhisperMelExtractor,
 	WHISPER_N_FRAMES,
@@ -40,19 +41,11 @@ import {
 	WhisperTokenizer,
 	type WhisperSpecialTokens,
 } from './tokenizer';
-import type {
-	OnnxModule,
-	OnnxSession,
-	OnnxTensor,
-} from '../../../../local-models/runtime/onnx-types';
+import type { OnnxModule, OnnxSession, OnnxTensor } from '../../runtime/onnx-types';
 
 // The ONNX Runtime surface is shared with the Parakeet engine. Re-exported so
 // existing importers keep their one import site.
-export type {
-	OnnxModule,
-	OnnxSession,
-	OnnxTensor,
-} from '../../../../local-models/runtime/onnx-types';
+export type { OnnxModule, OnnxSession, OnnxTensor } from '../../runtime/onnx-types';
 
 /**
  * Model geometry, read from the checkpoint's `config.json`.
@@ -80,8 +73,8 @@ export interface WhisperEngineOptions {
 	readonly specialTokens?: WhisperSpecialTokens;
 	/** Safety stop for the greedy loop. Whisper's own limit is 448. */
 	readonly maxTokens?: number;
-	/** Named for the error messages a failure surfaces as. */
-	readonly providerId: string;
+	/** Who is asking, so a classified failure can name its consumer. */
+	readonly consumerId: string;
 }
 
 /**
@@ -116,7 +109,7 @@ export class WhisperEngine {
 	/**
 	 * Open both graphs and the vocabulary.
 	 *
-	 * Failures are classified as `unavailable` rather than thrown raw: the
+	 * Failures are classified (a `LocalModelError`) rather than thrown raw: the
 	 * recovery for every one of them is the Models page, not a bug report.
 	 */
 	async load(module: OnnxModule): Promise<void> {
@@ -129,10 +122,12 @@ export class WhisperEngine {
 			this.tensorFactory = module.Tensor;
 		} catch (error) {
 			await this.unload();
-			throw new VoiceProviderError(
-				'The Whisper model could not be opened. Re-verify it in Settings > Extensions > A Cappella > Models.',
-				{ kind: 'unavailable', providerId: this.options.providerId, cause: error }
-			);
+			throw new LocalModelError('The Whisper model could not be opened.', {
+				code: 'generation-failed',
+				recovery: `Verify or re-download it in ${runtimeSetupLocation('onnx')}.`,
+				consumerId: this.options.consumerId,
+				cause: error,
+			});
 		}
 	}
 
@@ -164,9 +159,10 @@ export class WhisperEngine {
 		const tokenizer = this.tokenizer;
 		const Tensor = this.tensorFactory;
 		if (!encoder || !decoder || !tokenizer || !Tensor) {
-			throw new VoiceProviderError('Whisper was asked to transcribe before it loaded.', {
-				kind: 'unavailable',
-				providerId: this.options.providerId,
+			throw new LocalModelError('Whisper was asked to transcribe before it loaded.', {
+				code: 'generation-failed',
+				recovery: 'Try again.',
+				consumerId: this.options.consumerId,
 			});
 		}
 		if (audio.length === 0) return '';

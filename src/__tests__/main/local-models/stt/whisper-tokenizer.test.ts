@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	WHISPER_EN_SPECIAL_TOKENS,
 	WhisperTokenizer,
-} from '../../../../main/acappella/providers/local/whisper/tokenizer';
+} from '../../../../main/local-models/stt/whisper/tokenizer';
 
 /**
  * The GPT-2 byte-to-unicode map, built independently of the implementation.

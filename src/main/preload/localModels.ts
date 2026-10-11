@@ -13,7 +13,8 @@
  * `taskReadiness()` lists an endpoint's models only when a task is assigned to
  * one. `draftPullRequest()` reaches a model only when Git drafts is assigned
  * one, and `suggestTabCleanup()` only when Tab cleanup suggestions is.
- * `semanticIndex.*` reads the indexer's in-memory progress.
+ * `semanticIndex.*` reads the indexer's in-memory progress. `dictation.start()`
+ * is the one call that opens a device: the microphone, for this window only.
  */
 
 import { ipcRenderer } from 'electron';
@@ -31,6 +32,11 @@ import type { LocalTaskInput, LocalTaskResult } from '../local-models/task-route
 import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import type { PullRequestDraftRequest, PullRequestDraftResult } from '../../shared/gitDrafts';
+import type {
+	DictationInterruption,
+	DictationResult,
+	DictationStartResult,
+} from '../../shared/local-models/dictation';
 import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
 import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
 import type { TabCleanupResult } from '../../shared/tabCleanup';
@@ -107,6 +113,39 @@ function createSemanticIndexApi() {
 		/** Progress pushes, throttled at the source. Broadcast to every window. */
 		onProgress: (handler: (progress: SemanticIndexProgress) => void): (() => void) =>
 			subscribe('localModels:semanticIndex:progress', handler),
+	};
+}
+
+/**
+ * `window.maestro.localModels.dictation.*` - record one clip of speech and get
+ * its transcript, through the Dictation task's assignment. No voice session is
+ * started and the voice floor is never opened.
+ *
+ * The recording is made in the main process (the app window has no microphone)
+ * and belongs to the window that started it. Every outcome is an answer, never
+ * a rejection: a refusal carries a `code` and a `message` written for a person.
+ */
+function createDictationApi() {
+	return {
+		/**
+		 * Open the microphone and start recording. Resolves `{ started: true }`
+		 * once audio is really being captured, or with why it is not (task off or
+		 * unavailable, microphone denied, a voice session is live, ...).
+		 */
+		start: (): Promise<DictationStartResult> => ipcRenderer.invoke('localModels:dictation:start'),
+
+		/** Close the microphone and transcribe what was recorded. */
+		stop: (): Promise<DictationResult> => ipcRenderer.invoke('localModels:dictation:stop'),
+
+		/** Close the microphone and discard the recording and any pending transcript. */
+		cancel: (): Promise<void> => ipcRenderer.invoke('localModels:dictation:cancel'),
+
+		/**
+		 * This window's recording ended on its own (the microphone was lost, or
+		 * the length cap was reached). Call `stop()` for what was captured.
+		 */
+		onInterrupted: (handler: (interruption: DictationInterruption) => void): (() => void) =>
+			subscribe('localModels:dictation:interrupted', handler),
 	};
 }
 
@@ -196,6 +235,8 @@ export function createLocalModelsApi() {
 		 */
 		suggestTabCleanup: (): Promise<TabCleanupResult> =>
 			ipcRenderer.invoke('localModels:suggestTabCleanup'),
+
+		dictation: createDictationApi(),
 
 		semanticIndex: createSemanticIndexApi(),
 

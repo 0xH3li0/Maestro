@@ -27,6 +27,7 @@ const stats = vi.hoisted(() => ({
 const generate = vi.hoisted(() => ({ generateText: vi.fn() }));
 const embed = vi.hoisted(() => ({ embedTexts: vi.fn() }));
 const classify = vi.hoisted(() => ({ classifyText: vi.fn() }));
+const speech = vi.hoisted(() => ({ transcribeSpeech: vi.fn() }));
 
 vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({
@@ -62,6 +63,10 @@ vi.mock('../../../main/local-models/classifier', () => ({
 	classifyText: classify.classifyText,
 }));
 
+vi.mock('../../../main/local-models/speech-to-text', () => ({
+	transcribeSpeech: speech.transcribeSpeech,
+}));
+
 import {
 	DEFAULT_TASK_MAX_TOKENS,
 	isInteractiveLocalTaskRunning,
@@ -70,12 +75,14 @@ import {
 	runEmbeddingTask,
 	runLocalTask,
 	runLocalTaskRequest,
+	runSpeechToTextTask,
 	whenNoInteractiveLocalTask,
 } from '../../../main/local-models/task-router';
 import { LocalModelEndpointError, LocalModelError } from '../../../main/local-models/errors';
 import { captureException } from '../../../main/utils/sentry';
 import {
 	BGE_SMALL_EN_ID,
+	PARAKEET_TDT_V2_ID,
 	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 } from '../../../shared/local-models/model-catalog';
@@ -608,5 +615,118 @@ describe('interactive call tracking', () => {
 		await runEmbeddingTask('semantic-search', { texts: ['q'], mode: 'query' });
 		expect(isInteractiveLocalTaskRunning()).toBe(false);
 		expect(embed.embedTexts).not.toHaveBeenCalled();
+	});
+});
+
+describe('runSpeechToTextTask', () => {
+	const PARAKEET = { type: 'local', modelId: PARAKEET_TDT_V2_ID } as const;
+	const WHISPER_SERVER = { type: 'endpoint', endpointId: 'ep-1', model: 'whisper-1' } as const;
+	const clip = new Float32Array(16000);
+
+	beforeEach(() => {
+		settings.clear();
+		stats.ready = true;
+		stats.recordLocalModelRun.mockReset().mockReturnValue('id');
+		speech.transcribeSpeech.mockReset();
+	});
+
+	it('answers off on the default assignment and transcribes nothing', async () => {
+		await expect(
+			runSpeechToTextTask('dictation', { audio: clip, sampleRate: 16000 })
+		).resolves.toEqual({ status: 'off' });
+		expect(speech.transcribeSpeech).not.toHaveBeenCalled();
+		expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
+	});
+
+	it('transcribes on the assigned local model and records the run', async () => {
+		assign('dictation', PARAKEET);
+		speech.transcribeSpeech.mockResolvedValue({ text: 'Ship it.', audioMs: 1000 });
+
+		const result = await runSpeechToTextTask('dictation', { audio: clip, sampleRate: 16000 });
+
+		expect(speech.transcribeSpeech).toHaveBeenCalledWith(PARAKEET, clip, 16000, {});
+		expect(result).toMatchObject({
+			status: 'ok',
+			text: 'Ship it.',
+			audioMs: 1000,
+			source: PARAKEET,
+		});
+		expect(recorded()).toMatchObject({
+			taskId: 'dictation',
+			sourceType: 'local',
+			modelId: PARAKEET_TDT_V2_ID,
+			outcome: 'ok',
+		});
+	});
+
+	it('transcribes on an assigned endpoint, passing the abort signal through', async () => {
+		assign('dictation', WHISPER_SERVER);
+		speech.transcribeSpeech.mockResolvedValue({ text: 'Hello.', audioMs: 500 });
+		const abort = new AbortController();
+
+		await runSpeechToTextTask('dictation', {
+			audio: clip,
+			sampleRate: 48000,
+			signal: abort.signal,
+		});
+
+		expect(speech.transcribeSpeech).toHaveBeenCalledWith(WHISPER_SERVER, clip, 48000, {
+			signal: abort.signal,
+		});
+		expect(recorded()).toMatchObject({
+			sourceType: 'endpoint',
+			modelId: 'whisper-1',
+			endpointId: 'ep-1',
+		});
+	});
+
+	it('reports a model that is not downloaded as unavailable, trying nothing else', async () => {
+		assign('dictation', PARAKEET);
+		speech.transcribeSpeech.mockRejectedValue(
+			new LocalModelError('Parakeet TDT 0.6B (English) is not downloaded.', {
+				code: 'model-not-installed',
+				recovery: 'Download it in Settings.',
+				consumerId: 'local-models:speech-to-text',
+			})
+		);
+
+		await expect(
+			runSpeechToTextTask('dictation', { audio: clip, sampleRate: 16000 })
+		).resolves.toEqual({
+			status: 'unavailable',
+			source: PARAKEET,
+			reason: 'Parakeet TDT 0.6B (English) is not downloaded. Download it in Settings.',
+			code: 'model-not-installed',
+		});
+		expect(speech.transcribeSpeech).toHaveBeenCalledTimes(1);
+		expect(recorded()).toMatchObject({ outcome: 'error', errorCode: 'model-not-installed' });
+	});
+
+	it('reports an endpoint with no transcription route as unavailable, in its own words', async () => {
+		assign('dictation', WHISPER_SERVER);
+		speech.transcribeSpeech.mockRejectedValue(
+			new LocalModelEndpointError('"Ollama" does not offer speech-to-text.', {
+				kind: 'not-found',
+				endpointId: 'ep-1',
+				endpointName: 'Ollama',
+				url: 'http://127.0.0.1:11434/v1/audio/transcriptions',
+				httpStatus: 404,
+			})
+		);
+
+		await expect(
+			runSpeechToTextTask('dictation', { audio: clip, sampleRate: 16000 })
+		).resolves.toEqual({
+			status: 'unavailable',
+			source: WHISPER_SERVER,
+			reason: '"Ollama" does not offer speech-to-text.',
+			code: 'not-found',
+		});
+	});
+
+	it('refuses a task that is not a speech-to-text task (a caller bug)', async () => {
+		await expect(
+			runSpeechToTextTask('tab-naming', { audio: clip, sampleRate: 16000 })
+		).rejects.toThrow(/text-gen task/);
 	});
 });

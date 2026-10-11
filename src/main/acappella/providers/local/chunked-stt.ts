@@ -3,9 +3,15 @@
  *
  * Whisper and Parakeet are different models with the same shape at this seam:
  * each transcribes a BUFFER, not a stream. The policy that turns a buffer engine
- * into live text is identical for both, so it lives here once and each engine
- * supplies only its inference (`LocalSttEngine`) and its limits. Two copies of
- * this file would drift on exactly the parts that were expensive to get right.
+ * into live text is identical for both, so it lives here once and each provider
+ * names only its catalog model and its limits. Two copies of this file would
+ * drift on exactly the parts that were expensive to get right.
+ *
+ * **The engine is the core's, and it is shared.** The inference lives in
+ * `src/main/local-models/stt/`, and a session takes a LEASE on the loaded model
+ * from the Local Models speech-to-text pool (`speech-to-text.ts`) rather than
+ * building its own. The transcription wake word and a dictated clip lease the
+ * same model, so one copy of the encoder serves all three.
  *
  * **Chunked, not truly streaming.** The utterance so far is re-transcribed on a
  * cadence and published as a partial. Words near the start stop changing between
@@ -21,6 +27,8 @@
  * racing it: two greedy loops on the same decoder session hand each other's
  * recurrent state back, and ONNX Runtime reports that as a reshape failure deep
  * inside the graph - which is how a live session died on its first endpoint.
+ * The pool holds the same rule across consumers: every decode on a model runs
+ * through one queue, whoever asked for it.
  *
  * **Silence is not decoded.** The capture path feeds every frame while the floor
  * is open and marks each one with its voice-activity verdict. Until the detector
@@ -32,11 +40,12 @@
  * an agent is a prompt nobody said. A caller that gives no verdict (the harness,
  * the tests) is trusted, and every frame counts as speech.
  *
- * **Nothing loads until a session starts.** The graphs are opened on `start()`
- * through `native-loader.ts` and freed on `stop()`. Hundreds of megabytes of
- * model resident for the life of an app whose voice feature is off is exactly
- * the cost the lazy loader exists to avoid, and the failure to load reaches the
- * user through the capability gate rather than as a dlopen string.
+ * **Nothing loads until a session starts.** The lease is taken on `start()` and
+ * given back on `stop()`; the pool frees the graphs once no consumer has held
+ * the model for a few minutes. Hundreds of megabytes of model resident for the
+ * life of an app whose voice feature is off is exactly the cost the lazy loader
+ * exists to avoid, and the failure to load reaches the user through the
+ * capability gate rather than as a dlopen string.
  */
 
 import { ACAPPELLA_AUDIO_SAMPLE_RATE } from '../../../../shared/acappella/audio-host';
@@ -47,10 +56,18 @@ import type {
 	SttProvider,
 } from '../../../../shared/acappella/providers';
 import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences';
+import { isLocalModelError } from '../../../local-models/errors';
+import type { OnnxModule } from '../../../local-models/runtime/onnx-types';
+import { getSpeechToTextPool, type SpeechToTextPool } from '../../../local-models/speech-to-text';
+import type { SpeechToTextEngine } from '../../../local-models/stt/engines';
+import { sanitizeTranscript } from '../../../local-models/stt/transcript';
 import { logger } from '../../../utils/logger';
 import { PcmBuffer } from '../pcm';
-import type { OnnxModule } from '../../../local-models/runtime/onnx-types';
-import { loadVoiceRuntime } from './runtime';
+import { loadVoiceRuntime, voiceErrorFromLocalModel } from './runtime';
+
+// The rule for what a recogniser's raw text may become is the core's, shared
+// with dictation. Re-exported so existing importers keep their one import site.
+export { sanitizeTranscript };
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -87,19 +104,26 @@ const PRE_SPEECH_KEEP_MS = 1000;
 const MIN_SPEECH_MS_FOR_DECODE = 200;
 
 /** What a local engine provides: open, close, and transcribe one buffer. */
-export interface LocalSttEngine {
-	load(module: OnnxModule): Promise<void>;
-	unload(): Promise<void>;
-	/** Transcribe 16 kHz mono audio. Returns trimmed text, empty for nothing. */
-	transcribe(audio: Float32Array): Promise<string>;
-}
+export type LocalSttEngine = SpeechToTextEngine;
 
 export interface ChunkedLocalSttOptions {
 	partialIntervalMs?: number;
-	/** Injected in tests; production goes through `native-loader.ts`. */
-	loadRuntime?: typeof loadVoiceRuntime;
-	/** Injected in tests, so the streaming policy can be exercised without ONNX. */
+	/** Injected in tests. Production shares the app-wide pool. */
+	pool?: SpeechToTextPool;
+	/**
+	 * Injected in tests, so the streaming policy can be exercised without ONNX.
+	 * A provider given its own engine loads and frees it itself and never
+	 * touches the pool.
+	 */
 	engine?: LocalSttEngine;
+	/** The runtime loader for an injected {@link engine}. */
+	loadRuntime?: typeof loadVoiceRuntime;
+}
+
+/** The recogniser a session is holding: transcribe, and give it back. */
+interface HeldRecogniser {
+	transcribe(audio: Float32Array): Promise<string>;
+	release(): Promise<void>;
 }
 
 export abstract class ChunkedLocalSttProvider implements SttProvider {
@@ -111,6 +135,8 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 
 	/** The model's name as the user knows it, for failure messages. */
 	protected abstract readonly engineName: string;
+	/** The catalog model this provider transcribes with. */
+	protected abstract readonly modelId: string;
 	/**
 	 * The longest buffer one pass accepts. A longer utterance is transcribed from
 	 * its TAIL rather than truncated at the front: someone who has been speaking
@@ -118,15 +144,14 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	 * would publish a partial that disagrees with the one before it.
 	 */
 	protected abstract readonly maxSamples: number;
-	/** Build the real engine. Only called when no engine was injected. */
-	protected abstract createEngine(): Promise<LocalSttEngine>;
 
 	private readonly partialIntervalMs: number;
+	private readonly pool?: SpeechToTextPool;
 	private readonly loadRuntime: typeof loadVoiceRuntime;
 	private readonly injectedEngine?: LocalSttEngine;
 
 	private callbacks: SttCallbacks | null = null;
-	private engine: LocalSttEngine | null = null;
+	private engine: HeldRecogniser | null = null;
 	private buffer = new PcmBuffer();
 
 	/** Audio duration at the last partial pass, so the cadence is in AUDIO time. */
@@ -144,18 +169,15 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 
 	constructor(options: ChunkedLocalSttOptions = {}) {
 		this.partialIntervalMs = Math.max(0, options.partialIntervalMs ?? DEFAULT_PARTIAL_INTERVAL_MS);
+		this.pool = options.pool;
 		this.loadRuntime = options.loadRuntime ?? loadVoiceRuntime;
 		this.injectedEngine = options.engine;
 	}
 
 	async start(callbacks: SttCallbacks): Promise<void> {
-		// ONNX Runtime for every local recogniser: the wake word already fetches it,
-		// so local speech-to-text costs no extra runtime download.
-		const module = await this.loadRuntime<OnnxModule>('onnx', this.id);
-		const engine = this.injectedEngine ?? (await this.createEngine());
-
-		await engine.load(module);
-		this.engine = engine;
+		this.engine = this.injectedEngine
+			? await this.openInjected(this.injectedEngine)
+			: await this.openShared();
 		this.callbacks = callbacks;
 		this.resetUtterance();
 	}
@@ -214,7 +236,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 		// The session may still be inside a pass. Let it finish before the graphs
 		// go away underneath it; its result is dropped because `callbacks` is gone.
 		await this.inFlight?.catch(() => undefined);
-		await engine?.unload();
+		await engine?.release();
 	}
 
 	/**
@@ -229,6 +251,32 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	}
 
 	// -- Internals -----------------------------------------------------------
+
+	/**
+	 * Lease the catalog model from the shared pool. A core failure (not
+	 * downloaded, runtime will not load, graphs will not open) is restated as
+	 * this provider's own, so the session announces the engine the user chose.
+	 */
+	private async openShared(): Promise<HeldRecogniser> {
+		try {
+			return await (this.pool ?? getSpeechToTextPool()).acquire(this.modelId, this.id);
+		} catch (error) {
+			if (isLocalModelError(error)) throw voiceErrorFromLocalModel(error, this.id);
+			throw error;
+		}
+	}
+
+	/** A test's own engine: loaded here, freed on release, never pooled. */
+	private async openInjected(engine: LocalSttEngine): Promise<HeldRecogniser> {
+		// ONNX Runtime for every local recogniser: the wake word already fetches it,
+		// so local speech-to-text costs no extra runtime download.
+		const module = await this.loadRuntime<OnnxModule>('onnx', this.id);
+		await engine.load(module);
+		return {
+			transcribe: (audio) => engine.transcribe(audio),
+			release: () => engine.unload(),
+		};
+	}
 
 	private decode(kind: 'partial' | 'final'): Promise<void> {
 		const pass = this.runDecode(kind).finally(() => {
@@ -323,37 +371,4 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 		this.partialsInUtterance = 0;
 		this.speechMs = 0;
 	}
-}
-
-// ---------------------------------------------------------------------------
-
-/**
- * Phrases recognisers produce for audio with no speech in it. Matched whole,
- * after the bracketed tags are stripped: "you" alone is Whisper's favourite word
- * for silence, and nobody dictates it to an agent as a complete request.
- */
-const NON_SPEECH_PHRASES =
-	/^(?:you|thank you\.?|thanks for watching\.?|thank you for watching\.?|bye\.?|\.+)$/i;
-
-/**
- * Drop what a recogniser invents for a quiet room.
- *
- * Whisper narrates silence as sound effects - "[ Silence ]", "(keyboard
- * clacking)", "[BLANK_AUDIO]", "♪" - and a partial that shows them is a
- * transcript of nothing, while a final that dispatches them is a prompt nobody
- * said. Tags are removed wherever they sit, so "(sighs) run the tests" keeps its
- * request; a transcript that was nothing but tags becomes empty.
- */
-export function sanitizeTranscript(raw: string): string {
-	const text = raw.replace(/\s+/g, ' ').trim();
-	if (!text) return '';
-	const stripped = text
-		.replace(/[[(][^\])]*[\])]/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim();
-	if (!stripped) return '';
-	if (NON_SPEECH_PHRASES.test(stripped)) return '';
-	// No letter or digit anywhere: punctuation and music notes are not words.
-	if (!/[\p{L}\p{N}]/u.test(stripped)) return '';
-	return stripped;
 }

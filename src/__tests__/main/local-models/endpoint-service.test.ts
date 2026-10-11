@@ -23,6 +23,7 @@ const client = vi.hoisted(() => ({
 	testEndpoint: vi.fn(async () => ({ ok: true, model: 'm', latencyMs: 5 })),
 	endpointChat: vi.fn(async () => ({ content: 'hi', model: 'm' })),
 	endpointEmbed: vi.fn(async () => ({ embeddings: [[1, 0]], model: 'm' })),
+	endpointTranscribe: vi.fn(async () => ({ text: 'hello' })),
 }));
 
 vi.mock('../../../main/local-models/endpoint-client', () => client);
@@ -34,6 +35,7 @@ import {
 	getConfiguredLocalModelEndpoints,
 	listLocalModelEndpointModels,
 	testLocalModelEndpoint,
+	transcribeWithLocalModelEndpoint,
 } from '../../../main/local-models/endpoint-service';
 
 const saved = {
@@ -147,6 +149,25 @@ describe('endpoint-service', () => {
 			kind: 'invalid',
 		});
 		expect(client.endpointChat).not.toHaveBeenCalled();
+	});
+
+	it('transcribes on a saved endpoint by exact id, with the key from Settings -> Environment', async () => {
+		const wav = Uint8Array.from([1, 2, 3]);
+		await expect(
+			transcribeWithLocalModelEndpoint('ep-1', { model: 'whisper-1', wav })
+		).resolves.toEqual({ text: 'hello' });
+
+		expect(client.endpointTranscribe).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'ep-1' }),
+			{ model: 'whisper-1', wav, shellEnvVars: { LITELLM_KEY: 'sk-test' } }
+		);
+	});
+
+	it('refuses to transcribe on an endpoint that is unknown, before any request', async () => {
+		await expect(
+			transcribeWithLocalModelEndpoint('ep-', { model: 'whisper-1', wav: new Uint8Array(1) })
+		).rejects.toMatchObject({ kind: 'invalid' });
+		expect(client.endpointTranscribe).not.toHaveBeenCalled();
 	});
 
 	it('embeds on a saved endpoint by exact id, with the key from Settings -> Environment', async () => {

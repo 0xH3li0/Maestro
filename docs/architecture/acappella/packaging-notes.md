@@ -66,7 +66,7 @@ There used to be a third runtime, `smart-whisper`, carrying Speech-to-Text. It r
 
 Of the options recorded here when the problem was first written down, the last one was taken: **Speech-to-Text now runs through ONNX Runtime**, using the official `onnx-community/whisper-base.en` export instead of `ggml-base.en.bin`. That is strictly better than the alternatives, because ONNX Runtime was already being downloaded for Text-to-Speech and the wake word - the hardest slot now rides a runtime that is already fetched, already hash-verified, and already signed, and the build lost a whole native dependency rather than gaining a toolchain.
 
-The inference lives in `src/main/acappella/providers/local/whisper/`: `mel.ts` (log-mel features), `tokenizer.ts` (byte-level BPE decode), and `engine.ts` (encoder plus the greedy KV-cached decode loop). All three are plain TypeScript over ONNX Runtime tensors, so there is nothing further to compile.
+The inference lives in the core, in `src/main/local-models/stt/whisper/`: `mel.ts` (log-mel features), `tokenizer.ts` (byte-level BPE decode), and `engine.ts` (encoder plus the greedy KV-cached decode loop). All three are plain TypeScript over ONNX Runtime tensors, so there is nothing further to compile.
 
 ### A downloaded tarball is not an install
 

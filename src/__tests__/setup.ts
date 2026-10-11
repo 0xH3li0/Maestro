@@ -756,6 +756,16 @@ const mockMaestro = {
 			status: 'off',
 			error: 'Tab cleanup suggestions is off.',
 		}),
+		dictation: {
+			start: vi.fn().mockResolvedValue({
+				started: false,
+				code: 'task-off',
+				message: 'Dictation is off.',
+			}),
+			stop: vi.fn().mockResolvedValue({ status: 'idle' }),
+			cancel: vi.fn().mockResolvedValue(undefined),
+			onInterrupted: vi.fn().mockReturnValue(() => {}),
+		},
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),

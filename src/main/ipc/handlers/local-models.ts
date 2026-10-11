@@ -16,12 +16,15 @@
  * disk and settings, and reaches the network only to list the models of an
  * endpoint a task is assigned to. `draftPullRequest` reads a local repository
  * and reaches a model only when the user assigned one to Git drafts.
+ * `dictation:start` is the one call here that opens a device: the microphone,
+ * and only for the window that asked, only while the Dictation task is ready.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
- * `src/main/utils/safe-send.ts`.
+ * `src/main/utils/safe-send.ts`. A dictation is the exception: it belongs to
+ * the one window recording it, so its interruption goes to that window alone.
  */
 
-import { ipcMain } from 'electron';
+import { ipcMain, type WebContents } from 'electron';
 
 import type {
 	DetectedEndpoint,
@@ -36,6 +39,12 @@ import {
 import type { DownloadProgress, DownloadResult } from '../../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../local-models/model-store';
 import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-installer';
+import {
+	cancelDictation,
+	onDictationInterrupted,
+	startDictation,
+	stopDictation,
+} from '../../local-models/dictation';
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
 import { runLocalTaskRequest, type LocalTaskResult } from '../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../local-models/task-readiness';
@@ -45,6 +54,11 @@ import {
 } from '../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../local-models/work-search';
 import { suggestTabCleanup } from '../../local-models/tab-cleanup';
+import type {
+	DictationInterruption,
+	DictationResult,
+	DictationStartResult,
+} from '../../../shared/local-models/dictation';
 import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
 import type { WorkSearchResult } from '../../../shared/local-models/work-search';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
@@ -83,6 +97,9 @@ export const LOCAL_RUNTIME_PROGRESS_CHANNEL = 'localModels:runtimes:progress';
 /** The push channel the semantic indexer's progress goes out on. */
 export const SEMANTIC_INDEX_PROGRESS_CHANNEL = 'localModels:semanticIndex:progress';
 
+/** Pushed to the ONE window whose dictation ended on its own. Never broadcast. */
+export const DICTATION_INTERRUPTED_CHANNEL = 'localModels:dictation:interrupted';
+
 export interface LocalModelsHandlerDependencies {
 	/** Broadcasts to every window and to the web-desktop bridge. */
 	safeSend: SafeSendFn;
@@ -95,6 +112,44 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 
 /** Unsubscribes from the previous registration, so re-registering never doubles broadcasts. */
 let releaseProgressListeners: (() => void) | null = null;
+
+/**
+ * The windows that have dictated, by owner id. A dictation is owned by the
+ * window that started it: only that window may stop or cancel it, and it is
+ * cancelled if the window goes away or reloads with the microphone still open.
+ */
+const dictationOwners = new Map<string, WebContents>();
+
+/**
+ * The window behind a dictation call, or null when there is none.
+ *
+ * A web-desktop client reaches these handlers through the bridge with a
+ * placeholder event and no sender. Dictation records on THIS machine's
+ * microphone, which is not where that person is speaking, so such a call is
+ * refused by name instead of opening a device in another room.
+ */
+function dictationOwner(event: unknown): WebContents | null {
+	const sender = (event as { sender?: Partial<WebContents> } | null)?.sender;
+	return sender && typeof sender.id === 'number' && typeof sender.send === 'function'
+		? (sender as WebContents)
+		: null;
+}
+
+/** The owner id for a window, tracking it so its dictation dies with it. */
+function claimDictationOwner(owner: WebContents): string {
+	const ownerId = `window:${owner.id}`;
+	if (dictationOwners.get(ownerId) === owner) return ownerId;
+	dictationOwners.set(ownerId, owner);
+	// A reload loses the page that was showing "recording"; nothing would ever
+	// stop the microphone it left open.
+	const abandon = () => void cancelDictation(ownerId);
+	owner.on('did-navigate', abandon);
+	owner.once('destroyed', () => {
+		dictationOwners.delete(ownerId);
+		abandon();
+	});
+	return ownerId;
+}
 
 /**
  * Register the core Local Models handlers.
@@ -116,10 +171,17 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 	const releaseIndex = onSemanticIndexProgress((progress: SemanticIndexProgress) => {
 		safeSend(SEMANTIC_INDEX_PROGRESS_CHANNEL, progress);
 	});
+	const releaseDictation = onDictationInterrupted(
+		(ownerId: string, interruption: DictationInterruption) => {
+			const owner = dictationOwners.get(ownerId);
+			if (owner && !owner.isDestroyed()) owner.send(DICTATION_INTERRUPTED_CHANNEL, interruption);
+		}
+	);
 	releaseProgressListeners = () => {
 		releaseModel();
 		releaseRuntime();
 		releaseIndex();
+		releaseDictation();
 	};
 
 	ipcMain.handle(
@@ -286,5 +348,43 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('suggestTabCleanup'),
 			async (): Promise<TabCleanupResult> => suggestTabCleanup()
 		)
+	);
+
+	// Dictation. Each handler needs the calling window, which
+	// `withIpcErrorLogging` strips, so the sender is resolved first and passed
+	// through as the handler's one argument.
+	const dictationStart = withIpcErrorLogging(
+		handlerOpts('dictation:start'),
+		async (owner: WebContents | null): Promise<DictationStartResult> => {
+			if (!owner) {
+				return {
+					started: false,
+					code: 'no-microphone',
+					message:
+						'Dictation records on the computer running Maestro, so it is not available from a browser.',
+				};
+			}
+			return startDictation(claimDictationOwner(owner));
+		}
+	);
+	const dictationStop = withIpcErrorLogging(
+		handlerOpts('dictation:stop'),
+		async (owner: WebContents | null): Promise<DictationResult> =>
+			owner ? stopDictation(claimDictationOwner(owner)) : { status: 'idle' }
+	);
+	const dictationCancel = withIpcErrorLogging(
+		handlerOpts('dictation:cancel'),
+		async (owner: WebContents | null): Promise<void> => {
+			if (owner) await cancelDictation(claimDictationOwner(owner));
+		}
+	);
+	ipcMain.handle('localModels:dictation:start', (event) =>
+		dictationStart(event, dictationOwner(event))
+	);
+	ipcMain.handle('localModels:dictation:stop', (event) =>
+		dictationStop(event, dictationOwner(event))
+	);
+	ipcMain.handle('localModels:dictation:cancel', (event) =>
+		dictationCancel(event, dictationOwner(event))
 	);
 }

@@ -12,6 +12,7 @@ import {
 	detectLocalEndpoints,
 	endpointChat,
 	endpointEmbed,
+	endpointTranscribe,
 	listEndpointModels,
 	listEndpointModelsResult,
 	testEndpoint,
@@ -656,5 +657,104 @@ describe('endpoint-client', () => {
 			expect(result.error.kind).toBe('missing-key');
 			expect(mock).not.toHaveBeenCalled();
 		});
+	});
+});
+
+describe('endpointTranscribe', () => {
+	const WAV = Uint8Array.from([82, 73, 70, 70, 1, 2, 3, 4]);
+
+	function requestForm(mock: ReturnType<typeof vi.fn>, call: number): FormData {
+		return (mock.mock.calls[call][1] as RequestInit).body as FormData;
+	}
+
+	it('uploads the clip as a multipart file and returns the transcript', async () => {
+		const mock = routeFetch({
+			'/v1/audio/transcriptions': jsonResponse(200, { text: ' Ship it. ' }),
+		});
+
+		const result = await endpointTranscribe(endpoint('openai-compatible'), {
+			model: 'whisper-1',
+			wav: WAV,
+			language: 'en',
+		});
+
+		// Raw: sanitizing is the speech-to-text service's job, not the transport's.
+		expect(result).toEqual({ text: ' Ship it. ' });
+		const form = requestForm(mock, 0);
+		expect(form.get('model')).toBe('whisper-1');
+		expect(form.get('response_format')).toBe('json');
+		expect(form.get('language')).toBe('en');
+		const file = form.get('file') as File;
+		expect(file.name).toBe('clip.wav');
+		expect(file.type).toBe('audio/wav');
+		expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual(Array.from(WAV));
+		// fetch writes the multipart boundary itself; a JSON content type would
+		// make the server reject the upload.
+		expect(requestHeaders(mock, 0)['Content-Type']).toBeUndefined();
+	});
+
+	it('uploads only the clip when the WAV is a view over a larger buffer', async () => {
+		const mock = routeFetch({
+			'/v1/audio/transcriptions': jsonResponse(200, { text: 'ok' }),
+		});
+		const backing = Uint8Array.from([9, 9, 9, 1, 2, 3, 9, 9]);
+
+		await endpointTranscribe(endpoint('openai-compatible'), {
+			model: 'whisper-1',
+			wav: backing.subarray(3, 6),
+		});
+
+		const file = requestForm(mock, 0).get('file') as File;
+		expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3]);
+	});
+
+	it('sends the API key resolved from Settings -> Environment', async () => {
+		const mock = routeFetch({
+			'/v1/audio/transcriptions': jsonResponse(200, { text: 'ok' }),
+		});
+
+		await endpointTranscribe(endpoint('openai-compatible', { apiKeyEnvVar: 'SPEECH_KEY' }), {
+			model: 'whisper-1',
+			wav: WAV,
+			shellEnvVars: { SPEECH_KEY: 'secret' },
+		});
+
+		expect(requestHeaders(mock, 0).Authorization).toBe('Bearer secret');
+	});
+
+	it('says an endpoint without the route does not offer speech-to-text', async () => {
+		routeFetch({
+			'/v1/audio/transcriptions': jsonResponse(404, '404 page not found'),
+		});
+
+		const error = await endpointTranscribe(endpoint('ollama'), {
+			model: 'whisper-1',
+			wav: WAV,
+		}).catch((caught) => caught);
+
+		expect(isLocalModelEndpointError(error)).toBe(true);
+		expect(error).toMatchObject({ kind: 'not-found', httpStatus: 404 });
+		expect((error as Error).message).toMatch(/does not offer speech-to-text/);
+		expect((error as Error).message).toContain('My ollama');
+	});
+
+	it('passes any other failure through as the server reported it', async () => {
+		routeFetch({
+			'/v1/audio/transcriptions': jsonResponse(401, { error: { message: 'bad key' } }),
+		});
+
+		await expect(
+			endpointTranscribe(endpoint('openai-compatible'), { model: 'whisper-1', wav: WAV })
+		).rejects.toMatchObject({ kind: 'auth', httpStatus: 401 });
+	});
+
+	it('refuses an answer with no transcript in it', async () => {
+		routeFetch({
+			'/v1/audio/transcriptions': jsonResponse(200, { segments: [] }),
+		});
+
+		await expect(
+			endpointTranscribe(endpoint('openai-compatible'), { model: 'whisper-1', wav: WAV })
+		).rejects.toMatchObject({ kind: 'malformed' });
 	});
 });

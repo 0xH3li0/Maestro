@@ -10,8 +10,9 @@
  * changes: should the wake word be listening right now? Yes only when the user
  * switched it on, the capability gate says the phrase can actually fire (front
  * end, the phrase's own classifier, and the runtime are all present), no voice
- * session holds the floor, and the Test button is not borrowing the microphone.
- * Every other combination is a no, and a no closes the microphone it opened.
+ * session holds the floor, and neither the Test button nor a dictation is
+ * borrowing the microphone. Every other combination is a no, and a no closes
+ * the microphone it opened (unless whoever caused the no is using it).
  *
  * **What a hit does.** It hands the floor to a voice session through the same
  * main-side start path a global hotkey uses, with `source: 'wake-word'`. The
@@ -56,6 +57,12 @@ export interface HandsFreeDeps {
 	/** Whether the gate says the wake word can fire. Asked before every arm. */
 	canRunHandsFree(): Promise<boolean>;
 	getSessionState(): VoiceSessionState;
+	/**
+	 * Whether a dictation is recording through the microphone right now. While
+	 * it is, the wake word stands down: a dictated "hey jarvis" is text for a
+	 * text box, not a wake. Read on every `sync`, so the answer is never a copy.
+	 */
+	isMicrophoneBorrowed?(): boolean;
 	/** Open the floor for a wake-word session. Rejections are logged, not thrown. */
 	startSession(): Promise<unknown>;
 	/** Make sure the audio host window exists; the microphone lives there. */
@@ -147,9 +154,12 @@ export class HandsFreeListener {
 					logger.info(`Hands-free wake word not listening: ${refusal}`, LOG_CONTEXT);
 				}
 			}
-			// A session holding the floor owns the microphone now; closing it here
-			// would cut that session off mid-sentence.
-			await this.disarm({ closeMicrophone: refusal !== SESSION_ACTIVE });
+			// A session holding the floor owns the microphone now, and so does a
+			// dictation that borrowed it; closing it here would cut either off
+			// mid-sentence.
+			await this.disarm({
+				closeMicrophone: refusal !== SESSION_ACTIVE && refusal !== MICROPHONE_BORROWED,
+			});
 			return;
 		}
 		this.lastRefusal = null;
@@ -165,6 +175,7 @@ export class HandsFreeListener {
 		if (!this.deps.readSettings().enabled) return 'switched off';
 		if (this.suspended) return 'the Test button is using the microphone';
 		if (this.deps.getSessionState() !== 'idle') return SESSION_ACTIVE;
+		if (this.deps.isMicrophoneBorrowed?.()) return MICROPHONE_BORROWED;
 		if (!(await this.deps.canRunHandsFree())) {
 			return 'the wake word cannot fire yet (see Voice Setup)';
 		}
@@ -235,6 +246,7 @@ export class HandsFreeListener {
 }
 
 const SESSION_ACTIVE = 'a voice session holds the floor';
+const MICROPHONE_BORROWED = 'a dictation is using the microphone';
 
 /** What a detector is built from; when this changes the armed one is stale. */
 function armKey(settings: HandsFreeSettings): string {

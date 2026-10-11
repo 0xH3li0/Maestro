@@ -127,6 +127,8 @@ import {
 import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
 import { installVoiceHotkeys, type VoiceHotkeyInstallation } from '../../acappella/hotkeys';
 import { HandsFreeListener } from '../../acappella/wake/hands-free';
+import { ClipCapture } from '../../acappella/audio/clip-capture';
+import { registerDictationMicrophone } from '../../local-models/dictation';
 import { TAB_SCOPE_ROUTER_ID } from '../../../shared/acappella/voice-mode';
 import { wakeScorerFactory } from '../../acappella/wake/transcription-wake';
 import { describePressHoldCapability } from '../../acappella/hotkeys/press-hold';
@@ -359,6 +361,18 @@ let wakeTestDetector: WakeDetector | null = null;
  * them. See `acappella/wake/hands-free.ts`.
  */
 let handsFree: HandsFreeListener | null = null;
+
+/**
+ * The session-less microphone dictation records through, and its registration
+ * with the core Local Models dictation service.
+ *
+ * Module state like the wake word, and built whether or not the A Cappella
+ * Encore Feature is on: dictation is a core feature that only borrows this
+ * capture path. Building it opens no device; a clip does, when a user asks for
+ * one. See `acappella/audio/clip-capture.ts`.
+ */
+let clipCapture: ClipCapture | null = null;
+let releaseDictationMicrophone: (() => void) | null = null;
 
 /**
  * The tap on dispatched agent output.
@@ -1122,6 +1136,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		},
 		canRunHandsFree: async () => (await readVoiceReadiness(settingsStore)).canRunHandsFree,
 		getSessionState: () => getVoiceSessionService()?.getState() ?? 'idle',
+		isMicrophoneBorrowed: () => clipCapture?.isActive ?? false,
 		startSession: () =>
 			floorSession.startSession({ scope: { kind: 'conductor' }, source: 'wake-word' }),
 		ensureAudioHost: () => {
@@ -1144,6 +1159,48 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	settingsStore.onDidChange?.('encoreFeatures', () => void handsFree?.sync());
 	// Armed at launch when the toggle was left on: that is what "always listening" means.
 	void handsFree.sync();
+
+	// Dictation's microphone. Not gated on the Encore flag (dictation is a core
+	// Local Models feature), and it never reaches the session service: it only
+	// reads the session's state, to refuse while one is live.
+	clipCapture ??= new ClipCapture({
+		refusal: () => {
+			if ((getVoiceSessionService()?.getState() ?? 'idle') !== 'idle') {
+				return {
+					code: 'voice-session-active',
+					message: 'A voice session is using the microphone. End it, then dictate.',
+				};
+			}
+			if (wakeTestDetector) {
+				return {
+					code: 'busy',
+					message: 'The wake word Test is using the microphone. Stop it, then dictate.',
+				};
+			}
+			return null;
+		},
+		// The always-on wake word reads `isActive` and stands down or re-arms.
+		onActiveChange: () => handsFree?.sync(),
+		requestMicPermission,
+		ensureAudioHost: () => {
+			if (!deps.audioHostDeps) return false;
+			ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+			return true;
+		},
+		// The device the user picked for voice: one microphone setting, not two.
+		startCapture: () =>
+			sendAudioHostCommand({
+				kind: 'start-capture',
+				deviceId: readVoiceProviderSettings(settingsStore).inputDeviceId,
+			}),
+		stopCapture: () => {
+			// Never close a microphone a session is using.
+			if ((getVoiceSessionService()?.getState() ?? 'idle') === 'idle') {
+				sendAudioHostCommand({ kind: 'stop-capture' });
+			}
+		},
+	});
+	releaseDictationMicrophone ??= registerDictationMicrophone(clipCapture);
 
 	const hotkeys = (voiceHotkeys ??= installVoiceHotkeys({
 		settingsStore,
@@ -1406,6 +1463,8 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		// there is one microphone, and two consumers of it is one device conflict.
 		if (wakeTestDetector) wakeTestDetector.pushFrame(new Int16Array(frame.pcm));
 		else handsFree?.pushFrame(new Int16Array(frame.pcm));
+		// A dictated clip taps them too, for the same reason.
+		if (clipCapture?.isActive) clipCapture.pushFrame(new Int16Array(frame.pcm));
 	});
 
 	ipcMain.on(ACAPPELLA_AUDIO_STATUS_CHANNEL, (event, status: unknown) => {
@@ -1414,6 +1473,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		notePermissionFromStatus(status as AudioHostStatus);
 		noteInputDevices(status as AudioHostStatus, deps.safeSend);
 		audioBridge?.handleStatus(status as AudioHostStatus);
+		clipCapture?.handleStatus(status as AudioHostStatus);
 		logAudioHostStatus(status as AudioHostStatus);
 		// A tuning run started before the host finished booting; see startWakeTestCapture.
 		if ((status as AudioHostStatus).kind === 'ready') {
@@ -1564,6 +1624,9 @@ async function startWakeTest(
 	if (state && state !== 'idle') {
 		return { started: false, reason: 'End the voice session first, then test the wake word.' };
 	}
+	if (clipCapture?.isActive) {
+		return { started: false, reason: 'Finish the dictation first, then test the wake word.' };
+	}
 	if (!deps.audioHostDeps) {
 		return { started: false, reason: 'There is no audio host to capture the microphone through.' };
 	}
@@ -1691,6 +1754,9 @@ export function resetACappellaHandlerState(): void {
 	transport = null;
 	void handsFree?.dispose();
 	handsFree = null;
+	releaseDictationMicrophone?.();
+	releaseDictationMicrophone = null;
+	clipCapture = null;
 	void stopWakeTest();
 	// Fire and forget: this runs from `will-quit`, which is synchronous, and from
 	// tests, which do not care how long a model file takes to close.

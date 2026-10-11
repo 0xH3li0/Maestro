@@ -48,7 +48,7 @@ export const LOCAL_MODEL_TASK_UNREADY_REASONS = [
 	// No saved endpoint has the assigned id.
 	'endpoint-unknown',
 	'endpoint-disabled',
-	// The task's need is not something an endpoint serves (classifiers, speech).
+	// The task's need is not something an endpoint serves (classifiers, speech synthesis).
 	'endpoint-unsupported',
 	// The endpoint names an API key variable that is not set.
 	'endpoint-key-missing',

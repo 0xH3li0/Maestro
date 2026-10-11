@@ -250,10 +250,13 @@ describe('localModelAssignmentProblem', () => {
 		expect(localModelAssignmentProblem('injection-screen', endpoint)).toMatch(
 			/an endpoint cannot serve/
 		);
-		expect(localModelAssignmentProblem('dictation', endpoint)).toMatch(/an endpoint cannot serve/);
 		expect(localModelAssignmentProblem('semantic-search', endpoint)).toBeNull();
+		// Speech-to-text rides `/v1/audio/transcriptions`, so dictation may name one.
+		expect(localModelAssignmentProblem('dictation', endpoint)).toBeNull();
 		expect(endpointServesNeed('text-gen')).toBe(true);
+		expect(endpointServesNeed('stt')).toBe(true);
 		expect(endpointServesNeed('classifier')).toBe(false);
+		expect(endpointServesNeed('tts')).toBe(false);
 	});
 });
 

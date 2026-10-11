@@ -21,7 +21,7 @@ import {
 	ParakeetEngine,
 	detokenizeParakeet,
 	parseParakeetVocab,
-} from '../../../../main/acappella/providers/local/parakeet/engine';
+} from '../../../../main/local-models/stt/parakeet/engine';
 import type {
 	OnnxModule,
 	OnnxSession,
@@ -133,7 +133,7 @@ function engine(options: { maxTokensPerStep?: number } = {}) {
 		encoderPath: 'enc',
 		decoderJointPath: 'dec',
 		vocabText: VOCAB_TEXT,
-		providerId: 'parakeet-local',
+		consumerId: 'parakeet-local',
 		...options,
 	});
 }
@@ -218,12 +218,13 @@ describe('ParakeetEngine', () => {
 
 	it('refuses to transcribe before it loads, as itself', async () => {
 		await expect(engine().transcribe(new Float32Array(16))).rejects.toMatchObject({
-			kind: 'unavailable',
-			providerId: 'parakeet-local',
+			name: 'LocalModelError',
+			code: 'generation-failed',
+			consumerId: 'parakeet-local',
 		});
 	});
 
-	it('classifies a graph that will not open as unavailable, and releases the rest', async () => {
+	it('classifies a graph that will not open as a failed model, and releases the rest', async () => {
 		const fake = fakeOnnx(1, []);
 		const module: OnnxModule = {
 			...fake.module,
@@ -237,8 +238,10 @@ describe('ParakeetEngine', () => {
 		const parakeet = engine();
 
 		await expect(parakeet.load(module)).rejects.toMatchObject({
-			kind: 'unavailable',
-			providerId: 'parakeet-local',
+			name: 'LocalModelError',
+			code: 'generation-failed',
+			consumerId: 'parakeet-local',
+			recovery: expect.stringContaining('Verify or re-download'),
 		});
 		expect(parakeet.ready).toBe(false);
 		// The preprocessor and encoder that DID open are not leaked.

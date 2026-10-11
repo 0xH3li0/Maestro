@@ -27,12 +27,9 @@
  * frame cannot loop forever. This mirrors `onnx-asr`'s reference loop exactly.
  */
 
-import { VoiceProviderError } from '../../../../../shared/acappella/provider-errors';
-import type {
-	OnnxModule,
-	OnnxSession,
-	OnnxTensor,
-} from '../../../../local-models/runtime/onnx-types';
+import { LocalModelError } from '../../errors';
+import { runtimeSetupLocation } from '../../runtime/runtime-consumers';
+import type { OnnxModule, OnnxSession, OnnxTensor } from '../../runtime/onnx-types';
 
 /** Sample rate the preprocessor graph was exported for. */
 export const PARAKEET_SAMPLE_RATE = 16000;
@@ -68,8 +65,8 @@ export interface ParakeetEngineOptions {
 	/** Contents of `vocab.txt`: one `<token> <id>` per line, blank last. */
 	readonly vocabText: string;
 	readonly maxTokensPerStep?: number;
-	/** Named for the error messages a failure surfaces as. */
-	readonly providerId: string;
+	/** Who is asking, so a classified failure can name its consumer. */
+	readonly consumerId: string;
 }
 
 /** Parse `vocab.txt` into an id-indexed token table. */
@@ -115,7 +112,7 @@ export class ParakeetEngine {
 	/**
 	 * Open the three graphs and the vocabulary.
 	 *
-	 * Failures are classified as `unavailable` rather than thrown raw: the
+	 * Failures are classified (a `LocalModelError`) rather than thrown raw: the
 	 * recovery for every one of them is the Models page, not a bug report.
 	 */
 	async load(module: OnnxModule): Promise<void> {
@@ -129,10 +126,12 @@ export class ParakeetEngine {
 			this.tensorFactory = module.Tensor;
 		} catch (error) {
 			await this.unload();
-			throw new VoiceProviderError(
-				'The Parakeet model could not be opened. Re-verify it in Settings > Extensions > A Cappella > Models.',
-				{ kind: 'unavailable', providerId: this.options.providerId, cause: error }
-			);
+			throw new LocalModelError('The Parakeet model could not be opened.', {
+				code: 'generation-failed',
+				recovery: `Verify or re-download it in ${runtimeSetupLocation('onnx')}.`,
+				consumerId: this.options.consumerId,
+				cause: error,
+			});
 		}
 	}
 
@@ -162,9 +161,10 @@ export class ParakeetEngine {
 		const vocab = this.vocab;
 		const Tensor = this.tensorFactory;
 		if (!preprocessor || !encoder || !decoderJoint || !vocab || !Tensor) {
-			throw new VoiceProviderError('Parakeet was asked to transcribe before it loaded.', {
-				kind: 'unavailable',
-				providerId: this.options.providerId,
+			throw new LocalModelError('Parakeet was asked to transcribe before it loaded.', {
+				code: 'generation-failed',
+				recovery: 'Try again.',
+				consumerId: this.options.consumerId,
 			});
 		}
 		if (audio.length === 0) return '';

@@ -21,6 +21,7 @@ import {
 	detectLocalEndpoints,
 	endpointChat,
 	endpointEmbed,
+	endpointTranscribe,
 	listEndpointModelsResult,
 	testEndpoint,
 	type DetectedEndpoint,
@@ -31,6 +32,8 @@ import {
 	type EndpointFailure,
 	type EndpointModelsResult,
 	type EndpointTestResult,
+	type EndpointTranscribeRequest,
+	type EndpointTranscribeResult,
 } from './endpoint-client';
 import { LocalModelEndpointError } from './errors';
 
@@ -156,6 +159,17 @@ export async function embedWithLocalModelEndpoint(
 	request: Omit<EndpointEmbedRequest, 'shellEnvVars'>
 ): Promise<EndpointEmbedResult> {
 	return endpointEmbed(requireUsableEndpoint(endpointId), {
+		...request,
+		shellEnvVars: shellEnvVars(),
+	});
+}
+
+/** Transcribe one clip on a saved, enabled endpoint, named by its exact id. */
+export async function transcribeWithLocalModelEndpoint(
+	endpointId: string,
+	request: Omit<EndpointTranscribeRequest, 'shellEnvVars'>
+): Promise<EndpointTranscribeResult> {
+	return endpointTranscribe(requireUsableEndpoint(endpointId), {
 		...request,
 		shellEnvVars: shellEnvVars(),
 	});

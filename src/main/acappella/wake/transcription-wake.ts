@@ -18,13 +18,15 @@
  *
  * **The cost is memory.** Parakeet stays loaded while hands-free is on (about
  * 1 GB). That is why this is the fallback and the classifier is the default.
+ * The model is LEASED from the core speech-to-text pool, so a voice session or
+ * a dictation that also uses Parakeet shares this copy instead of loading a
+ * second one.
  */
 
 import { VoiceActivityDetector } from '../audio/vad';
 import { TRANSCRIPTION_WAKE_PROVIDER_ID } from '../models/capability-gate';
-import { createParakeetEngine } from '../providers/local/parakeet-stt';
-import { loadVoiceRuntime } from '../providers/local/runtime';
-import type { OnnxModule } from '../../local-models/runtime/onnx-types';
+import { getSpeechToTextPool } from '../../local-models/speech-to-text';
+import { PARAKEET_TDT_V2_ID } from '../../../shared/local-models/model-catalog';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
 import type { WakeEngine } from '../../../shared/acappella/voice-controls';
@@ -228,10 +230,14 @@ export function createTranscriptionScorer(transcriber: WakeTranscriber): WakePhr
  */
 export async function createTranscriptionWakeScorer(): Promise<WakePhraseScorer | null> {
 	try {
-		const module = await loadVoiceRuntime<OnnxModule>('onnx', TRANSCRIPTION_WAKE_PROVIDER_ID);
-		const engine = await createParakeetEngine({ providerId: TRANSCRIPTION_WAKE_PROVIDER_ID });
-		await engine.load(module);
-		return createTranscriptionScorer(engine);
+		const lease = await getSpeechToTextPool().acquire(
+			PARAKEET_TDT_V2_ID,
+			TRANSCRIPTION_WAKE_PROVIDER_ID
+		);
+		return createTranscriptionScorer({
+			transcribe: (audio) => lease.transcribe(audio),
+			unload: () => lease.release(),
+		});
 	} catch (err) {
 		logger.info(`Transcription wake engine unavailable: ${(err as Error).message}`, LOG_CONTEXT);
 		return null;

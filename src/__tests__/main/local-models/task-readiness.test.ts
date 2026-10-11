@@ -143,6 +143,34 @@ describe('resolveTaskReadiness', () => {
 		expect(options.readModelStatus).toHaveBeenCalledWith(PROMPT_GUARD_2_22M_ID);
 	});
 
+	it('lets Dictation run on an endpoint that lists its speech model', async () => {
+		const verdict = await resolveTaskReadiness(
+			'dictation',
+			healthy({
+				assignments: { dictation: endpoint('whisper-1') },
+				listEndpointModels: vi.fn(async () => ({
+					ok: true as const,
+					models: [{ id: 'whisper-1' }],
+				})),
+			})
+		);
+		expect(verdict).toMatchObject({ state: 'ready', detail: 'Runs whisper-1 on Ollama.' });
+	});
+
+	it('names a speech model the endpoint does not serve', async () => {
+		const verdict = await resolveTaskReadiness(
+			'dictation',
+			healthy({ assignments: { dictation: endpoint('whisper-1') } })
+		);
+		expect(verdict).toMatchObject({ state: 'unavailable', reason: 'endpoint-model-missing' });
+	});
+
+	it('offers a local model or an endpoint for Dictation while it is off', async () => {
+		const verdict = await resolveTaskReadiness('dictation', healthy());
+		expect(verdict.state).toBe('off');
+		expect(verdict.suggestedAction).toMatch(/Assign it a local model or an endpoint in/);
+	});
+
 	it('answers ready for an endpoint that lists the model, matching a bare Ollama name to :latest', async () => {
 		const verdict = await resolveTaskReadiness(
 			'semantic-search',

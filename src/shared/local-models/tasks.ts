@@ -52,14 +52,22 @@ export type LocalModelAssignmentType = LocalModelAssignment['type'];
 
 /**
  * The needs a user-run model server can serve. Endpoints speak chat
- * completions and embeddings (`endpoint-client.ts`); no server runs a sequence
- * classifier or a speech model through those, so an endpoint assignment for
- * any other need is refused when saved and reported by readiness, rather than
- * accepted and then failing on every run.
+ * completions, embeddings, and speech-to-text (`/v1/audio/transcriptions`) in
+ * `endpoint-client.ts`; no server runs a sequence classifier or synthesizes
+ * speech through those, so an endpoint assignment for any other need is
+ * refused when saved and reported by readiness, rather than accepted and then
+ * failing on every run.
+ *
+ * Speech-to-text is the one need not EVERY endpoint serves: a chat-only server
+ * has no transcription route. Which servers do is not written down here (a
+ * shipped list would rot as servers gain the route); readiness checks that the
+ * endpoint lists the assigned model, and a call to a server without the route
+ * is reported as exactly that.
  */
 export const ENDPOINT_SERVED_NEEDS: readonly LocalModelTaskNeed[] = Object.freeze([
 	'text-gen',
 	'embedding',
+	'stt',
 ]);
 
 /** Whether an endpoint can serve a task with this need. */

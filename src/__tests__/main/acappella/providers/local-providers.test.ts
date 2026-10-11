@@ -32,6 +32,8 @@ import {
 import { LlamaBrainProvider } from '../../../../main/acappella/providers/local/llama-brain';
 import { LocalTextEngine } from '../../../../main/local-models/text-gen';
 import { LocalModelError } from '../../../../main/local-models/errors';
+import { SpeechToTextPool } from '../../../../main/local-models/speech-to-text';
+import type { InstalledSpeechToTextModel } from '../../../../main/local-models/stt/engines';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type { SttCallbacks, TtsChunk } from '../../../../shared/acappella/providers';
 import type { RosterAgent } from '../../../../shared/acappella/protocol';
@@ -46,11 +48,36 @@ const ROSTER: RosterAgent[] = [
 	},
 ];
 
-/** A runtime loader that always fails, as an uninstalled runtime would. */
-const failingRuntime = async (_id: string, providerId: string) => {
-	throw new VoiceProviderError('llama.cpp is not part of this build yet.', {
-		kind: 'unavailable',
-		providerId,
+/**
+ * A speech-to-text pool over a fake engine, standing in for the app-wide one.
+ * Production providers lease their model from the pool instead of building an
+ * engine of their own, so this is the seam the shared path is tested through.
+ */
+function sharedPool(options: { loadRuntime?: () => Promise<unknown>; text?: string } = {}) {
+	const transcribe = vi.fn(async () => options.text ?? 'open the auth tab');
+	const engine = { load: vi.fn(async () => {}), unload: vi.fn(async () => {}), transcribe };
+	const resolved: string[] = [];
+	const pool = new SpeechToTextPool({
+		idleUnloadMs: 0,
+		loadRuntime: (options.loadRuntime ?? (async () => ({}))) as never,
+		resolveModel: async (modelId) => {
+			resolved.push(modelId);
+			return {
+				entry: { displayName: modelId, runtime: 'onnx' },
+				maxSamples: 16000 * 30,
+				createEngine: async () => engine,
+			} as unknown as InstalledSpeechToTextModel;
+		},
+	});
+	return { pool, engine, resolved };
+}
+
+/** A core runtime refusal, as an uninstalled ONNX Runtime produces. */
+const runtimeDown = async (_id: string, consumerId: string) => {
+	throw new LocalModelError('ONNX Runtime is not downloaded.', {
+		code: 'runtime-unavailable',
+		recovery: 'Download it in Settings.',
+		consumerId,
 	});
 };
 
@@ -104,12 +131,50 @@ describe('WhisperSttProvider', () => {
 	}
 
 	it('reports a runtime that will not load as its own failure, never another provider', async () => {
-		const provider = new WhisperSttProvider({ loadRuntime: failingRuntime as never });
+		const { pool } = sharedPool({ loadRuntime: runtimeDown as never });
+		const provider = new WhisperSttProvider({ pool });
 
 		await expect(provider.start(recorder().callbacks)).rejects.toMatchObject({
+			name: 'VoiceProviderError',
 			kind: 'unavailable',
 			providerId: 'whisper-local',
+			message: 'ONNX Runtime is not downloaded.',
 		});
+	});
+
+	it('leases its catalog model from the shared pool and gives it back on stop', async () => {
+		const { pool, engine, resolved } = sharedPool({ text: 'run the tests' });
+		const provider = new WhisperSttProvider({ pool, partialIntervalMs: 0 });
+		const { callbacks, finals } = recorder();
+
+		await provider.start(callbacks);
+		expect(resolved).toEqual(['whisper-base-en']);
+		expect(pool.leaseCount('whisper-base-en')).toBe(1);
+
+		provider.feed(frame());
+		await provider.flush();
+		expect(finals).toEqual(['run the tests']);
+
+		await provider.stop();
+		expect(pool.leaseCount('whisper-base-en')).toBe(0);
+		// Nobody else held it and this pool keeps nothing idle, so it is freed.
+		expect(engine.unload).toHaveBeenCalledTimes(1);
+	});
+
+	it('shares one loaded model with another consumer rather than loading a second', async () => {
+		const { pool, engine } = sharedPool();
+		// The transcription wake word, say, already holding the same model.
+		const other = await pool.acquire('whisper-base-en', 'transcription-wake');
+		const provider = new WhisperSttProvider({ pool });
+
+		await provider.start(recorder().callbacks);
+		expect(engine.load).toHaveBeenCalledTimes(1);
+		expect(pool.leaseCount('whisper-base-en')).toBe(2);
+
+		// Ending the session must not unload the model underneath the other holder.
+		await provider.stop();
+		expect(engine.unload).not.toHaveBeenCalled();
+		await expect(other.transcribe(new Float32Array(16000))).resolves.toBe('open the auth tab');
 	});
 
 	it('loads the ONNX runtime rather than a whisper-specific one', async () => {
@@ -312,12 +377,23 @@ describe('ParakeetSttProvider', () => {
 	});
 
 	it('reports a runtime that will not load as its own failure', async () => {
-		const provider = new ParakeetSttProvider({ loadRuntime: failingRuntime as never });
+		const { pool } = sharedPool({ loadRuntime: runtimeDown as never });
+		const provider = new ParakeetSttProvider({ pool });
 
 		await expect(provider.start(recorder().callbacks)).rejects.toMatchObject({
 			kind: 'unavailable',
 			providerId: 'parakeet-local',
 		});
+	});
+
+	it('leases the Parakeet catalog model from the shared pool', async () => {
+		const { pool, resolved } = sharedPool();
+		const provider = new ParakeetSttProvider({ pool });
+
+		await provider.start(recorder().callbacks);
+		expect(resolved).toEqual(['parakeet-tdt-0.6b-v2']);
+		await provider.stop();
+		expect(pool.leaseCount('parakeet-tdt-0.6b-v2')).toBe(0);
 	});
 });
 

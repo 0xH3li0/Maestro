@@ -28,7 +28,7 @@ import {
 	WHISPER_N_FRAMES,
 	WHISPER_N_MELS,
 	WHISPER_SAMPLE_RATE,
-} from '../../../../main/acappella/providers/local/whisper/mel';
+} from '../../../../main/local-models/stt/whisper/mel';
 
 /** The definition of a DFT, written out. Ground truth for the fast path. */
 function naiveDftPower(frame: Float64Array): Float64Array {

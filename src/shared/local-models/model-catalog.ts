@@ -175,7 +175,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// The local default: it gets agent names, casing, and punctuation right
 		// where Whisper Base does not, and decodes a few seconds of speech in
 		// about 150 ms. The int8 graphs, because the fp32 encoder is 2.4 GB for no
-		// audible gain on dictated commands. See `providers/local/parakeet/engine.ts`.
+		// audible gain on dictated commands. See `local-models/stt/parakeet/engine.ts`.
 		repo: 'istupakov/parakeet-tdt-0.6b-v2-onnx',
 		revision: '0bbb45a3365852604aef28b538a8f066f4ccaa85',
 		license: 'CC-BY-4.0',
@@ -217,7 +217,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// Runtime - the same runtime text-to-speech and the wake word already need -
 		// because the whisper.cpp binding publishes no prebuilt binary on any
 		// platform and compiles at install time. That made it the one slot that
-		// could never ship. See `providers/local/whisper/engine.ts`.
+		// could never ship. See `local-models/stt/whisper/engine.ts`.
 		repo: 'onnx-community/whisper-base.en',
 		revision: '51eefc0af78b103839eda9e7e4f4186acc6517fe',
 		license: 'Apache-2.0',

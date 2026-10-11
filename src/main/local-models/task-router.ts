@@ -5,7 +5,8 @@
  * A caller names a task (`tab-naming`, `git-drafts`, ...) and hands over its
  * input: a prompt for a text-generation task ({@link runLocalTask}), texts for
  * an embedding task ({@link runEmbeddingTask}), one text for a classifier task
- * ({@link runClassifierTask}). The router reads the user's assignment for that task
+ * ({@link runClassifierTask}), one clip of audio for a speech-to-text task
+ * ({@link runSpeechToTextTask}). The router reads the user's assignment for that task
  * (`localModelAssignments`, resolved against the registry defaults in
  * `src/shared/local-models/tasks.ts`) and answers with one of:
  *
@@ -53,6 +54,7 @@ import { classifyText, type ClassificationResult } from './classifier';
 import { embedTexts, type EmbeddingMode } from './embeddings';
 import { isLocalModelCancelled, isLocalModelEndpointError, isLocalModelError } from './errors';
 import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
+import { transcribeSpeech } from './speech-to-text';
 import { generateText } from './text-gen';
 
 /** Token budget when a caller names none. Housekeeping output is short. */
@@ -150,6 +152,33 @@ export type ClassifierTaskResult =
 			source: LocalModelSource;
 			durationMs: number;
 	  } & ClassificationResult)
+	| LocalTaskUnavailable
+	| { status: 'cancelled'; source: LocalModelSource };
+
+/** What a speech-to-text task hands the router. */
+export interface SpeechToTextTaskInput {
+	/** One whole clip of mono audio, normalised to -1..1. */
+	audio: Float32Array;
+	/** The rate `audio` was captured at. Resampled to 16 kHz by the service. */
+	sampleRate: number;
+	signal?: AbortSignal;
+}
+
+/**
+ * A speech-to-text task's verdict. No `use-utility-agent`: an agent cannot hear,
+ * so no speech-to-text task accepts that assignment.
+ */
+export type SpeechToTextTaskResult =
+	| { status: 'off' }
+	| {
+			status: 'ok';
+			/** The transcript. Empty when the clip held no speech. */
+			text: string;
+			/** Length of the clip, in milliseconds. */
+			audioMs: number;
+			source: LocalModelSource;
+			durationMs: number;
+	  }
 	| LocalTaskUnavailable
 	| { status: 'cancelled'; source: LocalModelSource };
 
@@ -252,6 +281,39 @@ export async function runClassifierTask(
 	return {
 		status: 'ok',
 		...verdict.value,
+		source: verdict.source,
+		durationMs: verdict.durationMs,
+	};
+}
+
+/**
+ * Run a speech-to-text task (`dictation`) through its assignment.
+ *
+ * Throws only for a caller bug (a task that is not a speech-to-text task, a
+ * sample rate that is not one) or an unclassified failure inside the service.
+ */
+export async function runSpeechToTextTask(
+	taskId: LocalModelTaskId,
+	input: SpeechToTextTaskInput
+): Promise<SpeechToTextTaskResult> {
+	requireTaskNeed(taskId, 'stt', 'runSpeechToTextTask');
+	const verdict = await runThroughAssignment(taskId, (source) =>
+		transcribeSpeech(
+			source,
+			input.audio,
+			input.sampleRate,
+			input.signal ? { signal: input.signal } : {}
+		)
+	);
+	if (verdict.status === 'use-utility-agent') {
+		// The registry refuses this assignment for every speech-to-text task.
+		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on the Utility Agent.`);
+	}
+	if (verdict.status !== 'ok') return verdict;
+	return {
+		status: 'ok',
+		text: verdict.value.text,
+		audioMs: verdict.value.audioMs,
 		source: verdict.source,
 		durationMs: verdict.durationMs,
 	};

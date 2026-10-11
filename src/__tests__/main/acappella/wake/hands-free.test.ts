@@ -203,6 +203,34 @@ describe('HandsFreeListener', () => {
 		expect(listener.isListening).toBe(true);
 	});
 
+	it('stands down for a dictation without closing the microphone it is recording through', async () => {
+		let dictating = false;
+		const { listener, deps, detectors } = harness({ isMicrophoneBorrowed: () => dictating });
+		await listener.sync();
+		expect(listener.isListening).toBe(true);
+
+		// A dictated "hey jarvis" is text for a text box, not a wake.
+		dictating = true;
+		await listener.sync();
+		expect(listener.isListening).toBe(false);
+		expect(detectors.created[0].detector.stop).toHaveBeenCalledTimes(1);
+		// The dictation is using the device; closing it would cut the clip off.
+		expect(deps.stopCapture).not.toHaveBeenCalled();
+
+		dictating = false;
+		await listener.sync();
+		expect(listener.isListening).toBe(true);
+		expect(detectors.created).toHaveLength(2);
+	});
+
+	it('does not arm while a dictation holds the microphone', async () => {
+		const { listener, deps } = harness({ isMicrophoneBorrowed: () => true });
+		await listener.sync();
+
+		expect(listener.isListening).toBe(false);
+		expect(deps.startCapture).not.toHaveBeenCalled();
+	});
+
 	it('re-requests capture when the audio host finishes booting', async () => {
 		const { listener, deps } = harness();
 		await listener.sync();

@@ -2,7 +2,7 @@
  * The client for user-run model servers: Ollama, LM Studio, and any
  * OpenAI-compatible base URL (LiteLLM, vLLM, ...).
  *
- * Three calls, one transport. Every request goes through `fetchWithTimeout`, so
+ * Four calls, one transport. Every request goes through `fetchWithTimeout`, so
  * a server that accepted the connection and then went quiet cannot hang an IPC
  * handler forever, and every failure comes back as a `LocalModelEndpointError`
  * that names the endpoint and, for an HTTP failure, the status.
@@ -13,6 +13,11 @@
  * newer). Ollama's native routes are kept as FALLBACKS for the cases an older
  * Ollama cannot serve on `/v1`: a 404 (the compat layer predates the route) and,
  * for structured output, a 400 (the compat layer predates `json_schema`).
+ *
+ * Speech-to-text (`/v1/audio/transcriptions`) is the one route NOT every server
+ * has: an OpenAI-compatible gateway or a speech server offers it, a chat-only
+ * server does not. There is no native fallback to reach for, so a 404 there is
+ * reported as what it is: this endpoint does not offer speech-to-text.
  *
  * Non-streaming only for now. Note that the timeout covers the response
  * headers; a non-streaming server sends those once generation is done, so for
@@ -49,6 +54,13 @@ export const ENDPOINT_LIST_TIMEOUT_MS = 5_000;
 export const ENDPOINT_CHAT_TIMEOUT_MS = 120_000;
 
 export const ENDPOINT_EMBED_TIMEOUT_MS = 60_000;
+
+/**
+ * One clip, uploaded whole. A minute of speech transcribes in a few seconds on
+ * a warm server; the budget is for the first request after idle, when the
+ * server loads the model before it reads a single sample.
+ */
+export const ENDPOINT_TRANSCRIBE_TIMEOUT_MS = 60_000;
 
 /**
  * A server on loopback that is running answers in a few milliseconds, and one
@@ -124,6 +136,22 @@ export interface EndpointEmbedResult {
 	/** One vector per input, in input order. */
 	embeddings: number[][];
 	model: string;
+}
+
+export interface EndpointTranscribeRequest extends EndpointCallOptions {
+	model: string;
+	/**
+	 * The clip as a WAV file (16-bit PCM, mono). A container rather than raw
+	 * samples because the route takes a file and infers the format from it.
+	 */
+	wav: Uint8Array;
+	/** Optional BCP-47 hint. Given, it improves both speed and accuracy. */
+	language?: string;
+}
+
+export interface EndpointTranscribeResult {
+	/** The transcript exactly as the server returned it. */
+	text: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +282,53 @@ export async function endpointEmbed(
 		),
 		model: stringOr((payload as { model?: unknown }).model, request.model),
 	};
+}
+
+/** The route every OpenAI-compatible speech server transcribes on. */
+const TRANSCRIBE_PATH = '/v1/audio/transcriptions';
+
+/**
+ * Transcribe one clip on a server that offers speech-to-text.
+ *
+ * The clip is uploaded whole as one multipart request and the transcript comes
+ * back as JSON. Not every endpoint has this route (see the file comment), so a
+ * 404 is restated to say so rather than left as a bare status: "HTTP 404" in
+ * front of someone who assigned a chat server to dictation explains nothing.
+ */
+export async function endpointTranscribe(
+	endpoint: LocalModelEndpoint,
+	request: EndpointTranscribeRequest
+): Promise<EndpointTranscribeResult> {
+	const call = { ...request, timeoutMs: request.timeoutMs ?? ENDPOINT_TRANSCRIBE_TIMEOUT_MS };
+	const form = new FormData();
+	form.append('model', request.model);
+	form.append('response_format', 'json');
+	if (request.language) form.append('language', request.language);
+	// Copied into its own buffer: `wav` may be a view over a larger one, and a
+	// Blob built from `.buffer` would upload the bytes around it too.
+	form.append(
+		'file',
+		new Blob([new Uint8Array(request.wav).buffer as ArrayBuffer], { type: 'audio/wav' }),
+		'clip.wav'
+	);
+
+	let payload: unknown;
+	try {
+		payload = await requestJson(endpoint, 'POST', TRANSCRIBE_PATH, form, call);
+	} catch (error) {
+		if (!isEndpointStatus(error, 404)) throw error;
+		throw endpointError(
+			endpoint,
+			'not-found',
+			`${describeEndpoint(endpoint)} does not offer speech-to-text (${TRANSCRIBE_PATH} answered HTTP 404), or does not serve "${request.model}".`,
+			`${endpoint.baseUrl}${TRANSCRIBE_PATH}`,
+			{ httpStatus: 404, cause: error }
+		);
+	}
+
+	const text = (payload as { text?: unknown }).text;
+	if (typeof text !== 'string') throw malformed(endpoint, TRANSCRIBE_PATH, 'no "text"');
+	return { text };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +655,9 @@ async function readErrorDetail(response: Response): Promise<string | null> {
  * A named key that does not resolve is refused BEFORE the request: sending the
  * call unauthenticated would come back as a 401 that blames the server for a
  * setting the user never finished.
+ *
+ * `body` is sent as JSON, except a `FormData`, which is sent as the multipart
+ * upload it is (fetch writes its own boundary header).
  */
 async function requestJson(
 	endpoint: LocalModelEndpoint,
@@ -599,8 +677,9 @@ async function requestJson(
 		);
 	}
 
+	const multipart = body instanceof FormData;
 	const headers: Record<string, string> = { Accept: 'application/json' };
-	if (body !== undefined) headers['Content-Type'] = 'application/json';
+	if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json';
 	if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
 	let response: Response;
@@ -610,7 +689,7 @@ async function requestJson(
 			{
 				method,
 				headers,
-				...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+				...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 			options.timeoutMs
