@@ -289,6 +289,7 @@ export async function send(
 		const startedAt = Date.now();
 		result = await captureCliRun(
 			{
+				agentId,
 				sessionId: agentSessionId ?? agentId,
 				toolType: agent.toolType,
 				cwd: agent.cwd,

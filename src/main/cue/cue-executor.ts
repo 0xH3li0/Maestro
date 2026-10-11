@@ -10,7 +10,7 @@
 
 import * as path from 'path';
 import { getWakaTimeManager } from '../wakatime-instance';
-import type { CueEvent, CueRunResult, CueSubscription } from './cue-types';
+import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cue-types';
 import type { SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
@@ -28,6 +28,30 @@ import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
+
+/**
+ * One finished agent run, handed to `CueExecutionConfig.onRunTranscript`. It
+ * carries what the run was asked and what the agent printed, and nothing the
+ * observer could use to change the run.
+ */
+export interface CueRunTranscript {
+	agentId: string;
+	toolType: string;
+	/** The prompt after variable substitution, as it was sent. */
+	prompt: string;
+	/** The agent's stdout byte for byte. `CueRunResult.stdout` is the cleaned text. */
+	rawStdout: string;
+	/** The agent's own directory (the remote path, for a run over SSH). */
+	cwd: string;
+	/** When the run started, in epoch milliseconds. */
+	startTime: number;
+	exitCode: number | null;
+	durationMs: number;
+	status: CueRunStatus;
+	providerSessionId: string | null;
+	/** The SSH remote the run executed on, when it ran on one. */
+	sshRemoteId?: string;
+}
 
 /** Configuration for executing a Cue-triggered prompt */
 export interface CueExecutionConfig {
@@ -57,6 +81,14 @@ export interface CueExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
+	/**
+	 * Called once with the run's raw transcript after an agent process has run
+	 * and the result is built. It has no way to change the result, the cleaned
+	 * stdout or the timing, and a throw from it is swallowed. Not called when no
+	 * process was started (an empty prompt, a spec that could not be built).
+	 * Must return quickly: the run's caller waits for it.
+	 */
+	onRunTranscript?: (run: CueRunTranscript) => void;
 	/**
 	 * The Maestro system prompt for the target agent (built in main from the
 	 * stored session). Delivered by `applySystemPromptDelivery`: the native flag
@@ -186,6 +218,9 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sshActuallyUsed
 	);
 
+	// Asked for only when someone is listening. It is a reference to the string
+	// the run already holds, so the copy costs nothing.
+	let rawStdout = '';
 	const processResult = await runProcess(runId, spec, {
 		toolType: config.toolType,
 		timeoutMs,
@@ -196,13 +231,20 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		stdinPrompt: spec.stdinPrompt,
 		onLog,
 		onActivity: wakaHeartbeat,
+		...(config.onRunTranscript
+			? {
+					onRawStdout: (raw: string) => {
+						rawStdout = raw;
+					},
+				}
+			: {}),
 	});
 
 	// 5. Assemble final result. `processResult.stdout` is already clean text and
 	// `providerSessionId`/`usage` already extracted - both parsed once, live,
 	// by `cue-process-lifecycle.ts`'s stream capture as stdout arrived, rather
 	// than re-parsed here from the finished buffer.
-	return {
+	const result: CueRunResult = {
 		runId,
 		sessionId: session.id,
 		sessionName: session.name,
@@ -219,6 +261,31 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		providerSessionId: processResult.providerSessionId,
 		usage: processResult.usage ?? undefined,
 	};
+
+	// After the result is built, so nothing the observer does is in its timing.
+	if (config.onRunTranscript) {
+		try {
+			config.onRunTranscript({
+				agentId: session.id,
+				toolType: config.toolType,
+				prompt: substitutedPrompt,
+				rawStdout,
+				cwd: config.projectRoot,
+				startTime: Date.parse(startedAt),
+				exitCode: processResult.exitCode,
+				durationMs: result.durationMs,
+				status: processResult.status,
+				providerSessionId: processResult.providerSessionId,
+				...(sshActuallyUsed && config.sshRemoteConfig?.remoteId
+					? { sshRemoteId: config.sshRemoteConfig.remoteId }
+					: {}),
+			});
+		} catch {
+			// An observer of a run must not be able to fail it.
+		}
+	}
+
+	return result;
 }
 
 /**

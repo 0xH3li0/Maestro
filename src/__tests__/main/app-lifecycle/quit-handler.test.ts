@@ -81,6 +81,14 @@ vi.mock('../../../main/window-state-persistence', () => ({
 	saveAllWindowStates: (...args: unknown[]) => mockSaveAllWindowStates(...args),
 }));
 
+// The per-device state store saves behind a short timer, so the quit path has
+// to land its last write. Mocked so the assertion is on the call, not on a
+// store file (the store has its own tests).
+const mockFlushDeviceState = vi.fn();
+vi.mock('../../../main/cot-export/config-store', () => ({
+	flushCotConfigStoreSync: (...args: unknown[]) => mockFlushDeviceState(...args),
+}));
+
 // Platform is controllable per-test: the update-install hard-exit only applies
 // on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
 let mockIsMacOS = true;
@@ -416,6 +424,40 @@ describe('app-lifecycle/quit-handler', () => {
 
 			expect(() => beforeQuitHandler!({ preventDefault: vi.fn() })).not.toThrow();
 			expect(mockSaveAllWindowStates).not.toHaveBeenCalled();
+		});
+
+		it('lands the pending device-state write before processes are torn down, and once more after', async () => {
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			// Before: nothing further down cleanup can cost the write. After: a
+			// line a process printed on its way out can have moved the store again.
+			expect(mockFlushDeviceState).toHaveBeenCalledTimes(2);
+			const [firstFlush, secondFlush] = mockFlushDeviceState.mock.invocationCallOrder;
+			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
+			expect(firstFlush).toBeLessThan(killOrder);
+			expect(secondFlush).toBeGreaterThan(killOrder);
+		});
+
+		it('finishes cleanup when the device-state write fails', async () => {
+			mockFlushDeviceState.mockImplementationOnce(() => {
+				throw new Error('ENOSPC');
+			});
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			expect(() => beforeQuitHandler!({ preventDefault: vi.fn() })).not.toThrow();
+			expect(mockProcessManager.killAll).toHaveBeenCalled();
+			expect(deps.closeStatsDB).toHaveBeenCalled();
 		});
 
 		it('should handle null process manager gracefully', async () => {

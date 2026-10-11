@@ -6,6 +6,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
+import { emitParsedEvent } from '../utils/parsedEvent';
 import type { ManagedProcess, AgentError, TurnSettlement } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
@@ -176,6 +177,9 @@ export class ExitHandler {
 			// supposed to continue. StdoutHandler does this for mid-stream lines; the
 			// flush is the same event arriving without a trailing newline.
 			if (event) {
+				// The flushed line never went through StdoutHandler, so this is where
+				// it is handed on as a parsed event, like every line before it.
+				emitParsedEvent(this.emitter, sessionId, event);
 				const eventSessionId = outputParser.extractSessionId(event);
 				if (eventSessionId) {
 					managedProcess.agentSessionId = eventSessionId;

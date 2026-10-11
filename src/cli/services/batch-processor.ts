@@ -640,6 +640,7 @@ export async function* runPlaybook(
 
 					const result = await captureCliRun(
 						{
+							agentId: session.id,
 							sessionId: session.id,
 							toolType: session.toolType,
 							cwd: session.cwd,

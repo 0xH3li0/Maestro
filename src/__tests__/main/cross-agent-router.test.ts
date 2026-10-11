@@ -5,6 +5,7 @@ import {
 	buildCrossAgentPrompt,
 	startCrossAgentRequest,
 	cancelCrossAgentRequestsForSource,
+	getCrossAgentConsultParties,
 	type CrossAgentTargetSession,
 } from '../../main/cross-agent/cross-agent-router';
 import type {
@@ -570,6 +571,34 @@ describe('cancelCrossAgentRequestsForSource', () => {
 		expect(chunks[0].error).toBeUndefined();
 		// Whatever the target managed to say before the plug was pulled is kept.
 		expect(chunks[0].chunk).toBe('half an answer');
+	});
+
+	it('says who asks and who answers while a consult is in flight, and nothing once it settled', async () => {
+		const { dispatch } = harness();
+		expect(getCrossAgentConsultParties('r1')).toBeNull();
+
+		await dispatch();
+		expect(getCrossAgentConsultParties('r1')).toEqual({
+			sourceSessionId: 'src',
+			targetSessionId: 'tgt',
+		});
+		expect(getCrossAgentConsultParties('some-other-request')).toBeNull();
+
+		cancelCrossAgentRequestsForSource('src');
+		expect(getCrossAgentConsultParties('r1')).toBeNull();
+	});
+
+	it('already lists the consult at the moment its process is spawned', async () => {
+		// A process listener asks while the spawn is still on the stack.
+		let atSpawn: ReturnType<typeof getCrossAgentConsultParties> = null;
+		vi.mocked(spawnGroupChatAgent).mockImplementationOnce(async () => {
+			atSpawn = getCrossAgentConsultParties('r1');
+			return { pid: 123, success: true };
+		});
+
+		await harness().dispatch();
+
+		expect(atSpawn).toEqual({ sourceSessionId: 'src', targetSessionId: 'tgt' });
 	});
 
 	it('leaves consults belonging to another source agent alone', async () => {
