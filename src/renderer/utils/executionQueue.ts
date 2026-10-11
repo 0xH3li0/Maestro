@@ -616,29 +616,55 @@ export function applyReplayDispatch(
 		source: 'system',
 		text: noteText,
 	};
-	const markReplayed = (tab: Session['aiTabs'][number]) => {
-		const next = markTabRunningTurn(tab, item, session);
-		return { ...next, logs: [...tab.logs, note] };
-	};
+	const running = applyResendRunning(session, item, (tab) => ({
+		...tab,
+		logs: [...tab.logs, note],
+	}));
+	return running ? { session: running } : { session, blocked: 'no-target-tab' };
+}
 
-	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markReplayed(tab) : tab));
+/**
+ * Put the agent and the target tab of a turn that is being SENT AGAIN into the
+ * running state. Returns null when the item has no tab left to run on.
+ *
+ * Nothing is dequeued and no user bubble is appended: the original send already
+ * wrote one (see {@link markTabRunningTurn}). Shared by the two resend paths, the
+ * re-authentication replay ({@link applyReplayDispatch}) and Agent Resilience's
+ * auto-retry (`retryStore.fireRetry`). `processQueuedItem` marks nothing busy -
+ * its callers do - so a resend that skips this runs as a GHOST TURN: the provider
+ * is working while the tab reads idle, the Thinking pill never lists it, and the
+ * last thing on screen is whatever the failed attempt printed before it died.
+ *
+ * `decorateTab` runs on the target tab after it is marked running, for a caller
+ * that also writes to the transcript.
+ */
+export function applyResendRunning(
+	session: Session,
+	item: QueuedItem,
+	decorateTab: (tab: Session['aiTabs'][number]) => Session['aiTabs'][number] = (tab) => tab
+): Session | null {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return null;
+
+	const markRunning = (tab: Session['aiTabs'][number]) =>
+		decorateTab(markTabRunningTurn(tab, item, session));
+
+	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markRunning(tab) : tab));
 	const orphans =
 		target.location === 'orphan' && session.orphanedThinkingTabs
 			? session.orphanedThinkingTabs.map((tab) =>
-					tab.id === target.tabId ? markReplayed(tab) : tab
+					tab.id === target.tabId ? markRunning(tab) : tab
 				)
 			: session.orphanedThinkingTabs;
 
 	return {
-		session: {
-			...session,
-			state: 'busy' as SessionState,
-			busySource: 'ai',
-			thinkingStartTime: Date.now(),
-			currentCycleTokens: 0,
-			currentCycleBytes: 0,
-			aiTabs,
-			...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
-		},
+		...session,
+		state: 'busy' as SessionState,
+		busySource: 'ai',
+		thinkingStartTime: Date.now(),
+		currentCycleTokens: 0,
+		currentCycleBytes: 0,
+		aiTabs,
+		...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
 	};
 }
