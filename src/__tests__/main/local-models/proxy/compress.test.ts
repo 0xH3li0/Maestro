@@ -399,6 +399,136 @@ describe('compressRequestBody: OpenAI Responses', () => {
 	});
 });
 
+describe('compressRequestBody: early mode', () => {
+	const early = (extra: CompressRequestOptions = {}) => options({ early: true, ...extra });
+
+	it('shortens a fresh tool result before the model has read it', async () => {
+		const body = anthropicBody('small', LOG);
+		const result = await compressRequestBody('anthropic-messages', body, early());
+
+		// Without `early` this request goes out untouched (see "never touches the
+		// most recent user message"). With it, nothing is ever cached in full.
+		expect(result.body).toBe(anthropicBody('small', compressedLog()));
+		expect(result.stats.candidates).toBe(2);
+		expect(result.blocks.map((block) => block.hash)).toEqual([contentHash(LOG)]);
+	});
+
+	it('sends the same bytes on the next request, when the result is no longer fresh', async () => {
+		const cache = newCache();
+		const first = await compressRequestBody(
+			'anthropic-messages',
+			anthropicBody('small', LOG),
+			early({ cache })
+		);
+		const next = await compressRequestBody(
+			'anthropic-messages',
+			anthropicBody(LOG, 'the newest result'),
+			early({ cache })
+		);
+
+		// The prefix a provider cached on the first request is byte for byte the
+		// prefix of the second: that is what keeps the prompt cache reading.
+		const firstFresh = (JSON.parse(first.body) as { messages: Array<{ content: unknown }> })
+			.messages[4].content as Array<{ content: string }>;
+		const nextAnswered = (JSON.parse(next.body) as { messages: Array<{ content: unknown }> })
+			.messages[2].content as Array<{ content: string }>;
+		expect(nextAnswered[0].content).toBe(firstFresh[0].content);
+		expect(next.blocks[0].cached).toBe(true);
+	});
+
+	it('shortens the block that carries the cache breakpoint, and leaves the breakpoint', async () => {
+		const messages = [
+			{ role: 'user', content: 'run the build' },
+			{ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 't1',
+						content: [{ type: 'text', text: LOG, cache_control: { type: 'ephemeral' } }],
+						cache_control: { type: 'ephemeral' },
+					},
+				],
+			},
+		];
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			JSON.stringify({ messages }),
+			early()
+		);
+		const out = JSON.parse(result.body) as { messages: typeof messages };
+		const block = (out.messages[2].content as Array<Record<string, unknown>>)[0];
+
+		expect(block.cache_control).toEqual({ type: 'ephemeral' });
+		expect((block.content as Array<Record<string, unknown>>)[0]).toEqual({
+			type: 'text',
+			text: compressedLog(),
+			cache_control: { type: 'ephemeral' },
+		});
+	});
+
+	it('still reads only tool results: what the user typed is never touched', async () => {
+		const body = JSON.stringify({
+			system: LOG,
+			tools: [{ name: 'Bash', description: LOG }],
+			messages: [
+				{ role: 'user', content: LOG },
+				{ role: 'assistant', content: [{ type: 'text', text: LOG }] },
+				{ role: 'user', content: [{ type: 'text', text: LOG }] },
+			],
+		});
+		const result = await compressRequestBody('anthropic-messages', body, early());
+
+		expect(result.changed).toBe(false);
+		expect(result.body).toBe(body);
+		expect(result.stats.candidates).toBe(0);
+	});
+
+	it('shortens tool messages and outputs the model has not answered yet, in the OpenAI formats', async () => {
+		const chat = await compressRequestBody(
+			'openai-chat-completions',
+			JSON.stringify({
+				messages: [
+					{ role: 'user', content: LOG },
+					{ role: 'assistant', content: null, tool_calls: [{ id: 'c1' }] },
+					{ role: 'tool', tool_call_id: 'c1', content: LOG },
+				],
+			}),
+			early()
+		);
+		const chatOut = JSON.parse(chat.body) as { messages: Array<{ content: unknown }> };
+		expect(chatOut.messages[0].content).toBe(LOG);
+		expect(chatOut.messages[2].content).toBe(compressedLog());
+
+		const responses = await compressRequestBody(
+			'openai-responses',
+			JSON.stringify({
+				instructions: LOG,
+				input: [
+					{ type: 'message', role: 'user', content: [{ type: 'input_text', text: LOG }] },
+					{ type: 'function_call', call_id: 'c1', name: 'shell', arguments: '{}' },
+					{ type: 'function_call_output', call_id: 'c1', output: LOG },
+				],
+			}),
+			early()
+		);
+		const responsesOut = JSON.parse(responses.body) as {
+			instructions: string;
+			input: Array<{ output?: string }>;
+		};
+		expect(responsesOut.instructions).toBe(LOG);
+		expect(responsesOut.input[2].output).toBe(compressedLog());
+	});
+
+	it('leaves a small fresh result alone', async () => {
+		const body = anthropicBody('small', 'also small');
+		const result = await compressRequestBody('anthropic-messages', body, early());
+		expect(result.changed).toBe(false);
+		expect(result.body).toBe(body);
+	});
+});
+
 describe('compressRequestBody: what it leaves alone', () => {
 	it('returns the same string for a path that carries no message list', async () => {
 		const body = anthropicBody(LOG);

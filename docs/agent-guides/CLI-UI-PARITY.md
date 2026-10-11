@@ -225,83 +225,88 @@ of taking a second round trip or trusting a value the caller guessed.
 
 ## Covered
 
-| Point-and-click action                               | CLI                                                                                               |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Bookmark / unbookmark an agent (Cmd+Shift+B)         | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                           |
-| Create / rename / remove an agent                    | `create-agent`, `rename-agent`, `remove-agent`                                                    |
-| Edit Agent modal fields                              | `update-agent`, `settings agent set`                                                              |
-| Set an agent's Local Models gateway                  | `update-agent --gateway-url <url\|none>`; read it with `show agent --json`                        |
-| Set an agent's Maestro proxy mode (Gateway table)    | `update-agent --proxy-mode <off\|passthrough\|compress>`; read: `show agent --json`               |
-| Switch an agent's provider                           | `update-agent --provider --force`                                                                 |
-| Move an agent to a group                             | `update-agent --group`                                                                            |
-| Change working directory                             | `update-agent --cwd`                                                                              |
-| SSH remote execution config                          | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                      |
-| Edit an SSH remote, incl. its `ssh -o` list          | `update-ssh-remote --ssh-option / --clear-ssh-options`                                            |
-| Focus an agent, switch AI/Shell mode                 | `focus-agent`, `switch-mode`                                                                      |
-| Create / rename / remove a group                     | `create-group`, `rename-group`, `remove-group`                                                    |
-| Group icon, color, and nesting                       | `create-group --icon/--color/--parent`, `update-group`                                            |
-| Hide / show a group in the Left Bar                  | `update-group --hide / --show` (read back with `list groups --json`)                              |
-| Create a worktree agent                              | `create-worktree`                                                                                 |
-| New / close / rename a tab                           | `tab new`, `tab close`, `tab rename`                                                              |
-| Star a tab (Cmd+Shift+S)                             | `tab star` / `tab unstar`                                                                         |
-| Mark a tab unread                                    | `tab unread` / `tab read`                                                                         |
-| Toggle Save to History                               | `tab save-to-history`                                                                             |
-| Composer chips: thinking, read-only access           | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                             |
-| Model / effort pills on one tab                      | `tab model`, `tab effort` (`inherit` clears the override)                                         |
-| Enter-to-send chip                                   | `tab enter-to-send`                                                                               |
-| Read one tab's settings back                         | `tab show`, or `session list --json`                                                              |
-| Move Tab to First / Last                             | `tab move <tab-id> first\|last\|<index>`                                                          |
-| Send a message, or run a shell command               | `send`, `dispatch`, `send-terminal`                                                               |
-| Consult another agent (`@mention`)                   | `ask <agent> "<question>" --from <caller>`                                                        |
-| Open a file / URL / terminal tab                     | `open-file`, `open-browser`, `open-terminal`                                                      |
-| Open a modal or dashboard                            | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                 |
-| Auto Run: start, stop, resume, skip, abort           | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                               |
-| Settings, theme, Encore features                     | `settings`, `theme`, `set-theme`, `encore`                                                        |
-| Toasts and center flashes                            | `notify toast`, `notify flash`                                                                    |
-| Save a pasted chat image (right-click)               | `image save` (`image list` to find it)                                                            |
-| Cue subscriptions and scheduled tasks                | `cue trigger`, `cue schedule`, `cue pipeline`                                                     |
-| Schedule an Auto Run to start at a set time          | `cue schedule --auto-run <documents...>` (read back with `cue schedule --list`)                   |
-| Schedule an Auto Run into a worktree                 | `cue schedule --auto-run ... --worktree-branch / --worktree-agent / --worktree-path`              |
-| Snooze a tab, list / wake / dismiss what is parked   | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history`  |
-| Send Feedback modal (open / file / +1)               | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                       |
-| Feedback: screenshots, support package box           | `feedback submit --attach <png...> --support-package`                                             |
-| Feedback: Running as (account picker)                | `feedback accounts [--use <key> \| --clear]`                                                      |
-| Feedback: Log in to GitHub / Check Again             | `feedback login`, `feedback auth --fresh`                                                         |
-| Create Debug Package (support package)               | `support-package -o <dir> [--no-logs ...]`                                                        |
-| Secret screen: "Publish anyway" / "Create anyway"    | `--allow-secrets` on `gist create`, `feedback submit`, `feedback subscribe`, `support-package`    |
-| Start / End Performance Profiling                    | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                  |
-| Cue dashboard: subscription on/off switch            | `cue enable <sub>`, `cue disable <sub>` (any event type)                                          |
-| Cue dashboard: activity log                          | `cue activity [-a <agent>] [-n <limit>]`                                                          |
-| Cue pipeline editor: Gate on a trigger               | `cue gate <sub> --set "<condition>" [--on-unavailable skip]`, `--clear` (bare = read it back)     |
-| Scheduled Task form: Gate                            | `cue schedule ... --gate "<condition>" [--gate-on-unavailable skip]` (read: `--list`)             |
-| Cue pipeline editor: injection screen on a trigger   | `cue screen <sub> [--mode on\|off\|auto] [--threshold <score>]` (bare = read it back)             |
-| Auto Run panel: progress                             | `auto-run-status -a <agent>`                                                                      |
-| Auto Run panel: Change folder                        | `auto-run-folder <path> -a <agent>`                                                               |
-| Playbook Exchange: browse, README, install           | `marketplace list`, `marketplace show <id>`, `marketplace import`                                 |
-| Local Models catalog: list, Download, Verify, Remove | `models list [--kind]`, `models install`, `models verify`, `models remove [--force] <model-id>`   |
-| Local Models download: Pause, Resume, Cancel         | `models pause <model-id>`, `models install <model-id>` (resumes), `models cancel <model-id>`      |
-| Local Models Engines card: list, Install, Update     | `models runtimes list`, `models runtimes install <onnx\|llama>` (`models install` fetches both)   |
-| Local Models Assignments picker                      | `models assign <task-id> <off\|utility-agent\|local:<id>\|endpoint:<ep>:<model>>`, `models tasks` |
-| A Cappella Conductor Brain picker: an endpoint model | `models assign voice-routing endpoint:<ep>:<model>` (`off` returns to the voice-specific Brain)   |
-| Local Models endpoints: add, remove, test, detect    | `models endpoints list\|add\|remove\|test\|detect`                                                |
-| Local Models endpoint: Edit form, enabled switch     | `models endpoints update <ep> [--name --url --kind --api-key-env] [--enable \| --disable]`        |
-| Local Models endpoint: list the models it serves     | `models endpoints models <endpoint>` (same `listLocalModelEndpointModels()` as the row's button)  |
-| Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                   |
-| Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                         |
-| Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)           |
-| Dictation: microphone in a text box, `dictate` chord | `models run dictation --audio <file.wav>` (same `transcribeClip()`; prints the transcript)        |
-| Speak When an Agent Finishes: the mode               | `settings set spokenNotices <off\|unfocused\|always>` (read: `settings get spokenNotices`)        |
-| Speak When an Agent Finishes: the Test button        | `notify speak "<text>"` (same `speakNotice()` queue; waits, then says spoken or why not)          |
-| Tab Cleanup Suggestions: the list                    | `tab suggest-cleanup [--json]` (read-only; same `suggestTabCleanup()` as the modal)               |
-| Tab Cleanup Suggestions: Apply a ticked row          | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`          |
-| Open Tab Cleanup Suggestions                         | `open tab-cleanup`                                                                                |
-| Local Models: semantic index status and progress     | `models index` (same record as `localModels:semanticIndex:status`)                                |
-| Local Models: token proxy status and totals          | `models proxy status` (same report as `localModels:proxy:report`)                                 |
-| Local Models: diff of one compressed block           | `models proxy block <hash>` (same record as `localModels:proxy:block`)                            |
-| Local Models: Index Cue runs toggle                  | `settings set semanticIndexCue <true\|false>` (read: `settings get semanticIndexCue`)             |
-| History panel: Semantic toggle (search by meaning)   | `search "<query>" --semantic --source history --agent <id>` (same `searchPastWork()`)             |
-| Search Messages (All Agent Tabs): Semantic toggle    | `search "<query>" --semantic --source transcripts --agent <id>`                                   |
-| History panel filter / cross-tab search by text      | `search "<query>" [--source history\|notes\|transcripts] [--agent <id>] [--limit n]`              |
+| Point-and-click action                               | CLI                                                                                                 |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Bookmark / unbookmark an agent (Cmd+Shift+B)         | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                             |
+| Create / rename / remove an agent                    | `create-agent`, `rename-agent`, `remove-agent`                                                      |
+| Edit Agent modal fields                              | `update-agent`, `settings agent set`                                                                |
+| Set an agent's Local Models gateway                  | `update-agent --gateway-url <url\|none>`; read it with `show agent --json`                          |
+| Set an agent's Maestro proxy mode (Gateway table)    | `update-agent --proxy-mode <off\|passthrough\|compress\|compress-early>`; read: `show agent`        |
+| Switch an agent's provider                           | `update-agent --provider --force`                                                                   |
+| Move an agent to a group                             | `update-agent --group`                                                                              |
+| Change working directory                             | `update-agent --cwd`                                                                                |
+| SSH remote execution config                          | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                        |
+| Edit an SSH remote, incl. its `ssh -o` list          | `update-ssh-remote --ssh-option / --clear-ssh-options`                                              |
+| Focus an agent, switch AI/Shell mode                 | `focus-agent`, `switch-mode`                                                                        |
+| Create / rename / remove a group                     | `create-group`, `rename-group`, `remove-group`                                                      |
+| Group icon, color, and nesting                       | `create-group --icon/--color/--parent`, `update-group`                                              |
+| Hide / show a group in the Left Bar                  | `update-group --hide / --show` (read back with `list groups --json`)                                |
+| Create a worktree agent                              | `create-worktree`                                                                                   |
+| New / close / rename a tab                           | `tab new`, `tab close`, `tab rename`                                                                |
+| Star a tab (Cmd+Shift+S)                             | `tab star` / `tab unstar`                                                                           |
+| Mark a tab unread                                    | `tab unread` / `tab read`                                                                           |
+| Toggle Save to History                               | `tab save-to-history`                                                                               |
+| Composer chips: thinking, read-only access           | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                               |
+| Model / effort pills on one tab                      | `tab model`, `tab effort` (`inherit` clears the override)                                           |
+| Enter-to-send chip                                   | `tab enter-to-send`                                                                                 |
+| Read one tab's settings back                         | `tab show`, or `session list --json`                                                                |
+| Move Tab to First / Last                             | `tab move <tab-id> first\|last\|<index>`                                                            |
+| Send a message, or run a shell command               | `send`, `dispatch`, `send-terminal`                                                                 |
+| Consult another agent (`@mention`)                   | `ask <agent> "<question>" --from <caller>`                                                          |
+| Open a file / URL / terminal tab                     | `open-file`, `open-browser`, `open-terminal`                                                        |
+| Open a modal or dashboard                            | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                   |
+| Auto Run: start, stop, resume, skip, abort           | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                 |
+| Settings, theme, Encore features                     | `settings`, `theme`, `set-theme`, `encore`                                                          |
+| Toasts and center flashes                            | `notify toast`, `notify flash`                                                                      |
+| Save a pasted chat image (right-click)               | `image save` (`image list` to find it)                                                              |
+| Cue subscriptions and scheduled tasks                | `cue trigger`, `cue schedule`, `cue pipeline`                                                       |
+| Schedule an Auto Run to start at a set time          | `cue schedule --auto-run <documents...>` (read back with `cue schedule --list`)                     |
+| Schedule an Auto Run into a worktree                 | `cue schedule --auto-run ... --worktree-branch / --worktree-agent / --worktree-path`                |
+| Snooze a tab, list / wake / dismiss what is parked   | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history`    |
+| Send Feedback modal (open / file / +1)               | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                         |
+| Feedback: screenshots, support package box           | `feedback submit --attach <png...> --support-package`                                               |
+| Feedback: Running as (account picker)                | `feedback accounts [--use <key> \| --clear]`                                                        |
+| Feedback: Log in to GitHub / Check Again             | `feedback login`, `feedback auth --fresh`                                                           |
+| Create Debug Package (support package)               | `support-package -o <dir> [--no-logs ...]`                                                          |
+| Secret screen: "Publish anyway" / "Create anyway"    | `--allow-secrets` on `gist create`, `feedback submit`, `feedback subscribe`, `support-package`      |
+| Start / End Performance Profiling                    | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                    |
+| Cue dashboard: subscription on/off switch            | `cue enable <sub>`, `cue disable <sub>` (any event type)                                            |
+| Cue dashboard: activity log                          | `cue activity [-a <agent>] [-n <limit>]`                                                            |
+| Cue pipeline editor: Gate on a trigger               | `cue gate <sub> --set "<condition>" [--on-unavailable skip]`, `--clear` (bare = read it back)       |
+| Scheduled Task form: Gate                            | `cue schedule ... --gate "<condition>" [--gate-on-unavailable skip]` (read: `--list`)               |
+| Cue pipeline editor: injection screen on a trigger   | `cue screen <sub> [--mode on\|off\|auto] [--threshold <score>]` (bare = read it back)               |
+| Auto Run panel: progress                             | `auto-run-status -a <agent>`                                                                        |
+| Auto Run panel: Change folder                        | `auto-run-folder <path> -a <agent>`                                                                 |
+| Playbook Exchange: browse, README, install           | `marketplace list`, `marketplace show <id>`, `marketplace import`                                   |
+| Local Models catalog: list, Download, Verify, Remove | `models list [--kind]`, `models install`, `models verify`, `models remove [--force] <model-id>`     |
+| Local Models download: Pause, Resume, Cancel         | `models pause <model-id>`, `models install <model-id>` (resumes), `models cancel <model-id>`        |
+| Local Models Engines card: list, Install, Update     | `models runtimes list`, `models runtimes install <onnx\|llama>` (`models install` fetches both)     |
+| Local Models Assignments picker                      | `models assign <task-id> <off\|utility-agent\|local:<id>\|endpoint:<ep>:<model>>`, `models tasks`   |
+| A Cappella Conductor Brain picker: an endpoint model | `models assign voice-routing endpoint:<ep>:<model>` (`off` returns to the voice-specific Brain)     |
+| Voice Controls > Train: record the phrase / stop     | `voice wake record <phrase>`, `voice wake stop` (same `runWakeEnrollmentRequest()`)                 |
+| Voice Controls > Train: record other speech          | `voice wake record <phrase> --background`; from files: `voice wake add <phrase> --background <wav>` |
+| Voice Controls > Train: Remove last / Start over     | `voice wake undo <phrase>`, `voice wake clear-background <phrase>`                                  |
+| Voice Controls > Train: Train / Train again          | `voice wake train <phrase>`; read the result with `voice wake status <phrase> [--json]`             |
+| Voice Controls > Train: Delete recordings and model  | `voice wake remove <phrase>`; `voice wake list` reads what exists                                   |
+| Local Models endpoints: add, remove, test, detect    | `models endpoints list\|add\|remove\|test\|detect`                                                  |
+| Local Models endpoint: Edit form, enabled switch     | `models endpoints update <ep> [--name --url --kind --api-key-env] [--enable \| --disable]`          |
+| Local Models endpoint: list the models it serves     | `models endpoints models <endpoint>` (same `listLocalModelEndpointModels()` as the row's button)    |
+| Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                     |
+| Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                           |
+| Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)             |
+| Dictation: microphone in a text box, `dictate` chord | `models run dictation --audio <file.wav>` (same `transcribeClip()`; prints the transcript)          |
+| Speak When an Agent Finishes: the mode               | `settings set spokenNotices <off\|unfocused\|always>` (read: `settings get spokenNotices`)          |
+| Speak When an Agent Finishes: the Test button        | `notify speak "<text>"` (same `speakNotice()` queue; waits, then says spoken or why not)            |
+| Tab Cleanup Suggestions: the list                    | `tab suggest-cleanup [--json]` (read-only; same `suggestTabCleanup()` as the modal)                 |
+| Tab Cleanup Suggestions: Apply a ticked row          | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`            |
+| Open Tab Cleanup Suggestions                         | `open tab-cleanup`                                                                                  |
+| Local Models: semantic index status and progress     | `models index` (same record as `localModels:semanticIndex:status`)                                  |
+| Local Models: token proxy status and totals          | `models proxy status` (same report as `localModels:proxy:report`)                                   |
+| Local Models: diff of one compressed block           | `models proxy block <hash>` (same record as `localModels:proxy:block`)                              |
+| Local Models: Index Cue runs toggle                  | `settings set semanticIndexCue <true\|false>` (read: `settings get semanticIndexCue`)               |
+| History panel: Semantic toggle (search by meaning)   | `search "<query>" --semantic --source history --agent <id>` (same `searchPastWork()`)               |
+| Search Messages (All Agent Tabs): Semantic toggle    | `search "<query>" --semantic --source transcripts --agent <id>`                                     |
+| History panel filter / cross-tab search by text      | `search "<query>" [--source history\|notes\|transcripts] [--agent <id>] [--limit n]`                |
 
 ## Open gaps
 
@@ -366,14 +371,27 @@ a design constraint; they are simply not built yet.
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
-14. **A Cappella voice session controls** (HUD Talk / Stop / Interrupt / Send
-    now, the wake word Test button). None has a CLI verb; they are reachable
-    only as `acappella:*` IPC over the WS bridge (`acappella:start-session`,
-    `acappella:stop-session`, `acappella:interrupt`, `acappella:end-utterance`,
-    `acappella:set-scope` for the Tab / Agent / Conductor switch,
-    `acappella:wake-test`). The feature is an Encore Feature still being made
-    to work end to end; a `maestro-cli voice` group belongs with it once the
-    session surface is stable, and reads back through `acappella:get-state`.
+14. **A Cappella voice session controls** (HUD talk button in both listen
+    modes, Stop the reply, Send now, the send wait picker, the wake word Test
+    button). None has a CLI verb; they are reachable only as `acappella:*` IPC
+    over the WS bridge (`acappella:start-session`, `acappella:stop-session`,
+    `acappella:interrupt`, `acappella:end-utterance`, `acappella:set-scope`
+    for the Tab / Agent / Conductor switch and its Tab key,
+    `acappella:set-listening` for the hands-free toggle and the push-to-talk
+    press and release, `acappella:get-send-wait` / `acappella:set-send-wait`
+    for the wait picker, `acappella:wake-test`). The hands-free / push-to-talk
+    choice itself is the `ui.listenMode` field of the `acappella` settings
+    blob. The send phrase the same panel edits is NOT part of this gap: it is
+    the stored `controls.sendPhrases` field, written with
+    `maestro-cli settings set acappella.controls.sendPhrases "go maestro, send it"`
+    and read back with `settings get`; main reads it per turn, so it applies to
+    the next thing said. Only the wait slider's per-conversation override has
+    no verb. The feature is an Encore Feature still being made
+    to work end to end. The `maestro-cli voice` group exists (`voice wake`,
+    for wake phrase training); the session verbs belong in it once the session
+    surface is stable, and read back through `acappella:get-state`. Trying a
+    freshly trained phrase from the CLI is part of this gap: `voice wake`
+    trains and reports, but the live Test run is still the button.
 15. **Local Models: Remove All.** "Remove All" on A Cappella's Models page
     (`models:remove-all`) has no verb on purpose: unfiltered it would delete
     every consumer's models, and `models remove <model-id>` reaches each one by

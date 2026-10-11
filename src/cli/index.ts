@@ -128,6 +128,17 @@ import { modelsRuntimesInstall, modelsRuntimesList } from './commands/models-run
 import { modelsIndex } from './commands/models-index';
 import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
 import { modelsStatus } from './commands/models-status';
+import {
+	voiceWakeAdd,
+	voiceWakeClearBackground,
+	voiceWakeList,
+	voiceWakeRecord,
+	voiceWakeRemove,
+	voiceWakeStatus,
+	voiceWakeStop,
+	voiceWakeTrain,
+	voiceWakeUndo,
+} from './commands/voice-wake';
 import { search } from './commands/search';
 import { tabSuggestCleanup } from './commands/tab-suggest-cleanup';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
@@ -1503,7 +1514,7 @@ program
 	)
 	.option(
 		'--proxy-mode <mode>',
-		'Maestro token proxy for this agent: off | passthrough | compress. passthrough and compress point the gateway at the proxy; off clears it (requires the desktop app)'
+		'Maestro token proxy for this agent: off | passthrough | compress | compress-early. Any mode but off points the gateway at the proxy; off clears it. compress shortens a tool result after the model has read it once; compress-early shortens it before, which is cheaper and means the model works from the shortened output (requires the desktop app)'
 	)
 	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
@@ -2278,6 +2289,80 @@ program
 	.option('-l, --limit <n>', 'Most results to return (default 20, max 100)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(search);
+
+// Voice (A Cappella). The wake phrase training flow from Settings > Voice
+// Controls, verb for verb.
+const voice = program.command('voice').description('A Cappella voice: wake phrase training');
+const voiceWake = voice
+	.command('wake')
+	.description(
+		'Teach the wake word a phrase from your own recordings: record or add WAV files, then train (requires the desktop app)'
+	);
+
+voiceWake
+	.command('list')
+	.description('List every phrase with recordings, and whether each is trained')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeList);
+
+voiceWake
+	.command('status <phrase>')
+	.description('Show what is recorded for a phrase and what its trained model measured')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeStatus);
+
+voiceWake
+	.command('record <phrase>')
+	.description(
+		'Open the microphone and keep each burst of speech as one recording of the phrase, until "voice wake stop"'
+	)
+	.option(
+		'--background',
+		'Record ordinary speech that is NOT the phrase instead (about 30 seconds)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeRecord);
+
+voiceWake
+	.command('stop')
+	.description('End the recording in progress and close the microphone')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeStop);
+
+voiceWake
+	.command('add <phrase> <files...>')
+	.description(
+		'Add recordings from 16-bit PCM WAV files instead of the microphone, one recording of the phrase per file'
+	)
+	.option('--background', 'The files are ordinary speech that is NOT the phrase')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeAdd);
+
+voiceWake
+	.command('undo <phrase>')
+	.description('Remove the newest recording of the phrase')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeUndo);
+
+voiceWake
+	.command('clear-background <phrase>')
+	.description('Remove the ordinary speech recorded for a phrase, so it can be recorded again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeClearBackground);
+
+voiceWake
+	.command('train <phrase>')
+	.description(
+		'Build the wake word model for a phrase from its recordings; waits until training finishes'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeTrain);
+
+voiceWake
+	.command('remove <phrase>')
+	.description('Delete the trained model and every recording of a phrase')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceWakeRemove);
 
 const models = program.command('models').description('Local Models: model sources Maestro can use');
 

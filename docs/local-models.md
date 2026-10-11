@@ -222,20 +222,25 @@ maestro-cli show agent <agent-id> --json   # gatewayUrl
 
 ### The Maestro proxy
 
-Maestro has a proxy of its own, so you do not need to run one to save tokens. Each row of the Gateway table has a **Maestro proxy** control with three modes:
+Maestro has a proxy of its own, so you do not need to run one to save tokens. Each row of the Gateway table has a **Maestro proxy** control with four modes:
 
-| Mode            | What happens to the agent's requests                                                                |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| **Off**         | They do not go through Maestro's proxy. This is the default.                                        |
-| **Passthrough** | They go through it unchanged. Maestro only counts them.                                             |
-| **Compress**    | Large tool results (file reads, command output) in each request are shortened before it is sent on. |
+| Mode               | What happens to the agent's requests                                       |
+| ------------------ | -------------------------------------------------------------------------- |
+| **Off**            | They do not go through Maestro's proxy. This is the default.               |
+| **Passthrough**    | They go through it unchanged. Maestro only counts them.                    |
+| **Compress**       | A large tool result is shortened after the model has read it once in full. |
+| **Compress early** | A large tool result is shortened before the model first reads it.          |
 
-Choosing Passthrough or Compress sets the agent's gateway URL to the proxy for you. Choosing Off clears it. The proxy listens on `127.0.0.1` only, starts when the first agent uses it, and stops when none do.
+Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Choosing Off clears it. The proxy listens on `127.0.0.1` only, starts when the first agent uses it, and stops when none do.
 
-What Compress does, and does not do:
+**Which compress mode to pick.** The note under the control says the same thing in one sentence.
 
-- **It shortens only tool results**, and only ones over about 1,000 tokens. Your messages, the system prompt, tool definitions, and the agent's own text are never changed.
-- **The model reads every tool result in full once.** A result is shortened from the next request on, when it is history.
+- **Compress** changes nothing about what the model works from: it reads every tool result in full, and the result is shortened only once it is history. The cost is that the result is written to your provider's prompt cache twice, in full and then shortened. Measured on Claude Code, that made a 4 to 5 request session cost 2% to 8% more than Passthrough, and it pays back in a longer one. Pick it for long sessions where you want the model to see everything once.
+- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheaper mode in every session. The model works from the shortened output (repeated log lines folded, long lists and lines cut), which is the trade. It can run a narrower command when it needs a part that was cut. Pick it when the tool output is mostly build logs, test runs, and listings.
+
+What both compress modes do, and do not do:
+
+- **They shorten only tool results**, and only ones over about 1,000 tokens. Your messages, the system prompt, tool definitions, and the agent's own text are never changed.
 - **The same text always shortens to the same bytes.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working.
 - **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine.
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
@@ -246,7 +251,7 @@ Under the table, **Maestro token proxy** shows what it did in the last 30 days, 
 The proxy cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider with no base-URL variable. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
 
 ```bash
-maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress
+maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress | compress-early
 maestro-cli show agent <agent-id> --json                    # tokenProxyMode
 maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
 maestro-cli models proxy block <hash>                       # a diff of one shortened block

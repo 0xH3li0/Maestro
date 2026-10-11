@@ -1052,30 +1052,30 @@ Remove an agent from the Maestro desktop app
 
 Update an existing agent's group, working directory, and per-agent settings
 
-| Option                            | Description                                                                                    | Default |
-| --------------------------------- | ---------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                | Move the agent to this group (use "none" to ungroup; supports partial IDs)                     | -       |
-| `-d, --cwd <path>`                | Change the agent's working directory (resolved to absolute; agent must be stopped)             | -       |
-| `--ssh-remote <id>`               | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped) | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                   | -       |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false)                      | -       |
-| `--nudge <message>`               | Nudge message appended to every message (empty string clears)                                  | -       |
-| `--new-session-message <message>` | Message prefixed to the first message of new sessions (empty string clears)                    | -       |
-| `--custom-path <path>`            | Override the agent binary path (empty string clears)                                           | -       |
-| `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                       | -       |
-| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                 | `[]`    |
-| `--clear-env`                     | Clear all per-agent environment variables                                                      | -       |
-| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                | -       |
-| `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress (requires the desktop app)  | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                        | -       |
-| `--effort <level>`                | Effort/reasoning level override (empty string clears)                                          | -       |
-| `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |
-| `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
-| `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                       | -       |
-| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                | -       |
-| `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)             | -       |
-| `--force`                         | Confirm a destructive change (required for --provider)                                         | -       |
-| `--json`                          | Output as JSON (for scripting)                                                                 | -       |
+| Option                            | Description                                                                                                     | Default |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                | Move the agent to this group (use "none" to ungroup; supports partial IDs)                                      | -       |
+| `-d, --cwd <path>`                | Change the agent's working directory (resolved to absolute; agent must be stopped)                              | -       |
+| `--ssh-remote <id>`               | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped)                  | -       |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                    | -       |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false)                                       | -       |
+| `--nudge <message>`               | Nudge message appended to every message (empty string clears)                                                   | -       |
+| `--new-session-message <message>` | Message prefixed to the first message of new sessions (empty string clears)                                     | -       |
+| `--custom-path <path>`            | Override the agent binary path (empty string clears)                                                            | -       |
+| `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                                        | -       |
+| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                  | `[]`    |
+| `--clear-env`                     | Clear all per-agent environment variables                                                                       | -       |
+| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                                 | -       |
+| `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app) | -       |
+| `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                                         | -       |
+| `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                           | -       |
+| `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                              | -       |
+| `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                                            | -       |
+| `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                                        | -       |
+| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                                 | -       |
+| `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)                              | -       |
+| `--force`                         | Confirm a destructive change (required for --provider)                                                          | -       |
+| `--json`                          | Output as JSON (for scripting)                                                                                  | -       |
 
 ## `maestro-cli rename-agent <agent-id> <new-name>`
 
@@ -1852,6 +1852,88 @@ Search past work across History entries, Director's Notes, and tab transcripts: 
 | `-a, --agent <id>`  | Restrict to one agent (id, id prefix, or exact name)                                  | -       |
 | `-l, --limit <n>`   | Most results to return (default 20, max 100)                                          | -       |
 | `--json`            | Output as JSON (for scripting)                                                        | -       |
+
+## `maestro-cli voice`
+
+A Cappella voice: wake phrase training
+
+## `maestro-cli voice wake`
+
+Teach the wake word a phrase from your own recordings: record or add WAV files, then train (requires the desktop app)
+
+## `maestro-cli voice wake list`
+
+List every phrase with recordings, and whether each is trained
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake status <phrase>`
+
+Show what is recorded for a phrase and what its trained model measured
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake record <phrase>`
+
+Open the microphone and keep each burst of speech as one recording of the phrase, until "voice wake stop"
+
+| Option         | Description                                                              | Default |
+| -------------- | ------------------------------------------------------------------------ | ------- |
+| `--background` | Record ordinary speech that is NOT the phrase instead (about 30 seconds) | -       |
+| `--json`       | Output as JSON (for scripting)                                           | -       |
+
+## `maestro-cli voice wake stop`
+
+End the recording in progress and close the microphone
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake add <phrase> <files>`
+
+Add recordings from 16-bit PCM WAV files instead of the microphone, one recording of the phrase per file
+
+| Option         | Description                                          | Default |
+| -------------- | ---------------------------------------------------- | ------- |
+| `--background` | The files are ordinary speech that is NOT the phrase | -       |
+| `--json`       | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli voice wake undo <phrase>`
+
+Remove the newest recording of the phrase
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake clear-background <phrase>`
+
+Remove the ordinary speech recorded for a phrase, so it can be recorded again
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake train <phrase>`
+
+Build the wake word model for a phrase from its recordings; waits until training finishes
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake remove <phrase>`
+
+Delete the trained model and every recording of a phrase
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli models`
 

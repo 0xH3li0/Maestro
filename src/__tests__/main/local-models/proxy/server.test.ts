@@ -752,6 +752,25 @@ describe('token proxy server, compress mode', () => {
 		String(body.length),
 	];
 
+	it('tells the compressor when the agent chose to compress early', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const modeFor = vi.fn(() => 'compress-early' as const);
+		const { port, logs } = await startProxy({ anthropic: upstream.origin }, { modeFor, compress });
+		const body = Buffer.from(original, 'utf-8');
+
+		await send(port, {
+			path: '/agent/agent-1/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(compress).toHaveBeenCalledWith('anthropic-messages', original, { early: true });
+		expect(upstream.seen[0].body.toString()).toBe(shortened);
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0]).toMatchObject({ mode: 'compress-early', compression: { changed: true } });
+	});
+
 	it('sends the shortened body, with its own length, for an agent in compress mode', async () => {
 		const upstream = await startUpstream((_req, res) => res.end('ok'));
 		const compress = vi.fn(async () => compressResult(shortened, true));
@@ -767,7 +786,7 @@ describe('token proxy server, compress mode', () => {
 
 		expect(answer.body.toString()).toBe('ok');
 		expect(modeFor).toHaveBeenCalledWith('agent-1');
-		expect(compress).toHaveBeenCalledWith('anthropic-messages', original);
+		expect(compress).toHaveBeenCalledWith('anthropic-messages', original, { early: false });
 		const seen = upstream.seen[0];
 		// The agent prefix is the proxy's own: the upstream never sees it.
 		expect(seen.url).toBe('/v1/messages?beta=true');
@@ -914,7 +933,7 @@ describe('token proxy server, compress mode', () => {
 			body,
 		});
 
-		expect(compress).toHaveBeenCalledWith('openai-responses', original);
+		expect(compress).toHaveBeenCalledWith('openai-responses', original, { early: false });
 		const seen = upstream.seen[0];
 		expect(seen.body.toString('utf-8')).toBe(shortened);
 		// The declared encoding no longer describes the body, so it is gone.

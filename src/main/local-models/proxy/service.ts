@@ -246,8 +246,9 @@ async function start(port: number): Promise<void> {
 				recordTokenProxyRequest(entry);
 			},
 			modeFor,
-			compress: (kind, body) =>
+			compress: (kind, body, { early }) =>
 				compressRequestBody(kind, body, {
+					early,
 					onModelUnavailable: (verdict) =>
 						reportLocalTaskUnavailable({
 							safeSend: deps?.safeSend,

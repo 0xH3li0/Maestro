@@ -301,7 +301,7 @@ export interface SessionInfo {
 	 * `off`, is the gateway not pointing at the proxy at all (see
 	 * `resolveTokenProxyMode` in `shared/local-models/token-proxy.ts`).
 	 */
-	tokenProxyMode?: 'passthrough' | 'compress';
+	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

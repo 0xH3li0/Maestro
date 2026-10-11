@@ -116,6 +116,13 @@ describe('proxyRequestFromLog', () => {
 		});
 	});
 
+	it('records an early request as compress: the table says whether the body was shortened', () => {
+		expect(proxyRequestFromLog({ ...compressedEntry(), mode: 'compress-early' })).toMatchObject({
+			mode: 'compress',
+			blocksCompressed: 2,
+		});
+	});
+
 	it('records what compress mode read, sent and newly shortened', () => {
 		expect(proxyRequestFromLog(compressedEntry())).toMatchObject({
 			mode: 'compress',

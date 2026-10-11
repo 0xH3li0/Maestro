@@ -148,6 +148,7 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'tokens',
 			'compression',
 			'compress',
+			'compress early',
 			'passthrough',
 			'token proxy',
 			'tokens saved',

@@ -208,7 +208,7 @@ describe('remoteUpdateSessionConfig - token proxy mode', () => {
 
 		expect(reply).toEqual({
 			success: false,
-			error: 'tokenProxyMode must be one of: off, passthrough, compress.',
+			error: 'tokenProxyMode must be one of: off, passthrough, compress, compress-early.',
 		});
 		expect(gatewayService.setAgentTokenProxyMode).not.toHaveBeenCalled();
 	});

@@ -115,7 +115,7 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		patch.gatewayUrl = raw === '' || raw.toLowerCase() === 'none' ? null : raw;
 	}
 
-	// `--proxy-mode <off|passthrough|compress>`: how the Maestro token proxy
+	// `--proxy-mode <off|passthrough|compress|compress-early>`: how the Maestro token proxy
 	// carries this agent's requests. The app points the agent's gateway at the
 	// proxy (or clears it for `off`), so the two flags cannot be combined.
 	if (options.proxyMode !== undefined) {

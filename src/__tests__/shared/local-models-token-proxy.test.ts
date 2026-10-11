@@ -16,8 +16,12 @@ import {
 	classifyTokenProxyPath,
 	defaultTokenProxyUpstreams,
 	gatewayPointsAtTokenProxy,
+	isCompressingTokenProxyMode,
 	resolveTokenProxyMode,
 	resolveTokenProxyTarget,
+	TOKEN_PROXY_MODE_DESCRIPTIONS,
+	TOKEN_PROXY_MODE_LABELS,
+	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_ROUTES,
 	tokenProxyAgentGatewayUrl,
 	tokenProxyErrorBody,
@@ -285,10 +289,32 @@ describe('resolveTokenProxyMode', () => {
 			resolveTokenProxyMode({ gatewayUrl: onProxy, storedMode: 'compress', port: 41234 })
 		).toBe('compress');
 	});
+
+	it('keeps the early choice, which is a different mode and not a spelling of compress', () => {
+		expect(
+			resolveTokenProxyMode({ gatewayUrl: onProxy, storedMode: 'compress-early', port: 41234 })
+		).toBe('compress-early');
+		expect(asTokenProxyMode('compress-early')).toBe('compress-early');
+		expect(asStoredTokenProxyMode('compress-early')).toBe('compress-early');
+	});
+
+	it('says which modes read and shorten a request, and describes every mode', () => {
+		expect(TOKEN_PROXY_MODES.filter(isCompressingTokenProxyMode)).toEqual([
+			'compress',
+			'compress-early',
+		]);
+		for (const mode of TOKEN_PROXY_MODES) {
+			expect(TOKEN_PROXY_MODE_LABELS[mode].length).toBeGreaterThan(0);
+			expect(TOKEN_PROXY_MODE_DESCRIPTIONS[mode].length).toBeGreaterThan(0);
+		}
+		// The two compress modes differ in what the MODEL sees; the words say so.
+		expect(TOKEN_PROXY_MODE_DESCRIPTIONS['compress-early']).toMatch(/before the model first reads/);
+		expect(TOKEN_PROXY_MODE_DESCRIPTIONS.compress).toMatch(/after the model has read/);
+	});
 });
 
 describe('asTokenProxyMode', () => {
-	it('narrows the three modes and nothing else', () => {
+	it('narrows the modes and nothing else', () => {
 		expect(asTokenProxyMode('off')).toBe('off');
 		expect(asTokenProxyMode('passthrough')).toBe('passthrough');
 		expect(asTokenProxyMode('compress')).toBe('compress');
@@ -297,7 +323,7 @@ describe('asTokenProxyMode', () => {
 		}
 	});
 
-	it('reads anything but compress as passthrough when stored', () => {
+	it('reads anything but a compress mode as passthrough when stored', () => {
 		expect(asStoredTokenProxyMode('compress')).toBe('compress');
 		for (const value of ['passthrough', 'off', undefined, null, true]) {
 			expect(asStoredTokenProxyMode(value)).toBe('passthrough');

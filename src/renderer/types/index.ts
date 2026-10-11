@@ -1584,7 +1584,7 @@ export interface Session {
 	gatewayUrl?: string;
 	// How the Maestro token proxy carries this agent's requests when gatewayUrl
 	// points at it. Absent means passthrough. See shared/local-models/token-proxy.ts.
-	tokenProxyMode?: 'passthrough' | 'compress';
+	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

@@ -29,6 +29,18 @@
  *   - Any block marked with `cache_control`, and everything inside it.
  *   - A tool result under the size threshold.
  *
+ * ## Early mode (`options.early`, the agent's `compress-early` proxy mode)
+ *
+ * The two middle rules above are what make `compress` cost more than
+ * passthrough in a short session: a result is written to the provider's prompt
+ * cache in full, then written again shortened one request later (measured:
+ * 2% to 8% more over 4 to 5 requests). Early mode lifts exactly those two
+ * rules. A fresh tool result, and the block carrying the `cache_control`
+ * breakpoint, are shortened before the model first reads them, so nothing is
+ * ever cached in full. It is still only tool results: the user's words in the
+ * same message are not read. What changes is what the model sees, which is why
+ * it is a mode the user picks and not the default.
+ *
  * ## The order of work for one block
  *
  *   1. Hash the original (SHA-256). A verdict already in the cache is used as
@@ -148,6 +160,13 @@ export interface CompressRequestOptions {
 	 * result either way.
 	 */
 	onModelUnavailable?: (verdict: LocalTaskUnavailable) => void;
+	/**
+	 * `compress-early` mode: also shorten the tool results the model has NOT
+	 * read yet (the fresh ones, and any block carrying the `cache_control`
+	 * breakpoint, which is where a client puts it). Off, a fresh result goes out
+	 * whole and is shortened on the next request.
+	 */
+	early?: boolean;
 }
 
 /** One block that was replaced in this request. */
@@ -234,7 +253,12 @@ function lastIndexWhere(items: readonly JsonSpan[], test: (item: JsonSpan) => bo
 }
 
 /** The text of a tool result: the string itself, or the text parts of a content list. */
-function collectText(body: string, content: JsonSpan | undefined, out: JsonSpan[]): void {
+function collectText(
+	body: string,
+	content: JsonSpan | undefined,
+	out: JsonSpan[],
+	early: boolean
+): void {
 	if (!content) return;
 	if (content.kind === 'string') {
 		out.push(content);
@@ -242,32 +266,37 @@ function collectText(body: string, content: JsonSpan | undefined, out: JsonSpan[
 	}
 	if (content.kind !== 'array') return;
 	for (const part of content.items) {
-		if (hasCacheControl(body, part)) continue;
+		if (!early && hasCacheControl(body, part)) continue;
 		if (!TEXT_PART_TYPES.has(field(body, part, 'type') ?? '')) continue;
 		const text = memberOf(part, 'text');
 		if (text?.kind === 'string') out.push(text);
 	}
 }
 
-function anthropicToolResults(body: string, root: JsonSpan): JsonSpan[] {
+function anthropicToolResults(body: string, root: JsonSpan, early: boolean): JsonSpan[] {
 	const messages = memberOf(root, 'messages');
 	if (messages?.kind !== 'array') return [];
-	// Fresh tool results arrive in the last user message. It goes out whole.
+	// Fresh tool results arrive in the last user message. It goes out whole,
+	// unless the mode is early. Only `tool_result` blocks are ever collected, so
+	// what the user typed in that message is not read in either mode.
 	const lastUser = lastIndexWhere(messages.items, (item) => field(body, item, 'role') === 'user');
 	const out: JsonSpan[] = [];
 	messages.items.forEach((message, index) => {
-		if (index === lastUser) return;
+		if (!early && index === lastUser) return;
 		const content = memberOf(message, 'content');
 		if (content?.kind !== 'array') return;
 		for (const block of content.items) {
-			if (field(body, block, 'type') !== 'tool_result' || hasCacheControl(body, block)) continue;
-			collectText(body, memberOf(block, 'content'), out);
+			if (field(body, block, 'type') !== 'tool_result') continue;
+			// The breakpoint sits on the newest block, which in early mode is the
+			// one to shorten. Only the text is rewritten; the marker stays.
+			if (!early && hasCacheControl(body, block)) continue;
+			collectText(body, memberOf(block, 'content'), out, early);
 		}
 	});
 	return out;
 }
 
-function chatCompletionsToolResults(body: string, root: JsonSpan): JsonSpan[] {
+function chatCompletionsToolResults(body: string, root: JsonSpan, early: boolean): JsonSpan[] {
 	const messages = memberOf(root, 'messages');
 	if (messages?.kind !== 'array') return [];
 	// A tool message after the last assistant message has not been answered yet.
@@ -275,11 +304,13 @@ function chatCompletionsToolResults(body: string, root: JsonSpan): JsonSpan[] {
 		messages.items,
 		(item) => field(body, item, 'role') === 'assistant'
 	);
+	const end = early ? messages.items.length : lastAssistant;
 	const out: JsonSpan[] = [];
-	for (let index = 0; index < lastAssistant; index++) {
+	for (let index = 0; index < end; index++) {
 		const message = messages.items[index];
-		if (field(body, message, 'role') !== 'tool' || hasCacheControl(body, message)) continue;
-		collectText(body, memberOf(message, 'content'), out);
+		if (field(body, message, 'role') !== 'tool') continue;
+		if (!early && hasCacheControl(body, message)) continue;
+		collectText(body, memberOf(message, 'content'), out, early);
 	}
 	return out;
 }
@@ -291,17 +322,18 @@ function isModelItem(body: string, item: JsonSpan): boolean {
 	return type === 'reasoning' || type.endsWith('_call');
 }
 
-function responsesToolResults(body: string, root: JsonSpan): JsonSpan[] {
+function responsesToolResults(body: string, root: JsonSpan, early: boolean): JsonSpan[] {
 	const input = memberOf(root, 'input');
 	if (input?.kind !== 'array') return [];
 	// An output after the last model item has not been answered yet.
 	const lastModel = lastIndexWhere(input.items, (item) => isModelItem(body, item));
+	const end = early ? input.items.length : lastModel;
 	const out: JsonSpan[] = [];
-	for (let index = 0; index < lastModel; index++) {
+	for (let index = 0; index < end; index++) {
 		const item = input.items[index];
 		if (!RESPONSES_OUTPUT_TYPES.has(field(body, item, 'type') ?? '')) continue;
-		if (hasCacheControl(body, item)) continue;
-		collectText(body, memberOf(item, 'output'), out);
+		if (!early && hasCacheControl(body, item)) continue;
+		collectText(body, memberOf(item, 'output'), out, early);
 	}
 	return out;
 }
@@ -314,15 +346,17 @@ function responsesToolResults(body: string, root: JsonSpan): JsonSpan[] {
 export function findToolResultSpans(
 	kind: TokenProxyRequestKind,
 	body: string,
-	root: JsonSpan
+	root: JsonSpan,
+	options: { early?: boolean } = {}
 ): JsonSpan[] {
+	const early = options.early === true;
 	switch (kind) {
 		case 'anthropic-messages':
-			return anthropicToolResults(body, root);
+			return anthropicToolResults(body, root, early);
 		case 'openai-chat-completions':
-			return chatCompletionsToolResults(body, root);
+			return chatCompletionsToolResults(body, root, early);
 		case 'openai-responses':
-			return responsesToolResults(body, root);
+			return responsesToolResults(body, root, early);
 		case 'other':
 			return [];
 	}
@@ -535,7 +569,7 @@ export async function compressRequestBody(
 			((text) => summarizeToolResult(text, { onUnavailable: options.onModelUnavailable })),
 	};
 
-	const spans = findToolResultSpans(kind, body, root);
+	const spans = findToolResultSpans(kind, body, root, { early: options.early });
 	stats.candidates = spans.length;
 	const resolutions = await Promise.all(
 		spans.map((span) => {

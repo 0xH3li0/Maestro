@@ -2021,9 +2021,22 @@ grows with each compressed block and each later request, so compress mode wins i
 and loses in a short one. What it always gives is context: the prompt was about 20500 and 31600
 tokens smaller at the end of the two runs.
 
-Compressing a result the first time it is sent would remove the cost: one write of about 1750
-tokens per result and nothing re-written. It is not built, because the model would never read the
-full result. That is the user's decision.
+Compressing a result the first time it is sent removes the cost: one write of about 1750 tokens
+per result and nothing re-written. It changes what the model reads, so it is the user's decision,
+and it is now a mode of its own: **`compress-early`** (`TokenProxyMode`, "Compress early" in the
+Gateway table, `--proxy-mode compress-early`). The server passes `{ early: true }` to
+`compressRequestBody`, which lifts exactly the two rules that cause the double write: a tool result
+the model has not answered yet, and the block carrying the `cache_control` breakpoint, are both
+shortened (the breakpoint itself is left where the client put it). Everything else holds: only tool
+results, only over the threshold, the same bytes for the same content. `proxy_requests.mode` records
+an early request as `compress`, since that column says whether the body was shortened; the agent's
+mode is read from its record.
+
+Why `compress` was not simply retimed instead: shortening a block later costs more, not less.
+Changing bytes early in a cached prefix makes the provider re-write everything after them, so the
+request right after a result is fresh (when only a short tail follows it) is already the cheapest
+moment `compress` has. Not measured on real traffic yet: `compress-early` has unit tests for the
+byte-level rule and no provider run.
 
 #### Finding 2: a Codex agent's gateway is not applied
 

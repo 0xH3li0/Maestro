@@ -468,12 +468,15 @@ describe("an agent's mode", () => {
 		const result = { body: '{}', changed: false, blocks: [], stats: {} };
 		compressor.compressRequestBody.mockResolvedValueOnce(result);
 
-		await expect(options.compress?.('anthropic-messages', '{"a":1}')).resolves.toBe(result);
+		await expect(
+			options.compress?.('anthropic-messages', '{"a":1}', { early: true })
+		).resolves.toBe(result);
 
 		expect(compressor.compressRequestBody).toHaveBeenCalledWith(
 			'anthropic-messages',
 			'{"a":1}',
-			expect.objectContaining({ onModelUnavailable: expect.any(Function) })
+			// The agent's early choice reaches the compressor as it was made.
+			expect.objectContaining({ early: true, onModelUnavailable: expect.any(Function) })
 		);
 		const verdict = { status: 'unavailable', code: 'model-not-installed', reason: 'Not installed' };
 		compressor.compressRequestBody.mock.calls[0][2].onModelUnavailable(verdict);

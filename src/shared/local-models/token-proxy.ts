@@ -238,12 +238,23 @@ export function tokenProxyAgentGatewayUrl(
  * - `off`: the agent's gateway is not the Maestro proxy (it has none, or it
  *   points somewhere else).
  * - `passthrough`: requests are forwarded unchanged and counted.
- * - `compress`: large tool results in a request are shortened first
- *   (`src/main/local-models/proxy/compress.ts`).
+ * - `compress`: a large tool result is shortened once the model has read it in
+ *   full (`src/main/local-models/proxy/compress.ts`). The model's work is
+ *   unchanged; the result is written to the provider's prompt cache twice, in
+ *   full and then shortened, so a short session costs slightly more and a long
+ *   one less.
+ * - `compress-early`: a large tool result is shortened BEFORE the model first
+ *   reads it. Nothing is cached twice, so it is the cheapest in every session.
+ *   The model works from the shortened output, which is the trade.
  */
-export type TokenProxyMode = 'off' | 'passthrough' | 'compress';
+export type TokenProxyMode = 'off' | 'passthrough' | 'compress' | 'compress-early';
 
-export const TOKEN_PROXY_MODES: readonly TokenProxyMode[] = ['off', 'passthrough', 'compress'];
+export const TOKEN_PROXY_MODES: readonly TokenProxyMode[] = [
+	'off',
+	'passthrough',
+	'compress',
+	'compress-early',
+];
 
 /** The part of the mode that is stored on the agent. `off` is the gateway's absence. */
 export type StoredTokenProxyMode = Exclude<TokenProxyMode, 'off'>;
@@ -255,7 +266,23 @@ export const TOKEN_PROXY_MODE_LABELS: Record<TokenProxyMode, string> = {
 	off: 'Off',
 	passthrough: 'Passthrough (count only)',
 	compress: 'Compress tool results',
+	'compress-early': 'Compress early',
 };
+
+/** One sentence per mode: what it does and what it costs. Shown under the picker. */
+export const TOKEN_PROXY_MODE_DESCRIPTIONS: Record<TokenProxyMode, string> = {
+	off: "This agent's requests do not go through the Maestro proxy.",
+	passthrough: 'Requests are forwarded unchanged and counted. Nothing is shortened.',
+	compress:
+		'A large tool result is shortened after the model has read it once in full. The model sees everything; the result is cached twice, so this costs slightly more in a short session and less in a long one.',
+	'compress-early':
+		'A large tool result is shortened before the model first reads it. Cheapest in every session, because nothing is cached in full. The model works from the shortened output.',
+};
+
+/** Whether a mode reads and shortens request bodies. */
+export function isCompressingTokenProxyMode(mode: TokenProxyMode): boolean {
+	return mode === 'compress' || mode === 'compress-early';
+}
 
 /** Narrow a value from the CLI, the bridge or a stored record. Never a cast. */
 export function asTokenProxyMode(value: unknown): TokenProxyMode | undefined {
@@ -264,9 +291,9 @@ export function asTokenProxyMode(value: unknown): TokenProxyMode | undefined {
 		: undefined;
 }
 
-/** The stored half of {@link asTokenProxyMode}: anything but `compress` is passthrough. */
+/** The stored half of {@link asTokenProxyMode}: anything but a compress mode is passthrough. */
 export function asStoredTokenProxyMode(value: unknown): StoredTokenProxyMode {
-	return value === 'compress' ? 'compress' : 'passthrough';
+	return value === 'compress' || value === 'compress-early' ? value : 'passthrough';
 }
 
 /**

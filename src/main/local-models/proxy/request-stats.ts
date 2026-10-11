@@ -18,6 +18,7 @@ import type {
 	ProxyRequestUsage,
 	StatsTimeRange,
 } from '../../../shared/stats-types';
+import { isCompressingTokenProxyMode } from '../../../shared/local-models/token-proxy';
 import { getStatsDB } from '../../stats/singleton';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { getSettingsStore } from '../../stores/getters';
@@ -53,7 +54,9 @@ export function proxyRequestFromLog(entry: TokenProxyRequestLog): Omit<ProxyRequ
 		...(entry.agentId !== null ? { agentId: entry.agentId } : {}),
 		route: entry.route,
 		kind: entry.kind,
-		mode: entry.mode,
+		// The table records whether a request was read and shortened, which both
+		// compress modes do. The agent's mode itself is read from its record.
+		mode: isCompressingTokenProxyMode(entry.mode) ? 'compress' : 'passthrough',
 		startedAt: entry.startedAt,
 		durationMs: entry.durationMs,
 		status: entry.status,

@@ -257,6 +257,41 @@ describe('the Maestro proxy mode', () => {
 		expect(modeSelect('b')).toHaveValue('compress');
 	});
 
+	it('offers Compress early, and says under the picker what each mode costs', async () => {
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'b']));
+		seed(
+			agent({
+				id: 'a',
+				name: 'Alpha',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress',
+			}),
+			agent({
+				id: 'b',
+				name: 'Beta',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress-early',
+			}),
+			agent({ id: 'c', name: 'Gamma' })
+		);
+
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		await waitFor(() => expect(modeSelect('b')).toHaveValue('compress-early'));
+		expect(Array.from(modeSelect('a').options).map((option) => option.textContent)).toContain(
+			'Compress early'
+		);
+		// The two modes differ in what the model sees; the note is where that is said.
+		expect(screen.getByTestId('gateway-proxy-mode-note-a')).toHaveTextContent(
+			/after the model has read it once/
+		);
+		expect(screen.getByTestId('gateway-proxy-mode-note-b')).toHaveTextContent(
+			/before the model first reads it/
+		);
+		// An agent that is not on the proxy has nothing to explain.
+		expect(screen.queryByTestId('gateway-proxy-mode-note-c')).not.toBeInTheDocument();
+	});
+
 	it('choosing Compress points the agent at the proxy, stores the mode, and re-reads the report', async () => {
 		const proxy = window.maestro.localModels.proxy;
 		seed(agent({ id: 'a', name: 'Alpha' }));

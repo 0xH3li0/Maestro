@@ -53,6 +53,7 @@ import * as zlib from 'zlib';
 import { estimateTokenCount } from '../../../shared/formatters';
 import {
 	defaultTokenProxyUpstreams,
+	isCompressingTokenProxyMode,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_HOST,
 	TOKEN_PROXY_NAME,
@@ -155,7 +156,11 @@ export interface TokenProxyServerOptions {
 	 * Shortens a request body in `compress` mode (`compressRequestBody`). It
 	 * takes and returns text. Without it every request is a passthrough.
 	 */
-	compress?: (kind: TokenProxyRequestKind, body: string) => Promise<CompressRequestResult>;
+	compress?: (
+		kind: TokenProxyRequestKind,
+		body: string,
+		options: { early: boolean }
+	) => Promise<CompressRequestResult>;
 }
 
 export interface TokenProxyServer {
@@ -489,7 +494,7 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		req.on('error', () => {});
 
 		const compress = options.compress;
-		if (entry.mode !== 'compress' || !compress || target.kind === 'other') {
+		if (!isCompressingTokenProxyMode(entry.mode) || !compress || target.kind === 'other') {
 			req.pipe(openUpstream(arrivedHeaders()));
 			return;
 		}
@@ -511,7 +516,9 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 				if ('skipped' in decoded) {
 					log.skipped = decoded.skipped;
 				} else {
-					const result = await compress(kind, decoded.text);
+					const result = await compress(kind, decoded.text, {
+						early: entry.mode === 'compress-early',
+					});
 					log.originalTokens = estimateTokenCount(decoded.text);
 					log.sentTokens = log.originalTokens;
 					log.stats = result.stats;

@@ -32,6 +32,7 @@ import {
 	asTokenProxyMode,
 	resolveTokenProxyMode,
 	TOKEN_PROXY_MODE_LABELS,
+	TOKEN_PROXY_MODE_DESCRIPTIONS,
 	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_NAME,
 	type TokenProxyMode,
@@ -290,6 +291,17 @@ function GatewayRow({
 						</option>
 					))}
 				</select>
+				{proxyMode !== 'off' && (
+					// What the chosen mode does and costs, where the choice is made: the
+					// two compress modes differ in what the MODEL sees, which a one-word
+					// label cannot carry.
+					<p
+						className="mt-1 text-xs opacity-70 max-w-xs"
+						data-testid={`gateway-proxy-mode-note-${agent.id}`}
+					>
+						{TOKEN_PROXY_MODE_DESCRIPTIONS[proxyMode]}
+					</p>
+				)}
 				{modeError && (
 					<p
 						className="mt-1 text-xs select-text"
