@@ -8,10 +8,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Session, Theme } from '../../../../../renderer/types';
-import {
-	LocalModelsGatewaySection,
-	tokenProxyModeBlocker,
-} from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsGatewaySection';
+import { LocalModelsGatewaySection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsGatewaySection';
+import { tokenProxyModeBlocker } from '../../../../../renderer/components/shared/TokenProxyModeField';
 import {
 	describeAddedLatency,
 	describeProxyListener,
@@ -282,14 +280,14 @@ describe('the Maestro proxy mode', () => {
 			'Compress early'
 		);
 		// The two modes differ in what the model sees; the note is where that is said.
-		expect(screen.getByTestId('gateway-proxy-mode-note-a')).toHaveTextContent(
+		expect(screen.getByTestId('gateway-proxy-mode-a-note')).toHaveTextContent(
 			/after the model has read it once/
 		);
-		expect(screen.getByTestId('gateway-proxy-mode-note-b')).toHaveTextContent(
+		expect(screen.getByTestId('gateway-proxy-mode-b-note')).toHaveTextContent(
 			/before the model first reads it/
 		);
 		// An agent that is not on the proxy has nothing to explain.
-		expect(screen.queryByTestId('gateway-proxy-mode-note-c')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('gateway-proxy-mode-c-note')).not.toBeInTheDocument();
 	});
 
 	it('choosing Compress points the agent at the proxy, stores the mode, and re-reads the report', async () => {
@@ -371,7 +369,7 @@ describe('the Maestro proxy mode', () => {
 			fireEvent.change(modeSelect('a'), { target: { value: 'passthrough' } });
 		});
 
-		expect(await screen.findByTestId('gateway-proxy-mode-error-a')).toHaveTextContent(
+		expect(await screen.findByTestId('gateway-proxy-mode-a-error')).toHaveTextContent(
 			'no free port'
 		);
 		expect(useSessionStore.getState().sessions[0].gatewayUrl).toBeUndefined();

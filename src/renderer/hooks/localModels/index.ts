@@ -34,3 +34,8 @@ export {
 export type { SemanticSearchState, UseSemanticSearchOptions } from './useSemanticSearch';
 export { useTokenProxyReport } from './useTokenProxyReport';
 export type { TokenProxyReportState } from './useTokenProxyReport';
+export { useTokenProxyModeChoice } from './useTokenProxyModeChoice';
+export type {
+	TokenProxyModeChoiceState,
+	UseTokenProxyModeChoiceOptions,
+} from './useTokenProxyModeChoice';

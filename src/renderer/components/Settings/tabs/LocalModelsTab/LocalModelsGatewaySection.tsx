@@ -27,27 +27,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { resolveAgentEnvironment } from '../../../../../shared/agentEnvironment';
 import { getAgentDisplayName } from '../../../../../shared/agentMetadata';
-import { agentGatewaySupport, gatewayEnvVarsFor } from '../../../../../shared/local-models/gateway';
+import { gatewayEnvVarsFor } from '../../../../../shared/local-models/gateway';
 import {
-	asTokenProxyMode,
 	resolveTokenProxyMode,
-	TOKEN_PROXY_MODE_LABELS,
-	TOKEN_PROXY_MODE_DESCRIPTIONS,
-	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_NAME,
-	type TokenProxyMode,
 } from '../../../../../shared/local-models/token-proxy';
 import { effectiveAgentCustomEnvVars } from '../../../../../shared/providerProfiles';
 import {
 	useAgentLevelEnvVars,
 	useSshRemoteNames,
 } from '../../../../hooks/stats/useProviderProfiles';
+import { useTokenProxyModeChoice } from '../../../../hooks/localModels/useTokenProxyModeChoice';
 import { useTokenProxyReport } from '../../../../hooks/localModels/useTokenProxyReport';
-import { setAgentGatewayUrl, setAgentTokenProxyMode } from '../../../../services/agentGateway';
+import { setAgentGatewayUrl } from '../../../../services/agentGateway';
 import { useSessionStore } from '../../../../stores/sessionStore';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Session, Theme } from '../../../../types';
 import { GatewayUrlField } from '../../../shared/GatewayUrlField';
+import { TokenProxyModeField, tokenProxyModeBlocker } from '../../../shared/TokenProxyModeField';
 import { EnvVarList } from '../../../ui/EnvVarList';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelsProxyUsage } from './LocalModelsProxyUsage';
@@ -150,22 +147,6 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 	);
 }
 
-/**
- * Why an agent cannot use the Maestro proxy, or undefined when it can. The
- * same two refusals `setAgentTokenProxyMode` makes, said before the click.
- */
-export function tokenProxyModeBlocker(
-	toolType: string,
-	sshRemoteName: string | undefined
-): string | undefined {
-	const support = agentGatewaySupport(toolType);
-	if (!support.supported) return support.reason;
-	if (sshRemoteName) {
-		return `The ${TOKEN_PROXY_NAME} listens on this machine, which SSH remote "${sshRemoteName}" cannot reach.`;
-	}
-	return undefined;
-}
-
 interface GatewayRowProps {
 	theme: Theme;
 	agent: Session;
@@ -189,35 +170,13 @@ function GatewayRow({
 	const stored = agent.gatewayUrl ?? '';
 	const [draft, setDraft] = useState(stored);
 	const [error, setError] = useState<string | undefined>();
-	const [modeError, setModeError] = useState<string | undefined>();
-	const [modeBusy, setModeBusy] = useState(false);
 	const proxyMode = resolveTokenProxyMode({
 		gatewayUrl: stored,
 		storedMode: agent.tokenProxyMode,
 		port: proxyPort,
 	});
 	const modeBlocker = tokenProxyModeBlocker(agent.toolType, sshRemoteName);
-
-	const chooseMode = useCallback(
-		(value: string) => {
-			const mode: TokenProxyMode | undefined = asTokenProxyMode(value);
-			if (!mode) return;
-			setModeBusy(true);
-			setModeError(undefined);
-			void setAgentTokenProxyMode(agent.id, mode)
-				.then((result) => {
-					if (!result.ok) setModeError(result.error);
-				})
-				.catch((err: unknown) => {
-					setModeError(err instanceof Error ? err.message : String(err));
-				})
-				.finally(() => {
-					setModeBusy(false);
-					onProxyModeChanged();
-				});
-		},
-		[agent.id, onProxyModeChanged]
-	);
+	const modeChoice = useTokenProxyModeChoice(agent.id, { onSettled: onProxyModeChanged });
 	const [envOpen, setEnvOpen] = useState(false);
 	const globalEnvVars = useSettingsStore((s) => s.shellEnvVars);
 	// The agent's own vars replace the provider-level set; the gateway yields to
@@ -275,42 +234,17 @@ function GatewayRow({
 				{sshRemoteName && <span className="block">on {sshRemoteName}</span>}
 			</td>
 			<td className="align-top py-1.5 pr-3">
-				<select
+				<TokenProxyModeField
+					theme={theme}
 					value={proxyMode}
-					onChange={(e) => chooseMode(e.target.value)}
-					disabled={modeBlocker !== undefined || modeBusy}
-					title={modeBlocker}
-					aria-label={`${TOKEN_PROXY_NAME} mode for ${agent.name}`}
-					className="p-1.5 rounded border bg-transparent outline-none text-xs disabled:opacity-40"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-					data-testid={`gateway-proxy-mode-${agent.id}`}
-				>
-					{TOKEN_PROXY_MODES.map((mode) => (
-						<option key={mode} value={mode}>
-							{TOKEN_PROXY_MODE_LABELS[mode]}
-						</option>
-					))}
-				</select>
-				{proxyMode !== 'off' && (
-					// What the chosen mode does and costs, where the choice is made: the
-					// two compress modes differ in what the MODEL sees, which a one-word
-					// label cannot carry.
-					<p
-						className="mt-1 text-xs opacity-70 max-w-xs"
-						data-testid={`gateway-proxy-mode-note-${agent.id}`}
-					>
-						{TOKEN_PROXY_MODE_DESCRIPTIONS[proxyMode]}
-					</p>
-				)}
-				{modeError && (
-					<p
-						className="mt-1 text-xs select-text"
-						style={{ color: theme.colors.error }}
-						data-testid={`gateway-proxy-mode-error-${agent.id}`}
-					>
-						{modeError}
-					</p>
-				)}
+					onChange={modeChoice.choose}
+					disabledReason={modeBlocker}
+					busy={modeChoice.busy}
+					error={modeChoice.error}
+					ariaLabel={`${TOKEN_PROXY_NAME} mode for ${agent.name}`}
+					testId={`gateway-proxy-mode-${agent.id}`}
+					compact
+				/>
 			</td>
 			<td className="align-top py-1.5">
 				<GatewayUrlField

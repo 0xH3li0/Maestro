@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
@@ -83,6 +84,10 @@ const SAVE_ARG = {
 	gatewayUrl: 23,
 } as const;
 
+/** Show one tab of the form. Only the active tab's fields are rendered. */
+const openTab = (name: string) =>
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
+
 describe('EditAgentModal', () => {
 	let theme: Theme;
 	let onClose: ReturnType<typeof vi.fn>;
@@ -94,6 +99,8 @@ describe('EditAgentModal', () => {
 		onSave = vi.fn();
 
 		mockRegisterLayer.mockClear().mockReturnValue('layer-edit-agent-123');
+		// The form remembers its last tab per app session; start every case on General.
+		__resetRememberedModalTabsForTests();
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 
@@ -424,6 +431,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 
 		await waitFor(() => {
 			const providerSelect = screen.getByDisplayValue('Claude Code');
@@ -442,6 +450,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 
 		const providerSelect = await screen.findByDisplayValue('Claude Code');
 
@@ -502,6 +511,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// 'max' (session override), not 'high' (agent-level config)
 			expect(await screen.findByDisplayValue('max')).toBeInTheDocument();
@@ -548,6 +558,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const effortSelect = await screen.findByDisplayValue('max');
 			fireEvent.change(effortSelect, { target: { value: 'low' } });
@@ -572,6 +583,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const yolo = await screen.findByLabelText('Enabled');
 			fireEvent.click(yolo);
@@ -998,6 +1010,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('SSH');
 
 		// Wait for the SSH dropdown to render with the remote selected
 		const dropdown = (await screen.findByDisplayValue(/Dev Server/)) as HTMLSelectElement;
@@ -1066,6 +1079,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('SSH');
 
 		// SSH selector should appear after SSH configs load
 		await waitFor(() => {
@@ -1137,6 +1151,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				// Names the window actually in use, so the number in the field is not
@@ -1159,6 +1174,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('120000');
 				// The value is winning, so there is nothing to explain.
@@ -1176,6 +1192,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				// An unflagged report may be a parser-injected static fallback, so the
@@ -1209,6 +1226,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).not.toBeInTheDocument();
@@ -1242,6 +1260,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent('1.0M');
@@ -1275,6 +1294,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				// Note is present before the switch...
 				await screen.findByDisplayValue('200000');
@@ -1307,6 +1327,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Provider');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent(/selected model/i);
@@ -1337,6 +1358,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Seeded from the agent-level config because the session has none.
 			expect(await screen.findByDisplayValue('200000')).toBeInTheDocument();
@@ -1365,6 +1387,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '' } });
@@ -1387,6 +1410,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '120000' } });
@@ -1426,7 +1450,7 @@ describe('EditAgentModal', () => {
 
 		function renderCodex(session: Session) {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([codexAgent]);
-			return render(
+			const result = render(
 				<EditAgentModal
 					isOpen={true}
 					onClose={onClose}
@@ -1436,6 +1460,8 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
+			return result;
 		}
 
 		const toggle = () =>
@@ -1492,7 +1518,8 @@ describe('EditAgentModal', () => {
 				/>
 			);
 
-			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
 		});
 
@@ -1543,7 +1570,8 @@ describe('EditAgentModal', () => {
 					/>
 				);
 
-				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				openTab('Provider');
+				await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
 				expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
 			});
 		});
@@ -1583,8 +1611,9 @@ describe('EditAgentModal', () => {
 			return api;
 		}
 
-		const renderModal = (session: Session = createSession()) =>
-			render(
+		/** The dialog, on the Provider tab where the export section lives. */
+		const renderModal = (session: Session = createSession()) => {
+			const result = render(
 				<EditAgentModal
 					isOpen={true}
 					onClose={onClose}
@@ -1594,13 +1623,22 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
+			return result;
+		};
 
-		/** The form, once the agent and its config have loaded: what Save reads. */
-		const formReady = () =>
-			waitFor(() => {
-				expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
-				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0);
-			});
+		/**
+		 * The form, once the agent and its config have loaded: what Save reads.
+		 * The name is on General, so it is checked there before coming back.
+		 */
+		const formReady = async () => {
+			await waitFor(() =>
+				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0)
+			);
+			openTab('General');
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+			openTab('Provider');
+		};
 
 		/** The section, once its first status has arrived and its controls are free. */
 		const sectionReady = () =>
@@ -1762,7 +1800,7 @@ describe('EditAgentModal', () => {
 
 	describe('Local Models gateway', () => {
 		function renderWith(session: Session) {
-			return render(
+			const result = render(
 				<EditAgentModal
 					isOpen={true}
 					onClose={onClose}
@@ -1772,6 +1810,8 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Models');
+			return result;
 		}
 
 		const field = () =>
@@ -1858,6 +1898,264 @@ describe('EditAgentModal', () => {
 			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
 				'ignores base-URL variables'
 			);
+		});
+	});
+
+	describe('tabbed form', () => {
+		const renderModal = (session: Session = createSession(), existingSessions: Session[] = []) =>
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={existingSessions}
+				/>
+			);
+
+		const selectedTab = () =>
+			screen.getAllByRole('tab').find((tab) => tab.getAttribute('aria-selected') === 'true');
+
+		it('renders the six tabs in order, opens on General, and is a resizable frame', () => {
+			const { container } = renderModal();
+
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Environment',
+				'Peers',
+				'SSH',
+			]);
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(
+				container.ownerDocument.querySelector('[data-modal-resize-key="edit-agent"]')
+			).not.toBe(null);
+		});
+
+		it('renders only the active panel', () => {
+			renderModal();
+
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
+			openTab('SSH');
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-ssh');
+		});
+
+		it('reopens on the last tab used', () => {
+			const first = renderModal();
+			openTab('Models');
+			first.unmount();
+
+			renderModal();
+			expect(selectedTab()).toHaveTextContent('Models');
+		});
+
+		it('moves the environment variables to the Environment tab', async () => {
+			renderModal();
+
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
+			expect(screen.queryByDisplayValue('API_KEY')).not.toBeInTheDocument();
+
+			openTab('Environment');
+			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('test-key')).toBeInTheDocument();
+		});
+
+		it('keeps an Environment edit through a tab switch and out through Save', async () => {
+			renderModal();
+			openTab('Environment');
+
+			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
+			openTab('General');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][7]).toEqual({ API_KEY: 'new-key' });
+		});
+
+		it('dots the General tab and sends Cmd+Enter there from SSH when the name is taken', async () => {
+			renderModal(createSession(), [createSession({ id: 'other', name: 'My Agent' })]);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-tab-general-error')).toBeInTheDocument()
+			);
+			openTab('SSH');
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('An agent named "My Agent" already exists')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter to General when the name is empty', async () => {
+			renderModal();
+			const name = await screen.findByDisplayValue('My Agent');
+			fireEvent.change(name, { target: { value: '' } });
+			openTab('Peers');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('lands on Models when Save refuses the gateway', async () => {
+			renderModal();
+			openTab('Models');
+			const gateway = screen
+				.getByTestId('edit-agent-gateway')
+				.querySelector('input') as HTMLInputElement;
+			fireEvent.change(gateway, { target: { value: 'not a url' } });
+			openTab('General');
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Models');
+			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
+		});
+
+		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[', () => {
+			renderModal();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('Provider');
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+			renderModal();
+			expect(screen.getByTestId('edit-agent-runs-on')).toHaveTextContent('Local');
+
+			openTab('Provider');
+			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+		});
+	});
+
+	describe('Maestro token proxy mode', () => {
+		const PROXY_PORT = 48123;
+		const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/anthropic`;
+		const proxy = () => window.maestro.localModels.proxy;
+
+		const reportWithPort = (port: number | null) => ({
+			status: { port, running: port !== null, agentIds: [], lastError: null, gatewayUrls: null },
+			agents: [],
+			usage: null,
+			recentCompressions: [],
+		});
+
+		function renderOnModels(session: Session) {
+			// The mode write reads and writes the live store entry, as the table does.
+			useSessionStore.setState({ sessions: [session] } as never);
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const modeSelect = () => screen.getByTestId('edit-agent-proxy-mode') as HTMLSelectElement;
+		const gatewayInput = () =>
+			screen.getByTestId('edit-agent-gateway').querySelector('input') as HTMLInputElement;
+
+		beforeEach(() => {
+			vi.mocked(proxy().report).mockReset().mockResolvedValue(reportWithPort(null));
+			vi.mocked(proxy().ensurePort).mockReset().mockResolvedValue(PROXY_PORT);
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		it('sits on the Models tab beside the gateway and reads Off with no proxy', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			expect(modeSelect()).toHaveValue('off');
+			expect(screen.getByTestId('edit-agent-gateway')).toBeInTheDocument();
+		});
+
+		it('reads the stored mode when the gateway is the proxy', async () => {
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'compress' }));
+
+			await waitFor(() => expect(modeSelect()).toHaveValue('compress'));
+			expect(screen.getByTestId('edit-agent-proxy-mode-note')).toBeInTheDocument();
+		});
+
+		it('applies a choice at once, and the gateway draft follows so Save keeps it', async () => {
+			renderOnModels(createSession());
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+
+			fireEvent.change(modeSelect(), { target: { value: 'passthrough' } });
+
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions[0]).toMatchObject({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+				})
+			);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(gatewayInput()).toHaveValue(proxyUrl));
+			await waitFor(() => expect(modeSelect()).toHaveValue('passthrough'));
+
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe(proxyUrl);
+		});
+
+		it('reads Off once a different gateway is typed over the proxy', async () => {
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'compress' }));
+			await waitFor(() => expect(modeSelect()).toHaveValue('compress'));
+
+			fireEvent.change(gatewayInput(), { target: { value: 'http://localhost:4000' } });
+
+			expect(modeSelect()).toHaveValue('off');
+		});
+
+		it('waits for a pending provider change, and says why', async () => {
+			renderOnModels(createSession());
+			openTab('Provider');
+			fireEvent.change(await screen.findByDisplayValue('Claude Code'), {
+				target: { value: 'codex' },
+			});
+			openTab('Models');
+
+			expect(modeSelect()).toBeDisabled();
+			expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent(
+				'Save the provider change first'
+			);
+		});
+
+		it('is refused for an agent on an SSH remote, before the click', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ id: 'remote-1', name: 'Dev Box', host: 'dev', port: 22 }],
+			} as never);
+			renderOnModels(
+				createSession({ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } })
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent('Dev Box')
+			);
+			expect(modeSelect()).toBeDisabled();
 		});
 	});
 });
