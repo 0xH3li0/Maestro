@@ -26,6 +26,7 @@ import { pluginToolRunIdentity } from './src/main/plugins/plugin-tool-run-identi
 import { createMcpBridge } from './src/cli/services/mcp-bridge.ts';
 import { evaluatePluginDispatch } from './src/shared/plugins/plugin-dispatch-gate.ts';
 
+/** Pair source MCP identity/receipts with real outbound policy and a fake network sink. */
 export async function verify() {
  const owner = 'fixture-agent';
  const binding = { guildId: '10', channelId: '20', agentId: owner };
@@ -71,6 +72,7 @@ export async function verify() {
  }));
  const socket = new WebSocket('ws://127.0.0.1:' + wss.address().port, { headers: { 'x-fixture-secret': secret } });
  await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+ /** Invoke the advertised source MCP tool using only the supplied host proof. */
  const call = async (args, runToken) => {
   const bridge = createMcpBridge({ serverInfo: { name: 'fixture', version: '1' }, runToken, log: () => {},
    request: async message => new Promise((resolve, reject) => {

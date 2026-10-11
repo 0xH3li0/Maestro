@@ -43,6 +43,9 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(kvBase, { recursive: true, force: true }));
 
+/** Isolated host dependencies with a verified pinned Relay signer by default.
+ * Individual boundary tests override trust, signer, grants and sinks independently.
+ */
 function makeDeps(over: Partial<HostHandlerDeps> = {}): HostHandlerDeps {
 	const base: HostHandlerDeps = {
 		broker: {

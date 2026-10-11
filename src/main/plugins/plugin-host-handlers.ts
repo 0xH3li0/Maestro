@@ -1616,6 +1616,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					runs.add(controller);
 					activeRuns.set(pluginId, runs);
 					try {
+						/** Forward progress only while the run retains live grants, consent and Relay identity. */
 						const onProgress = (event: AgentSendProgressEvent): void => {
 							if (controller.signal.aborted) return;
 							if (

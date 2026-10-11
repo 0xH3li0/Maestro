@@ -30,6 +30,10 @@ interface AgentDispatchAllowlistProps {
 	onSaved: (snapshot: PluginGrantsSnapshot) => void;
 }
 
+/** Edit the exact agent IDs in a plugin grant using the host consent ledger.
+ * Filtering changes only visibility; saving revalidates existing agents and
+ * retains the separately granted unattended setting through the host handler.
+ */
 export function AgentDispatchAllowlist({
 	theme,
 	pluginId,
