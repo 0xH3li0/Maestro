@@ -23,6 +23,7 @@ import {
 	toClaudeTokenModeSource,
 	type ClaudeTokenMode,
 } from '../../../shared/claudeTokenMode';
+import { CODEX_TRANSPORTS, type CodexTransport } from '../../../shared/codexTransport';
 import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/opencodeAgentArg';
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
@@ -57,6 +58,17 @@ const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
 	dynamic:
 		'Start on the TUI, switch to claude --print near a plan limit. The switch only helps with an API key set: signed in with a plan alone, both draw from the same limits.',
 };
+
+// Codex transport selector (codex only). Labels follow CODEX_TRANSPORTS order,
+// so the default (`exec`) is always the first segment.
+const CODEX_TRANSPORT_LABELS: Record<CodexTransport, string> = {
+	exec: 'Standard (codex exec)',
+	'app-server': 'App server (experimental, enables steering)',
+};
+
+const CODEX_TRANSPORT_OPTIONS: { value: CodexTransport; label: string }[] = CODEX_TRANSPORTS.map(
+	(value) => ({ value, label: CODEX_TRANSPORT_LABELS[value] })
+);
 
 // Built-in environment variables that Maestro sets automatically
 const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
@@ -399,6 +411,13 @@ export interface AgentConfigPanelProps {
 	 */
 	codexAutoResetOnExhaustion?: boolean;
 	onCodexAutoResetChange?: (value: boolean) => void;
+	/**
+	 * How this agent's chat turns reach Codex. `undefined` means `exec`, the
+	 * default. Rendered beside the Claude Token Source slot (the two are never
+	 * shown together) and only when the handler is supplied.
+	 */
+	codexTransport?: CodexTransport;
+	onCodexTransportChange?: (transport: CodexTransport) => void;
 }
 
 export function AgentConfigPanel({
@@ -446,6 +465,8 @@ export function AgentConfigPanel({
 	detectedMaestroPPath,
 	codexAutoResetOnExhaustion = false,
 	onCodexAutoResetChange,
+	codexTransport = 'exec',
+	onCodexTransportChange,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -793,6 +814,37 @@ export function AgentConfigPanel({
 							</p>
 						</div>
 					)}
+				</div>
+			)}
+
+			{/* Codex Transport selector - Codex only, in the same slot the Claude
+			    Token Source occupies for Claude. App server is an opt-in preference,
+			    not a guarantee: turns the app-server spawner cannot carry (SSH,
+			    images, Auto Run, Cue) still run on codex exec. Gated on the handler
+			    so a surface that does not persist the field shows nothing. */}
+			{agent.id === 'codex' && onCodexTransportChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					data-testid="codex-transport-option"
+				>
+					<span className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+						Codex Transport
+					</span>
+					<ToggleButtonGroup
+						options={CODEX_TRANSPORT_OPTIONS}
+						value={codexTransport}
+						onChange={onCodexTransportChange}
+						theme={theme}
+					/>
+					<p className="text-xs opacity-50 mt-2">
+						Standard runs every turn through codex exec. App server is experimental: it runs local
+						interactive chat turns through codex app-server so a queued message can steer a turn
+						that is already running. SSH, image, Auto Run, and Cue turns keep using codex exec.
+						{isSshEnabled && codexTransport === 'app-server'
+							? ' This agent runs over SSH, so its turns use codex exec.'
+							: ''}
+					</p>
 				</div>
 			)}
 
