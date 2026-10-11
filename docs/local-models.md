@@ -184,6 +184,8 @@ A gateway is set per agent and is off until you type a URL. When the agent next 
 | OpenCode    | None. It sets a base URL per model provider in its own config file.     |
 | Others      | None known to Maestro. The field is disabled and says so.               |
 
+Known problem: Codex CLI 0.162.1 does not read `OPENAI_BASE_URL` (tested with a ChatGPT login). A Codex agent with a gateway runs without it, and nothing reports that. Until this is fixed, check your proxy's own request log before you rely on a gateway for Codex.
+
 Four rules:
 
 - **Your own variable wins.** If the agent's environment variables already set the base-URL variable, Maestro leaves your value alone and the gateway is not applied. The field says so. The gateway does win over a value set for every agent in Settings -> Environment, because a gateway on one agent is the more specific choice.

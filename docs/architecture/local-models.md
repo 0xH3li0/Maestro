@@ -1346,7 +1346,10 @@ The rules, and why each is a rule:
    (`OPENAI_BASE_URL`) are mapped. Copilot CLI ignores base-URL variables. OpenCode and Factory
    Droid set a base URL per model provider in their own config files, so no single variable routes
    them. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
-   says it is proxied.
+   says it is proxied. **The Codex mapping is now exactly that failure:** Codex CLI 0.162.1 does
+   not read `OPENAI_BASE_URL` (its override is the config key `openai_base_url`), so a Codex
+   agent with a gateway runs direct. See
+   [Real run](#real-run-2026-10-11-darwin-arm64), finding 2.
 3. **Never silent.** A gateway that cannot work is a launch failure whose message names the
    gateway: a loopback URL for an agent on an SSH remote (`gateway-loopback-on-remote`, since the
    remote host cannot reach this machine's loopback), a stored URL on a provider that cannot use one
@@ -1421,8 +1424,11 @@ request is never inspected to learn where it goes. The table is `TOKEN_PROXY_ROU
 | `http://127.0.0.1:PORT/openai/v1` | `https://api.openai.com/v1`             | Codex with an OpenAI API key |
 | `http://127.0.0.1:PORT/chatgpt`   | `https://chatgpt.com/backend-api/codex` | Codex with a ChatGPT login   |
 
-The `chatgpt` route has not been confirmed against a real run yet. The proxy forwards to these
-hosts and no others: a request cannot name its own destination.
+The `anthropic` and `chatgpt` routes are confirmed against real turns
+([Real run](#real-run-2026-10-11-darwin-arm64)); the `chatgpt` one only when Codex is given the
+address through its `openai_base_url` config key, because Codex 0.162.1 ignores the variable the
+gateway sets. The `openai` route has not been run. The proxy forwards to these hosts and no
+others: a request cannot name its own destination.
 
 **The agent rides in front of the route.** The URL stored on an agent is the plain one in the
 table. When the desktop app or Cue launches that agent, `tokenProxyLaunchGatewayUrl()` (service)
@@ -1646,8 +1652,8 @@ Limits of this phase:
 ### Compression
 
 `compressRequestBody(kind, body, options)` in `src/main/local-models/proxy/compress.ts` shortens the
-large tool results of one request and changes nothing else. The server does not call it yet. It is
-a library with four parts:
+large tool results of one request and changes nothing else. The server calls it for a request in
+compress mode ([Modes](#modes-off-passthrough-compress)). It is a library with four parts:
 
 | File                         | Owns                                                               |
 | ---------------------------- | ------------------------------------------------------------------ |
@@ -1799,34 +1805,42 @@ a request: a body that is not JSON, or not a shape it knows, comes back unchange
 Rule 2 of "never touched" and the cache rule do not fit together for free. A tool result is sent
 in full once (fresh) and compressed from the next request on, so its bytes change ONCE. For
 Anthropic that one change matters, because a cache entry is written only at a `cache_control`
-breakpoint, and Claude Code puts the breakpoint on the newest message:
+breakpoint. Claude Code 2.1.296 puts two breakpoints in the message list: one on the last block
+of the last assistant message, one on the fresh `tool_result` block (recorded in the real run):
 
-| Request | Sent                                   | Cache entry written at  |
-| ------- | -------------------------------------- | ----------------------- |
-| N       | `..., T(N) in full`                    | end of `T(N)` in full   |
-| N+1     | `..., T(N) compressed, T(N+1) in full` | end of `T(N+1)` in full |
+| Request | Sent                                   | Cache entries written at                 |
+| ------- | -------------------------------------- | ---------------------------------------- |
+| N       | `..., A(N), T(N) in full`              | end of `A(N)`; end of `T(N)` in full     |
+| N+1     | `..., T(N) compressed, A(N+1), T(N+1)` | end of `A(N+1)`; end of `T(N+1)` in full |
 
-Request N+1 cannot read the entry request N wrote, because that entry's prefix holds `T(N)` in
-full. It reads back to the newest entry whose prefix did not change.
+Request N+1 cannot read the entry that ends in `T(N)` in full. It can read the one that ends in
+`A(N)`, the assistant block just before it. So it writes `T(N)` compressed and everything after
+it, and nothing before it.
 
-- **One compressible result, then small ones:** request N+1 re-writes one extra segment (the
-  compressed `T(N)` and the assistant turn before it). After that the compressed bytes are read
-  from cache on every turn. Example: a 10000 token result that compresses to 2000 costs 2500
-  token-equivalents once (2000 at the 1.25x write price) and saves 800 per later turn (8000 at the
-  0.1x read price), so it pays for itself on the fourth turn after.
-- **Several compressible results in a row:** every entry in the run ends in a block that is in
-  full there and compressed later, so none of them can be read. Each request re-writes everything
-  back to the last entry before the run. A long run costs more than no proxy.
+- **Each compressible result costs one extra write of its compressed form.** Measured: 1733 and
+  1772 tokens for a result of about 12300, on the request after the one that carried it in full
+  (3470 on the first such request of a session).
+- **It then saves the difference on every later request.** Measured: about 10500 fewer cache-read
+  tokens per compressed block per request.
+- **Several compressible results in a row do not compound.** The first version of this section
+  predicted that each request would re-write the whole run. It does not, because of the
+  assistant-block breakpoint: the extra write stays at one compressed block per step
+  ([Real run](#real-run-2026-10-11-darwin-arm64), run B).
+- **A short session costs more than no compression, a long one less.** In run B the compress
+  requests cost 5541, 1184 and 207 token-equivalents more than passthrough on requests 3, 4 and 5
+  (API prices, the 1 hour cache Claude Code asks for: 2x write, 0.1x read). The gap closes by
+  about 1000 per compressed block, so the next request is the first cheaper one. At the 5 minute
+  price (1.25x write) request 4 already is.
 
 Only a result that is over the threshold AND shrinks by 10% triggers this. A source file that no
 heuristic shortens is `kept`, and its bytes never change. OpenAI's prefix cache needs no
-breakpoint, so there the cost is one compressed block re-read per step.
+breakpoint, so there the cost is one compressed block re-read per step (not measured).
 
-This is not measured yet. The real-run phase must record `cache_creation_input_tokens` and
-`cache_read_input_tokens` for a run of consecutive large log results, with compression on and
-off. If the cost is what the table predicts, the alternative is to compress a tool result the
-first time it is sent (keeping its `cache_control` field and changing only its text), which keeps
-every prefix stable and costs the model its one full read.
+The alternative is to compress a tool result the first time it is sent (keeping its
+`cache_control` field and changing only its text). Then no byte ever changes, the full result is
+never written to the cache at all, and the extra write disappears. It costs the model its one
+full read, and it contradicts rules 2 and 3 of "never touched", so it is the user's decision. It
+is not built and not measured.
 
 Limits of this phase:
 
@@ -1834,6 +1848,180 @@ Limits of this phase:
   request for up to 60 seconds, once per block.
 - Parallel tool results in a Responses request that the client interleaves with their calls
   (`call A, output A, call B, output B`) are read as answered up to the last call.
+
+### Real run: 2026-10-11, darwin-arm64
+
+The proxy was run against real provider traffic from the dev build (branch `acappella` at
+`ad80e4e52f`, `npm run dev` with its own data directory through `MAESTRO_DEMO_DIR`).
+
+| Part         | Value                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------- |
+| Claude Code  | 2.1.296, `claude.ai` login, Max subscription, model `haiku` (`claude-haiku-5-5`)      |
+| Codex CLI    | 0.162.1, ChatGPT login                                                                |
+| Agent        | One Claude Code agent, custom args `--setting-sources local` (no user hooks/plugins)  |
+| How sent     | `maestro-cli dispatch` to the running app, so every turn took the desktop spawn path  |
+| Mode changes | `maestro-cli update-agent <agent> --proxy-mode passthrough` and `compress`            |
+| Tool results | Bash `cat` of a 24 KB build log (344 lines, repeated lines and repeated stack blocks) |
+| Token source | `usage` on each assistant message in the Claude transcript JSONL                      |
+
+Each Maestro turn is a new `claude --print --resume` process. "Write" and "read" below are
+`cache_creation_input_tokens` and `cache_read_input_tokens`. Uncached input was 2 to 4 tokens on
+every request.
+
+**Results in one table.**
+
+| Question                                                      | Answer                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Does a subscription login route through `ANTHROPIC_BASE_URL`? | Yes. `Authorization: Bearer`, beta `oauth-2025-04-20`, status 200  |
+| Does a passthrough turn complete?                             | Yes. 11 requests carried and counted under the agent               |
+| Cache reads on the second passthrough turn?                   | Yes. 51117 read, 494 written                                       |
+| Does a mode change apply without a restart?                   | Yes. The next turn was recorded as `compress`                      |
+| Cache reads on the second compress turn?                      | Yes. 37590 and 42410 read                                          |
+| Did determinism hold?                                         | Yes. See "Determinism" below                                       |
+| Were tokens saved?                                            | Yes. The prompt was 30% to 36% smaller once the results compressed |
+| Added latency in compress mode                                | 1.5 ms average, 3 ms maximum, over 11 requests                     |
+| `skip_reason`                                                 | None. Claude Code sends no `Content-Encoding`                      |
+| Is compress mode cheaper than passthrough in a short session? | No. 2% to 8% more over 4 to 5 requests (finding 1)                 |
+| Does a Codex agent's gateway route its traffic?               | No. Codex 0.162.1 ignores `OPENAI_BASE_URL` (finding 2)            |
+
+#### Run A: four turns, the same file read twice
+
+Turn 1 and turn 2 each run `cat build.log` and answer a question about it. Turns 3 and 4 are one
+word replies. One session per mode, the same prompts.
+
+| Request              | Passthrough write / read | Compress write / read | Compress: what changed              |
+| -------------------- | ------------------------ | --------------------- | ----------------------------------- |
+| 1: turn 1 prompt     | 37520 / 0                | 27831 / 9677          | Nothing (no tool result yet)        |
+| 2: result 1, fresh   | 13220 / 37520            | 13142 / 37508         | Nothing (a fresh result goes whole) |
+| 3: turn 2 prompt     | 494 / 51117              | 4820 / 37590          | Result 1 compressed, first time     |
+| 4: result 2, fresh   | 13110 / 51611            | 13024 / 42410         | Result 1 from the cache             |
+| 5: turn 3            | 51 / 65088               | 4178 / 42492          | Result 2 compressed (same hash)     |
+| 6: turn 4            | 2125 / 65592             | 544 / 46670           | Both from the cache                 |
+| Sum, requests 2 to 6 | 29000 / 270928           | 35708 / 206670        |                                     |
+| Prompt at request 6  | 67717 tokens             | 47214 tokens          | 30% smaller                         |
+
+The proxy's own record of the six compress requests: 218995 estimated tokens arrived, 187982
+were sent (31013 saved, 14%). One block, `c9cc310b...`, 6035 to 938 estimated tokens, compressor
+`logs`. The second read of the file has the same hash, so it was one cache hit and no second
+entry in "Recent compressions".
+
+#### Run B: one turn, four large results in a row
+
+Four logs of about 25 KB. The last line of each names the next `cat` command, so the model reads
+them one request at a time. This is the case the compressors phase flagged as unmeasured.
+
+| Request              | Passthrough write / read | Compress write / read | Compress: blocks sent compressed (from cache) |
+| -------------------- | ------------------------ | --------------------- | --------------------------------------------- |
+| 1: prompt            | 28026 / 9677             | 28022 / 9677          | 0                                             |
+| 2: result 1, fresh   | 14155 / 37703            | 14246 / 37699         | 0                                             |
+| 3: result 2, fresh   | 12458 / 51858            | 15928 / 37872         | 1 (0)                                         |
+| 4: result 3, fresh   | 12416 / 64316            | 14149 / 41505         | 2 (1)                                         |
+| 5: result 4, fresh   | 12066 / 76732            | 13838 / 43359         | 3 (2)                                         |
+| Sum, requests 2 to 5 | 51095 / 230609           | 58161 / 160435        |                                               |
+| Prompt at request 5  | 88798 tokens             | 57197 tokens          | 36% smaller                                   |
+
+Request bodies in compress mode: 163212 to 141061 bytes, 191003 to 146701, 218219 to 151250.
+Added latency 2, 3 and 3 ms.
+
+#### Determinism
+
+Every compress request read exactly what the request before it left in the cache:
+
+- Run A, request 4 read 42410, which is request 3's read plus its write (37590 + 4820).
+- Run A, request 6 read 46670, which is request 5's read plus its write (42492 + 4178).
+- Run B, requests 4 and 5 read 41505 and 43359: each is the previous read, plus the block that
+  was compressed in the previous request, plus one short assistant message.
+
+A cache read needs every byte before the breakpoint to be the same. So the compressed text of an
+earlier result was the same bytes in every later request, across four processes in run A.
+`cache_hits` in `proxy_requests` says the same from the proxy's side: 8 of the 12 compressed
+blocks sent were read from `proxy-cache/` and not decided again.
+
+#### Request shape (why the numbers look like this)
+
+A forwarding recorder in front of `api.anthropic.com` wrote the shape of each request of one
+direct `claude --print` run (shape only: roles, block types, sizes, where `cache_control` sits).
+
+- Credentials: `Authorization: Bearer`, no `x-api-key`. No `Content-Encoding` on the body.
+- `cache_control` is `{"type":"ephemeral","ttl":"1h"}` in four places: two system blocks, the last
+  block of the last assistant message, and the `tool_result` block of the last user message.
+- The message list holds a `role: "system"` message at index 1 (tool additions). The compressor
+  walks around it.
+
+The assistant-block breakpoint is why a row of large results does not compound
+([Known cost](#known-cost-the-turn-a-block-is-first-compressed)). The fresh result carries its own
+`cache_control`, so the "never touch a marked block" rule and the "last user message" rule
+protect the same block today.
+
+#### Finding 1: compress mode costs more in a short session
+
+Token-equivalents at API prices (input 1x, cache read 0.1x, cache write 2x for the 1 hour cache
+these requests asked for, 1.25x for the 5 minute cache). On a subscription login this is quota,
+not dollars, and how the provider weighs the two is not public.
+
+| Run                | Passthrough, 2x | Compress, 2x | Difference at 2x write | At 1.25x write |
+| ------------------ | --------------- | ------------ | ---------------------- | -------------- |
+| A, requests 2 to 6 | 85093           | 92083        | +8%                    | +3%            |
+| B, requests 2 to 5 | 125251          | 132366       | +6%                    | +2%            |
+| B, request 3 alone | 30102           | 35643        | +5541                  | +2939          |
+| B, request 4 alone | 31264           | 32448        | +1184                  | -116           |
+| B, request 5 alone | 31805           | 32012        | +207                   | -1121          |
+
+The cause is the one change of bytes per block: the result is written to the cache in full
+(about 12300 tokens), then written again compressed (about 1750) on the next request. The saving
+grows with each compressed block and each later request, so compress mode wins in a long session
+and loses in a short one. What it always gives is context: the prompt was about 20500 and 31600
+tokens smaller at the end of the two runs.
+
+Compressing a result the first time it is sent would remove the cost: one write of about 1750
+tokens per result and nothing re-written. It is not built, because the model would never read the
+full result. That is the user's decision.
+
+#### Finding 2: a Codex agent's gateway is not applied
+
+A Codex agent was put on the proxy in passthrough mode and given one turn from the app.
+
+- The launch log shows `OPENAI_BASE_URL=http://127.0.0.1:PORT/agent/<id>/chatgpt` in the plan.
+- The turn finished with exit code 0. The proxy received no request from it.
+- `OPENAI_BASE_URL=http://127.0.0.1:1 codex exec ...` (a closed port) also answers normally.
+
+Codex 0.162.1 with a ChatGPT login does not read `OPENAI_BASE_URL`. Its override is the config
+key `openai_base_url`. So the Gateway table says the agent is proxied while it runs direct, which
+is the silent case rule 3 of the gateway forbids. Not tested: a Codex API key login.
+
+With the config key, the `chatgpt` route works:
+
+```bash
+codex exec -c 'openai_base_url="http://127.0.0.1:PORT/agent/<id>/chatgpt"' '...'
+```
+
+- Codex first tries a WebSocket to `/responses` five times. The proxy does not forward upgrades,
+  the upstream answers 405, and Codex falls back to HTTPS after several seconds.
+- `POST /responses` then returns 200 through the proxy (kind `openai-responses`, 51150 bytes
+  sent, 139499 received) and the answer is correct. The upstream
+  `https://chatgpt.com/backend-api/codex` is right.
+- That request is recorded with outcome `client-aborted` although the turn completed.
+
+#### Other things the run showed
+
+1. **The History synopsis does not go through the proxy.** Each turn was followed by a synopsis
+   request that resumes the same provider session (6 API calls in the transcript of run B, 5
+   requests in the proxy log). It is one of the spawns outside the launch plan, so it sends every
+   tool result in full, and it cannot read a cache entry that holds a compressed result. In run B
+   it wrote 51883 tokens under compress and 37306 under passthrough. The two were not separated
+   from Claude Code's own behavior on resume: in passthrough the synopsis also re-wrote results
+   that were byte-identical to cached ones, and in run A it showed no steady penalty.
+2. **"Tokens saved" under-reports on log text.** The proxy counts characters / 4. The provider
+   counted about 12300 tokens for a block the proxy called 6352, and about 1750 for one it called 886. The ratio is about 1.9 on this text (paths, punctuation, digits), so the 1000 token
+   threshold is nearer 1900 real tokens there, and the real saving in these runs was about 1.9
+   times the reported 64369.
+3. **A file read with the Read tool was not tried, and logs would not fold there.** Read puts a
+   line number in front of each line, so no two lines are equal. The `logs` compressor needs
+   equal lines. Shell output is where it works.
+
+Not run: the `openai` route, compression of a Responses or Chat Completions body, the model
+tier (`token-proxy` was off), an SSH remote agent, and a session long enough to show the
+crossover in total cost.
 
 ## Related
 
