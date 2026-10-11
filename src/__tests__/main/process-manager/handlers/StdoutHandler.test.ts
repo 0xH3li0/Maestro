@@ -12,7 +12,7 @@
  * - If usageIsCumulative is already false: returns raw stats, stores totals
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { EventEmitter } from 'events';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -57,7 +57,11 @@ import {
 	StdoutHandler,
 	pushResolvedOmpContextWindow,
 } from '../../../../main/process-manager/handlers/StdoutHandler';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import {
+	getErrorPatterns,
+	matchErrorPattern,
+	matchSshErrorPattern,
+} from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
@@ -1201,6 +1205,51 @@ describe('StdoutHandler', () => {
 			expect(proc.provisionalError).toBeUndefined();
 			expect(errorSpy.mock.invocationCallOrder[0]).toBeLessThan(
 				bufferManager.emitDataBuffered.mock.invocationCallOrder[0]
+			);
+		});
+
+		// Captured live from `claude --print` when the transcript outgrew the
+		// context window. The notice's tag is the bare `invalid_request`, so the
+		// turn ended on an `unknown` error reading "invalid_request".
+		it('raises a full context window as token exhaustion, not as its bare tag', async () => {
+			// This file stubs the pattern table out; the classification under test
+			// needs the real one.
+			const real = await vi.importActual<typeof import('../../../../main/parsers/error-patterns')>(
+				'../../../../main/parsers/error-patterns'
+			);
+			vi.mocked(getErrorPatterns).mockImplementation(real.getErrorPatterns);
+			vi.mocked(matchErrorPattern).mockImplementation(real.matchErrorPattern);
+			onTestFinished(() => {
+				vi.mocked(getErrorPatterns).mockImplementation(() => ({}));
+				vi.mocked(matchErrorPattern).mockImplementation(() => null);
+			});
+			const { handler, sessionId, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				error: 'invalid_request',
+				is_api_error_message: true,
+				message: {
+					model: '<synthetic>',
+					role: 'assistant',
+					stop_reason: 'stop_sequence',
+					content: [{ type: 'text', text: 'Prompt is too long' }],
+				},
+				session_id: 'claude-session',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				terminal_reason: 'blocking_limit',
+				result: 'Prompt is too long',
+				session_id: 'claude-session',
+			});
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({ type: 'token_exhaustion', sessionId })
 			);
 		});
 

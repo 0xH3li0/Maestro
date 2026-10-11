@@ -1221,6 +1221,50 @@ describe('ClaudeOutputParser', () => {
 			expect(parser.isProvisionalErrorNotice(connectionLost)).toBe(true);
 		});
 
+		it('keeps the bare tag when the notice text matches no pattern', () => {
+			expect(parser.detectErrorFromParsed(connectionLost)).toMatchObject({
+				type: 'unknown',
+				message: 'server_error',
+			});
+		});
+
+		// Captured live from `claude --print` when the transcript outgrew the
+		// context window. The tag alone classified as `unknown`.
+		it('classifies a notice from its text when the tag matches no pattern', () => {
+			const promptTooLong = {
+				type: 'assistant',
+				error: 'invalid_request',
+				is_api_error_message: true,
+				message: {
+					model: '<synthetic>',
+					role: 'assistant',
+					stop_reason: 'stop_sequence',
+					content: [{ type: 'text', text: 'Prompt is too long' }],
+				},
+				session_id: 'sess-1',
+			};
+
+			expect(parser.isProvisionalErrorNotice(promptTooLong)).toBe(true);
+			expect(parser.detectErrorFromParsed(promptTooLong)).toMatchObject({
+				type: 'token_exhaustion',
+				message: 'Prompt is too long. Try a shorter message or start a new session.',
+			});
+		});
+
+		it('does not classify a real model message from its text', () => {
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					error: 'invalid_request',
+					message: {
+						model: 'claude-opus-5',
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Prompt is too long' }],
+					},
+				})
+			).toMatchObject({ type: 'unknown', message: 'invalid_request' });
+		});
+
 		it('accepts the camelCase flag or the synthetic model on its own', () => {
 			expect(
 				parser.isProvisionalErrorNotice({
