@@ -163,16 +163,16 @@ export class PluginServiceHost {
 	}
 	/**
 	 * Remove a provider binding before aborting its calls with ServiceUnavailable.
-	 * Wait for their media drains before notifying dependents; cleanup failure rejects.
+	 * Notify dependents immediately on binding loss, then await media drains; cleanup failure rejects.
 	 */
 	async unregister(pluginId: string, id: string): Promise<void> {
 		this.registrations.delete(this.key(pluginId, id));
+		this.deps.changed?.();
 		await Promise.all(
 			[...this.calls.values()]
 				.filter((c) => c.binding.provider === pluginId && c.binding.provided.id === id)
 				.map((c) => this.abort(c, 'ServiceUnavailable'))
 		);
-		this.deps.changed?.();
 	}
 	/** Return host-owned tool/model diagnostics, rechecking provider consent after the async lookup. */
 	async readiness(pluginId: string, id: string) {

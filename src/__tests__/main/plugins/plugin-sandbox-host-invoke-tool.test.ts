@@ -294,7 +294,7 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 				running: () => true,
 				allowed: () => true,
 				invoke: (id, command, args, signal, timeoutMs) =>
-					host.invokeTool(id, command, args, { signal, timeoutMs }),
+					host.invokeTool(id, command, args, { signal, timeoutMs, service: true }),
 				media: {
 					delegate: () => ({
 						audioId: 'provider-alias',
@@ -374,15 +374,45 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			expect(cleaned).toBe(true);
 		}
 	);
+	it.each(['none', 'signal-only', 'marker-only'] as const)(
+		'rejects forged service invocations with %s before posting into the provider realm',
+		async (mode) => {
+			const options =
+				mode === 'none'
+					? undefined
+					: mode === 'signal-only'
+						? { signal: new AbortController().signal }
+						: { service: true as const };
+			proc.postMessage.mockClear();
+			const invocation = host.invokeTool(
+				'p',
+				'service:transcription',
+				{ callId: 'live-call' },
+				options
+			);
+			const rejected = expect(invocation).rejects.toThrow('ServiceDenied');
+			// Settle an erroneously posted request so the red run does not wait for its timeout.
+			const sent = proc.postMessage.mock.calls.find((call) => call[0]?.kind === 'invokeTool')?.[0];
+			if (sent) emit('message', { kind: 'toolResult', id: sent.id, ok: true, result: 'forged' });
+			await rejected;
+			expect(proc.postMessage).not.toHaveBeenCalled();
+		}
+	);
+
 	it('bars new service work synchronously when stop begins', async () => {
 		vi.useFakeTimers();
 		try {
 			expect(host.isAcceptingServiceCalls('p')).toBe(true);
 			host.stop('p');
 			expect(host.isAcceptingServiceCalls('p')).toBe(false);
-			await expect(host.invokeTool('p', 'service:transcription', {})).rejects.toThrow(
-				'ServiceUnavailable'
-			);
+			await expect(
+				host.invokeTool(
+					'p',
+					'service:transcription',
+					{},
+					{ signal: new AbortController().signal, service: true }
+				)
+			).rejects.toThrow('ServiceUnavailable');
 			await vi.advanceTimersByTimeAsync(2001);
 		} finally {
 			vi.useRealTimers();
@@ -395,7 +425,7 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			'p',
 			'service:transcription',
 			{},
-			{ signal: controller.signal, timeoutMs: 120000 }
+			{ signal: controller.signal, timeoutMs: 120000, service: true }
 		);
 		const assertion = expect(response).rejects.toThrow('ServiceCancelled');
 		const sent = lastInvokeTool();
@@ -414,14 +444,19 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 				'p',
 				'service:transcription',
 				{},
-				{ signal: controller.signal, timeoutMs: 20 }
+				{ signal: controller.signal, timeoutMs: 20, service: true }
 			);
 			const assertion = expect(response).rejects.toThrow('ServiceTimeout');
 			await vi.advanceTimersByTimeAsync(21);
 			await assertion;
 			controller.abort(new Error('ServiceCancelled'));
 			await expect(
-				host.invokeTool('p', 'service:transcription', {}, { signal: controller.signal })
+				host.invokeTool(
+					'p',
+					'service:transcription',
+					{},
+					{ signal: controller.signal, service: true }
+				)
 			).rejects.toThrow('ServiceCancelled');
 		} finally {
 			vi.useRealTimers();

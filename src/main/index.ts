@@ -2452,7 +2452,11 @@ app
 				serviceAllowed: (id, capability, target) => isPermitted(grantsOf(id), capability, target),
 				serviceInvoke: (id, command, request, signal, timeoutMs) =>
 					pluginSandboxHost
-						? pluginSandboxHost.invokeTool(id, command, request, { signal, timeoutMs })
+						? pluginSandboxHost.invokeTool(id, command, request, {
+								signal,
+								timeoutMs,
+								service: true,
+							})
 						: Promise.reject(new Error('ServiceUnavailable')),
 				registerServiceReconcile: (reconcile) => {
 					serviceReconcile = reconcile;
@@ -2663,7 +2667,11 @@ app
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
-				backgroundSupervisor.onPluginCrash(pluginId, code);
+				backgroundSupervisor.onPluginCrash(
+					pluginId,
+					code,
+					drain ? Promise.resolve(drain) : undefined
+				);
 				return drain;
 			},
 			onStop: (pluginId) => {

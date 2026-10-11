@@ -347,17 +347,22 @@ export class PluginSandboxHost {
 	 * plugin is not running, the args cannot be serialized or exceed the size cap,
 	 * too many tool calls are already in flight, the round-trip exceeds
 	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
+	 * Reserved service: commands require the host broker marker and its lease AbortSignal.
+	 * Missing broker context throws ServiceDenied; stopping providers throw ServiceUnavailable.
 	 */
 	invokeTool(
 		pluginId: string,
 		commandId: string,
 		args?: unknown,
-		options?: { signal?: AbortSignal; timeoutMs?: number }
+		options?: { signal?: AbortSignal; timeoutMs?: number; service?: true }
 	): Promise<unknown> {
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
-		if (commandId.startsWith('service:') && record.stopping)
-			return Promise.reject(new Error('ServiceUnavailable'));
+		if (commandId.startsWith('service:')) {
+			if (options?.service !== true || !options.signal)
+				return Promise.reject(new Error('ServiceDenied'));
+			if (record.stopping) return Promise.reject(new Error('ServiceUnavailable'));
+		}
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
 		let serialized: string;
 		try {

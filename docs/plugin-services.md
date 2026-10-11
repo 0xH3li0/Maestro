@@ -4,7 +4,9 @@ This adds an explicit service dependency boundary to the existing plugin runtime
 It does not expose peer utility processes, IPC addresses, arbitrary schemas,
 network endpoints, filesystem paths or host settings. Main resolves the caller
 from the sandbox principal, authorizes both parties and invokes the provider
-through the existing bounded host-to-sandbox result channel.
+through the existing bounded host-to-sandbox result channel. Reserved `service:`
+handlers require the host broker context and its lease AbortSignal; generic tool
+invocation rejects those IDs before reaching the provider realm.
 
 The first host-known contract is `maestro.audio.transcribe` version `1.0.0`.
 Other contracts require a host implementation and schema review; declaring an
@@ -204,6 +206,10 @@ fixture, not a bundled or automatically installed plugin.
    cleanup acknowledgment. `cancel` and `result` also await media cleanup. A failed
    stop drain rejects and blocks process restart; it never reports successful cleanup.
    Every unexpected sandbox exit, including code zero, also gates restart on its resource drain.
+   Supervised crash backoff begins only after successful cleanup, so a long drain
+   cannot consume the restart attempt; failed cleanup schedules no restart.
+   Unregister notifies mandatory dependents as soon as the binding is removed,
+   even while its drain is pending or later fails.
 5. Cancel kills/aborts pending media work and waits for child exit/artifact cleanup
    before returning. It is idempotent, remains available after revoke, and cannot
    cancel another consumer's call. Provider SDK callbacks are cooperative;

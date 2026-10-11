@@ -461,6 +461,40 @@ describe('host-mediated service lifecycle', () => {
 		expect(vi.getTimerCount()).toBe(0);
 		expect(invoke).toHaveBeenCalledTimes(2);
 	});
+	it.each([false, true])(
+		'unregister notifies service loss before pending/failed drain (failure: %s)',
+		async (fail) => {
+			vi.useFakeTimers();
+			holding = true;
+			const call = host.start('consumer', 'voice', request);
+			const gate = Promise.withResolvers<void>();
+			const close = leases[0].close;
+			leases[0].close = vi.fn(async () => {
+				await close();
+				await gate.promise;
+			});
+			const availability: boolean[] = [];
+			changed.mockClear();
+			changed.mockImplementation(() => availability.push(host.available('consumer', 'voice')));
+			const cleanup = host.unregister('provider', 'transcription');
+			const invalidated = [...availability];
+			expect(host.ownsCancel('consumer', call)).toBe(true);
+			if (fail) {
+				const rejected = expect(cleanup).rejects.toThrow('MediaProcessFailed');
+				gate.reject(new Error('MediaProcessFailed'));
+				await rejected;
+				leases[0].close = close;
+				await host.cleanupPlugin('provider');
+			} else {
+				gate.resolve();
+				await cleanup;
+			}
+			await expect(host.result('consumer', call.callId)).rejects.toThrow(
+				fail ? 'MediaProcessFailed' : 'ServiceUnavailable'
+			);
+			expect(invalidated).toEqual([false]);
+		}
+	);
 	it('does not resurrect a revoked registration when permissions are restored', async () => {
 		revoked.add('provider:services:provide');
 		host.reconcile();

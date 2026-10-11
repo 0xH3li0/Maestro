@@ -750,7 +750,8 @@ export class PluginManager {
 	 * the sandbox via a brokered request/response round-trip and the plugin
 	 * handler's awaited return value is returned. Rejects if the id is malformed,
 	 * no sandbox is wired, or the sandbox rejects (plugin not running, timeout,
-	 * early child exit, handler error).
+	 * early child exit, handler error). Reserved service: handlers reject with ServiceDenied
+	 * before sandbox dispatch; only the host service broker may invoke them.
 	 */
 	invokeTool(toolId: string, args?: unknown): Promise<unknown> {
 		const sep = toolId.indexOf('/');
@@ -759,6 +760,7 @@ export class PluginManager {
 		}
 		const pluginId = toolId.slice(0, sep);
 		const localId = toolId.slice(sep + 1);
+		if (localId.startsWith('service:')) return Promise.reject(new Error('ServiceDenied'));
 		if (!this.deps.sandbox) return Promise.reject(new Error('sandbox not available'));
 		return this.deps.sandbox.invokeTool(pluginId, localId, args);
 	}

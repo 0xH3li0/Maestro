@@ -62,6 +62,15 @@ describe('PluginManager.invokeTool', () => {
 		expect(invokeTool).not.toHaveBeenCalled();
 	});
 
+	it('rejects provider service handlers on the generic tool path before touching the sandbox', async () => {
+		const invokeTool = vi.fn(async () => 'forged');
+		const manager = new PluginManager({ isEnabled: () => true, sandbox: makeSandbox(invokeTool) });
+		await expect(
+			manager.invokeTool('demo/service:transcription', { callId: 'live-call' })
+		).rejects.toThrow('ServiceDenied');
+		expect(invokeTool).not.toHaveBeenCalled();
+	});
+
 	it('rejects when no sandbox is wired', async () => {
 		const manager = new PluginManager({ isEnabled: () => true });
 		await expect(manager.invokeTool('demo/lookup')).rejects.toThrow('sandbox not available');
