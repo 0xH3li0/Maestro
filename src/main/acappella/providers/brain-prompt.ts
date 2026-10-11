@@ -22,6 +22,7 @@ import type { RouteDecision, RouteTabAction } from '../../../shared/acappella/ro
 import { ROUTE_TAB_ACTIONS } from '../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
 import { PROMPT_IDS } from '../../../shared/promptDefinitions';
+import { extractJsonObject } from '../../../shared/jsonUtils';
 import { stripMarkdown } from '../../../shared/markdown';
 import { getPrompt } from '../../prompt-manager';
 
@@ -285,49 +286,6 @@ export function parseRouteDecision(
 		clarify: asSpokenLine(parsed?.clarify),
 		reply: asSpokenLine(parsed?.reply),
 	};
-}
-
-/**
- * Pull the first JSON object out of a model response.
- *
- * Brace matching rather than a regex: a `prompt` field can legally contain
- * braces, and the non-greedy regex that "worked" would truncate the object at the
- * first one.
- */
-export function extractJsonObject(raw: string): Record<string, unknown> | null {
-	const text = raw.trim();
-	const start = text.indexOf('{');
-	if (start === -1) return null;
-
-	let depth = 0;
-	let inString = false;
-	let escaped = false;
-
-	for (let i = start; i < text.length; i++) {
-		const char = text[i];
-
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (char === '\\') escaped = true;
-			else if (char === '"') inString = false;
-			continue;
-		}
-
-		if (char === '"') inString = true;
-		else if (char === '{') depth++;
-		else if (char === '}' && --depth === 0) {
-			try {
-				const parsed: unknown = JSON.parse(text.slice(start, i + 1));
-				return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-					? (parsed as Record<string, unknown>)
-					: null;
-			} catch {
-				return null;
-			}
-		}
-	}
-
-	return null;
 }
 
 /** The roster agent a target names, or null for the conductor and for junk. */

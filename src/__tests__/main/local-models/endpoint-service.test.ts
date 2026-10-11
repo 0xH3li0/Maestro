@@ -21,11 +21,13 @@ const client = vi.hoisted(() => ({
 	detectLocalEndpoints: vi.fn(async () => []),
 	listEndpointModelsResult: vi.fn(async () => ({ ok: true, models: [] })),
 	testEndpoint: vi.fn(async () => ({ ok: true, model: 'm', latencyMs: 5 })),
+	endpointChat: vi.fn(async () => ({ content: 'hi', model: 'm' })),
 }));
 
 vi.mock('../../../main/local-models/endpoint-client', () => client);
 
 import {
+	chatWithLocalModelEndpoint,
 	detectNewLocalModelEndpoints,
 	getConfiguredLocalModelEndpoints,
 	listLocalModelEndpointModels,
@@ -115,5 +117,33 @@ describe('endpoint-service', () => {
 		expect(result.error.kind).toBe('invalid');
 		expect(result.error.message).toContain('credentials');
 		expect(client.testEndpoint).not.toHaveBeenCalled();
+	});
+
+	it('chats with a saved endpoint by exact id, with the key from Settings -> Environment', async () => {
+		const messages = [{ role: 'user' as const, content: 'hi' }];
+
+		await chatWithLocalModelEndpoint('ep-1', { model: 'gpt-x', messages });
+
+		expect(client.endpointChat).toHaveBeenCalledWith(expect.objectContaining({ id: 'ep-1' }), {
+			model: 'gpt-x',
+			messages,
+			shellEnvVars: { LITELLM_KEY: 'sk-test' },
+		});
+	});
+
+	it('refuses to chat by prefix or name, or with a disabled endpoint', async () => {
+		settings.set('localModelEndpoints', [saved, { ...saved, id: 'ep-off', enabled: false }]);
+		const request = { model: 'm', messages: [] };
+
+		await expect(chatWithLocalModelEndpoint('ep-', request)).rejects.toMatchObject({
+			kind: 'invalid',
+		});
+		await expect(chatWithLocalModelEndpoint('Gateway', request)).rejects.toMatchObject({
+			kind: 'invalid',
+		});
+		await expect(chatWithLocalModelEndpoint('ep-off', request)).rejects.toMatchObject({
+			kind: 'invalid',
+		});
+		expect(client.endpointChat).not.toHaveBeenCalled();
 	});
 });

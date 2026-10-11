@@ -12,7 +12,6 @@ import { describe, it, expect } from 'vitest';
 
 import {
 	buildRouteUserPrompt,
-	extractJsonObject,
 	limitSpokenReply,
 	parseRouteDecision,
 } from '../../../../main/acappella/providers/brain-prompt';
@@ -33,27 +32,6 @@ const ROSTER: RosterAgent[] = [
 ];
 
 const CONTEXT: VoiceRouteContext = { roster: ROSTER, scope: { kind: 'conductor' } };
-
-describe('extractJsonObject', () => {
-	it('finds an object inside a fenced block with a preamble', () => {
-		const raw = 'Sure! Here you go:\n```json\n{"target":"conductor"}\n```';
-		expect(extractJsonObject(raw)).toEqual({ target: 'conductor' });
-	});
-
-	it('keeps braces that belong to a string value', () => {
-		// The non-greedy regex that "worked" would truncate here.
-		const raw = '{"prompt":"replace {old} with {new}","confidence":0.5}';
-		expect(extractJsonObject(raw)).toMatchObject({ prompt: 'replace {old} with {new}' });
-	});
-
-	it('returns null for text with no object in it', () => {
-		expect(extractJsonObject('I think you want the backend agent.')).toBeNull();
-	});
-
-	it('returns null rather than throwing on malformed JSON', () => {
-		expect(extractJsonObject('{"target": }')).toBeNull();
-	});
-});
 
 describe('parseRouteDecision', () => {
 	it('accepts a well-formed decision for a running agent', () => {

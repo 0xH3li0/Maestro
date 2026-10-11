@@ -19,13 +19,17 @@ import {
 import { getSettingsStore } from '../stores/getters';
 import {
 	detectLocalEndpoints,
+	endpointChat,
 	listEndpointModelsResult,
 	testEndpoint,
 	type DetectedEndpoint,
+	type EndpointChatRequest,
+	type EndpointChatResult,
 	type EndpointFailure,
 	type EndpointModelsResult,
 	type EndpointTestResult,
 } from './endpoint-client';
+import { LocalModelEndpointError } from './errors';
 
 /** The saved endpoints, read through the same validator that saves them. */
 export function getConfiguredLocalModelEndpoints(): LocalModelEndpoint[] {
@@ -83,4 +87,35 @@ export async function testLocalModelEndpoint(
 		shellEnvVars: shellEnvVars(),
 		...(typeof model === 'string' && model.trim() !== '' ? { model: model.trim() } : {}),
 	});
+}
+
+/**
+ * One chat completion against a SAVED endpoint, named by its exact id.
+ *
+ * This is the path real work takes (the text-generation service), so it is
+ * stricter than Test: the id must match exactly (an assignment stores the full
+ * id, and a prefix that later becomes ambiguous must not quietly pick another
+ * server), and a disabled endpoint is refused rather than called. The client
+ * leaves `enabled` to its caller; this is that caller.
+ */
+export async function chatWithLocalModelEndpoint(
+	endpointId: string,
+	request: Omit<EndpointChatRequest, 'shellEnvVars'>
+): Promise<EndpointChatResult> {
+	const endpoint = getConfiguredLocalModelEndpoints().find((entry) => entry.id === endpointId);
+	if (!endpoint) {
+		throw new LocalModelEndpointError(`No saved endpoint has the id "${endpointId}".`, {
+			kind: 'invalid',
+			endpointId,
+			endpointName: endpointId,
+			url: '',
+		});
+	}
+	if (!endpoint.enabled) {
+		throw new LocalModelEndpointError(
+			`${endpoint.name} is disabled. Enable it in the endpoint list to use it.`,
+			{ kind: 'invalid', endpointId, endpointName: endpoint.name, url: endpoint.baseUrl }
+		);
+	}
+	return endpointChat(endpoint, { ...request, shellEnvVars: shellEnvVars() });
 }

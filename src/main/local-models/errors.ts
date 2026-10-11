@@ -18,8 +18,20 @@
  *   - `runtime-unavailable` - the native runtime the model needs will not load
  *                             here: not downloaded, no build for this platform,
  *                             or the dlopen failed.
+ *   - `model-unsupported`   - the model id is not a catalog model this call can
+ *                             run (an assignment naming a model that is not, or
+ *                             is no longer, a text-generation model).
+ *   - `model-not-installed` - the model is in the catalog but its files are not
+ *                             on disk, or are the wrong length.
+ *   - `generation-failed`   - the model would not open, or failed mid-turn.
+ *   - `cancelled`           - the caller aborted. Not a fault; never shown as one.
  */
-export type LocalModelErrorCode = 'runtime-unavailable';
+export type LocalModelErrorCode =
+	| 'runtime-unavailable'
+	| 'model-unsupported'
+	| 'model-not-installed'
+	| 'generation-failed'
+	| 'cancelled';
 
 export interface LocalModelErrorOptions {
 	code: LocalModelErrorCode;

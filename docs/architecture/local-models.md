@@ -94,6 +94,8 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `runtime/runtime-store.ts`     | Runtime install layout and footprint                                                                    |
 | `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()`; the llama probe initializes the real backend   |
 | `runtime/llama-options.ts`     | `LLAMA_GET_OPTIONS` (never compile from source) and `llamaBackendLabel()`, shared by every `getLlama()` |
+| `text-gen.ts`                  | `generateText()` for a local model or an endpoint; the one shared, idle-unloading `LocalTextEngine`     |
+| `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`          |
 | `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
 | `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)   |
 | `storage-migration.ts`         | One-time move of the legacy `acappella/` roots (below)                                                  |
@@ -147,6 +149,9 @@ A Cappella keeps everything that is about voice and imports everything that is a
 - `src/main/acappella/providers/local/runtime.ts`: `loadVoiceRuntime()`, a thin adapter that maps
   `LocalModelError` to `VoiceProviderError`. Parakeet, Whisper, Kokoro, `llama-brain.ts`, and the
   openWakeWord detector load runtimes through it and read model files from the core store.
+- `llama-brain.ts` does not own a model. It runs each turn on the shared `LocalTextEngine`
+  (`text-gen.ts`), so voice and housekeeping tasks reuse one resident model; its `unload()` frees
+  the model only when Qwen3 is the resident one.
 - `src/main/acappella/runtime-consumer.ts`: registers voice with the runtime consumer registry at
   startup.
 - `src/main/ipc/handlers/acappella-models.ts`: the legacy `models:*` / `runtimes:*` channels. They
@@ -219,6 +224,24 @@ explicit agent name correctly.
 so the second turn on a loaded model failed with `No sequences left`. The chat session now passes
 `autoDisposeSequence: true`, and the unit-test mock models a one-sequence context so the regression
 is caught without hardware.
+
+## Text generation
+
+`generateText({ source, prompt, system?, maxTokens, temperature?, jsonSchema?, signal? })` in
+`src/main/local-models/text-gen.ts` is the one call for a few hundred tokens of text. `source` is a
+catalog model (`{ type: 'local', modelId }`) or a saved endpoint (`{ type: 'endpoint', endpointId,
+model }`). The result shape is the same for both: `text`, `json` (only when a schema was given and
+the reply parsed), `source`, sleep-aware `durationMs`, and token counts when known.
+
+| Rule                                    | Why                                                                                                                                                   |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One resident local model, app-wide      | A GGUF is a gigabyte of RAM. Asking for another model frees the resident one first.                                                                   |
+| Loaded lazily, freed after 5 idle min   | Warm within a burst of work, cold between them. The idle clock restarts after every turn.                                                             |
+| Turns are serialized                    | The context has one sequence; a parallel second turn would fail with `No sequences left`.                                                             |
+| JSON schema becomes a llama.cpp grammar | Compiled once per schema per load. A build without grammar support generates unconstrained.                                                           |
+| Endpoints by exact id, enabled only     | An assignment stores the full id; a prefix that later matches two servers must not pick one.                                                          |
+| Temperature defaults to 0               | Housekeeping output should be reproducible.                                                                                                           |
+| Failures are classified, never swapped  | `LocalModelError` (`model-unsupported`, `model-not-installed`, `runtime-unavailable`, `generation-failed`, `cancelled`) or `LocalModelEndpointError`. |
 
 ## Related
 

@@ -30,6 +30,8 @@ import {
 	styleVectorFor,
 } from '../../../../main/acappella/providers/local/kokoro-tts';
 import { LlamaBrainProvider } from '../../../../main/acappella/providers/local/llama-brain';
+import { LocalTextEngine } from '../../../../main/local-models/text-gen';
+import { LocalModelError } from '../../../../main/local-models/errors';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type { SttCallbacks, TtsChunk } from '../../../../shared/acappella/providers';
 import type { RosterAgent } from '../../../../shared/acappella/protocol';
@@ -506,6 +508,15 @@ describe('LlamaBrainProvider', () => {
 		};
 	}
 
+	/** The shared engine, over a mocked binding and a fixed model path. */
+	function engineFor(loadRuntime: () => Promise<never>, idleUnloadMs = 0): LocalTextEngine {
+		return new LocalTextEngine({
+			loadRuntime: loadRuntime as never,
+			resolveModelPath: async () => '/tmp/qwen.gguf',
+			idleUnloadMs,
+		});
+	}
+
 	const decision = JSON.stringify({
 		target: { sessionId: 'agent-backend' },
 		tabAction: 'new',
@@ -515,7 +526,17 @@ describe('LlamaBrainProvider', () => {
 	});
 
 	it('reports a runtime that will not load as its own failure', async () => {
-		const provider = new LlamaBrainProvider({ loadRuntime: failingRuntime as never });
+		// The core loader throws the core's classified error; the provider restates
+		// it as itself.
+		const provider = new LlamaBrainProvider({
+			engine: engineFor(async () => {
+				throw new LocalModelError('llama.cpp is not downloaded.', {
+					code: 'runtime-unavailable',
+					recovery: 'Download it.',
+					consumerId: 'local-models:text-gen',
+				});
+			}),
+		});
 
 		await expect(
 			provider.route('anything', { roster: ROSTER, scope: { kind: 'conductor' } })
@@ -525,9 +546,7 @@ describe('LlamaBrainProvider', () => {
 	it('routes through the shared parser', async () => {
 		const runtime = llamaRuntime(decision);
 		const provider = new LlamaBrainProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/qwen.gguf',
-			idleUnloadMs: 0,
+			engine: engineFor(runtime.loadRuntime),
 		});
 
 		const result = await provider.route('ask backend to refactor auth', {
@@ -541,10 +560,7 @@ describe('LlamaBrainProvider', () => {
 	it('keeps the context loaded across turns', async () => {
 		const runtime = llamaRuntime(decision);
 		const provider = new LlamaBrainProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/qwen.gguf',
-			// Never unload, so this test is about reuse rather than about the timer.
-			idleUnloadMs: 0,
+			engine: engineFor(runtime.loadRuntime),
 		});
 		const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
 
@@ -560,9 +576,7 @@ describe('LlamaBrainProvider', () => {
 	it('gives the context sequence back after every turn', async () => {
 		const runtime = llamaRuntime(decision);
 		const provider = new LlamaBrainProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/qwen.gguf',
-			idleUnloadMs: 0,
+			engine: engineFor(runtime.loadRuntime),
 		});
 		const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
 
@@ -577,9 +591,7 @@ describe('LlamaBrainProvider', () => {
 	it('never lets node-llama-cpp compile llama.cpp from source', async () => {
 		const runtime = llamaRuntime(decision);
 		const provider = new LlamaBrainProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/qwen.gguf',
-			idleUnloadMs: 0,
+			engine: engineFor(runtime.loadRuntime),
 		});
 
 		await provider.route('one', { roster: ROSTER, scope: { kind: 'conductor' } });
@@ -592,9 +604,7 @@ describe('LlamaBrainProvider', () => {
 		try {
 			const runtime = llamaRuntime(decision);
 			const provider = new LlamaBrainProvider({
-				loadRuntime: runtime.loadRuntime,
-				modelPath: '/tmp/qwen.gguf',
-				idleUnloadMs: 1_000,
+				engine: engineFor(runtime.loadRuntime, 1_000),
 			});
 			const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
 
@@ -618,9 +628,7 @@ describe('LlamaBrainProvider', () => {
 	it('trims a spoken rewrite to the sentence budget', async () => {
 		const runtime = llamaRuntime('One. Two. Three.');
 		const provider = new LlamaBrainProvider({
-			loadRuntime: runtime.loadRuntime,
-			modelPath: '/tmp/qwen.gguf',
-			idleUnloadMs: 0,
+			engine: engineFor(runtime.loadRuntime),
 		});
 
 		const spoken = await provider.converse('...', {
@@ -648,9 +656,7 @@ describe('LlamaBrainProvider', () => {
 			},
 		};
 		const provider = new LlamaBrainProvider({
-			loadRuntime: async () => module as never,
-			modelPath: '/tmp/qwen.gguf',
-			idleUnloadMs: 0,
+			engine: engineFor(async () => module as never),
 		});
 
 		await expect(

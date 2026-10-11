@@ -54,6 +54,7 @@ import {
 } from '../../../main/local-models/runtime/llama-options';
 import { modelFilePath } from '../../../main/local-models/model-store';
 import { LlamaBrainProvider } from '../../../main/acappella/providers/local/llama-brain';
+import { LocalTextEngine } from '../../../main/local-models/text-gen';
 import { QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
 import type { RosterAgent } from '../../../shared/acappella/protocol';
 import { ROUTE_TAB_ACTIONS } from '../../../shared/acappella/route-decision';
@@ -161,7 +162,9 @@ describe.skipIf(!RUN)('llama runtime end to end (MAESTRO_LOCAL_MODEL_E2E=1)', ()
 	it(
 		'routes one utterance through LlamaBrainProvider with the grammar',
 		async () => {
-			const brain = new LlamaBrainProvider({ idleUnloadMs: 0 });
+			// The real engine (real runtime loader, real installed-model check), just
+			// never idle-unloaded mid-test.
+			const brain = new LlamaBrainProvider({ engine: new LocalTextEngine({ idleUnloadMs: 0 }) });
 			try {
 				const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
 
