@@ -3,6 +3,7 @@
 	"version": "1.0.1",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
+	"desktopName": "maestro.desktop",
 	"author": {
 		"name": "Pedram Amini",
 		"email": "pedram@runmaestro.ai"
@@ -242,7 +243,12 @@
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
 			"icon": "build/icon.png",
+			"syncDesktopName": true,
 			"extraResources": [
+				{
+					"from": "build/icon.png",
+					"to": "icon.png"
+				},
 				{
 					"from": "dist/cli/maestro-cli.js",
 					"to": "maestro-cli.js"
