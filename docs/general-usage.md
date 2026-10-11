@@ -469,9 +469,10 @@ That request travels with the command. When you ask for a follow-up, the model s
 **How the suggestion is made:**
 
 - **The model only names the command; it never runs anything.** The request is answered with tools disabled and in read-only mode, so a task-shaped request ("clean up the build output") comes back as a command to look at rather than as work already done.
-- **It is the tab's own provider**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **It is the tab's own provider by default**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **You can move it to a local model or your own endpoint.** Assign the **AI command mode** task under **Settings → Local Models → Assignments** (see [Local Models](./local-models#the-tasks)). The mode strip then names that model instead, and the proposal adds one line saying what the command does. If the assigned model cannot run, the request fails with the reason. It does not fall back to the tab's provider. **Off** switches AI Command Mode off: a request is refused and tells you where the setting is.
 - **The agent's conversation is untouched.** The request and the suggestion never enter the agent's context, the same as any other command-mode activity.
-- **The prompt is yours to change.** It is a core prompt (`ai-command`), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
+- **The prompt is yours to change.** It is a core prompt (`ai-command`, or the shorter `ai-command-local` when a local model or endpoint is assigned), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
 
 There is no rung above AI Command Mode, so a `!` typed here is an ordinary character - your request is prose, and prose contains bangs.
 

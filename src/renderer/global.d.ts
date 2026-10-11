@@ -4375,7 +4375,13 @@ interface MaestroAPI {
 				exitCode?: number;
 				status?: 'running' | 'finished' | 'cancelled';
 			}[];
-		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+		}) => Promise<{
+			success: boolean;
+			command?: string;
+			error?: string;
+			explanation?: string;
+			producedBy?: string;
+		}>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

@@ -25,6 +25,7 @@ import { getLocalModel } from '../../../../../shared/local-models/model-catalog'
 import {
 	endpointServesNeed,
 	formatLocalModelAssignmentSpec,
+	localModelAssignmentSourceLabel,
 	type LocalModelAssignment,
 	type LocalModelTaskDefinition,
 } from '../../../../../shared/local-models/tasks';
@@ -62,16 +63,14 @@ function unlistedLabel(
 	assignment: LocalModelAssignment,
 	endpoints: readonly LocalModelEndpoint[]
 ): string {
+	const source = localModelAssignmentSourceLabel(assignment, endpoints);
 	if (assignment.type === 'local') {
-		const entry = getLocalModel(assignment.modelId);
-		return entry
-			? `${entry.displayName} (not installed)`
-			: `${assignment.modelId} (not in catalog)`;
+		return `${source} (${getLocalModel(assignment.modelId) ? 'not installed' : 'not in catalog'})`;
 	}
 	if (assignment.type === 'endpoint') {
 		const endpoint = endpoints.find((candidate) => candidate.id === assignment.endpointId);
-		if (!endpoint) return `${assignment.model} (endpoint removed)`;
-		return `${assignment.model} on ${endpoint.name} (${endpoint.enabled ? 'not listed' : 'disabled'})`;
+		if (!endpoint) return `${source} (endpoint removed)`;
+		return `${source} (${endpoint.enabled ? 'not listed' : 'disabled'})`;
 	}
 	// Off and Utility Agent are always offered when they are valid, so this is
 	// only reached for a Utility Agent assignment the task does not accept.

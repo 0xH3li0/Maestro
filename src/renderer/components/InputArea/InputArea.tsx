@@ -45,7 +45,11 @@ import { MentionRoutingBar } from './components/MentionRoutingBar';
 import { useMentionRouting } from './hooks/useMentionRouting';
 import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
-import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import {
+	acceptAiCommand,
+	dismissAiCommand,
+	resolveAiCommandProvenance,
+} from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
 import {
 	buildSlotRemap,
@@ -260,8 +264,22 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		() => codifyTurnSettings(activeTab, session),
 		[activeTab, session]
 	);
-	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : turnModel;
-	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : turnEffort;
+	// Before a request, the bar names whatever the `ai-command` Local Models
+	// assignment would ask: the tab's own model by default, or the assigned
+	// local model or endpoint.
+	const localModelAssignments = useSettingsStore((s) => s.localModelAssignments);
+	const localModelEndpoints = useSettingsStore((s) => s.localModelEndpoints);
+	const draftProvenance = useMemo(
+		() =>
+			resolveAiCommandProvenance(
+				{ turnModel, turnEffort },
+				localModelAssignments,
+				localModelEndpoints
+			),
+		[turnModel, turnEffort, localModelAssignments, localModelEndpoints]
+	);
+	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : draftProvenance.model;
+	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : draftProvenance.effort;
 
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
 	// Non-reactive store handles for the change handler below.

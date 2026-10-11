@@ -10,6 +10,7 @@ import {
 	isLocalModelTaskId,
 	isSameLocalModelAssignment,
 	localModelAssignmentProblem,
+	localModelAssignmentSourceLabel,
 	endpointServesNeed,
 	formatLocalModelAssignmentSpec,
 	parseLocalModelAssignmentSpec,
@@ -27,6 +28,7 @@ import {
 	BGE_SMALL_EN_ID,
 	KOKORO_82M_ID,
 	QWEN3_1_7B_ID,
+	getLocalModel,
 } from '../../shared/local-models/model-catalog';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
 import { SETTINGS_DEFAULTS } from '../../main/stores/defaults';
@@ -252,6 +254,42 @@ describe('localModelAssignmentProblem', () => {
 		expect(localModelAssignmentProblem('semantic-search', endpoint)).toBeNull();
 		expect(endpointServesNeed('text-gen')).toBe(true);
 		expect(endpointServesNeed('classifier')).toBe(false);
+	});
+});
+
+describe('localModelAssignmentSourceLabel', () => {
+	const endpoints = [{ id: 'ep-1', name: 'Ollama' }];
+
+	it('names a local model by its catalog display name', () => {
+		expect(
+			localModelAssignmentSourceLabel({ type: 'local', modelId: QWEN3_1_7B_ID }, endpoints)
+		).toBe(getLocalModel(QWEN3_1_7B_ID)!.displayName);
+	});
+
+	it('names an endpoint model with the endpoint it is served by', () => {
+		expect(
+			localModelAssignmentSourceLabel(
+				{ type: 'endpoint', endpointId: 'ep-1', model: 'qwen3:latest' },
+				endpoints
+			)
+		).toBe('qwen3:latest on Ollama');
+	});
+
+	it('falls back to the id for a source this build no longer knows', () => {
+		expect(localModelAssignmentSourceLabel({ type: 'local', modelId: 'gone' }, endpoints)).toBe(
+			'gone'
+		);
+		expect(
+			localModelAssignmentSourceLabel(
+				{ type: 'endpoint', endpointId: 'removed', model: 'qwen3:latest' },
+				endpoints
+			)
+		).toBe('qwen3:latest');
+	});
+
+	it('names nothing for off and the Utility Agent', () => {
+		expect(localModelAssignmentSourceLabel({ type: 'off' }, endpoints)).toBeNull();
+		expect(localModelAssignmentSourceLabel({ type: 'utility-agent' }, endpoints)).toBeNull();
 	});
 });
 

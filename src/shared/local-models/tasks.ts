@@ -17,6 +17,7 @@
  * and validate an assignment by the same rules.
  */
 
+import type { LocalModelEndpoint } from './endpoints';
 import { getLocalModel } from './model-catalog';
 import type { LocalModelKind } from './types';
 
@@ -454,6 +455,30 @@ export function tasksUsingEndpoint(
 		const assignment = resolveLocalModelAssignment(assignments, taskId);
 		return assignment.type === 'endpoint' && assignment.endpointId === endpointId;
 	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
+}
+
+/**
+ * What a person calls the model a `local` or `endpoint` assignment runs on: the
+ * catalog display name, or `<model> on <endpoint name>`. `null` for `off` and
+ * `utility-agent`, which name no model of their own.
+ *
+ * A source the build no longer knows (a model dropped from the catalog, an
+ * endpoint that was removed) is still named by its id, so a surface never
+ * shows a blank where the user's choice was. A task router source has the same
+ * shape as its assignment, so it is labeled through this too.
+ */
+export function localModelAssignmentSourceLabel(
+	assignment: LocalModelAssignment,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[]
+): string | null {
+	if (assignment.type === 'local') {
+		return getLocalModel(assignment.modelId)?.displayName ?? assignment.modelId;
+	}
+	if (assignment.type === 'endpoint') {
+		const endpoint = endpoints.find((candidate) => candidate.id === assignment.endpointId);
+		return endpoint ? `${assignment.model} on ${endpoint.name}` : assignment.model;
+	}
+	return null;
 }
 
 /**

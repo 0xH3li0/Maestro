@@ -119,6 +119,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'AI command mode: turns a plain-English request into one shell command line for confirmation',
 		category: 'commands',
 	},
+	{
+		id: 'ai-command-local',
+		filename: 'ai-command-local.md',
+		description:
+			'AI command mode for a small local model or endpoint: short, and answers as JSON with the command and one sentence on what it does',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -363,6 +370,7 @@ export const PROMPT_IDS = {
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
 	AI_COMMAND: 'ai-command',
+	AI_COMMAND_LOCAL: 'ai-command-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System
