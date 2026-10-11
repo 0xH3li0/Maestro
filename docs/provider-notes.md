@@ -109,6 +109,23 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 - Codex's **built-in** [slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/compact`, `/diff`, `/model`, etc.) are still unavailable: they are implemented inside the interactive TUI and have no on-disk prompt to expand.
 - Codex commands on an SSH remote agent are not discovered yet, since the skills live on the remote host.
 
+### App Server Transport (Experimental)
+
+By default Maestro runs every Codex turn through `codex exec`. A Codex agent can opt into `codex app-server` instead, which keeps a live connection to the running turn. That connection is what makes the **Steer** button available on a queued message: Maestro hands the message to the turn already in progress, and Codex folds it into its work instead of waiting for the turn to end.
+
+Turn it on per agent:
+
+- **Agent settings:** set **Codex Transport** to **App server (experimental, enables steering)** in the New Agent or Edit Agent dialog.
+- **CLI:** `maestro-cli update-agent <agent-id> --codex-transport app-server` (use `exec` to switch back).
+
+Only local chat turns use the app server. These keep running on `codex exec` even with the option on:
+
+- [SSH remote](/ssh-remote-execution) agents
+- Prompts with attached images
+- Auto Run, Maestro Cue, and `maestro-cli` batch runs
+
+If the app server cannot start (an older Codex build, or a handshake error), Maestro runs the turn on `codex exec` automatically. Conversations carry over in both directions, because both transports share the same Codex session.
+
 ## OpenCode
 
 | Feature            | Support                        |

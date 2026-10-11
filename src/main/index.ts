@@ -985,7 +985,8 @@ app
 		// `encoreFeatures.opencodeServer` plugin. Read live on every spawn so the
 		// Extensions toggle takes effect without an app restart.
 		processManager = new ProcessManager(
-			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true
+			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true,
+			{ appVersion: app.getVersion() }
 		);
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();

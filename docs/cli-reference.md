@@ -306,6 +306,14 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli queue steer <item-id>`
+
+Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
 ## `maestro-cli window`
 
 List Maestro windows, and move agents or whole groups between them
@@ -1078,6 +1086,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |
 | `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
 | `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                       | -       |
+| `--codex-transport <transport>`   | Codex transport: exec \| app-server (experimental, enables steering; Codex only)               | -       |
 | `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                | -       |
 | `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)             | -       |
 | `--force`                         | Confirm a destructive change (required for --provider)                                         | -       |

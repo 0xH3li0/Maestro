@@ -16,13 +16,11 @@ import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-deliv
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
-import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
+import { isPowerShellShell } from '../utils/shellEscape';
+import { planSpawnShell } from '../utils/windowsSpawnShell';
+import { argsResumeSession } from '../utils/resumeArgs';
 import { isWindows } from '../../../shared/platformDetection';
-import {
-	quoteCommandForCmdShell,
-	windowsShellReason,
-	type WindowsShellReason,
-} from '../../../shared/maestro-lib/launch/windows-command';
+import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
@@ -226,9 +224,7 @@ export class ChildProcessSpawner {
 
 		try {
 			// Build environment
-			const isResuming =
-				args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
-				args.includes('--session');
+			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
 				customEnvVars,
 				isResuming,
@@ -257,43 +253,32 @@ export class ChildProcessSpawner {
 				hasStdio: 'default (pipe)',
 			});
 
-			// Handle Windows shell requirements
-			let spawnCommand = command;
-			let spawnArgs = finalArgs;
-			// Respect explicit request from caller, but also be defensive: if caller
-			// did not set runInShell and we're on Windows with a bare .exe basename,
-			// enable shell so PATH resolution occurs. This avoids ENOENT when callers
-			// rewrite the command to basename (or pass a basename) but forget to set
-			// the runInShell flag.
-			let useShell = !!config.runInShell;
+			// Handle Windows shell requirements. Respect an explicit runInShell, and
+			// auto-enable a shell on Windows when the command cannot be spawned
+			// directly: a bare .exe (PATH resolution), a .cmd/.bat shim (spawn EINVAL
+			// since the CVE-2024-27980 fix, MAESTRO-Q8), or an extensionless shebang
+			// script. The decision lives in planSpawnShell(); the logging stays here.
+			const shellPlan = planSpawnShell(command, finalArgs, {
+				runInShell: config.runInShell,
+				shell: config.shell,
+			});
+			const { command: spawnCommand, args: spawnArgs, shell: spawnShell } = shellPlan;
 
-			// Auto-enable shell for Windows when the command cannot be spawned directly:
-			// a bare .exe (PATH resolution), a .cmd/.bat shim (spawn EINVAL since the
-			// CVE-2024-27980 fix, MAESTRO-Q8), or an extensionless shebang script. The
-			// rules live in maestro-lib's windowsShellReason(); the logging stays here.
-			if (isWindows() && !useShell) {
-				const { reason, shebang } = windowsShellReason(spawnCommand);
-				if (reason) {
-					useShell = true;
-					logger.info(
-						WINDOWS_SHELL_LOG_MESSAGES[reason],
-						'ProcessManager',
-						shebang !== undefined ? { command: spawnCommand, shebang } : { command: spawnCommand }
-					);
-				}
+			if (shellPlan.autoReason) {
+				logger.info(
+					WINDOWS_SHELL_LOG_MESSAGES[shellPlan.autoReason],
+					'ProcessManager',
+					shellPlan.shebang !== undefined ? { command, shebang: shellPlan.shebang } : { command }
+				);
 			}
 
-			if (isWindows() && useShell) {
+			if (isWindows() && spawnShell !== false) {
 				logger.debug(
 					'[ProcessManager] Forcing shell=true for agent spawn on Windows (runInShell or auto)',
 					'ProcessManager',
-					{ command: spawnCommand }
+					{ command }
 				);
-
-				// Use the shell escape utility for proper argument escaping
 				const shellPath = typeof config.shell === 'string' ? config.shell : undefined;
-				spawnArgs = escapeArgsForShell(finalArgs, shellPath);
-
 				const shellType = isPowerShellShell(shellPath) ? 'PowerShell' : 'cmd.exe';
 				logger.info(`[ProcessManager] Escaped args for ${shellType}`, 'ProcessManager', {
 					originalArgsCount: finalArgs.length,
@@ -301,21 +286,6 @@ export class ChildProcessSpawner {
 					escapedPromptArgLength: spawnArgs[spawnArgs.length - 1]?.length,
 					argsModified: finalArgs.some((arg, i) => arg !== spawnArgs[i]),
 				});
-			}
-
-			// Determine shell option to pass to child_process.spawn.
-			// If the caller provided a specific shell path, prefer that (string).
-			// Otherwise pass a boolean indicating whether to use the default shell.
-			let spawnShell: boolean | string = !!useShell;
-			if (useShell && typeof config.shell === 'string' && config.shell.trim()) {
-				spawnShell = config.shell.trim();
-			}
-
-			// cmd.exe splits an unquoted command path that contains spaces; see
-			// quoteCommandForCmdShell() in maestro-lib. Only for the boolean (cmd.exe)
-			// shell - an explicit shell string carries its own quoting rules.
-			if (isWindows() && spawnShell === true) {
-				spawnCommand = quoteCommandForCmdShell(spawnCommand);
 			}
 
 			// Log spawn details

@@ -113,6 +113,7 @@ import type {
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
+	SteerQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -658,6 +659,10 @@ export class WebServer {
 		this.callbackRegistry.setRemoveQueueItemCallback(callback);
 	}
 
+	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
+		this.callbackRegistry.setSteerQueueItemCallback(callback);
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbackRegistry.setRefreshAutoRunDocsCallback(callback);
 	}
@@ -1146,6 +1151,7 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
+			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
 			executeCommand: async (
 				sessionId: string,
 				command: string,
@@ -1230,6 +1236,8 @@ export class WebServer {
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
+			steerQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.steerQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (

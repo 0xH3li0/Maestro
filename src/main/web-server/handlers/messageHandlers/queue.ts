@@ -2,7 +2,7 @@
  * Queue domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
- * list_queue, remove_queue_item.
+ * list_queue, remove_queue_item, steer_queue_item.
  */
 
 import { logger } from '../../../utils/logger';
@@ -223,6 +223,60 @@ export function handleRemoveQueueItem(
 				success: false,
 				removed: false,
 				error: `Failed to remove queue item: ${error.message}`,
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle steer_queue_item message - steer a queued message into the turn running
+ * on its tab, through the SAME renderer path the Steer button uses (the renderer
+ * owns the queue removal and the later re-queue). Used by `maestro-cli queue steer`.
+ */
+export function handleSteerQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	if (!sessionId || !itemId) {
+		ctx.send(client, {
+			type: 'steer_queue_item_result',
+			success: false,
+			error: 'Missing sessionId or itemId',
+			requestId: message.requestId,
+		});
+		return;
+	}
+	if (!ctx.callbacks.steerQueueItem) {
+		ctx.send(client, {
+			type: 'steer_queue_item_result',
+			success: false,
+			error: 'Steer queue item not configured',
+			requestId: message.requestId,
+		});
+		return;
+	}
+	ctx.callbacks
+		.steerQueueItem(sessionId, itemId)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'steer_queue_item_result',
+				success: result.success,
+				...(result.result ? { result: result.result } : {}),
+				...(result.error ? { error: result.error } : {}),
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'steer_queue_item', sessionId, itemId },
+			});
+			ctx.send(client, {
+				type: 'steer_queue_item_result',
+				success: false,
+				error: `Failed to steer queue item: ${error.message}`,
 				requestId: message.requestId,
 			});
 		});

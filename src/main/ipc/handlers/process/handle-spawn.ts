@@ -49,6 +49,7 @@ import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
+import { resolveCodexSpawnTransport } from './resolve-codex-spawn-transport';
 import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
@@ -191,6 +192,10 @@ export async function handleProcessSpawn(
 		isClaudeCode,
 		isSshEnabled,
 	} = claudeContext;
+	// Codex transport (exec default, app-server opt-in), read from the persisted
+	// agent record so a stale renderer cannot route the turn differently from
+	// what is saved. Handed to ProcessManager.spawn() below.
+	const codexTransport = resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore);
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -916,6 +921,8 @@ export async function handleProcessSpawn(
 		sshRemoteCommand,
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
+		// Host-authoritative (see above): overrides whatever the caller sent.
+		codexTransport,
 	});
 
 	// The prime outran the spawn cap, so the process started without a usable

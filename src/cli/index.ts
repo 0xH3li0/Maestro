@@ -14,7 +14,7 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueList, queueRemove } from './commands/queue';
+import { queueList, queueRemove, queueSteer } from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -554,8 +554,9 @@ program
 	.action(ask);
 
 // Queue commands - inspect and manage the desktop execution queue populated by
-// `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
-// cleanup/debugging. The queue lives authoritatively in the desktop renderer.
+// `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
+// cleanup/debugging, and `steer` (the Steer button). The queue lives
+// authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
 	.description('Inspect and manage the desktop execution queue (from dispatch --queue)');
@@ -574,6 +575,14 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+queue
+	.command('steer <item-id>')
+	.description(
+		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueSteer);
 
 // Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
 // agent and on a group) and the matching Cmd+K commands. Answered by the primary
@@ -1493,6 +1502,10 @@ program
 		'Claude token source: api | tui | dynamic (Claude Code agents only)'
 	)
 	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option(
+		'--codex-transport <transport>',
+		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
+	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',

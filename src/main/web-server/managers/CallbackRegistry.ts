@@ -58,6 +58,8 @@ import type {
 	ListQueueResult,
 	RemoveQueueItemCallback,
 	RemoveQueueItemResult,
+	SteerQueueItemCallback,
+	SteerQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -201,6 +203,7 @@ export interface WebServerCallbacks {
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
+	steerQueueItem: SteerQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -307,6 +310,7 @@ export class CallbackRegistry {
 		enqueueCommand: null,
 		listQueue: null,
 		removeQueueItem: null,
+		steerQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -612,6 +616,11 @@ export class CallbackRegistry {
 		if (!this.callbacks.removeQueueItem)
 			return { success: false, removed: false, error: 'not configured' };
 		return this.callbacks.removeQueueItem(sessionId, itemId);
+	}
+
+	async steerQueueItem(sessionId: string, itemId: string): Promise<SteerQueueItemResult> {
+		if (!this.callbacks.steerQueueItem) return { success: false, error: 'not configured' };
+		return this.callbacks.steerQueueItem(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -1242,6 +1251,10 @@ export class CallbackRegistry {
 
 	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
 		this.callbacks.removeQueueItem = callback;
+	}
+
+	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
+		this.callbacks.steerQueueItem = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
