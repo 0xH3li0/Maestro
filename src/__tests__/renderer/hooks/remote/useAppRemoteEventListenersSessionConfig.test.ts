@@ -159,6 +159,61 @@ describe('maestro:remoteUpdateSessionConfig', () => {
 	});
 });
 
+describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
+	it('writes the app-server opt-in and flushes it before acking', async () => {
+		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: 'app-server' });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBe('app-server');
+		expect(setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'session-1', codexTransport: 'app-server' })],
+			[]
+		);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
+
+	it('stores exec as an unset field, the way the Edit Agent modal does', async () => {
+		const sessions = [
+			createMockSession({ id: 'session-1', toolType: 'codex', codexTransport: 'app-server' }),
+		];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: 'exec' });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBeUndefined();
+	});
+
+	it('clears the opt-in on null', async () => {
+		const sessions = [
+			createMockSession({ id: 'session-1', toolType: 'codex', codexTransport: 'app-server' }),
+		];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: null });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBeUndefined();
+	});
+
+	it('drops an unknown transport instead of persisting it', async () => {
+		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: 'websocket' });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: 'No editable config fields in patch',
+		});
+	});
+});
+
 describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 	/** An agent whose second tab is the one under test. */
 	function twoTabSession() {

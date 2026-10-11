@@ -1053,6 +1053,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |
 | `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
 | `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                       | -       |
+| `--codex-transport <transport>`   | Codex transport: exec \| app-server (experimental, enables steering; Codex only)               | -       |
 | `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                | -       |
 | `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)             | -       |
 | `--force`                         | Confirm a destructive change (required for --provider)                                         | -       |

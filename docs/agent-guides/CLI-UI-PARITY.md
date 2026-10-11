@@ -231,6 +231,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Create / rename / remove an agent                  | `create-agent`, `rename-agent`, `remove-agent`                                                   |
 | Edit Agent modal fields                            | `update-agent`, `settings agent set`                                                             |
 | Switch an agent's provider                         | `update-agent --provider --force`                                                                |
+| Codex transport (Standard / App server)            | `update-agent --codex-transport exec\|app-server`, read back via `show-agent`                    |
 | Move an agent to a group                           | `update-agent --group`                                                                           |
 | Change working directory                           | `update-agent --cwd`                                                                             |
 | SSH remote execution config                        | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |

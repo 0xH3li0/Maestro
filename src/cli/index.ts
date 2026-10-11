@@ -1441,6 +1441,10 @@ program
 		'Claude token source: api | tui | dynamic (Claude Code agents only)'
 	)
 	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option(
+		'--codex-transport <transport>',
+		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
+	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',

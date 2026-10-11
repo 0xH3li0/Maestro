@@ -1228,8 +1228,8 @@ export type UpdateSessionSshCallback = (
  * Update an agent's editable per-session config from the CLI/web. `configPatch`
  * is a partial bag of the fields the Edit Agent modal exposes (nudge / new
  * session message, custom binary path / args / env vars, model, effort, context
- * window, and the Claude token-source tri-state `enableMaestroP` /
- * `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
+ * window, the Codex transport `codexTransport`, and the Claude token-source
+ * tri-state `enableMaestroP` / `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
  * present with value `null` clears that field to undefined. Typed as a plain
  * record because the payload crosses the IPC bridge to the renderer.
  */

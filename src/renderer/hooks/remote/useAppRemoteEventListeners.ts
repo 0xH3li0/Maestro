@@ -56,6 +56,7 @@ import {
 	validateGroupUpdate,
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
+import { isCodexTransport } from '../../../shared/codexTransport';
 
 // ============================================================================
 // Group update helpers
@@ -1935,6 +1936,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// Codex transport opt-in (`update-agent --codex-transport`). Validated
+			// below, since an unknown value must never reach the spawner.
+			'codexTransport',
 			// UI state
 			'bookmarked',
 		]);
@@ -1946,6 +1950,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		for (const key of Object.keys(patch)) {
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
+			if (key === 'codexTransport' && value !== null && !isCodexTransport(value)) continue;
+			// `exec` is the default, so it is stored the way the Edit Agent modal
+			// stores it: as an unset field.
+			if (key === 'codexTransport' && value === 'exec') {
+				updated.codexTransport = undefined;
+				continue;
+			}
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
 		}
 
