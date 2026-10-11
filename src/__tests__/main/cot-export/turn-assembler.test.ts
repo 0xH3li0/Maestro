@@ -36,6 +36,7 @@ import { ClaudeOutputParser } from '../../../main/parsers/claude-output-parser';
 import { COT_GENESIS_CHAIN_SEQ, COT_GENESIS_HASH } from '../../../shared/cotExport/types';
 import type { CotChainState, CotRecord } from '../../../shared/cotExport/types';
 import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
+import { readTurnFiles } from './helpers';
 
 // ============================================================================
 // Fixtures
@@ -222,16 +223,7 @@ describe('cot-export turn assembler', () => {
 	};
 
 	/** Every turn file under `dir`, oldest first, each as its records. */
-	const readTurns = async (dir: string = folder): Promise<CotRecord[][]> => {
-		const files = (await listTurnFiles(dir)).reverse();
-		return files.map((file) =>
-			fs
-				.readFileSync(file, 'utf8')
-				.split('\n')
-				.filter((line) => line.trim() !== '')
-				.map((line) => JSON.parse(line) as CotRecord)
-		);
-	};
+	const readTurns = (dir: string = folder): Promise<CotRecord[][]> => readTurnFiles(dir);
 
 	const kindsOf = (records: CotRecord[]): string[] => records.map((record) => record.kind);
 
