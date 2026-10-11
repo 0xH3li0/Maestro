@@ -696,6 +696,10 @@ function resolveRealPath(target: string): string {
 	return missing.length > 0 ? path.join(realBase, ...missing) : realBase;
 }
 
+/**
+ * Build brokered handlers and their shared media/service registries using host-owned dependencies.
+ * Missing service wiring fails closed; cleanupPluginResources returns the media/service teardown barrier.
+ */
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	const mediaTools = new PluginMediaTools({
 		resolveRuntime: () => resolveMediaRuntime(deps.settingsGet('mediaModelDirectory')),

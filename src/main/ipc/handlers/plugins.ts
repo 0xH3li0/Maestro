@@ -84,6 +84,10 @@ function snapshotOf(registry: PluginRegistry): PluginListSnapshot {
 	return { hostApiVersion: HOST_API_VERSION, plugins: registry.records };
 }
 
+/**
+ * Register feature-gated plugin IPC with sealed-ledger authorization for code-tier enablement.
+ * Disable, revoke and uninstall await resource drains; validation, authorization or cleanup failures reject.
+ */
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
 	const { settingsStore, manager, sandboxHost, authStore, groupingRegistry } = deps;
 

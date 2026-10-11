@@ -167,6 +167,7 @@ export class PluginSandboxHost {
 		return this.running.has(pluginId);
 	}
 
+	/** False as soon as shutdown starts, before child exit, so stopping plugins cannot acquire new service work. */
 	isAcceptingServiceCalls(pluginId: string): boolean {
 		const record = this.running.get(pluginId);
 		return !!record && !record.stopping;
@@ -457,7 +458,10 @@ export class PluginSandboxHost {
 		}
 	}
 
-	/** Stop a plugin: ask it to shut down, then hard-kill after a grace period. */
+	/**
+	 * Bar new work, request shutdown and hard-kill after the grace period.
+	 * Resolve only after child exit and host cleanup; a failed drain blocks restart until an explicit stop retry succeeds.
+	 */
 	stop(pluginId: string): Promise<void> {
 		const existingDrain = this.drains.get(pluginId);
 		if (existingDrain) {

@@ -2043,6 +2043,7 @@ export function parseServiceDeclarations(
 	return out;
 }
 
+/** Validate the closed request shape and supported model/language; handle ownership and consent are host checks. */
 export function isTranscriptionRequest(value: unknown): value is TranscriptionRequest {
 	return (
 		object(value) &&
@@ -2058,6 +2059,7 @@ export function isTranscriptionRequest(value: unknown): value is TranscriptionRe
 		(TRANSCRIPTION_LANGUAGES as readonly unknown[]).includes(value.language)
 	);
 }
+/** Require nonempty bounded text, valid duration and the requested model/language without translation. */
 export function isTranscriptionResult(
 	value: unknown,
 	expected: Pick<TranscriptionRequest, 'model' | 'language'>

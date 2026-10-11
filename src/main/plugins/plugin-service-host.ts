@@ -76,6 +76,7 @@ export class PluginServiceHost {
 	private key(provider: string, service: string): string {
 		return `${provider}/${service}`;
 	}
+	/** Require a live declared provider with both service-specific and delegated-media consent. */
 	private ownService(pluginId: string, serviceId: string): ProvidedService {
 		const provided = this.deps.manifest(pluginId)?.provides?.find((s) => s.id === serviceId);
 		if (
@@ -92,6 +93,10 @@ export class PluginServiceHost {
 		if (!required) throw new ServiceError('ServiceInvalid');
 		return required;
 	}
+	/**
+	 * Resolve only the declared provider, rechecking both principals' live grants.
+	 * Missing registration or incompatible versions fail closed; no fallback provider is selected.
+	 */
 	private binding(pluginId: string, id: string): Binding {
 		const requirement = this.requirement(pluginId, id);
 		if (
@@ -145,6 +150,10 @@ export class PluginServiceHost {
 			return false;
 		}
 	}
+	/**
+	 * Register an own consented service and notify dependency reconciliation.
+	 * Duplicate registration throws ServiceBusy; each registration has a fresh binding identity.
+	 */
 	register(pluginId: string, id: string): void {
 		this.ownService(pluginId, id);
 		const key = this.key(pluginId, id);
@@ -152,6 +161,10 @@ export class PluginServiceHost {
 		this.registrations.set(key, {});
 		this.deps.changed?.();
 	}
+	/**
+	 * Remove a provider binding before aborting its calls with ServiceUnavailable.
+	 * Wait for their media drains before notifying dependents; cleanup failure rejects.
+	 */
 	async unregister(pluginId: string, id: string): Promise<void> {
 		this.registrations.delete(this.key(pluginId, id));
 		await Promise.all(
@@ -161,12 +174,17 @@ export class PluginServiceHost {
 		);
 		this.deps.changed?.();
 	}
+	/** Return host-owned tool/model diagnostics, rechecking provider consent after the async lookup. */
 	async readiness(pluginId: string, id: string) {
 		this.ownService(pluginId, id);
 		const status = await this.deps.media.serviceStatus();
 		this.ownService(pluginId, id);
 		return { ...status, languages: TRANSCRIPTION_LANGUAGES };
 	}
+	/**
+	 * Report a declared requirement's readiness, exact Settings target and retained-call capacity.
+	 * Binding failures become status states; an undeclared requirement throws ServiceInvalid.
+	 */
 	async status(pluginId: string, id: string): Promise<PluginServiceStatus> {
 		const requirement = this.requirement(pluginId, id);
 		const base: PluginServiceStatus = {
@@ -213,6 +231,10 @@ export class PluginServiceHost {
 		}
 		return base;
 	}
+	/**
+	 * Open only the pinned provider's declared Settings card with exact services:call consent.
+	 * Missing consent throws ServiceDenied; an absent card or navigation sink throws ServiceUnavailable.
+	 */
 	openSettings(pluginId: string, id: string): void {
 		const requirement = this.requirement(pluginId, id);
 		if (
@@ -234,6 +256,7 @@ export class PluginServiceHost {
 			throw new ServiceError('ServiceUnavailable');
 		this.deps.openSettings(requirement.provider, panel);
 	}
+	/** Reject a failed, expired or rebound call, including grants revoked since its reservation. */
 	private check(call: ServiceCall): void {
 		if (call.failure) throw new ServiceError(call.failure);
 		if (Date.now() >= call.expiresAt) throw new ServiceError('ServiceTimeout');
@@ -241,6 +264,11 @@ export class PluginServiceHost {
 		if (live.registration !== call.binding.registration)
 			throw new ServiceError('ServiceUnavailable');
 	}
+	/**
+	 * Synchronously reserve a bounded call and lease owned audio after validating the request and consent.
+	 * Preserve the parent job's deadline and quotas; invalid input, denied binding or saturation throws.
+	 * The caller must consume result or cancel; a successful start reply after local cancellation must be cancelled.
+	 */
 	start(pluginId: string, id: string, raw: unknown): { callId: string } {
 		const size = serializedJsonByteLength(raw);
 		if (size === null || size > SERVICE_LIMITS.requestBytes || !isTranscriptionRequest(raw))
@@ -311,6 +339,7 @@ export class PluginServiceHost {
 		void call.result.catch(() => {});
 		return { callId: call.id };
 	}
+	/** Preserve allowlisted service codes, translate media failures and hide unknown diagnostics as ServiceFailed. */
 	private failure(error: unknown): ServiceError {
 		if (error instanceof ServiceError) return error;
 		const code =
@@ -335,6 +364,10 @@ export class PluginServiceHost {
 										: 'ServiceFailed'
 		);
 	}
+	/**
+	 * Invoke the pinned provider with lease aliases, validate its closed result and await media cleanup.
+	 * Recheck consent/binding after cleanup; failures cancel the provider and drain before rejection.
+	 */
 	private async execute(call: ServiceCall, remaining: number): Promise<TranscriptionResult> {
 		try {
 			const value = await this.deps.invoke(
@@ -379,6 +412,10 @@ export class PluginServiceHost {
 		if (!call || call.owner !== pluginId) throw new ServiceError('ServiceInvalid');
 		return call;
 	}
+	/**
+	 * Claim an own call's result once, then recheck its live binding after execution and cleanup.
+	 * Unknown, foreign or already claimed calls throw ServiceInvalid; settlement releases the retained call.
+	 */
 	async result(pluginId: string, id: string): Promise<TranscriptionResult> {
 		const call = this.owned(pluginId, id);
 		if (call.claimed) throw new ServiceError('ServiceInvalid');
@@ -392,6 +429,10 @@ export class PluginServiceHost {
 			call.watchdog.disarm();
 		}
 	}
+	/**
+	 * Cancel an own call without requiring grants that may already be revoked.
+	 * Unknown/foreign calls are no-ops; await media drain before releasing the call, and propagate cleanup failure.
+	 */
 	async cancel(pluginId: string, id: string): Promise<void> {
 		const call = this.calls.get(id);
 		if (!call || call.owner !== pluginId) return;
@@ -399,12 +440,14 @@ export class PluginServiceHost {
 		this.calls.delete(call.id);
 		call.watchdog.disarm();
 	}
+	/** Preserve the first failure, notify the provider once and await native/file cleanup and result settlement. */
 	private async abort(call: ServiceCall, code: ServiceErrorCode): Promise<void> {
 		if (!call.failure) this.deps.cancelProvider?.(call.binding.provider, call.id);
 		call.failure ??= code;
 		await call.lease.close(); // abort/kill and filesystem cleanup BEFORE reporting cancellation
 		await call.result.catch(() => {});
 	}
+	/** Admit a closed cancellation request to reserved release capacity only while its call belongs to this plugin. */
 	ownsCancel(pluginId: string, raw: unknown): boolean {
 		return (
 			!!raw &&
@@ -413,6 +456,10 @@ export class PluginServiceHost {
 			this.calls.get((raw as { callId: string }).callId)?.owner === pluginId
 		);
 	}
+	/**
+	 * Route fixed media operations only for the bound provider of an unsettled, live call.
+	 * The lease validates audio aliases and shared quotas; media failures become sanitized service codes.
+	 */
 	async media(
 		pluginId: string,
 		method: 'probe' | 'decode' | 'run',
@@ -450,6 +497,10 @@ export class PluginServiceHost {
 		}
 	}
 
+	/**
+	 * Invalidate a plugin's registrations and drain every call it owns or provides during teardown.
+	 * Notify dependents immediately; the returned promise is the cleanup barrier and rejects on drain failure.
+	 */
 	cleanupPlugin(pluginId: string): Promise<void> {
 		for (const key of this.registrations.keys())
 			if (key.startsWith(`${pluginId}/`)) this.registrations.delete(key);
