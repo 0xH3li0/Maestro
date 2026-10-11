@@ -14,6 +14,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowUp,
+	Bookmark,
+	BookmarkCheck,
 	ChevronDown,
 	ExternalLink,
 	PenSquare,
@@ -44,6 +46,26 @@ const COMPOSER_MAX_HEIGHT = 120;
 /** `-webkit-app-region` lets the frameless window be dragged by its header. */
 const DRAG_REGION = { WebkitAppRegion: 'drag' } as React.CSSProperties;
 const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
+
+/**
+ * The grip the whole window is dragged by. The composer-only shape is all
+ * input and buttons, so without it there is nothing to grab there.
+ */
+function DragHandle({ theme }: { theme: Theme }) {
+	return (
+		<div
+			className="h-3 shrink-0 flex items-center justify-center"
+			style={DRAG_REGION}
+			title="Drag to move"
+			data-testid="quick-chat-drag-handle"
+		>
+			<div
+				className="w-10 h-1 rounded-full"
+				style={{ backgroundColor: theme.colors.textDim, opacity: 0.45 }}
+			/>
+		</div>
+	);
+}
 
 function useElapsedSeconds(since: number | null): number {
 	const [now, setNow] = useState(() => Date.now());
@@ -126,6 +148,7 @@ export function QuickChatRoot() {
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const [pinned, setPinned] = useState(true);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// This window boots its own renderer and never runs useSettings: load the
@@ -135,10 +158,13 @@ export function QuickChatRoot() {
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
 		const offFocus = window.maestro.quickChat.onFocusInput(() => textareaRef.current?.focus());
+		const offPinned = window.maestro.quickChat.onPinned(setPinned);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
+		void window.maestro.quickChat.getPinned().then(setPinned);
 		return () => {
 			offSnapshot();
 			offFocus();
+			offPinned();
 		};
 	}, []);
 
@@ -173,6 +199,17 @@ export function QuickChatRoot() {
 	}, [draft, snapshot.busy, run]);
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
+	const togglePinned = useCallback(() => {
+		window.maestro.quickChat
+			.setPinned(!pinned)
+			.then((next) => {
+				setPinned(next);
+				setError(null);
+			})
+			.catch((err: unknown) =>
+				setError(`Could not change the pin: ${err instanceof Error ? err.message : String(err)}`)
+			);
+	}, [pinned]);
 	const closePicker = useCallback(() => {
 		setPickerOpen(false);
 		textareaRef.current?.focus();
@@ -221,15 +258,45 @@ export function QuickChatRoot() {
 	const shownError = error ?? snapshot.error;
 	const c = theme.colors;
 
+	// The switcher sits at the TOP in both shapes. The window grows downward
+	// from a fixed top edge, so a trigger at the top stays under the cursor
+	// while the picker opens just below it.
+	const agentButton = (
+		<button
+			type="button"
+			onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+			title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
+			aria-label="Switch agent"
+			aria-expanded={pickerOpen}
+			className="flex items-center gap-1 text-sm font-medium max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
+			style={{ ...NO_DRAG_REGION, color: c.textMain }}
+			data-testid="quick-chat-agent-button"
+		>
+			<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
+			<ChevronDown
+				className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
+				style={{ color: c.textDim }}
+			/>
+		</button>
+	);
+
 	const composer = (
 		<div
-			className={`rounded-3xl px-4 pt-3 pb-2 flex flex-col gap-2 ${expanded ? '' : 'h-full justify-between'}`}
+			className={`rounded-3xl px-4 pb-2 flex flex-col gap-2 ${expanded ? 'pt-3' : 'h-full justify-between'}`}
 			style={{
 				backgroundColor: expanded ? c.bgActivity : c.bgSidebar,
 				border: expanded ? 'none' : `1px solid ${c.border}`,
 				...NO_DRAG_REGION,
 			}}
 		>
+			{!expanded && (
+				// Same rows as the conversation header (grip, then a 28px row with
+				// the switcher first), so opening the picker leaves it in place.
+				<div className="-mx-4 -mb-2 flex flex-col" style={DRAG_REGION}>
+					<DragHandle theme={theme} />
+					<div className="h-7 px-4 flex items-center min-w-0">{agentButton}</div>
+				</div>
+			)}
 			<textarea
 				ref={textareaRef}
 				autoFocus
@@ -247,21 +314,6 @@ export function QuickChatRoot() {
 				style={{ color: c.textMain }}
 			/>
 			<div className="flex items-center gap-2">
-				<button
-					type="button"
-					onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
-					title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
-					aria-label="Switch agent"
-					aria-expanded={pickerOpen}
-					className="flex items-center gap-1 text-sm max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
-					style={{ color: c.textDim }}
-					data-testid="quick-chat-agent-button"
-				>
-					<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
-					<ChevronDown
-						className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
-					/>
-				</button>
 				<div className="flex-1" />
 				<IconButton
 					theme={theme}
@@ -273,6 +325,21 @@ export function QuickChatRoot() {
 					onClick={() => void run({ type: 'setPersistent', persistent: !snapshot.persistent })}
 				>
 					{snapshot.persistent ? (
+						<BookmarkCheck className="w-4 h-4" style={{ color: c.accent }} />
+					) : (
+						<Bookmark className="w-4 h-4" />
+					)}
+				</IconButton>
+				<IconButton
+					theme={theme}
+					label={
+						pinned
+							? 'Pinned: floats above other windows. Click to let it fall behind them.'
+							: 'Not pinned: falls behind other windows. Click to float it on top.'
+					}
+					onClick={togglePinned}
+				>
+					{pinned ? (
 						<Pin className="w-4 h-4" style={{ color: c.accent }} />
 					) : (
 						<PinOff className="w-4 h-4" />
@@ -316,16 +383,12 @@ export function QuickChatRoot() {
 			}}
 		>
 			<style>{proseStyles}</style>
+			{expanded && <DragHandle theme={theme} />}
 			{expanded && (
-				<div className="flex items-center gap-2 px-4 py-3 shrink-0" style={DRAG_REGION}>
-					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
-						<X className="w-4 h-4" />
-					</IconButton>
-					<div className="flex-1 min-w-0 truncate text-sm">
-						<span className="font-medium" style={{ color: c.textMain }}>
-							{agentName}
-						</span>
-						<span className="ml-2" style={{ color: c.textDim }}>
+				<div className="h-7 mb-3 flex items-center gap-2 px-4 shrink-0" style={DRAG_REGION}>
+					<div className="flex-1 min-w-0 flex items-center gap-2 text-sm">
+						{agentButton}
+						<span className="truncate" style={{ color: c.textDim }}>
 							{snapshot.persistent ? 'Quick Chat tab' : 'Quick Chat'}
 						</span>
 					</div>
@@ -343,6 +406,9 @@ export function QuickChatRoot() {
 						disabled={!snapshot.tabId}
 					>
 						<ExternalLink className="w-4 h-4" />
+					</IconButton>
+					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
+						<X className="w-4 h-4" />
 					</IconButton>
 				</div>
 			)}
