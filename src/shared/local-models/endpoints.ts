@@ -341,6 +341,42 @@ export function addLocalModelEndpoint(
 	return { ok: true, endpoints: [...endpoints, endpoint], endpoint };
 }
 
+/**
+ * Replace one configured endpoint, keeping its id and its place in the list.
+ * The edit goes through the same validator as {@link addLocalModelEndpoint},
+ * and it is refused when the new base URL names a server ANOTHER record
+ * already holds; the record's own URL never conflicts with itself, so renaming
+ * or toggling `enabled` always passes.
+ */
+export function updateLocalModelEndpoint(
+	endpoints: readonly LocalModelEndpoint[],
+	id: string,
+	candidate: unknown
+): LocalModelEndpointListChange {
+	const index = endpoints.findIndex((endpoint) => endpoint.id === id);
+	if (index === -1) return { ok: false, message: `No endpoint has id "${id}".` };
+	const validation = validateLocalModelEndpoint({
+		...(typeof candidate === 'object' && candidate !== null ? candidate : {}),
+		id,
+	});
+	if (!validation.ok) {
+		return { ok: false, message: validation.issues.map((issue) => issue.message).join(' ') };
+	}
+	const endpoint = validation.endpoint;
+	const sameServer = endpoints.find(
+		(existing) => existing.id !== id && isSameEndpointServer(existing.baseUrl, endpoint.baseUrl)
+	);
+	if (sameServer) {
+		return {
+			ok: false,
+			message: `${endpoint.baseUrl} is already configured as "${sameServer.name}" (${sameServer.id}).`,
+		};
+	}
+	const next = [...endpoints];
+	next[index] = endpoint;
+	return { ok: true, endpoints: next, endpoint };
+}
+
 /** Drop one endpoint, named by id, id prefix, or name ({@link findLocalModelEndpoint}). */
 export function removeLocalModelEndpoint(
 	endpoints: readonly LocalModelEndpoint[],

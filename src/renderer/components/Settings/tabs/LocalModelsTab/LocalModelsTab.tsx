@@ -14,6 +14,7 @@
 import { HardDrive, ListChecks, Server } from 'lucide-react';
 import type { Theme } from '../../../../types';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
+import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 
 export interface LocalModelsTabProps {
@@ -40,6 +41,7 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 				>
 					Endpoints
 				</SettingsSectionHeading>
+				<LocalModelsEndpointsSection theme={theme} />
 			</div>
 
 			<div data-setting-id="local-models-assignments">

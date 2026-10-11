@@ -9,6 +9,7 @@ import {
 	DEFAULT_ENDPOINT_BASE_URLS,
 	findLocalModelEndpoint,
 	removeLocalModelEndpoint,
+	updateLocalModelEndpoint,
 	endpointBaseUrlProblem,
 	LOCAL_MODEL_ENDPOINT_KINDS,
 	LOCAL_MODEL_ENDPOINT_KIND_LABELS,
@@ -292,6 +293,35 @@ describe('endpoint list editing (add / remove / find)', () => {
 		});
 		expect(sameServer.ok).toBe(false);
 		if (!sameServer.ok) expect(sameServer.message).toContain('already configured as "Ollama"');
+	});
+
+	it('updates one endpoint in place, keeping its id and position', () => {
+		const change = updateLocalModelEndpoint(list, ollama.id, {
+			...ollama,
+			id: 'ignored',
+			name: 'Ollama (desk)',
+			enabled: false,
+		});
+		expect(change.ok).toBe(true);
+		if (!change.ok) return;
+		expect(change.endpoint).toEqual({ ...ollama, name: 'Ollama (desk)', enabled: false });
+		expect(change.endpoints).toEqual([change.endpoint, gateway]);
+		expect(list[0]).toBe(ollama);
+	});
+
+	it("refuses an update to an unknown id, an invalid record, or another record's server", () => {
+		expect(updateLocalModelEndpoint(list, 'nope', ollama)).toEqual({
+			ok: false,
+			message: 'No endpoint has id "nope".',
+		});
+		const invalid = updateLocalModelEndpoint(list, ollama.id, { ...ollama, baseUrl: 'ftp://x' });
+		expect(invalid.ok).toBe(false);
+		const clash = updateLocalModelEndpoint(list, gateway.id, {
+			...gateway,
+			baseUrl: 'http://localhost:11434',
+		});
+		expect(clash.ok).toBe(false);
+		if (!clash.ok) expect(clash.message).toContain('already configured as "Ollama"');
 	});
 
 	it('removes the resolved endpoint and reports which one', () => {

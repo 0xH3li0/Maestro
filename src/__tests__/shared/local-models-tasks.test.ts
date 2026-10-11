@@ -14,6 +14,7 @@ import {
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
 	tasksNeedingKind,
+	tasksUsingEndpoint,
 	tasksUsingLocalModel,
 	resolveLocalModelAssignment,
 	resolveLocalModelAssignments,
@@ -327,5 +328,27 @@ describe('tasksNeedingKind', () => {
 		expect(embedding.length).toBeGreaterThan(0);
 		for (const task of embedding) expect(task.needs).toBe('embedding');
 		expect(tasksNeedingKind('wake-word')).toEqual([]);
+	});
+});
+
+describe('tasksUsingEndpoint', () => {
+	it('names every task whose effective assignment calls the endpoint, in registry order', () => {
+		const tasks = tasksUsingEndpoint(
+			{
+				'tab-summary': { type: 'endpoint', endpointId: 'e1', model: 'llama3' },
+				'tab-naming': { type: 'endpoint', endpointId: 'e1', model: 'qwen' },
+				'semantic-search': { type: 'endpoint', endpointId: 'e2', model: 'nomic' },
+			},
+			'e1'
+		);
+		expect(tasks.map((task) => task.id)).toEqual(['tab-naming', 'tab-summary']);
+	});
+
+	it('returns nothing for an endpoint no task calls, and ignores local models', () => {
+		expect(tasksUsingEndpoint({}, 'e1')).toEqual([]);
+		expect(tasksUsingEndpoint(undefined, 'e1')).toEqual([]);
+		expect(tasksUsingEndpoint({ 'tab-naming': { type: 'local', modelId: 'e1' } }, 'e1')).toEqual(
+			[]
+		);
 	});
 });

@@ -14,3 +14,11 @@ export type {
 	LocalRuntimesState,
 	UseLocalRuntimesOptions,
 } from './useLocalRuntimes';
+export { useLocalModelEndpoints } from './useLocalModelEndpoints';
+export type {
+	EndpointCallFailure,
+	EndpointModelsState,
+	EndpointTestState,
+	EndpointTestVerdict,
+	LocalModelEndpointsState,
+} from './useLocalModelEndpoints';

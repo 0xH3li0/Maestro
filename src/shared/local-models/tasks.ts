@@ -439,3 +439,19 @@ export function tasksNeedingKind(kind: LocalModelKind): LocalModelTaskDefinition
 		(task) => task.needs === kind
 	);
 }
+
+/**
+ * The tasks whose EFFECTIVE assignment calls a given endpoint, in registry
+ * order. The endpoint twin of {@link tasksUsingLocalModel}: removing or
+ * disabling the endpoint turns each of these tasks unavailable, so a surface
+ * names them first.
+ */
+export function tasksUsingEndpoint(
+	assignments: LocalModelAssignments | undefined,
+	endpointId: string
+): LocalModelTaskDefinition[] {
+	return LOCAL_MODEL_TASK_IDS.filter((taskId) => {
+		const assignment = resolveLocalModelAssignment(assignments, taskId);
+		return assignment.type === 'endpoint' && assignment.endpointId === endpointId;
+	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
+}

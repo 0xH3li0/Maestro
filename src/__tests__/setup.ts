@@ -726,6 +726,11 @@ const mockMaestro = {
 			removeAll: vi.fn().mockResolvedValue(undefined),
 			onProgress: vi.fn().mockReturnValue(() => {}),
 		},
+		endpoints: {
+			detect: vi.fn().mockResolvedValue([]),
+			listModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
+			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
+		},
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),

@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { AlertTriangle, Trash2, X } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 import {
 	LOCAL_MODEL_KIND_LABELS,
@@ -32,6 +32,7 @@ import type { Theme } from '../../../../types';
 import { StatCardGrid, type StatCardDatum } from '../../../widgets';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { LocalModelRow } from './LocalModelRow';
+import { RemoveInUseWarning } from './RemoveInUseWarning';
 
 export interface LocalModelsModelsSectionProps {
 	theme: Theme;
@@ -138,8 +139,9 @@ export function LocalModelsModelsSection({ theme }: LocalModelsModelsSectionProp
 									{confirmingRemove === id && (
 										<RemoveInUseWarning
 											theme={theme}
-											modelName={listing.entry.displayName}
+											subjectName={listing.entry.displayName}
 											taskLabels={taskLabels}
+											recovery="download it again"
 											onConfirm={() => confirmRemove(id)}
 											onKeep={() => setConfirmingRemove(null)}
 										/>
@@ -163,57 +165,6 @@ export function LocalModelsModelsSection({ theme }: LocalModelsModelsSectionProp
 					</SectionCard>
 				);
 			})}
-		</div>
-	);
-}
-
-function RemoveInUseWarning({
-	theme,
-	modelName,
-	taskLabels,
-	onConfirm,
-	onKeep,
-}: {
-	theme: Theme;
-	modelName: string;
-	taskLabels: string[];
-	onConfirm: () => void;
-	onKeep: () => void;
-}) {
-	return (
-		<div className="space-y-2" data-testid="local-model-remove-warning">
-			<div className="flex items-start gap-1.5 text-xs" style={{ color: theme.colors.warning }}>
-				<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-				<span>
-					{modelName} is assigned to {taskLabels.join(', ')}. Removing it leaves{' '}
-					{taskLabels.length === 1 ? 'that task' : 'those tasks'} unavailable until you download it
-					again or assign another source.
-				</span>
-			</div>
-			<div className="flex flex-wrap gap-2">
-				<button
-					type="button"
-					onClick={onConfirm}
-					className="px-2 py-1 rounded border text-xs flex items-center gap-1.5"
-					style={{
-						borderColor: theme.colors.warning,
-						color: theme.colors.warning,
-						backgroundColor: 'transparent',
-					}}
-				>
-					<Trash2 className="w-3 h-3" />
-					Remove anyway
-				</button>
-				<button
-					type="button"
-					onClick={onKeep}
-					className="px-2 py-1 rounded border text-xs flex items-center gap-1.5"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-				>
-					<X className="w-3 h-3" />
-					Keep it
-				</button>
-			</div>
 		</div>
 	);
 }
