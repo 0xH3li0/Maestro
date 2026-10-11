@@ -288,6 +288,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
 - **Segmented toolbar (sort/filter pill bar):** `<SegmentedControl>` in `src/renderer/components/ui/SegmentedControl.tsx`
+- **Tabs across the top of a modal:** `<ModalTabStrip>`, `useModalTabs()`, `useModalTabCycling()`, `tabPanelProps()` in `src/renderer/components/ui/ModalTabStrip.tsx`
+- **The agent settings form (tabs and panels):** `buildAgentSettingsTabs()`, `firstTabWithError()`, `AGENT_SETTINGS_FIELD_TAB` and `<GeneralTab>` / `<ProviderTab>` / `<ModelsTab>` / `<EnvironmentTab>` / `<PeersTab>` / `<SshTab>` in `src/renderer/components/AgentSettings/`
+- **Editing an agent's env vars:** `<AgentEnvVarsSection>` in `src/renderer/components/shared/AgentEnvVarsSection.tsx`; `hideEnvVars` on `<AgentConfigPanel>` when it is mounted elsewhere
 - **Paginating a list already in memory:** `usePagination()` in `src/renderer/hooks/ui/usePagination.ts`, `<Pager>` in `src/renderer/components/ui/Pager.tsx` (not `useHistoryPagination`)
 - **Sortable table header:** `<SortableTh>` in `src/renderer/components/ui/SortableTh.tsx` + `useTableSort()` in `src/renderer/hooks/ui/useTableSort.ts`
 - **A list of editable `key = value` pairs:** `<KeyValueRows>` in `src/renderer/components/ui/KeyValueRows.tsx`, with `recordToKeyValueRows()` / `keyValueRowsToRecords()` beside it

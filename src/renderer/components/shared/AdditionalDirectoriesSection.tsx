@@ -25,7 +25,7 @@ import { FormInput } from '../ui/FormInput';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { AdditionalDirectory, Theme } from '../../types';
 
-interface AdditionalDirectoriesSectionProps {
+export interface AdditionalDirectoriesSectionProps {
 	theme: Theme;
 	directories: AdditionalDirectory[];
 	onChange: (directories: AdditionalDirectory[]) => void;
