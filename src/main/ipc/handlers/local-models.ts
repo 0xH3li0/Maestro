@@ -18,13 +18,15 @@
  * and reaches a model only when the user assigned one to Git drafts.
  * `dictation:start` is the one call here that opens a device: the microphone,
  * and only for the window that asked, only while the Dictation task is ready.
+ * `spokenNotices:*` makes sound on this machine: `agentFinished` only when the
+ * user switched spoken notices on, `speak` because a person or an agent asked.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`. A dictation is the exception: it belongs to
  * the one window recording it, so its interruption goes to that window alone.
  */
 
-import { ipcMain, type WebContents } from 'electron';
+import { BrowserWindow, ipcMain, type WebContents } from 'electron';
 
 import type {
 	DetectedEndpoint,
@@ -46,6 +48,10 @@ import {
 	stopDictation,
 } from '../../local-models/dictation';
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
+import {
+	announceAgentFinishedRequest,
+	speakNoticeRequest,
+} from '../../local-models/spoken-notices';
 import { runLocalTaskRequest, type LocalTaskResult } from '../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../local-models/task-readiness';
 import {
@@ -60,6 +66,7 @@ import type {
 	DictationStartResult,
 } from '../../../shared/local-models/dictation';
 import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
+import type { SpokenNoticeResult } from '../../../shared/spokenNotices';
 import type { WorkSearchResult } from '../../../shared/local-models/work-search';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
@@ -347,6 +354,27 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('suggestTabCleanup'),
 			async (): Promise<TabCleanupResult> => suggestTabCleanup()
+		)
+	);
+
+	// Spoken notices. Focus is read here, at the transport: the core stays free
+	// of Electron, and "is Maestro in front" is a question about its windows.
+	ipcMain.handle(
+		'localModels:spokenNotices:agentFinished',
+		withIpcErrorLogging(
+			handlerOpts('spokenNotices:agentFinished'),
+			async (notice: unknown): Promise<SpokenNoticeResult> =>
+				announceAgentFinishedRequest(notice, {
+					appFocused: BrowserWindow.getFocusedWindow() !== null,
+					safeSend,
+				})
+		)
+	);
+	ipcMain.handle(
+		'localModels:spokenNotices:speak',
+		withIpcErrorLogging(
+			handlerOpts('spokenNotices:speak'),
+			async (text: unknown): Promise<SpokenNoticeResult> => speakNoticeRequest(text)
 		)
 	);
 

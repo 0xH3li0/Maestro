@@ -114,6 +114,7 @@ function resetStore() {
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'rich',
 		toastPosition: 'bottom-right',
+		spokenNotices: 'off',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -245,6 +246,8 @@ describe('settingsStore', () => {
 			expect(state.sshReduceEntryCapEnabled).toBe(false);
 			expect(state.sshReduceEntryCapFraction).toBe(0.1);
 			expect(state.toastPosition).toBe('bottom-right');
+			// Speaking aloud is opt-in.
+			expect(state.spokenNotices).toBe('off');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
@@ -602,6 +605,14 @@ describe('settingsStore', () => {
 					const [toast] = useNotificationStore.getState().toasts;
 					expect(toast.skipCustomNotification).toBe(true);
 					expect(toast.skipOsNotification).toBe(true);
+				});
+			});
+
+			describe('setSpokenNotices', () => {
+				it('updates state and persists', () => {
+					useSettingsStore.getState().setSpokenNotices('unfocused');
+					expect(useSettingsStore.getState().spokenNotices).toBe('unfocused');
+					expect(window.maestro.settings.set).toHaveBeenCalledWith('spokenNotices', 'unfocused');
 				});
 			});
 
@@ -2269,6 +2280,23 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().toastPosition).toBe('bottom-right');
+		});
+
+		it('loads a persisted spokenNotices mode', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ spokenNotices: 'unfocused' });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().spokenNotices).toBe('unfocused');
+		});
+
+		it('reads an unknown spokenNotices value as off, because speaking aloud is consent', async () => {
+			useSettingsStore.setState({ spokenNotices: 'always' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ spokenNotices: true });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().spokenNotices).toBe('off');
 		});
 
 		it('keeps edits made while a reload is in flight', async () => {

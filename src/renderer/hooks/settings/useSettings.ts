@@ -32,6 +32,7 @@ import type {
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
+import type { SpokenNoticeMode } from '../../../shared/spokenNotices';
 import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
@@ -199,6 +200,8 @@ export interface UseSettingsReturn {
 	setIdleNotificationEnabled: (value: boolean) => void;
 	idleNotificationCommand: string;
 	setIdleNotificationCommand: (value: string) => void;
+	spokenNotices: SpokenNoticeMode;
+	setSpokenNotices: (value: SpokenNoticeMode) => void;
 
 	// Update settings
 	checkForUpdatesOnStartup: boolean;

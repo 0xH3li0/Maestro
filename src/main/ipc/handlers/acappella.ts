@@ -104,14 +104,18 @@ import {
 import {
 	ACAPPELLA_SETTINGS_KEY,
 	buildProviderState,
+	createNoticeTtsProvider,
 	migrateLegacyVoiceProviders,
+	noticeTtsProviderId,
 	pipelineKey,
 	readVoiceProviderSettings,
 	resolveVoicePipeline,
 	swapVoicePipeline,
 	type VoiceProviderResolution,
+	type VoiceProviderSettings,
 	type VoiceProviderSubstitution,
 } from '../../acappella/providers/provider-registry';
+import type { TtsProvider } from '../../../shared/acappella/providers';
 import {
 	clearCredential,
 	listCredentialStates,
@@ -128,7 +132,9 @@ import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-met
 import { installVoiceHotkeys, type VoiceHotkeyInstallation } from '../../acappella/hotkeys';
 import { HandsFreeListener } from '../../acappella/wake/hands-free';
 import { ClipCapture } from '../../acappella/audio/clip-capture';
+import { NoticeSpeech } from '../../acappella/audio/notice-speech';
 import { registerDictationMicrophone } from '../../local-models/dictation';
+import { cancelSpokenNotices, registerNoticeSpeaker } from '../../local-models/spoken-notices';
 import { TAB_SCOPE_ROUTER_ID } from '../../../shared/acappella/voice-mode';
 import { wakeScorerFactory } from '../../acappella/wake/transcription-wake';
 import { describePressHoldCapability } from '../../acappella/hotkeys/press-hold';
@@ -373,6 +379,47 @@ let handsFree: HandsFreeListener | null = null;
  */
 let clipCapture: ClipCapture | null = null;
 let releaseDictationMicrophone: (() => void) | null = null;
+
+/**
+ * The session-less speaker spoken notices play through, its registration with
+ * the core Local Models notice service, and the voice it last spoke with.
+ *
+ * Module state like the dictation microphone, and for the same reason built
+ * whether or not the A Cappella Encore Feature is on: a notice is a core
+ * feature that only borrows this playback path. Building it opens nothing; a
+ * notice does, when the user has asked for them. See
+ * `acappella/audio/notice-speech.ts`.
+ */
+let noticeSpeech: NoticeSpeech | null = null;
+let releaseNoticeSpeaker: (() => void) | null = null;
+let noticeTts: { id: string; provider: TtsProvider } | null = null;
+
+/** Why a notice may not be spoken over a live voice session. */
+const VOICE_SESSION_NOTICE_REFUSAL = Object.freeze({
+	code: 'voice-session-active' as const,
+	message: 'A voice session is live, so the notice was not spoken.',
+});
+
+/**
+ * The voice provider a notice speaks with, kept between notices so the system
+ * voice's installed-voice list is read once. Rebuilt when the Text-to-Speech
+ * choice moves to a different local voice.
+ */
+function noticeTtsFor(settings: VoiceProviderSettings): TtsProvider {
+	const id = noticeTtsProviderId(settings);
+	if (noticeTts?.id === id) return noticeTts.provider;
+	disposeNoticeTts();
+	noticeTts = { id, provider: createNoticeTtsProvider(settings) };
+	return noticeTts.provider;
+}
+
+function disposeNoticeTts(): void {
+	const previous = noticeTts?.provider as
+		| (TtsProvider & { dispose?: () => Promise<void> })
+		| undefined;
+	noticeTts = null;
+	void previous?.dispose?.();
+}
 
 /**
  * The tap on dispatched agent output.
@@ -679,6 +726,16 @@ async function buildService(
 	service.subscribe((event) => {
 		if (event.type === 'wake' || event.type === 'listen-stop' || event.type === 'session-error') {
 			setTimeout(() => void handsFree?.sync(), 0);
+		}
+	});
+	// From the moment the floor opens the session owns the speakers: a notice
+	// being spoken is cut off and the ones waiting behind it are dropped.
+	service.subscribe((event) => {
+		if (event.type === 'listen-start') {
+			cancelSpokenNotices(
+				VOICE_SESSION_NOTICE_REFUSAL.code,
+				'A voice session started, so the notice was cut off.'
+			);
 		}
 	});
 	ensureAudioBridge(service, deps);
@@ -1202,6 +1259,34 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	});
 	releaseDictationMicrophone ??= registerDictationMicrophone(clipCapture);
 
+	// Spoken notices' speaker. Not gated on the Encore flag either, and like the
+	// dictation microphone it only READS the session's state, to stay silent
+	// while one is live.
+	noticeSpeech ??= new NoticeSpeech({
+		refusal: () =>
+			(getVoiceSessionService()?.getState() ?? 'idle') !== 'idle'
+				? VOICE_SESSION_NOTICE_REFUSAL
+				: null,
+		// The voice the user picked for A Cappella: one voice setting, not two.
+		readVoice: () => {
+			const settings = readVoiceProviderSettings(settingsStore);
+			return {
+				tts: noticeTtsFor(settings),
+				voiceId: settings.voiceId,
+				rate: settings.rate,
+				volume: settings.volume ?? DEFAULT_TTS_VOLUME,
+			};
+		},
+		ensureAudioHost: () => {
+			if (!deps.audioHostDeps) return false;
+			ensureAcappellaAudioHostWindow(deps.audioHostDeps);
+			return true;
+		},
+		isAudioHostReady: isAcappellaAudioHostReady,
+		sendCommand: sendAudioHostCommand,
+	});
+	releaseNoticeSpeaker ??= registerNoticeSpeaker(noticeSpeech);
+
 	const hotkeys = (voiceHotkeys ??= installVoiceHotkeys({
 		settingsStore,
 		session: floorSession,
@@ -1474,6 +1559,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		noteInputDevices(status as AudioHostStatus, deps.safeSend);
 		audioBridge?.handleStatus(status as AudioHostStatus);
 		clipCapture?.handleStatus(status as AudioHostStatus);
+		noticeSpeech?.handleStatus(status as AudioHostStatus);
 		logAudioHostStatus(status as AudioHostStatus);
 		// A tuning run started before the host finished booting; see startWakeTestCapture.
 		if ((status as AudioHostStatus).kind === 'ready') {
@@ -1757,6 +1843,10 @@ export function resetACappellaHandlerState(): void {
 	releaseDictationMicrophone?.();
 	releaseDictationMicrophone = null;
 	clipCapture = null;
+	releaseNoticeSpeaker?.();
+	releaseNoticeSpeaker = null;
+	noticeSpeech = null;
+	disposeNoticeTts();
 	void stopWakeTest();
 	// Fire and forget: this runs from `will-quit`, which is synchronous, and from
 	// tests, which do not care how long a model file takes to close.

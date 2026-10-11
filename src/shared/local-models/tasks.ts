@@ -118,8 +118,9 @@ export interface LocalModelTaskDefinition {
 	readonly needs: LocalModelTaskNeed;
 	/**
 	 * Capabilities the task also uses that this assignment does NOT choose, so a
-	 * readiness check can name them. Spoken notices write the line with the
-	 * assigned text model and speak it with the voice that is already configured.
+	 * readiness check can name them. Spoken notices write the summary with the
+	 * assigned text model and speak it with a local voice (the A Cappella
+	 * Text-to-Speech choice when it is local, the system voice otherwise).
 	 */
 	readonly alsoNeeds?: readonly LocalModelTaskNeed[];
 	/** Whether `utility-agent` is a valid assignment: only tasks with an existing agent path. */
@@ -234,7 +235,8 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 		'spoken-notices': defineTask({
 			id: 'spoken-notices',
 			label: 'Spoken notices',
-			description: 'Writes a one-line summary to speak aloud when an agent finishes a turn.',
+			description:
+				'Writes the short summary a spoken notice adds when an agent finishes a turn. Off speaks the agent name alone. Turn notices on in Settings > Notifications.',
 			needs: 'text-gen',
 			alsoNeeds: ['tts'],
 			allowsUtilityAgent: false,

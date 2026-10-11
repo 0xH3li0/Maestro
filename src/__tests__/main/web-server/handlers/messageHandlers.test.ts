@@ -115,6 +115,14 @@ vi.mock('../../../../main/local-models/git-drafts', () => ({
 }));
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
 
+vi.mock('../../../../main/local-models/spoken-notices', () => ({
+	speakNoticeRequest: vi.fn().mockResolvedValue({
+		spoken: true,
+		text: 'The build is green.',
+		lineSource: 'given',
+	}),
+}));
+
 vi.mock('../../../../main/local-models/dictation', () => ({
 	transcribeAudioFileRequest: vi.fn().mockResolvedValue({
 		status: 'ok',
@@ -125,6 +133,7 @@ vi.mock('../../../../main/local-models/dictation', () => ({
 	}),
 }));
 import { transcribeAudioFileRequest } from '../../../../main/local-models/dictation';
+import { speakNoticeRequest } from '../../../../main/local-models/spoken-notices';
 
 vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 	semanticIndexProgress: vi.fn(() => ({
@@ -5378,6 +5387,45 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(lastResponse()).toMatchObject({
 				success: false,
 				error: 'An absolute path to a WAV file is required.',
+			});
+		});
+
+		it('notify_speak passes the text through and answers once it was spoken', async () => {
+			handler.handleMessage(client, {
+				type: 'notify_speak',
+				requestId: 'sp1',
+				text: 'The build is green.',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('notify_speak_result'));
+			expect(speakNoticeRequest).toHaveBeenCalledWith('The build is green.');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'sp1',
+				result: { spoken: true, text: 'The build is green.' },
+			});
+		});
+
+		it('notify_speak returns a refusal as a verdict, not an error', async () => {
+			vi.mocked(speakNoticeRequest).mockResolvedValueOnce({
+				spoken: false,
+				code: 'voice-session-active',
+				message: 'A voice session is live, so the notice was not spoken.',
+			});
+			handler.handleMessage(client, { type: 'notify_speak', requestId: 'sp2', text: 'hello' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('notify_speak_result'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { spoken: false, code: 'voice-session-active' },
+			});
+		});
+
+		it('notify_speak reports a bad request as success: false', async () => {
+			vi.mocked(speakNoticeRequest).mockRejectedValueOnce(new Error('Text to speak is required.'));
+			handler.handleMessage(client, { type: 'notify_speak', requestId: 'sp3' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('notify_speak_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Text to speak is required.',
 			});
 		});
 

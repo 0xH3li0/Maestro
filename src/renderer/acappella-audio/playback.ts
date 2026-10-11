@@ -222,6 +222,10 @@ export class TtsPlayback {
 
 	private schedule(buffer: AudioBuffer): void {
 		const { context } = this.options;
+		// Capture resumes the context when it opens the microphone. A spoken notice
+		// plays with no capture behind it, so this is the one path that can reach a
+		// context nothing has resumed, and audio scheduled on it would never sound.
+		if (context.state === 'suspended') void context.resume().catch(() => undefined);
 		const source = context.createBufferSource();
 		source.buffer = buffer;
 		source.connect(this.gain);

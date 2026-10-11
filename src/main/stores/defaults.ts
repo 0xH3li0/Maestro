@@ -10,6 +10,7 @@ import { isWindows } from '../../shared/platformDetection';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
+import { DEFAULT_SPOKEN_NOTICE_MODE } from '../../shared/spokenNotices';
 
 import type {
 	MaestroSettings,
@@ -169,6 +170,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// Whether the semantic index includes Cue runs. Off: they are most of History
 	// by volume and mostly noise. Read by main (local-models/semantic-indexer.ts).
 	semanticIndexCue: false,
+	// When a finished turn is spoken about. Off: speaking aloud is opt-in. Read
+	// by main (local-models/spoken-notices.ts). See shared/spokenNotices.ts.
+	spokenNotices: DEFAULT_SPOKEN_NOTICE_MODE,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

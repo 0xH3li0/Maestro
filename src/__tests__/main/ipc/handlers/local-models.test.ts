@@ -26,6 +26,10 @@
  *     `maestro-cli models index` prints, and its progress is broadcast once.
  *   - **`search` hands its request to the one search entry** `maestro-cli
  *     search` also reaches, and returns the verdict untouched.
+ *   - **Spoken notices are thin, and focus is read at the transport.**
+ *     `spokenNotices:agentFinished` hands the report to the one notice entry
+ *     with whether a Maestro window has focus; `spokenNotices:speak` hands its
+ *     text to the entry `maestro-cli notify speak` also reaches.
  *   - **A dictation belongs to the window that started it.** The owner is the
  *     calling window, a client with no window (the web bridge) is refused
  *     before any microphone opens, an interruption reaches the owner alone,
@@ -35,8 +39,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ipcMain } from 'electron';
 
+const focus = vi.hoisted(() => ({ window: null as unknown }));
+
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn(), on: vi.fn(), removeHandler: vi.fn() },
+	BrowserWindow: { getFocusedWindow: () => focus.window },
 }));
 
 vi.mock('../../../../main/utils/logger', () => ({
@@ -171,6 +178,21 @@ const dictation = vi.hoisted(() => {
 });
 
 vi.mock('../../../../main/local-models/dictation', () => dictation);
+
+const spokenNotices = vi.hoisted(() => ({
+	announceAgentFinishedRequest: vi.fn(async (_notice: unknown, _context: unknown) => ({
+		spoken: true,
+		text: 'Backend finished',
+		lineSource: 'fallback',
+	})),
+	speakNoticeRequest: vi.fn(async (text: unknown) => ({
+		spoken: true,
+		text,
+		lineSource: 'given',
+	})),
+}));
+
+vi.mock('../../../../main/local-models/spoken-notices', () => spokenNotices);
 
 import {
 	registerLocalModelsHandlers,
@@ -459,6 +481,42 @@ describe('semantic index channels', () => {
 
 		for (const listener of semanticIndex.listeners) listener(semanticIndex.progress);
 		expect(broadcasts).toHaveLength(1);
+	});
+});
+
+describe('spoken notices channels', () => {
+	const NOTICE = { agentName: 'Backend', response: 'Done.' };
+
+	it('reports a finished turn with whether a Maestro window has focus', async () => {
+		focus.window = null;
+		await expect(
+			handlerFor('localModels:spokenNotices:agentFinished')({}, NOTICE)
+		).resolves.toMatchObject({ spoken: true, text: 'Backend finished' });
+		expect(spokenNotices.announceAgentFinishedRequest).toHaveBeenLastCalledWith(NOTICE, {
+			appFocused: false,
+			safeSend,
+		});
+
+		focus.window = { id: 1 };
+		await handlerFor('localModels:spokenNotices:agentFinished')({}, NOTICE);
+		expect(spokenNotices.announceAgentFinishedRequest).toHaveBeenLastCalledWith(NOTICE, {
+			appFocused: true,
+			safeSend,
+		});
+	});
+
+	it('hands text to speak to the entry the CLI also reaches', async () => {
+		await expect(
+			handlerFor('localModels:spokenNotices:speak')({}, 'The build is green.')
+		).resolves.toEqual({ spoken: true, text: 'The build is green.', lineSource: 'given' });
+		expect(spokenNotices.speakNoticeRequest).toHaveBeenCalledWith('The build is green.');
+	});
+
+	it('answers with no Encore Feature switched on', async () => {
+		// Registered by the core handlers, which read no feature flag at all.
+		const channels = vi.mocked(ipcMain.handle).mock.calls.map(([channel]) => channel);
+		expect(channels).toContain('localModels:spokenNotices:agentFinished');
+		expect(channels).toContain('localModels:spokenNotices:speak');
 	});
 });
 

@@ -17,6 +17,7 @@ import { TOAST_WIDTHS, TOAST_WIDTH_LABELS } from '../../shared/toastWidth';
 import type { ToastPosition } from '../../shared/toastPosition';
 import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPosition';
 import { SettingCheckbox } from './SettingCheckbox';
+import { SpokenNoticesSetting } from './SpokenNoticesSetting';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { logger } from '../utils/logger';
 import { showOsNotification } from '../stores/notificationStore';
@@ -462,6 +463,9 @@ export function NotificationsPanel({
 				</div>
 			</div>
 
+			{/* Spoken notices: self-sourced, so it takes no props beyond the theme */}
+			<SpokenNoticesSetting theme={theme} />
+
 			{/* Toast Duration */}
 			<div data-setting-id="notifications-toast">
 				<label className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
@@ -541,6 +545,7 @@ export function NotificationsPanel({
 				</div>
 				<ul className="text-xs opacity-70 space-y-1" style={{ color: theme.colors.textDim }}>
 					<li>• When an AI task completes (Custom Notification)</li>
+					<li>• When an agent finishes a turn (Speak When an Agent Finishes)</li>
 					<li>• When all agents and Auto Runs finish (Idle Notification)</li>
 				</ul>
 				<div

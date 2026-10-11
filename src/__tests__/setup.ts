@@ -756,6 +756,14 @@ const mockMaestro = {
 			status: 'off',
 			error: 'Tab cleanup suggestions is off.',
 		}),
+		spokenNotices: {
+			agentFinished: vi.fn().mockResolvedValue({
+				spoken: false,
+				code: 'setting-off',
+				message: 'Speak when an agent finishes is off.',
+			}),
+			speak: vi.fn().mockResolvedValue({ spoken: true, text: 'Test', lineSource: 'given' }),
+		},
 		dictation: {
 			start: vi.fn().mockResolvedValue({
 				started: false,

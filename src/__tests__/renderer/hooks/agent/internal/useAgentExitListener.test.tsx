@@ -13,6 +13,11 @@ vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: () => mockIsWebDesktop,
 }));
 
+const mockAnnounceAgentFinished = vi.fn();
+vi.mock('../../../../../renderer/services/spokenNotices', () => ({
+	announceAgentFinished: (...args: unknown[]) => mockAnnounceAgentFinished(...args),
+}));
+
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
 
@@ -106,6 +111,70 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	describe('the spoken notice', () => {
+		beforeEach(async () => {
+			// An exit defers its notifications by a tick. Let any that an earlier
+			// test left pending run now, so they are not counted here.
+			await new Promise((r) => setTimeout(r, 0));
+			mockAnnounceAgentFinished.mockClear();
+		});
+
+		/** An agent whose tab just answered a request. */
+		function finishedTurn() {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: 0,
+				logs: [
+					{ id: 'l1', timestamp: 1, source: 'user', text: 'Fix the login test' },
+					{ id: 'l2', timestamp: 2, source: 'stdout', text: 'Fixed. Tests pass.' },
+				],
+			} as any);
+			const session = createMockSession({
+				id: 'sess-1',
+				name: 'Backend',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1000,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' } as any);
+		}
+
+		async function exit() {
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+		}
+
+		it('reports a finished turn with who finished, the request, and the reply', async () => {
+			finishedTurn();
+			await exit();
+
+			// Reported even though the finished tab is the one on screen: whether to
+			// speak is main's call (the setting, window focus, a live voice session).
+			expect(mockAnnounceAgentFinished).toHaveBeenCalledTimes(1);
+			expect(mockAnnounceAgentFinished).toHaveBeenCalledWith({
+				agentName: 'Backend',
+				prompt: 'Fix the login test',
+				response: 'Fixed. Tests pass.',
+			});
+		});
+
+		it('is not reported from a web-desktop client, which does not own the side effects', async () => {
+			// The line is spoken on the host, so a browser reporting the same turn
+			// would say it a second time.
+			mockIsWebDesktop = true;
+			finishedTurn();
+			await exit();
+
+			expect(mockAnnounceAgentFinished).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('on a web-desktop client', () => {

@@ -49,6 +49,13 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'say Maestro is idle',
 		category: 'notifications',
 	},
+	spokenNotices: {
+		description:
+			'Speak one line aloud when an agent finishes a turn, with a local voice. Options: off (default), unfocused (only while no Maestro window has focus), always. The line is "<agent name> finished" unless the Spoken notices task in Settings > Local Models is assigned a model, which adds a short summary. Never speaks while a voice session is live.',
+		type: 'string',
+		default: 'off',
+		category: 'notifications',
+	},
 
 	// --- Updates & Crash Reporting ---
 	checkForUpdatesOnStartup: {

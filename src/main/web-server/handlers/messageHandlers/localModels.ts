@@ -5,7 +5,7 @@
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
  * local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
- * local_models_tab_cleanup, local_models_transcribe.
+ * local_models_tab_cleanup, local_models_transcribe, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -33,6 +33,7 @@ import {
 	verifyLocalModel,
 } from '../../../local-models/service';
 import { transcribeAudioFileRequest } from '../../../local-models/dictation';
+import { speakNoticeRequest } from '../../../local-models/spoken-notices';
 import { draftPullRequestRequest } from '../../../local-models/git-drafts';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
@@ -263,5 +264,23 @@ export function handleLocalModelsTranscribe(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_transcribe_result', async () => ({
 		result: await transcribeAudioFileRequest(message.path),
+	}));
+}
+
+/**
+ * Handle notify_speak - say one line aloud through the spoken notices queue
+ * (`maestro-cli notify speak "<text>"`), the same `speakNotice()` the Test
+ * button in Settings > Notifications calls. Answers once the line was spoken
+ * or refused. A refusal (a voice session is live, the voice could not speak)
+ * is a successful round trip with the verdict in `result`; only a bad request
+ * (no text, too long) comes back as an error.
+ */
+export function handleNotifySpeak(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'notify_speak_result', async () => ({
+		result: await speakNoticeRequest(message.text),
 	}));
 }

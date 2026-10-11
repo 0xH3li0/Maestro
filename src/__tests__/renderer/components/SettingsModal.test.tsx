@@ -1617,7 +1617,9 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			fireEvent.click(screen.getByRole('button', { name: 'Off' }));
+			// Scoped to the duration control: spoken notices has an "Off" of its own.
+			const duration = document.querySelector('[data-setting-id="notifications-toast"]');
+			fireEvent.click(within(duration as HTMLElement).getByRole('button', { name: 'Off' }));
 			expect(mockSetToastDuration).toHaveBeenCalledWith(-1);
 
 			fireEvent.click(screen.getByRole('button', { name: '5s' }));

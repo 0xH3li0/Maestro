@@ -1712,6 +1712,24 @@ maestro-cli notify flash "Cache cleared" --detail "1.2 GB freed" --timeout 3
 | `-t, --timeout` | Auto-dismiss after N seconds (range: `(0, 5]`; default 1.5)    |
 | `--json`        | JSON output for scripting                                      |
 
+##### Speak
+
+```bash
+# Say one line aloud on the computer running Maestro, with a local voice.
+maestro-cli notify speak "The deploy finished and the smoke tests pass."
+
+# For scripts: {"success":true,"spoken":true,"text":"..."} or the reason it was not spoken.
+maestro-cli notify speak "Backup complete" --json
+```
+
+The command waits until the line was heard and then prints it. It uses the same queue as [spoken notices](./local-models#spoken-notices): lines never overlap, and each one waits a few seconds after the last. Nothing is spoken while an A Cappella voice session is open; the command then exits non-zero and prints the reason, for example `Not spoken (voice-session-active): ...`. Text is limited to 600 characters, and markup (backticks, asterisks, links) is removed before it is spoken.
+
+This is an explicit request, so it speaks whatever **Speak When an Agent Finishes** is set to.
+
+| Flag     | Description               |
+| -------- | ------------------------- |
+| `--json` | JSON output for scripting |
+
 ##### Caps and dismissibility
 
 External (CLI/web) callers are capped to **5 seconds** for Center Flash and **60 seconds** for Toast. The cap exists so external scripts can't stick a permanent overlay on the user. The only way to leave a notification on screen indefinitely is `--dismissible` on a toast - there is no equivalent for Center Flash (it is, by design, momentary).

@@ -458,6 +458,28 @@ export function resolveVoiceProviders(options: ResolveVoiceProvidersOptions = {}
 	return { providers, substitutions, resolvedIds };
 }
 
+/**
+ * The id of the voice a spoken notice uses: the Text-to-Speech choice when it
+ * is a LOCAL voice, otherwise the system voice.
+ *
+ * A notice is not a reply. It fires when an agent finishes, with nobody asking
+ * for it, so it must not send its text to a hosted voice or spend that
+ * service's credit each time. Speaking it with the OS voice instead is this
+ * feature's own rule, not a substitution for a provider that failed: a local
+ * voice that cannot speak (no engine installed) is still reported as itself.
+ */
+export function noticeTtsProviderId(settings: VoiceProviderSettings): string {
+	const chosen = settings.tts ? catalog.tts.get(settings.tts) : undefined;
+	return chosen?.tier === 'local' ? chosen.id : SYSTEM_TTS_PROVIDER_ID;
+}
+
+/** Build the voice provider a spoken notice speaks with. See {@link noticeTtsProviderId}. */
+export function createNoticeTtsProvider(settings: VoiceProviderSettings): TtsProvider {
+	const registration = catalog.tts.get(noticeTtsProviderId(settings));
+	if (!registration) throw new Error('The system voice is not registered.');
+	return registration.create({ settings });
+}
+
 function resolveCascade(
 	settings: VoiceProviderSettings,
 	mock: MockProviderOptions | undefined

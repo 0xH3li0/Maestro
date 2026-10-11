@@ -440,6 +440,21 @@ maestro-cli models run dictation --audio <file.wav> [--json]
 - Prints the transcript alone on stdout, which is empty when the clip held no speech. `--json` prints the whole result (`text`, `audioMs`, `source`, `durationMs`).
 - Exits non-zero with the reason when the task is off (the default), the source is unavailable, or the file is missing or not a readable WAV. It never falls back to another recogniser. `--audio` is refused for every other task and does not combine with `--input`, `--system`, `--max-tokens`, `--cwd`, or `--base`.
 
+### `notify speak <text>`
+
+The CLI path to spoken notices (the Test button under **Speak When an Agent Finishes** in Settings > Notifications). Implemented in `src/cli/commands/notify-speak.ts`.
+
+```bash
+maestro-cli notify speak "<text>" [--json]
+```
+
+- Runs in the desktop (`notify_speak`) through `speakNoticeRequest()` in `src/main/local-models/spoken-notices.ts`, which calls `speakNotice()`: the same queue, the same local voice, and the same rules as the notice Maestro speaks when an agent finishes a turn.
+- **It waits.** The command returns once the line was heard, or was refused, so a caller can tell the two apart. Prints `Spoken: <text>`; `--json` prints `{ success, spoken, text }`.
+- **It ignores the `spokenNotices` setting and window focus**, because it is an explicit request. Everything else holds: one line at a time with a quiet window between them, and nothing while a voice session is live.
+- A line that was not spoken exits non-zero with `Not spoken (<code>): <reason>` (`--json`: `{ success: false, spoken: false, code, error }`). Codes: `voice-session-active`, `no-speaker`, `empty`, `stale`, `superseded`, `cancelled`, `speech-failed`.
+- Text is limited to 600 characters (refused as a usage error before the app is called) and is flattened to one speakable line: markup and URLs are removed.
+- The mode itself is a setting, not a verb: `maestro-cli settings set spokenNotices <off|unfocused|always>`.
+
 ### `models endpoints list|add|remove|test|detect`
 
 Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.

@@ -179,8 +179,10 @@ import {
 	DEFAULT_PROVIDER_IDS,
 	MOCK_PROVIDER_IDS,
 	buildProviderState,
+	createNoticeTtsProvider,
 	listVoiceProviders,
 	migrateLegacyVoiceProviders,
+	noticeTtsProviderId,
 	pipelineKey,
 	readVoiceProviderSettings,
 	registerVoiceProvider,
@@ -679,5 +681,32 @@ describe('provider registry', () => {
 		};
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+	});
+});
+
+describe('the voice a spoken notice uses', () => {
+	it('is the system voice when no voice was chosen', () => {
+		expect(noticeTtsProviderId({})).toBe('system-tts');
+	});
+
+	it('is the chosen voice when that voice is local', () => {
+		expect(noticeTtsProviderId({ tts: 'system-tts' })).toBe('system-tts');
+		expect(noticeTtsProviderId({ tts: 'kokoro-local' })).toBe('kokoro-local');
+	});
+
+	it('is the system voice, never a hosted one, when the chosen voice is hosted', () => {
+		// A notice fires unasked: its text must not go to a hosted service.
+		expect(noticeTtsProviderId({ tts: 'openai-tts' })).toBe('system-tts');
+		expect(noticeTtsProviderId({ tts: 'elevenlabs-tts' })).toBe('system-tts');
+	});
+
+	it('is the system voice when the chosen voice is the silent mock or unknown', () => {
+		expect(noticeTtsProviderId({ tts: 'mock-tts' })).toBe('system-tts');
+		expect(noticeTtsProviderId({ tts: 'no-such-voice' })).toBe('system-tts');
+	});
+
+	it('builds that provider', () => {
+		expect(createNoticeTtsProvider({ tts: 'elevenlabs-tts' }).id).toBe('system-tts');
+		expect(createNoticeTtsProvider({ tts: 'kokoro-local' }).id).toBe('kokoro-local');
 	});
 });

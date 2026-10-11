@@ -184,28 +184,8 @@ export class VoiceAudioBridge {
 	 */
 	handleSpeechChunk(chunk: TtsChunk): void {
 		if (this.disposed) return;
-		if (!chunk.audio || chunk.audio.byteLength === 0 || chunk.format === 'none') return;
-
-		const format: PlaybackFormat = chunk.format === 'pcm16' ? 'pcm16' : 'encoded';
-		if (format === 'pcm16' && !chunk.sampleRate) {
-			// Raw samples with no rate cannot be played at all, and guessing one is how
-			// a voice ends up an octave out. Dropping it is the honest failure.
-			logger.warn(
-				`Dropping pcm16 speech chunk with no sample rate (utterance ${chunk.utteranceId})`,
-				LOG_CONTEXT
-			);
-			return;
-		}
-
-		this.send({
-			kind: 'play',
-			utteranceId: chunk.utteranceId,
-			format,
-			sampleRate: chunk.sampleRate,
-			// Copied because the buffer crosses an IPC boundary and the provider may
-			// well be reusing it for the next sentence.
-			data: new Uint8Array(chunk.audio).buffer,
-		});
+		const command = speechChunkToPlayCommand(chunk);
+		if (command) this.send(command);
 	}
 
 	/**
@@ -337,6 +317,41 @@ export class VoiceAudioBridge {
 		if (!this.hostReady && command.kind !== 'start-capture') return;
 		this.options.sendCommand(command);
 	}
+}
+
+/** The audio host's `play` command. */
+export type AudioHostPlayCommand = Extract<AudioHostCommand, { kind: 'play' }>;
+
+/**
+ * The `play` command for one chunk of synthesised speech, or null when the
+ * chunk has nothing playable behind it.
+ *
+ * Shared by the session's bridge and by spoken notices
+ * (`notice-speech.ts`), so the two cannot disagree about what is playable.
+ */
+export function speechChunkToPlayCommand(chunk: TtsChunk): AudioHostPlayCommand | null {
+	if (!chunk.audio || chunk.audio.byteLength === 0 || chunk.format === 'none') return null;
+
+	const format: PlaybackFormat = chunk.format === 'pcm16' ? 'pcm16' : 'encoded';
+	if (format === 'pcm16' && !chunk.sampleRate) {
+		// Raw samples with no rate cannot be played at all, and guessing one is how
+		// a voice ends up an octave out. Dropping it is the honest failure.
+		logger.warn(
+			`Dropping pcm16 speech chunk with no sample rate (utterance ${chunk.utteranceId})`,
+			LOG_CONTEXT
+		);
+		return null;
+	}
+
+	return {
+		kind: 'play',
+		utteranceId: chunk.utteranceId,
+		format,
+		sampleRate: chunk.sampleRate,
+		// Copied because the buffer crosses an IPC boundary and the provider may
+		// well be reusing it for the next sentence.
+		data: new Uint8Array(chunk.audio).buffer,
+	};
 }
 
 export function createVoiceAudioBridge(options: VoiceAudioBridgeOptions): VoiceAudioBridge {

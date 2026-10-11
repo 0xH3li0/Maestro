@@ -103,6 +103,7 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notifySpeak } from './commands/notify-speak';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import {
 	modelsEndpointsAdd,
@@ -2227,6 +2228,14 @@ notify
 	.option('-t, --timeout <seconds>', 'Auto-dismiss after N seconds (range: (0, 5]; default 1.5)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyFlash);
+
+notify
+	.command('speak <text>')
+	.description(
+		'Say one line aloud on the computer running Maestro, with a local voice. Waits until it was spoken; queued behind other notices, and refused while a voice session is live'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifySpeak);
 
 // Local Models commands - the model catalog, model servers the user runs
 // (Ollama, LM Studio, OpenAI-compatible), task assignments, and the task

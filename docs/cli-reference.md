@@ -1831,6 +1831,14 @@ Show a center-screen flash (momentary, exclusive - replaces any active flash)
 | `-t, --timeout <seconds>` | Auto-dismiss after N seconds (range: (0, 5]; default 1.5)  | -       |
 | `--json`                  | Output as JSON (for scripting)                             | -       |
 
+## `maestro-cli notify speak <text>`
+
+Say one line aloud on the computer running Maestro, with a local voice. Waits until it was spoken; queued behind other notices, and refused while a voice session is live
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli search <query>`
 
 Search past work across History entries, Director's Notes, and tab transcripts: exact text by default, by meaning with --semantic (requires the desktop app)

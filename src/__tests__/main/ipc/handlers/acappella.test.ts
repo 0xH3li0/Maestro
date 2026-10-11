@@ -77,6 +77,55 @@ vi.mock('../../../../main/local-models/dictation', () => ({
 		return dictation.unregister;
 	}),
 }));
+/**
+ * The core spoken notices queue is not under test here either; what is, is that
+ * these handlers hand it a speaker, and cut it off when a voice session starts.
+ */
+const notices = vi.hoisted(() => ({
+	speakers: [] as unknown[],
+	unregister: vi.fn(),
+	cancelSpokenNotices: vi.fn(),
+}));
+vi.mock('../../../../main/local-models/spoken-notices', () => ({
+	registerNoticeSpeaker: vi.fn((device: unknown) => {
+		notices.speakers.push(device);
+		return notices.unregister;
+	}),
+	cancelSpokenNotices: notices.cancelSpokenNotices,
+}));
+/**
+ * The voice a notice speaks with is the operating system's, which is a child
+ * process. Here it is one second of silence, so a test can follow the audio
+ * through the host without making any.
+ */
+const noticeVoice = vi.hoisted(() => ({ ids: [] as string[] }));
+vi.mock('../../../../main/acappella/providers/provider-registry', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/acappella/providers/provider-registry')>();
+	return {
+		...actual,
+		createNoticeTtsProvider: vi.fn((voiceSettings: { tts?: string }) => {
+			const id = actual.noticeTtsProviderId(voiceSettings);
+			noticeVoice.ids.push(id);
+			return {
+				id,
+				label: 'Notice voice',
+				tier: 'local',
+				cancel: vi.fn(),
+				async *speak(text: string, options: { utteranceId: string }) {
+					yield {
+						utteranceId: options.utteranceId,
+						index: 0,
+						text,
+						format: 'pcm16',
+						audio: new Uint8Array(48_000),
+						sampleRate: 24_000,
+					};
+				},
+			};
+		}),
+	};
+});
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -117,6 +166,7 @@ import {
 } from '../../../../main/acappella';
 import type { RosterAgent, VoiceEvent } from '../../../../shared/acappella/protocol';
 import type { DictationMicrophone } from '../../../../main/local-models/dictation';
+import type { NoticeSpeaker } from '../../../../main/local-models/spoken-notices';
 import type { VoiceSessionSnapshot } from '../../../../main/acappella';
 import type { StoredSession } from '../../../../main/stores/types';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -1013,6 +1063,116 @@ describe('A Cappella IPC handlers - audio host transport', () => {
 			dictation.unregister.mockClear();
 			resetACappellaHandlerState();
 			expect(dictation.unregister).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	// -- Spoken notices' speaker: the playback path with no session behind it --
+
+	describe('the notice speaker', () => {
+		const DRAINED: AudioHostStatus = {
+			kind: 'playback-state',
+			playing: false,
+			utteranceId: null,
+			queuedMs: 0,
+		};
+
+		beforeEach(() => {
+			noticeVoice.ids.length = 0;
+		});
+
+		/** The speaker the latest registration handed the notice service. */
+		function speaker(): NoticeSpeaker {
+			return notices.speakers.at(-1) as NoticeSpeaker;
+		}
+
+		function kinds(): string[] {
+			return audioCommands().map((command) => command.kind);
+		}
+
+		/** Speak one line the way the notice queue does, to the end. */
+		async function speakLine(text: string): Promise<void> {
+			const speaking = speaker().speak(text, new AbortController().signal);
+			// The host window was just created and has not loaded its bundle yet.
+			pushStatus({ kind: 'ready' });
+			await vi.waitFor(() => expect(kinds()).toContain('end-utterance'));
+			pushStatus(DRAINED);
+			await speaking;
+		}
+
+		it('speaks through the audio host without starting a voice session', async () => {
+			broadcasts = [];
+			await speakLine('Backend finished');
+
+			expect(kinds()).toEqual(['set-volume', 'play', 'end-utterance']);
+			// No microphone was opened, no session was started, and nothing was
+			// published on the voice event stream.
+			expect(kinds()).not.toContain('start-capture');
+			expect(getVoiceSessionService()?.getState() ?? 'idle').toBe('idle');
+			expect(voiceEvents()).toEqual([]);
+		});
+
+		it('is offered with the A Cappella Encore Feature switched off', async () => {
+			// Spoken notices are a core Local Models feature that only borrows this
+			// playback path, so the Encore gate on the voice channels does not apply.
+			settings.encoreFeatures = {};
+
+			await speakLine('Backend finished');
+
+			expect(kinds()).toContain('play');
+		});
+
+		it('speaks with the system voice when the voice chosen for A Cappella is not a local one', async () => {
+			// The suite pins `mock-tts`; a hosted voice is treated the same way. A
+			// notice fires unasked, so its text never goes to a hosted service.
+			await speakLine('Backend finished');
+			expect(noticeVoice.ids).toEqual(['system-tts']);
+
+			settings.acappella = { providers: { tts: 'elevenlabs-tts' } };
+			await speakLine('Backend finished');
+			// Same local voice as before, so it was kept rather than rebuilt.
+			expect(noticeVoice.ids).toEqual(['system-tts']);
+		});
+
+		it('keeps a local voice the user chose', async () => {
+			settings.acappella = { providers: { tts: 'kokoro-local' } };
+			await speakLine('Backend finished');
+			expect(noticeVoice.ids).toEqual(['kokoro-local']);
+		});
+
+		it('stays silent while a voice session is live', async () => {
+			expect(speaker().refusal()).toBeNull();
+
+			await handlerFor('acappella:start-session')({});
+
+			expect(speaker().refusal()).toMatchObject({ code: 'voice-session-active' });
+		});
+
+		it('cuts notices off when a voice session opens the floor', async () => {
+			expect(notices.cancelSpokenNotices).not.toHaveBeenCalled();
+
+			await handlerFor('acappella:start-session')({});
+
+			expect(notices.cancelSpokenNotices).toHaveBeenCalledWith(
+				'voice-session-active',
+				expect.any(String)
+			);
+		});
+
+		it('has no speaker to play through without a host window', async () => {
+			vi.clearAllMocks();
+			resetACappellaHandlerState();
+			register();
+
+			await expect(speaker().speak('hi', new AbortController().signal)).rejects.toThrow(
+				/no audio host/
+			);
+			expect(audioCommands()).toEqual([]);
+		});
+
+		it('unregisters the speaker when the handler state is reset', () => {
+			notices.unregister.mockClear();
+			resetACappellaHandlerState();
+			expect(notices.unregister).toHaveBeenCalledTimes(1);
 		});
 	});
 });

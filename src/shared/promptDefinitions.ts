@@ -134,6 +134,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'commands',
 	},
 	{
+		id: 'spoken-notice-local',
+		filename: 'spoken-notice-local.md',
+		description:
+			'Spoken notice summary for a small local model or endpoint: one short clause, read aloud when an agent finishes a turn, as JSON',
+		category: 'commands',
+	},
+	{
 		id: 'tab-cleanup-local',
 		filename: 'tab-cleanup-local.md',
 		description:
@@ -394,6 +401,7 @@ export const PROMPT_IDS = {
 	AI_COMMAND_LOCAL: 'ai-command-local',
 	GIT_DRAFT_PR_LOCAL: 'git-draft-pr-local',
 	TAB_CLEANUP_LOCAL: 'tab-cleanup-local',
+	SPOKEN_NOTICE_LOCAL: 'spoken-notice-local',
 	CUE_GATE_LOCAL: 'cue-gate-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',

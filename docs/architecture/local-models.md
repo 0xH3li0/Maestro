@@ -654,6 +654,12 @@ falls back to another source.
 | `cue-gate`         | `evaluateCueGate()` in `local-models/cue-gate.ts`, called by the Cue dispatch service                                                                                    | Gate unavailable (the default): the run starts and the user is warned                                                                                                        | The same: fail open with a warning, unless the subscription set `gate_on_unavailable: skip`      |
 | `secret-screen`    | `screenForSecrets()` in `local-models/secret-screen.ts`, called by gist publishing, feedback, and the support package (a classifier task, through `runClassifierTask()`) | Pattern scan only (the default)                                                                                                                                              | Pattern scan only, with a note; publishing is never blocked by the model                         |
 | `injection-screen` | `scoreCueInjectionText()` in `local-models/cue-injection-screen.ts`, called by the Cue dispatch service (a classifier task, through `runClassifierTask()`)               | Reported as `off`: a command that set `screen_injection: true` is blocked, a prompt that set it starts with a warning, a command that only got the default starts unscreened | A screened command is blocked (fail closed); a screened prompt starts with a warning (fail open) |
+| `spoken-notices`   | `announceAgentFinished()` in `local-models/spoken-notices.ts`, called by the exit listener through `localModels:spokenNotices:agentFinished`                             | The notice is `<agent name> finished` (the default)                                                                                                                          | The same plain line; one yellow toast (`task-notices.ts`)                                        |
+
+`spoken-notices` is the one consumer where `off` and `unavailable` do not stop the feature: the
+task only writes the summary half of the line, and `announceAgentFinished()` in
+`local-models/spoken-notices.ts` speaks `<agent name> finished` without it. See
+[Spoken notices](#spoken-notices-announceagentfinished).
 
 `git-drafts` is the one consumer with no agent path. It reads `git log --oneline base..HEAD` and
 `git diff --stat base...HEAD` from a LOCAL checkout (Create Pull Request is local-only), caps both
@@ -1140,6 +1146,72 @@ Rules:
 CLI: `maestro-cli models run dictation --audio <file.wav>` reaches `transcribeAudioFileRequest()`
 (`local_models_transcribe` on the bridge), which decodes a 16-bit PCM WAV and calls
 `transcribeClip()`. An agent has no microphone, so it brings the audio as a file.
+
+## Spoken notices: `announceAgentFinished()`
+
+One line said aloud when an agent finishes a turn. Opt-in: the `spokenNotices` setting
+(`off` | `unfocused` | `always`, default `off`; vocabulary and gate in `src/shared/spokenNotices.ts`).
+
+```mermaid
+flowchart LR
+	EXIT["exit listener<br/>(renderer, side-effect owner)"] -->|agentFinished| IPC["localModels:spokenNotices:*<br/>reads window focus"]
+	CLI["maestro-cli notify speak"] -->|notify_speak| SPEAK
+	TEST["Settings: Test"] -->|speak| IPC
+	IPC --> ANNOUNCE["announceAgentFinished()"]
+	IPC --> SPEAK["speakNotice()"]
+	ANNOUNCE -->|"runLocalTask('spoken-notices')"| LINE["line: model summary,<br/>or '<agent> finished'"]
+	LINE --> QUEUE["queue: one at a time,<br/>quiet window, stale drop"]
+	SPEAK --> QUEUE
+	QUEUE --> SPEAKER["NoticeSpeaker seam"]
+	SPEAKER --> HOST["NoticeSpeech<br/>(A Cappella audio host, local TTS)"]
+```
+
+Core, in `src/main/local-models/spoken-notices.ts`:
+
+- **The line.** `announceAgentFinished(notice, { appFocused, safeSend })` asks the `spoken-notices`
+  task for `{ "summary": ... }` (prompt `spoken-notice-local`, schema `SPOKEN_NOTICE_REPLY_SCHEMA`,
+  20 second timeout) and builds `<agent name> finished: <summary>` with `composeNoticeLine()`. The
+  agent's name is put in front by code, never by the model. `off`, `unavailable`, a timeout, an
+  unusable reply, and a throwing engine all speak `fallbackNoticeLine()` instead. `unavailable` also
+  raises the one-time task notice (`reportLocalTaskUnavailable`).
+- **The gates run before the model.** The setting, window focus (`shouldSpeakNotice()`), and the
+  speaker's refusal are checked first, so a notice nobody will hear costs no inference.
+- **The queue.** One notice at a time. The next starts `SPOKEN_NOTICE_QUIET_MS` (3 s) after the last
+  ENDED, so notices are queued and never overlap. At most `SPOKEN_NOTICE_MAX_QUEUED` (4) wait; past
+  that the oldest waiting one gives way (`superseded`). A notice that waited
+  `SPOKEN_NOTICE_STALE_MS` (60 s) is dropped (`stale`). A notice waits while
+  `isDictationRecording()`, because the microphone would record it into the text.
+- **Every outcome is an answer.** `SpokenNoticeResult` is `{ spoken: true, text, lineSource }` or
+  `{ spoken: false, code, message }`. Nothing rejects, so the CLI can report why a line was skipped.
+- **`speakNotice(text)`** is the explicit entry (`maestro-cli notify speak`, the Test button). It
+  skips the setting and the focus check and keeps everything else.
+
+The voice is a seam, like dictation's microphone: the core imports no audio.
+`registerNoticeSpeaker()` takes a `NoticeSpeaker` (`refusal()`, `speak(text, signal)`), and A
+Cappella registers `NoticeSpeech` (`src/main/acappella/audio/notice-speech.ts`) at startup, whether
+or not the Encore flag is on:
+
+- **No session.** It takes no session service. It opens no microphone and publishes no protocol
+  event. It sends `set-volume`, `play`, and `end-utterance` to the audio host, and resolves when the
+  host reports the utterance drained (`playback-state` idle naming no utterance), or after the
+  audio's own length plus a margin, so a lost report cannot hold the queue.
+- **Never while a voice session is live.** `refusal()` reads the session state. A session that
+  starts under a notice cuts it off: the handler calls `cancelSpokenNotices()` on `listen-start`,
+  which aborts the run (the synthesiser is cancelled and the host flushed) and drops what waits.
+- **A local voice, always.** `noticeTtsProviderId()` in `provider-registry.ts` answers the
+  Text-to-Speech choice when it is local-tier and the system voice otherwise. A notice is spoken
+  with nobody asking for it, so it never sends its text to a hosted voice. This is the feature's own
+  rule and not a substitution: a local voice that cannot speak (no engine on Linux) is reported as
+  `speech-failed` with its own message.
+- The chunk-to-command conversion is shared with the session's bridge
+  (`speechChunkToPlayCommand()` in `audio-bridge.ts`).
+
+The renderer reports the turn from `useAgentExitListener` through `announceAgentFinished()` in
+`src/renderer/services/spokenNotices.ts`: only from the client that owns a turn's side effects (the
+line is spoken on the host), only while the setting is not `off`, and with the reply cut down by
+`boundAgentFinishedNotice()` before it crosses the bridge. The setting is drawn by
+`<SpokenNoticesSetting>` in the Notifications tab, with a Test button and a line that says what a
+notice will say given the task's readiness.
 
 ## Related
 

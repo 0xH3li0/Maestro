@@ -101,6 +101,7 @@ import {
 	handleLocalModelsTabCleanup,
 	handleLocalModelsTaskReadiness,
 	handleLocalModelsVerify,
+	handleNotifySpeak,
 } from './localModels';
 import {
 	handleRefreshAutoRunDocs,
@@ -742,6 +743,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_transcribe':
 				void handleLocalModelsTranscribe(this.ctx, client, message);
+				break;
+
+			case 'notify_speak':
+				void handleNotifySpeak(this.ctx, client, message);
 				break;
 
 			case 'local_models_semantic_index_status':

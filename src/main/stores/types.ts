@@ -10,6 +10,7 @@ import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilitie
 import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { LocalModelAssignments } from '../../shared/local-models/tasks';
+import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -153,6 +154,9 @@ export interface MaestroSettings {
 	// Include Cue runs in the semantic index. Declared explicitly because the
 	// main process reads it (local-models/semantic-index-startup.ts).
 	semanticIndexCue: boolean;
+	// When a finished turn is spoken about (off, unfocused, always). Declared
+	// explicitly because the main process reads it (local-models/spoken-notices.ts).
+	spokenNotices: SpokenNoticeMode;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

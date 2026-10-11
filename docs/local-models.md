@@ -91,7 +91,7 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 | Prompt-injection screen | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                            |
 | Secret screen           | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.            |
 | Dictation               | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                  |
-| Spoken notices          | Text generation and text-to-speech | Off           | Writes a one-line summary to speak aloud when an agent finishes a turn.                                                 |
+| Spoken notices          | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).     |
 | Voice routing           | Text generation                    | Off           | Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings.           |
 | Token proxy             | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                          |
 
@@ -123,6 +123,23 @@ You can also dictate from the keyboard. Open **Settings**, then **Shortcuts**, a
 Dictation is not a voice session. Nothing is sent to an agent, nothing is spoken back, and the text is not submitted for you: it is typed into the box and you send it when you are ready. In the AI composer, dictated text never changes the command mode, so a sentence cannot become a shell command by accident.
 
 If the microphone is dimmed, its tooltip says why (the model is not downloaded, the endpoint is not reachable) and what to do. Dictation does not run on a different source instead. The first time you dictate, your operating system asks for microphone access; if access is denied, Maestro says so and offers to open the system setting. A recording stops by itself after 5 minutes and keeps what it captured. Dictation is not available from the web interface, because the microphone is on the computer that runs Maestro. It also cannot start while an A Cappella voice session is open, since speech is already going to that session.
+
+### Spoken notices
+
+A spoken notice is one line said aloud when an agent finishes a turn. You turn notices on in **Settings**, then **Notifications**, under **Speak When an Agent Finishes**: only when Maestro is not focused, or always. They are off by default.
+
+The **Spoken notices** task decides how much the line says:
+
+- **Off** (the default): the line is the agent's name and "finished", for example "Backend finished". This needs no model.
+- **A local model or an endpoint**: the model reads the end of the agent's reply and adds a short summary, for example "Backend finished: tests pass, two files changed".
+
+If the assigned model is not ready, or takes longer than 20 seconds, the plain line is spoken instead and Maestro tells you once why. A notice is never skipped because of the model.
+
+The line is spoken with a local voice on the computer that runs Maestro. It uses the voice, speed, and volume you chose for A Cappella when that voice is a local one, and your computer's own voice otherwise. A hosted voice is never used for a notice, because a notice is spoken without you asking and would send text to that service each time.
+
+Notices never overlap. One line is spoken at a time, the next waits a few seconds after it, and a line that has waited a minute is dropped as old news. Nothing is spoken while an A Cappella voice session is open, and a notice waits while you dictate.
+
+From the command line, `maestro-cli notify speak "<text>"` says a line of your own through the same voice and the same queue, and reports whether it was spoken.
 
 ### The secret screen
 
@@ -188,6 +205,7 @@ maestro-cli models run <task-id> --input "..."   # run a text-generation task on
 maestro-cli models run git-drafts --cwd <repo> [--base <branch>]   # draft a pull request title and body
 maestro-cli models run dictation --audio <file.wav>   # transcribe a 16-bit PCM WAV file with the Dictation model
 maestro-cli tab suggest-cleanup                  # tabs to close, snooze, or wake; prints them, changes nothing
+maestro-cli notify speak "<text>"                # say one line aloud with the spoken-notices voice; waits until heard
 ```
 
 An endpoint can be named by its id, an id prefix, or its name. Every verb takes `--json`. See the [CLI reference](./cli-reference#maestro-cli-models) for every option.

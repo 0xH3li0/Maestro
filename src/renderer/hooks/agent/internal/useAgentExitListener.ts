@@ -24,6 +24,7 @@ import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores
 import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
+import { announceAgentFinished } from '../../../services/spokenNotices';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import {
 	formatSessionId,
@@ -903,6 +904,18 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 								task: toastData!.title,
 							});
 						}
+					}
+
+					// The spoken notice (Settings > Notifications, off by default). Main
+					// decides whether to say anything: it knows whether Maestro is focused
+					// and whether a voice session is live. Spoken on the HOST, so only the
+					// side-effect owner reports the turn, whichever tab is on screen.
+					if (ownsSideEffects) {
+						announceAgentFinished({
+							agentName: toastData!.projectName,
+							prompt: toastData!.prompt,
+							response: toastData!.response,
+						});
 					}
 				}, 0);
 			}

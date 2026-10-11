@@ -16,7 +16,7 @@ Settings are organized into tabs:
 | **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
-| **Notifications**               | OS notifications, custom command notifications, toast notification duration, position, and width                                                                                                                                                                                                     |
+| **Notifications**               | OS notifications, custom command notifications, spoken notices, toast notification duration, position, and width                                                                                                                                                                                     |
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
@@ -465,6 +465,22 @@ Execute a custom command when AI tasks complete. Use any notification method tha
 - `notify-send "Maestro" && espeak` - show desktop notification and speak (Linux)
 - `afplay ~/sounds/done.wav` - play a sound file (macOS)
 
+### Speak When an Agent Finishes
+
+Maestro can say one line aloud when an agent finishes a turn, for example "Backend finished". It is off until you turn it on.
+
+**To configure:**
+
+1. Under **Speak When an Agent Finishes**, choose **When Maestro is not focused** or **Always**
+2. Click **Test** to hear a sample line
+
+- **When Maestro is not focused** speaks only while no Maestro window is in front, which is when a toast cannot reach you.
+- **Always** speaks about every finished turn.
+
+The line is spoken on the computer that runs Maestro, with a local voice, and nothing is sent anywhere. Notices never overlap: when several agents finish together, each line waits its turn. Nothing is spoken while an A Cappella voice session is open.
+
+By default the line is the agent's name and "finished". To add a short summary of what the agent did ("Backend finished: tests pass, two files changed"), assign a model to the **Spoken notices** task in **Settings**, then **Local Models**. See [Spoken notices](./local-models#spoken-notices).
+
 ### Toast Notifications
 
 In-app toast notifications appear in the corner when events occur. Configure how long they stay visible:
@@ -505,6 +521,7 @@ If the target tab was closed since the toast appeared, the click still switches 
 Notifications are sent when:
 
 - An AI task completes (OS notification + optional custom notification)
+- An agent finishes a turn (the spoken notice, when **Speak When an Agent Finishes** is on)
 - A long-running command finishes (OS notification)
 
 ## Sleep Prevention

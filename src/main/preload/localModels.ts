@@ -15,6 +15,7 @@
  * one, and `suggestTabCleanup()` only when Tab cleanup suggestions is.
  * `semanticIndex.*` reads the indexer's in-memory progress. `dictation.start()`
  * is the one call that opens a device: the microphone, for this window only.
+ * `spokenNotices.*` makes sound on this machine's speakers.
  */
 
 import { ipcRenderer } from 'electron';
@@ -38,6 +39,7 @@ import type {
 	DictationStartResult,
 } from '../../shared/local-models/dictation';
 import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
+import type { AgentFinishedNotice, SpokenNoticeResult } from '../../shared/spokenNotices';
 import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
 import type { TabCleanupResult } from '../../shared/tabCleanup';
 
@@ -150,6 +152,29 @@ function createDictationApi() {
 }
 
 /**
+ * `window.maestro.localModels.spokenNotices.*` - say one line aloud on the
+ * computer running Maestro, with a local voice and no voice session.
+ *
+ * Every outcome is an answer, never a rejection: a line that was not spoken
+ * carries a `code` and a `message` written for a person. Nothing is ever
+ * spoken while a voice session is live.
+ */
+function createSpokenNoticesApi() {
+	return {
+		/**
+		 * Report that an agent finished a turn. Main decides whether to speak
+		 * about it (the `spokenNotices` setting, window focus) and writes the line.
+		 */
+		agentFinished: (notice: AgentFinishedNotice): Promise<SpokenNoticeResult> =>
+			ipcRenderer.invoke('localModels:spokenNotices:agentFinished', notice),
+
+		/** Speak this text now, whatever the setting says. The Test button. */
+		speak: (text: string): Promise<SpokenNoticeResult> =>
+			ipcRenderer.invoke('localModels:spokenNotices:speak', text),
+	};
+}
+
+/**
  * Creates the Local Models API object for contextBridge exposure.
  */
 export function createLocalModelsApi() {
@@ -237,6 +262,8 @@ export function createLocalModelsApi() {
 			ipcRenderer.invoke('localModels:suggestTabCleanup'),
 
 		dictation: createDictationApi(),
+
+		spokenNotices: createSpokenNoticesApi(),
 
 		semanticIndex: createSemanticIndexApi(),
 
