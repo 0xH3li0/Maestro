@@ -94,6 +94,9 @@ export interface InMemoryCueQueueRow {
 	autoRunJson?: string | null;
 	/** Serialized notify config for `action: notify` rows. */
 	notifyJson?: string | null;
+	/** JSON of the subscription's tier / model / effort. Optional so rows
+	 *  built by older tests (and pre-column databases) stay valid. */
+	turnSettingsJson?: string | null;
 }
 
 export interface InMemoryCueDbState {

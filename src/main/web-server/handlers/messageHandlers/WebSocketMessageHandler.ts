@@ -105,6 +105,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -320,6 +321,10 @@ export class WebSocketMessageHandler {
 
 			case 'maestro_run_command':
 				void handleMaestroRunCommand(this.ctx, client, message);
+				break;
+
+			case 'window_command':
+				handleWindowCommand(this.ctx, client, message);
 				break;
 
 			case 'reorder_tab':

@@ -14,7 +14,13 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
-import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import {
+	getRemoteMediaKind,
+	getRemoteMediaName,
+	isRemoteMediaUrl,
+	type MediaOpenMode,
+} from '../../../shared/mediaTypes';
+import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -234,6 +240,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
 			logger.error('[Remote] Session not found for openFileTab:', undefined, sessionId);
+			return;
+		}
+		// An http(s) URL is remote media (`maestro-cli open-file <url>`). There is
+		// no file to read and no preview tab to make, so it goes straight to the
+		// player. No agent switch either: the player is app-wide, so the agent the
+		// URL was filed under is not somewhere the user needs to be.
+		if (isRemoteMediaUrl(filePath)) {
+			const request = {
+				path: filePath,
+				name: getRemoteMediaName(filePath),
+				kind: getRemoteMediaKind(filePath),
+				sessionId: session.id,
+				sessionName: session.name,
+			};
+			const store = useMediaPlaybackStore.getState();
+			if (mediaMode === 'queue') store.enqueueMedia([request]);
+			else store.openMedia(request);
 			return;
 		}
 		const sshRemoteId =

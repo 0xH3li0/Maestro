@@ -31,6 +31,7 @@ import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
+import { collectAssistantText, ReplyText } from './reply-text';
 import {
 	discoverSessionId,
 	findLatestSessionId,
@@ -243,24 +244,6 @@ function hasToolResultBlock(message: unknown): boolean {
 	);
 }
 
-function collectAssistantText(message: unknown): string {
-	if (!message || typeof message !== 'object') return '';
-	const content = (message as { content?: unknown }).content;
-	if (!Array.isArray(content)) return '';
-	let out = '';
-	for (const block of content) {
-		if (
-			block &&
-			typeof block === 'object' &&
-			(block as { type?: unknown }).type === 'text' &&
-			typeof (block as { text?: unknown }).text === 'string'
-		) {
-			out += (block as { text: string }).text;
-		}
-	}
-	return out;
-}
-
 async function runMode(args: ParsedArgs): Promise<never> {
 	if (!args.prompt || args.prompt.length === 0) {
 		process.stderr.write(
@@ -433,7 +416,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	let promptEchoChecked = false;
 	const slashCommandPrompt = isSlashCommandPrompt(prompt);
 	let limitHit = false;
-	let aggregatedText = '';
+	const reply = new ReplyText();
 	const usage = emptyUsage();
 	// Buffer for entries that race ahead of emitInit. Should be empty in
 	// the normal flow (tailer.start() / EOF-skip prevent racing), but keeps
@@ -681,7 +664,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// (assistant emitted text BEFORE the limit was hit). Pure error paths
 		// (timeout, tui_exited) omit them.
 		if (!options.isError || errorIsLimit) {
-			resultOpts.result = aggregatedText;
+			resultOpts.result = reply.text;
 			resultOpts.usage = usage;
 		}
 		try {
@@ -762,7 +745,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			const commandOutput = localCommandOutput(e);
 			if (commandOutput !== null) {
 				if (graceTimer) clearTimeout(graceTimer);
-				if (commandOutput && !aggregatedText) aggregatedText = commandOutput;
+				reply.setIfEmpty(commandOutput);
 				if (typeof e.sessionId === 'string' && e.sessionId) resolvedSessionId = e.sessionId;
 				graceTimer = setTimeout(() => {
 					if (!finalized) {
@@ -794,7 +777,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				clearTimeout(graceTimer);
 				graceTimer = null;
 			}
-			aggregatedText += collectAssistantText(message);
+			reply.addAssistant(message);
 			addUsage(usage, message.usage);
 			emitter.emitAssistantMessage(message);
 
@@ -807,9 +790,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// result and finalize cleanly.
 			const planText = extractExitPlanText(message);
 			if (planText !== null) {
-				if (planText && !aggregatedText.includes(planText)) {
-					aggregatedText += (aggregatedText ? '\n\n' : '') + planText;
-				}
+				reply.appendIfMissing(planText);
 				finalize({ isError: false, exitCode: 0 });
 				return;
 			}
@@ -833,6 +814,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				graceTimer = null;
 			}
 			if (hasToolResultBlock(message)) {
+				reply.addToolResult();
 				emitter.emitUserMessage(message);
 				return;
 			}

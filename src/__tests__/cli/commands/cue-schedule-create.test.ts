@@ -535,6 +535,46 @@ describe('cue schedule (create)', () => {
 			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
 		});
 
+		// `--model` and `--effort` are shared with the prompt run's model choice
+		// (`tier` / `model` / `effort` on the subscription). With --auto-run they
+		// describe the run and must stay inside its payload.
+		it('keeps --model and --effort inside the Auto Run payload, off the subscription', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('nightly.md');
+
+			// `max` is a provider effort word, not low | medium | high: the Auto Run
+			// payload takes it as given, the subscription-level field would not.
+			await cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], model: 'opus', effort: 'max' });
+
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect(subs).toHaveLength(1);
+			expect(subs[0].auto_run).toMatchObject({ model: 'opus', effort: 'max' });
+			expect(subs[0]).not.toHaveProperty('model');
+			expect(subs[0]).not.toHaveProperty('effort');
+			expect(subs[0]).not.toHaveProperty('tier');
+		});
+
+		it('refuses --tier alongside --auto-run', async () => {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+			const doc = writeDoc('nightly.md');
+
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', autoRun: [doc], tier: 'high' })
+			).rejects.toThrow('process.exit');
+
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(
+				/--tier cannot be combined with --auto-run/
+			);
+			expect(fs.existsSync(path.join(projectRoot, '.maestro', 'cue.yaml'))).toBe(false);
+		});
+
 		it('refuses an Auto Run option passed without --auto-run', async () => {
 			processExitSpy.mockImplementation(() => {
 				throw new Error('process.exit');
@@ -548,6 +588,45 @@ describe('cue schedule (create)', () => {
 			).rejects.toThrow('process.exit');
 
 			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(/--loop requires --auto-run/);
+		});
+	});
+
+	describe('--tier / --model / --effort on a prompt run', () => {
+		it('writes the model choice on the subscription when there is no --auto-run', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+
+			await cueSchedule({
+				in: '2h',
+				agent: 'Alpha',
+				prompt: 'Review it',
+				model: 'opus',
+				effort: 'low',
+			});
+
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect(subs).toHaveLength(1);
+			expect(subs[0]).toMatchObject({ action: 'prompt', model: 'opus', effort: 'low' });
+			expect(subs[0]).not.toHaveProperty('auto_run');
+		});
+
+		it('writes a tier, and refuses an effort outside low | medium | high', async () => {
+			mockReadSessions.mockReturnValue([
+				session({ id: 'agent-alpha', name: 'Alpha', projectRoot }),
+			]);
+
+			await cueSchedule({ in: '2h', agent: 'Alpha', prompt: 'Review it', tier: 'high' });
+			const subs = readCueYaml(projectRoot).parsed.subscriptions as Array<Record<string, unknown>>;
+			expect(subs[0]).toMatchObject({ tier: 'high' });
+
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(
+				cueSchedule({ in: '2h', agent: 'Alpha', prompt: 'Review it', effort: 'max' })
+			).rejects.toThrow('process.exit');
+			expect(consoleErrorSpy.mock.calls[0]?.[0] as string).toMatch(/--effort must be one of/);
 		});
 	});
 

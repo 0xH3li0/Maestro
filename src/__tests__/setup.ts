@@ -844,6 +844,8 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+		onRemoteCommand: vi.fn(() => () => {}),
+		sendRemoteCommandResponse: vi.fn(),
 	},
 	// MaestroRun (macOS launcher install + Full Disk Access walkthrough). Not
 	// ready by default, so no spawn test picks up its system-prompt section.

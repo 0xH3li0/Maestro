@@ -32,6 +32,7 @@ import {
 } from '../../shared/cue/scheduled-tasks';
 import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
+import { cueTurnSettingsOf } from '../../shared/cue/turn-settings';
 import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
 import { removeSubscriptionFromYaml } from './cue-self-destruct';
@@ -204,6 +205,7 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		notifyMessage: sub.notify?.message,
 		notifySticky: sub.notify?.sticky,
 		autoRun: sub.auto_run,
+		...cueTurnSettingsOf(sub),
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -268,6 +270,13 @@ export function buildScheduledTaskSubscriptions(
 	if (hasAutoRun && (hasPrompt || hasNotify)) {
 		throw new Error('an Auto Run task cannot also carry a prompt or a notification');
 	}
+	const turnSettings = cueTurnSettingsOf(input);
+	if (turnSettings?.tier && turnSettings.model) {
+		throw new Error('set a model tier or an exact model, not both');
+	}
+	if (turnSettings && !hasPrompt) {
+		throw new Error('a model tier, model, or effort needs a prompt to run');
+	}
 
 	const timing: Record<string, unknown> = {};
 	let baseName: string;
@@ -323,6 +332,7 @@ export function buildScheduledTaskSubscriptions(
 			enabled: true,
 			action: 'prompt',
 			prompt: promptText,
+			...turnSettings,
 			...timing,
 			agent_id: agent.id,
 			pipeline_name: pipelineName,

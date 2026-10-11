@@ -35,6 +35,7 @@ import { captureException } from '../utils/sentry';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { runMaestroCliSend } from './cue-cli-executor';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 
 /** Cap on persisted error_message length - enough to carry an agent error
  *  envelope / stderr tail without bloating the journal DB. */
@@ -121,6 +122,9 @@ export interface QueuedEvent {
 	 *  scheduled, rather than re-resolved from the agent's (mutable) Auto Run
 	 *  folder at fire time. Optional - other actions leave this undefined. */
 	autoRun?: CueAutoRunConfig;
+	/** The subscription's `tier` / `model` / `effort`, resolved against the
+	 *  target agent at spawn time. Undefined when the subscription sets none. */
+	turnSettings?: CueTurnSettings;
 	/** Phase 12A - DB row id for the persisted copy, when persistence is enabled. */
 	persistId?: string;
 	/** Phase 01 - chain lineage propagated from the dispatching parent. When
@@ -144,6 +148,7 @@ export interface CueRunManagerDeps {
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
 		autoRun?: CueAutoRunConfig;
+		turnSettings?: CueTurnSettings;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -247,7 +252,9 @@ export interface CueRunManager {
 		 * through the queue alongside `notify` so a concurrency-gated
 		 * scheduled run still launches the documents it was scheduled with.
 		 */
-		autoRun?: CueAutoRunConfig
+		autoRun?: CueAutoRunConfig,
+		/** The subscription's model choice, threaded through the queue. */
+		turnSettings?: CueTurnSettings
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -406,7 +413,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.chainRootId,
 				entry.parentEventId,
 				entry.notify,
-				entry.autoRun
+				entry.autoRun,
+				entry.turnSettings
 			);
 		}
 
@@ -457,7 +465,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		incomingChainRootId?: string,
 		parentEventId?: string,
 		notify?: CueNotifyConfig,
-		autoRun?: CueAutoRunConfig
+		autoRun?: CueAutoRunConfig,
+		turnSettings?: CueTurnSettings
 	): Promise<void> {
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
@@ -537,6 +546,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				command,
 				notify,
 				autoRun,
+				turnSettings,
 			});
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
@@ -644,6 +654,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						subscriptionName: `${subscriptionName}:output`,
 						event: outputEvent,
 						timeoutMs,
+						// Same agent, same subscription: the follow-up runs on the
+						// model the subscription chose for the main task.
+						turnSettings,
 					});
 					outputStatus = outputResult.status;
 				} finally {
@@ -845,7 +858,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			chainRootId?: string,
 			parentEventId?: string,
 			notify?: CueNotifyConfig,
-			autoRun?: CueAutoRunConfig
+			autoRun?: CueAutoRunConfig,
+			turnSettings?: CueTurnSettings
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -936,6 +950,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					command,
 					notify,
 					autoRun,
+					turnSettings,
 					persistId,
 					chainRootId,
 					parentEventId,
@@ -960,6 +975,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						parentEventId,
 						autoRun,
 						notify,
+						turnSettings,
 					});
 				}
 
@@ -986,7 +1002,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				chainRootId,
 				parentEventId,
 				notify,
-				autoRun
+				autoRun,
+				turnSettings
 			);
 		},
 

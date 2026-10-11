@@ -12,6 +12,9 @@ import {
 	isExpectedSessionReadError,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
+import os from 'os';
+import path from 'path';
+import { promises as realFs } from 'fs';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -34,6 +37,14 @@ vi.mock('../../../../main/agents', () => ({
 // behavior the tests below assert against), not an "uninitialized" throw.
 vi.mock('../../../../main/stores', () => ({
 	getSshRemoteById: vi.fn().mockReturnValue(undefined),
+}));
+
+// The global stats scan reads and writes a cache under userData; start cold
+// and discard writes so a test only ever sees the transcripts it created.
+vi.mock('../../../../main/utils/statsCache', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/statsCache')>()),
+	loadGlobalStatsCache: vi.fn().mockResolvedValue(null),
+	saveGlobalStatsCache: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock the logger
@@ -513,5 +524,73 @@ describe('isExpectedSessionReadError', () => {
 	it('handles non-Error throwables', () => {
 		expect(isExpectedSessionReadError(undefined)).toBe(false);
 		expect(isExpectedSessionReadError('EACCES')).toBe(false);
+	});
+});
+
+describe('agentSessions:getGlobalStats discovery', () => {
+	let home: string;
+	let getGlobalStats: () => Promise<{
+		totalSessions: number;
+		totalMessages: number;
+		totalSizeBytes: number;
+		byProvider: Record<string, { sessions: number }>;
+	}>;
+
+	beforeEach(async () => {
+		home = await realFs.mkdtemp(path.join(os.tmpdir(), 'maestro-global-stats-'));
+		vi.spyOn(os, 'homedir').mockReturnValue(home);
+		const handlers = new Map<string, Function>();
+		vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+			handlers.set(channel, handler);
+		});
+		registerAgentSessionsHandlers();
+		const handler = handlers.get('agentSessions:getGlobalStats')!;
+		getGlobalStats = () => handler({});
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		await realFs.rm(home, { recursive: true, force: true });
+	});
+
+	it('counts every non-empty transcript across more files than the concurrency cap', async () => {
+		const claudeTranscript = '{"type":"user"}\n{"type":"assistant"}\n';
+		const projects = path.join(home, '.claude', 'projects');
+		// 40 transcripts across two projects: more than either pool's cap, so
+		// workers must pull past their first item for the count to come out right.
+		for (const project of ['-Users-a', '-Users-b']) {
+			await realFs.mkdir(path.join(projects, project), { recursive: true });
+			for (let i = 0; i < 20; i++) {
+				await realFs.writeFile(path.join(projects, project, `s${i}.jsonl`), claudeTranscript);
+			}
+		}
+		// Skipped: an abandoned 0-byte session, a non-transcript, and a stray file
+		// where a project directory is expected.
+		await realFs.writeFile(path.join(projects, '-Users-a', 'empty.jsonl'), '');
+		await realFs.writeFile(path.join(projects, '-Users-a', 'notes.txt'), 'x');
+		await realFs.writeFile(path.join(projects, 'stray.jsonl'), claudeTranscript);
+
+		const codexDay = path.join(home, '.codex', 'sessions', '2026', '10', '11');
+		await realFs.mkdir(codexDay, { recursive: true });
+		await realFs.writeFile(
+			path.join(codexDay, 'rollout.jsonl'),
+			'{"type":"response_item","payload":{"type":"message","role":"user"}}\n'
+		);
+
+		const stats = await getGlobalStats();
+
+		expect(stats.byProvider['claude-code'].sessions).toBe(40);
+		expect(stats.byProvider['codex'].sessions).toBe(1);
+		expect(stats.totalSessions).toBe(41);
+		expect(stats.totalMessages).toBe(81);
+		expect(stats.totalSizeBytes).toBe(
+			40 * claudeTranscript.length +
+				'{"type":"response_item","payload":{"type":"message","role":"user"}}\n'.length
+		);
+	});
+
+	it('reports zero when neither provider has a transcript directory', async () => {
+		const stats = await getGlobalStats();
+		expect(stats.totalSessions).toBe(0);
 	});
 });

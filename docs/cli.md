@@ -692,6 +692,30 @@ Notes on behavior:
 | `-f, --force` | Delete even if the group still has agents (ungroups them) | -       |
 | `--json`      | Machine-readable JSON output                              | -       |
 
+### Moving Agents and Groups Between Windows (`window`)
+
+The CLI half of the Left Bar's **Move to Window** menus. `move-agent` carries one agent with its worktrees; `move-group` carries every agent in a group (and its subgroups when Groups+ nesting is on), gathering a group that is split across windows into one. The primary window answers through the same code path as a click, so the same rule applies: a move that would leave the main window with no agents is refused.
+
+```bash
+# See which windows exist and what each holds
+maestro-cli window list
+
+# Pull a whole group out into a new window
+maestro-cli window move-group <group-id> --to new
+
+# Bring an agent back to the main window, or into window 2 / a named window
+maestro-cli window move-agent <agent-id> --to main
+maestro-cli window move-agent <agent-id> --to 2
+maestro-cli window move-agent <agent-id> --to "Research"
+```
+
+`--to` takes `new`, `main`, a window number (as shown by `window list` and the Left Bar badge), a window id, or a custom window name. Agent and group IDs accept the usual partial-ID resolution. Moving onto the window that already holds everything succeeds and moves nothing.
+
+| Flag            | Description                                            | Default |
+| --------------- | ------------------------------------------------------ | ------- |
+| `--to <window>` | Destination (required for `move-agent` / `move-group`) | -       |
+| `--json`        | Machine-readable JSON output                           | -       |
+
 ### Creating Worktree Agents
 
 Branch a new agent off an existing parent agent into its own git worktree, without an Auto Run playbook. This mirrors the desktop "create worktree" flow: the parent agent must already exist in the running app, the desktop creates the worktree on disk and a child session linked to the parent, then hands back the new agent's ID.
@@ -1459,6 +1483,12 @@ for f in episodes/*.mp3; do maestro-cli open-file "$f" --queue; done
 ```
 
 `--queue` on a file that is not audio or video is an error.
+
+Pass an `http://` or `https://` URL instead of a path to stream it in the player. This covers progressive MP4 (H.264 video, AAC audio) and plain audio files such as MP3 or M4A. Adaptive and live formats (HLS `.m3u8`, DASH, RTSP, RTMP) are not supported. A URL never becomes a tab and never switches agents; it is filed under `--agent`, or the agent that owns your shell's current directory. `--queue` works the same as for a file:
+
+```bash
+maestro-cli open-file https://example.com/clip.mp4 --queue
+```
 
 #### Open a Browser Tab
 

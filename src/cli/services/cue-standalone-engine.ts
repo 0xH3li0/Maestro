@@ -60,6 +60,8 @@ import type { SshRemoteSettingsStore } from '../../main/utils/ssh-remote-resolve
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { CueRunResult } from '../../shared/cue/contracts';
+import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
+import { describeTurnSettings } from '../../shared/autorunTurnSettings';
 import { readSessions, readSshRemotes, getAgentCustomPath, readAgentConfig } from './storage';
 
 /** Lazily import every executor module once, cached for the process lifetime - see the module doc above for why these are dynamic rather than top-level imports. */
@@ -145,6 +147,7 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 		action,
 		command,
 		notify,
+		turnSettings,
 	}) => {
 		const { executeCuePrompt, executeCueShell, executeCueCli, executeCueNotify } =
 			await loadExecutors();
@@ -241,6 +244,24 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 					});
 		}
 
+		// Same rule as the desktop host (src/main/index.ts): the subscription's
+		// tier / model / effort outranks the agent's own config for this run only,
+		// and one the provider cannot honor falls back to the agent's value with a
+		// warning, so a headless run never lands on a different model than asked.
+		const turn = resolveCueTurnSettings(
+			storedSession.toolType,
+			turnSettings,
+			storedSession.customModel,
+			storedSession.customEffort
+		);
+		const turnNote = describeTurnSettings(turn);
+		if (turnNote) {
+			onLog(
+				turn.warnings.length > 0 ? 'warn' : 'cue',
+				`[CUE] "${subscriptionName}" model: ${turnNote}`
+			);
+		}
+
 		const result = await executeCuePrompt({
 			runId,
 			session: sessionInfo,
@@ -257,8 +278,8 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			customPath: getAgentCustomPath(storedSession.toolType),
 			customArgs: storedSession.customArgs,
 			customEnvVars: storedSession.customEnvVars,
-			customModel: storedSession.customModel,
-			customEffort: storedSession.customEffort,
+			customModel: turn.model,
+			customEffort: turn.effort,
 			enableMaestroP: storedSession.enableMaestroP,
 			maestroPMode: storedSession.maestroPMode,
 			maestroPPath: storedSession.maestroPPath,

@@ -23,6 +23,7 @@ import {
 	snoozeTabCommand,
 	snoozeWake,
 } from './commands/snooze';
+import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -594,6 +595,33 @@ queue
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueSteer);
 
+// Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
+// agent and on a group) and the matching Cmd+K commands. Answered by the primary
+// window through the same code path as a click.
+const windowCmd = program
+	.command('window')
+	.description('List Maestro windows, and move agents or whole groups between them');
+
+windowCmd
+	.command('list')
+	.description('List open windows and the agents each one holds')
+	.option('--json', 'Output as JSON')
+	.action(windowList);
+
+windowCmd
+	.command('move-agent <agent-id>')
+	.description('Move an agent (with its worktrees) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveAgent);
+
+windowCmd
+	.command('move-group <group-id>')
+	.description('Move every agent in a group (with subgroups when nesting is on) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveGroup);
+
 // Snooze commands - the CLI half of the Snooze dialog (Opt+Cmd+S), the Snoozed
 // Tabs list, and its history log. `<when>` takes the same expressions the dialog
 // does ("2h", "tomorrow", "next fri 3pm", "aug 5"), parsed locally so a typo
@@ -753,7 +781,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -1115,8 +1143,6 @@ cue
 	.option('--reset-on-completion', 'With --auto-run: uncheck every task when the run finishes')
 	.option('--loop', 'With --auto-run: re-run the documents once every task is checked off')
 	.option('--max-loops <n>', 'With --auto-run: loop ceiling (implies --loop)')
-	.option('--model <id>', 'With --auto-run: model for this run only')
-	.option('--effort <level>', 'With --auto-run: reasoning effort for this run only')
 	.option('--per-document', 'With --auto-run: one agent turn per document instead of one per task')
 	.option('--ignore-model-hints', "With --auto-run: ignore the documents' MAESTRO:MODEL hints")
 	.option('--no-auto-resume', 'With --auto-run: stay paused after an agent error')
@@ -1146,6 +1172,18 @@ cue
 	.option('-l, --label <text>', 'Human-readable label (defaults to truncated prompt)')
 	.option('--pipeline <name>', 'Pipeline name (default: Tasks)')
 	.option('--grace-minutes <n>', 'Override the default 360-minute grace window')
+	.option(
+		'--tier <level>',
+		'Model tier for the prompt run: low, medium, high (mapped per provider)'
+	)
+	.option(
+		'--model <id>',
+		'Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only'
+	)
+	.option(
+		'--effort <level>',
+		'Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only'
+	)
 	.option(
 		'--keep-on-failure',
 		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
