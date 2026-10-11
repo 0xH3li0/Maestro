@@ -618,6 +618,26 @@ describe('batch-processor', () => {
 				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
 				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'haiku' });
 			});
+
+			it('keeps the run model on the synopsis when the cheap tier would shrink the context window', async () => {
+				singleTask();
+				vi.mocked(spawnAgent).mockResolvedValue({
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				});
+
+				await collectEvents(
+					runPlaybook(mockSession({ customModel: 'sonnet' }), mockPlaybook(), '/playbooks', {
+						model: 'opus[1m]',
+					})
+				);
+
+				// The synopsis resumes the task's transcript, which was written under
+				// the 1M model and may not fit the cheap one. Effort still drops.
+				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'opus[1m]', customEffort: 'low' });
+			});
 		});
 
 		it('should track usage statistics', async () => {
@@ -770,6 +790,39 @@ describe('batch-processor', () => {
 
 			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
 			expect(taskCompleteEvent?.summary).toBe('Test summary');
+		});
+
+		/** One task, then a synopsis turn that answers with `synopsisResponse`. */
+		const runWithSynopsisResponse = async (synopsisResponse: string): Promise<JsonlEvent[]> => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-123' })
+				.mockResolvedValueOnce({ success: true, response: synopsisResponse });
+
+			return collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+		};
+
+		it('keeps the default label when the synopsis turn prints a provider error', async () => {
+			// `claude -p` prints the API error and exits 0, so the text arrives as a
+			// successful response. Parsed as a synopsis it would be recorded as the
+			// summary of work it says nothing about.
+			const events = await runWithSynopsisResponse('Prompt is too long');
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent?.summary).toBe('[tasks] Task completed');
+			expect(taskCompleteEvent?.fullResponse).toBe('[tasks] Task completed');
+		});
+
+		it('keeps the default label when the synopsis reports NOTHING_TO_REPORT', async () => {
+			const events = await runWithSynopsisResponse('NOTHING_TO_REPORT');
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent?.summary).toBe('[tasks] Task completed');
 		});
 	});
 

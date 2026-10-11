@@ -665,19 +665,22 @@ Document ids are always reconciled against the batch store's `documentList`, NOT
 
 One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.
 
-| Function / Constant                   | Signature                                           | Purpose                                                                               |
-| ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `TIER_LEVELS`                         | `readonly ['low', 'medium', 'high']`                | The vocabulary. Both axes use it.                                                     |
-| `asTierLevel(value)`                  | `(unknown) => ModelTier \| undefined`               | Narrow an untrusted value to a rung.                                                  |
-| `resolveTierModel(toolType, tier)`    | `(ToolType, ModelTier) => string \| undefined`      | Model for a tier. `undefined` = no mapping, inherit the agent's model **and say so**. |
-| `resolveEffortLevel(toolType, level)` | `(ToolType, EffortLevel) => string \| undefined`    | Provider effort string for a level. `undefined` = provider has no effort knob.        |
-| `supportsTierSelection(toolType)`     | `(ToolType) => boolean`                             | Whether this provider can act on a tier hint at all.                                  |
-| `supportsEffortSelection(toolType)`   | `(ToolType) => boolean`                             | Whether this provider can act on an effort hint at all.                               |
-| `cheapTurnSettings(toolType)`         | `(ToolType) => { model?: string; effort?: string }` | Bottom of both ladders. Used to pin throwaway synopsis turns.                         |
+| Function / Constant                          | Signature                                                                | Purpose                                                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TIER_LEVELS`                                | `readonly ['low', 'medium', 'high']`                                     | The vocabulary. Both axes use it.                                                                                                                                               |
+| `asTierLevel(value)`                         | `(unknown) => ModelTier \| undefined`                                    | Narrow an untrusted value to a rung.                                                                                                                                            |
+| `resolveTierModel(toolType, tier)`           | `(ToolType, ModelTier) => string \| undefined`                           | Model for a tier. `undefined` = no mapping, inherit the agent's model **and say so**.                                                                                           |
+| `resolveEffortLevel(toolType, level)`        | `(ToolType, EffortLevel) => string \| undefined`                         | Provider effort string for a level. `undefined` = provider has no effort knob.                                                                                                  |
+| `supportsTierSelection(toolType)`            | `(ToolType) => boolean`                                                  | Whether this provider can act on a tier hint at all.                                                                                                                            |
+| `supportsEffortSelection(toolType)`          | `(ToolType) => boolean`                                                  | Whether this provider can act on an effort hint at all.                                                                                                                         |
+| `cheapTurnSettings(toolType)`                | `(ToolType) => { model?: string; effort?: string }`                      | Bottom of both ladders. Used to pin throwaway synopsis turns.                                                                                                                   |
+| `cheapResumeTurnSettings(toolType, current)` | `(ToolType, { model?, effort? }) => { model?: string; effort?: string }` | `cheapTurnSettings` for a turn that resumes its session: keeps `current.model` when the cheap one has a smaller context window, and inherits `current` where no tier is mapped. |
 
 Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`). Do NOT add one for a provider that discovers its catalogue at runtime (`codex`, `copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution.
 
 `cheapTurnSettings` is safe only because a synopsis is a LEAF - every caller discards the `agentSessionId` it returns. A future caller that adopts that id has to revisit the pin first, or the tab silently continues on the cheap model.
+
+A synopsis spawn passes `cheapResumeTurnSettings`, not `cheapTurnSettings`: resuming replays the transcript, and one written under a 1M-context model (`opus[1m]`) does not fit the cheap 200k model. The desktop synopsis and the CLI's `requestCliSynopsis()` (`src/cli/services/synopsis.ts`) both call it.
 
 ---
 
@@ -745,7 +748,7 @@ Rendering rule: no surface may display the raw structured output as if it were t
 | Function / Constant                  | Signature                                            | Purpose                                                                                                                                                         |
 | ------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HISTORY_VERSION`                    | `number` (1)                                         | Current history file format version.                                                                                                                            |
-| `MAX_ENTRIES_PER_SESSION`            | `number` (5000)                                      | Max history entries per session file.                                                                                                                           |
+| `MAX_ENTRIES_PER_SESSION`            | `number` (10000)                                     | Default max history entries per session file; the live cap is the `maxLogBuffer` setting.                                                                       |
 | `ORPHANED_SESSION_ID`                | `string` (`'_orphaned'`)                             | Session ID for entries without associated sessions.                                                                                                             |
 | `sanitizeSessionId(sessionId)`       | `(string) => string`                                 | Replace non-safe chars with underscore for filesystem.                                                                                                          |
 | `paginateEntries(entries, options?)` | `<T>(T[], PaginationOptions?) => PaginatedResult<T>` | Apply limit/offset pagination. Default: limit 100, offset 0.                                                                                                    |

@@ -58,6 +58,7 @@ import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes'
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { MAX_ENTRIES_PER_SESSION } from '../../shared/history';
 import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared/usagePeaks';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
@@ -779,7 +780,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: MAX_ENTRIES_PER_SESSION,
 		maxOutputLines: Infinity,
 		checkForUpdatesOnStartup: true,
 		autoResumeOnLimit: true,
