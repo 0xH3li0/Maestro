@@ -257,6 +257,40 @@ describe('VoiceHud rendering', () => {
 		expect(screen.queryByTestId('voice-hud-latest')).toBeNull();
 	});
 
+	it('says a finished sentence is waiting for a send phrase, and sends it on request', () => {
+		// Hold-until-send keeps a request for up to thirty seconds. Without this
+		// line the HUD showed the sentence and then nothing happened, which read as
+		// a session that heard you and ignored you.
+		renderHud();
+		startSession();
+		const held = event('partial-transcript', {
+			text: 'what color is snow',
+			stability: 0.95,
+			held: { settlesInMs: 30_000, sendPhrases: ['good to go', 'send it'] },
+		});
+		emit({ ...held, ts: Date.now() } as VoiceEvent);
+
+		const notice = screen.getByTestId('voice-hud-held');
+		expect(notice.textContent).toContain('good to go');
+		expect(notice.textContent).toMatch(/sends in \d+s/);
+
+		fireEvent.click(screen.getByTestId('voice-hud-send-now'));
+		expect(window.maestro.voice.endUtterance).toHaveBeenCalledTimes(1);
+
+		// Dispatched: the notice is gone with the hold.
+		emit(event('final-transcript', { text: 'what color is snow', confidence: 1 }));
+		expect(screen.queryByTestId('voice-hud-held')).toBeNull();
+	});
+
+	it('shows no hold notice for a live hypothesis', () => {
+		renderHud();
+		startSession();
+
+		emit(event('partial-transcript', { text: 'what color', stability: 0.4 }));
+
+		expect(screen.queryByTestId('voice-hud-held')).toBeNull();
+	});
+
 	it('streams the partial transcript and settles it into the transcript', async () => {
 		renderHud({ transcript: true });
 		startSession();

@@ -211,6 +211,35 @@ describe('MicCapture', () => {
 		expect(context.addedModules).toHaveLength(1);
 	});
 
+	it('re-announces the open capture to a later start, without reopening the device', async () => {
+		// A voice session taking over the microphone the always-on wake word
+		// opened never saw the first announcement; without this it reports the
+		// mic as not capturing for the whole session.
+		const capture = build();
+		await capture.start();
+		const announced = statuses.filter((status) => status.kind === 'capture-start').length;
+
+		await capture.start();
+
+		expect(media.getUserMedia).toHaveBeenCalledTimes(1);
+		expect(statuses.filter((status) => status.kind === 'capture-start')).toHaveLength(
+			announced + 1
+		);
+	});
+
+	it('does not re-announce a capture that was stopped', async () => {
+		const capture = build();
+		await capture.start();
+		capture.stop();
+		const before = statuses.filter((status) => status.kind === 'capture-start').length;
+
+		await capture.start();
+
+		// A real restart: a fresh device open and one fresh announcement, not a replay.
+		expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+		expect(statuses.filter((status) => status.kind === 'capture-start')).toHaveLength(before + 1);
+	});
+
 	it('releases the microphone and tears down the graph on stop', async () => {
 		const capture = build();
 		await capture.start();

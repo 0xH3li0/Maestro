@@ -336,6 +336,13 @@ a design constraint; they are simply not built yet.
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
+14. **A Cappella voice session controls** (HUD Talk / Stop / Interrupt / Send
+    now, the wake word Test button). None has a CLI verb; they are reachable
+    only as `acappella:*` IPC over the WS bridge (`acappella:start-session`,
+    `acappella:stop-session`, `acappella:interrupt`, `acappella:end-utterance`,
+    `acappella:wake-test`). The feature is an Encore Feature still being made
+    to work end to end; a `maestro-cli voice` group belongs with it once the
+    session surface is stable, and reads back through `acappella:get-state`.
 
 ### Audit backlog (2026-09-27)
 

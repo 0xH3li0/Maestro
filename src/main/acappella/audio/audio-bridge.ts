@@ -70,6 +70,12 @@ export interface VoiceAudioBridgeOptions {
 	vad?: Partial<VadConfig>;
 	/** Audio retained ahead of the floor opening. Clamped by the pipeline. */
 	preRollMs?: number;
+	/**
+	 * Whether the host already announced `ready` before this bridge existed.
+	 * The announcement is once per host load, so a bridge built later would
+	 * otherwise drop every non-capture command (all playback) indefinitely.
+	 */
+	hostAlreadyReady?: boolean;
 	meter?: Partial<AudioLevelMeterConfig>;
 	/** The user's chosen microphone, read at each capture start. */
 	getInputDeviceId?: () => string | undefined;
@@ -94,6 +100,7 @@ export class VoiceAudioBridge {
 
 	constructor(options: VoiceAudioBridgeOptions) {
 		this.options = options;
+		this.hostReady = options.hostAlreadyReady === true;
 		this.meter = new AudioLevelMeter(options.meter);
 		this.pipeline = new AudioPipeline({
 			session: options.session,

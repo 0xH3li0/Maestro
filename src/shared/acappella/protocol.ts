@@ -201,6 +201,18 @@ export interface PartialTranscriptEvent extends VoiceEventBase {
 	text: string;
 	/** 0 to 1. Rises across successive partials for the same utterance. */
 	stability: number;
+	/**
+	 * Present when the text is a FINISHED sentence being held before dispatch,
+	 * rather than a live hypothesis. Hold-until-send mode keeps a request for up
+	 * to `sendHoldMs` waiting for a send phrase, and without saying so the HUD
+	 * looked like a session that heard you and did nothing for thirty seconds.
+	 */
+	held?: {
+		/** Milliseconds until the hold expires and the request is sent anyway. */
+		settlesInMs: number;
+		/** What ends the hold now. Empty when send phrases are disabled. */
+		sendPhrases: string[];
+	};
 }
 
 /**

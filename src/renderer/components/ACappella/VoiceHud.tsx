@@ -54,6 +54,7 @@ import { VoiceDevHarness } from './VoiceDevHarness';
 import { VoiceHudControls } from './VoiceHudControls';
 import { VoiceIndicator } from './VoiceIndicator';
 import { VoiceTranscript } from './VoiceTranscript';
+import { VoiceHeldNotice } from './VoiceHeldNotice';
 import { useVoiceScope } from './useVoiceScope';
 import { useOwnsVoiceSession } from './useOwnsVoiceSession';
 import { VoiceInputPicker } from './VoiceInputPicker';
@@ -522,6 +523,9 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 				)}
 
 				{transcriptVisible && <VoiceTranscript theme={theme} />}
+
+				{/* A finished sentence waiting on a send phrase. */}
+				<VoiceHeldNotice theme={theme} />
 
 				{/* The one thing "Listening" cannot say for itself. The floor really is
 				    open here - the state machine is not lying - but a text-in recogniser

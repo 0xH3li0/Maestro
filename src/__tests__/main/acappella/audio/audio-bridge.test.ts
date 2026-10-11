@@ -152,7 +152,7 @@ function frame(samples: Int16Array): AudioFrame {
 	};
 }
 
-function harness(options: { acceptsAudio?: boolean } = {}): Harness {
+function harness(options: { acceptsAudio?: boolean; hostAlreadyReady?: boolean } = {}): Harness {
 	sequence = 0;
 	const session = new FakeSession();
 	const stt = new FakeStt(options.acceptsAudio ?? true);
@@ -162,6 +162,7 @@ function harness(options: { acceptsAudio?: boolean } = {}): Harness {
 	const bridge = createVoiceAudioBridge({
 		session,
 		sendCommand: (command) => commands.push(command),
+		hostAlreadyReady: options.hostAlreadyReady,
 	});
 
 	return {
@@ -447,6 +448,26 @@ describe('VoiceAudioBridge playback', () => {
 		]);
 		const command = h.commands[0] as Extract<AudioHostCommand, { kind: 'play' }>;
 		expect(new Uint8Array(command.data)).toEqual(new Uint8Array([1, 2, 3, 4]));
+	});
+
+	it('plays through a host that announced ready before the bridge existed', () => {
+		// The host announces once per load. A bridge built afterwards (the wake word
+		// booted the host first, or a provider change rebuilt the bridge) never sees
+		// that announcement, and used to drop every chunk: a session that
+		// transcribed, routed, got its reply, and spoke it into nothing.
+		const h = harness({ hostAlreadyReady: true });
+
+		h.bridge.handleSpeechChunk(chunk());
+
+		expect(h.kinds()).toEqual(['play']);
+	});
+
+	it('holds playback for a host that has not announced ready', () => {
+		const h = harness();
+
+		h.bridge.handleSpeechChunk(chunk());
+
+		expect(h.commands).toEqual([]);
 	});
 
 	it('sends a container format on to be decoded', () => {

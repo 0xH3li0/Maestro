@@ -272,6 +272,45 @@ describe('MockBrainProvider routing', () => {
 		expect(decision.tabName).toBe('Auth Refactor');
 	});
 
+	it('keeps a request that genuinely opens with a preposition', async () => {
+		// The dangling-connective rule used to run on every prompt, so "In one
+		// short sentence, ..." reached the agent as "one short sentence, ...".
+		const decision = await brain.route('In one short sentence, what color is grass?', {
+			roster,
+			scope: { kind: 'agent', sessionId: 'agent-backend' },
+		});
+
+		expect(decision.prompt).toBe('In one short sentence, what color is grass?');
+	});
+
+	it('drops the verb that addressed the agent along with its name', async () => {
+		const decision = await brain.route('Ask backend to describe the ocean in two sentences', {
+			roster,
+			scope: { kind: 'conductor' },
+		});
+
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+		expect(decision.prompt).toBe('describe the ocean in two sentences');
+	});
+
+	it('keeps an "ask" that addresses nobody', async () => {
+		const decision = await brain.route('ask me a question about the build', {
+			roster,
+			scope: { kind: 'agent', sessionId: 'agent-backend' },
+		});
+
+		expect(decision.prompt).toBe('ask me a question about the build');
+	});
+
+	it('still drops the connective left behind by routing chatter', async () => {
+		const decision = await brain.route('open a new tab for reviewing the migration', {
+			roster,
+			scope: { kind: 'agent', sessionId: 'agent-backend' },
+		});
+
+		expect(decision.prompt).toBe('reviewing the migration');
+	});
+
 	it('picks recall from a back-to cue and resolves the tab by name', async () => {
 		const decision = await brain.route('go back to the auth refactor on backend', {
 			roster,

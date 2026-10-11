@@ -131,6 +131,8 @@ export class MicCapture {
 	private externalStream = false;
 	private starting: Promise<boolean> | null = null;
 	private disposed = false;
+	/** The announcement for the live capture, repeated to a later `start()`. */
+	private startedStatus: Extract<AudioHostStatus, { kind: 'capture-start' }> | null = null;
 	private seq = 0;
 	/**
 	 * Epoch ms corresponding to `context.currentTime === 0`. Frames carry audio
@@ -158,7 +160,14 @@ export class MicCapture {
 	 */
 	start(deviceId?: string): Promise<boolean> {
 		if (this.disposed) return Promise.resolve(false);
-		if (this.active) return Promise.resolve(true);
+		if (this.active) {
+			// Already open, so nothing is reopened, but the start is still ANSWERED.
+			// The caller may be a new owner of the stream (a voice session taking
+			// over the microphone the always-on wake word opened) that never saw the
+			// first announcement, and without this it believes capture is off.
+			if (this.startedStatus) this.options.onStatus(this.startedStatus);
+			return Promise.resolve(true);
+		}
 		if (!this.starting) {
 			this.starting = this.startInternal(deviceId).finally(() => {
 				this.starting = null;
@@ -314,14 +323,15 @@ export class MicCapture {
 		const track = stream.getAudioTracks()[0];
 		track?.addEventListener('ended', this.handleTrackEnded);
 
-		onStatus({
+		this.startedStatus = {
 			kind: 'capture-start',
 			device: deviceOverride ?? {
 				deviceId: track?.getSettings?.().deviceId ?? '',
 				label: track?.label ?? '',
 			},
 			contextSampleRate: context.sampleRate,
-		});
+		};
+		onStatus(this.startedStatus);
 	}
 
 	/** Release the microphone. Idempotent. */
@@ -336,6 +346,7 @@ export class MicCapture {
 		// renegotiate to be heard again after a single floor handover.
 		if (!this.externalStream) this.stream.getTracks().forEach((track) => track.stop());
 		this.stream = null;
+		this.startedStatus = null;
 		this.externalStream = false;
 
 		if (this.node) {

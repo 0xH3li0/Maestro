@@ -153,6 +153,12 @@ interface VoiceSessionStoreState {
 	substitutions: VoiceProviderSubstitution[];
 	/** Live STT hypothesis. Cleared when the utterance settles. */
 	partialTranscript: string;
+	/**
+	 * Set while a finished sentence is held before dispatch (hold-until-send, or
+	 * the settle window). `settlesAt` is epoch ms; the HUD counts down to it and
+	 * says how to send now, so a held request never reads as a dead session.
+	 */
+	heldUtterance: { settlesAt: number; sendPhrases: string[] } | null;
 	/** The last settled utterance. */
 	utterance: string | null;
 	decision: RouteDecision | null;
@@ -232,6 +238,7 @@ const EMPTY_STATE: VoiceSessionStoreState = {
 	sttHearsAudio: null,
 	substitutions: [],
 	partialTranscript: '',
+	heldUtterance: null,
 	utterance: null,
 	decision: null,
 	lastDispatch: null,
@@ -257,6 +264,7 @@ function freshSessionFields(sessionId: string): Partial<VoiceSessionStoreState> 
 		seq: 0,
 		lostEvents: false,
 		partialTranscript: '',
+		heldUtterance: null,
 		utterance: null,
 		decision: null,
 		lastDispatch: null,
@@ -341,9 +349,11 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					patch.scope = event.scope;
 					patch.origin = event.origin ?? { kind: 'local' };
 					patch.partialTranscript = '';
+					patch.heldUtterance = null;
 					break;
 				case 'listen-stop':
 					patch.partialTranscript = '';
+					patch.heldUtterance = null;
 					// The floor closed, so nothing is arriving to move the meter. Leaving
 					// the last level on screen would draw a bar for a microphone that is
 					// no longer being read.
@@ -365,9 +375,18 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					break;
 				case 'partial-transcript':
 					patch.partialTranscript = event.text;
+					// A live hypothesis (no `held`) means the user is speaking again;
+					// the next held partial re-arms the countdown.
+					patch.heldUtterance = event.held
+						? {
+								settlesAt: event.ts + event.held.settlesInMs,
+								sendPhrases: event.held.sendPhrases,
+							}
+						: null;
 					break;
 				case 'final-transcript':
 					patch.partialTranscript = '';
+					patch.heldUtterance = null;
 					patch.utterance = event.text;
 					patch.feed = appendFeed(base.feed, {
 						id: `${event.sessionId}:${event.seq}`,

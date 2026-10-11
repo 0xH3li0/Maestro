@@ -82,6 +82,8 @@ import {
 	getVoiceSessionService,
 	initVoiceSessionService,
 	isAcappellaAudioHostContents,
+	isAcappellaAudioHostReady,
+	markAcappellaAudioHostReady,
 	readAgentRoster,
 	type AudioHostWindowDeps,
 	type VoiceAudioBridge,
@@ -499,6 +501,9 @@ function ensureAudioBridge(service: VoiceSessionService, deps: ACappellaHandlerD
 	audioBridge = createVoiceAudioBridge({
 		session: service,
 		sendCommand: sendAudioHostCommand,
+		// The host may have booted before this bridge (the always-on wake word, a
+		// wake test, or a previous bridge rebuilt on a provider change).
+		hostAlreadyReady: isAcappellaAudioHostReady(),
 		// Read at each capture start rather than captured here, so picking a
 		// different microphone takes effect on the next session without rebuilding
 		// the provider pipeline.
@@ -1246,6 +1251,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		return wrappedSubmitUtterance(event, text);
 	});
 
+	// "Send now": end the held utterance and dispatch it. The same two-part
+	// gesture as releasing the push-to-talk key: flush the recogniser so the tail
+	// of the sentence is decoded, and settle the composer on it.
+	ipcMain.handle('acappella:end-utterance', async (): Promise<void> => {
+		requireEnabled(settingsStore);
+		audioBridge?.endUtterance();
+		getVoiceSessionService()?.endUtteranceNow();
+	});
+
 	ipcMain.handle('acappella:interrupt', async (event, source: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
 		return wrappedInterrupt(event, source);
@@ -1378,6 +1392,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		logAudioHostStatus(status as AudioHostStatus);
 		// A tuning run started before the host finished booting; see startWakeTestCapture.
 		if ((status as AudioHostStatus).kind === 'ready') {
+			markAcappellaAudioHostReady();
 			if (wakeTestDetector) startWakeTestCapture(deps);
 			else handsFree?.onAudioHostReady();
 		}

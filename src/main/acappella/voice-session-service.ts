@@ -463,17 +463,27 @@ export class VoiceSessionService {
 			// thought rather than on the next session: a person who finds it too
 			// eager will tune it mid-conversation, which is when they notice.
 			...options.getUtteranceComposerConfig?.(),
-			onSettled: ({ text, confidence, durationMs }) => {
+			onSettled: ({ text, confidence, durationMs, sentBy, fragments }) => {
 				// The floor can close between the last fragment and the settle. Every
 				// path that closes it cancels the composer, so this is belt and braces
 				// rather than a known race - but a fragment dispatched into a dead
 				// session is exactly the bug this component exists to prevent.
-				if (this.state !== 'listening') return;
+				if (this.state !== 'listening') {
+					logger.info(`Composed utterance dropped in state '${this.state}'`, LOG_CONTEXT);
+					return;
+				}
+				logger.info(
+					`Utterance composed from ${fragments} fragment(s), sent by ${sentBy ?? 'the settle timer'}`,
+					LOG_CONTEXT
+				);
 				void this.runTurn(text, confidence, durationMs);
 			},
 			// A growing partial, so the transcript does not blank between the halves
 			// of one sentence and make a composing session look like a stalled one.
-			onComposing: (text) => this.emit('partial-transcript', { text, stability: 0.95 }),
+			// `held` tells the HUD this is a finished sentence waiting to be sent,
+			// so it can say how to send it instead of looking stalled.
+			onComposing: (text, hold) =>
+				this.emit('partial-transcript', { text, stability: 0.95, held: hold }),
 		});
 		this.bargeIn = new BargeInController({
 			// Both default to no-ops: the audio pipeline ducks on a candidate frame
@@ -1020,7 +1030,15 @@ export class VoiceSessionService {
 				this.emit('partial-transcript', { text, stability });
 			},
 			onFinal: (text, confidence, durationMs) => {
-				if (this.state !== 'listening') return;
+				if (this.state !== 'listening') {
+					// Logged because a sentence that vanished here looks, from outside,
+					// exactly like a recogniser that heard nothing.
+					logger.info(
+						`Final transcript ignored in state '${this.state}' (${text.length} chars)`,
+						LOG_CONTEXT
+					);
+					return;
+				}
 				// Composed only for a recogniser that listens to a room. A text-in
 				// provider's utterance was already delimited by whoever typed it and
 				// pressed send, so holding it would be latency in exchange for nothing.

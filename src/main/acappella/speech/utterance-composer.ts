@@ -59,6 +59,12 @@ export const DEFAULT_UTTERANCE_COMPOSER_CONFIG: UtteranceComposerConfig = {
 	sendPhrases: DEFAULT_SEND_PHRASES,
 };
 
+/** How a buffered thought is being held: until when, and what ends it early. */
+export interface ComposerHold {
+	settlesInMs: number;
+	sendPhrases: string[];
+}
+
 /** One assembled thought, with the parts it was built from. */
 export interface ComposedUtterance {
 	text: string;
@@ -94,7 +100,7 @@ export interface UtteranceComposerOptions extends Partial<UtteranceComposerConfi
 	 * between fragments and a composing session looks like one that stopped
 	 * listening.
 	 */
-	onComposing?: (text: string) => void;
+	onComposing?: (text: string, hold: ComposerHold) => void;
 }
 
 interface Buffered {
@@ -107,7 +113,7 @@ interface Buffered {
 export class UtteranceComposer {
 	private readonly config: UtteranceComposerConfig;
 	private readonly onSettled: (utterance: ComposedUtterance) => void;
-	private readonly onComposing?: (text: string) => void;
+	private readonly onComposing?: (text: string, hold: ComposerHold) => void;
 
 	private buffer: Buffered | null = null;
 	/** Set by {@link armImmediateSettle}: the next fragment ends the thought. */
@@ -182,7 +188,10 @@ export class UtteranceComposer {
 			return;
 		}
 
-		this.onComposing?.(this.pending);
+		this.onComposing?.(this.pending, {
+			settlesInMs: this.config.settleMs,
+			sendPhrases: [...this.config.sendPhrases],
+		});
 		this.restartSettleTimer();
 		this.startHoldTimer();
 	}

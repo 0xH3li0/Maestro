@@ -252,10 +252,29 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 				samples.length > this.maxSamples
 					? samples.subarray(samples.length - this.maxSamples)
 					: samples;
-			const text = sanitizeTranscript(await engine.transcribe(windowed));
+			const decodeStartedAt = Date.now();
+			const raw = await engine.transcribe(windowed);
+			const text = sanitizeTranscript(raw);
+			if (kind === 'final') {
+				// One line per utterance: the decode time is the recogniser's share of
+				// the turn's latency, and an empty result after real speech is the
+				// difference between "it heard nothing" and "it threw the text away".
+				logger.info(
+					`${this.engineName} final: ${Math.round(durationMs)} ms of audio decoded in ${Date.now() - decodeStartedAt} ms, ${text.length} chars${raw.trim() && !text ? ' (dropped as non-speech)' : ''}`,
+					LOG_CONTEXT
+				);
+			}
 			// The session may have ended, or the utterance been superseded, while the
 			// decode ran. Publishing now would put an old transcript on a new turn.
-			if (this.callbacks !== callbacks) return;
+			if (this.callbacks !== callbacks) {
+				if (kind === 'final') {
+					logger.info(
+						`${this.engineName} final discarded: the session ended during the decode`,
+						LOG_CONTEXT
+					);
+				}
+				return;
+			}
 
 			if (kind === 'final') {
 				this.buffer.clear();

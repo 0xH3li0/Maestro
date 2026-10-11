@@ -50,6 +50,22 @@ describe('UtteranceComposer', () => {
 		expect(settled[0].fragments).toBe(2);
 	});
 
+	it('reports how long a held thought waits and what sends it now', () => {
+		// The HUD reads this to say "say 'good to go' to send, or it sends in 30s",
+		// so a held request never looks like a session that ignored you.
+		const holds: Array<{ settlesInMs: number; sendPhrases: string[] }> = [];
+		const composer = new UtteranceComposer({
+			settleMs: 30_000,
+			sendPhrases: ['good to go'],
+			onSettled: () => undefined,
+			onComposing: (_text, hold) => holds.push(hold),
+		});
+
+		composer.add('what color is snow', 0.9);
+
+		expect(holds).toEqual([{ settlesInMs: 30_000, sendPhrases: ['good to go'] }]);
+	});
+
 	it('dispatches nothing while the user is still talking', () => {
 		const { composer, settled } = makeComposer();
 

@@ -19,6 +19,8 @@ export {
 	ensureAcappellaAudioHostWindow,
 	getAcappellaAudioHostWindow,
 	isAcappellaAudioHostContents,
+	isAcappellaAudioHostReady,
+	markAcappellaAudioHostReady,
 	type AudioHostWindowDeps,
 } from './audio-host-window';
 export {

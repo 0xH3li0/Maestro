@@ -155,6 +155,15 @@ export interface AudioPipelineStats {
 	bargeIns: number;
 	/** Throws out of `feed()`. Counted rather than propagated: see {@link AudioPipeline.handleFrame}. */
 	feedErrors: number;
+	/** VAD onsets seen while feeding. Zero over a spoken run means the room never cleared the gate. */
+	speechStarts: number;
+	/**
+	 * VAD endpoints forwarded as a recogniser flush. A final transcript needs
+	 * one, so starts without ends means the room never went quiet enough.
+	 */
+	speechEnds: number;
+	/** Loudest frame this run, RMS 0 to 1. */
+	peakRms: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +296,7 @@ export class AudioPipeline {
 		this.syncSessionState();
 		const samples = new Int16Array(frame.pcm);
 		const result = this.vad.process(samples);
+		if (result.rms > this.stats.peakRms) this.stats.peakRms = result.rms;
 
 		this.handleDuplex(result);
 
@@ -371,6 +381,10 @@ export class AudioPipeline {
 		}
 
 		if (result.event?.type === 'speech-start') {
+			logger.info(
+				`Barge-in: speech detected over playback (level ${result.rms.toFixed(3)}, floor ${result.noiseFloor.toFixed(3)})`,
+				LOG_CONTEXT
+			);
 			this.bargeIn();
 			return;
 		}
@@ -444,7 +458,15 @@ export class AudioPipeline {
 		// The recogniser decides what a final transcript is, but it cannot know the
 		// room went quiet if it is being fed a continuous stream, so the VAD's
 		// endpoint is forwarded as an explicit flush.
-		if (result.event?.type === 'speech-end') this.endpoint(stt);
+		if (result.event?.type === 'speech-start') {
+			this.stats.speechStarts += 1;
+			logger.debug('Speech started', LOG_CONTEXT);
+		}
+		if (result.event?.type === 'speech-end') {
+			this.stats.speechEnds += 1;
+			logger.debug('Speech ended; asking the recogniser for a final transcript', LOG_CONTEXT);
+			this.endpoint(stt);
+		}
 		return true;
 	}
 
@@ -515,11 +537,16 @@ export class AudioPipeline {
 	private logDropSummary(): void {
 		const { framesReceived, framesDelivered, framesDropped, sequenceGaps, feedErrors } = this.stats;
 		if (framesReceived === 0) return;
+		// Info, not debug: one line per session, and it is the line that tells a
+		// deaf recogniser (no starts), a room that never goes quiet (starts without
+		// ends), and a healthy run apart.
 		const message =
 			`Audio run: ${framesReceived} frames, ${framesDelivered} delivered, ` +
-			`${framesDropped} dropped, ${sequenceGaps} lost in transit, ${feedErrors} feed errors`;
+			`${framesDropped} dropped, ${sequenceGaps} lost in transit, ${feedErrors} feed errors, ` +
+			`${this.stats.speechStarts} speech starts, ${this.stats.speechEnds} endpoints, ` +
+			`peak level ${this.stats.peakRms.toFixed(3)}`;
 		if (sequenceGaps > 0 || feedErrors > 0) logger.warn(message, LOG_CONTEXT);
-		else logger.debug(message, LOG_CONTEXT);
+		else logger.info(message, LOG_CONTEXT);
 	}
 
 	private resetRun(): void {
@@ -549,6 +576,9 @@ function emptyStats(): AudioPipelineStats {
 		sequenceGaps: 0,
 		bargeIns: 0,
 		feedErrors: 0,
+		speechStarts: 0,
+		speechEnds: 0,
+		peakRms: 0,
 	};
 }
 

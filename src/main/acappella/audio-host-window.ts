@@ -148,8 +148,14 @@ export function ensureAcappellaAudioHostWindow(deps: AudioHostWindowDeps): Brows
 		: withAudioHostFlag(deps.rendererProductionUrl);
 	void win.loadURL(url);
 
+	// A (re)load starts a fresh bundle that has not attached its listeners yet.
+	win.webContents.on('did-start-loading', () => {
+		if (audioWindow === win) audioHostReady = false;
+	});
+
 	win.on('closed', () => {
 		if (audioWindow !== win) return;
+		audioHostReady = false;
 		if (audioWindowId) {
 			deps.windowRegistry.remove(audioWindowId);
 			audioWindowId = null;
@@ -169,6 +175,27 @@ export function ensureAcappellaAudioHostWindow(deps: AudioHostWindowDeps): Brows
 	});
 
 	return win;
+}
+
+/**
+ * Whether the host renderer has announced `ready` since it last (re)loaded.
+ *
+ * Tracked here, beside the window, rather than in each consumer: the host
+ * announces once per load, and a consumer created AFTER that announcement (a
+ * voice session's audio bridge built after the always-on wake word booted the
+ * host, or rebuilt after a provider change) would otherwise wait for a `ready`
+ * that already happened and drop every playback command meanwhile. That was a
+ * session that transcribed, routed, got its reply, and spoke it into nothing.
+ */
+let audioHostReady = false;
+
+/** Record the host's `ready` announcement. Called by the status listener. */
+export function markAcappellaAudioHostReady(): void {
+	if (audioWindow && !audioWindow.isDestroyed()) audioHostReady = true;
+}
+
+export function isAcappellaAudioHostReady(): boolean {
+	return audioHostReady && !!audioWindow && !audioWindow.isDestroyed();
 }
 
 /**

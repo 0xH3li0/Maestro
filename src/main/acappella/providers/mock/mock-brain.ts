@@ -58,8 +58,19 @@ const PROMPT_PREAMBLE_PATTERNS: RegExp[] = [
 	/^(?:switch|go|jump|head|take me)\s+(?:back\s+)?(?:to|over to)\b[\s,]*/i,
 	/^(?:back to|return to|resume|start over)\b[\s,]*/i,
 	/^(?:the\s+)?(?:tab|session|chat|conversation|thread)\b[\s,]*/i,
-	/^(?:on|in|with|for|about|and|then|to)\b[\s,]*/i,
 ];
+
+/**
+ * A connective left dangling once routing chatter was removed ("open a new tab
+ * ABOUT the refactor", "on the backend agent, AND run the tests"). Applied only
+ * after something else was stripped: unconditionally, it ate the first word of
+ * an ordinary request, so "In one short sentence, ..." reached the agent as
+ * "one short sentence, ...".
+ */
+const DANGLING_CONNECTIVE = /^(?:on|in|with|for|about|and|then|to)\b[\s,]*/i;
+
+/** "ask NAME to", "tell NAME", "have NAME", "get NAME to": the verb addressing an agent. */
+const ADDRESSING_VERB = /^(?:ask|tell|have|get)\b[\s,]*(?:to\b[\s,]*)?/i;
 
 /** How many preamble passes before giving up. Bounded so a pattern cycle cannot spin. */
 const MAX_PREAMBLE_PASSES = 8;
@@ -252,21 +263,29 @@ function tabNameOverlap(tab: RosterTab, normalizedInput: string): number {
  * word out of an unusual one. That is the accepted cost of a keyword mock.
  */
 function cleanPrompt(input: string, agentName?: string): string {
-	let text = input.trim();
+	const original = input.trim();
+	let text = original;
 
 	if (agentName) {
 		const pattern = new RegExp(
 			`(?:^|\\s)(?:(?:on|with|for|to|in|at|from)\\s+)?(?:the\\s+)?${escapeRegExp(agentName)}(?:\\s+agent)?(?=$|[\\s,.!?])`,
 			'i'
 		);
-		text = text.replace(pattern, ' ').trim();
+		const withoutName = text.replace(pattern, ' ').trim();
+		// "Ask Philosopher to describe X" loses the name and would reach the agent
+		// as "Ask to describe X". The addressing verb belonged to the name, so it
+		// goes with it - but only when a name was actually removed.
+		text =
+			withoutName === text ? text : withoutName.replace(ADDRESSING_VERB, '').trim() || withoutName;
 	}
 
 	for (let pass = 0; pass < MAX_PREAMBLE_PASSES; pass++) {
-		const next = PROMPT_PREAMBLE_PATTERNS.reduce(
+		let next = PROMPT_PREAMBLE_PATTERNS.reduce(
 			(current, pattern) => current.replace(pattern, ''),
 			text
 		).trim();
+		// Only once routing chatter has actually been removed; see DANGLING_CONNECTIVE.
+		if (next !== original) next = next.replace(DANGLING_CONNECTIVE, '').trim();
 		if (next === text) break;
 		text = next;
 	}

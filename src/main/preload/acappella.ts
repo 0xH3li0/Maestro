@@ -460,6 +460,12 @@ export function createVoiceApi() {
 		interrupt: (source: 'voice' | 'client-button' = 'client-button'): Promise<boolean> =>
 			ipcRenderer.invoke('acappella:interrupt', source),
 
+		/**
+		 * Send the utterance now instead of waiting: what saying a send phrase or
+		 * letting go of the push-to-talk key does.
+		 */
+		endUtterance: (): Promise<void> => ipcRenderer.invoke('acappella:end-utterance'),
+
 		/** The stop word: end the session from any state. */
 		stopWord: (payload?: { phrase?: string; source?: 'voice' | 'client-button' }): Promise<void> =>
 			ipcRenderer.invoke('acappella:stop-word', payload),
