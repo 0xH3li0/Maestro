@@ -1159,6 +1159,7 @@ maestro-cli quick-chat toggle                # what the hotkey does: open, focus
 maestro-cli quick-chat send "summarize the last commit"
 maestro-cli quick-chat status --json         # window state, agent, mode, and the conversation
 maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
+maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)
 maestro-cli quick-chat new                   # start over; an ephemeral chat's hidden tab is deleted
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
 maestro-cli quick-chat reveal                # open the chat as a tab in the main window

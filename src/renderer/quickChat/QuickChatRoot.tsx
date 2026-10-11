@@ -14,6 +14,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowUp,
+	Bookmark,
+	BookmarkCheck,
 	ChevronDown,
 	ExternalLink,
 	PenSquare,
@@ -44,6 +46,26 @@ const COMPOSER_MAX_HEIGHT = 120;
 /** `-webkit-app-region` lets the frameless window be dragged by its header. */
 const DRAG_REGION = { WebkitAppRegion: 'drag' } as React.CSSProperties;
 const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
+
+/**
+ * The grip the whole window is dragged by. The composer-only shape is all
+ * input and buttons, so without it there is nothing to grab there.
+ */
+function DragHandle({ theme }: { theme: Theme }) {
+	return (
+		<div
+			className="h-3 shrink-0 flex items-center justify-center"
+			style={DRAG_REGION}
+			title="Drag to move"
+			data-testid="quick-chat-drag-handle"
+		>
+			<div
+				className="w-10 h-1 rounded-full"
+				style={{ backgroundColor: theme.colors.textDim, opacity: 0.45 }}
+			/>
+		</div>
+	);
+}
 
 function useElapsedSeconds(since: number | null): number {
 	const [now, setNow] = useState(() => Date.now());
@@ -126,6 +148,7 @@ export function QuickChatRoot() {
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const [pinned, setPinned] = useState(true);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// This window boots its own renderer and never runs useSettings: load the
@@ -135,10 +158,13 @@ export function QuickChatRoot() {
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
 		const offFocus = window.maestro.quickChat.onFocusInput(() => textareaRef.current?.focus());
+		const offPinned = window.maestro.quickChat.onPinned(setPinned);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
+		void window.maestro.quickChat.getPinned().then(setPinned);
 		return () => {
 			offSnapshot();
 			offFocus();
+			offPinned();
 		};
 	}, []);
 
@@ -173,6 +199,9 @@ export function QuickChatRoot() {
 	}, [draft, snapshot.busy, run]);
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
+	const togglePinned = useCallback(() => {
+		void window.maestro.quickChat.setPinned(!pinned).then(setPinned);
+	}, [pinned]);
 	const closePicker = useCallback(() => {
 		setPickerOpen(false);
 		textareaRef.current?.focus();
@@ -223,13 +252,18 @@ export function QuickChatRoot() {
 
 	const composer = (
 		<div
-			className={`rounded-3xl px-4 pt-3 pb-2 flex flex-col gap-2 ${expanded ? '' : 'h-full justify-between'}`}
+			className={`rounded-3xl px-4 pb-2 flex flex-col gap-2 ${expanded ? 'pt-3' : 'pt-1 h-full justify-between'}`}
 			style={{
 				backgroundColor: expanded ? c.bgActivity : c.bgSidebar,
 				border: expanded ? 'none' : `1px solid ${c.border}`,
 				...NO_DRAG_REGION,
 			}}
 		>
+			{!expanded && (
+				<div className="-mb-1">
+					<DragHandle theme={theme} />
+				</div>
+			)}
 			<textarea
 				ref={textareaRef}
 				autoFocus
@@ -273,6 +307,21 @@ export function QuickChatRoot() {
 					onClick={() => void run({ type: 'setPersistent', persistent: !snapshot.persistent })}
 				>
 					{snapshot.persistent ? (
+						<BookmarkCheck className="w-4 h-4" style={{ color: c.accent }} />
+					) : (
+						<Bookmark className="w-4 h-4" />
+					)}
+				</IconButton>
+				<IconButton
+					theme={theme}
+					label={
+						pinned
+							? 'Pinned: floats above other windows. Click to let it fall behind them.'
+							: 'Not pinned: falls behind other windows. Click to float it on top.'
+					}
+					onClick={togglePinned}
+				>
+					{pinned ? (
 						<Pin className="w-4 h-4" style={{ color: c.accent }} />
 					) : (
 						<PinOff className="w-4 h-4" />
@@ -316,8 +365,9 @@ export function QuickChatRoot() {
 			}}
 		>
 			<style>{proseStyles}</style>
+			{expanded && <DragHandle theme={theme} />}
 			{expanded && (
-				<div className="flex items-center gap-2 px-4 py-3 shrink-0" style={DRAG_REGION}>
+				<div className="flex items-center gap-2 px-4 pb-3 shrink-0" style={DRAG_REGION}>
 					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
 						<X className="w-4 h-4" />
 					</IconButton>

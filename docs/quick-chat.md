@@ -24,7 +24,9 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 
-The window floats above other apps and on every desktop, including over full-screen apps. Drag it by its header to move it, and drag an edge or corner to resize it. Maestro remembers the size and the spot across restarts. Until you move the window yourself, it opens centered on the screen under your pointer.
+The window shows on every desktop, including over full-screen apps. While the pin in the window is on (the default), it floats above other apps. Turn the pin off and it behaves like an ordinary window: it falls behind whatever you click next, and the hotkey still brings it to the front. Maestro remembers the pin across restarts.
+
+Drag the grip at the top of the window (or the header, once a conversation is showing) to move it, and drag an edge or corner to resize it. Maestro remembers the size and the spot across restarts. Until you move the window yourself, it opens centered on the screen under your pointer.
 
 Before your first message the window is just the composer, so only its width changes. Once a conversation is showing, you can make it taller or shorter too, and that height is kept for the next conversation. If the screen the window was on is no longer connected, it opens on your main screen instead.
 
@@ -32,12 +34,12 @@ Before your first message the window is just the composer, so only its width cha
 
 Every Quick Chat is a real AI tab on the agent you choose. It uses that agent's provider, model, working directory, SSH remote, and permissions, exactly like a tab you open yourself. The agent can be busy in another tab: your quick chat does not wait for it.
 
-A chat has one of two modes, and you can flip between them at any time with the pin in the window:
+A chat has one of two modes, and you can flip between them at any time with the bookmark in the window:
 
 | Mode                | What happens                                                                                                                                                |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Ephemeral (default) | The tab is hidden: no chip in the tab bar. When you start a new chat, the tab is deleted. Whether its turns write [History](/history) entries is a setting. |
-| Kept (pin on)       | The tab is visible on the agent like any other and stays there after you start the next chat.                                                               |
+| Kept (bookmark on)  | The tab is visible on the agent like any other and stays there after you start the next chat.                                                               |
 
 A reply never raises a completion toast in the main window: you are reading it in Quick Chat. The audio or spoken notification you configured still plays.
 
@@ -66,6 +68,7 @@ maestro-cli quick-chat send "what does this error mean?"
 maestro-cli quick-chat status              # window, agent, mode, and the conversation (--json for scripts)
 maestro-cli quick-chat new
 maestro-cli quick-chat keep                # keep the current chat as a tab ("keep off" makes it ephemeral)
+maestro-cli quick-chat pin                 # float the window above other windows ("pin off" lets it fall behind)
 maestro-cli quick-chat agent <agent-id>    # switch agents and start a new chat
 maestro-cli quick-chat reveal              # open the chat as a tab in Maestro
 maestro-cli quick-chat stop                # stop the reply

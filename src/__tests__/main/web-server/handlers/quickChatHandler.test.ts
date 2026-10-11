@@ -22,6 +22,7 @@ const status = {
 	hotkey: ['Alt', 'Space'],
 	hotkeyRegistered: true,
 	bounds: null,
+	pinned: true,
 	snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
 };
 const controller = {
@@ -29,6 +30,7 @@ const controller = {
 	runCommand: vi.fn(),
 	windowAction: vi.fn(),
 	setBounds: vi.fn(),
+	setPinned: vi.fn(),
 	getStatus: vi.fn(),
 };
 let activeController: typeof controller | null = controller;
@@ -65,6 +67,7 @@ describe('quick_chat handler', () => {
 		controller.getStatus.mockReturnValue(status);
 		controller.windowAction.mockReturnValue(status);
 		controller.setBounds.mockReturnValue(status);
+		controller.setPinned.mockReturnValue(status);
 		controller.runCommand.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
@@ -177,5 +180,19 @@ describe('quick_chat handler', () => {
 		});
 		expect(controller.setBounds).not.toHaveBeenCalled();
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r10' });
+	});
+
+	it('pins and unpins the window through the controller', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'pin',
+			pinned: false,
+			requestId: 'r11',
+		});
+		expect(controller.setPinned).toHaveBeenCalledWith(false);
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r11' });
+
+		handler.handleMessage(client, { type: 'quick_chat', action: 'pin', requestId: 'r12' });
+		expect(controller.setPinned).toHaveBeenLastCalledWith(true);
 	});
 });

@@ -1,6 +1,7 @@
 /**
- * Quick Chat window - a small, frameless, always-on-top window summoned by a
- * system-wide hotkey. It reuses the main renderer bundle loaded with
+ * Quick Chat window - a small, frameless window summoned by a system-wide
+ * hotkey. Pinned (the default), it floats above other windows; unpinned, it is
+ * an ordinary window that falls behind whatever the user clicks next. It reuses the main renderer bundle loaded with
  * `?quickChat`, which boots into QuickChatRoot (the chat view only).
  *
  * Created lazily on first show and then only hidden, never closed, so the
@@ -106,6 +107,7 @@ function loadSaved(deps: QuickChatWindowDeps): QuickChatWindowBounds {
 		y: typeof raw.y === 'number' && Number.isFinite(raw.y) ? raw.y : undefined,
 		width: positive(raw.width),
 		expandedHeight: positive(raw.expandedHeight),
+		pinned: typeof raw.pinned === 'boolean' ? raw.pinned : undefined,
 	};
 	if (saved.x !== undefined && saved.y !== undefined) userPlaced = true;
 	return saved;
@@ -255,7 +257,7 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 		sessionIds: [],
 	});
 
-	win.setAlwaysOnTop(true, 'floating');
+	win.setAlwaysOnTop(saved?.pinned !== false, 'floating');
 	win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 	applyLayout(win, layout, win.getBounds());
 
@@ -331,6 +333,9 @@ export function showQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 		revealPending = false;
 		if (win.isDestroyed()) return;
 		win.show();
+		// Unpinned, the window sits at the normal level, where showing it from
+		// another app can land it behind that app's window. A summon must be seen.
+		if (saved?.pinned === false) win.moveTop();
 		win.focus();
 		win.webContents.send('quickChat:focusInput');
 	};
@@ -413,6 +418,26 @@ export function setQuickChatWindowBounds(
 	deps.boundsStore.set(next);
 	const win = getQuickChatWindow();
 	if (win) applyLayout(win, layout, boundsFor(layout));
+}
+
+/** Whether the window floats above other windows. Pinned unless the user unpinned it. */
+export function isQuickChatWindowPinned(deps: QuickChatWindowDeps): boolean {
+	return loadSaved(deps).pinned !== false;
+}
+
+/**
+ * Float the window above other windows, or let it fall behind them, and
+ * remember the choice. The pin button and `maestro-cli quick-chat pin` both
+ * land here; the window is told so its button follows a CLI change.
+ */
+export function setQuickChatWindowPinned(next: boolean, deps: QuickChatWindowDeps): void {
+	pendingSave?.flush();
+	saved = { ...loadSaved(deps), pinned: next };
+	deps.boundsStore.set(saved);
+	const win = getQuickChatWindow();
+	if (!win) return;
+	win.setAlwaysOnTop(next, 'floating');
+	win.webContents.send('quickChat:pinned', next);
 }
 
 /** The window's current bounds, for `quick-chat status`. */

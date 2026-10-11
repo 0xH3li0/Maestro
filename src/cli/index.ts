@@ -2426,6 +2426,14 @@ quickChatCmd
 	);
 
 quickChatCmd
+	.command('pin [state]')
+	.description('Float the window above other windows ("off" lets it fall behind them)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((state: string | undefined, options) =>
+		quickChat('pin', { pinned: state !== 'off' }, options)
+	);
+
+quickChatCmd
 	.command('agent <agent-id>')
 	.description('Switch Quick Chat to another agent and start a new chat there')
 	.option('--json', 'Output as JSON (for scripting)')
