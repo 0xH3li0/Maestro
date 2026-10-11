@@ -38,6 +38,18 @@ export interface AgentSpawnResult {
 }
 
 /**
+ * Options for a background turn that is NOT a synopsis but runs through
+ * `spawnBackgroundSynopsis` for what that gives it: a resumed session under a
+ * hidden process id, so nothing it prints reaches the transcript.
+ */
+export interface BackgroundTurnOptions {
+	/** Run on the caller's model and effort instead of the cheap synopsis tier. */
+	keepTurnSettings?: boolean;
+	/** The turn prints nothing on success, so an empty response is not a failure. */
+	allowEmptyResponse?: boolean;
+}
+
+/**
  * Per-spawn options for `spawnAgentForSession`.
  *
  * The model/effort overrides are run-scoped: an Auto Run can use a different
@@ -113,6 +125,7 @@ export interface UseAgentExecutionReturn {
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
+			customEffort?: string;
 			customContextWindow?: number;
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
@@ -122,33 +135,12 @@ export interface UseAgentExecutionReturn {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			};
-		}
+		},
+		options?: BackgroundTurnOptions
 	) => Promise<AgentSpawnResult>;
 	/** Ref to spawnBackgroundSynopsis for use in callbacks that need latest version */
 	spawnBackgroundSynopsisRef: React.MutableRefObject<
-		| ((
-				sessionId: string,
-				cwd: string,
-				resumeAgentSessionId: string,
-				prompt: string,
-				toolType?: ToolType,
-				sessionConfig?: {
-					customPath?: string;
-					customArgs?: string;
-					customEnvVars?: Record<string, string>;
-					customModel?: string;
-					customContextWindow?: number;
-					enableMaestroP?: boolean;
-					maestroPMode?: 'interactive' | 'dynamic';
-					maestroPPath?: string;
-					sessionSshRemoteConfig?: {
-						enabled: boolean;
-						remoteId: string | null;
-						workingDirOverride?: string;
-					};
-				}
-		  ) => Promise<AgentSpawnResult>)
-		| null
+		UseAgentExecutionReturn['spawnBackgroundSynopsis'] | null
 	>;
 	/** Ref to spawnAgentWithPrompt for use in callbacks that need latest version */
 	spawnAgentWithPromptRef: React.MutableRefObject<
@@ -707,7 +699,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
-			}
+			},
+			options?: BackgroundTurnOptions
 		): Promise<AgentSpawnResult> => {
 			try {
 				const agent = await window.maestro.agents.get(toolType);
@@ -798,9 +791,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// lastSynopsisTime - so the next synopsis skips everything the
 								// agent did before the failure. Report the failure instead and
 								// let the caller write nothing.
+								// A turn that prints nothing by design (a `/compact`) is judged
+								// by its exit code; text it does print is still checked.
+								const emptyByDesign =
+									options?.allowEmptyResponse === true && !stripAnsiCodes(responseText).trim();
 								const failed =
 									(typeof code === 'number' && code !== 0) ||
-									isFailedSynopsisResponse(responseText, toolType);
+									(!emptyByDesign && isFailedSynopsisResponse(responseText, toolType));
 								resolve({
 									success: !failed,
 									response: responseText,
@@ -860,8 +857,15 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// agentSessionId it returns rather than adopting it, so the cheap
 							// model cannot follow the conversation into the next real turn. A
 							// future caller that adopts that id must revisit this.
-							sessionCustomModel: synopsisTurn.model,
-							sessionCustomEffort: synopsisTurn.effort,
+							//
+							// `keepTurnSettings` opts out: a compaction is not a leaf, its
+							// summary becomes the conversation every later turn reads.
+							sessionCustomModel: options?.keepTurnSettings
+								? sessionConfig?.customModel
+								: synopsisTurn.model,
+							sessionCustomEffort: options?.keepTurnSettings
+								? sessionConfig?.customEffort
+								: synopsisTurn.effort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the

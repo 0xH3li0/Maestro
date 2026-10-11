@@ -30,6 +30,7 @@ import {
 import { nextRunnableQueueItem, takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { logger } from '../../utils/logger';
 import { dropMentionHandoffs } from '../../services/crossAgentHandoff';
+import { cancelContextCompaction } from '../../stores/retryStore';
 
 // ============================================================================
 // Dependencies interface
@@ -133,6 +134,12 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 			currentMode === 'ai'
 				? `${activeSession.id}-ai-${activeTab?.id || 'default'}`
 				: `${activeSession.id}-terminal`;
+
+		// An automatic context compaction is part of the turn the user is stopping.
+		// Ended first, so the kill below (the compaction runs as a synopsis-style
+		// process) reads as a cancel and not as a compaction that failed, and so
+		// the prompt it was holding is not picked up as queued work further down.
+		cancelContextCompaction(activeSession.id);
 
 		// Cancel any pending synopsis processes (non-critical, shouldn't block interrupt)
 		try {

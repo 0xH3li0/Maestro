@@ -399,6 +399,17 @@ export interface LogEntry {
 		/** Ask only: why no answer came back. */
 		error?: string;
 	};
+	// Marks where Maestro compacted this conversation on its own because the
+	// turn above it no longer fit the model's context window. The failed prompt
+	// is resent once the compaction lands, so this pill is all the user sees of
+	// the failure. Written and settled by services/contextCompaction.ts, driven
+	// by retryStore. See components/ContextCompactionCard.tsx.
+	contextCompaction?: {
+		/** `pending` while the provider is compacting, then how it ended. */
+		status: 'pending' | 'done' | 'error' | 'canceled';
+		/** Why the compaction did not land. */
+		error?: string;
+	};
 }
 
 // Queued item for the session-level execution queue
