@@ -651,12 +651,12 @@ describe('director-notes IPC handlers', () => {
 		};
 
 		// A busy agent's history file evicts its own oldest entries at the retention
-		// cap, so its bar silently pins to exactly 5000 and reads as an exact figure.
+		// cap, so its bar silently pins to exactly the cap and reads as an exact figure.
 		// Two agents at wildly different volumes then tie for top. `truncated` is
 		// what lets the chart say "at least" instead of stating a number it cannot know.
 		it('flags an agent whose count was bounded by retention, not the window', async () => {
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['busy']);
-			// 5000 entries spanning 5 days, well inside a 30-day window: the cutoff
+			// A full file spanning 5 days, well inside a 30-day window: the cutoff
 			// dropped nothing, so the cap is what produced this number.
 			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(fullFile(5, 'busy'));
 
@@ -665,6 +665,31 @@ describe('director-notes IPC handlers', () => {
 
 			expect(result.perAgent[0].entryCount).toBe(MAX_ENTRIES_PER_SESSION);
 			expect(result.perAgent[0].truncated).toBe(true);
+		});
+
+		// The cap is the user's maxLogBuffer, not the built-in default: a file held
+		// to 1,000 entries is full at 1,000 and must still read as a floor.
+		it('flags a file full at a retention limit the user lowered', async () => {
+			mockGetSettingsStore.mockReturnValue({
+				get: vi.fn((key: string) => (key === 'maxLogBuffer' ? 1000 : undefined)),
+			});
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['capped']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(
+				Array.from({ length: 1000 }, (_, i) =>
+					createMockEntry({ id: `capped-${i}`, timestamp: now - i * 1000 })
+				)
+			);
+
+			try {
+				const handler = handlers.get('director-notes:getRichOverviewStats');
+				const result = await handler!({} as any, { lookbackDays: 30 });
+
+				expect(result.perAgent[0].entryCount).toBe(1000);
+				expect(result.perAgent[0].truncated).toBe(true);
+			} finally {
+				mockGetSettingsStore.mockReturnValue({ get: vi.fn().mockReturnValue(undefined) });
+			}
 		});
 
 		it('does not flag a full file whose older entries fall outside the window', async () => {

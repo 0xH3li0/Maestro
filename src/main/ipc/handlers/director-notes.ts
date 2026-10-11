@@ -14,7 +14,11 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
-import { MAX_ENTRIES_PER_SESSION, paginateEntries } from '../../../shared/history';
+import {
+	MAX_ENTRIES_PER_SESSION,
+	historyRetentionCeiling,
+	paginateEntries,
+} from '../../../shared/history';
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
@@ -466,7 +470,7 @@ export interface RichAgentStat {
 	failureCount: number;
 	/**
 	 * True when RETENTION, not the lookback window, is what bounded this count:
-	 * the agent's history file sits at `MAX_ENTRIES_PER_SESSION` and its oldest
+	 * the agent's history file sits at `historyRetentionCeiling()` and its oldest
 	 * surviving entry is still inside the window, so older runs were already
 	 * evicted and the real total is unknown and larger. Without this, a busy
 	 * agent's bar silently pins to the cap and reads as an exact figure - two
@@ -984,7 +988,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					// A file at the cap whose tail predates the window is fine: the
 					// window did the trimming and the number is exact.
 					const agentStat = agent.canBeTruncated ? perAgentMap.get(sid) : undefined;
-					if (agentStat && entries.length >= MAX_ENTRIES_PER_SESSION) {
+					if (
+						agentStat &&
+						entries.length >= historyRetentionCeiling(getSettingsStore().get('maxLogBuffer'))
+					) {
 						const oldest = entries.reduce(
 							(min, e) => Math.min(min, e.timestamp),
 							Number.POSITIVE_INFINITY
