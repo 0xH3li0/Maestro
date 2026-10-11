@@ -14,7 +14,7 @@
  * name there regardless of the local command.
  */
 
-import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
+import { checkCustomPath } from '../agents/path-prober';
 
 export interface ResolveCueAgentBinaryInput {
 	/** The agent's own custom path (`Session.customPath`). */
