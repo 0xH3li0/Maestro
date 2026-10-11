@@ -122,12 +122,13 @@ Both live in **Voice Controls**.
 
 ### Wake word
 
-- Default phrase: **"hey maestro"**. Say it and a Conductor session opens without stealing focus from whatever you are working in.
+- Default phrase: **"hey jarvis"**, the phrase a trained detector ships for. Say it and a Conductor session opens without stealing focus from whatever you are working in.
+- **Detection** picks how the phrase is heard. **Trained model** (the default) is tiny and nearly free on the CPU, but it only knows the phrases it was trained on. **Transcription** works for any phrase you type: the local speech model transcribes each burst of speech and matches the phrase in the text, at the cost of keeping that model loaded (about 1 GB) while hands-free is on.
 - **Sensitivity** is a single slider. Higher fires more easily.
 - **Test** runs the detector with no session behind it, so you can tune the sensitivity by saying the phrase instead of guessing, restarting, and guessing again. A test run closes the microphone on its own after 15 seconds.
 - **Per-agent wake phrases.** Any agent can be given its own phrase, and saying it opens a session bound directly to that agent, skipping routing entirely.
 
-The wake word needs the openWakeWord model (2.3 MB). Without it the detector runs inert and says so rather than pretending to listen.
+The trained-model engine needs the openWakeWord front end (2.4 MB) plus the phrase's own detector (1.3 MB for "hey jarvis"). If either is missing, or the phrase has no trained detector, **Test** says exactly which instead of listening to nothing.
 
 ![Wake word settings, with a slot reporting exactly which model it is missing](./screenshots/acappella-wake-word.png)
 
@@ -146,6 +147,20 @@ The stop word is a separate control in its own card, because it is a different a
 - **"nevermind" is always armed and cannot be edited.** A stop word you have to remember is not a stop word, so this one is the same in every install and works even if you have never opened the settings.
 
 Wake phrases are only listened for while the session is cold, and stop phrases only while it is running, so saying the wake word mid-answer can never stack a second session on top of the first.
+
+## Who you are talking to
+
+A session is in one of three modes, shown as **Tab / Agent / Conductor** under the HUD's header. Click one to switch; the session keeps running and the new mode applies from the next thing you say.
+
+| Mode          | Where your words go                                                                                                                                | Who decides                                                                   |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Tab**       | One tab, word for word. Naming another agent is just part of the message.                                                                          | Nobody: the Conductor is skipped entirely, which also makes it the fastest    |
+| **Agent**     | One agent. The current tab, a new tab ("open a new tab about the auth bug"), or a tab you name ("back to the migration tab"). Never another agent. | The Conductor picks the tab, never the agent, and never answers for the agent |
+| **Conductor** | Any agent and any tab. "Ask the backend agent to run the tests" goes to the backend agent.                                                         | The Conductor picks both, and asks when it is unsure                          |
+
+Switching picks a sensible target for you: **Agent** binds to the agent your last request went to (or the one on screen), and **Tab** pins the tab your last request landed in (or that agent's active tab). The header always names where the next sentence will land.
+
+How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the composer microphone, the **Talk to Current Agent** hotkey, and the Left Bar menu open in **Agent** mode. After that, the HUD's **Talk** button reopens in whatever mode you last used.
 
 ## The two hotkeys
 

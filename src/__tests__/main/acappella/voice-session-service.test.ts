@@ -441,6 +441,148 @@ describe('VoiceSessionService document scope', () => {
 	});
 });
 
+describe('VoiceSessionService modes (Tab, Agent, Conductor)', () => {
+	/** Two agents, so a request can name the one the session is NOT bound to. */
+	function twoAgents(): RosterAgent[] {
+		return [
+			...makeRoster(),
+			{
+				sessionId: 'agent-frontend',
+				name: 'Frontend',
+				agentType: 'claude-code',
+				cwd: '/web',
+				tabs: [{ id: 'tab-f', name: 'Styles', lastActiveAt: 2 }],
+			},
+		];
+	}
+
+	it('Tab mode sends the words verbatim to the pinned tab without asking the Brain', async () => {
+		const h = makeHarness({ getRoster: twoAgents });
+		await h.service.startSession({
+			scope: { kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-1' },
+			source: 'hotkey',
+		});
+		h.events.length = 0;
+
+		h.service.submitUtterance('In one sentence, ask the frontend agent about the styles');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		expect(h.brain.contexts).toHaveLength(0);
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision).toEqual({
+			target: { sessionId: 'agent-backend' },
+			tabAction: 'recall',
+			tabId: 'tab-1',
+			prompt: 'In one sentence, ask the frontend agent about the styles',
+			confidence: 1,
+		});
+		const routed = h.events.find((event) => event.type === 'route-decision');
+		expect(routed).toMatchObject({ brainProviderId: 'tab-scope' });
+	});
+
+	it('Tab mode reports a pinned tab that no longer exists instead of picking another', async () => {
+		const h = makeHarness();
+		await h.service.startSession({
+			scope: { kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-gone' },
+			source: 'hotkey',
+		});
+		h.events.length = 0;
+
+		h.service.submitUtterance('hello');
+		await vi.waitFor(() => expect(h.types()).toContain('session-error'));
+
+		expect(h.executor).not.toHaveBeenCalled();
+		const error = h.events.find((event) => event.type === 'session-error');
+		expect(error).toMatchObject({ code: 'dispatch-failed' });
+	});
+
+	it('Agent mode keeps a request that names another agent with the bound agent', async () => {
+		const h = makeHarness({ getRoster: twoAgents });
+		h.brain.decision = {
+			target: { sessionId: 'agent-frontend' },
+			tabAction: 'current',
+			prompt: 'compare with the frontend styles',
+			confidence: 0.8,
+		};
+		await h.service.startSession({
+			scope: { kind: 'agent', sessionId: 'agent-backend' },
+			source: 'hotkey',
+		});
+		h.events.length = 0;
+
+		h.service.submitUtterance('compare with the frontend styles');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+	});
+
+	it('Conductor mode still lets the Brain pick the agent', async () => {
+		const h = makeHarness({ getRoster: twoAgents });
+		h.brain.decision = {
+			target: { sessionId: 'agent-frontend' },
+			tabAction: 'current',
+			prompt: 'check the styles',
+			confidence: 0.8,
+		};
+		await start(h);
+
+		h.service.submitUtterance('ask frontend to check the styles');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		expect(decision.target).toEqual({ sessionId: 'agent-frontend' });
+	});
+
+	it('switches mode mid-session and applies it from the next utterance', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		expect(h.service.setScope({ kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-1' })).toBe(
+			true
+		);
+		expect(h.events.find((event) => event.type === 'scope-change')).toMatchObject({
+			scope: { kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-1' },
+		});
+
+		h.service.submitUtterance('run the tests');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+		expect(h.brain.contexts).toHaveLength(0);
+	});
+
+	it('refuses to switch when no session is running', () => {
+		const h = makeHarness();
+
+		expect(h.service.setScope({ kind: 'conductor' })).toBe(false);
+		expect(h.events).toEqual([]);
+	});
+
+	it('finishes a turn already being routed under the mode it started in', async () => {
+		const h = makeHarness();
+		const gate = deferred();
+		h.brain.routeGate = gate.promise;
+		h.brain.decision = {
+			target: { sessionId: 'agent-backend' },
+			tabAction: 'new',
+			tabName: 'Tests',
+			prompt: 'run the tests',
+			confidence: 0.9,
+		};
+		await start(h);
+
+		h.service.submitUtterance('open a new tab and run the tests');
+		await vi.waitFor(() => expect(h.brain.contexts).toHaveLength(1));
+		// Switched while the Brain is still thinking about the first request.
+		h.service.setScope({ kind: 'agent', sessionId: 'agent-backend', tabId: 'tab-1' });
+		gate.resolve();
+
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+		const [decision] = h.executor.mock.calls[0] as [RouteDecision];
+		// Routed as the Conductor turn it was, not re-pinned halfway through.
+		expect(decision.tabAction).toBe('new');
+	});
+});
+
 describe('VoiceSessionService lifecycle', () => {
 	let h: Harness;
 

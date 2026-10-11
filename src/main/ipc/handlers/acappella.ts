@@ -127,6 +127,7 @@ import {
 import { lastTurn, type TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
 import { installVoiceHotkeys, type VoiceHotkeyInstallation } from '../../acappella/hotkeys';
 import { HandsFreeListener } from '../../acappella/wake/hands-free';
+import { TAB_SCOPE_ROUTER_ID } from '../../../shared/acappella/voice-mode';
 import { wakeScorerFactory } from '../../acappella/wake/transcription-wake';
 import { describePressHoldCapability } from '../../acappella/hotkeys/press-hold';
 import type { GlobalHotkeyStatus } from '../../../shared/global-hotkeys';
@@ -417,7 +418,13 @@ function parseScope(raw: unknown): VoiceScope {
 	if (typeof raw.sessionId !== 'string' || !raw.sessionId) {
 		throw new Error('InvalidVoiceScope');
 	}
-	if (raw.kind === 'agent') return { kind: 'agent', sessionId: raw.sessionId };
+	if (raw.kind === 'agent') {
+		// A tab pin is Tab mode; anything that is not a non-empty string is Agent
+		// mode rather than an error, because the agent binding itself is valid.
+		return typeof raw.tabId === 'string' && raw.tabId
+			? { kind: 'agent', sessionId: raw.sessionId, tabId: raw.tabId }
+			: { kind: 'agent', sessionId: raw.sessionId };
+	}
 	// Same rule for the path: a document scope with no document would open a
 	// session that names a file in the HUD and hands the agent nothing.
 	if (typeof raw.path !== 'string' || !raw.path) {
@@ -664,6 +671,9 @@ async function buildService(
 	return service;
 }
 
+/** Whether the latest `route-decision` came from a Brain (false in Tab mode). */
+let lastDecisionWasRouted = true;
+
 /**
  * Close the routing log's loop from the event stream.
  *
@@ -674,6 +684,14 @@ async function buildService(
  * failure path cannot forget to report itself.
  */
 function recordRoutingOutcome(event: VoiceEvent): void {
+	// Tab mode routes nothing, so its dispatch is not an outcome of any logged
+	// turn; recording it would overwrite the verdict of the last real one.
+	if (event.type === 'route-decision') {
+		lastDecisionWasRouted = event.brainProviderId !== TAB_SCOPE_ROUTER_ID;
+		return;
+	}
+	if (!lastDecisionWasRouted) return;
+
 	const turnId = lastRoutingTurn()?.id;
 	if (!turnId) return;
 
@@ -1249,6 +1267,13 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	ipcMain.handle('acappella:submit-utterance', async (event, text: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
 		return wrappedSubmitUtterance(event, text);
+	});
+
+	// Tab / Agent / Conductor, switched mid-session from the HUD. Returns false
+	// when there is no live session to re-bind.
+	ipcMain.handle('acappella:set-scope', async (_event, rawScope: unknown): Promise<boolean> => {
+		requireEnabled(settingsStore);
+		return getVoiceSessionService()?.setScope(parseScope(rawScope)) ?? false;
 	});
 
 	// "Send now": end the held utterance and dispatch it. The same two-part

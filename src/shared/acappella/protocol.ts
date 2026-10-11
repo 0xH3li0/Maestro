@@ -46,10 +46,23 @@ export interface DocumentVoiceScope {
  * that only knows about one silently treats a document conversation as an
  * unbound Conductor session.
  */
-export type VoiceScope =
-	| { kind: 'conductor' }
-	| { kind: 'agent'; sessionId: string }
-	| DocumentVoiceScope;
+export type VoiceScope = { kind: 'conductor' } | AgentVoiceScope | DocumentVoiceScope;
+
+/**
+ * Bound to one agent, and optionally to ONE TAB of it.
+ *
+ * Without `tabId` this is Agent mode: every utterance goes to this agent and the
+ * Conductor only decides WHICH TAB (the current one, a new one, or one recalled
+ * by name). With `tabId` it is Tab mode: every utterance goes verbatim to that
+ * tab and the Conductor is not consulted at all. One kind rather than two, so
+ * the many places that ask "which agent is this bound to" keep working
+ * unchanged; `voiceScopeMode()` in `./voice-mode` tells the two apart.
+ */
+export interface AgentVoiceScope {
+	kind: 'agent';
+	sessionId: string;
+	tabId?: string;
+}
 
 /** Every event carries the same three fields. */
 export interface VoiceEventBase {
@@ -514,6 +527,16 @@ export interface TabStateEvent extends VoiceEventBase {
 	activeTabId: string | null;
 }
 
+/**
+ * The live session was re-bound: Tab, Agent, or Conductor mode, switched from
+ * the HUD mid-session. The new scope applies from the next utterance; a turn
+ * already being routed finishes under the scope it started with.
+ */
+export interface ScopeChangeEvent extends VoiceEventBase {
+	type: 'scope-change';
+	scope: VoiceScope;
+}
+
 /** Roster snapshot, sent on subscribe and on change. */
 export interface AgentRosterEvent extends VoiceEventBase {
 	type: 'agent-roster';
@@ -541,6 +564,7 @@ export type VoiceEvent =
 	| MicStateEvent
 	| ProviderStateEvent
 	| TabStateEvent
+	| ScopeChangeEvent
 	| AgentRosterEvent;
 
 export type VoiceEventType = VoiceEvent['type'];
@@ -586,6 +610,7 @@ export const VOICE_EVENT_DIRECTIONS: Record<VoiceEventType, VoiceEventDirection>
 	'mic-state': 'service-to-client',
 	'provider-state': 'service-to-client',
 	'tab-state': 'service-to-client',
+	'scope-change': 'service-to-client',
 	'agent-roster': 'service-to-client',
 };
 

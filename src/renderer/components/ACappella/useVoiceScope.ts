@@ -21,6 +21,7 @@ import {
 	isDocumentScope,
 	voiceScopeAgentId,
 } from '../../../shared/acappella/document-scope';
+import { voiceScopeTabId } from '../../../shared/acappella/voice-mode';
 import { generateParticipantColor } from '../../utils/participantColors';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 
@@ -86,6 +87,20 @@ export function useVoiceScope(theme: Theme): VoiceScopeDisplay {
 			: agentSessionId
 				? (agent?.name ?? 'Agent')
 				: 'Conductor';
+
+		// Tab mode names its tab from the binding itself, before anything has been
+		// sent: the header is the promise of where the next sentence lands.
+		const pinnedTabId = voiceScopeTabId(scope);
+		if (pinnedTabId) {
+			const pinned = agent?.tabs.find((tab) => tab.id === pinnedTabId);
+			return {
+				label,
+				tabLabel: pinned?.name ?? (dispatchMatches ? lastDispatch.tabName : undefined) ?? 'Tab',
+				color,
+				agentSessionId,
+				tabId: pinnedTabId,
+			};
+		}
 
 		return {
 			label,

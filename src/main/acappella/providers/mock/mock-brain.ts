@@ -54,6 +54,16 @@ const MAX_CONFIDENCE = 0.95;
 const PROMPT_PREAMBLE_PATTERNS: RegExp[] = [
 	/^(?:hey|ok|okay|yo|maestro)\b[\s,]*/i,
 	/^(?:please|can you|could you|i want you to|i'd like you to|go ahead and)\b[\s,]*/i,
+];
+
+/**
+ * Routing STRUCTURE: the part of a sentence that says where, not what. Only
+ * these leave a connective dangling ("open a new tab ABOUT x", "switch to the
+ * auth tab AND ..."), so only these arm {@link DANGLING_CONNECTIVE}. A greeting
+ * or a removed agent name does not: "Ask Philosopher, IN one word, ..." keeps
+ * its "In".
+ */
+const ROUTING_STRUCTURE_PATTERNS: RegExp[] = [
 	/^(?:open|start|create|make|spin up|fire up|kick off)\b\s*(?:a|an|the)?\s*(?:new|fresh|another)?\s*(?:ai\s+)?(?:tab|session|chat|conversation|thread)\b[\s,]*/i,
 	/^(?:switch|go|jump|head|take me)\s+(?:back\s+)?(?:to|over to)\b[\s,]*/i,
 	/^(?:back to|return to|resume|start over)\b[\s,]*/i,
@@ -61,16 +71,36 @@ const PROMPT_PREAMBLE_PATTERNS: RegExp[] = [
 ];
 
 /**
- * A connective left dangling once routing chatter was removed ("open a new tab
- * ABOUT the refactor", "on the backend agent, AND run the tests"). Applied only
- * after something else was stripped: unconditionally, it ate the first word of
- * an ordinary request, so "In one short sentence, ..." reached the agent as
- * "one short sentence, ...".
+ * A connective left dangling once routing structure was removed ("open a new
+ * tab ABOUT the refactor"). Applied only right after a
+ * {@link ROUTING_STRUCTURE_PATTERNS} match: unconditionally, it ate the first
+ * word of an ordinary request, so "In one short sentence, ..." reached the agent
+ * as "one short sentence, ...".
  */
 const DANGLING_CONNECTIVE = /^(?:on|in|with|for|about|and|then|to)\b[\s,]*/i;
 
 /** "ask NAME to", "tell NAME", "have NAME", "get NAME to": the verb addressing an agent. */
-const ADDRESSING_VERB = /^(?:ask|tell|have|get)\b[\s,]*(?:to\b[\s,]*)?/i;
+const ADDRESSING_VERBS = '(?:ask|tell|have|get)';
+
+/** "on NAME", "with the NAME agent": a preposition that only points at the agent. */
+const NAME_PREPOSITIONS = '(?:on|with|for|to|in|at|from)';
+
+/**
+ * Where an agent's name sits in an utterance, with the words that only exist to
+ * point at it. Two shapes: addressed ("Ask Philosopher to describe X", "tell the
+ * backend agent, ...") takes its verb and a following "to" with it, wherever in
+ * the sentence it sits; pointed at ("on the backend agent") takes its
+ * preposition. Either takes the comma or colon that separated it from the
+ * request, so "Is it more? Ask Philosopher, in one word" does not reach the
+ * agent as "Ask , in one word".
+ */
+function agentNamePattern(agentName: string): RegExp {
+	const name = `(?:the\\s+)?${escapeRegExp(agentName)}(?:\\s+agent)?`;
+	return new RegExp(
+		`(?:^|\\s)(?:${ADDRESSING_VERBS}\\s+${name}(?:\\s+to\\b)?|(?:${NAME_PREPOSITIONS}\\s+)?${name})(?:\\s*[,:])?(?=$|[\\s,.!?])`,
+		'i'
+	);
+}
 
 /** How many preamble passes before giving up. Bounded so a pattern cycle cannot spin. */
 const MAX_PREAMBLE_PASSES = 8;
@@ -263,29 +293,23 @@ function tabNameOverlap(tab: RosterTab, normalizedInput: string): number {
  * word out of an unusual one. That is the accepted cost of a keyword mock.
  */
 function cleanPrompt(input: string, agentName?: string): string {
-	const original = input.trim();
-	let text = original;
+	let text = input.trim();
 
 	if (agentName) {
-		const pattern = new RegExp(
-			`(?:^|\\s)(?:(?:on|with|for|to|in|at|from)\\s+)?(?:the\\s+)?${escapeRegExp(agentName)}(?:\\s+agent)?(?=$|[\\s,.!?])`,
-			'i'
-		);
-		const withoutName = text.replace(pattern, ' ').trim();
-		// "Ask Philosopher to describe X" loses the name and would reach the agent
-		// as "Ask to describe X". The addressing verb belonged to the name, so it
-		// goes with it - but only when a name was actually removed.
-		text =
-			withoutName === text ? text : withoutName.replace(ADDRESSING_VERB, '').trim() || withoutName;
+		text = text.replace(agentNamePattern(agentName), ' ').trim();
 	}
 
 	for (let pass = 0; pass < MAX_PREAMBLE_PASSES; pass++) {
-		let next = PROMPT_PREAMBLE_PATTERNS.reduce(
+		const greeted = PROMPT_PREAMBLE_PATTERNS.reduce(
 			(current, pattern) => current.replace(pattern, ''),
 			text
 		).trim();
-		// Only once routing chatter has actually been removed; see DANGLING_CONNECTIVE.
-		if (next !== original) next = next.replace(DANGLING_CONNECTIVE, '').trim();
+		let next = ROUTING_STRUCTURE_PATTERNS.reduce(
+			(current, pattern) => current.replace(pattern, ''),
+			greeted
+		).trim();
+		// Only right after routing structure; see DANGLING_CONNECTIVE.
+		if (next !== greeted) next = next.replace(DANGLING_CONNECTIVE, '').trim();
 		if (next === text) break;
 		text = next;
 	}

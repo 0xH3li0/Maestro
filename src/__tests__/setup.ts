@@ -628,6 +628,7 @@ const mockMaestro = {
 		submitUtterance: vi.fn().mockResolvedValue(true),
 		interrupt: vi.fn().mockResolvedValue(true),
 		endUtterance: vi.fn().mockResolvedValue(undefined),
+		setScope: vi.fn().mockResolvedValue(true),
 		stopWord: vi.fn().mockResolvedValue(undefined),
 		// The microphone picker. `system-default` is the shipped state: no explicit
 		// choice, follow the OS.

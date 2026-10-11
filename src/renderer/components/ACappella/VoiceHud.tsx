@@ -55,6 +55,7 @@ import { VoiceHudControls } from './VoiceHudControls';
 import { VoiceIndicator } from './VoiceIndicator';
 import { VoiceTranscript } from './VoiceTranscript';
 import { VoiceHeldNotice } from './VoiceHeldNotice';
+import { VoiceModeSwitch } from './VoiceModeSwitch';
 import { useVoiceScope } from './useVoiceScope';
 import { useOwnsVoiceSession } from './useOwnsVoiceSession';
 import { VoiceInputPicker } from './VoiceInputPicker';
@@ -246,9 +247,13 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	// The other button. It does NOT touch the session.
 	const handleMinimize = useCallback(() => setMinimized(true), [setMinimized]);
 
+	// Talk restarts in the mode the last session ended in, so a user who switched
+	// to Tab mode is not quietly dropped back to the Conductor by stopping and
+	// starting again.
+	const lastScope = useVoiceSessionStore((s) => s.scope);
 	const handleStart = useCallback(() => {
-		void actions.start();
-	}, [actions]);
+		void actions.start(lastScope ?? undefined);
+	}, [actions, lastScope]);
 
 	const handleStop = useCallback(() => {
 		void actions.stop();
@@ -471,6 +476,10 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 						testId="voice-hud-close"
 					/>
 				</div>
+
+				{/* Tab / Agent / Conductor: where the next sentence goes. Only while a
+				    session is live, because a switch re-binds that session. */}
+				{active && <VoiceModeSwitch theme={theme} />}
 
 				{/* Anything the user is running that they did not ask for. */}
 				{substitutions.length > 0 && (

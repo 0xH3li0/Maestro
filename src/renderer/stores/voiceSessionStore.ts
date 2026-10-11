@@ -345,6 +345,11 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 					// before it knows whether the session belongs to it.
 					patch.windowId = event.windowId ?? null;
 					break;
+				case 'scope-change':
+					// Switched from the HUD mid-session: the header and the switch
+					// follow, and the next utterance goes where this says.
+					patch.scope = event.scope;
+					break;
 				case 'listen-start':
 					patch.scope = event.scope;
 					patch.origin = event.origin ?? { kind: 'local' };

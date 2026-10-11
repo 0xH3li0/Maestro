@@ -304,6 +304,61 @@ describe('VoiceHud rendering', () => {
 		expect(screen.getByText('start a new tab')).toBeTruthy();
 	});
 
+	it('offers the three modes while a session is live, with the Conductor selected', () => {
+		renderHud();
+		startSession();
+
+		expect(screen.getByTestId('voice-hud-mode')).toBeTruthy();
+		expect(screen.getByTestId('voice-hud-mode-conductor').getAttribute('aria-checked')).toBe(
+			'true'
+		);
+	});
+
+	it('pins Tab mode to the tab the last request landed in', () => {
+		renderHud();
+		startSession();
+		emit(
+			event('dispatch', {
+				agentSessionId: 'agent-1',
+				agentName: 'Backend',
+				tabId: 'tab-7',
+				tabName: 'Auth Refactor',
+				action: 'focused',
+				promptSent: true,
+			})
+		);
+
+		fireEvent.click(screen.getByTestId('voice-hud-mode-tab'));
+
+		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+			tabId: 'tab-7',
+		});
+	});
+
+	it('follows a mode switch from the service, naming the pinned tab', () => {
+		renderHud();
+		startSession();
+		emit(
+			event('agent-roster', {
+				agents: [
+					{
+						sessionId: 'agent-1',
+						name: 'Backend',
+						agentType: 'claude-code',
+						cwd: '/repo',
+						tabs: [{ id: 'tab-7', name: 'Auth Refactor', lastActiveAt: 1 }],
+					},
+				],
+			}),
+			event('scope-change', { scope: { kind: 'agent', sessionId: 'agent-1', tabId: 'tab-7' } })
+		);
+
+		expect(screen.getByTestId('voice-hud-mode-tab').getAttribute('aria-checked')).toBe('true');
+		expect(screen.getByTestId('voice-hud-scope').textContent).toBe('Backend / Auth Refactor');
+	});
+
 	it('names the agent and tab a dispatch landed on', async () => {
 		renderHud({ transcript: true });
 		startSession();

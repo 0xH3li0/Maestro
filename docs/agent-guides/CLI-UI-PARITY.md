@@ -340,6 +340,7 @@ a design constraint; they are simply not built yet.
     now, the wake word Test button). None has a CLI verb; they are reachable
     only as `acappella:*` IPC over the WS bridge (`acappella:start-session`,
     `acappella:stop-session`, `acappella:interrupt`, `acappella:end-utterance`,
+    `acappella:set-scope` for the Tab / Agent / Conductor switch,
     `acappella:wake-test`). The feature is an Encore Feature still being made
     to work end to end; a `maestro-cli voice` group belongs with it once the
     session surface is stable, and reads back through `acappella:get-state`.

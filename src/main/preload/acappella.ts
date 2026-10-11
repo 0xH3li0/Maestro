@@ -466,6 +466,16 @@ export function createVoiceApi() {
 		 */
 		endUtterance: (): Promise<void> => ipcRenderer.invoke('acappella:end-utterance'),
 
+		/**
+		 * Re-bind the live session: `{ kind: 'agent', sessionId, tabId }` is Tab
+		 * mode, `{ kind: 'agent', sessionId }` Agent mode, `{ kind: 'conductor' }`
+		 * Conductor mode. Applies from the next utterance.
+		 *
+		 * @returns false when no session is running.
+		 */
+		setScope: (scope: VoiceScope): Promise<boolean> =>
+			ipcRenderer.invoke('acappella:set-scope', scope),
+
 		/** The stop word: end the session from any state. */
 		stopWord: (payload?: { phrase?: string; source?: 'voice' | 'client-button' }): Promise<void> =>
 			ipcRenderer.invoke('acappella:stop-word', payload),

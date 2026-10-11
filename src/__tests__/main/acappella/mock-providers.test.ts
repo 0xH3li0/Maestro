@@ -293,6 +293,35 @@ describe('MockBrainProvider routing', () => {
 		expect(decision.prompt).toBe('describe the ocean in two sentences');
 	});
 
+	it('keeps a preposition that follows the addressed agent or a greeting', async () => {
+		const named = await brain.route('Ask backend, in one word, what is two plus two?', {
+			roster,
+			scope: { kind: 'conductor' },
+		});
+		expect(named.prompt).toBe('in one word, what is two plus two?');
+
+		const greeted = await brain.route('Hey maestro, in one word, what is two plus two?', {
+			roster,
+			scope: { kind: 'agent', sessionId: 'agent-backend' },
+		});
+		expect(greeted.prompt).toBe('in one word, what is two plus two?');
+	});
+
+	it('drops an address in the middle of the sentence with its verb and comma', async () => {
+		// The transcript carried a stray clause ahead of the address, so the
+		// verb was not at the start and survived as "Ask , in one word".
+		const decision = await brain.route(
+			'Is it more? Ask backend, in one word, what color is snow?',
+			{
+				roster,
+				scope: { kind: 'conductor' },
+			}
+		);
+
+		expect(decision.target).toEqual({ sessionId: 'agent-backend' });
+		expect(decision.prompt).toBe('Is it more? in one word, what color is snow?');
+	});
+
 	it('keeps an "ask" that addresses nobody', async () => {
 		const decision = await brain.route('ask me a question about the build', {
 			roster,

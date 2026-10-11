@@ -39,6 +39,14 @@ import {
 } from '../../shared/acappella/document-scope';
 import type { RouteDecision } from '../../shared/acappella/route-decision';
 import {
+	TAB_SCOPE_ROUTER_ID,
+	applyAgentScope,
+	isAgentModeScope,
+	isTabScope,
+	tabScopeDecision,
+	voiceScopeMode,
+} from '../../shared/acappella/voice-mode';
+import {
 	isClarification,
 	isConversationalReply,
 	routeTargetSessionId,
@@ -1108,18 +1116,44 @@ export class VoiceSessionService {
 			const roster = await this.publishRoster();
 			if (!this.isCurrentTurn(turn)) return;
 
+			// The binding this turn runs under, taken once. The HUD can switch modes
+			// while the turn is being routed; the switch applies to the NEXT
+			// utterance, never halfway through this one.
+			const scope: VoiceScope = this.scope ?? { kind: 'conductor' };
+
 			// A correction is not a request, so it never reaches the Brain: "no, the
 			// other one" routed as an utterance becomes a prompt, and the agent it
-			// lands in has no idea what it refers to.
-			if (this.lastDispatch && isCorrectionUtterance(utterance)) {
+			// lands in has no idea what it refers to. Not in Tab mode: nothing was
+			// routed there, so there is no "other one", and the words are for the tab.
+			if (!isTabScope(scope) && this.lastDispatch && isCorrectionUtterance(utterance)) {
 				await this.runCorrection(roster, turn);
 				return;
 			}
 
 			const startedAt = Date.now();
-			const context = this.routeContext(roster);
-			const decision = await this.providers.brain.route(utterance, context);
-			if (!this.isCurrentTurn(turn)) return;
+			const context = this.routeContext(roster, scope);
+			let decision: RouteDecision;
+			if (isTabScope(scope)) {
+				// Tab mode: the utterance IS the message, and the Conductor has nothing
+				// to decide. A pinned tab that is gone is reported, not silently
+				// replaced with another one.
+				const agent = roster.find((candidate) => candidate.sessionId === scope.sessionId);
+				if (!agent?.tabs.some((tab) => tab.id === scope.tabId)) {
+					this.fail(
+						'dispatch-failed',
+						'The tab this voice session is talking to no longer exists. Switch to Agent mode or pick another tab.'
+					);
+					return;
+				}
+				decision = tabScopeDecision(utterance, scope);
+			} else {
+				decision = await this.providers.brain.route(utterance, context);
+				if (!this.isCurrentTurn(turn)) return;
+				// Agent mode: the Brain picks the tab, never the agent.
+				if (isAgentModeScope(scope)) {
+					decision = applyAgentScope(decision, scope, roster, utterance);
+				}
+			}
 
 			const targetId = routeTargetSessionId(decision.target);
 			if (targetId && !roster.some((agent) => agent.sessionId === targetId)) {
@@ -1131,7 +1165,7 @@ export class VoiceSessionService {
 			this.lastDecision = decision;
 			this.emit('route-decision', {
 				decision,
-				brainProviderId: this.providers.brain.id,
+				brainProviderId: isTabScope(scope) ? TAB_SCOPE_ROUTER_ID : this.providers.brain.id,
 				latencyMs: Date.now() - startedAt,
 			});
 
@@ -1151,7 +1185,7 @@ export class VoiceSessionService {
 			}
 
 			this.transition('dispatching');
-			await this.dispatch(decision, roster, turn);
+			await this.dispatch(decision, roster, turn, scope);
 		} catch (error) {
 			// A provider that predicted its own failure is announced, not reported: it
 			// has a message written for the user and a recovery to go with it.
@@ -1181,6 +1215,28 @@ export class VoiceSessionService {
 	 */
 	endUtteranceNow(): void {
 		this.composer.armImmediateSettle();
+	}
+
+	/**
+	 * Re-bind the live session: Tab, Agent, or Conductor mode, switched from the
+	 * HUD without ending the conversation.
+	 *
+	 * Applies from the next utterance; a turn already being routed keeps the scope
+	 * it started with (`runTurn` takes its own copy). A pending clarification and
+	 * the conversational exchange belong to the Conductor, so a switch drops them:
+	 * an answer to "which agent?" must not be routed after you have already said
+	 * which one by switching to it.
+	 *
+	 * @returns false when there is no live session to re-bind.
+	 */
+	setScope(scope: VoiceScope): boolean {
+		if (!this.sessionId || this.state === 'idle') return false;
+		this.scope = scope;
+		this.pendingClarification = null;
+		this.conversation.clear();
+		logger.info(`Voice session switched to ${voiceScopeMode(scope)} mode`, LOG_CONTEXT);
+		this.emit('scope-change', { scope });
+		return true;
 	}
 
 	/**
@@ -1222,21 +1278,19 @@ export class VoiceSessionService {
 	private async dispatch(
 		decision: RouteDecision,
 		roster: RosterAgent[],
-		turn: number
+		turn: number,
+		scope: VoiceScope = this.scope ?? { kind: 'conductor' }
 	): Promise<void> {
 		if (!this.executeRoute) {
 			this.fail('dispatch-failed', 'No route executor is configured for this session');
 			return;
 		}
 
-		const bound = this.bindToDocument(decision, roster);
+		const bound = this.bindToDocument(decision, roster, scope);
 
 		let result: VoiceDispatchResult;
 		try {
-			result = await this.executeRoute(bound, {
-				roster,
-				scope: this.scope ?? { kind: 'conductor' },
-			});
+			result = await this.executeRoute(bound, { roster, scope });
 		} catch (error) {
 			// Only the executor's own classified failure is an event. Anything else
 			// is a bug and belongs in Sentry.
@@ -1726,8 +1780,10 @@ export class VoiceSessionService {
 
 	// -- Internals -----------------------------------------------------------
 
-	private routeContext(roster: RosterAgent[]): VoiceRouteContext {
-		const scope = this.scope ?? { kind: 'conductor' };
+	private routeContext(
+		roster: RosterAgent[],
+		scope: VoiceScope = this.scope ?? { kind: 'conductor' }
+	): VoiceRouteContext {
 		// Consumed here, not on the next turn: a question that was asked and then
 		// abandoned must not reinterpret an unrelated sentence later on.
 		const clarification = this.pendingClarification ?? undefined;
@@ -1760,8 +1816,11 @@ export class VoiceSessionService {
 	 * being flattened - and this only fixes where the result lands. Outside a
 	 * document scope it is the identity function.
 	 */
-	private bindToDocument(decision: RouteDecision, roster: RosterAgent[]): RouteDecision {
-		const scope = this.scope;
+	private bindToDocument(
+		decision: RouteDecision,
+		roster: RosterAgent[],
+		scope: VoiceScope | null = this.scope
+	): RouteDecision {
 		if (!isDocumentScope(scope)) return decision;
 		return applyDocumentScope(decision, scope, this.documentTabId(scope, roster));
 	}
