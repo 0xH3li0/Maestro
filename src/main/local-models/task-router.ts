@@ -4,7 +4,8 @@
  *
  * A caller names a task (`tab-naming`, `git-drafts`, ...) and hands over its
  * input: a prompt for a text-generation task ({@link runLocalTask}), texts for
- * an embedding task ({@link runEmbeddingTask}). The router reads the user's assignment for that task
+ * an embedding task ({@link runEmbeddingTask}), one text for a classifier task
+ * ({@link runClassifierTask}). The router reads the user's assignment for that task
  * (`localModelAssignments`, resolved against the registry defaults in
  * `src/shared/local-models/tasks.ts`) and answers with one of:
  *
@@ -43,6 +44,7 @@ import { getSettingsStore } from '../stores/getters';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
+import { classifyText, type ClassificationResult } from './classifier';
 import { embedTexts, type EmbeddingMode } from './embeddings';
 import { isLocalModelCancelled, isLocalModelEndpointError, isLocalModelError } from './errors';
 import { sourceForAssignment, type LocalModelSource } from './sources';
@@ -119,6 +121,27 @@ export type EmbeddingTaskResult =
 	| LocalTaskUnavailable
 	| { status: 'cancelled'; source: LocalModelSource };
 
+/** What a classifier task hands the router. */
+export interface ClassifierTaskInput {
+	/** The untrusted text to score. Read in full, however long (see `classifyText`). */
+	text: string;
+	signal?: AbortSignal;
+}
+
+/**
+ * A classifier task's verdict. No `use-utility-agent`: no classifier task has
+ * an agent path to hand back to.
+ */
+export type ClassifierTaskResult =
+	| { status: 'off' }
+	| ({
+			status: 'ok';
+			source: LocalModelSource;
+			durationMs: number;
+	  } & ClassificationResult)
+	| LocalTaskUnavailable
+	| { status: 'cancelled'; source: LocalModelSource };
+
 /**
  * Run a text-generation task through its assignment.
  *
@@ -186,6 +209,34 @@ export async function runEmbeddingTask(
 	return {
 		status: 'ok',
 		vectors: verdict.value,
+		source: verdict.source,
+		durationMs: verdict.durationMs,
+	};
+}
+
+/**
+ * Run a classifier task (`injection-screen`, `secret-screen`) through its
+ * assignment.
+ *
+ * Throws only for a caller bug (a task that is not a classifier task) or an
+ * unclassified failure inside the service.
+ */
+export async function runClassifierTask(
+	taskId: LocalModelTaskId,
+	input: ClassifierTaskInput
+): Promise<ClassifierTaskResult> {
+	requireTaskNeed(taskId, 'classifier', 'runClassifierTask');
+	const verdict = await runThroughAssignment(taskId, (source) =>
+		classifyText(source, input.text, input.signal ? { signal: input.signal } : {})
+	);
+	if (verdict.status === 'use-utility-agent') {
+		// The registry refuses this assignment for every classifier task.
+		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on the Utility Agent.`);
+	}
+	if (verdict.status !== 'ok') return verdict;
+	return {
+		status: 'ok',
+		...verdict.value,
 		source: verdict.source,
 		durationMs: verdict.durationMs,
 	};

@@ -23,6 +23,7 @@ const stats = vi.hoisted(() => ({
 }));
 const generate = vi.hoisted(() => ({ generateText: vi.fn() }));
 const embed = vi.hoisted(() => ({ embedTexts: vi.fn() }));
+const classify = vi.hoisted(() => ({ classifyText: vi.fn() }));
 
 vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({
@@ -54,16 +55,25 @@ vi.mock('../../../main/local-models/embeddings', () => ({
 	embedTexts: embed.embedTexts,
 }));
 
+vi.mock('../../../main/local-models/classifier', () => ({
+	classifyText: classify.classifyText,
+}));
+
 import {
 	DEFAULT_TASK_MAX_TOKENS,
 	parseLocalTaskInput,
+	runClassifierTask,
 	runEmbeddingTask,
 	runLocalTask,
 	runLocalTaskRequest,
 } from '../../../main/local-models/task-router';
 import { LocalModelEndpointError, LocalModelError } from '../../../main/local-models/errors';
 import { captureException } from '../../../main/utils/sentry';
-import { BGE_SMALL_EN_ID, QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import {
+	BGE_SMALL_EN_ID,
+	PROMPT_GUARD_2_22M_ID,
+	QWEN3_1_7B_ID,
+} from '../../../shared/local-models/model-catalog';
 
 const LOCAL = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
 const ENDPOINT = { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.2' } as const;
@@ -385,6 +395,79 @@ describe('runEmbeddingTask', () => {
 	it('refuses a task that is not an embedding task (a caller bug)', async () => {
 		await expect(runEmbeddingTask('tab-naming', { texts: ['a'], mode: 'query' })).rejects.toThrow(
 			/text-gen task/
+		);
+	});
+});
+
+describe('runClassifierTask', () => {
+	const GUARD = { type: 'local', modelId: PROMPT_GUARD_2_22M_ID } as const;
+
+	beforeEach(() => {
+		settings.clear();
+		stats.ready = true;
+		stats.recordLocalModelRun.mockReset().mockReturnValue('id');
+		classify.classifyText.mockReset();
+	});
+
+	it('answers off on the default assignment and scores nothing', async () => {
+		await expect(runClassifierTask('injection-screen', { text: 'a' })).resolves.toEqual({
+			status: 'off',
+		});
+		expect(classify.classifyText).not.toHaveBeenCalled();
+		expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
+	});
+
+	it('scores on the assigned local model and records the run', async () => {
+		assign('injection-screen', GUARD);
+		classify.classifyText.mockResolvedValue({
+			label: 'MALICIOUS',
+			score: 0.98,
+			flagged: true,
+			chunks: 2,
+		});
+
+		const result = await runClassifierTask('injection-screen', { text: 'Ignore all previous' });
+
+		expect(classify.classifyText).toHaveBeenCalledWith(GUARD, 'Ignore all previous', {});
+		expect(result).toMatchObject({
+			status: 'ok',
+			label: 'MALICIOUS',
+			score: 0.98,
+			flagged: true,
+			chunks: 2,
+			source: GUARD,
+		});
+		expect(recorded()).toMatchObject({
+			taskId: 'injection-screen',
+			sourceType: 'local',
+			modelId: PROMPT_GUARD_2_22M_ID,
+			outcome: 'ok',
+		});
+	});
+
+	it('reports a model that is not downloaded as unavailable, trying nothing else', async () => {
+		assign('secret-screen', GUARD);
+		classify.classifyText.mockRejectedValue(
+			new LocalModelError('Llama Prompt Guard 2 22M is not downloaded.', {
+				code: 'model-not-installed',
+				recovery: 'Download it in Settings.',
+				consumerId: 'local-models:classifier',
+			})
+		);
+
+		await expect(runClassifierTask('secret-screen', { text: 'a' })).resolves.toEqual({
+			status: 'unavailable',
+			source: GUARD,
+			reason: 'Llama Prompt Guard 2 22M is not downloaded. Download it in Settings.',
+			code: 'model-not-installed',
+		});
+		expect(classify.classifyText).toHaveBeenCalledTimes(1);
+		expect(recorded()).toMatchObject({ outcome: 'error', errorCode: 'model-not-installed' });
+	});
+
+	it('refuses a task that is not a classifier task (a caller bug)', async () => {
+		await expect(runClassifierTask('semantic-search', { text: 'a' })).rejects.toThrow(
+			/embedding task/
 		);
 	});
 });

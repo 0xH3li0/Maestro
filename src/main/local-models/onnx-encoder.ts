@@ -310,6 +310,25 @@ function encoderInput(name: string, tokens: TokenizedBatch): BigInt64Array | nul
 	}
 }
 
+/**
+ * A loaded encoder failed on one request, or returned something its run spec
+ * does not describe. Shared by every encoder consumer so the failure reads the
+ * same whichever service ran the graph: the model's name, then what went wrong.
+ */
+export function encoderRunFailure(
+	entry: Pick<LocalModelEntry, 'displayName'>,
+	consumerId: string,
+	detail: string,
+	cause?: unknown
+): LocalModelError {
+	return new LocalModelError(`${entry.displayName} ${detail}`, {
+		code: 'generation-failed',
+		recovery: 'Try again. If it keeps failing, verify the model in Local Models settings.',
+		consumerId,
+		...(cause !== undefined ? { cause } : {}),
+	});
+}
+
 function openFailure(entry: LocalModelEntry, consumerId: string, cause: unknown): LocalModelError {
 	return new LocalModelError(`${entry.displayName} could not be opened.`, {
 		code: 'generation-failed',

@@ -8,7 +8,7 @@
  * `tokenizer_config.json`), and `@huggingface/tokenizers` runs it: WordPiece,
  * Unigram and BPE, pure JavaScript, no native code.
  *
- * Two things this module adds on top of the library:
+ * Three things this module adds on top of the library:
  *
  *   - **Truncation that keeps the special tokens.** The library has none, and
  *     cutting the encoded ids at `maxLength` drops the trailing `[SEP]` / `</s>`
@@ -16,6 +16,10 @@
  *     shortens the CONTENT and re-wraps it in whatever the model's
  *     post-processor added, so the layout is right for every tokenizer family
  *     without knowing which one it is.
+ *   - **Windows for text longer than the model reads.** The same layout lets
+ *     {@link LocalTokenizer.encodeWindows} cut a long text into overlapping
+ *     windows that are each wrapped correctly, for a classifier that must read
+ *     all of a long input rather than its first 512 tokens.
  *   - **Tensors-ready output.** ONNX Runtime wants `int64` inputs, so ids come
  *     back as `BigInt64Array`s rather than number arrays each caller converts,
  *     and {@link LocalTokenizer.encodeBatch} pads a batch into the flat
@@ -91,6 +95,24 @@ export interface LocalTokenizer {
 	encode(text: string, options?: TokenizerEncodeOptions): TokenizedInput;
 	/** Encode every text and pad them to the longest. An empty list is an error. */
 	encodeBatch(texts: readonly string[], options?: TokenizerEncodeOptions): TokenizedBatch;
+	/**
+	 * Encode a text as one or more overlapping windows, each at most
+	 * `maxLength` tokens and each wrapped in the model's own special tokens.
+	 * Truncation would read only the start of a long text; a screen that must
+	 * see all of it reads every window instead. A text that fits is one window.
+	 */
+	encodeWindows(text: string, options: TokenizerWindowOptions): TokenizedInput[];
+}
+
+export interface TokenizerWindowOptions {
+	/** Longest window, special tokens included. */
+	maxLength: number;
+	/**
+	 * Content tokens each window repeats from the one before it, so a span cut
+	 * at a window edge is still read whole by one window. Clamped to under half
+	 * a window's content, which keeps the walk moving forward.
+	 */
+	overlap: number;
 }
 
 const cache = new Map<string, Promise<LocalTokenizer>>();
@@ -161,24 +183,41 @@ export function createLocalTokenizer(
 			const maxLength = options.maxLength ?? modelMaxLength;
 			const truncation = options.truncation ?? true;
 			const full = tokenizer.encode(text, { return_token_type_ids: true });
-			let ids = full.ids;
-			let typeIds = full.token_type_ids;
-			if (truncation && maxLength !== undefined && ids.length > maxLength) {
-				const content = tokenizer.encode(text, { add_special_tokens: false }).ids;
-				const kept = truncationLayout(ids, content, maxLength);
-				ids = kept(ids);
-				if (typeIds) typeIds = kept(typeIds);
+			if (!truncation || maxLength === undefined || full.ids.length <= maxLength) {
+				return toTokenizedInput(full.ids, full.token_type_ids);
 			}
-			return {
-				inputIds: toInt64(ids),
-				attentionMask: new BigInt64Array(ids.length).fill(1n),
-				...(typeIds ? { tokenTypeIds: toInt64(typeIds) } : {}),
-			};
+			const content = tokenizer.encode(text, { add_special_tokens: false }).ids;
+			const layout = contentLayout(full.ids, content, maxLength);
+			const kept = <T>(values: readonly T[]) => sliceContent(values, layout, 0);
+			return toTokenizedInput(
+				kept(full.ids),
+				full.token_type_ids ? kept(full.token_type_ids) : undefined
+			);
 		},
 		encodeBatch(texts, options = {}) {
 			if (texts.length === 0) throw new Error('Cannot encode an empty batch');
 			const rows = texts.map((text) => local.encode(text, options));
-			return padRows(rows, padTokenId);
+			return padTokenizedRows(rows, padTokenId);
+		},
+		encodeWindows(text, { maxLength, overlap }) {
+			const full = tokenizer.encode(text, { return_token_type_ids: true });
+			if (full.ids.length <= maxLength) return [toTokenizedInput(full.ids, full.token_type_ids)];
+			const content = tokenizer.encode(text, { add_special_tokens: false }).ids;
+			const layout = contentLayout(full.ids, content, maxLength);
+			const repeat = Math.max(0, Math.min(Math.floor(overlap), Math.ceil(layout.budget / 2) - 1));
+			const stride = layout.budget - repeat;
+			const windows: TokenizedInput[] = [];
+			for (let start = 0; ; start += stride) {
+				const slice = <T>(values: readonly T[]) => sliceContent(values, layout, start);
+				windows.push(
+					toTokenizedInput(
+						slice(full.ids),
+						full.token_type_ids ? slice(full.token_type_ids) : undefined
+					)
+				);
+				if (start + layout.budget >= content.length) break;
+			}
+			return windows;
 		},
 	};
 	return local;
@@ -203,7 +242,24 @@ function resolvePadTokenId(
 	return (token !== undefined ? tokenizer.token_to_id(token) : undefined) ?? 0;
 }
 
-function padRows(rows: readonly TokenizedInput[], padTokenId: number): TokenizedBatch {
+function toTokenizedInput(ids: readonly number[], typeIds?: readonly number[]): TokenizedInput {
+	return {
+		inputIds: toInt64(ids),
+		attentionMask: new BigInt64Array(ids.length).fill(1n),
+		...(typeIds ? { tokenTypeIds: toInt64(typeIds) } : {}),
+	};
+}
+
+/**
+ * Pad already-encoded rows into one batch. {@link LocalTokenizer.encodeBatch}
+ * is this over freshly encoded texts; a caller holding rows of its own (the
+ * windows of one long text) batches them here. An empty list is an error.
+ */
+export function padTokenizedRows(
+	rows: readonly TokenizedInput[],
+	padTokenId: number
+): TokenizedBatch {
+	if (rows.length === 0) throw new Error('Cannot pad an empty batch');
 	const sequenceLength = Math.max(...rows.map((row) => row.inputIds.length));
 	const size = rows.length * sequenceLength;
 	const inputIds = new BigInt64Array(size).fill(BigInt(padTokenId));
@@ -226,19 +282,24 @@ function padRows(rows: readonly TokenizedInput[], padTokenId: number): Tokenized
 }
 
 /**
- * Work out which positions of a wrapped sequence survive truncation.
+ * Where the content sits inside a wrapped sequence, and how much of it fits.
  *
  * A single sequence is post-processed as `prefix + content + suffix` (`[CLS]
  * ... [SEP]`, `<s> ... </s>`, `<bos> ...`), so the prefix length is wherever the
- * content run starts. Everything outside the content is kept; the content is
- * cut to fit what remains of `maxLength`. Returns a slicer so the token type
- * ids are cut at exactly the same positions as the ids.
+ * content run starts. Everything outside the content is kept on every cut;
+ * `budget` is how many content tokens fit beside it in `maxLength`.
  */
-function truncationLayout(
+interface ContentLayout {
+	prefix: number;
+	contentEnd: number;
+	budget: number;
+}
+
+function contentLayout(
 	full: readonly number[],
 	content: readonly number[],
 	maxLength: number
-): <T>(values: readonly T[]) => T[] {
+): ContentLayout {
 	const specials = full.length - content.length;
 	const budget = maxLength - specials;
 	if (budget < 1) {
@@ -247,8 +308,22 @@ function truncationLayout(
 		);
 	}
 	const prefix = findContentStart(full, content);
-	const contentEnd = prefix + content.length;
-	return (values) => [...values.slice(0, prefix + budget), ...values.slice(contentEnd)];
+	return { prefix, contentEnd: prefix + content.length, budget };
+}
+
+/**
+ * The wrapped sequence with only `budget` content tokens from `start` kept.
+ * Applied to the ids and the token type ids alike, so both are cut at exactly
+ * the same positions.
+ */
+function sliceContent<T>(values: readonly T[], layout: ContentLayout, start: number): T[] {
+	const from = layout.prefix + start;
+	const to = Math.min(from + layout.budget, layout.contentEnd);
+	return [
+		...values.slice(0, layout.prefix),
+		...values.slice(from, to),
+		...values.slice(layout.contentEnd),
+	];
 }
 
 function findContentStart(full: readonly number[], content: readonly number[]): number {

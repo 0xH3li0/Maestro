@@ -16,6 +16,7 @@ import {
 	clearTokenizerCache,
 	createLocalTokenizer,
 	loadTokenizer,
+	padTokenizedRows,
 	TOKENIZER_CONFIG_FILENAME,
 	TOKENIZER_FILENAME,
 } from '../../../main/local-models/tokenizer';
@@ -187,5 +188,78 @@ describe('batching', () => {
 	it('refuses an empty batch', () => {
 		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
 		expect(() => tokenizer.encodeBatch([])).toThrow(/empty batch/);
+	});
+});
+
+describe('windows', () => {
+	let definition: object;
+	let config: Record<string, unknown>;
+
+	beforeEach(async () => {
+		definition = JSON.parse(await fs.readFile(path.join(FIXTURE_DIR, TOKENIZER_FILENAME), 'utf8'));
+		config = JSON.parse(
+			await fs.readFile(path.join(FIXTURE_DIR, TOKENIZER_CONFIG_FILENAME), 'utf8')
+		);
+	});
+
+	// "How do I rename a tab?" is 8 content tokens:
+	// 2129 2079 1045 14916 14074 1037 21628 1029.
+
+	it('returns one window for a text that fits', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const windows = tokenizer.encodeWindows('How do I rename a tab?', {
+			maxLength: 10,
+			overlap: 2,
+		});
+		expect(windows.map((window) => ids(window.inputIds))).toEqual([
+			[101, 2129, 2079, 1045, 14916, 14074, 1037, 21628, 1029, 102],
+		]);
+	});
+
+	it('covers every token in overlapping windows, each wrapped in [CLS] ... [SEP]', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const windows = tokenizer.encodeWindows('How do I rename a tab?', { maxLength: 6, overlap: 1 });
+
+		expect(windows.map((window) => ids(window.inputIds))).toEqual([
+			[101, 2129, 2079, 1045, 14916, 102],
+			[101, 14916, 14074, 1037, 21628, 102],
+			[101, 21628, 1029, 102],
+		]);
+		for (const window of windows) {
+			expect(ids(window.attentionMask).every((value) => value === 1)).toBe(true);
+			expect(ids(window.tokenTypeIds)).toEqual(new Array(window.inputIds.length).fill(0));
+		}
+	});
+
+	it('clamps an overlap that would stop the walk moving forward', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const clamped = tokenizer.encodeWindows('How do I rename a tab?', {
+			maxLength: 6,
+			overlap: 100,
+		});
+		const exact = tokenizer.encodeWindows('How do I rename a tab?', { maxLength: 6, overlap: 1 });
+		expect(clamped.map((window) => ids(window.inputIds))).toEqual(
+			exact.map((window) => ids(window.inputIds))
+		);
+	});
+
+	it('steps a full window at a time with no overlap', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const windows = tokenizer.encodeWindows('How do I rename a tab?', { maxLength: 6, overlap: 0 });
+		expect(windows.map((window) => ids(window.inputIds))).toEqual([
+			[101, 2129, 2079, 1045, 14916, 102],
+			[101, 14074, 1037, 21628, 1029, 102],
+		]);
+	});
+
+	it('pads windows into one batch, and refuses an empty one', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const windows = tokenizer.encodeWindows('How do I rename a tab?', { maxLength: 6, overlap: 1 });
+		const batch = padTokenizedRows(windows, tokenizer.padTokenId);
+		expect(batch.batchSize).toBe(3);
+		expect(batch.sequenceLength).toBe(6);
+		expect(ids(batch.inputIds).slice(12)).toEqual([101, 21628, 1029, 102, 0, 0]);
+		expect(ids(batch.attentionMask).slice(12)).toEqual([1, 1, 1, 1, 0, 0]);
+		expect(() => padTokenizedRows([], 0)).toThrow(/empty batch/);
 	});
 });

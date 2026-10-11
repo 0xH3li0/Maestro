@@ -25,8 +25,13 @@
 
 import type { LocalEmbeddingSpec } from '../../shared/local-models/types';
 import { embedWithLocalModelEndpoint } from './endpoint-service';
-import { LocalModelError, throwIfLocalModelCancelled } from './errors';
-import { encoderFeeds, getOnnxEncoderPool, type LoadedEncoder } from './onnx-encoder';
+import { throwIfLocalModelCancelled } from './errors';
+import {
+	encoderFeeds,
+	encoderRunFailure,
+	getOnnxEncoderPool,
+	type LoadedEncoder,
+} from './onnx-encoder';
 import type { OnnxTensor } from './runtime/onnx-types';
 import type { LocalModelSource } from './sources';
 import type { TokenizedBatch } from './tokenizer';
@@ -123,14 +128,21 @@ async function runEmbeddingBatch(
 	try {
 		outputs = await encoder.session.run(feeds);
 	} catch (error) {
-		throw runFailure(encoder, `failed on this request: ${(error as Error).message}`, error);
+		throw encoderRunFailure(
+			encoder.entry,
+			CONSUMER_ID,
+			`failed on this request: ${(error as Error).message}`,
+			error
+		);
 	}
 	const output = outputs[spec.outputName];
-	if (!output) throw runFailure(encoder, `produced no "${spec.outputName}" output.`);
+	if (!output) {
+		throw encoderRunFailure(encoder.entry, CONSUMER_ID, `produced no "${spec.outputName}" output.`);
+	}
 	try {
 		return poolEmbeddings(output, tokens, spec);
 	} catch (error) {
-		throw runFailure(encoder, (error as Error).message, error);
+		throw encoderRunFailure(encoder.entry, CONSUMER_ID, (error as Error).message, error);
 	}
 }
 
@@ -204,17 +216,4 @@ export function l2Normalize(vector: Float32Array): Float32Array {
 	const norm = Math.sqrt(sum);
 	if (norm > 0) for (let i = 0; i < vector.length; i++) vector[i] /= norm;
 	return vector;
-}
-
-function runFailure(
-	encoder: Pick<LoadedEncoder, 'entry'>,
-	detail: string,
-	cause?: unknown
-): LocalModelError {
-	return new LocalModelError(`${encoder.entry.displayName} ${detail}`, {
-		code: 'generation-failed',
-		recovery: 'Try again. If it keeps failing, verify the model in Local Models settings.',
-		consumerId: CONSUMER_ID,
-		...(cause !== undefined ? { cause } : {}),
-	});
 }
