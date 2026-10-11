@@ -306,6 +306,36 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli window`
+
+List Maestro windows, and move agents or whole groups between them
+
+## `maestro-cli window list`
+
+List open windows and the agents each one holds
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli window move-agent <agent-id>`
+
+Move an agent (with its worktrees) to another window
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--to <window>` | "new", "main", a window number, a window id, or a window name | -       |
+| `--json`        | Output as JSON                                                | -       |
+
+## `maestro-cli window move-group <group-id>`
+
+Move every agent in a group (with subgroups when nesting is on) to another window
+
+| Option          | Description                                                   | Default |
+| --------------- | ------------------------------------------------------------- | ------- |
+| `--to <window>` | "new", "main", a window number, a window id, or a window name | -       |
+| `--json`        | Output as JSON                                                | -       |
+
 ## `maestro-cli snooze`
 
 Park a tab until later, and manage what is parked
@@ -456,7 +486,7 @@ Stop a group chat's moderator and participants
 
 ## `maestro-cli open-file <file-path>`
 
-Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)
+Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)
 
 | Option             | Description                                                                                   | Default |
 | ------------------ | --------------------------------------------------------------------------------------------- | ------- |
@@ -793,8 +823,9 @@ Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 | `--reset-on-completion`         | With --auto-run: uncheck every task when the run finishes                                                                           | -       |
 | `--loop`                        | With --auto-run: re-run the documents once every task is checked off                                                                | -       |
 | `--max-loops <n>`               | With --auto-run: loop ceiling (implies --loop)                                                                                      | -       |
-| `--model <id>`                  | With --auto-run: model for this run only                                                                                            | -       |
-| `--effort <level>`              | With --auto-run: reasoning effort for this run only                                                                                 | -       |
+| `--tier <level>`                | Model tier for the prompt run: low, medium, high (mapped per provider)                                                              | -       |
+| `--model <id>`                  | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                     | -       |
+| `--effort <level>`              | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only             | -       |
 | `--per-document`                | With --auto-run: one agent turn per document instead of one per task                                                                | -       |
 | `--ignore-model-hints`          | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                          | -       |
 | `--no-auto-resume`              | With --auto-run: stay paused after an agent error                                                                                   | -       |

@@ -6,9 +6,11 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
@@ -397,6 +399,12 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * `maestro-cli window` - list windows, or move an agent or a whole group
+ * between them. Answered by the primary window through the same WindowContext
+ * methods the Left Bar menus call. Resolves rather than rejects on a miss.
+ */
+export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
 export type ReorderTabCallback = (
 	sessionId: string,
 	fromIndex: number,
@@ -1397,6 +1405,10 @@ export interface CueSubscriptionInfo {
 	enabled: boolean;
 	lastTriggered?: number;
 	triggerCount: number;
+	/** The run's model choice, when the subscription sets one. */
+	tier?: CueTurnSettings['tier'];
+	model?: string;
+	effort?: CueTurnSettings['effort'];
 }
 
 /** Web-specific Cue activity log entry (simplified from engine types) */

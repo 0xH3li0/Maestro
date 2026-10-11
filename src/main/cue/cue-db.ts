@@ -194,7 +194,8 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
     chain_root_id TEXT,
     parent_event_id TEXT,
     auto_run_json TEXT,
-    notify_json TEXT
+    notify_json TEXT,
+    turn_settings_json TEXT
   )
 `;
 
@@ -209,11 +210,15 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
 // `notify_json` is the same idea for `action: notify`: the message survived a
 // restart in the `prompt` slot, but `sticky` did not, so a toast the user asked
 // to stay on screen came back as one that dismisses itself.
+//
+// `turn_settings_json` carries the subscription's tier / model / effort so a
+// run restored after a crash spawns on the model it was queued with.
 const CUE_EVENT_QUEUE_ADDITIVE_COLUMNS = [
 	'chain_root_id',
 	'parent_event_id',
 	'auto_run_json',
 	'notify_json',
+	'turn_settings_json',
 ] as const;
 
 const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
@@ -1294,6 +1299,8 @@ export interface CueQueuedEventRecord {
 	/** Serialized `CueNotifyConfig` for `action: notify`, NULL for every other
 	 *  action and for rows persisted before the column existed. */
 	notifyJson: string | null;
+	/** JSON of the subscription's `CueTurnSettings`, NULL when it sets none. */
+	turnSettingsJson: string | null;
 }
 
 /** Persist a queued event. Throws on DB failure - use safePersistQueuedEvent for
@@ -1304,8 +1311,8 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			`INSERT OR REPLACE INTO cue_event_queue
 			 (id, session_id, subscription_name, event_json, prompt, output_prompt,
 			  cli_output_json, action, command_json, chain_depth, queued_at,
-			  chain_root_id, parent_event_id, auto_run_json, notify_json)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  chain_root_id, parent_event_id, auto_run_json, notify_json, turn_settings_json)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			record.id,
@@ -1322,7 +1329,8 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			record.chainRootId,
 			record.parentEventId,
 			record.autoRunJson,
-			record.notifyJson
+			record.notifyJson,
+			record.turnSettingsJson ?? null
 		);
 }
 
@@ -1358,6 +1366,7 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		parent_event_id: string | null;
 		auto_run_json: string | null;
 		notify_json: string | null;
+		turn_settings_json: string | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -1376,6 +1385,7 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		parentEventId: row.parent_event_id,
 		autoRunJson: row.auto_run_json ?? null,
 		notifyJson: row.notify_json ?? null,
+		turnSettingsJson: row.turn_settings_json ?? null,
 	}));
 }
 

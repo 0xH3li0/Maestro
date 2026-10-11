@@ -121,6 +121,8 @@ import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
+import { resolveCueTurnSettings } from '../shared/cue/turn-settings';
+import { describeTurnSettings } from '../shared/autorunTurnSettings';
 import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
@@ -1283,6 +1285,7 @@ app
 				command,
 				notify,
 				autoRun,
+				turnSettings,
 			}) => {
 				const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
 				const storedSession = storedSessions.find((s) => s.id === sessionId);
@@ -1522,6 +1525,23 @@ app
 					await import('./utils/maestro-system-prompt');
 				const appendSystemPrompt = await buildMaestroSystemPromptForSession(storedSession.id);
 
+				// The subscription's tier / model / effort outranks the agent's own
+				// config for this run only. A tier or effort the provider cannot
+				// honor falls back to the agent's value and is logged as a warning,
+				// so a run never silently lands on a different model than asked.
+				const turn = resolveCueTurnSettings(
+					storedSession.toolType,
+					turnSettings,
+					storedSession.customModel,
+					storedSession.customEffort
+				);
+				const turnNote = describeTurnSettings(turn);
+				if (turnNote) {
+					const line = `[CUE] "${subscriptionName}" model: ${turnNote}`;
+					if (turn.warnings.length > 0) logger.warn(line, 'Cue');
+					else logger.cue(line, 'Cue');
+				}
+
 				const result = await executeCuePrompt({
 					runId,
 					session: {
@@ -1548,11 +1568,11 @@ app
 					customPath: resolvedAgentPath,
 					customArgs: storedSession.customArgs,
 					customEnvVars: storedSession.customEnvVars,
-					customModel: storedSession.customModel,
-					customEffort: storedSession.customEffort,
+					customModel: turn.model,
+					customEffort: turn.effort,
 					// Claude token-source selection (TUI / API / dynamic), read from
-					// the same persisted session record that supplies customModel
-					// above, so Cue runs honor the triggering agent's choice.
+					// the same persisted session record the model fallback above
+					// reads, so Cue runs honor the triggering agent's choice.
 					enableMaestroP: storedSession.enableMaestroP,
 					maestroPMode: storedSession.maestroPMode,
 					maestroPPath: storedSession.maestroPPath,

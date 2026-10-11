@@ -50,6 +50,8 @@ import type {
 	CueScheduleDay,
 } from '../../shared/cue/contracts';
 import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
+import { TIER_LEVELS, asTierLevel } from '../../shared/modelTiers';
+import { formatCueTurnSettings } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
 
 export interface CueScheduleOptions {
@@ -91,6 +93,7 @@ export interface CueScheduleOptions {
 	worktreePath?: string;
 	baseBranch?: string;
 	createPr?: boolean;
+	tier?: string;
 	json?: boolean;
 }
 
@@ -190,6 +193,9 @@ interface ScheduledTaskRow {
 	 *  worktree it fires in. Present only on autorun rows, so a schedule written
 	 *  with `--auto-run` can be read back and checked. */
 	auto_run?: CueAutoRunConfig;
+	tier: string;
+	model: string;
+	effort: string;
 }
 
 function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
@@ -208,6 +214,9 @@ function toRow(task: ScheduledTask, now: number): ScheduledTaskRow {
 		action: task.action,
 		label: task.label,
 		...(task.autoRun ? { auto_run: task.autoRun } : {}),
+		tier: task.tier ?? '',
+		model: task.model ?? '',
+		effort: task.effort ?? '',
 	};
 }
 
@@ -558,13 +567,16 @@ function parseTiming(options: CueScheduleOptions): ParsedTiming {
 // create
 // ────────────────────────────────────────────────────────────────────────────
 
-/** The flags that only describe an Auto Run, by the name the user typed. */
+/**
+ * The flags that only describe an Auto Run, by the name the user typed.
+ * `--model` and `--effort` are NOT here: with `--auto-run` they describe the
+ * run (see `buildAutoRunConfig`), without it they are the prompt run's model
+ * choice (see `runCreate`).
+ */
 const AUTO_RUN_ONLY_FLAGS: ReadonlyArray<[keyof CueScheduleOptions, string]> = [
 	['resetOnCompletion', '--reset-on-completion'],
 	['loop', '--loop'],
 	['maxLoops', '--max-loops'],
-	['model', '--model'],
-	['effort', '--effort'],
 	['perDocument', '--per-document'],
 	['ignoreModelHints', '--ignore-model-hints'],
 	['autoResumeAfter', '--auto-resume-after'],
@@ -754,6 +766,40 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		errorOut('--sticky requires --notify', options, 'STICKY_WITHOUT_NOTIFY');
 	}
 
+	// `--model` and `--effort` mean two things. With --auto-run they are the
+	// run's own model and effort and already travel in the Auto Run payload
+	// (`buildAutoRunConfig`). Without it they are the prompt run's model choice,
+	// stored on the subscription next to `--tier`. A tier has no Auto Run
+	// counterpart, so that combination is refused rather than silently dropped.
+	if (autoRun && options.tier !== undefined) {
+		errorOut(
+			'--tier cannot be combined with --auto-run (use --model)',
+			options,
+			'TIER_WITH_AUTO_RUN'
+		);
+	}
+	const turnModel = autoRun ? undefined : options.model;
+	const turnEffort = autoRun ? undefined : options.effort;
+	const levels = TIER_LEVELS.join(', ');
+	const tier = options.tier !== undefined ? asTierLevel(options.tier) : undefined;
+	if (options.tier !== undefined && !tier) {
+		errorOut(`--tier must be one of: ${levels}`, options, 'BAD_TIER');
+	}
+	const effort = turnEffort !== undefined ? asTierLevel(turnEffort) : undefined;
+	if (turnEffort !== undefined && !effort) {
+		errorOut(`--effort must be one of: ${levels}`, options, 'BAD_EFFORT');
+	}
+	const model = turnModel?.trim() || undefined;
+	if (turnModel !== undefined && !model) {
+		errorOut('--model needs a model id', options, 'BAD_MODEL');
+	}
+	if (tier && model) {
+		errorOut('pass --tier or --model, not both', options, 'TIER_AND_MODEL');
+	}
+	if ((tier || model || effort) && !hasPrompt) {
+		errorOut('--tier, --model, and --effort need --prompt', options, 'MODEL_WITHOUT_PROMPT');
+	}
+
 	let graceMinutes: number | undefined;
 	if (options.graceMinutes !== undefined) {
 		if (timing.kind !== 'once') {
@@ -794,6 +840,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		// the Auto Run window: the alternative is a run that never happened and
 		// left nothing behind to say why.
 		keepOnFailure: options.keepOnFailure === true || autoRun !== undefined,
+		tier,
+		model,
+		effort,
 	};
 
 	let names: string[];
@@ -824,6 +873,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 				interval_minutes: timing.intervalMinutes ?? null,
 				agent_id: agent.id,
 				pipeline_name: pipelineName,
+				tier: tier ?? '',
+				model: model ?? '',
+				effort: effort ?? '',
 			})
 		);
 		return;
@@ -831,5 +883,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 
 	const quoted = names.map((n) => `'${n}'`).join(', ');
 	const noun = names.length === 1 ? 'task' : 'tasks';
-	console.log(`Scheduled ${noun} ${quoted} on agent ${agentDisplay}: ${describeTiming(timing)}`);
+	const modelLabel = formatCueTurnSettings({ tier, model, effort });
+	const modelNote = modelLabel ? ` (${modelLabel})` : '';
+	console.log(
+		`Scheduled ${noun} ${quoted} on agent ${agentDisplay}: ${describeTiming(timing)}${modelNote}`
+	);
 }

@@ -9,7 +9,7 @@ import { logger } from '../../../utils/logger';
 import { getSshRemoteById } from '../../../stores';
 import { createSafeSend } from '../../../utils/safe-send';
 import { createIpcHandler } from '../../../utils/ipcHandler';
-import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../../utils/watcher-ignore';
+import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreDotfilesUnder } from '../../../utils/watcher-ignore';
 import { readDirRemote } from '../../../utils/remote-fs';
 import { captureException } from '../../../utils/sentry';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
@@ -385,7 +385,7 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					// only the actual worktree is reported as discovered.
 					const watcher = chokidar.watch(worktreePath, {
 						ignored: [
-							/(^|[/\\])\../, // Ignore dotfiles
+							ignoreDotfilesUnder(worktreePath), // Ignore dotfiles below the root, not above it
 							WINDOWS_LOCKED_SYSTEM_FILES,
 						],
 						persistent: true,
