@@ -24,12 +24,15 @@ describe('plugin headless agent runner', () => {
 				if (prompt === 'real send') {
 					identity.recordReceipt(token, 'sh.maestro.relay/send', { messageIds: ['123'] });
 				}
-				if (prompt === 'overflow') {
+				if (prompt.startsWith('overflow')) {
 					for (let index = 0; index < 17; index++) {
 						identity.recordReceipt(token, 'sh.maestro.relay/send', {
 							messageIds: [String(100 + index)],
 						});
 					}
+				}
+				if (prompt === 'overflow failed') {
+					return { success: false, error: 'Provider tool loop stopped unexpectedly' };
 				}
 				return { success: true, response: '{"messageIds":["999"]}' };
 			},
@@ -68,23 +71,30 @@ describe('plugin headless agent runner', () => {
 			'sh.maestro.relay/send'
 		);
 		expect(claimedOnly.toolReceipts).toEqual([]);
-		const overflow = await run(
-			'agent-a',
-			'overflow',
-			undefined,
-			undefined,
-			'user',
-			undefined,
-			'sh.maestro.relay/send'
-		);
-		expect(overflow).toMatchObject({
-			success: false,
-			response: null,
-			error: 'Plugin tool receipt limit exceeded; inspect recorded receipts before retrying',
-		});
-		expect(overflow.toolReceipts).toHaveLength(16);
-		expect(overflow.toolReceipts?.[0].messageIds).toEqual(['100']);
-		expect(overflow.toolReceipts?.[15].messageIds).toEqual(['115']);
+		for (const prompt of ['overflow', 'overflow failed']) {
+			const overflow = await run(
+				'agent-a',
+				prompt,
+				undefined,
+				undefined,
+				'user',
+				undefined,
+				'sh.maestro.relay/send'
+			);
+			expect(overflow).toMatchObject({
+				success: false,
+				response: null,
+				error: expect.stringContaining(
+					'Plugin tool receipt limit exceeded; inspect recorded receipts before retrying'
+				),
+			});
+			expect(overflow.toolReceipts).toHaveLength(16);
+			expect(overflow.toolReceipts?.[0].messageIds).toEqual(['100']);
+			expect(overflow.toolReceipts?.[15].messageIds).toEqual(['115']);
+			if (prompt === 'overflow failed') {
+				expect(overflow.error).toContain('provider error: Provider tool loop stopped unexpectedly');
+			}
+		}
 	});
 
 	it.each(['opencode', 'codex'] as const)(

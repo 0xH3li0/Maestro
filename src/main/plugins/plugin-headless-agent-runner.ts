@@ -123,11 +123,9 @@ export function createPluginHeadlessAgentRunner(
 				...(success
 					? {}
 					: {
-							error:
-								result.error ??
-								(receiptsOverflowed
-									? 'Plugin tool receipt limit exceeded; inspect recorded receipts before retrying'
-									: 'Agent run failed or returned no final text'),
+							error: receiptsOverflowed
+								? `Plugin tool receipt limit exceeded; inspect recorded receipts before retrying${result.error ? `; provider error: ${result.error}` : ''}`
+								: (result.error ?? 'Agent run failed or returned no final text'),
 						}),
 			};
 		} finally {

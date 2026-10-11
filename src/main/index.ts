@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { DURATION_MS } from '../shared/duration';
-import { installApplicationMenu } from './app-menu';
+import { installApplicationMenu, setMenuEncoreFeatures } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -3421,7 +3421,11 @@ app
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
 		// menu is display-only and how clicks are routed back to the renderer.
+		// The Encore flags go in first: an item for a switched-off feature is
+		// left out, and the menu follows the flags live from then on.
+		setMenuEncoreFeatures(store.get('encoreFeatures'));
 		installApplicationMenu();
+		store.onDidChange('encoreFeatures', (value) => setMenuEncoreFeatures(value));
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).
