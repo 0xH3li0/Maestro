@@ -7,7 +7,11 @@
  */
 
 import { getQuickChatController } from '../../../quick-chat';
-import type { QuickChatCommand } from '../../../../shared/quickChat';
+import {
+	validateQuickChatBoundsRequest,
+	type QuickChatBoundsRequest,
+	type QuickChatCommand,
+} from '../../../../shared/quickChat';
 import { logger } from '../../../utils/logger';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -67,6 +71,20 @@ export function handleQuickChat(
 			return;
 		}
 		reply({ success: true, status });
+		return;
+	}
+
+	if (action === 'bounds') {
+		const request: QuickChatBoundsRequest = {};
+		for (const key of ['x', 'y', 'width', 'height'] as const) {
+			if (message[key] !== undefined) request[key] = message[key] as number;
+		}
+		const invalid = validateQuickChatBoundsRequest(request);
+		if (invalid) {
+			reply({ success: false, error: invalid });
+			return;
+		}
+		reply({ success: true, status: controller.setBounds(request) });
 		return;
 	}
 

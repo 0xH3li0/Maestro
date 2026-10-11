@@ -24,6 +24,7 @@ import {
 } from '../../../../shared/plugins/first-party';
 import type { PermissionRequest } from '../../../../shared/plugins/permissions';
 import { buildExtensions, type UnifiedExtension } from './extensionModel';
+import { hostPlatform } from '../../../utils/platformUtils';
 
 /** Is this Encore flag one of the five first-party plugin-backed features? */
 function isFirstPartyFlag(flag: keyof EncoreFeatureFlags): flag is FirstPartyEncoreFlag {
@@ -302,7 +303,7 @@ export function useExtensions(): UseExtensionsResult {
 		[]
 	);
 
-	const extensions = buildExtensions(encoreFeatures, plugins);
+	const extensions = buildExtensions(encoreFeatures, plugins, hostPlatform());
 
 	return {
 		extensions,

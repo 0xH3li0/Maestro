@@ -50,6 +50,7 @@ Built-in features work with the community plugin subsystem switched off - that i
 | Coworking                              | Agents     | -                              | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
 | OpenCode Server                        | Agents     | -                              | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
 | [Computer History](./computer-history) | Data       | -                              | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
+| [MaestroRun](./maestro-run)            | Automation | -                              | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
 
 Features without a shortcut are not opened from the keyboard: they change how something you already use behaves, rather than putting a new surface on screen.
 

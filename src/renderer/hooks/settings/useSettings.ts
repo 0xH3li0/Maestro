@@ -52,7 +52,10 @@ import { logger } from '../../utils/logger';
 import type { TypographySurface } from '../../../shared/typography';
 import type { TypographyPresetId } from '../../../shared/typographyPresets';
 import type { TypographySnapshot } from '../../../shared/typographySnapshot';
-import { applyTypographyVars } from '../../utils/applyTypographyVars';
+import {
+	usePublishTypographyVars,
+	useReloadSettingsOnExternalChange,
+} from './useWindowSettingsSync';
 
 export interface UseSettingsReturn {
 	// Loading state
@@ -613,65 +616,9 @@ export function useSettings(): UseSettingsReturn {
 		return cleanup;
 	}, []);
 
-	// Reload settings when external change detected (e.g., maestro-cli settings set)
-	useEffect(() => {
-		if (!window.maestro?.settings?.onExternalChange) {
-			return;
-		}
-		const cleanup = window.maestro.settings.onExternalChange(() => {
-			logger.info('[Settings] External settings change detected, reloading');
-			loadAllSettings();
-		});
-		return cleanup;
-	}, []);
-
-	// Publish the resolved typography as CSS custom properties on the document
-	// root, and set the root font-size so rem-based Tailwind spacing scales.
-	//
-	// The custom properties are how a font setting reaches surfaces no prop can
-	// carry: everything that portals to document.body (47 components) and every
-	// `font-mono` utility (~200 sites). See applyTypographyVars.
-	//
-	// Gated on settingsLoaded so the app does not paint at the default size and
-	// then jump to the saved one.
-	useEffect(() => {
-		if (!store.settingsLoaded) return;
-		applyTypographyVars({
-			fonts: {
-				interface: store.fontFamily,
-				chat: store.chatFontFamily,
-				terminal: store.terminalFontFamily,
-				filePreview: store.filePreviewFontFamily,
-				fileEditor: store.fileEditorFontFamily,
-				documentGraph: store.documentGraphFontFamily,
-			},
-			sizes: {
-				interface: store.fontSize,
-				chat: store.chatFontSize,
-				terminal: store.terminalFontSize,
-				filePreview: store.filePreviewFontSize,
-				fileEditor: store.fileEditorFontSize,
-				documentGraph: store.documentGraphFontSize,
-			},
-			baseSize: store.fontSize,
-			zoom: store.fontZoom,
-		});
-	}, [
-		store.settingsLoaded,
-		store.fontFamily,
-		store.chatFontFamily,
-		store.terminalFontFamily,
-		store.filePreviewFontFamily,
-		store.fileEditorFontFamily,
-		store.documentGraphFontFamily,
-		store.fontSize,
-		store.chatFontSize,
-		store.terminalFontSize,
-		store.filePreviewFontSize,
-		store.fileEditorFontSize,
-		store.documentGraphFontSize,
-		store.fontZoom,
-	]);
+	// Shared with every secondary window (see useWindowSettingsSync).
+	useReloadSettingsOnExternalChange();
+	usePublishTypographyVars();
 
 	// Surface global-hotkey registration failures (e.g. combo already owned by
 	// another app). Mounted here so the toast fires even when Settings is closed.

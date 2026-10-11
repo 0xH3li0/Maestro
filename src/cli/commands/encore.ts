@@ -4,6 +4,11 @@
 // the Settings -> Encore Features toggles.
 
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import {
+	FIRST_PARTY_PLUGINS,
+	isFirstPartyPluginAvailableOn,
+	type FirstPartyEncoreFlag,
+} from '../../shared/plugins/first-party';
 import { readSettingValue } from '../services/storage';
 import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
 
@@ -17,6 +22,7 @@ const FEATURES: Record<string, string> = {
 	pianola: 'Pianola (Manager Agent)',
 	computerHistory: 'Computer History',
 	quickChat: 'Quick Chat',
+	maestroRun: 'MaestroRun (macOS)',
 };
 
 const ALIASES: Record<string, string> = {
@@ -42,10 +48,23 @@ const ALIASES: Record<string, string> = {
 	'screen-history': 'computerHistory',
 	'quick-chat': 'quickChat',
 	quickchat: 'quickChat',
+	'maestro-run': 'maestroRun',
+	maestrorun: 'maestroRun',
 };
 
 interface EncoreOptions {
 	json?: boolean;
+}
+
+/** Whether `key` exists on this operating system (a feature with no platform list exists everywhere). */
+function isAvailableHere(key: string): boolean {
+	const definition = FIRST_PARTY_PLUGINS[key as FirstPartyEncoreFlag];
+	return !definition || isFirstPartyPluginAvailableOn(definition, process.platform);
+}
+
+/** The features this machine can run: the ones listed and accepted by `enable`. */
+function availableFeatureKeys(): string[] {
+	return Object.keys(FEATURES).filter(isAvailableHere);
 }
 
 function readFlags(): Record<string, boolean> {
@@ -54,7 +73,7 @@ function readFlags(): Record<string, boolean> {
 	// and reporting every feature as off would contradict the running app.
 	const resolved = resolveEncoreFeatures(readSettingValue('encoreFeatures'));
 	const flags: Record<string, boolean> = {};
-	for (const key of Object.keys(FEATURES)) {
+	for (const key of availableFeatureKeys()) {
 		flags[key] = resolved[key as keyof typeof resolved];
 	}
 	return flags;
@@ -77,7 +96,8 @@ export function encoreList(options: EncoreOptions): void {
 		return;
 	}
 	console.log('Encore Features:');
-	for (const [key, label] of Object.entries(FEATURES)) {
+	for (const key of availableFeatureKeys()) {
+		const label = FEATURES[key];
 		console.log(
 			`  ${flags[key] ? 'on ' : 'off'}  ${key}${' '.repeat(Math.max(1, 16 - key.length))}${label}`
 		);
@@ -92,9 +112,15 @@ export async function encoreSet(
 	const key = resolveFeature(feature);
 	if (!key) {
 		failCommand(
-			`Unknown Encore feature "${feature}". Valid features: ${Object.keys(FEATURES).join(', ')}.`,
+			`Unknown Encore feature "${feature}". Valid features: ${availableFeatureKeys().join(', ')}.`,
 			options.json
 		);
+	}
+
+	// A feature that does not exist on this OS cannot be switched on. The CLI
+	// runs on the same machine as the app, so its own platform is the host's.
+	if (enabled && !isAvailableHere(key)) {
+		failCommand(`${FEATURES[key]} is not available on this operating system.`, options.json);
 	}
 
 	const flags = readFlags();

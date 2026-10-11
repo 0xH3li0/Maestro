@@ -35,6 +35,40 @@ describe('Computer History prompts', () => {
 		expect(section.length).toBeLessThan(2500);
 	});
 
+	it('discloses in steps: the guide carries the detail the section leaves out', () => {
+		const read = (file: string) => fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8');
+		const section = read('computer-history-system.md');
+		const guide = read('_computer-history.md');
+		// The section stays a mention; filters, output shape and formats live in the guide.
+		expect(guide.length).toBeGreaterThan(section.length * 3);
+		for (const detail of ['--kind', '--grep', '"limited"', 'SCHEMA.md', 'digests', 'blocked']) {
+			expect(guide, detail).toContain(detail);
+		}
+		expect(guide).toMatch(/never turn computer history on yourself/i);
+	});
+
+	it('the on-demand includes route an agent to it, gated and never self-enabled', () => {
+		const read = (file: string) => fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8');
+		const cli = read('_maestro-cli.md');
+		expect(cli).toContain('**computer-history**');
+		expect(cli).toContain('prompts get _computer-history');
+
+		const routing = read('_interface-primitives.md')
+			.split('\n')
+			.find((line) => line.includes('encoreFeatures.computerHistory'));
+		expect(routing).toBeDefined();
+		expect(routing).toContain('computer-history status');
+		expect(routing).toContain('prompts get _computer-history');
+		expect(routing).toMatch(/only when the user explicitly asks/);
+		// Switching the feature off stops recording; it does not hide saved history.
+		expect(routing).toMatch(/saved earlier is still readable/);
+		expect(routing).toMatch(/untrusted/i);
+
+		expect(read('_documentation-index.md')).toContain(
+			'https://docs.runmaestro.ai/computer-history.md'
+		);
+	});
+
 	it('no prompt or generated doc contains an em or en dash', () => {
 		for (const file of ['computer-history-system.md', '_computer-history.md']) {
 			expect(DASHES.test(fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8')), file).toBe(false);

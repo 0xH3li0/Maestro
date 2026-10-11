@@ -105,6 +105,7 @@ import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { quickChat } from './commands/quick-chat';
+import { maestroRun } from './commands/maestro-run';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -1898,7 +1899,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
@@ -2341,6 +2342,39 @@ profiling
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profilingStatus);
 
+// MaestroRun commands (macOS only) - install the signed launcher that holds
+// Full Disk Access for scheduled scripts, and walk the grant. Each verb is the
+// same action as the matching button on the MaestroRun tile in Settings.
+const maestroRunCmd = program
+	.command('maestro-run')
+	.description(
+		'MaestroRun (macOS): install the launcher and grant it Full Disk Access for scheduled scripts'
+	);
+
+maestroRunCmd
+	.command('status')
+	.description('Re-check the launcher: installed version, signature, and Full Disk Access')
+	.option('--check-latest', 'Also ask GitHub for the newest release')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => maestroRun('status', options));
+
+maestroRunCmd
+	.command('install')
+	.description(
+		'Download, verify, and install the newest MaestroRun release for this Mac (or update it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => maestroRun('install', options));
+
+maestroRunCmd
+	.command('grant')
+	.description(
+		'Open System Settings on the Full Disk Access list and watch for the switch (the user flips it)'
+	)
+	.option('--reveal', 'Also show MaestroRun.app in Finder, for dragging into the list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => maestroRun('grant', options));
+
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.
 const quickChatCmd = program
@@ -2408,6 +2442,18 @@ quickChatCmd
 	.description('Stop the reply the agent is writing')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('stop', {}, options));
+
+quickChatCmd
+	.command('bounds')
+	.description(
+		'Move or resize the window, as dragging it does, and remember it (--height is the conversation height)'
+	)
+	.option('--x <px>', 'Left edge, in screen points (give with --y)')
+	.option('--y <px>', 'Top edge, in screen points (give with --x)')
+	.option('--width <px>', 'Width')
+	.option('--height <px>', 'Height of the conversation shape')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('bounds', {}, options));
 
 // Cadenza commands - open small cadenza panels that display or track work.
 const cadenza = program

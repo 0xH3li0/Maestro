@@ -224,6 +224,7 @@ import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
+import type { MaestroRunApi } from '../main/preload/maestroRun';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -1800,6 +1801,11 @@ interface MaestroAPI {
 	 * bridge refuses every `computerHistory:*` channel (D15).
 	 */
 	computerHistory: ComputerHistoryApi;
+	/**
+	 * MaestroRun (macOS launcher install, the Full Disk Access walkthrough, and
+	 * the readiness that gates its system-prompt section).
+	 */
+	maestroRun: MaestroRunApi;
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
 		refresh: (

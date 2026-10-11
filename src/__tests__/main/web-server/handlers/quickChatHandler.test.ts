@@ -21,12 +21,14 @@ const status = {
 	visible: true,
 	hotkey: ['Alt', 'Space'],
 	hotkeyRegistered: true,
+	bounds: null,
 	snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
 };
 const controller = {
 	init: vi.fn(),
 	runCommand: vi.fn(),
 	windowAction: vi.fn(),
+	setBounds: vi.fn(),
 	getStatus: vi.fn(),
 };
 let activeController: typeof controller | null = controller;
@@ -62,6 +64,7 @@ describe('quick_chat handler', () => {
 		activeController = controller;
 		controller.getStatus.mockReturnValue(status);
 		controller.windowAction.mockReturnValue(status);
+		controller.setBounds.mockReturnValue(status);
 		controller.runCommand.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
@@ -150,5 +153,29 @@ describe('quick_chat handler', () => {
 		activeController = null;
 		handler.handleMessage(client, { type: 'quick_chat', action: 'status', requestId: 'r8' });
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r8' });
+	});
+
+	it('moves and resizes the window through the controller', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'bounds',
+			x: 100,
+			y: 50,
+			width: 700,
+			requestId: 'r9',
+		});
+		expect(controller.setBounds).toHaveBeenCalledWith({ x: 100, y: 50, width: 700 });
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r9' });
+	});
+
+	it('refuses bounds a drag could not produce, without touching the window', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'bounds',
+			width: 10,
+			requestId: 'r10',
+		});
+		expect(controller.setBounds).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r10' });
 	});
 });

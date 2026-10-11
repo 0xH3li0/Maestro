@@ -5,10 +5,19 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
-import type { QuickChatStatus } from '../../shared/quickChat';
+import {
+	validateQuickChatBoundsRequest,
+	type QuickChatBoundsRequest,
+	type QuickChatStatus,
+} from '../../shared/quickChat';
 
 export interface QuickChatOptions {
 	json?: boolean;
+	/** `bounds` only: raw flag values, parsed here. */
+	x?: string;
+	y?: string;
+	width?: string;
+	height?: string;
 }
 
 interface QuickChatResponse {
@@ -28,7 +37,8 @@ export type QuickChatAction =
 	| 'keep'
 	| 'agent'
 	| 'reveal'
-	| 'stop';
+	| 'stop'
+	| 'bounds';
 
 function fail(message: string, options: QuickChatOptions): void {
 	if (options.json) {
@@ -47,6 +57,10 @@ function printStatus(status: QuickChatStatus): void {
 	);
 	const hotkey = status.hotkey.length > 0 ? status.hotkey.join('+') : 'none';
 	console.log(`Hotkey: ${hotkey}${status.hotkeyRegistered ? '' : ' (not registered)'}`);
+	if (status.bounds) {
+		const { x, y, width, height } = status.bounds;
+		console.log(`Window: ${width}x${height} at ${x},${y}`);
+	}
 	console.log(
 		`Agent: ${snapshot.agentName ?? 'none'}${snapshot.agentId ? ` (${snapshot.agentId})` : ''}`
 	);
@@ -73,6 +87,19 @@ export async function quickChat(
 		message.text = args.text;
 	}
 	if (action === 'keep') message.persistent = args.persistent !== false;
+	if (action === 'bounds') {
+		const request: QuickChatBoundsRequest = {};
+		for (const key of ['x', 'y', 'width', 'height'] as const) {
+			const raw = options[key];
+			if (raw !== undefined) request[key] = Number(raw);
+		}
+		const invalid = validateQuickChatBoundsRequest(request);
+		if (invalid) {
+			fail(invalid, options);
+			return;
+		}
+		Object.assign(message, request);
+	}
 	if (action === 'agent') {
 		try {
 			message.agentId = resolveAgentId(args.agent ?? '');
@@ -97,7 +124,7 @@ export async function quickChat(
 			fail(result.error || `quick-chat ${action} failed`, options);
 			return;
 		}
-		if (action === 'status' && result.status) printStatus(result.status);
+		if ((action === 'status' || action === 'bounds') && result.status) printStatus(result.status);
 		else console.log(`Quick Chat: ${action} done`);
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options);

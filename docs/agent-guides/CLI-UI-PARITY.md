@@ -233,7 +233,7 @@ of taking a second round trip or trusting a value the caller guessed.
 
 | Point-and-click action                                                                      | CLI                                                                                                                                                |
 | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Quick Chat window: hotkey, send, new, pin, agent, open in Maestro, stop                     | `quick-chat toggle\|show\|hide\|send\|new\|keep\|agent\|reveal\|stop`, read with `quick-chat status`; `open quick-chat`                            |
+| Quick Chat window: hotkey, send, new, pin, agent, open in Maestro, stop, drag, resize       | `quick-chat toggle\|show\|hide\|send\|new\|keep\|agent\|reveal\|stop\|bounds`, read with `quick-chat status`; `open quick-chat`                    |
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                            |
 | Create / rename / remove an agent                                                           | `create-agent`, `rename-agent`, `remove-agent`                                                                                                     |
 | Edit Agent modal fields                                                                     | `update-agent`, `settings agent set`                                                                                                               |
@@ -291,6 +291,9 @@ of taking a second round trip or trusting a value the caller guessed.
 | Computer History viewer: open (Ctrl+Cmd+H, palette, hamburger menu)                         | `open computer-history`                                                                                                                            |
 | Computer History viewer: Timeline (strip, app list, visit stream, search)                   | `computer-history apps`, `computer-history list`, `computer-history query [--app] [--kind] [--grep]`                                               |
 | Computer History viewer: Digests tab                                                        | `computer-history digests`                                                                                                                         |
+| MaestroRun tile (macOS): setup status, Check again                                          | `maestro-run status [--check-latest]`                                                                                                              |
+| MaestroRun tile (macOS): Install MaestroRun / Update to <version>                           | `maestro-run install`, read with `maestro-run status`                                                                                              |
+| MaestroRun tile (macOS): Open Full Disk Access / Reveal in Finder                           | `maestro-run grant [--reveal]`, read with `maestro-run status`                                                                                     |
 
 ## Open gaps
 

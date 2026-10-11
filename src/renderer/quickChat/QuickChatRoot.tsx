@@ -20,7 +20,7 @@ import {
 	type QuickChatSnapshot,
 } from '../../shared/quickChat';
 import { formatDurationHuman } from '../../shared/duration';
-import { loadAllSettings } from '../stores/settingsStore';
+import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
@@ -117,10 +117,9 @@ export function QuickChatRoot() {
 	const [error, setError] = useState<string | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-	// This window boots its own renderer, so hydrate settings (the theme) here.
-	useEffect(() => {
-		void loadAllSettings();
-	}, []);
+	// This window boots its own renderer and never runs useSettings: load the
+	// settings, follow changes made in the main window, and apply the typography.
+	useWindowSettingsSync();
 
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
