@@ -172,17 +172,18 @@ A Cappella keeps everything that is about voice and imports everything that is a
   core model id.
 - `src/main/acappella/models/capability-gate.ts`: voice readiness, reading the core model store.
 - `src/main/acappella/providers/local/runtime.ts`: `loadVoiceRuntime()`, a thin adapter that maps
-  `LocalModelError` to `VoiceProviderError`. Kokoro, `llama-brain.ts`, and the openWakeWord detector
-  load runtimes through it and read model files from the core store.
+  `LocalModelError` to `VoiceProviderError`. Kokoro and the openWakeWord detector load runtimes
+  through it and read model files from the core store.
 - The speech-to-text engines are the core's (`src/main/local-models/stt/`). The Parakeet and Whisper
   providers keep only the live streaming policy (`chunked-stt.ts`) and LEASE their model from the
   shared `SpeechToTextPool`, as does the transcription wake word, so one loaded copy serves a voice
   session, the wake word, and a dictated clip.
 - `src/main/acappella/audio/clip-capture.ts`: the audio host's microphone in a mode with no voice
   session behind it, registered with the core as dictation's microphone.
-- `llama-brain.ts` does not own a model. It runs each turn on the shared `LocalTextEngine`
-  (`text-gen.ts`), so voice and housekeeping tasks reuse one resident model; its `unload()` frees
-  the model only when Qwen3 is the resident one.
+- `providers/local/assigned-brain.ts` (`AssignedBrainProvider`) is the Conductor Brain on a Local
+  Models source. It owns no model and picks no source: each turn is `runLocalTask('voice-routing')`,
+  so voice and housekeeping tasks reuse one resident model. Its `unload()` frees its own local
+  model, and only when that is the resident one. See [Voice routing](#voice-routing-the-conductor-brain-on-an-assignment).
 - `src/main/acappella/runtime-consumer.ts`: registers voice with the runtime consumer registry at
   startup.
 - `src/main/ipc/handlers/acappella-models.ts`: the legacy `models:*` / `runtimes:*` channels. They
@@ -228,7 +229,7 @@ MAESTRO_LOCAL_MODEL_E2E=1 env -u MAESTRO_USER_DATA npx vitest run src/__tests__/
 It installs the `llama` runtime and `qwen3-1.7b-instruct-q4km` through `service.ts` into a scratch
 data dir (`$TMPDIR/maestro-local-model-e2e`, kept between runs; override with
 `MAESTRO_LOCAL_MODEL_E2E_DIR`), runs the real self-test, routes two utterances through
-`LlamaBrainProvider.route()` with the JSON-schema grammar, then drives node-llama-cpp directly to
+the local Conductor Brain (`AssignedBrainProvider.route()`) with the JSON-schema grammar, then drives node-llama-cpp directly to
 measure throughput. Results are written to `llama-e2e-results.json` in that dir. vitest's module VM
 cannot run the loader's `new Function` import, so the test swaps in a plain `import()` via
 `__setNativeImporter`; the entry path and its file-URL conversion are the same.
@@ -251,10 +252,34 @@ cannot run the loader's `new Function` import, so the test swaps in a plain `imp
 **Routing quality is not proven.** On a two-agent roster (Backend, Frontend), "tell the frontend
 agent to fix the navbar padding" and "ask backend to add rate limiting to login" both came back as
 `target: "conductor"` with a clarifying question, not routed to the named agent. That is a model or
-prompt problem, not a load problem; the provider stays hidden in the picker until it routes an
-explicit agent name correctly.
+prompt problem, not a load problem; no local model is offered in the Conductor Brain picker until
+one routes an explicit agent name correctly.
 
-**Bug the run found.** `LlamaBrainProvider` took a context sequence per turn and never gave it back,
+### Result: 2026-10-11, the same machine, routing only
+
+The two halves of that failure were separated, and one was a bug.
+
+**The clarifying question was the grammar, and is fixed.** node-llama-cpp compiles a JSON Schema
+into a grammar in which EVERY listed property is emitted; `required` is not read. Held to
+`ROUTE_DECISION_JSON_SCHEMA`, the model had to write a `clarify` and a `reply` on every turn, and a
+non-empty one makes the decision a question (`holdsTheFloor`), so no utterance could reach an
+agent whatever the model meant. A local model is now held to `ROUTE_DECISION_GRAMMAR_SCHEMA`
+(`src/shared/acappella/route-decision.ts`), whose four optional fields may be `null`. The E2E
+records `heldTheFloor: 0` with it, and a warm route dropped from about 0.57 s to 0.48 s because the
+model writes two fewer strings.
+
+**The target is the model, and is not fixed.** Six utterances (four naming an agent, two that
+belong to the Conductor) were run under seven shapes of the schema: the current one, required
+fields only, nullable optional fields, the target as a flat enum of the roster ids, the target
+last, and an "agent named" field ahead of the target as either shape. Qwen3 1.7B Q4_K_M answered
+`"conductor"` for all four named-agent utterances under six of the seven, and the seventh routed
+three of four while breaking the Conductor cases. Everything else in each decision was right (the
+tab action, the recalled tab id, the cleaned prompt), so this is the model choosing the first
+field, not a malformed reply. No schema shape fixes it. The model stays out of the picker, and a
+`local` assignment is honored but not offered; a larger local model, or a routing prompt written
+for a small one, would have to pass this check first.
+
+**Bug the first run found.** The Brain took a context sequence per turn and never gave it back,
 so the second turn on a loaded model failed with `No sequences left`. The chat session now passes
 `autoDisposeSequence: true`, and the unit-test mock models a one-sequence context so the regression
 is caught without hardware.
@@ -655,6 +680,7 @@ falls back to another source.
 | `secret-screen`    | `screenForSecrets()` in `local-models/secret-screen.ts`, called by gist publishing, feedback, and the support package (a classifier task, through `runClassifierTask()`) | Pattern scan only (the default)                                                                                                                                              | Pattern scan only, with a note; publishing is never blocked by the model                         |
 | `injection-screen` | `scoreCueInjectionText()` in `local-models/cue-injection-screen.ts`, called by the Cue dispatch service (a classifier task, through `runClassifierTask()`)               | Reported as `off`: a command that set `screen_injection: true` is blocked, a prompt that set it starts with a warning, a command that only got the default starts unscreened | A screened command is blocked (fail closed); a screened prompt starts with a warning (fail open) |
 | `spoken-notices`   | `announceAgentFinished()` in `local-models/spoken-notices.ts`, called by the exit listener through `localModels:spokenNotices:agentFinished`                             | The notice is `<agent name> finished` (the default)                                                                                                                          | The same plain line; one yellow toast (`task-notices.ts`)                                        |
+| `voice-routing`    | `AssignedBrainProvider` in `acappella/providers/local/assigned-brain.ts`, built when the assignment names a source                                                       | The voice-specific Brain routes (the default); under a pipeline built for an assignment, the turn is refused by name                                                         | The turn fails as the assigned Brain, with the reason spoken and shown; no other Brain is tried  |
 
 `spoken-notices` is the one consumer where `off` and `unavailable` do not stop the feature: the
 task only writes the summary half of the line, and `announceAgentFinished()` in
@@ -1146,6 +1172,63 @@ Rules:
 CLI: `maestro-cli models run dictation --audio <file.wav>` reaches `transcribeAudioFileRequest()`
 (`local_models_transcribe` on the bridge), which decodes a 16-bit PCM WAV and calls
 `transcribeClip()`. An agent has no microphone, so it brings the audio as a file.
+
+## Voice routing: the Conductor Brain on an assignment
+
+The A Cappella Conductor Brain decides which agent and tab a spoken request is for. A local model or
+an endpoint fills that slot by being ASSIGNED to the `voice-routing` task. There is no second stored
+value: the provider id a session reports is derived from the assignment.
+
+```mermaid
+flowchart LR
+	A["localModelAssignments<br/>voice-routing"] -->|local or endpoint| S[resolveVoiceBrainSource]
+	P["acappella.providers.brain<br/>built-in or hosted"] --> E[effectiveBrainProviderId]
+	S --> E
+	E -->|"qwen3-local / endpoint-brain"| B[AssignedBrainProvider]
+	E -->|"mock-brain / openai-brain / anthropic-brain"| V[voice-specific Brain]
+	B -->|every turn| R[runLocalTask voice-routing]
+	R --> T["generateText: llama or endpoint"]
+```
+
+| Piece                                                                               | Where                                                                      |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `resolveVoiceBrainSource()`, `effectiveBrainProviderId()`, the picker value helpers | `src/shared/acappella/voice-routing.ts` (pure)                             |
+| `ASSIGNED_BRAIN_PROVIDERS` (requirement, egress, description)                       | `src/shared/acappella/provider-catalog.ts`                                 |
+| `readVoiceProviderSettings()` (reports the Brain in force)                          | `src/main/acappella/providers/provider-registry.ts`                        |
+| `AssignedBrainProvider`                                                             | `src/main/acappella/providers/local/assigned-brain.ts`                     |
+| The Brain slot's readiness                                                          | `capability-gate.ts`, over `resolveTaskReadiness('voice-routing')`         |
+| The picker rows                                                                     | `Settings/ACappella/brainOptions.ts`, over `buildAssignmentOptionGroups()` |
+
+Rules a change here must keep:
+
+- **The assignment decides, the stored provider waits.** While `voice-routing` names a source the
+  Brain is `qwen3-local` (a local model) or `endpoint-brain` (an endpoint), whatever
+  `acappella.providers.brain` holds. Picking a voice-specific Brain in the voice panels sets the
+  assignment to `off` first: an assignment left on would keep deciding the slot.
+- **Nothing stores an assigned provider id.** `setProvider('brain', 'qwen3-local')` is a no-op. A
+  settings file that named `qwen3-local` before this (it was never in a dropdown) is moved to a
+  `local` assignment by `migrateLegacyVoiceProviders()` step 4.
+- **Every turn goes through the router.** The provider calls `runLocalTask('voice-routing')`, so the
+  assignment is read at the moment of the turn, the run lands in `local_model_runs`, and the
+  background indexer stands aside. `pipelineKey()` includes the assignment spec, so a change of
+  model rebuilds the pipeline and its label.
+- **A verdict is restated, never worked around.** `unavailable` becomes a `VoiceProviderError` with
+  the router's own sentence (`network`, `timeout`, and `auth` keep their kind, everything else is
+  `unavailable`); `cancelled` is the 30 second turn budget and becomes `timeout`; `off` under a
+  pipeline built for an assignment is refused by name. No other Brain is tried.
+- **A local model gets the grammar schema, an endpoint the plain one.** See the 2026-10-11 result
+  above for why they differ.
+- **The slot's readiness is the task's.** The gate maps `LocalModelTaskReadiness` onto the slot:
+  `model-not-installed` and `model-corrupt` keep the model id (the slot draws Download from it),
+  `runtime-unavailable` and `endpoint-key-missing` keep their meaning, and every other endpoint or
+  catalog fault is `provider-unreachable` with the task's sentence beside it.
+- **The privacy sentence names the endpoint.** `endpoint-brain` has `egress: 'text'`, and
+  `summariseVoiceEgress(ids, { endpointName })` says "Text is sent to <endpoint name>". It does not
+  inspect the URL to decide whether the server is on this machine: the transcript leaves this
+  process either way, and the user named where it goes.
+- **No local model is offered in the picker.** `buildBrainOptionGroups()` lists a local model only
+  when it is already the assignment, so a choice made in Settings > Local Models or with
+  `maestro-cli models assign voice-routing local:<id>` is shown as what it is.
 
 ## Spoken notices: `announceAgentFinished()`
 

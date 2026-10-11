@@ -16,10 +16,13 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	ASSIGNED_BRAIN_PROVIDERS,
 	ELEVENLABS_TTS_PROVIDER_ID,
+	ENDPOINT_BRAIN_PROVIDER_ID,
 	HOSTED_PROVIDER_IDS,
 	LOCAL_PROVIDER_IDS,
 	OPENAI_REALTIME_PROVIDER_ID,
+	QWEN3_BRAIN_PROVIDER_ID,
 	VOICE_CREDENTIALS,
 	VOICE_CREDENTIAL_SERVICES,
 	VOICE_PROVIDER_CATALOG,
@@ -77,8 +80,31 @@ describe('the provider catalog', () => {
 		// Registered in the provider registry, absent from the dropdown: a choice
 		// that refuses every session reads as "voice is broken".
 		expect(getVoiceProvider('kokoro-local')).toBeUndefined();
-		expect(getVoiceProvider('qwen3-local')).toBeUndefined();
 		expect(getVoiceProvider('conductor-agent')).toBeUndefined();
+	});
+
+	it('describes the two Local Models Brains without offering them as provider choices', () => {
+		// They are selected by the `voice-routing` assignment, not picked by id, so
+		// the slot selector must not list them; the gate and the privacy sentence
+		// still read their requirement and egress from this table.
+		const picked = voiceProvidersForRole('brain').map((entry) => entry.id);
+		expect(picked).toEqual(['mock-brain', 'openai-brain', 'anthropic-brain']);
+		expect(VOICE_PROVIDER_CATALOG.map((entry) => entry.id)).not.toContain(QWEN3_BRAIN_PROVIDER_ID);
+		expect(ASSIGNED_BRAIN_PROVIDERS.map((entry) => entry.id)).toEqual([
+			QWEN3_BRAIN_PROVIDER_ID,
+			ENDPOINT_BRAIN_PROVIDER_ID,
+		]);
+
+		for (const id of [QWEN3_BRAIN_PROVIDER_ID, ENDPOINT_BRAIN_PROVIDER_ID]) {
+			expect(getVoiceProvider(id)).toMatchObject({ role: 'brain', tier: 'local' });
+			expect(voiceProviderRequirement(id)).toEqual({
+				kind: 'local-models-task',
+				taskId: 'voice-routing',
+			});
+			expect(voiceProviderCredential(id)).toBeNull();
+		}
+		expect(getVoiceProvider(QWEN3_BRAIN_PROVIDER_ID)?.egress).toBe('none');
+		expect(getVoiceProvider(ENDPOINT_BRAIN_PROVIDER_ID)?.egress).toBe('text');
 	});
 
 	it('offers a hosted trio that one OpenAI key can run', () => {
@@ -156,11 +182,45 @@ describe('summariseVoiceEgress', () => {
 		);
 	});
 
+	it('names the endpoint a routed transcript is sent to', () => {
+		const summary = summariseVoiceEgress(
+			['parakeet-local', 'system-tts', ENDPOINT_BRAIN_PROVIDER_ID],
+			{
+				endpointName: 'Ollama',
+			}
+		);
+
+		expect(summary).toMatchObject({
+			audioLeaves: false,
+			textLeaves: true,
+			services: [],
+			destinations: ['Ollama'],
+			statement: 'Audio stays on this machine. Text is sent to Ollama.',
+		});
+	});
+
+	it('still says text leaves when the endpoint has no name to give', () => {
+		expect(summariseVoiceEgress([ENDPOINT_BRAIN_PROVIDER_ID]).statement).toBe(
+			'Audio stays on this machine. Text is sent to your model endpoint.'
+		);
+	});
+
+	it('lists an endpoint beside a hosted service, and ignores the name without the endpoint Brain', () => {
+		expect(
+			summariseVoiceEgress(['system-tts', 'openai-tts', ENDPOINT_BRAIN_PROVIDER_ID], {
+				endpointName: 'LM Studio',
+			}).statement
+		).toBe('Audio stays on this machine. Text is sent to OpenAI and LM Studio.');
+		expect(
+			summariseVoiceEgress([QWEN3_BRAIN_PROVIDER_ID], { endpointName: 'Ollama' }).statement
+		).toBe('Audio stays on this machine.');
+	});
+
 	it('counts a runtime as in use only when something listed runs on it', () => {
 		// ONNX carries the recognisers and the wake word.
 		expect(isNativeRuntimeUsedByVoice('onnx')).toBe(true);
-		// llama.cpp downloads, but its only provider (Qwen3) is unlisted, so nagging
-		// for it would leave every self-test permanently incomplete.
+		// llama.cpp downloads and loads, but no listed provider needs it: a local
+		// model routes only through a `voice-routing` assignment.
 		expect(isNativeRuntimeUsedByVoice('llama')).toBe(false);
 	});
 });

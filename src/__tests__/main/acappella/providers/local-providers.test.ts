@@ -8,9 +8,13 @@
  * What is worth testing about a local provider is not the inference - that
  * belongs to whisper.cpp and llama.cpp - but everything around it, which is where
  * this codebase's bugs would be: chunked partials that stop when the session
- * does, a cancel that actually cuts a run, a model that unloads when idle and
- * loads again on the next turn, and a load failure that reports itself as its own
- * provider rather than reaching for another one.
+ * does, a cancel that actually cuts a run, and a load failure that reports itself
+ * as its own provider rather than reaching for another one.
+ *
+ * The local Conductor Brain is not here: it runs through the Local Models task
+ * router and is covered by `assigned-brain.test.ts`; the llama engine itself
+ * (one resident model, idle unload, the sequence handed back per turn) by
+ * `local-models/text-gen.test.ts`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -29,24 +33,11 @@ import {
 	KokoroTtsProvider,
 	styleVectorFor,
 } from '../../../../main/acappella/providers/local/kokoro-tts';
-import { LlamaBrainProvider } from '../../../../main/acappella/providers/local/llama-brain';
-import { LocalTextEngine } from '../../../../main/local-models/text-gen';
 import { LocalModelError } from '../../../../main/local-models/errors';
 import { SpeechToTextPool } from '../../../../main/local-models/speech-to-text';
 import type { InstalledSpeechToTextModel } from '../../../../main/local-models/stt/engines';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type { SttCallbacks, TtsChunk } from '../../../../shared/acappella/providers';
-import type { RosterAgent } from '../../../../shared/acappella/protocol';
-
-const ROSTER: RosterAgent[] = [
-	{
-		sessionId: 'agent-backend',
-		name: 'Backend',
-		agentType: 'claude-code',
-		cwd: '/repo/api',
-		tabs: [{ id: 'tab-auth', name: 'Auth', lastActiveAt: 1 }],
-	},
-];
 
 /**
  * A speech-to-text pool over a fake engine, standing in for the app-wide one.
@@ -519,225 +510,6 @@ describe('KokoroTtsProvider', () => {
 		// of noise at full volume.
 		expect(styleVectorFor(pack, 10_000)).toHaveLength(256);
 		expect(styleVectorFor(pack, 0)).toHaveLength(256);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Qwen3 via llama.cpp
-// ---------------------------------------------------------------------------
-
-describe('LlamaBrainProvider', () => {
-	function llamaRuntime(reply: string) {
-		const prompt = vi.fn(async () => reply);
-		const contextDispose = vi.fn();
-		const modelDispose = vi.fn();
-		const getLlama = vi.fn(async (_options?: Record<string, unknown>) => ({
-			loadModel: async () => ({
-				// Like node-llama-cpp's default context: ONE sequence, handed back only
-				// when it is disposed. A sequence taken and never returned is how the
-				// second turn failed with "No sequences left" on real hardware.
-				createContext: async () => {
-					let sequenceHeld = false;
-					return {
-						getSequence: () => {
-							if (sequenceHeld) throw new Error('No sequences left');
-							sequenceHeld = true;
-							return {
-								dispose: () => {
-									sequenceHeld = false;
-								},
-							};
-						},
-						dispose: contextDispose,
-					};
-				},
-				dispose: modelDispose,
-			}),
-			createGrammarForJsonSchema: async () => ({}),
-		}));
-		const module = {
-			getLlama,
-			LlamaChatSession: class {
-				private readonly options: {
-					contextSequence: { dispose(): void };
-					autoDisposeSequence?: boolean;
-				};
-				prompt = prompt;
-				constructor(options: {
-					contextSequence: { dispose(): void };
-					autoDisposeSequence?: boolean;
-				}) {
-					this.options = options;
-				}
-				dispose() {
-					if (this.options.autoDisposeSequence) this.options.contextSequence.dispose();
-				}
-			},
-		};
-		return {
-			module,
-			getLlama,
-			prompt,
-			contextDispose,
-			modelDispose,
-			loadRuntime: async () => module as never,
-		};
-	}
-
-	/** The shared engine, over a mocked binding and a fixed model path. */
-	function engineFor(loadRuntime: () => Promise<never>, idleUnloadMs = 0): LocalTextEngine {
-		return new LocalTextEngine({
-			loadRuntime: loadRuntime as never,
-			resolveModelPath: async () => '/tmp/qwen.gguf',
-			idleUnloadMs,
-		});
-	}
-
-	const decision = JSON.stringify({
-		target: { sessionId: 'agent-backend' },
-		tabAction: 'new',
-		tabName: 'Auth',
-		prompt: 'refactor auth',
-		confidence: 0.9,
-	});
-
-	it('reports a runtime that will not load as its own failure', async () => {
-		// The core loader throws the core's classified error; the provider restates
-		// it as itself.
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(async () => {
-				throw new LocalModelError('llama.cpp is not downloaded.', {
-					code: 'runtime-unavailable',
-					recovery: 'Download it.',
-					consumerId: 'local-models:text-gen',
-				});
-			}),
-		});
-
-		await expect(
-			provider.route('anything', { roster: ROSTER, scope: { kind: 'conductor' } })
-		).rejects.toMatchObject({ kind: 'unavailable', providerId: 'qwen3-local' });
-	});
-
-	it('routes through the shared parser', async () => {
-		const runtime = llamaRuntime(decision);
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(runtime.loadRuntime),
-		});
-
-		const result = await provider.route('ask backend to refactor auth', {
-			roster: ROSTER,
-			scope: { kind: 'conductor' },
-		});
-
-		expect(result).toMatchObject({ target: { sessionId: 'agent-backend' }, tabAction: 'new' });
-	});
-
-	it('keeps the context loaded across turns', async () => {
-		const runtime = llamaRuntime(decision);
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(runtime.loadRuntime),
-		});
-		const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
-
-		await provider.route('one', context);
-		await provider.route('two', context);
-
-		expect(provider.isLoaded).toBe(true);
-		expect(runtime.prompt).toHaveBeenCalledTimes(2);
-		// One load, two turns: per-turn latency is inference only.
-		expect(runtime.modelDispose).not.toHaveBeenCalled();
-	});
-
-	it('gives the context sequence back after every turn', async () => {
-		const runtime = llamaRuntime(decision);
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(runtime.loadRuntime),
-		});
-		const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
-
-		// Three turns on one context, which has one sequence: each turn must return it.
-		await provider.route('one', context);
-		await provider.route('two', context);
-		await expect(provider.route('three', context)).resolves.toMatchObject({
-			target: { sessionId: 'agent-backend' },
-		});
-	});
-
-	it('never lets node-llama-cpp compile llama.cpp from source', async () => {
-		const runtime = llamaRuntime(decision);
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(runtime.loadRuntime),
-		});
-
-		await provider.route('one', { roster: ROSTER, scope: { kind: 'conductor' } });
-
-		expect(runtime.getLlama.mock.calls[0][0]).toMatchObject({ build: 'never', skipDownload: true });
-	});
-
-	it('unloads after the idle window and reloads on the next turn', async () => {
-		vi.useFakeTimers();
-		try {
-			const runtime = llamaRuntime(decision);
-			const provider = new LlamaBrainProvider({
-				engine: engineFor(runtime.loadRuntime, 1_000),
-			});
-			const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
-
-			await provider.route('one', context);
-			expect(provider.isLoaded).toBe(true);
-
-			await vi.advanceTimersByTimeAsync(1_100);
-			// A gigabyte of resident memory for a conversation that ended is not
-			// acceptable, however warm it would have been.
-			expect(provider.isLoaded).toBe(false);
-			expect(runtime.contextDispose).toHaveBeenCalled();
-			expect(runtime.modelDispose).toHaveBeenCalled();
-
-			await provider.route('two', context);
-			expect(provider.isLoaded).toBe(true);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('trims a spoken rewrite to the sentence budget', async () => {
-		const runtime = llamaRuntime('One. Two. Three.');
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(runtime.loadRuntime),
-		});
-
-		const spoken = await provider.converse('...', {
-			agentSessionId: 'agent-backend',
-			tabId: 'tab-auth',
-			maxSentences: 2,
-		});
-
-		expect(spoken).toBe('One. Two.');
-	});
-
-	it('reports an inference failure as a classified provider error', async () => {
-		const module = {
-			getLlama: async () => ({
-				loadModel: async () => ({
-					createContext: async () => ({ getSequence: () => ({}), dispose: vi.fn() }),
-					dispose: vi.fn(),
-				}),
-				createGrammarForJsonSchema: async () => ({}),
-			}),
-			LlamaChatSession: class {
-				prompt = async () => {
-					throw new Error('context is full');
-				};
-			},
-		};
-		const provider = new LlamaBrainProvider({
-			engine: engineFor(async () => module as never),
-		});
-
-		await expect(
-			provider.route('anything', { roster: ROSTER, scope: { kind: 'conductor' } })
-		).rejects.toMatchObject({ kind: 'unavailable' });
 	});
 });
 

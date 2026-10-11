@@ -11,7 +11,7 @@
  * asserts that no verdict ever names a provider other than the configured one.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
  * Which runtimes this "build" ships, flipped per test.
@@ -87,6 +87,17 @@ vi.mock('../../../../main/acappella/providers/local/system-tts', () => ({
 	systemVoiceUnavailability: async () => null,
 }));
 
+// The Local Models assignments, as the settings store holds them. Read only by
+// the core task readiness resolver, when a Brain is one the `voice-routing`
+// assignment selects. Empty unless a test fills it.
+const storedSettings = vi.hoisted(() => ({ localModelAssignments: {} as Record<string, unknown> }));
+vi.mock('../../../../main/stores/getters', () => ({
+	getSettingsStore: () => ({
+		get: (key: string, defaultValue: unknown) =>
+			key === 'localModelAssignments' ? storedSettings.localModelAssignments : defaultValue,
+	}),
+}));
+
 vi.mock('electron', () => ({
 	app: { getPath: () => '/tmp/acappella-capability-gate-test' },
 	shell: { openExternal: vi.fn() },
@@ -114,6 +125,7 @@ import {
 	type VoiceSlotUnsatisfiedReason,
 } from '../../../../shared/acappella/readiness';
 import type { NativeRuntimeUnavailable } from '../../../../main/local-models/runtime/native-loader';
+import type { LocalModelTaskReadiness } from '../../../../shared/local-models/task-readiness';
 import {
 	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
@@ -462,6 +474,196 @@ describe('capability-gate', () => {
 			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
 			expect(brain.providerId).toBe('not-a-registered-provider');
 			expect(brain.satisfied).toBe(true);
+		});
+	});
+
+	describe('a Brain the voice-routing assignment selects', () => {
+		const LOCAL_BRAIN = { ...ALL_LOCAL, brain: 'qwen3-local' };
+		const ENDPOINT_BRAIN = { ...ALL_LOCAL, brain: 'endpoint-brain' };
+
+		beforeEach(() => {
+			storedSettings.localModelAssignments = {};
+		});
+
+		/** A task readiness verdict, as the core resolver would answer it. */
+		function taskReadiness(
+			verdict: Partial<LocalModelTaskReadiness> & Pick<LocalModelTaskReadiness, 'state'>
+		) {
+			return async (): Promise<LocalModelTaskReadiness> => ({
+				taskId: 'voice-routing',
+				label: 'Voice routing',
+				needs: 'text-gen',
+				assignment: { type: 'local', modelId: QWEN3_1_7B_ID },
+				detail: 'Runs Qwen3 1.7B Instruct (Q4_K_M) on this machine.',
+				...verdict,
+			});
+		}
+
+		it('is ready when the assigned source is, and names the model it runs', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+				readTaskReadiness: taskReadiness({ state: 'ready' }),
+			});
+
+			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
+			expect(brain).toMatchObject({
+				providerId: 'qwen3-local',
+				satisfied: true,
+				requiredModelId: QWEN3_1_7B_ID,
+			});
+			expect(readiness.canStartSession).toBe(true);
+		});
+
+		it('offers the download for an assigned model that is not on disk', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+				readTaskReadiness: taskReadiness({
+					state: 'unavailable',
+					reason: 'model-not-installed',
+					detail: 'Qwen3 1.7B Instruct (Q4_K_M) is not downloaded.',
+					suggestedAction: 'Download it in Settings > Local Models.',
+				}),
+			});
+
+			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
+			expect(brain).toMatchObject({
+				satisfied: false,
+				reason: 'model-not-installed',
+				requiredModelId: QWEN3_1_7B_ID,
+				detail: 'Conductor Brain: Qwen3 1.7B Instruct (Q4_K_M) is not downloaded.',
+				suggestedAction: 'Download it in Settings > Local Models.',
+			});
+			expect(readiness.canStartSession).toBe(false);
+		});
+
+		it('does not offer a download for a runtime that will not load', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+				readTaskReadiness: taskReadiness({
+					state: 'unavailable',
+					reason: 'runtime-unavailable',
+					detail: 'llama.cpp is not downloaded.',
+					suggestedAction: 'Download it.',
+				}),
+			});
+
+			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
+			expect(brain.reason).toBe('runtime-unavailable');
+			expect(brain.requiredModelId).toBeUndefined();
+		});
+
+		it.each([
+			['endpoint-key-missing', 'api-key-missing'],
+			['endpoint-unreachable', 'provider-unreachable'],
+			['endpoint-disabled', 'provider-unreachable'],
+			['endpoint-model-missing', 'provider-unreachable'],
+			['model-unknown', 'provider-unreachable'],
+		] as const)('reports an assigned source that is %s as %s', async (taskReason, slotReason) => {
+			const readiness = await resolveVoiceReadiness({
+				settings: ENDPOINT_BRAIN,
+				readModelStatus: statusReader(),
+				readTaskReadiness: taskReadiness({
+					state: 'unavailable',
+					reason: taskReason,
+					assignment: { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.3' },
+					detail: 'Ollama is not answering.',
+					suggestedAction: 'Start Ollama.',
+				}),
+			});
+
+			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
+			expect(brain).toMatchObject({
+				providerId: 'endpoint-brain',
+				satisfied: false,
+				reason: slotReason,
+				detail: 'Conductor Brain: Ollama is not answering.',
+				suggestedAction: 'Start Ollama.',
+			});
+			// The fix is on the server, so there is no model to download here.
+			expect(brain.requiredModelId).toBeUndefined();
+		});
+
+		it('refuses by name when the slot holds an assigned Brain and nothing is assigned', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+				readTaskReadiness: taskReadiness({
+					state: 'off',
+					assignment: { type: 'off' },
+					detail: 'Voice routing is off.',
+				}),
+			});
+
+			const brain = readiness.slots.find((slot) => slot.slot === 'brain')!;
+			expect(brain).toMatchObject({
+				satisfied: false,
+				reason: 'provider-unreachable',
+				detail: 'Conductor Brain: Voice routing has no model assigned.',
+			});
+			expect(brain.suggestedAction).toContain('Settings > Local Models');
+			expect(readiness.canStartSession).toBe(false);
+		});
+
+		it("asks the core resolver with this gate's own model and runtime readers by default", async () => {
+			// No `readTaskReadiness`: the real resolver runs against the settings
+			// store, and must describe the same machine the rest of the gate does.
+			storedSettings.localModelAssignments = {
+				'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID },
+			};
+
+			const missing = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader({ [QWEN3_1_7B_ID]: 'not-installed' }),
+				readRuntimeFailure: () => null,
+			});
+			expect(missing.slots.find((slot) => slot.slot === 'brain')).toMatchObject({
+				satisfied: false,
+				reason: 'model-not-installed',
+				requiredModelId: QWEN3_1_7B_ID,
+			});
+
+			const runtimeDown = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+				readRuntimeFailure: (runtimeId) =>
+					runtimeId === 'llama'
+						? ({
+								runtimeId: 'llama',
+								message: 'llama.cpp is not downloaded.',
+								suggestedAction: 'Download it.',
+							} as NativeRuntimeUnavailable)
+						: null,
+			});
+			expect(runtimeDown.slots.find((slot) => slot.slot === 'brain')).toMatchObject({
+				satisfied: false,
+				reason: 'runtime-unavailable',
+				detail: 'Conductor Brain: llama.cpp is not downloaded.',
+			});
+
+			const ready = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+				readRuntimeFailure: () => null,
+			});
+			expect(ready.slots.find((slot) => slot.slot === 'brain')).toMatchObject({
+				satisfied: true,
+				requiredModelId: QWEN3_1_7B_ID,
+			});
+		});
+
+		it('is unsatisfied, by name, when nothing is assigned in the settings store', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: LOCAL_BRAIN,
+				readModelStatus: statusReader(),
+			});
+
+			expect(readiness.slots.find((slot) => slot.slot === 'brain')).toMatchObject({
+				satisfied: false,
+				detail: 'Conductor Brain: Voice routing has no model assigned.',
+			});
 		});
 	});
 

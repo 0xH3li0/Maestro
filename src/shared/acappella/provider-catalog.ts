@@ -22,6 +22,7 @@
 
 import { PARAKEET_TDT_V2_ID, WHISPER_BASE_EN_ID } from '../local-models/model-catalog';
 import type { NativeRuntimeId } from '../local-models/native-runtimes';
+import type { LocalModelTaskId } from '../local-models/tasks';
 import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 
 // ---------------------------------------------------------------------------
@@ -97,7 +98,13 @@ export type VoiceProviderRequirement =
 	| { readonly kind: 'none' }
 	| { readonly kind: 'system-voice' }
 	| { readonly kind: 'model'; readonly modelId: string; readonly runtimeId: NativeRuntimeId }
-	| { readonly kind: 'api-key'; readonly service: VoiceCredentialService };
+	| { readonly kind: 'api-key'; readonly service: VoiceCredentialService }
+	/**
+	 * Whatever the Local Models task's assigned source needs: a downloaded model
+	 * and its runtime, or a reachable endpoint. Which one is not known here (the
+	 * assignment decides), so the gate asks task readiness instead of this table.
+	 */
+	| { readonly kind: 'local-models-task'; readonly taskId: LocalModelTaskId };
 
 /**
  * What leaves this machine when a provider runs.
@@ -170,14 +177,36 @@ export const KOKORO_TTS_PROVIDER_ID = 'kokoro-local';
 export const BUILTIN_BRAIN_PROVIDER_ID = 'mock-brain';
 
 /**
- * Qwen3 through llama.cpp. Registered and runnable, but NOT listed in the
- * catalog below. The runtime now ships whole and loads (Metal, about 0.6 s per
- * grammar-constrained turn on Apple Silicon), but the on-device check routed
- * explicit agent names ("tell the frontend agent ...") to the Conductor with a
- * clarifying question instead of to the agent. It returns to the list when it
- * routes a named agent correctly; see docs/architecture/local-models.md.
+ * The Brain a `local` assignment of the Local Models `voice-routing` task runs:
+ * a catalog text model on llama.cpp, through the task router.
+ *
+ * Never stored as a provider choice and never offered as one: the ASSIGNMENT is
+ * the stored value, and this id is what a session reports while it is in force
+ * (see `voice-routing.ts`). The id keeps its first name so routing logs and
+ * turn metrics recorded under it stay comparable.
+ *
+ * No local model is OFFERED in the Conductor Brain picker yet, and the reason
+ * is routing quality, not loading. The llama runtime loads and Qwen3 1.7B (the
+ * one text model in the catalog) answers a grammar-constrained turn in about
+ * 0.4 s on Apple Silicon. But on 2026-10-11, against a two-agent roster, it
+ * sent four of four utterances that named an agent ("tell the frontend agent
+ * ...", "ask backend to ...") to the Conductor, under seven shapes of the
+ * decision schema. A Brain that never reaches a named agent reads as "voice is
+ * broken", so the picker lists a local model only when it is already assigned.
+ * An endpoint model is offered, because the user chose that model themselves.
+ * See docs/architecture/local-models.md.
  */
 export const QWEN3_BRAIN_PROVIDER_ID = 'qwen3-local';
+
+/**
+ * The Brain an `endpoint` assignment of `voice-routing` runs: a model on one of
+ * the user's own servers (Ollama, LM Studio, any OpenAI-compatible one).
+ *
+ * `local` tier for the reason the Conductor agent is: it is the user's server,
+ * wherever they run it. The transcript still LEAVES this process, so its egress
+ * is `text` and the privacy sentence names the endpoint.
+ */
+export const ENDPOINT_BRAIN_PROVIDER_ID = 'endpoint-brain';
 
 /**
  * The Conductor run as a real Maestro agent rather than as a classifier.
@@ -352,9 +381,10 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 		description:
 			'Picks the agent by name, or the one you are talking to, and reads replies back as written. No model, no network.',
 	}),
-	// Qwen3 (`qwen3-local`) is NOT listed on purpose. See QWEN3_BRAIN_PROVIDER_ID:
-	// its runtime payload cannot be imported on any machine yet, so listing it
-	// put a choice in the dropdown that could never route.
+	// The two Local Models Brains (`qwen3-local`, `endpoint-brain`) are NOT listed
+	// here on purpose: they are not provider choices. The `voice-routing`
+	// assignment selects them, and the picker builds their rows from the user's
+	// endpoints. See ASSIGNED_BRAIN_PROVIDERS below.
 	defineProvider({
 		id: OPENAI_BRAIN_PROVIDER_ID,
 		role: 'brain',
@@ -402,13 +432,49 @@ export const VOICE_PROVIDER_CATALOG: readonly VoiceProviderDescriptor[] = Object
 	}),
 ]);
 
-const CATALOG_BY_ID = new Map(VOICE_PROVIDER_CATALOG.map((entry) => [entry.id, entry]));
+/**
+ * The Brains the Local Models `voice-routing` assignment puts in the slot.
+ *
+ * Kept out of {@link VOICE_PROVIDER_CATALOG} because that list is what a slot
+ * selector renders as provider choices, and these are chosen by assigning a
+ * model. They are still described here, so the capability gate, the privacy
+ * sentence, and the panels read their requirement and egress from the same
+ * table as every other provider.
+ */
+export const ASSIGNED_BRAIN_PROVIDERS: readonly VoiceProviderDescriptor[] = Object.freeze([
+	defineProvider({
+		id: QWEN3_BRAIN_PROVIDER_ID,
+		role: 'brain',
+		label: 'Local model',
+		tier: 'local',
+		requires: { kind: 'local-models-task', taskId: 'voice-routing' },
+		egress: 'none',
+		egressService: null,
+		description:
+			'Routes with a text model on this machine, assigned to Voice routing in Settings > Local Models. Nothing leaves it.',
+	}),
+	defineProvider({
+		id: ENDPOINT_BRAIN_PROVIDER_ID,
+		role: 'brain',
+		label: 'Model endpoint',
+		tier: 'local',
+		requires: { kind: 'local-models-task', taskId: 'voice-routing' },
+		egress: 'text',
+		egressService: null,
+		description:
+			'Routes with a model on one of your endpoints. Your transcripts are sent to that server.',
+	}),
+]);
+
+const CATALOG_BY_ID = new Map(
+	[...VOICE_PROVIDER_CATALOG, ...ASSIGNED_BRAIN_PROVIDERS].map((entry) => [entry.id, entry])
+);
 
 export function getVoiceProvider(id: string): VoiceProviderDescriptor | undefined {
 	return CATALOG_BY_ID.get(id);
 }
 
-/** Every provider that can fill a slot, in catalog order. */
+/** Every provider a user can PICK for a slot, in catalog order. */
 export function voiceProvidersForRole(role: VoiceProviderSlotKind): VoiceProviderDescriptor[] {
 	return VOICE_PROVIDER_CATALOG.filter((entry) => entry.role === role);
 }
@@ -433,8 +499,13 @@ export interface VoiceEgressSummary {
 	audioLeaves: boolean;
 	/** True when transcripts or replies reach a service, audio aside. */
 	textLeaves: boolean;
-	/** Every service involved, deduped, in the order the slots were given. */
+	/** Every hosted service involved, deduped, in the order the slots were given. */
 	services: VoiceCredentialService[];
+	/**
+	 * Everyone the egress goes to, by the name a person knows it by: the hosted
+	 * services above, plus the user's own endpoint when it routes.
+	 */
+	destinations: string[];
 	/**
 	 * The sentence to show the user. One fact, stated plainly, because it is the
 	 * single thing a person needs to know about a voice configuration and the one
@@ -451,10 +522,14 @@ const EGRESS_RANK: Record<VoiceDataEgress, number> = { none: 0, text: 1, audio: 
  * Takes ids rather than a role map so it works for both pipeline shapes: the
  * cascade passes its three, and the realtime tier passes its one.
  */
-export function summariseVoiceEgress(providerIds: readonly string[]): VoiceEgressSummary {
+export function summariseVoiceEgress(
+	providerIds: readonly string[],
+	options: VoiceEgressOptions = {}
+): VoiceEgressSummary {
 	let audioLeaves = false;
 	let textLeaves = false;
 	const services: VoiceCredentialService[] = [];
+	const destinations: string[] = [];
 
 	for (const id of providerIds) {
 		const entry = CATALOG_BY_ID.get(id);
@@ -464,30 +539,45 @@ export function summariseVoiceEgress(providerIds: readonly string[]): VoiceEgres
 		if (entry.egressService && !services.includes(entry.egressService)) {
 			services.push(entry.egressService);
 		}
+		const destination = entry.egressService
+			? credentialLabel(entry.egressService)
+			: id === ENDPOINT_BRAIN_PROVIDER_ID
+				? (options.endpointName ?? 'your model endpoint')
+				: null;
+		if (destination && !destinations.includes(destination)) destinations.push(destination);
 	}
 
 	return {
 		audioLeaves,
 		textLeaves,
 		services,
-		statement: egressStatement(audioLeaves, textLeaves, services),
+		destinations,
+		statement: egressStatement(audioLeaves, textLeaves, destinations),
 	};
+}
+
+export interface VoiceEgressOptions {
+	/**
+	 * What the user named the endpoint the `voice-routing` assignment points at.
+	 * Only read when the endpoint Brain is among the providers; absent, the
+	 * sentence still says text leaves, to "your model endpoint".
+	 */
+	endpointName?: string;
 }
 
 function egressStatement(
 	audioLeaves: boolean,
 	textLeaves: boolean,
-	services: VoiceCredentialService[]
+	destinations: string[]
 ): string {
 	if (!audioLeaves && !textLeaves) return 'Audio stays on this machine.';
 
-	const names = formatServiceList(services);
+	const names = formatDestinationList(destinations);
 	if (audioLeaves) return `Audio is sent to ${names}.`;
 	return `Audio stays on this machine. Text is sent to ${names}.`;
 }
 
-function formatServiceList(services: VoiceCredentialService[]): string {
-	const labels = services.map(credentialLabel);
+function formatDestinationList(labels: string[]): string {
 	if (labels.length <= 1) return labels[0] ?? 'a hosted service';
 	if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
 	return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
@@ -496,12 +586,13 @@ function formatServiceList(services: VoiceCredentialService[]): string {
 /**
  * Whether any voice provider a user can pick in this build runs on a native runtime.
  *
- * A runtime can be fetchable and still useless: llama.cpp downloads, but the
- * only provider on it (Qwen3) is unlisted because the payload lacks the
- * JavaScript half that opens a model. Reporting such a runtime as "not
- * downloaded yet" would leave every self-test permanently incomplete, nagging
- * for a download that enables nothing. The wake word is not a catalog provider
- * but always rides ONNX, so it counts.
+ * A runtime can be fetchable and still not something voice asks for: llama.cpp
+ * downloads and loads, but no listed provider needs it (a local model routes
+ * only through a `voice-routing` assignment, whose readiness names the runtime
+ * itself). Reporting such a runtime as "not downloaded yet" would leave every
+ * voice self-test permanently incomplete, nagging for a download no listed
+ * choice uses. The wake word is not a catalog provider but always rides ONNX,
+ * so it counts.
  */
 export function isNativeRuntimeUsedByVoice(runtimeId: NativeRuntimeId): boolean {
 	if (runtimeId === 'onnx') return true;

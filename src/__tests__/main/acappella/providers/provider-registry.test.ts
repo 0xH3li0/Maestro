@@ -62,11 +62,20 @@ vi.mock('../../../../main/acappella/providers/local/kokoro-tts', () => ({
 		cancel() {}
 	},
 }));
-vi.mock('../../../../main/acappella/providers/local/llama-brain', () => ({
-	LlamaBrainProvider: class {
-		readonly id = 'qwen3-local';
-		readonly label = 'Qwen3 1.7B (local)';
+vi.mock('../../../../main/acappella/providers/local/assigned-brain', () => ({
+	// The real one runs every turn through the Local Models task router, which
+	// this file has no reason to load. What the registry owes it is the id and
+	// the source the assignment named, so the stand-in keeps both.
+	AssignedBrainProvider: class {
+		readonly id: string;
+		readonly label: string;
 		readonly tier = 'local';
+		readonly source: unknown;
+		constructor(options: { id: string; source?: { label: string } }) {
+			this.id = options.id;
+			this.source = options.source;
+			this.label = options.source?.label ?? 'Assigned brain';
+		}
 		async route() {
 			return { target: 'conductor', tabAction: 'current', prompt: '', confidence: 1 };
 		}
@@ -628,7 +637,7 @@ describe('provider registry', () => {
 		expect(store.read()).toEqual({
 			providers: {},
 			controls: { conversationalMode: true },
-			providersVersion: 3,
+			providersVersion: 4,
 		});
 		const settings = readVoiceProviderSettings(store);
 		expect(resolveVoicePipeline({ settings }).resolvedIds).toEqual(DEFAULT_PROVIDER_IDS);
@@ -640,13 +649,13 @@ describe('provider registry', () => {
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
 		expect(store.read().providers).toEqual({ stt: ECHO_STT_PROVIDER_ID, tts: 'system-tts' });
-		expect(store.read().providersVersion).toBe(3);
+		expect(store.read().providersVersion).toBe(4);
 	});
 
 	it('runs once, so a later deliberate choice of the mock trio stands', () => {
 		const store = blobStore({
 			providers: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
-			providersVersion: 3,
+			providersVersion: 4,
 		});
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
@@ -665,7 +674,7 @@ describe('provider registry', () => {
 		expect(store.read().controls).toEqual({ wakeWordEnabled: true });
 		// The provider step did not run twice.
 		expect(store.read().providers).toEqual({ stt: 'parakeet-local' });
-		expect(store.read().providersVersion).toBe(3);
+		expect(store.read().providersVersion).toBe(4);
 	});
 
 	it('keeps a wake phrase the user typed themselves', () => {
@@ -681,6 +690,186 @@ describe('provider registry', () => {
 		};
 
 		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+	});
+
+	it('moves a stored local Brain to the voice-routing assignment', () => {
+		// The local Brain was never offered in a dropdown, but a settings file could
+		// name it, and that file routed on Qwen3. It still does, through the one
+		// place a local model is now chosen.
+		const store = keyedStore({
+			acappella: {
+				providers: { stt: 'parakeet-local', brain: 'qwen3-local' },
+				providersVersion: 3,
+			},
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(true);
+
+		expect(store.read('acappella')).toEqual({
+			providers: { stt: 'parakeet-local' },
+			providersVersion: 4,
+		});
+		expect(store.read('localModelAssignments')).toEqual({
+			'voice-routing': { type: 'local', modelId: 'qwen3-1.7b-instruct-q4km' },
+		});
+		expect(readVoiceProviderSettings(store).brain).toBe('qwen3-local');
+	});
+
+	it('keeps a voice-routing assignment that is already there', () => {
+		const assigned = {
+			'voice-routing': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.3' },
+		};
+		const store = keyedStore({
+			acappella: { providers: { brain: 'qwen3-local' }, providersVersion: 3 },
+			localModelAssignments: assigned,
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(true);
+
+		// The assignment is the newer decision; only the dead provider id goes.
+		expect(store.read('localModelAssignments')).toEqual(assigned);
+		expect(store.read('acappella')).toEqual({ providers: {}, providersVersion: 4 });
+	});
+
+	it('leaves a voice-specific Brain and the assignments alone', () => {
+		const store = keyedStore({
+			acappella: { providers: { brain: 'openai-brain' }, providersVersion: 3 },
+		});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+		expect(store.read('acappella')).toEqual({
+			providers: { brain: 'openai-brain' },
+			providersVersion: 4,
+		});
+		expect(store.read('localModelAssignments')).toBeUndefined();
+	});
+});
+
+/** A settings store that keeps each key apart, as the real one does. */
+function keyedStore(initial: Record<string, unknown>) {
+	const values: Record<string, unknown> = { ...initial };
+	return {
+		get: (key: string, defaultValue?: unknown) => values[key] ?? defaultValue,
+		set: vi.fn((key: string, value: unknown) => {
+			values[key] = value;
+		}),
+		read: (key: string) => values[key],
+	};
+}
+
+describe('the Brain the voice-routing assignment selects', () => {
+	const OLLAMA = {
+		id: 'ep-1',
+		name: 'Ollama',
+		kind: 'ollama',
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const ENDPOINT_ASSIGNMENT = {
+		'voice-routing': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.3' },
+	};
+
+	it('is the endpoint Brain for an endpoint assignment, over the stored choice', () => {
+		const store = keyedStore({
+			acappella: { providers: { brain: 'openai-brain' } },
+			localModelAssignments: ENDPOINT_ASSIGNMENT,
+			localModelEndpoints: [OLLAMA],
+		});
+
+		const settings = readVoiceProviderSettings(store);
+
+		expect(settings.brain).toBe('endpoint-brain');
+		expect(settings.brainSource).toEqual({
+			assignment: { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.3' },
+			spec: 'endpoint:ep-1:llama3.3',
+			label: 'llama3.3 on Ollama',
+			endpointName: 'Ollama',
+		});
+	});
+
+	it('is the local Brain for a local assignment', () => {
+		const store = keyedStore({
+			localModelAssignments: {
+				'voice-routing': { type: 'local', modelId: 'qwen3-1.7b-instruct-q4km' },
+			},
+		});
+
+		const settings = readVoiceProviderSettings(store);
+
+		expect(settings.brain).toBe('qwen3-local');
+		expect(settings.brainSource?.spec).toBe('local:qwen3-1.7b-instruct-q4km');
+		expect(settings.brainSource?.endpointName).toBeUndefined();
+	});
+
+	it('is the stored voice-specific Brain while the assignment is off', () => {
+		const store = keyedStore({
+			acappella: { providers: { brain: 'anthropic-brain' } },
+			localModelAssignments: { 'voice-routing': { type: 'off' }, 'tab-naming': { type: 'off' } },
+		});
+
+		const settings = readVoiceProviderSettings(store);
+
+		expect(settings.brain).toBe('anthropic-brain');
+		expect(settings.brainSource).toBeUndefined();
+	});
+
+	it('builds the assigned Brain with the source the assignment named', () => {
+		const store = keyedStore({
+			localModelAssignments: ENDPOINT_ASSIGNMENT,
+			localModelEndpoints: [OLLAMA],
+		});
+		const settings = readVoiceProviderSettings(store);
+
+		const resolution = resolveVoicePipeline({ settings });
+
+		expect(resolution.resolvedIds.brain).toBe('endpoint-brain');
+		expect(resolution.substitutions).toEqual([]);
+		expect(resolution.providers.brain).toMatchObject({
+			id: 'endpoint-brain',
+			source: { spec: 'endpoint:ep-1:llama3.3' },
+		});
+		expect(resolution.brainEndpointName).toBe('Ollama');
+	});
+
+	it('names the endpoint in the privacy sentence, because the transcript goes to it', () => {
+		const store = keyedStore({
+			localModelAssignments: ENDPOINT_ASSIGNMENT,
+			localModelEndpoints: [OLLAMA],
+		});
+
+		const state = buildProviderState(
+			resolveVoicePipeline({ settings: readVoiceProviderSettings(store) })
+		);
+
+		expect(state.audioLeavesMachine).toBe(false);
+		expect(state.egressStatement).toBe('Audio stays on this machine. Text is sent to Ollama.');
+	});
+
+	it('still says text leaves when the endpoint was removed', () => {
+		const store = keyedStore({ localModelAssignments: ENDPOINT_ASSIGNMENT });
+
+		const state = buildProviderState(
+			resolveVoicePipeline({ settings: readVoiceProviderSettings(store) })
+		);
+
+		expect(state.egressStatement).toBe(
+			'Audio stays on this machine. Text is sent to your model endpoint.'
+		);
+	});
+
+	it('keys a different model on the same endpoint as a different pipeline', () => {
+		const source = (model: string) => ({
+			assignment: { type: 'endpoint' as const, endpointId: 'ep-1', model },
+			spec: `endpoint:ep-1:${model}`,
+			label: `${model} on Ollama`,
+		});
+
+		expect(pipelineKey({ brain: 'endpoint-brain', brainSource: source('llama3.3') })).not.toBe(
+			pipelineKey({ brain: 'endpoint-brain', brainSource: source('qwen3:8b') })
+		);
+		expect(pipelineKey({ brain: 'endpoint-brain', brainSource: source('llama3.3') })).toBe(
+			pipelineKey({ brain: 'endpoint-brain', brainSource: source('llama3.3') })
+		);
 	});
 });
 

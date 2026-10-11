@@ -56,7 +56,7 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	// The same hook and the same persisted setting the HUD's quick picker writes,
 	// so the two can never disagree about which microphone is chosen.
 	const inputDevices = useVoiceInputDevices(enabled);
-	const { modes, setMode, loaded, providerIds } = useVoiceProviderSelection(enabled);
+	const { modes, setMode, loaded, providerIds, brainSource } = useVoiceProviderSelection(enabled);
 	const [pendingSet, setPendingSet] = useState(false);
 
 	// One bundle: the recogniser and the wake word. The voice and the router
@@ -101,7 +101,14 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 	/** One provider slot: the Local/Cloud choice plus its model row. */
 	const renderSlot = (role: VoiceProviderRole) => {
 		const slot = SLOT_DEFINITIONS.find((candidate) => candidate.slot === role)!;
-		const modelId = localModelIdForSlot(slot, providerIds[role]);
+		// A Brain on the Local Models `voice-routing` assignment is whatever that
+		// assignment names, so its row comes from there rather than the catalog.
+		const assigned = role === 'brain' ? brainSource : null;
+		const modelId = assigned
+			? assigned.assignment.type === 'local'
+				? assigned.assignment.modelId
+				: undefined
+			: localModelIdForSlot(slot, providerIds[role]);
 		const listing = modelId ? listingsById.get(modelId) : undefined;
 		const Icon = slot.icon;
 		return (
@@ -141,7 +148,13 @@ export function VoiceSetupPanel({ theme, enabled }: VoiceSetupPanelProps) {
 							onVerify={(id) => void models.verify(id)}
 						/>
 					)}
-					{modes[role] === 'local' && !modelId && slot.localNote && (
+					{modes[role] === 'local' && assigned && (
+						<p className="text-xs-plus opacity-55 select-text">
+							Routes with {assigned.label}, the model assigned to Voice routing in Settings &gt;
+							Local Models. Choose a different Conductor Brain in Voice Providers below.
+						</p>
+					)}
+					{modes[role] === 'local' && !assigned && !modelId && slot.localNote && (
 						<p className="text-xs-plus opacity-55">{slot.localNote}</p>
 					)}
 				</SectionCard>

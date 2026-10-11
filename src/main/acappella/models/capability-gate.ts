@@ -37,12 +37,19 @@ import {
 	type VoiceProviderRequirement,
 } from '../../../shared/acappella/provider-catalog';
 import type { NativeRuntimeId } from '../../../shared/local-models/native-runtimes';
+import type {
+	LocalModelTaskReadiness,
+	LocalModelTaskUnreadyReason,
+} from '../../../shared/local-models/task-readiness';
+import type { LocalModelTaskId } from '../../../shared/local-models/tasks';
+import { resolveTaskReadiness } from '../../local-models/task-readiness';
 import { hasCredential } from '../providers/credentials';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import type {
 	VoiceReadiness,
 	VoiceSlot,
 	VoiceSlotReadiness,
+	VoiceSlotUnsatisfiedReason,
 } from '../../../shared/acappella/readiness';
 import { getMicPermission } from '../permissions/mic-permission';
 import {
@@ -191,6 +198,13 @@ export interface ResolveVoiceReadinessOptions {
 	 * without `espeak-ng` can still describe a machine that has one.
 	 */
 	readSystemVoiceFailure?: () => Promise<SystemVoiceUnavailable | null>;
+	/**
+	 * Whether a Local Models task's assigned source can run. Defaults to the
+	 * core's own resolver, handed this gate's model and runtime readers so a test
+	 * that describes a machine describes it once. Asked only when the Brain is
+	 * one the `voice-routing` assignment selects.
+	 */
+	readTaskReadiness?: (taskId: LocalModelTaskId) => Promise<LocalModelTaskReadiness>;
 }
 
 /**
@@ -326,6 +340,10 @@ async function resolveSlot(
 		return { slot, providerId, satisfied: true };
 	}
 
+	if (requirement.kind === 'local-models-task') {
+		return resolveAssignedSource(slot, providerId, requirement.taskId, options, readModelStatus);
+	}
+
 	if (requirement.kind === 'system-voice') {
 		// Present by construction on macOS and Windows; on Linux only with
 		// `espeak-ng` installed. Checked here so a machine without one refuses
@@ -430,6 +448,97 @@ async function resolveSlot(
 	}
 
 	return { slot, providerId, satisfied: true };
+}
+
+/**
+ * How a Local Models readiness reason travels as a voice slot reason.
+ *
+ * The three a model row can act on keep their meaning (the slot offers the
+ * download for the first two). Every endpoint fault but a missing key, and an
+ * assignment that names a model this build cannot run, is "the source this slot
+ * was pointed at cannot be reached": the sentence beside it says which.
+ */
+const TASK_REASON_TO_SLOT_REASON: Record<LocalModelTaskUnreadyReason, VoiceSlotUnsatisfiedReason> =
+	{
+		'model-not-installed': 'model-not-installed',
+		'model-corrupt': 'model-corrupt',
+		'runtime-unavailable': 'runtime-unavailable',
+		'endpoint-key-missing': 'api-key-missing',
+		'model-unknown': 'provider-unreachable',
+		'model-wrong-kind': 'provider-unreachable',
+		'endpoint-unknown': 'provider-unreachable',
+		'endpoint-disabled': 'provider-unreachable',
+		'endpoint-unsupported': 'provider-unreachable',
+		'endpoint-rejected': 'provider-unreachable',
+		'endpoint-unreachable': 'provider-unreachable',
+		'endpoint-model-missing': 'provider-unreachable',
+	};
+
+/**
+ * A slot filled by a Local Models assignment: ready exactly when the task's
+ * assigned source is.
+ *
+ * The verdict is the core's (`resolveTaskReadiness`), restated for the slot, so
+ * this panel, Settings > Local Models, and `maestro-cli models status` cannot
+ * disagree about whether the assigned model can route. It is never satisfied by
+ * a different source: an assignment that is off, or that cannot run, leaves the
+ * slot unsatisfied and says which model or endpoint it was.
+ */
+async function resolveAssignedSource(
+	slot: VoiceSlot,
+	providerId: string,
+	taskId: LocalModelTaskId,
+	options: ResolveVoiceReadinessOptions,
+	readModelStatus: (modelId: string) => Promise<ModelStatus>
+): Promise<VoiceSlotReadiness> {
+	const label = SLOT_LABELS[slot];
+	const readRuntimeFailure = options.readRuntimeFailure;
+	const readTaskReadiness =
+		options.readTaskReadiness ??
+		((id: LocalModelTaskId) =>
+			resolveTaskReadiness(id, {
+				readModelStatus,
+				...(readRuntimeFailure
+					? { readRuntimeFailure: async (runtimeId) => readRuntimeFailure(runtimeId) }
+					: {}),
+			}));
+	const readiness = await readTaskReadiness(taskId);
+	const requiredModelId =
+		readiness.assignment.type === 'local' ? readiness.assignment.modelId : undefined;
+
+	if (readiness.state === 'ready') {
+		return { slot, providerId, satisfied: true, ...(requiredModelId ? { requiredModelId } : {}) };
+	}
+
+	if (readiness.state === 'unavailable' && readiness.reason) {
+		const reason = TASK_REASON_TO_SLOT_REASON[readiness.reason];
+		// Only a reason a download fixes carries the model id: the slot draws a
+		// Download button from it, and offering one for a runtime that will not
+		// load is the wrong instruction.
+		const downloadable = reason === 'model-not-installed' || reason === 'model-corrupt';
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason,
+			...(downloadable && requiredModelId ? { requiredModelId } : {}),
+			detail: `${label}: ${readiness.detail}`,
+			suggestedAction: readiness.suggestedAction,
+		};
+	}
+
+	// The slot holds an assigned Brain while the assignment names no model: a
+	// settings file that spells the provider id out, or an assignment switched
+	// off since. Refused by name; nothing else is put in its place.
+	return {
+		slot,
+		providerId,
+		satisfied: false,
+		reason: 'provider-unreachable',
+		detail: `${label}: ${readiness.label} has no model assigned.`,
+		suggestedAction:
+			'Assign one in Settings > Local Models, or pick another Conductor Brain in Settings > Plugins > A Cappella > Voice Providers.',
+	};
 }
 
 /**

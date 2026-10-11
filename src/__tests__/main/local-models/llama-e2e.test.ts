@@ -3,8 +3,9 @@
  *
  * The llama runtime, end to end on real hardware: install the runtime and the
  * Qwen3 1.7B GGUF through the core Local Models service, run the self-test
- * against the real loader, route one utterance through `LlamaBrainProvider`
- * with the JSON-schema grammar, and measure load time, throughput, and memory.
+ * against the real loader, route utterances through the local Conductor Brain
+ * (`AssignedBrainProvider`) with the JSON-schema grammar, and measure load
+ * time, throughput, and memory.
  *
  * Unit tests mock node-llama-cpp, so they cannot tell whether the downloaded
  * runtime actually loads, whether the prebuilt binary initializes a backend on
@@ -53,11 +54,15 @@ import {
 	llamaBackendLabel,
 } from '../../../main/local-models/runtime/llama-options';
 import { modelFilePath } from '../../../main/local-models/model-store';
-import { LlamaBrainProvider } from '../../../main/acappella/providers/local/llama-brain';
+import {
+	AssignedBrainProvider,
+	localEngineTaskRunner,
+} from '../../../main/acappella/providers/local/assigned-brain';
 import { LocalTextEngine } from '../../../main/local-models/text-gen';
 import { QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import { QWEN3_BRAIN_PROVIDER_ID } from '../../../shared/acappella/provider-catalog';
 import type { RosterAgent } from '../../../shared/acappella/protocol';
-import { ROUTE_TAB_ACTIONS } from '../../../shared/acappella/route-decision';
+import { ROUTE_TAB_ACTIONS, holdsTheFloor } from '../../../shared/acappella/route-decision';
 
 /** Generous on a slow link: the model alone is 1.1 GB. */
 const DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
@@ -160,11 +165,17 @@ describe.skipIf(!RUN)('llama runtime end to end (MAESTRO_LOCAL_MODEL_E2E=1)', ()
 	}, 60_000);
 
 	it(
-		'routes one utterance through LlamaBrainProvider with the grammar',
+		'routes utterances through the local Conductor Brain with the grammar',
 		async () => {
 			// The real engine (real runtime loader, real installed-model check), just
-			// never idle-unloaded mid-test.
-			const brain = new LlamaBrainProvider({ engine: new LocalTextEngine({ idleUnloadMs: 0 }) });
+			// never idle-unloaded mid-test. In the app the Brain reaches it through
+			// the task router and the `voice-routing` assignment; there is no settings
+			// store here, so the turns run on the engine directly.
+			const engine = new LocalTextEngine({ idleUnloadMs: 0 });
+			const brain = new AssignedBrainProvider({
+				id: QWEN3_BRAIN_PROVIDER_ID,
+				runTask: localEngineTaskRunner(engine, QWEN3_1_7B_ID),
+			});
 			try {
 				const context = { roster: ROSTER, scope: { kind: 'conductor' as const } };
 
@@ -186,9 +197,10 @@ describe.skipIf(!RUN)('llama runtime end to end (MAESTRO_LOCAL_MODEL_E2E=1)', ()
 
 				// What this proves is the grammar path: every turn came back as a
 				// structurally valid decision aimed at the Conductor or a roster agent,
-				// never free text. Routing ACCURACY is recorded, not asserted: on
-				// 2026-10-10 the 1.7B model answered both explicit utterances with a
-				// clarifying question (see docs/architecture/local-models.md).
+				// never free text. Routing ACCURACY is recorded, not asserted: the
+				// 1.7B model sends an utterance that names an agent to the Conductor
+				// (see docs/architecture/local-models.md), which is why no local model
+				// is offered in the Conductor Brain picker yet.
 				const rosterIds = ROSTER.map((agent) => agent.sessionId);
 				for (const decision of [cold, warm]) {
 					if (decision.target !== 'conductor') {
@@ -202,8 +214,11 @@ describe.skipIf(!RUN)('llama runtime end to end (MAESTRO_LOCAL_MODEL_E2E=1)', ()
 				results.routedToNamedAgent = [cold, warm].filter(
 					(decision) => decision.target !== 'conductor'
 				).length;
+				// With the grammar schema the optional fields may be null, so a
+				// decision is no longer forced to carry a clarifying question.
+				results.heldTheFloor = [cold, warm].filter(holdsTheFloor).length;
 			} finally {
-				await brain.unload();
+				await engine.unload();
 			}
 		},
 		INFERENCE_TIMEOUT_MS

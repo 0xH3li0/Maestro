@@ -278,6 +278,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Playbook Exchange: browse, README, install           | `marketplace list`, `marketplace show <id>`, `marketplace import`                                 |
 | Local Models catalog: list, Download, Verify, Remove | `models list [--kind]`, `models install`, `models verify`, `models remove [--force] <model-id>`   |
 | Local Models Assignments picker                      | `models assign <task-id> <off\|utility-agent\|local:<id>\|endpoint:<ep>:<model>>`, `models tasks` |
+| A Cappella Conductor Brain picker: an endpoint model | `models assign voice-routing endpoint:<ep>:<model>` (`off` returns to the voice-specific Brain)   |
 | Local Models endpoints: add, remove, test, detect    | `models endpoints list\|add\|remove\|test\|detect`                                                |
 | Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                   |
 | Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                         |

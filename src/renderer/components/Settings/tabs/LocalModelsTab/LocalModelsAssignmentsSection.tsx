@@ -45,6 +45,7 @@ import {
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Theme } from '../../../../types';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
+import { AssignmentOptionElements } from './AssignmentOptionElements';
 import { buildAssignmentOptionGroups } from './assignmentOptions';
 import { downloadPercent, isActive } from './LocalModelRow';
 import { SemanticIndexSettings } from './SemanticIndexSettings';
@@ -190,23 +191,7 @@ function TaskAssignmentRow({
 					className="w-56 flex-shrink-0 p-1.5 rounded border bg-transparent outline-none text-xs"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 				>
-					{groups.map((group) =>
-						group.label === null ? (
-							group.options.map((option) => (
-								<option key={option.value} value={option.value}>
-									{option.label}
-								</option>
-							))
-						) : (
-							<optgroup key={group.label} label={group.label}>
-								{group.options.map((option) => (
-									<option key={option.value} value={option.value}>
-										{option.label}
-									</option>
-								))}
-							</optgroup>
-						)
-					)}
+					<AssignmentOptionElements groups={groups} />
 				</select>
 			</div>
 			{problem && (

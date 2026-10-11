@@ -28,15 +28,27 @@
  *
  * The defaults are the LOCAL trio (`DEFAULT_PROVIDER_IDS` below): Parakeet for
  * speech in, the operating system's own voice for speech out, and the built-in
- * keyword router. Only the first needs a download. The two neural local engines
- * that cannot run in this build yet (Kokoro, Qwen3) stay registered here so the
- * code has a home, but they are absent from the shared catalog and so from every
- * dropdown; see the notes beside their ids in `provider-catalog.ts`.
+ * keyword router. Only the first needs a download. Kokoro, the neural local
+ * voice that cannot speak in this build yet, stays registered here so the code
+ * has a home, but it is absent from the shared catalog and so from every
+ * dropdown; see the note beside its id in `provider-catalog.ts`.
+ *
+ * The Brain slot has one more input than the other two: the Local Models
+ * `voice-routing` assignment. When it names a local model or an endpoint, that
+ * source IS the Brain (`brainSource` below, read by `readVoiceProviderSettings`)
+ * and the stored voice-specific choice waits behind it. See
+ * `shared/acappella/voice-routing.ts`.
  */
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
+import {
+	VOICE_ROUTING_TASK_ID,
+	effectiveBrainProviderId,
+	resolveVoiceBrainSource,
+	type VoiceBrainSource,
+} from '../../../shared/acappella/voice-routing';
 import {
 	LEGACY_DEFAULT_WAKE_PHRASE,
 	asWakeEngine,
@@ -49,6 +61,7 @@ import {
 import {
 	summariseVoiceEgress,
 	BUILTIN_BRAIN_PROVIDER_ID,
+	ENDPOINT_BRAIN_PROVIDER_ID,
 	KOKORO_TTS_PROVIDER_ID,
 	LOCAL_PROVIDER_IDS,
 	LOCAL_STT_PROVIDER_ID,
@@ -70,6 +83,13 @@ import type {
 	VoiceProviderTier,
 	VoiceProviderTrio,
 } from '../../../shared/acappella/providers';
+import { parseLocalModelEndpoints } from '../../../shared/local-models/endpoints';
+import { QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import {
+	parseLocalModelAssignments,
+	resolveLocalModelAssignment,
+	withLocalModelAssignment,
+} from '../../../shared/local-models/tasks';
 import { logger } from '../../utils/logger';
 import { CascadePipeline } from './cascade-pipeline';
 import { ECHO_STT_PROVIDER_ID, EchoSttProvider } from './echo-stt';
@@ -79,7 +99,7 @@ import { OpenAiBrainProvider } from './hosted/openai-brain';
 import { OpenAiSttProvider } from './hosted/openai-stt';
 import { OpenAiTtsProvider } from './hosted/openai-tts';
 import { KokoroTtsProvider } from './local/kokoro-tts';
-import { LlamaBrainProvider } from './local/llama-brain';
+import { AssignedBrainProvider } from './local/assigned-brain';
 import { SystemVoiceTtsProvider } from './local/system-tts';
 import { ParakeetSttProvider } from './local/parakeet-stt';
 import { WhisperSttProvider } from './local/whisper-stt';
@@ -115,7 +135,17 @@ interface VoiceProviderByRole {
 export interface VoiceProviderSettings {
 	stt?: string;
 	tts?: string;
+	/**
+	 * The Brain in force. The assigned one (`qwen3-local`, `endpoint-brain`) when
+	 * the `voice-routing` assignment names a source, else the stored choice.
+	 */
 	brain?: string;
+	/**
+	 * The source the Local Models `voice-routing` assignment names, when it names
+	 * one. It decides `brain` above; it is carried so the provider can say which
+	 * model it is and the privacy sentence can name the endpoint.
+	 */
+	brainSource?: VoiceBrainSource;
 	/** Cascade unless the user opted into the realtime tier. */
 	pipeline?: VoicePipelineShape;
 	/** Which realtime provider, when the shape is `realtime`. */
@@ -208,6 +238,8 @@ export interface VoiceProviderResolution {
 	substitutions: VoiceProviderSubstitution[];
 	/** What each role actually resolved to, for the HUD and for `get-state`. */
 	resolvedIds: Record<VoiceProviderRole, string>;
+	/** The endpoint the Brain routes on, by its name, when it routes on one. */
+	brainEndpointName?: string;
 }
 
 /**
@@ -367,13 +399,29 @@ registerVoiceProvider({
 	create: () => new KokoroTtsProvider(),
 });
 
-// Registered but UNLISTED. See QWEN3_BRAIN_PROVIDER_ID for why.
+// -- The Local Models Brains ------------------------------------------------
+//
+// Not provider choices: the `voice-routing` assignment selects them, and
+// `readVoiceProviderSettings` reports whichever one it names as `brain`. Both
+// run every turn through the task router. See QWEN3_BRAIN_PROVIDER_ID for why
+// no local model is offered in the picker yet.
+
 registerVoiceProvider({
 	role: 'brain',
 	id: QWEN3_BRAIN_PROVIDER_ID,
-	label: 'Qwen3 1.7B (local)',
+	label: 'Local model',
 	tier: 'local',
-	create: () => new LlamaBrainProvider(),
+	create: ({ settings }) =>
+		new AssignedBrainProvider({ id: QWEN3_BRAIN_PROVIDER_ID, source: settings.brainSource }),
+});
+
+registerVoiceProvider({
+	role: 'brain',
+	id: ENDPOINT_BRAIN_PROVIDER_ID,
+	label: 'Model endpoint',
+	tier: 'local',
+	create: ({ settings }) =>
+		new AssignedBrainProvider({ id: ENDPOINT_BRAIN_PROVIDER_ID, source: settings.brainSource }),
 });
 
 // -- The hosted tier --------------------------------------------------------
@@ -503,6 +551,11 @@ function resolveCascade(
 		providers,
 		substitutions,
 		resolvedIds: { stt: stt.id, tts: tts.id, brain: brain.id },
+		// Only when the endpoint Brain is the one that resolved: a slot that fell
+		// through to a refusing provider sends nothing to anyone.
+		...(brain.id === ENDPOINT_BRAIN_PROVIDER_ID && settings.brainSource?.endpointName
+			? { brainEndpointName: settings.brainSource.endpointName }
+			: {}),
 	};
 }
 
@@ -632,8 +685,15 @@ function unresolved<R extends VoiceProviderRole>(
  *
  *   2. Clear the mock provider trio an early build persisted.
  *   3. Move the old default wake phrase ("hey maestro") to the new one.
+ *   4. Move a stored local Brain (`qwen3-local`) to the `voice-routing` assignment.
  */
-export const VOICE_PROVIDERS_SETTINGS_VERSION = 3;
+export const VOICE_PROVIDERS_SETTINGS_VERSION = 4;
+
+/** Settings key of the Local Models task assignments, read here for the Brain. */
+const LOCAL_MODEL_ASSIGNMENTS_KEY = 'localModelAssignments';
+
+/** Settings key of the user's saved model endpoints, read here to name one. */
+const LOCAL_MODEL_ENDPOINTS_KEY = 'localModelEndpoints';
 
 /**
  * Speech-to-text ids an early build wrote as its DEFAULT, alongside the silent
@@ -656,7 +716,13 @@ const LEGACY_DEFAULT_STT_IDS = new Set<string>([MOCK_PROVIDER_IDS.stt, ECHO_STT_
  * phrase sits in settings verbatim. No detector exists for it, so it is cleared
  * and the new default applies. Any other phrase is the user's own and stays.
  *
- * @returns true when either step changed something.
+ * Step 4: a local model now routes because it is ASSIGNED to the `voice-routing`
+ * task, not because a provider id says so. The local Brain was never offered in
+ * a dropdown, but a settings file could name it, and that file ran Qwen3. It
+ * keeps doing so: the choice moves to the assignment (unless the task already
+ * has one, which is the newer decision) and the stored provider id is cleared.
+ *
+ * @returns true when any step changed something.
  */
 export function migrateLegacyVoiceProviders(store: {
 	get: (key: string, defaultValue?: unknown) => unknown;
@@ -707,6 +773,27 @@ export function migrateLegacyVoiceProviders(store: {
 		}
 	}
 
+	if (version < 4) {
+		const providers = (next.providers ?? {}) as Record<string, unknown>;
+		if (providers.brain === QWEN3_BRAIN_PROVIDER_ID) {
+			const assignments = parseLocalModelAssignments(store.get(LOCAL_MODEL_ASSIGNMENTS_KEY, {}));
+			if (resolveLocalModelAssignment(assignments, VOICE_ROUTING_TASK_ID).type === 'off') {
+				store.set(
+					LOCAL_MODEL_ASSIGNMENTS_KEY,
+					withLocalModelAssignment(assignments, VOICE_ROUTING_TASK_ID, {
+						type: 'local',
+						modelId: QWEN3_1_7B_ID,
+					})
+				);
+			}
+			const nextProviders = { ...providers };
+			delete nextProviders.brain;
+			next.providers = nextProviders;
+			changed = true;
+			logger.info('Moved the stored local Brain to the voice-routing assignment', LOG_CONTEXT);
+		}
+	}
+
 	store.set(ACAPPELLA_SETTINGS_KEY, {
 		...next,
 		providersVersion: VOICE_PROVIDERS_SETTINGS_VERSION,
@@ -735,6 +822,12 @@ export function readVoiceProviderSettings(store: {
 	// The conversation's timing lives with the other floor controls (hold
 	// threshold, idle timeout), which is the blob the Voice Controls panel writes.
 	const controls = (stored?.controls ?? {}) as Record<string, unknown>;
+	// The Brain's other input. Read from the same store, so every caller of this
+	// function (the session, the gate, a provider swap) sees one answer.
+	const brainSource = resolveVoiceBrainSource(
+		store.get(LOCAL_MODEL_ASSIGNMENTS_KEY, {}),
+		parseLocalModelEndpoints(store.get(LOCAL_MODEL_ENDPOINTS_KEY, []))
+	);
 
 	return {
 		speakBackgroundCompletions: asAnnouncementSetting(speech.speakBackgroundCompletions),
@@ -763,7 +856,8 @@ export function readVoiceProviderSettings(store: {
 		wakeEngine: asWakeEngine(controls.wakeEngine),
 		stt: asProviderId(providers.stt),
 		tts: asProviderId(providers.tts),
-		brain: asProviderId(providers.brain),
+		brain: effectiveBrainProviderId(brainSource, asProviderId(providers.brain)),
+		...(brainSource ? { brainSource } : {}),
 		pipeline: stored?.pipeline === 'realtime' ? 'realtime' : 'cascade',
 		realtime: asProviderId(providers.realtime),
 		voiceId: asProviderId(voice.voiceId),
@@ -786,6 +880,9 @@ export function pipelineKey(settings: VoiceProviderSettings): string {
 		settings.stt ?? '',
 		settings.tts ?? '',
 		settings.brain ?? '',
+		// A different model on the same kind of source is a different Brain: the
+		// provider id alone would not notice llama3 becoming qwen3 on one endpoint.
+		settings.brainSource?.spec ?? '',
 		settings.voiceId ?? '',
 		settings.rate ?? '',
 	].join('|');
@@ -832,7 +929,10 @@ export function buildProviderState(resolution: VoiceProviderResolution): {
 	// Computed from what RESOLVED, not from what was configured: a slot that fell
 	// through to a refusing provider sends nothing anywhere, and saying otherwise
 	// would be the one sentence in this feature that must never be wrong.
-	const egress = summariseVoiceEgress(slots.map((slot) => slot.providerId));
+	const egress = summariseVoiceEgress(
+		slots.map((slot) => slot.providerId),
+		{ endpointName: resolution.brainEndpointName }
+	);
 
 	return {
 		pipeline: resolution.shape,

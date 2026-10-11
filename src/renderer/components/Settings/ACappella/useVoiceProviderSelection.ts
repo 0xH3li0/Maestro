@@ -13,9 +13,17 @@
  * `electron` and the model store, which the renderer must not pull in; the
  * catalog is the pure-data half that both sides can import, and it is the only
  * reason a slot the gate blocks and a panel that says "ready" cannot disagree.
+ *
+ * The Conductor Brain has a second input, and it is NOT in that blob: the Local
+ * Models `voice-routing` assignment. A local model or an endpoint routes
+ * because it is assigned to that task, so this hook reads the assignment from
+ * the settings store every other Local Models surface uses and writes it back
+ * there. `providerIds.brain` is the Brain in force (the assigned one while the
+ * assignment names a source), never a second stored copy of it. See
+ * `shared/acappella/voice-routing.ts`.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Brain, MessageSquare, Volume2, type LucideIcon } from 'lucide-react';
 
 import { PARAKEET_TDT_V2_ID } from '../../../../shared/local-models/model-catalog';
@@ -36,6 +44,24 @@ import {
 	clampTtsRate,
 	clampTtsVolume,
 } from '../../../../shared/acappella/voice-controls';
+import {
+	VOICE_ROUTING_TASK_ID,
+	effectiveBrainProviderId,
+	isAssignedBrainProviderId,
+	parseVoiceBrainChoice,
+	resolveVoiceBrainSource,
+	voiceBrainChoiceValue,
+	type VoiceBrainSource,
+} from '../../../../shared/acappella/voice-routing';
+import {
+	OFF_ASSIGNMENT,
+	isSameLocalModelAssignment,
+	localModelAssignmentProblem,
+	resolveLocalModelAssignment,
+	withLocalModelAssignment,
+	type LocalModelAssignment,
+} from '../../../../shared/local-models/tasks';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 /** Where a slot runs. `hosted` is a stated choice, never a fallback. */
 export type VoiceSlotMode = 'local' | 'cloud';
@@ -99,7 +125,7 @@ export const SLOT_DEFINITIONS: readonly VoiceSlotDefinition[] = [
 		label: 'Conductor Brain',
 		title: 'What decides which agent you meant',
 		description:
-			'Local routes by agent name with no model. Hosted uses an API model, which understands more and costs per request.',
+			'Local routes by agent name with no model, or with a model you assign to Voice routing. Hosted uses an API model, which understands more and costs per request.',
 		localNote:
 			'Picks the agent you named, or the one you are talking to, and reads replies back as written. Nothing to download.',
 		icon: Brain,
@@ -122,9 +148,27 @@ export function localModelIdForSlot(
 }
 
 export interface VoiceProviderSelection {
-	/** What each slot is set to. Unset slots report the mock tier's id. */
+	/**
+	 * What each slot runs. Unset slots report the default tier's id, and the
+	 * Brain reports the assigned one while `voice-routing` names a source.
+	 */
 	providerIds: Record<VoiceProviderRole, string>;
+	/**
+	 * Pick a provider for a slot. For the Brain this is a voice-specific choice
+	 * (built-in, hosted), so it also switches the `voice-routing` assignment off:
+	 * an assignment left on would keep deciding the slot.
+	 */
 	setProvider: (slot: VoiceProviderRole, providerId: string) => Promise<void>;
+	/** The model the `voice-routing` assignment names, or null when it is off. */
+	brainSource: VoiceBrainSource | null;
+	/** The Conductor Brain picker's value for the Brain in force. */
+	brainChoice: string;
+	/**
+	 * Apply a Conductor Brain picker value: an assignment spec assigns that model
+	 * to `voice-routing`, a provider id goes through {@link setProvider}.
+	 * Resolves to the reason a model was refused, or null when it was saved.
+	 */
+	setBrainChoice: (value: string) => Promise<string | null>;
 	pipeline: VoicePipelineShape;
 	setPipeline: (shape: VoicePipelineShape) => Promise<void>;
 	/** Voice for the TTS slot, when its provider offers a choice. */
@@ -206,6 +250,47 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		};
 	}, [enabled]);
 
+	const assignments = useSettingsStore((s) => s.localModelAssignments);
+	const endpoints = useSettingsStore((s) => s.localModelEndpoints);
+	const setLocalModelAssignments = useSettingsStore((s) => s.setLocalModelAssignments);
+	const brainSource = useMemo(
+		() => resolveVoiceBrainSource(assignments, endpoints),
+		[assignments, endpoints]
+	);
+	/** The Brain in force: `providerIds` holds only the stored voice-specific one. */
+	const effectiveProviderIds = useMemo(
+		() => ({
+			...providerIds,
+			brain: effectiveBrainProviderId(brainSource, providerIds.brain) ?? providerIds.brain,
+		}),
+		[providerIds, brainSource]
+	);
+
+	/**
+	 * Tell the running app to pick a change up. The setting is saved either way;
+	 * what can be refused is applying it to a session that is mid-turn. That
+	 * refusal is surfaced rather than swallowed: a user who changed a voice and
+	 * heard the old one needs to know why.
+	 */
+	const applyToRunningSession = useCallback(async () => {
+		const applied = await window.maestro.voice
+			.applyProviders()
+			.catch(() => ({ status: 'unchanged' as const, reason: undefined }));
+		setNotice(applied.status === 'refused' ? (applied.reason ?? null) : null);
+	}, []);
+
+	/** Write the `voice-routing` assignment, when it is not already that. */
+	const writeBrainAssignment = useCallback(
+		(assignment: LocalModelAssignment) => {
+			const current = resolveLocalModelAssignment(assignments, VOICE_ROUTING_TASK_ID);
+			if (isSameLocalModelAssignment(assignment, current)) return;
+			setLocalModelAssignments(
+				withLocalModelAssignment(assignments, VOICE_ROUTING_TASK_ID, assignment)
+			);
+		},
+		[assignments, setLocalModelAssignments]
+	);
+
 	/**
 	 * Read-modify-write against the whole blob, then tell the running app.
 	 *
@@ -214,30 +299,50 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 	 * change take effect without a restart; it can come back refused, which is
 	 * correct and which the panel surfaces rather than retrying.
 	 */
-	const persist = useCallback(async (mutate: (blob: StoredBlob) => void) => {
-		const stored = ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ??
-			{}) as StoredBlob;
-		const next: StoredBlob = { ...stored, providers: { ...(stored.providers ?? {}) } };
-		mutate(next);
-		await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, next);
-
-		// The setting is saved either way; what can be refused is applying it to a
-		// session that is mid-turn. That refusal is surfaced rather than swallowed:
-		// a user who changed a voice and heard the old one needs to know why.
-		const applied = await window.maestro.voice
-			.applyProviders()
-			.catch(() => ({ status: 'unchanged' as const, reason: undefined }));
-		setNotice(applied.status === 'refused' ? (applied.reason ?? null) : null);
-	}, []);
+	const persist = useCallback(
+		async (mutate: (blob: StoredBlob) => void) => {
+			const stored = ((await window.maestro.settings.get(ACAPPELLA_SETTINGS_KEY)) ??
+				{}) as StoredBlob;
+			const next: StoredBlob = { ...stored, providers: { ...(stored.providers ?? {}) } };
+			mutate(next);
+			await window.maestro.settings.set(ACAPPELLA_SETTINGS_KEY, next);
+			await applyToRunningSession();
+		},
+		[applyToRunningSession]
+	);
 
 	const setProvider = useCallback(
 		async (slot: VoiceProviderRole, providerId: string) => {
+			if (slot === 'brain') {
+				// An assigned Brain is never a stored provider: it is reached by
+				// assigning a model, so there is nothing to write under this id.
+				if (isAssignedBrainProviderId(providerId)) return;
+				// Sent before the blob so main has both by the time it is asked to
+				// apply: an assignment left on would keep deciding the slot.
+				writeBrainAssignment(OFF_ASSIGNMENT);
+			}
 			setProviderIds((prev) => ({ ...prev, [slot]: providerId }));
 			await persist((blob) => {
 				blob.providers = { ...(blob.providers ?? {}), [slot]: providerId };
 			});
 		},
-		[persist]
+		[persist, writeBrainAssignment]
+	);
+
+	const setBrainChoice = useCallback(
+		async (value: string): Promise<string | null> => {
+			const choice = parseVoiceBrainChoice(value);
+			if (choice.kind === 'provider') {
+				await setProvider('brain', choice.providerId);
+				return null;
+			}
+			const problem = localModelAssignmentProblem(VOICE_ROUTING_TASK_ID, choice.assignment);
+			if (problem) return problem;
+			writeBrainAssignment(choice.assignment);
+			await applyToRunningSession();
+			return null;
+		},
+		[setProvider, writeBrainAssignment, applyToRunningSession]
 	);
 
 	const setPipeline = useCallback(
@@ -298,19 +403,35 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		[persist]
 	);
 
+	const modes = useMemo(
+		() => ({
+			stt: modeForProviderId(effectiveProviderIds.stt),
+			tts: modeForProviderId(effectiveProviderIds.tts),
+			brain: modeForProviderId(effectiveProviderIds.brain),
+		}),
+		[effectiveProviderIds]
+	);
+
 	const setMode = useCallback(
 		async (slot: VoiceProviderRole, mode: VoiceSlotMode) => {
+			// The toggle reports a click on the pill that is already lit. For a Brain
+			// on an assigned model that click must not be read as "reset to the
+			// built-in router": it would switch off an assignment the user made.
+			if (slot === 'brain' && brainSource && modes.brain === mode) return;
 			await setProvider(
 				slot,
 				mode === 'cloud' ? HOSTED_PROVIDER_IDS[slot] : LOCAL_PROVIDER_IDS[slot]
 			);
 		},
-		[setProvider]
+		[setProvider, brainSource, modes.brain]
 	);
 
 	return {
-		providerIds,
+		providerIds: effectiveProviderIds,
 		setProvider,
+		brainSource,
+		brainChoice: voiceBrainChoiceValue(brainSource, effectiveProviderIds.brain),
+		setBrainChoice,
 		pipeline,
 		setPipeline,
 		voiceId,
@@ -321,11 +442,7 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		setVolume,
 		backgroundAnnouncements,
 		setBackgroundAnnouncements,
-		modes: {
-			stt: modeForProviderId(providerIds.stt),
-			tts: modeForProviderId(providerIds.tts),
-			brain: modeForProviderId(providerIds.brain),
-		},
+		modes,
 		setMode,
 		loaded,
 		notice,

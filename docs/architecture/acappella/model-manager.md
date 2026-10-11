@@ -78,9 +78,11 @@ revision bump cannot leave the UI quoting a stale number.
 `MODEL_SETS` names one bundle, `hands-free-local` (STT + wake word), which is exactly what the
 default local trio downloads: the voice is the operating system's own and the router is built in.
 `kokoro-82m` and `qwen3-1.7b-instruct-q4km` stay in the catalog with a `pending` note and appear in
-no bundle and behind no Download button, because nothing in this build can read them yet (Kokoro
-needs a phoneme front end, Qwen3 needs the JavaScript half of `node-llama-cpp`; see
-[[packaging-notes]]). They remain listed so an earlier download can be seen, verified, and removed.
+no bundle and behind no Download button. Kokoro needs a phoneme front end this build does not have.
+Qwen3 now loads and generates (the llama runtime ships whole; see [[local-models]]), but its catalog
+entry still carries the note, and as a Conductor Brain it does not route a named agent, so voice
+offers no local model for routing. They remain listed so an earlier download can be seen, verified,
+and removed.
 
 ## Install layout
 

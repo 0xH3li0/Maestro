@@ -11,15 +11,40 @@
  *
  * The second property, checked here rather than trusted: a stored API key is
  * never read back into the renderer.
+ *
+ * The third: the Conductor Brain picker shows the Brain in force. A model
+ * routes because it is assigned to the Local Models `voice-routing` task, so
+ * the picker reads and writes that assignment and never a second copy of it.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import { VoiceProvidersPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceProvidersPanel';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
 const voice = () => window.maestro.voice;
+
+const ollama: LocalModelEndpoint = {
+	id: 'ep-ollama',
+	name: 'Ollama',
+	kind: 'ollama',
+	baseUrl: 'http://127.0.0.1:11434',
+	enabled: true,
+};
+
+const BRAIN_PICKER = 'Conductor Brain provider';
+
+function brainOptions(): Array<{ value: string; label: string }> {
+	return within(screen.getByLabelText(BRAIN_PICKER))
+		.getAllByRole('option')
+		.map((option) => ({
+			value: (option as HTMLOptionElement).value,
+			label: option.textContent ?? '',
+		}));
+}
 
 /** The stored `acappella` blob, as the settings store would return it. */
 function storedBlob(providers: Record<string, string>, extra: Record<string, unknown> = {}) {
@@ -43,6 +68,11 @@ describe('VoiceProvidersPanel', () => {
 			{ service: 'elevenlabs', label: 'ElevenLabs', configured: false, keyringAvailable: true },
 			{ service: 'anthropic', label: 'Anthropic', configured: false, keyringAvailable: true },
 		]);
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+			ok: true,
+			models: [{ id: 'llama3.3' }, { id: 'qwen3:8b' }],
+		} as never);
+		useSettingsStore.setState({ localModelAssignments: {}, localModelEndpoints: [] });
 	});
 
 	it('says audio stays on this machine for a local configuration', async () => {
@@ -116,6 +146,134 @@ describe('VoiceProvidersPanel', () => {
 		});
 		// Without this the change would not take effect until the next app start.
 		await waitFor(() => expect(voice().applyProviders).toHaveBeenCalled());
+	});
+
+	it('offers the built-in router, the hosted Brains, and nothing else with no endpoint saved', async () => {
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+		await screen.findByLabelText(BRAIN_PICKER);
+
+		// No local model row: none is offered as a fresh choice yet.
+		expect(brainOptions()).toEqual([
+			{ value: 'mock-brain', label: 'Built-in (keyword routing)' },
+			{ value: 'openai-brain', label: 'OpenAI (hosted)' },
+			{ value: 'anthropic-brain', label: 'Anthropic (hosted)' },
+		]);
+		expect(window.maestro.localModels.endpoints.listModels).not.toHaveBeenCalled();
+	});
+
+	it("offers the models of the user's enabled endpoints", async () => {
+		useSettingsStore.setState({ localModelEndpoints: [ollama] });
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+
+		await waitFor(() =>
+			expect(brainOptions()).toEqual(
+				expect.arrayContaining([
+					{ value: 'endpoint:ep-ollama:llama3.3', label: 'llama3.3' },
+					{ value: 'endpoint:ep-ollama:qwen3:8b', label: 'qwen3:8b' },
+				])
+			)
+		);
+		expect(screen.getByRole('group', { name: 'Ollama' })).toBeInTheDocument();
+	});
+
+	it('shows the assigned model as the Brain, over the stored provider, and names the endpoint', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue(
+			storedBlob({ stt: 'whisper-local', tts: 'system-tts', brain: 'openai-brain' })
+		);
+		useSettingsStore.setState({
+			localModelEndpoints: [ollama],
+			localModelAssignments: {
+				'voice-routing': { type: 'endpoint', endpointId: 'ep-ollama', model: 'llama3.3' },
+			},
+		});
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+
+		// The transcript goes to the endpoint, so the sentence says so, by name.
+		expect(
+			await screen.findByText('Audio stays on this machine. Text is sent to Ollama.')
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect((screen.getByLabelText(BRAIN_PICKER) as HTMLSelectElement).value).toBe(
+				'endpoint:ep-ollama:llama3.3'
+			)
+		);
+		// No key field: the stored hosted Brain is not the one in force.
+		expect(screen.queryByText('OpenAI API key')).not.toBeInTheDocument();
+	});
+
+	it('assigns the picked endpoint model to voice-routing, and stores no provider id for it', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue(storedBlob({ brain: 'mock-brain' }));
+		useSettingsStore.setState({ localModelEndpoints: [ollama] });
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+		await waitFor(() => expect(brainOptions().length).toBeGreaterThan(3));
+
+		fireEvent.change(screen.getByLabelText(BRAIN_PICKER), {
+			target: { value: 'endpoint:ep-ollama:qwen3:8b' },
+		});
+
+		await waitFor(() => {
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('localModelAssignments', {
+				'voice-routing': { type: 'endpoint', endpointId: 'ep-ollama', model: 'qwen3:8b' },
+			});
+		});
+		// One stored value: the assignment. The voice blob is not touched.
+		expect(window.maestro.settings.set).not.toHaveBeenCalledWith('acappella', expect.anything());
+		await waitFor(() => expect(voice().applyProviders).toHaveBeenCalled());
+		expect(
+			await screen.findByText('Audio stays on this machine. Text is sent to Ollama.')
+		).toBeInTheDocument();
+	});
+
+	it('switches the assignment off when a voice-specific Brain is picked', async () => {
+		useSettingsStore.setState({
+			localModelEndpoints: [ollama],
+			localModelAssignments: {
+				'tab-naming': { type: 'off' },
+				'voice-routing': { type: 'endpoint', endpointId: 'ep-ollama', model: 'llama3.3' },
+			},
+		});
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+		await screen.findByText('Audio stays on this machine. Text is sent to Ollama.');
+
+		fireEvent.change(screen.getByLabelText(BRAIN_PICKER), { target: { value: 'mock-brain' } });
+
+		await waitFor(() => {
+			// Only this task's entry goes; an assignment left on would keep deciding
+			// the slot, and another task's choice is not this panel's to touch.
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('localModelAssignments', {
+				'tab-naming': { type: 'off' },
+			});
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'acappella',
+				expect.objectContaining({ providers: expect.objectContaining({ brain: 'mock-brain' }) })
+			);
+		});
+		expect(await screen.findByText('Audio stays on this machine.')).toBeInTheDocument();
+	});
+
+	it('shows a local model that is already assigned, without offering one otherwise', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: {
+				'voice-routing': { type: 'local', modelId: 'qwen3-1.7b-instruct-q4km' },
+			},
+		});
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+		await screen.findByLabelText(BRAIN_PICKER);
+
+		// Not installed here, so the row says so; it is still the selected one.
+		expect((screen.getByLabelText(BRAIN_PICKER) as HTMLSelectElement).value).toBe(
+			'local:qwen3-1.7b-instruct-q4km'
+		);
+		expect(brainOptions()).toContainEqual({
+			value: 'local:qwen3-1.7b-instruct-q4km',
+			label: 'Qwen3 1.7B Instruct (Q4_K_M) (not installed)',
+		});
+		expect(screen.getByText('Audio stays on this machine.')).toBeInTheDocument();
 	});
 
 	it('shows the capability gate verdict for an unsatisfied slot, with its recovery', async () => {

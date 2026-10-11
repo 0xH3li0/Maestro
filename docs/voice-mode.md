@@ -71,10 +71,20 @@ Hosted providers need an API key, entered in **Voice Providers**. Keys are store
 </Note>
 
 <Note>
+	The Conductor Brain can also be a model on one of your own model servers (Ollama, LM Studio, any
+	OpenAI-compatible endpoint). Add the server in **Settings > Local Models**, and its models appear
+	in the **Conductor Brain** picker. Picking one assigns it to the Local Models **Voice routing**
+	task, so the picker and that task always show the same choice. Your transcripts are then sent to
+	that server, and the line at the top of Voice Providers names it. See
+	[Voice routing](./local-models#voice-routing).
+</Note>
+
+<Note>
 	Two more local engines exist in the code but are not offered yet, and the settings do not list
-	them: the **Kokoro** neural voice needs a phoneme front end that is not part of this build, and the
-	**Qwen3** local Brain needs a llama.cpp runtime that is not packaged yet. If you downloaded either
-	on an earlier build, the Models page still shows it so you can remove it.
+	them: the **Kokoro** neural voice needs a phoneme front end that is not part of this build, and a
+	**local model** as the Conductor Brain is held back because the one text model in the catalog
+	(Qwen3 1.7B) does not yet route a request to the agent it names. If you downloaded either on an
+	earlier build, the Models page still shows it so you can remove it.
 </Note>
 
 ## Downloading the models

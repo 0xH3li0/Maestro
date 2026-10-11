@@ -19,6 +19,10 @@
  *   - Realtime is a pipeline SHAPE, not a fourth provider. Choosing it replaces
  *     all three slots with one provider's speech-to-speech API, and the tradeoff
  *     is stated where the choice is made rather than in a help page.
+ *   - The Conductor Brain picker shows the Brain in force. A model on one of the
+ *     user's endpoints is chosen by assigning it to the Local Models
+ *     `voice-routing` task, so picking one here writes that assignment, and an
+ *     assignment made in Settings > Local Models or from the CLI shows up here.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -42,6 +46,10 @@ import { FormInput } from '../../ui/FormInput';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
+import { useLocalModelEndpoints } from '../../../hooks/localModels';
+import { AssignmentOptionElements } from '../tabs/LocalModelsTab/AssignmentOptionElements';
+import type { AssignmentOptionGroup } from '../tabs/LocalModelsTab/assignmentOptions';
+import { buildBrainOptionGroups } from './brainOptions';
 import { SLOT_DEFINITIONS, useVoiceProviderSelection } from './useVoiceProviderSelection';
 import { useVoiceModels } from './useVoiceModels';
 
@@ -59,7 +67,12 @@ const PIPELINE_OPTIONS: Array<{ value: VoicePipelineShape; label: string }> = [
 export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps) {
 	const selection = useVoiceProviderSelection(enabled);
 	const models = useVoiceModels(enabled);
+	// The user's own model servers, for the Conductor Brain's endpoint rows.
+	// Mounting lists the models of each ENABLED endpoint and calls nothing else.
+	const endpoints = useLocalModelEndpoints();
 	const [credentials, setCredentials] = useState<CredentialState[]>([]);
+	// Why the last Conductor Brain pick was refused, until the next pick.
+	const [brainProblem, setBrainProblem] = useState<string | null>(null);
 
 	const refreshCredentials = useCallback(async () => {
 		const states = await window.maestro.voice.credentials.list().catch(() => []);
@@ -86,14 +99,32 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 			selection.pipeline === 'realtime'
 				? ['openai-realtime']
 				: [selection.providerIds.stt, selection.providerIds.tts, selection.providerIds.brain];
-		return summariseVoiceEgress(ids);
-	}, [selection.pipeline, selection.providerIds]);
+		return summariseVoiceEgress(ids, { endpointName: selection.brainSource?.endpointName });
+	}, [selection.pipeline, selection.providerIds, selection.brainSource]);
+
+	const brainGroups = useMemo(
+		() =>
+			buildBrainOptionGroups(selection.brainSource, {
+				listings: models.listings,
+				endpoints: endpoints.endpoints,
+				endpointModels: endpoints.models,
+			}),
+		[selection.brainSource, models.listings, endpoints.endpoints, endpoints.models]
+	);
 
 	const handleProviderChange = useCallback(
 		async (role: VoiceProviderRole, providerId: string) => {
 			await selection.setProvider(role, providerId);
 			// Readiness is per provider: switching a slot changes which requirement
 			// the gate is checking, so a stale verdict would describe the old engine.
+			await models.refresh();
+		},
+		[selection, models]
+	);
+
+	const handleBrainChange = useCallback(
+		async (_role: VoiceProviderRole, value: string) => {
+			setBrainProblem(await selection.setBrainChoice(value));
 			await models.refresh();
 		},
 		[selection, models]
@@ -191,7 +222,10 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 							selection={selection}
 							readiness={readinessBySlot.get('brain')}
 							credentials={credentials}
-							onChange={handleProviderChange}
+							optionGroups={brainGroups}
+							value={selection.brainChoice}
+							problem={brainProblem}
+							onChange={handleBrainChange}
 							onCredentialsChanged={refreshCredentials}
 							onDownload={(modelId) => void models.download(modelId)}
 						/>
@@ -233,7 +267,16 @@ interface SlotSelectorProps {
 	selection: ReturnType<typeof useVoiceProviderSelection>;
 	readiness?: VoiceSlotReadiness;
 	credentials: CredentialState[];
-	onChange: (role: VoiceProviderRole, providerId: string) => Promise<void>;
+	/**
+	 * The rows to offer, when they are more than the slot's catalog providers.
+	 * Only the Conductor Brain passes it, to add the user's endpoint models.
+	 */
+	optionGroups?: readonly AssignmentOptionGroup[];
+	/** The selected row's value, when it is not the provider id (see `optionGroups`). */
+	value?: string;
+	/** Why the last pick was refused, shown under the picker. */
+	problem?: string | null;
+	onChange: (role: VoiceProviderRole, value: string) => Promise<void>;
 	onCredentialsChanged: () => Promise<void>;
 	onDownload: (modelId: string) => void;
 }
@@ -244,6 +287,9 @@ function SlotSelector({
 	selection,
 	readiness,
 	credentials,
+	optionGroups,
+	value,
+	problem,
 	onChange,
 	onCredentialsChanged,
 	onDownload,
@@ -251,7 +297,19 @@ function SlotSelector({
 	const definition = SLOT_DEFINITIONS.find((entry) => entry.slot === role)!;
 	const providerId = selection.providerIds[role];
 	const descriptor = getVoiceProvider(providerId);
-	const options = voiceProvidersForRole(role);
+	const groups = useMemo<readonly AssignmentOptionGroup[]>(
+		() =>
+			optionGroups ?? [
+				{
+					label: null,
+					options: voiceProvidersForRole(role).map((option) => ({
+						value: option.id,
+						label: option.label,
+					})),
+				},
+			],
+		[optionGroups, role]
+	);
 	const Icon = definition.icon;
 
 	const requiresKey = descriptor?.requires.kind === 'api-key';
@@ -269,7 +327,7 @@ function SlotSelector({
 
 					<select
 						aria-label={`${definition.label} provider`}
-						value={providerId}
+						value={value ?? providerId}
 						onChange={(event) => void onChange(role, event.target.value)}
 						className="w-full px-2 py-1.5 rounded border text-sm"
 						style={{
@@ -278,13 +336,14 @@ function SlotSelector({
 							color: theme.colors.textMain,
 						}}
 					>
-						{options.map((option) => (
-							<option key={option.id} value={option.id}>
-								{option.label}
-							</option>
-						))}
+						<AssignmentOptionElements groups={groups} />
 					</select>
 
+					{problem && (
+						<p className="text-xs mt-1.5 select-text" style={{ color: theme.colors.error }}>
+							{problem}
+						</p>
+					)}
 					{descriptor && <p className="text-xs opacity-70 mt-1.5">{descriptor.description}</p>}
 				</div>
 

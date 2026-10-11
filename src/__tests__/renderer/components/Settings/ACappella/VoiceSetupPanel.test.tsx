@@ -12,9 +12,10 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import { VoiceSetupPanel } from '../../../../../renderer/components/Settings/ACappella/VoiceSetupPanel';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import {
 	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
@@ -65,6 +66,7 @@ describe('VoiceSetupPanel', () => {
 			],
 		});
 		vi.mocked(window.maestro.settings.get).mockResolvedValue({});
+		useSettingsStore.setState({ localModelAssignments: {}, localModelEndpoints: [] });
 	});
 
 	it('issues zero network calls when mounted', async () => {
@@ -126,6 +128,78 @@ describe('VoiceSetupPanel', () => {
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
 		await screen.findByText(getLocalModel(WHISPER_BASE_EN_ID)!.displayName);
+	});
+
+	it('says which assigned model routes, and lists no endpoint to do it', async () => {
+		useSettingsStore.setState({
+			localModelEndpoints: [
+				{
+					id: 'ep-1',
+					name: 'Ollama',
+					kind: 'ollama',
+					baseUrl: 'http://127.0.0.1:11434',
+					enabled: true,
+				},
+			],
+			localModelAssignments: {
+				'voice-routing': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.3' },
+			},
+		});
+
+		render(<VoiceSetupPanel theme={mockTheme} enabled />);
+
+		expect(await screen.findByText(/Routes with llama3\.3 on Ollama/)).toBeInTheDocument();
+		// The built-in router's note would be a lie while a model routes.
+		expect(screen.queryByText(/reads replies back as written/)).not.toBeInTheDocument();
+		// This panel still opens no connection: the endpoint is named, not called.
+		expect(window.maestro.localModels.endpoints.listModels).not.toHaveBeenCalled();
+	});
+
+	it('shows the model row for a local model assigned to voice routing', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: { 'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID } },
+		});
+
+		render(<VoiceSetupPanel theme={mockTheme} enabled />);
+
+		await screen.findByText(getLocalModel(QWEN3_1_7B_ID)!.displayName);
+	});
+
+	it('keeps an assigned Brain when the pill that is already lit is clicked', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: { 'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID } },
+		});
+		const { container } = render(<VoiceSetupPanel theme={mockTheme} enabled />);
+		await screen.findByText(/Routes with Qwen3/);
+
+		const brain = container.querySelector('[data-setting-id="encore-a-cappella-brain"]')!;
+		fireEvent.click(within(brain as HTMLElement).getByText('Local'));
+
+		// A click on "Local" must not be read as "reset to the built-in router".
+		await Promise.resolve();
+		expect(window.maestro.settings.set).not.toHaveBeenCalled();
+		expect(useSettingsStore.getState().localModelAssignments).toEqual({
+			'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID },
+		});
+	});
+
+	it('moves an assigned Brain to the hosted one, and switches the assignment off', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: { 'voice-routing': { type: 'local', modelId: QWEN3_1_7B_ID } },
+		});
+		const { container } = render(<VoiceSetupPanel theme={mockTheme} enabled />);
+		await screen.findByText(/Routes with Qwen3/);
+
+		const brain = container.querySelector('[data-setting-id="encore-a-cappella-brain"]')!;
+		fireEvent.click(within(brain as HTMLElement).getByText('Cloud'));
+
+		await waitFor(() => {
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('localModelAssignments', {});
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'acappella',
+				expect.objectContaining({ providers: expect.objectContaining({ brain: 'openai-brain' }) })
+			);
+		});
 	});
 
 	it('starts a download only when the Download button is pressed', async () => {

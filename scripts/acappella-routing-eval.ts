@@ -60,7 +60,13 @@ import {
 } from '../src/main/acappella/router/routing-log';
 import { AnthropicBrainProvider } from '../src/main/acappella/providers/hosted/anthropic-brain';
 import { OpenAiBrainProvider } from '../src/main/acappella/providers/hosted/openai-brain';
-import { LlamaBrainProvider } from '../src/main/acappella/providers/local/llama-brain';
+import {
+	AssignedBrainProvider,
+	localEngineTaskRunner,
+} from '../src/main/acappella/providers/local/assigned-brain';
+import { LocalTextEngine } from '../src/main/local-models/text-gen';
+import { QWEN3_BRAIN_PROVIDER_ID } from '../src/shared/acappella/provider-catalog';
+import { QWEN3_1_7B_ID } from '../src/shared/local-models/model-catalog';
 import { initializePrompts } from '../src/main/prompt-manager';
 import { logger } from '../src/main/utils/logger';
 import type { RosterAgent } from '../src/shared/acappella/protocol';
@@ -488,8 +494,21 @@ async function createBrain(options: Options): Promise<BrainProvider> {
 				readCredential: () => process.env.OPENAI_API_KEY?.trim() || null,
 			});
 
-		case 'local':
-			return new LlamaBrainProvider({ modelPath: options.modelPath });
+		case 'local': {
+			// The script runs outside the app, so there is no `voice-routing`
+			// assignment to read: the turns run on a private engine, on the GGUF
+			// named by `--model-path` (or the installed catalog model without it).
+			const modelPath = options.modelPath;
+			const engine = new LocalTextEngine({
+				idleUnloadMs: 0,
+				...(modelPath ? { resolveModelPath: async () => modelPath } : {}),
+			});
+			return new AssignedBrainProvider({
+				id: QWEN3_BRAIN_PROVIDER_ID,
+				runTask: localEngineTaskRunner(engine, QWEN3_1_7B_ID),
+				unloadModel: (modelId) => engine.unload(modelId),
+			});
+		}
 
 		case 'agent': {
 			const detector = new AgentDetector();

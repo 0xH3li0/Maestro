@@ -92,7 +92,7 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 | Secret screen           | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.            |
 | Dictation               | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                  |
 | Spoken notices          | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).     |
-| Voice routing           | Text generation                    | Off           | Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings.           |
+| Voice routing           | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                               |
 | Token proxy             | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                          |
 
 For AI command mode, **Utility Agent** means the tab's own provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
@@ -140,6 +140,23 @@ The line is spoken with a local voice on the computer that runs Maestro. It uses
 Notices never overlap. One line is spoken at a time, the next waits a few seconds after it, and a line that has waited a minute is dropped as old news. Nothing is spoken while an A Cappella voice session is open, and a notice waits while you dictate.
 
 From the command line, `maestro-cli notify speak "<text>"` says a line of your own through the same voice and the same queue, and reports whether it was spoken.
+
+### Voice routing
+
+**Voice routing** is the Conductor Brain of [A Cappella](./voice-mode): the model that decides which agent and tab a spoken request is for. Assign it a model on one of your [endpoints](#endpoints) and that model routes. It is the same choice as the **Conductor Brain** picker in **Settings > Plugins > A Cappella > Voice Providers**: picking an endpoint model there assigns it here, and an assignment made here shows there. There is one setting, not two.
+
+**Off** (the default) means the Brain is the one chosen in A Cappella: the built-in keyword router, or a hosted model. Picking one of those in the Conductor Brain picker sets this task back to Off.
+
+Your transcripts are sent to the endpoint you assign, and the line at the top of Voice Providers names it ("Audio stays on this machine. Text is sent to Ollama."). Audio is not sent there.
+
+If the assigned model cannot answer (the server is down, the model is not loaded), the voice session says so by name and does not route on another Brain. A turn is given 30 seconds, because the first one can include the server loading the model.
+
+<Note>
+	A model run on this machine is not offered as a Conductor Brain yet. The one text model in the
+	catalog, Qwen3 1.7B, loads and answers quickly, but in testing it sent requests that named an
+	agent to the Conductor instead of to that agent. Use an endpoint with a larger model, the
+	built-in router, or a hosted Brain.
+</Note>
 
 ### The secret screen
 

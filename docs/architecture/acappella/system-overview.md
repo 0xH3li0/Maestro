@@ -200,11 +200,20 @@ the only module allowed to import a concrete provider. Two rules are non-negotia
    costs the user a permission prompt. `echo-stt` is still selectable and is still the right answer
    to "is my microphone reaching Maestro?" - it is a diagnostic, not a default.
 
-   Two local engines are registered but deliberately absent from the shared catalog, and so from
-   every dropdown: Kokoro (`kokoro-local`) needs a grapheme-to-phoneme front end this build does not
-   have, and Qwen3 (`qwen3-local`) needs the JavaScript half of `node-llama-cpp`, which the
-   downloadable runtime payload does not carry. Listing a provider that refuses every session reads
-   as "voice is broken"; each returns to the catalog in the commit that makes it runnable.
+   Kokoro (`kokoro-local`) is registered but deliberately absent from the shared catalog, and so
+   from every dropdown: it needs a grapheme-to-phoneme front end this build does not have. Listing
+   a provider that refuses every session reads as "voice is broken"; it returns to the catalog in
+   the commit that makes it runnable.
+
+   The Brain slot has a second input. A local model or an endpoint routes because it is ASSIGNED
+   to the Local Models `voice-routing` task, not because a provider id was stored. When that
+   assignment names a source, `readVoiceProviderSettings()` reports the assigned Brain
+   (`qwen3-local` for a local model, `endpoint-brain` for an endpoint) as `brain`, and the stored
+   voice-specific choice (built-in, hosted) waits behind it. Both assigned Brains are one class,
+   `AssignedBrainProvider`, which runs every turn through the task router. They are described in
+   `ASSIGNED_BRAIN_PROVIDERS`, outside the list a slot selector renders, because they are not
+   provider choices. See `src/shared/acappella/voice-routing.ts` and
+   [[local-models]] ("Voice routing").
 
 2. **Never substitute anything for a provider that cannot be built.** Not a cloud provider, which
    would spend the user's money and send their microphone somewhere they did not choose; and not
@@ -219,7 +228,7 @@ structural rather than a promise. The mock tier is selected, never substituted i
 unconfigured install runs on purpose, and it is what the tests and the dev harness drive.
 
 Phase 05 added the concrete backends behind these rules: `providers/local/` (Whisper, Kokoro,
-Qwen3 through `runtime/native-loader.ts`, plus the system voice through the OS speech engine),
+the Local Models Brain, plus the system voice through the OS speech engine),
 `providers/hosted/` (OpenAI STT, TTS, and Brain, Anthropic Brain, ElevenLabs TTS, all through one
 retrying and classifying transport), and
 `providers/realtime/` for the speech-to-speech tier. Which engine fills which slot, and what each

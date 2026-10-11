@@ -136,3 +136,30 @@ export const ROUTE_DECISION_JSON_SCHEMA = {
 	required: ['target', 'tabAction', 'prompt', 'confidence'],
 	additionalProperties: false,
 } as const;
+
+/** An optional string, as a grammar has to spell it: present, and possibly null. */
+const NULLABLE_STRING = { oneOf: [{ type: 'null' }, { type: 'string' }] } as const;
+
+/**
+ * The same decision for a grammar-constrained LOCAL model.
+ *
+ * A llama.cpp grammar compiled from a JSON Schema has no notion of `required`:
+ * every listed property is emitted, in order. Held to the schema above, a local
+ * model therefore HAS to write a `clarify` and a `reply` on every turn, and a
+ * non-empty one turns the decision into a question (see {@link holdsTheFloor}),
+ * so no utterance could ever reach an agent. Here the four optional fields may
+ * be `null`, which `parseRouteDecision` reads as absent.
+ *
+ * A server that takes the schema as a response format honors `required`, so an
+ * endpoint is sent {@link ROUTE_DECISION_JSON_SCHEMA} unchanged.
+ */
+export const ROUTE_DECISION_GRAMMAR_SCHEMA = {
+	...ROUTE_DECISION_JSON_SCHEMA,
+	properties: {
+		...ROUTE_DECISION_JSON_SCHEMA.properties,
+		tabId: NULLABLE_STRING,
+		tabName: NULLABLE_STRING,
+		clarify: NULLABLE_STRING,
+		reply: NULLABLE_STRING,
+	},
+} as const;
