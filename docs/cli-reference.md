@@ -1420,6 +1420,13 @@ Reset a setting to its default value
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli settings media-status`
+
+Report media tools available to this CLI process and allowed models as JSON
+
+Uses the same resolver as the desktop diagnostic, with this CLI process's PATH and
+environment variables. Results can differ from the running desktop's environment.
+
 ## `maestro-cli settings agent`
 
 View and manage per-agent configuration
