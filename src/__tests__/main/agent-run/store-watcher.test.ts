@@ -5,15 +5,18 @@
  * reader of the ledger gets the runs from the watcher, so that the file is
  * read once per change, and not at all at start by a listener that has
  * nothing to do.
+ *
+ * `fs.watch` is stood in for, and the debounce runs on fake timers. A real
+ * watch delivers its event whenever the OS gets to it, which under a loaded
+ * test run is sometimes not within any timeout worth waiting for.
  */
 
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRun } from '../../../shared/agent-run';
 
 const mocks = vi.hoisted(() => ({
+	/** What the watcher handed to `fs.watch`, by the path it watches. */
+	watched: new Map<string, (event: string, name: string | null) => void>(),
 	dir: '',
 	runs: [] as unknown[],
 	readAgentRuns: vi.fn(),
@@ -23,6 +26,14 @@ const mocks = vi.hoisted(() => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	const watch = (target: unknown, listener: unknown): unknown => {
+		mocks.watched.set(String(target), listener as (event: string, name: string | null) => void);
+		return { on: () => undefined, close: () => undefined };
+	};
+	return { ...actual, watch, default: { ...actual, watch } };
+});
 vi.mock('../../../cli/services/storage', () => ({ getConfigDirectory: () => mocks.dir }));
 vi.mock('../../../cli/services/agent-run-store', () => ({
 	readAgentRuns: mocks.readAgentRuns,
@@ -38,6 +49,8 @@ import { startAgentRunStoreWatcher } from '../../../main/agent-run/store-watcher
 import type { StoreWatcherHandle } from '../../../main/agent-run/store-watcher';
 
 const RUNS_FILE = 'maestro-agent-runs.json';
+/** Longer than the watcher's debounce. */
+const PAST_DEBOUNCE_MS = 1000;
 
 function run(id: string): AgentRun {
 	return {
@@ -55,25 +68,31 @@ function run(id: string): AgentRun {
 
 describe('agent-run store watcher: onRunsChanged', () => {
 	let handle: StoreWatcherHandle | null;
+	const { watched } = mocks;
 
 	beforeEach(() => {
-		mocks.dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'run-watch-')));
-		fs.writeFileSync(path.join(mocks.dir, RUNS_FILE), '{"runs":[]}');
+		vi.useFakeTimers();
+		mocks.dir = '/data';
 		mocks.runs = [run('a')];
 		mocks.readAgentRuns.mockReset();
 		mocks.readAgentRuns.mockImplementation(() => mocks.runs);
+		mocks.broadcastRunUpdated.mockClear();
 		mocks.logger.warn.mockClear();
 		handle = null;
+		watched.clear();
 	});
 
 	afterEach(() => {
 		handle?.stop();
-		fs.rmSync(mocks.dir, { recursive: true, force: true });
+		vi.useRealTimers();
 	});
 
-	/** Touches the ledger the way a write of the command line does. */
+	/** Reports a change of the ledger, as the OS does after a write of the command line. */
 	const changeLedger = (): void => {
-		fs.writeFileSync(path.join(mocks.dir, RUNS_FILE), `{"runs":[],"at":${Date.now()}}`);
+		const listener = [...watched.entries()].find(([target]) => target.endsWith(RUNS_FILE))?.[1];
+		if (!listener) throw new Error('The watcher does not watch the ledger.');
+		listener('change', RUNS_FILE);
+		vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
 	};
 
 	it('tells the listener once at start, and reads the ledger only if the listener asks', () => {
@@ -88,22 +107,36 @@ describe('agent-run store watcher: onRunsChanged', () => {
 		expect(mocks.readAgentRuns).toHaveBeenCalledTimes(1);
 	});
 
-	it('hands over the runs it just read after a change, with no second read', async () => {
+	it('hands over the runs it just read after a change, with no second read', () => {
 		const readers: Array<() => AgentRun[]> = [];
 		handle = startAgentRunStoreWatcher({ onRunsChanged: (readRuns) => readers.push(readRuns) });
 		mocks.runs = [run('a'), run('b')];
 
 		changeLedger();
-		await vi.waitFor(() => expect(readers.length).toBeGreaterThan(1), { timeout: 5000 });
 
-		const readsByWatcher = mocks.readAgentRuns.mock.calls.length;
-		expect(readsByWatcher).toBeGreaterThan(0);
-		expect(readers[readers.length - 1]()).toEqual([run('a'), run('b')]);
-		expect(mocks.readAgentRuns).toHaveBeenCalledTimes(readsByWatcher);
-		expect(mocks.broadcastRunUpdated).toHaveBeenCalled();
+		expect(readers).toHaveLength(2);
+		// One read, by the watcher, for its own broadcast.
+		expect(mocks.readAgentRuns).toHaveBeenCalledTimes(1);
+		expect(readers[1]()).toEqual([run('a'), run('b')]);
+		expect(mocks.readAgentRuns).toHaveBeenCalledTimes(1);
+		expect(mocks.broadcastRunUpdated).toHaveBeenCalledTimes(1);
 	});
 
-	it('goes on watching when the listener throws', async () => {
+	it('tells the listener once for a burst of changes', () => {
+		let calls = 0;
+		handle = startAgentRunStoreWatcher({ onRunsChanged: () => (calls += 1) });
+		const listener = [...watched.entries()].find(([target]) => target.endsWith(RUNS_FILE))?.[1];
+
+		listener?.('change', RUNS_FILE);
+		listener?.('change', RUNS_FILE);
+		listener?.('change', RUNS_FILE);
+		vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+
+		// Once at start, and once for the burst.
+		expect(calls).toBe(2);
+	});
+
+	it('goes on watching when the listener throws', () => {
 		let calls = 0;
 		handle = startAgentRunStoreWatcher({
 			onRunsChanged: () => {
@@ -114,8 +147,9 @@ describe('agent-run store watcher: onRunsChanged', () => {
 		expect(calls).toBe(1);
 
 		changeLedger();
-		await vi.waitFor(() => expect(calls).toBeGreaterThan(1), { timeout: 5000 });
+		changeLedger();
 
+		expect(calls).toBe(3);
 		expect(mocks.logger.warn).toHaveBeenCalledWith(
 			'store watch listener failed',
 			expect.any(String),
@@ -125,6 +159,7 @@ describe('agent-run store watcher: onRunsChanged', () => {
 
 	it('starts and stops with no listener at all', () => {
 		handle = startAgentRunStoreWatcher();
+		expect(() => changeLedger()).not.toThrow();
 		expect(() => handle?.stop()).not.toThrow();
 	});
 });
