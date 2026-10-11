@@ -36,6 +36,11 @@ vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(async () => ({ exitCode: 0, stdout: 'feature/x\n', stderr: '' })),
 }));
 
+let bundledCliPath: string | null = null;
+vi.mock('../../../main/maestro-cli-manager', () => ({
+	resolveBundledCliPathSync: vi.fn(() => bundledCliPath),
+}));
+
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -152,5 +157,18 @@ describe('buildPluginSystemPromptSections', () => {
 	it('drops localOnly sections for an SSH moderator', () => {
 		settings.encoreFeatures = { computerHistory: true };
 		expect(buildPluginSystemPromptSections({ isSsh: true })).toBeUndefined();
+	});
+
+	it('points {{MAESTRO_CLI_PATH}} at the CLI the app resolved, not the default install path', () => {
+		settings.encoreFeatures = { computerHistory: true };
+		prompts['computer-history-system'] = 'RUN {{MAESTRO_CLI_PATH}} computer-history';
+		bundledCliPath = '/work/maestro/dist/cli/maestro-cli.js';
+		try {
+			expect(buildPluginSystemPromptSections({ isSsh: false })).toBe(
+				'RUN node "/work/maestro/dist/cli/maestro-cli.js" computer-history'
+			);
+		} finally {
+			bundledCliPath = null;
+		}
 	});
 });

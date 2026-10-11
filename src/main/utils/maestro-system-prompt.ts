@@ -24,6 +24,7 @@ import type { StoredSession } from '../stores/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
+import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
 import { logger } from './logger';
 
@@ -67,6 +68,20 @@ function readSettings(): { encoreFeatures: unknown; conductorProfile: string | u
 function localComputerHistoryDir(): string | undefined {
 	try {
 		return computerHistoryDir(app.getPath('userData'));
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The CLI the app actually ships or built, for `{{MAESTRO_CLI_PATH}}`. Without
+ * it the shared resolver falls back to the default install location, which is
+ * wrong in a development build and in any install elsewhere, so a Cue run or
+ * Group Chat turn was told to run a `maestro-cli.js` that is not there.
+ */
+function resolvedCliPath(): string | undefined {
+	try {
+		return resolveBundledCliPathSync() ?? undefined;
 	} catch {
 		return undefined;
 	}
@@ -166,6 +181,7 @@ export async function buildMaestroSystemPromptForSession(
 		historyFilePath,
 		conductorProfile,
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
+		maestroCliPath: resolvedCliPath(),
 	};
 
 	const roleSections = record.isPianola ? [loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
@@ -195,6 +211,7 @@ export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): strin
 			session: { id: '', name: '', toolType: '', cwd: '' },
 			conductorProfile,
 			computerHistoryDir: opts.isSsh ? undefined : localComputerHistoryDir(),
+			maestroCliPath: resolvedCliPath(),
 		},
 		pluginSections: rest,
 	});

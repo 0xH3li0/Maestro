@@ -220,6 +220,13 @@ export interface TemplateContext {
 	 * agents, whose shell cannot reach that path.
 	 */
 	computerHistoryDir?: string;
+	/**
+	 * Absolute path of `maestro-cli.js` as the main process resolved it. The
+	 * renderer gets it through preload (`window.maestro.maestroCliPath`); a
+	 * main-process builder has no such global and passes it here. Unset falls
+	 * back to `getMaestroCLIPath()`.
+	 */
+	maestroCliPath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
 	// Cue event context (for Cue automation prompts)
@@ -629,7 +636,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CONTEXT_USAGE: String(session.contextUsage || 0),
 
 		// Maestro variables
-		MAESTRO_CLI_PATH: getMaestroCLIPath(),
+		MAESTRO_CLI_PATH: context.maestroCliPath
+			? `node "${context.maestroCliPath}"`
+			: getMaestroCLIPath(),
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',
