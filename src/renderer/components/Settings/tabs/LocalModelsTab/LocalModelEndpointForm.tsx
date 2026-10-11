@@ -30,6 +30,7 @@ import type { EndpointTestState, EndpointTestVerdict } from '../../../../hooks/l
 import type { Theme } from '../../../../types';
 import { generateId } from '../../../../utils/ids';
 import { EnvVarKeyInput } from '../../../shared/EnvVarKeyInput';
+import { FormFieldLabel } from '../../../ui/FormFieldLabel';
 import { FormInput } from '../../../ui/FormInput';
 import { SegmentedControl } from '../../../ui/SegmentedControl';
 import { EndpointTestVerdictLine } from './EndpointTestVerdictLine';
@@ -152,12 +153,7 @@ export function LocalModelEndpointForm({
 				testId="local-model-endpoint-url"
 			/>
 			<div>
-				<div
-					className="block text-xs font-bold opacity-70 uppercase mb-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					API key variable (optional)
-				</div>
+				<FormFieldLabel theme={theme}>API key variable (optional)</FormFieldLabel>
 				<EnvVarKeyInput
 					theme={theme}
 					value={apiKeyEnvVar}

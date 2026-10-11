@@ -30,6 +30,7 @@
 
 import React, { forwardRef, useId } from 'react';
 import type { Theme } from '../../types';
+import { FormFieldLabel } from './FormFieldLabel';
 
 export interface FormInputProps {
 	/** Theme object for styling */
@@ -129,13 +130,9 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 		return (
 			<div className="w-full" data-testid={testId}>
 				{label && (
-					<label
-						htmlFor={inputId}
-						className="block text-xs font-bold opacity-70 uppercase mb-2"
-						style={{ color: theme.colors.textMain }}
-					>
+					<FormFieldLabel theme={theme} htmlFor={inputId}>
 						{label}
-					</label>
+					</FormFieldLabel>
 				)}
 
 				<div className={addon ? 'flex gap-2' : ''}>

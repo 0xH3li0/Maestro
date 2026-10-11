@@ -10,6 +10,8 @@ export type { ModalProps, ModalFooterProps } from './Modal';
 
 export { FormInput } from './FormInput';
 export type { FormInputProps } from './FormInput';
+export { FormFieldLabel } from './FormFieldLabel';
+export type { FormFieldLabelProps } from './FormFieldLabel';
 
 export { FilterInput } from './FilterInput';
 export type { FilterInputProps } from './FilterInput';

@@ -373,7 +373,7 @@ function EndpointModelList({
 				>
 					{model.id}
 					{model.sizeBytes !== undefined && (
-						<span className="opacity-60"> {formatSize(model.sizeBytes)}</span>
+						<span className="opacity-70"> {formatSize(model.sizeBytes)}</span>
 					)}
 				</span>
 			))}
