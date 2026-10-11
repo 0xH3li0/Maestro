@@ -119,6 +119,25 @@ describe('send command', () => {
 		});
 	});
 
+	it.each(['opencode', 'factory-droid'] as const)(
+		'refuses required plugin tools for the unverified %s provider before dispatch',
+		async (toolType) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType }));
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/agent' });
+			desktop.connect.mockResolvedValue(undefined);
+			await send('agent-abc', 'report', { requirePluginTools: true });
+			expect(desktop.connect).not.toHaveBeenCalled();
+			expect(desktop.sendCommand).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				code: 'PLUGIN_TOOLS_UNAVAILABLE',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		}
+	);
+
 	it('requires the authenticated desktop plugin path when requested', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));

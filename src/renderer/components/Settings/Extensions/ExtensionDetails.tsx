@@ -660,9 +660,16 @@ export function ExtensionDetails({
 					{settingsPanels.map((panel) => (
 						<button
 							key={panel.id}
-							disabled={ext.state !== 'enabled'}
+							disabled={
+								ext.state !== 'enabled' ||
+								record?.signature?.status !== 'trusted' ||
+								!grantedCaps.has('ui:panel') ||
+								!contributions?.panels.some(
+									(active) => active.id === panel.id && active.pluginId === ext.id
+								)
+							}
 							type="button"
-							className="w-full px-3 py-2 rounded border text-sm"
+							className="w-full px-3 py-2 rounded border text-sm disabled:opacity-50"
 							style={{ borderColor: theme.colors.border }}
 							onClick={() =>
 								useModalStore

@@ -88,6 +88,7 @@ function pluginRecord(id: string, declaresPanel = false): PluginRecord {
 		folderName: id,
 		enabled: true,
 		loadStatus: 'ok',
+		signature: { status: 'trusted' },
 		errors: [],
 		manifest: {
 			id,
@@ -329,6 +330,9 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			'true'
 		);
 		expect(container.querySelector('webview')).toBeNull();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeEnabled()
+		);
 		await act(async () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Open plugin-a config' }));
 		});
@@ -407,8 +411,31 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			/>
 		);
 		expect(view.container.querySelector('webview')).toBeNull();
-		expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeEnabled();
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeEnabled()
+		);
 	});
+
+	it.each(['no-grant', 'untrusted', 'inactive'] as const)(
+		'keeps declared Settings links disabled when the live destination is %s',
+		async (reason) => {
+			useModalStore.getState().closeModal('settings');
+			const plugin = pluginTile('plugin-a', true);
+			if (reason === 'untrusted') plugin.record!.signature = { status: 'unknown' };
+			renderDetails({
+				ext: plugin,
+				contributions: contributions(reason === 'inactive' ? [] : [panel('plugin-a')]),
+				getGrants: vi.fn(async () =>
+					reason === 'no-grant' ? { requested: [], granted: [] } : granted
+				),
+			});
+			await act(async () => {});
+			const open = screen.getByRole('button', { name: 'Open plugin-a config' });
+			expect(open).toBeDisabled();
+			fireEvent.click(open);
+			expect(useModalStore.getState().isOpen('settings')).toBe(false);
+		}
+	);
 
 	it('discovers a disabled declarative setting, but not an unrelated settings-less plugin', () => {
 		const plugin = pluginTile('plugin-a');
