@@ -1859,6 +1859,12 @@ ends. Omit them to use the agent default. They are honored in worktree mode too,
 without changing the child worktree session's own configured model. See
 [Per-run model override](#per-run-model-override) for the full picture.
 
+Every document must sit inside the agent's Auto Run folder. A saved playbook
+stores each one relative to that folder, so `--save-as` and `--launch` both
+refuse a document outside it and name the file. When a saved playbook names a
+document that no longer exists, `maestro-cli playbook` fails with
+`DOCUMENT_NOT_FOUND` and lists the missing paths.
+
 Worktree mode reuses the desktop app's Auto Run pipeline: the app creates the
 worktree (or reuses an existing one on the same repo), checks out the requested
 branch, dispatches the agent inside the worktree, and - when `--create-pr` is
