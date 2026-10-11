@@ -117,7 +117,10 @@ export interface TabNamingConfig {
 	useUtilityAgent?: boolean;
 }
 
-/** Shared isolated naming turn for UI tabs and brokered plugin titles. */
+/** Shared isolated naming turn for UI tabs and brokered plugin titles.
+ * An enabled unresolved SSH target returns null before provider detection or spawn;
+ * it must never send the remote message to a local provider.
+ */
 export async function generateTabName(
 	deps: TabNamingHandlerDependencies,
 	config: TabNamingConfig,

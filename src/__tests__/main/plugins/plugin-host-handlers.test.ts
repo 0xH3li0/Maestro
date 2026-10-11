@@ -29,6 +29,8 @@ import {
 	type PermissionGrant,
 } from '../../../shared/plugins/permissions';
 import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
+import { MAESTRO_PUBLISHER_KEYS } from '../../../shared/plugins/publisher-keys';
+import { RELAY_PUBLISHER_KEY } from '../../../shared/plugins/relay-identity';
 import relayRelease from '../../shared/plugins/fixtures/relay-release-question.json';
 import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
@@ -71,6 +73,7 @@ function makeDeps(over: Partial<HostHandlerDeps> = {}): HostHandlerDeps {
 		forwardHostView: vi.fn(() => true),
 		listAgents: () => [],
 		isPluginTrusted: () => true,
+		getPluginSignature: () => ({ status: 'trusted', signerKey: RELAY_PUBLISHER_KEY }),
 		readSessionTranscript: async () => [],
 		assertTranscriptReadAllowed: () => {},
 		auditTranscriptRead: () => {},
@@ -1124,10 +1127,72 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		}
 	);
 
+	it.each([undefined, MAESTRO_PUBLISHER_KEYS[0], 'user-trusted-other-publisher'])(
+		'keeps an exact Relay ID risk-gated without its pinned publisher: %s',
+		async (signerKey) => {
+			const sendAgent = vi.fn();
+			const h = buildHostCallHandlers(
+				makeDeps({
+					broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+					dispatchUnattendedAllowed: () => true,
+					isPluginTrusted: () => true,
+					getPluginSignature: () => ({ status: 'trusted', signerKey }),
+					sendAgent,
+				})
+			);
+			await expect(
+				h['agents.send']!('sh.maestro.relay', {
+					agentId: 'a',
+					prompt: relayRelease.fullPrompt,
+				})
+			).rejects.toThrow('high-risk prompt: auto-dispatch blocked, surfaced for review');
+			expect(sendAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(['progress', 'quiet completion'])(
+		'withholds Relay results and ownership after publisher revocation at %s',
+		async (phase) => {
+			let signerKey = RELAY_PUBLISHER_KEY;
+			const onProgress = vi.fn();
+			const recordRelayTurn = vi.fn();
+			const deps = makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				getPluginSignature: () => ({ status: 'trusted', signerKey }),
+				recordRelayTurn,
+				sendAgent: async (_agent, _prompt, _session, _signal, _origin, report) => {
+					signerKey = 'user-trusted-other-publisher';
+					if (phase === 'progress') report!({ type: 'commentary', text: 'private', at: 'now' });
+					return { success: true, response: 'private', sessionId: 'late-session' };
+				},
+			});
+			const pending = buildHostCallHandlers(deps)['agents.send']!(
+				'sh.maestro.relay',
+				{
+					agentId: 'a',
+					prompt: relayRelease.fullPrompt,
+				},
+				{ onProgress }
+			);
+			if (phase === 'progress')
+				await expect(pending).resolves.toMatchObject({
+					success: false,
+					response: null,
+					sessionId: null,
+				});
+			else await expect(pending).rejects.toThrow('identity was revoked');
+			expect(onProgress).not.toHaveBeenCalled();
+			expect(recordRelayTurn).not.toHaveBeenCalled();
+			expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'late-session')).toBe(false);
+		}
+	);
+
 	it('fails closed when Relay trust or unattended wiring is absent', async () => {
 		const sendAgent = vi.fn();
 		for (const missing of [
 			{ isPluginTrusted: undefined },
+			{ getPluginSignature: undefined },
 			{ dispatchUnattendedAllowed: undefined },
 		]) {
 			const h = buildHostCallHandlers(

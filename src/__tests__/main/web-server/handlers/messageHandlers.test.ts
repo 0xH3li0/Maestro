@@ -1,3 +1,5 @@
+import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
+import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
  * Tests for WebSocketMessageHandler
  *
@@ -5061,7 +5063,12 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		};
 		vi.mocked(getActivePluginManager).mockReturnValue({
 			getContributions: () => ({ tools: [relayTool] }),
-			getActiveRecords: () => [{ id: 'sh.maestro.relay', signature: { status: 'trusted' } }],
+			getActiveRecords: () => [
+				{
+					id: 'sh.maestro.relay',
+					signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+				},
+			],
 			invokeTool,
 		} as unknown as PluginManager);
 		const runToken = pluginToolRunIdentity.issue('agent-a');
@@ -5096,7 +5103,12 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			};
 			vi.mocked(getActivePluginManager).mockReturnValue({
 				getContributions: () => ({ tools: [relayTool] }),
-				getActiveRecords: () => [{ id: 'sh.maestro.relay', signature: { status: 'trusted' } }],
+				getActiveRecords: () => [
+					{
+						id: 'sh.maestro.relay',
+						signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+					},
+				],
 				invokeTool,
 			} as unknown as PluginManager);
 			let runToken: string | undefined;
@@ -5122,6 +5134,40 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			} finally {
 				if (runToken) pluginToolRunIdentity.revoke(runToken);
 				vi.restoreAllMocks();
+			}
+		}
+	);
+
+	it.each([undefined, MAESTRO_PUBLISHER_KEYS[0], 'user-trusted-other-publisher'])(
+		'rejects exact Relay replies signed by an unpinned trusted publisher: %s',
+		async (signerKey) => {
+			const relayTool = {
+				...tool,
+				id: 'sh.maestro.relay/send',
+				pluginId: 'sh.maestro.relay',
+				localId: 'send',
+			};
+			vi.mocked(getActivePluginManager).mockReturnValue({
+				getContributions: () => ({ tools: [relayTool] }),
+				getActiveRecords: () => [
+					{ id: 'sh.maestro.relay', signature: { status: 'trusted', signerKey } },
+				],
+				invokeTool,
+			} as unknown as PluginManager);
+			const runToken = pluginToolRunIdentity.issue('agent-a');
+			try {
+				handler.handleMessage(client, {
+					type: 'plugins_call_tool',
+					toolId: relayTool.id,
+					args: { text: 'Release discussion' },
+					runToken,
+				});
+				await vi.waitFor(() =>
+					expect(String(lastResult().error)).toContain('pinned Relay publisher')
+				);
+				expect(invokeTool).not.toHaveBeenCalled();
+			} finally {
+				pluginToolRunIdentity.revoke(runToken);
 			}
 		}
 	);
@@ -5171,7 +5217,12 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			const declared = { ...tool, ...identity };
 			vi.mocked(getActivePluginManager).mockReturnValue({
 				getContributions: () => ({ tools: [declared] }),
-				getActiveRecords: () => [{ id: 'sh.maestro.relay', signature: { status: 'trusted' } }],
+				getActiveRecords: () => [
+					{
+						id: 'sh.maestro.relay',
+						signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+					},
+				],
 				invokeTool,
 			} as unknown as PluginManager);
 			const runToken = pluginToolRunIdentity.issue('agent-a');
@@ -5199,7 +5250,12 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		};
 		vi.mocked(getActivePluginManager).mockReturnValue({
 			getContributions: () => ({ tools: [relayTool] }),
-			getActiveRecords: () => [{ id: 'sh.maestro.relay', signature: { status: 'trusted' } }],
+			getActiveRecords: () => [
+				{
+					id: 'sh.maestro.relay',
+					signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+				},
+			],
 			invokeTool,
 		} as unknown as PluginManager);
 		invokeTool.mockRejectedValue(new Error('Thread is not bound to caller'));

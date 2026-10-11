@@ -36,6 +36,10 @@ export interface PluginHeadlessRunnerDeps {
 	audit: (agentId: string, resumed: boolean) => void;
 }
 
+/** Build a cancellable host turn using live desktop provider settings and execution mode.
+ * Required tools/receipts fail before spawn when no authenticated local MCP bridge exists.
+ * Every issued proof is revoked in finally, including provider and cleanup failures.
+ */
 export function createPluginHeadlessAgentRunner(
 	deps: PluginHeadlessRunnerDeps
 ): HeadlessAgentRunner {

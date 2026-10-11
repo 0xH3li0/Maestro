@@ -10,6 +10,11 @@ import {
 	isPluginsFeatureEnabled,
 	getHeadlessAgentRunner,
 } from '../../../plugins/plugin-manager-singleton';
+import {
+	RELAY_PLUGIN_ID,
+	RELAY_REPLY_TOOL_ID,
+	isRelayConversationIdentity,
+} from '../../../../shared/plugins/relay-identity';
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
 import { LOG_CONTEXT } from './shared';
@@ -242,8 +247,8 @@ export async function handlePluginsCallTool(
 	// outbound policy, and its network calls remain brokered. Other tools,
 	// including other Relay tools, retain the usual risk ceiling.
 	const isRelayReply =
-		toolId === 'sh.maestro.relay/send' &&
-		declaredTool.pluginId === 'sh.maestro.relay' &&
+		toolId === RELAY_REPLY_TOOL_ID &&
+		declaredTool.pluginId === RELAY_PLUGIN_ID &&
 		declaredTool.localId === 'send';
 	if (isRelayReply) {
 		if (!context.callerAgentId) {
@@ -253,11 +258,12 @@ export async function handlePluginsCallTool(
 		if (
 			!manager
 				.getActiveRecords()
-				.some(
-					(record) => record.id === 'sh.maestro.relay' && record.signature?.status === 'trusted'
-				)
+				.some((record) => isRelayConversationIdentity(record.id, record.signature))
 		) {
-			respond({ ok: false, error: 'Relay reply requires a trusted signed plugin' });
+			respond({
+				ok: false,
+				error: 'Relay reply requires a trusted signed plugin from the pinned Relay publisher',
+			});
 			return;
 		}
 	} else {

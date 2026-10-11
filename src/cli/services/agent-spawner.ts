@@ -364,8 +364,12 @@ function planCliLaunch(
 		cwd: input.cwd,
 		prompt: input.prompt,
 		agentCustomEnvVars: input.agentCustomEnvVars,
-		globalEnvVars: input.globalEnvVars,
-		sessionCustomEnvVars: input.sessionCustomEnvVars,
+		globalShellEnvVars: input.globalEnvVars,
+		// Desktop-backed local turns receive the live global layer below provider/session overrides.
+		sessionCustomEnvVars:
+			input.globalEnvVars && !input.sshRemoteConfig?.enabled
+				? { ...input.globalEnvVars, ...(input.sessionCustomEnvVars ?? input.agentCustomEnvVars) }
+				: input.sessionCustomEnvVars,
 		readOnlyMode: input.readOnlyMode,
 		batchMode: true,
 		isResuming: input.isResuming,

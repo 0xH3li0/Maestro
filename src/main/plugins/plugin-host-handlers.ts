@@ -19,6 +19,8 @@ import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { PluginServiceHost, ServiceError } from './plugin-service-host';
+import { RELAY_PLUGIN_ID, isRelayConversationIdentity } from '../../shared/plugins/relay-identity';
+import type { PluginSignatureInfo } from '../../shared/plugins/plugin-registry';
 import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
 import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
@@ -309,6 +311,8 @@ export interface HostHandlerDeps {
 	/** Whether the plugin currently has a trusted signature. Required for
 	 * high-power act verbs even when the user granted the capability. */
 	isPluginTrusted?: (pluginId: string) => boolean;
+	/** Live verified signature from the host registry; absent means no Relay topic exception. */
+	getPluginSignature?: (pluginId: string) => PluginSignatureInfo | undefined;
 	/** Optional Phase-4 act verb: send a prompt to an agent through the brokered
 	 * high-power path. The handler enforces the closed {agentId, prompt} schema
 	 * and re-checks broker (allowlist scope) + trust + risk + guard before
@@ -728,6 +732,7 @@ function resolveRealPath(target: string): string {
 
 /**
  * Build brokered handlers and their shared media/service registries using host-owned dependencies.
+ * Relay conversations require the exact pinned verified publisher in addition to live grants/consent.
  * Missing service wiring fails closed; cleanupPluginResources returns the media/service teardown barrier.
  */
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
@@ -1588,7 +1593,11 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			// Preserve its full prompt and the agent's configured execution mode;
 			// topic keywords are not an additional conversation permission gate.
 			// Caller identity comes from the sandbox host, never from params/opts.
-			if (pluginId !== 'sh.maestro.relay') assertLowOrMediumRisk(prompt);
+			const relayConversation = isRelayConversationIdentity(
+				pluginId,
+				deps.getPluginSignature?.(pluginId)
+			);
+			if (!relayConversation) assertLowOrMediumRisk(prompt);
 			const providerSessions = deps.providerSessions;
 			if (!providerSessions) {
 				throw new Error('agents.send: provider session binding store unavailable');
@@ -1611,7 +1620,9 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							if (controller.signal.aborted) return;
 							if (
 								!deps.broker.authorize(pluginId, 'agents.send', p, { audit: false }).allowed ||
-								!deps.dispatchUnattendedAllowed?.(pluginId, agentId)
+								!deps.dispatchUnattendedAllowed?.(pluginId, agentId) ||
+								(relayConversation &&
+									!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)))
 							) {
 								controller.abort();
 								return;
@@ -1623,7 +1634,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							prompt,
 							opts.sessionId as string | undefined,
 							controller.signal,
-							pluginId === 'sh.maestro.relay' ? 'relay' : 'auto',
+							pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
 							onProgress
 						);
 						// Stop/uninstall may have purged this plugin's bindings while the
@@ -1643,10 +1654,16 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							throw new Error('agents.send requires separate unattended consent');
 						}
 						assertTrustedActVerb(deps, pluginId);
+						if (
+							relayConversation &&
+							!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
+						) {
+							throw new Error('Relay conversation identity was revoked');
+						}
 						if (success && sessionId) {
 							providerSessions.remember(pluginId, agentId, sessionId);
 						}
-						if (pluginId === 'sh.maestro.relay') {
+						if (pluginId === RELAY_PLUGIN_ID) {
 							try {
 								await deps.recordRelayTurn?.(agentId, prompt, {
 									success,

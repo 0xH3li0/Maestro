@@ -53,7 +53,7 @@ The host also records successful provider session IDs in a private persistent bi
 
 A plugin stop or uninstall aborts outstanding sends and closes admission for new host calls during sandbox shutdown. A provider result that arrives after cancellation is reported as failed and cannot recreate a purged session binding.
 
-Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. Non-Relay plugins and all `agents.dispatch` calls additionally require a low/medium Pianola risk verdict. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
+Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. Plugins without the exact pinned Relay conversation identity and all `agents.dispatch` calls additionally require a low/medium Pianola risk verdict. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
 
 ## Relay session origin and History
 
@@ -78,7 +78,7 @@ filter selections gain `RELAY` on upgrade; a later explicit deselection persists
 maestro.agents.generateTitle(agentId, firstMessage): Promise<string | null>
 ```
 
-This optional call runs Maestro's tab naming prompt, cheap turn settings, and title parser once on a bounded first message (maximum 4,096 characters). It uses a fresh ephemeral provider process without resuming or recording a conversation, and returns `null` if generation fails. The host resolves the provider, working directory, and active authentication configuration from the permitted Maestro agent ID. It applies the same `agents:dispatch` allowlist, unattended consent, trust, risk, and ActionGuard checks as `agents.send`. Plugin shutdown cancels the naming process. Relay can feature-detect this method while retaining `minHostApi: "1.25.0"` for its base progress integration.
+This optional call runs Maestro's tab naming prompt, cheap turn settings, and title parser once on a bounded first message (maximum 4,096 characters). It uses a fresh ephemeral provider process without resuming or recording a conversation, and returns `null` if generation fails. The host resolves the provider, working directory, and active authentication configuration from the permitted Maestro agent ID. It applies the `agents:dispatch` allowlist, unattended consent, trust, low/medium topic risk ceiling, and ActionGuard checks. The conversation exception does not apply to title generation. Plugin shutdown cancels the naming process. Relay can feature-detect this method while retaining `minHostApi: "1.25.0"` for its base progress integration.
 
 ## Outgoing plugin tools
 
@@ -184,3 +184,23 @@ ID passed to this CLI guard. On a nonzero exit, inspect any receipts before
 deciding whether retrying could duplicate a completed send.
 
 `--require-plugin-tools` requires a local, verified MCP injection mode and refuses standalone, SSH, unverified providers and Claude interactive/dynamic runs before spawning. It does not prove delivery; use the exact receipt guard for that.
+
+## Conversation transport boundary
+
+Only `agents.send` from the exact host-known `sh.maestro.relay` caller with a verified `trusted` signature by `RELAY_PUBLISHER_KEY` in `src/shared/plugins/relay-identity.ts` transports an authorized conversation without the free-text topic ceiling. The pinned public ed25519 key matches the signed Backstage Relay distribution; adding another publisher to `pluginTrustedKeys` cannot grant this exception. Key rotation requires a reviewed host update and a correspondingly signed Relay distribution; the pin does not itself grant trust or consent.
+
+The host preserves the original question, full Relay wrapper, response and configured provider execution mode. The closed schema, exact-agent grant, unattended consent, provider-session ownership, live grant/trust checks, cancellation, progress and ActionGuard audit/rate/concurrency gates remain mandatory. A caller cannot supply `force`, `skipRisk`, origin or execution permission options. Identity is rechecked on progress and before releasing a result or recording session ownership; publisher revocation suppresses late results.
+
+The only reply exception is the declared `sh.maestro.relay/send` tool with matching plugin/local IDs, the same live pinned publisher identity, and a valid host-issued caller proof. Tool arguments do not authenticate the caller. Relay still enforces sender, guild, bound parent channel/thread, outbound policy, target metadata and disabled mentions; network delivery remains brokered. A host-observed receipt correlates the proof's agent/run/tool and nonempty message IDs. Provider prose alone is not delivery evidence.
+
+Other plugins, other Relay tools, `agents.dispatch`, title generation, Cue/scheduler, Pianola and `process.spawn` retain their existing topic ceilings. The legacy blocked-path error remains `high-risk prompt: auto-dispatch blocked, surfaced for review`, which Relay maps to `risk-blocked`. No SDK/API schema or version is changed.
+
+### Paired source verification
+
+With dependencies installed in Maestro and a compatible Backstage checkout containing `plugins/relay/src/outbound.ts` and `message-queue.ts`, run:
+
+```bash
+node scripts/verify-relay-reply-path.mjs /path/to/backstage-checkout
+```
+
+Replace the example path with your checkout. This supported developer fixture bundles both sources only in memory. It connects the real source MCP bridge to host handlers over an ephemeral authenticated loopback WebSocket and uses Backstage's real outbound and queue logic with synthetic bindings and a fake Discord sink. It verifies unchanged reply text, disabled mentions, host-observed receipts, proof/publisher/destination denials and the legacy error mapping. Backstage is read only. It makes no external network calls, provider turns or live Discord sends and supplies no current installer/package acceptance.
