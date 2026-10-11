@@ -19,7 +19,7 @@
  */
 
 import type { QueuedItem } from '../types';
-import type { SteeringResultFrame } from '../../shared/chatSteering';
+import type { QueueSteerResult, SteeringResultFrame } from '../../shared/chatSteering';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
@@ -81,15 +81,20 @@ function notifyUnconfirmed(sessionId: string, tabId: string): void {
  * Steer one queued message into the turn running on its tab. Never loses the
  * message: it leaves the queue only once claude has it, and comes back if the
  * transcript later shows claude never took it.
+ *
+ * The one implementation behind both the Steer button and `maestro-cli queue
+ * steer`, so it reports what it did rather than leaving the caller to infer it
+ * from the queue.
  */
-export async function steerQueuedItem(sessionId: string, itemId: string): Promise<void> {
+export async function steerQueuedItem(
+	sessionId: string,
+	itemId: string
+): Promise<QueueSteerResult> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const item = session?.executionQueue?.find((i) => i.id === itemId);
-	if (!session || !item) return;
-
-	const target = resolveQueuedItemTarget(session, item);
-	if (!target) return;
-	const processKey = `${sessionId}-ai-${target.tabId}`;
+	if (!session || !item) {
+		return { outcome: 'not-found', detail: `no queued item ${itemId} for agent ${sessionId}` };
+	}
 
 	const steer = window.maestro?.process?.steer;
 	if (!steer) {
@@ -100,16 +105,24 @@ export async function steerQueuedItem(sessionId: string, itemId: string): Promis
 			title: 'Steering unavailable',
 			message: 'This client cannot steer a running turn.',
 		});
-		return;
+		return { outcome: 'unavailable', detail: 'this client cannot steer a running turn' };
 	}
 
 	// Guarded by getSteerEligibility before the button renders; re-checked against
 	// the LIVE item because the card can be stale by the click (a consult hold
 	// landed, the turn ended), and this is reachable from surfaces that never
 	// asked. Re-checking with the same predicate keeps the two from disagreeing.
-	if (!getSteerEligibility(session, item).canSteer) return;
+	const eligibility = getSteerEligibility(session, item);
+	const target = resolveQueuedItemTarget(session, item);
 	const text = item.text?.trim();
-	if (!text) return;
+	if (!eligibility.canSteer || !target || !text) {
+		return {
+			outcome: 'not-steerable',
+			blockedReason: eligibility.blockedReason ?? 'no-target-tab',
+			detail: 'the message stays queued and sends when the current turn ends',
+		};
+	}
+	const processKey = `${sessionId}-ai-${target.tabId}`;
 
 	const result = await steer(processKey, text);
 
@@ -125,13 +138,13 @@ export async function steerQueuedItem(sessionId: string, itemId: string): Promis
 			sessionId,
 			tabId: target.tabId,
 		});
-		return;
+		return { outcome: 'delivered', verdict: result.verdict };
 	}
 
 	if (result.verdict === 'absorbed' || result.verdict === 'queued') {
 		// Already settled; nothing left to wait for.
 		removeFromQueue(sessionId, itemId);
-		return;
+		return { outcome: 'settled', verdict: result.verdict };
 	}
 
 	// Refused: nothing was typed, so the message is still ours and stays queued
@@ -144,7 +157,12 @@ export async function steerQueuedItem(sessionId: string, itemId: string): Promis
 			sessionId,
 			tabId: target.tabId,
 		});
-		return;
+		return {
+			outcome: 'refused',
+			verdict: result.verdict,
+			refusal: result.refusal,
+			detail: result.detail,
+		};
 	}
 
 	// Unknown (or a `dropped` on the socket, which cannot happen today): the text
@@ -157,6 +175,7 @@ export async function steerQueuedItem(sessionId: string, itemId: string): Promis
 		executionQueue: s.executionQueue.map((i) => (i.id === itemId ? { ...i, paused: true } : i)),
 	}));
 	notifyUnconfirmed(sessionId, target.tabId);
+	return { outcome: 'unconfirmed', verdict: result.verdict, detail: result.detail };
 }
 
 /**

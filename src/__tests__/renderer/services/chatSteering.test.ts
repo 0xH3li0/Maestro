@@ -60,7 +60,8 @@ function queue(): QueuedItem[] {
 async function deliver(queued: QueuedItem[] = [item()]): Promise<void> {
 	useSessionStore.setState({ sessions: [steerableSession(queued)] });
 	steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
-	await steerQueuedItem('sess-1', 'item-a');
+	const result = await steerQueuedItem('sess-1', 'item-a');
+	expect(result).toEqual({ outcome: 'delivered', verdict: 'delivered' });
 }
 
 beforeEach(() => {
@@ -90,10 +91,43 @@ describe('steerQueuedItem', () => {
 			refusal: 'blocking-dialog',
 		});
 
-		await steerQueuedItem('sess-1', 'item-a');
+		const result = await steerQueuedItem('sess-1', 'item-a');
 
+		expect(result).toMatchObject({ outcome: 'refused', refusal: 'blocking-dialog' });
 		expect(queue()).toEqual([item()]);
 		expect(pendingSteerCount()).toBe(0);
+	});
+
+	it('reports an unknown item as not-found without steering', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+
+		const result = await steerQueuedItem('sess-1', 'ghost');
+
+		expect(result.outcome).toBe('not-found');
+		expect(steer).not.toHaveBeenCalled();
+	});
+
+	it('reports why an item is not steerable instead of steering it', async () => {
+		// The CLI surfaces this reason; the button never renders for it.
+		useSessionStore.setState({
+			sessions: [{ ...steerableSession([item()]), toolType: 'codex' } as Session],
+		});
+
+		const result = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'not-claude' });
+		expect(steer).not.toHaveBeenCalled();
+		expect(queue()).toEqual([item()]);
+	});
+
+	it('pauses the item and reports unconfirmed when the socket answer is unknown', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		steer.mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'unknown' });
+
+		const result = await steerQueuedItem('sess-1', 'item-a');
+
+		expect(result.outcome).toBe('unconfirmed');
+		expect(queue()).toEqual([{ ...item(), paused: true }]);
 	});
 });
 

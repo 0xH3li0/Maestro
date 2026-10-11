@@ -4,6 +4,11 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import {
+	parseQueueSteerResult,
+	QUEUE_STEER_RENDERER_TIMEOUT_MS,
+	type QueueSteerResult,
+} from '../../../shared/chatSteering';
 import type {
 	QueueSessionSnapshot,
 	EnqueueCommandResult,
@@ -193,5 +198,51 @@ export function registerQueueCallbacks(
 				resolve({ success: false, removed: false, error: 'Renderer did not respond' });
 			}, 5000);
 		});
+	});
+
+	// Round-trip `maestro-cli queue steer <itemId>` into the renderer, which runs
+	// the same steerQueuedItem() the Steer button does. Waits longer than the
+	// remove round trip because the renderer itself waits on maestro-p's socket.
+	server.setSteerQueueItemCallback(async (sessionId: string, itemId: string) => {
+		const mainWindow = getMainWindow();
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for steerQueueItem', 'WebServer');
+			return { success: false, error: 'Desktop window unavailable' };
+		}
+		return new Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>(
+			(resolve) => {
+				const responseChannel = `remote:steerQueueItem:response:${randomUUID()}`;
+				let resolved = false;
+				const handleResponse = (_event: Electron.IpcMainEvent, raw: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					const r = (raw ?? {}) as Record<string, unknown>;
+					const result = parseQueueSteerResult(r.result);
+					if (r.success === true && result) {
+						resolve({ success: true, result });
+					} else {
+						resolve({
+							success: false,
+							error: typeof r.error === 'string' ? r.error : 'Renderer returned no steer result',
+						});
+					}
+				};
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Desktop window unavailable' });
+					return;
+				}
+				mainWindow.webContents.send('remote:steerQueueItem', sessionId, itemId, responseChannel);
+				// Outlasts the renderer's own wait on the steering socket.
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Renderer did not respond' });
+				}, QUEUE_STEER_RENDERER_TIMEOUT_MS);
+			}
+		);
 	});
 }

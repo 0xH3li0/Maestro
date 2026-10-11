@@ -148,6 +148,91 @@ export interface SteeringResultFrame {
 }
 
 /**
+ * How long the main process waits for maestro-p's socket reply before giving up.
+ *
+ * Bounded by what the SERVER does, not by how long claude takes to think: the
+ * reply comes back as soon as the text is typed and submitted (or refused), and
+ * the absorbed/queued refinement arrives later on stdout instead. The typing
+ * itself is the slow part - paced at 256 bytes per repaint with a 250ms drain cap,
+ * so a full 8 KB frame can take a few seconds on a busy machine.
+ */
+export const STEERING_REPLY_TIMEOUT_MS = 20_000;
+
+/**
+ * Waits for a `maestro-cli queue steer` round trip. Each hop outward must outlast
+ * the one it waits on, or an outer timeout reports a steer as failed while the
+ * inner one is still about to answer: the renderer waits on the socket
+ * ({@link STEERING_REPLY_TIMEOUT_MS}), main waits on the renderer, and the CLI
+ * waits on main.
+ */
+export const QUEUE_STEER_RENDERER_TIMEOUT_MS = STEERING_REPLY_TIMEOUT_MS + 2_500;
+export const QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS = STEERING_REPLY_TIMEOUT_MS + 5_000;
+
+/**
+ * What became of one request to steer a QUEUED message (the Steer button on a
+ * queued card, or `maestro-cli queue steer`). One shape for both callers, so the
+ * CLI reports exactly what the click did.
+ *
+ * - `delivered`     typed and submitted; the item left the queue and returns if
+ *                   the transcript later shows claude never took it.
+ * - `settled`       claude already took it (absorbed or queued); nothing pending.
+ * - `refused`       nothing was typed; the item is still queued where it was.
+ * - `unconfirmed`   it may have been typed; the item is still queued, PAUSED.
+ * - `not-found`     no queued item with that id for that agent.
+ * - `not-steerable` the item cannot be steered right now; see `blockedReason`.
+ * - `unavailable`   this client has no steering bridge (a web renderer).
+ */
+export type QueueSteerOutcome =
+	| 'delivered'
+	| 'settled'
+	| 'refused'
+	| 'unconfirmed'
+	| 'not-found'
+	| 'not-steerable'
+	| 'unavailable';
+
+export interface QueueSteerResult {
+	outcome: QueueSteerOutcome;
+	/** The socket's verdict, when a steer was actually attempted. */
+	verdict?: SteeringVerdict;
+	refusal?: SteeringRefusal;
+	/** Why an item is not steerable (`not-steerable` only). */
+	blockedReason?: string;
+	/** Human-readable detail for the caller. */
+	detail?: string;
+}
+
+/** Every queue-steer outcome, for runtime validation (typed so a new case must be listed). */
+export const QUEUE_STEER_OUTCOMES: readonly QueueSteerOutcome[] = [
+	'delivered',
+	'settled',
+	'refused',
+	'unconfirmed',
+	'not-found',
+	'not-steerable',
+	'unavailable',
+];
+
+/**
+ * Validate a queue-steer result that crossed a process boundary. Returns null
+ * for anything that is not one, so a caller reports a transport failure rather
+ * than a fabricated outcome.
+ */
+export function parseQueueSteerResult(raw: unknown): QueueSteerResult | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	const outcome = QUEUE_STEER_OUTCOMES.find((o) => o === r.outcome);
+	if (!outcome) return null;
+	const result: QueueSteerResult = { outcome };
+	const verdict = STEERING_VERDICTS.find((v) => v === r.verdict);
+	if (verdict) result.verdict = verdict;
+	if (typeof r.refusal === 'string') result.refusal = r.refusal as SteeringRefusal;
+	if (typeof r.blockedReason === 'string') result.blockedReason = r.blockedReason;
+	if (typeof r.detail === 'string') result.detail = r.detail;
+	return result;
+}
+
+/**
  * Longest text accepted in one frame. Generous (a steer is a sentence or two,
  * not a document) but bounded, because every byte is TYPED into a live PTY at
  * 256 bytes per repaint: a megabyte would hold the turn's keyboard for minutes.

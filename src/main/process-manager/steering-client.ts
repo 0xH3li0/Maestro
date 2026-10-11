@@ -16,6 +16,7 @@ import * as path from 'path';
 
 import {
 	parseSteeringResult,
+	STEERING_REPLY_TIMEOUT_MS,
 	STEERING_TOO_LONG_DETAIL,
 	steeringTextTooLong,
 	type SteeringResultFrame,
@@ -43,16 +44,9 @@ export function steeringSocketPathFor(processKey: string): string {
 	return path.join(os.tmpdir(), `maestro-steer-${digest}.sock`);
 }
 
-/**
- * How long to wait for a verdict before giving up on the socket.
- *
- * Bounded by what the SERVER does, not by how long claude takes to think: the
- * reply comes back as soon as the text is typed and submitted (or refused), and
- * the absorbed/queued refinement arrives later on stdout instead. The typing
- * itself is the slow part - paced at 256 bytes per repaint with a 250ms drain cap,
- * so a full 8 KB frame can take a few seconds on a busy machine.
- */
-export const STEERING_REPLY_TIMEOUT_MS = 20_000;
+// The socket reply budget lives in shared/chatSteering.ts so the CLI and the
+// web-server round trip can size their own waits from it.
+export { STEERING_REPLY_TIMEOUT_MS } from '../../shared/chatSteering';
 
 /**
  * Ask a running maestro-p turn to take `text` into the turn in flight.

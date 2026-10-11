@@ -13,7 +13,49 @@ import {
 	parseSteeringRequest,
 	STEERING_MAX_TEXT_BYTES,
 	steeringTextMatches,
+	parseQueueSteerResult,
+	QUEUE_STEER_RENDERER_TIMEOUT_MS,
+	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
+	STEERING_REPLY_TIMEOUT_MS,
 } from '../../shared/chatSteering';
+
+describe('parseQueueSteerResult', () => {
+	it('keeps a known outcome and its known fields', () => {
+		expect(
+			parseQueueSteerResult({
+				outcome: 'refused',
+				verdict: 'refused',
+				refusal: 'blocking-dialog',
+				detail: 'a permission prompt',
+				extra: 'dropped',
+			})
+		).toEqual({
+			outcome: 'refused',
+			verdict: 'refused',
+			refusal: 'blocking-dialog',
+			detail: 'a permission prompt',
+		});
+	});
+
+	it('rejects anything without a known outcome', () => {
+		expect(parseQueueSteerResult({ outcome: 'exploded' })).toBeNull();
+		expect(parseQueueSteerResult(null)).toBeNull();
+		expect(parseQueueSteerResult('delivered')).toBeNull();
+	});
+
+	it('drops an unknown verdict rather than passing it through', () => {
+		expect(parseQueueSteerResult({ outcome: 'delivered', verdict: 'maybe' })).toEqual({
+			outcome: 'delivered',
+		});
+	});
+});
+
+describe('queue steer timeouts', () => {
+	it('outlast each other outward: socket < main waiting on renderer < CLI waiting on main', () => {
+		expect(QUEUE_STEER_RENDERER_TIMEOUT_MS).toBeGreaterThan(STEERING_REPLY_TIMEOUT_MS);
+		expect(QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS).toBeGreaterThan(QUEUE_STEER_RENDERER_TIMEOUT_MS);
+	});
+});
 
 describe('steeringTextMatches', () => {
 	it('ignores whitespace claude rewrites on the way in', () => {

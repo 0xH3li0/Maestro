@@ -179,7 +179,7 @@ import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
-import type { SteeringResultFrame } from '../shared/chatSteering';
+import type { QueueSteerResult, SteeringResultFrame } from '../shared/chatSteering';
 import type {
 	ParquetFetchProgress,
 	ParquetFileInfo,
@@ -827,6 +827,13 @@ interface MaestroAPI {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		) => void;
+		onRemoteSteerQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSteerQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; result?: QueueSteerResult; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (
 			callback: (sessionId: string, background?: boolean) => void

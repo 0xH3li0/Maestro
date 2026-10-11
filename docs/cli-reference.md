@@ -304,6 +304,14 @@ Remove a queued item by its id (from dispatch --queue output or queue list)
 | ------------------ | ------------------------------------------------ | ------- |
 | `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
 
+## `maestro-cli queue steer <item-id>`
+
+Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source only). The item leaves the queue once Claude has it and returns if Claude never takes it.
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
 ## `maestro-cli snooze`
 
 Park a tab until later, and manage what is parked

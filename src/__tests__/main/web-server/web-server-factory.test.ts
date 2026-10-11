@@ -65,6 +65,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
+			setSteerQueueItemCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
 			setConfigureAutoRunCallback = vi.fn();
@@ -1971,6 +1972,45 @@ describe('web-server/web-server-factory', () => {
 				'item-1',
 				expect.any(String)
 			);
+		});
+
+		it('setSteerQueueItemCallback forwards to the renderer and validates its reply', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSteerQueueItemCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'item-1');
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:steerQueueItem'
+			);
+			expect(request).toEqual(['remote:steerQueueItem', 'session-1', 'item-1', expect.any(String)]);
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === request?.[3])?.[1];
+			responseListener?.({} as never, {
+				success: true,
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			});
+
+			await expect(resultPromise).resolves.toEqual({
+				success: true,
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			});
+		});
+
+		it('setSteerQueueItemCallback reports a malformed reply as a failure, not an outcome', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSteerQueueItemCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'item-1');
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:steerQueueItem'
+			);
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === request?.[3])?.[1];
+			responseListener?.({} as never, { success: true, result: { outcome: 'exploded' } });
+
+			await expect(resultPromise).resolves.toMatchObject({ success: false });
 		});
 	});
 

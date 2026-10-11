@@ -159,7 +159,12 @@ import {
 	handleCuePipelineSet,
 	handleCuePipelineRemove,
 } from './cue';
-import { handleEnqueueCommand, handleListQueue, handleRemoveQueueItem } from './queue';
+import {
+	handleEnqueueCommand,
+	handleListQueue,
+	handleRemoveQueueItem,
+	handleSteerQueueItem,
+} from './queue';
 import {
 	handleListPlaybooks,
 	handleCreatePlaybook,
@@ -363,6 +368,10 @@ export class WebSocketMessageHandler {
 
 			case 'remove_queue_item':
 				handleRemoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'steer_queue_item':
+				handleSteerQueueItem(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':

@@ -181,6 +181,10 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			queues: [{ sessionId: 'session-1', name: 'Session 1', state: 'busy', items: [] }],
 		}),
 		removeQueueItem: vi.fn().mockResolvedValue({ success: true, removed: true }),
+		steerQueueItem: vi.fn().mockResolvedValue({
+			success: true,
+			result: { outcome: 'delivered', verdict: 'delivered' },
+		}),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -2725,6 +2729,41 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('Missing sessionId or itemId');
 			expect(callbacks.removeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Steer Queue Item (queue steer)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards sessionId + itemId to the callback and relays its result', async () => {
+			handler.handleMessage(client, {
+				type: 'steer_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.steerQueueItem).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('steer_queue_item_result');
+				expect(response.success).toBe(true);
+				expect(response.result).toEqual({ outcome: 'delivered', verdict: 'delivered' });
+			});
+		});
+
+		it('rejects missing sessionId or itemId without calling the callback', () => {
+			handler.handleMessage(client, { type: 'steer_queue_item', sessionId: 'session-1' });
+
+			const response = lastSend();
+			expect(response.type).toBe('steer_queue_item_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or itemId');
+			expect(callbacks.steerQueueItem).not.toHaveBeenCalled();
 		});
 	});
 

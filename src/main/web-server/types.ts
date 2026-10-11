@@ -4,6 +4,7 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type { UsageStats } from '../../shared/types';
@@ -571,6 +572,12 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
+export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
+export type SteerQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SteerQueueItemResult>;
 /**
  * Opens a URL as a browser tab in the desktop app.
  *

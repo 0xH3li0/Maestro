@@ -4,6 +4,7 @@
  * Extracted from messageHandlers.ts.
  */
 
+import type { QueueSteerResult } from '../../../../shared/chatSteering';
 import { WebSocket } from 'ws';
 import type {
 	AutoRunDocument,
@@ -207,6 +208,10 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
+	steerQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,

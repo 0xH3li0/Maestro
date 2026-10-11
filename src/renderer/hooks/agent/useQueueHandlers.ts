@@ -14,6 +14,7 @@ import { useCallback } from 'react';
 import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { steerQueuedItem } from '../../services/chatSteering';
+import type { QueueSteerResult } from '../../../shared/chatSteering';
 import {
 	applyQueuedItemDispatch,
 	applyQueuedItemEdit,
@@ -54,7 +55,7 @@ export interface UseQueueHandlersReturn {
 	 * waiting for that turn to finish. Claude-interactive turns only - see
 	 * getSteerEligibility.
 	 */
-	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<void>;
+	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<QueueSteerResult>;
 }
 
 // ============================================================================
