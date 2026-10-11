@@ -20,6 +20,14 @@
  * `turn/interrupt`) and every `userMessage` item that completes inside the
  * active turn. A steer is `absorbed` when its text comes back as one of those.
  *
+ * Every notification is scoped to THIS turn's thread. One app-server
+ * connection can carry more than one thread (a sub-agent spawned by the turn
+ * runs as its own thread, `parentThreadId` pointing back at ours), and every
+ * thread-scoped notification names its thread (`params.threadId`, or
+ * `params.thread.id` on `thread/started`). A notification naming another
+ * thread is dropped, or a sub-agent's `turn/started` / `turn/completed` would
+ * end or hang this turn and steer or interrupt the wrong one.
+ *
  * Pure and free of any process concerns, so it can be replayed against the
  * recorded fixtures. One instance per spawned turn.
  */
@@ -62,7 +70,27 @@ const USAGE_FIELDS = [
 
 type UsageTotals = Record<(typeof USAGE_FIELDS)[number][0], number>;
 
-function readTotals(breakdown: CodexAppServerTokenBreakdown | undefined): UsageTotals | null {
+/** What the usage updates for one turn said: its first and its latest. */
+interface TurnUsage {
+	/**
+	 * Thread total BEFORE the turn, derived from its first update as
+	 * `total - last` (`last` is the model call that update covers). Null when
+	 * that update carried no `last`.
+	 */
+	baseline: UsageTotals | null;
+	/** Thread total at the turn's latest update. */
+	current: UsageTotals;
+	/**
+	 * Thread total of the most recent update for an EARLIER turn, as it stood
+	 * when this turn's first update arrived (a resumed thread replays the
+	 * previous turn's total before this one starts). The fallback baseline.
+	 */
+	replayBaseline: UsageTotals | null;
+}
+
+function readTotals(
+	breakdown: CodexAppServerTokenBreakdown | null | undefined
+): UsageTotals | null {
 	if (!breakdown || typeof breakdown !== 'object') return null;
 	const totals = {} as UsageTotals;
 	for (const [field] of USAGE_FIELDS) {
@@ -70,6 +98,21 @@ function readTotals(breakdown: CodexAppServerTokenBreakdown | undefined): UsageT
 		totals[field] = typeof value === 'number' && Number.isFinite(value) ? value : 0;
 	}
 	return totals;
+}
+
+function subtractTotals(total: UsageTotals, part: UsageTotals): UsageTotals {
+	const out = {} as UsageTotals;
+	for (const [field] of USAGE_FIELDS) out[field] = Math.max(0, total[field] - part[field]);
+	return out;
+}
+
+/** The thread a notification names, if any. */
+function notificationThreadId(method: string, params: Record<string, unknown>): string | undefined {
+	if (method === 'thread/started') {
+		const id = (params.thread as CodexAppServerThread | undefined)?.id;
+		return typeof id === 'string' ? id : undefined;
+	}
+	return typeof params.threadId === 'string' ? params.threadId : undefined;
 }
 
 /** App-server item status -> exec item status. `declined` is a failure to exec. */
@@ -109,10 +152,10 @@ export class CodexAppServerEventTranslator {
 	private _activeTurnId: string | null = null;
 	private turnStartedEmitted = false;
 	private _outcome: CodexAppServerTurnOutcome | null = null;
-	/** Thread total at the last usage update that belonged to an EARLIER turn. */
-	private usageBaseline: UsageTotals | null = null;
-	/** Thread total at the last usage update that belonged to THIS turn. */
-	private usageCurrent: UsageTotals | null = null;
+	/** Usage updates per turn id, so the active turn's can be read once it is known. */
+	private usageByTurn = new Map<string, TurnUsage>();
+	/** Thread total at the most recent usage update, whichever turn it named. */
+	private latestUsageTotal: UsageTotals | null = null;
 	private userMessageListeners = new Set<(message: CodexAppServerUserMessage) => void>();
 
 	/** The thread id (the provider session id), once known. */
@@ -156,7 +199,10 @@ export class CodexAppServerEventTranslator {
 			return [];
 		}
 		const thread = (result as { thread?: CodexAppServerThread }).thread;
-		return this.threadStarted(thread?.id);
+		if (!thread?.id) return [];
+		// The response is authoritative for which thread this turn runs on.
+		this._threadId = thread.id;
+		return this.threadStarted(thread.id);
 	}
 
 	/**
@@ -166,6 +212,9 @@ export class CodexAppServerEventTranslator {
 	 */
 	translate(notification: CodexAppServerNotification): CodexExecLine[] {
 		const params = (notification.params ?? {}) as Record<string, unknown>;
+		const threadId = notificationThreadId(notification.method, params);
+		// Another thread's notification (a sub-agent's) says nothing about ours.
+		if (this._threadId && threadId && threadId !== this._threadId) return [];
 		switch (notification.method) {
 			case 'thread/started':
 				return this.threadStarted((params.thread as CodexAppServerThread | undefined)?.id);
@@ -185,7 +234,9 @@ export class CodexAppServerEventTranslator {
 			case 'thread/tokenUsage/updated':
 				this.recordUsage(
 					typeof params.turnId === 'string' ? params.turnId : undefined,
-					(params.tokenUsage as { total?: CodexAppServerTokenBreakdown } | undefined)?.total
+					params.tokenUsage as
+						| { total?: CodexAppServerTokenBreakdown; last?: CodexAppServerTokenBreakdown }
+						| undefined
 				);
 				return [];
 
@@ -205,7 +256,7 @@ export class CodexAppServerEventTranslator {
 
 	private threadStarted(threadId: string | undefined): CodexExecLine[] {
 		if (!threadId) return [];
-		this._threadId = threadId;
+		this._threadId ??= threadId;
 		if (this.threadStartedEmitted) return [];
 		this.threadStartedEmitted = true;
 		return [{ type: 'thread.started', thread_id: threadId }];
@@ -290,31 +341,48 @@ export class CodexAppServerEventTranslator {
 	}
 
 	/**
-	 * Track the thread's running total. An update for another turn (a resumed
-	 * thread reports the previous turn's total before this one starts) is the
-	 * baseline; this turn's usage is its own last total minus that baseline. The
-	 * total is NEVER forwarded as-is: it covers the whole thread, and reporting it
-	 * per turn is the quadratic over-count `CodexTokenCounts` exists to stop.
+	 * Track the thread's running total per turn. The total is NEVER forwarded
+	 * as-is: it covers the whole thread, and reporting it per turn is the
+	 * quadratic over-count `CodexTokenCounts` exists to stop. This turn's usage
+	 * is its latest total minus the total before it started, which its FIRST
+	 * update states directly as `total - last`. That does not depend on the
+	 * server replaying the previous turn's total on resume; the replayed total
+	 * is only the fallback for an update that carries no `last`.
+	 *
+	 * Updates are keyed by turn id rather than matched against the active turn,
+	 * so one that lands before the turn id is known still counts.
 	 */
 	private recordUsage(
 		turnId: string | undefined,
-		total: CodexAppServerTokenBreakdown | undefined
+		tokenUsage:
+			| { total?: CodexAppServerTokenBreakdown; last?: CodexAppServerTokenBreakdown }
+			| undefined
 	): void {
-		const totals = readTotals(total);
-		if (!totals) return;
-		if (this._activeTurnId && turnId === this._activeTurnId) {
-			this.usageCurrent = totals;
-		} else if (!this.usageCurrent) {
-			this.usageBaseline = totals;
+		const total = readTotals(tokenUsage?.total);
+		if (!total) return;
+		const previousTotal = this.latestUsageTotal;
+		this.latestUsageTotal = total;
+		if (!turnId) return;
+		const entry = this.usageByTurn.get(turnId);
+		if (entry) {
+			entry.current = total;
+			return;
 		}
+		const last = readTotals(tokenUsage?.last);
+		this.usageByTurn.set(turnId, {
+			baseline: last ? subtractTotals(total, last) : null,
+			current: total,
+			replayBaseline: previousTotal,
+		});
 	}
 
-	private turnUsage(): Record<string, number> | null {
-		if (!this.usageCurrent) return null;
+	private turnUsage(turnId: string | null): Record<string, number> | null {
+		const entry = turnId ? this.usageByTurn.get(turnId) : undefined;
+		if (!entry) return null;
+		const baseline = entry.baseline ?? entry.replayBaseline;
 		const usage: Record<string, number> = {};
 		for (const [field, execField] of USAGE_FIELDS) {
-			const base = this.usageBaseline?.[field] ?? 0;
-			usage[execField] = Math.max(0, this.usageCurrent[field] - base);
+			usage[execField] = Math.max(0, entry.current[field] - (baseline?.[field] ?? 0));
 		}
 		return usage;
 	}
@@ -322,6 +390,7 @@ export class CodexAppServerEventTranslator {
 	private turnCompleted(turn: CodexAppServerTurn | undefined): CodexExecLine[] {
 		if (this._outcome) return [];
 		if (turn?.id && this._activeTurnId && turn.id !== this._activeTurnId) return [];
+		const turnId = this._activeTurnId ?? turn?.id ?? null;
 		this._activeTurnId = null;
 
 		if (turn?.status === 'failed') {
@@ -336,7 +405,7 @@ export class CodexAppServerEventTranslator {
 
 		// An interrupted turn still spent real tokens; report them.
 		this._outcome = turn?.status === 'interrupted' ? 'interrupted' : 'completed';
-		const usage = this.turnUsage();
+		const usage = this.turnUsage(turnId);
 		return [{ type: 'turn.completed', ...(usage ? { usage } : {}) }];
 	}
 

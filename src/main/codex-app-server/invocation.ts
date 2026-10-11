@@ -190,3 +190,45 @@ export function parseCodexAppServerInvocation(
 	// a turn exec would have started fresh must not resume here.
 	return { ok: true, invocation: out };
 }
+
+/** `SandboxPolicy.type` the server echoes for each sandbox mode we request. */
+const ECHOED_SANDBOX_TYPE: Record<CodexAppServerSandbox, string> = {
+	'read-only': 'readOnly',
+	'workspace-write': 'workspaceWrite',
+	'danger-full-access': 'dangerFullAccess',
+};
+
+/**
+ * Why the thread the server set up does not run under the sandbox this turn
+ * asked for, or null when it does (or nothing restrictive was asked for).
+ *
+ * The `thread/start` and `thread/resume` responses echo the EFFECTIVE `sandbox`
+ * as a `SandboxPolicy` object (`{ type: 'readOnly', ... }`). A resumed thread
+ * has its own persisted settings, and the request's override is what keeps a
+ * read-only turn read-only, so a turn that asked for a restricted sandbox is
+ * checked against the echo before its prompt goes out. An echo that is
+ * missing, or names anything else, is a mismatch: the safe answer to "I cannot
+ * tell which sandbox this runs in" is exec, which applies `--sandbox` itself.
+ * Full access is not checked, since anything the server could pick instead is
+ * narrower.
+ *
+ * The echoed `approvalPolicy` is deliberately NOT checked: outside full access
+ * the spawner declines every approval request (`answerCodexServerRequest`), so
+ * no approval policy can widen what a restricted turn may do, and the check
+ * would only send turns to exec for a difference that changes nothing.
+ */
+export function codexThreadPolicyMismatch(
+	invocation: Pick<CodexAppServerInvocation, 'sandbox'>,
+	result: unknown
+): string | null {
+	const requested = invocation.sandbox;
+	if (!requested || requested === 'danger-full-access') return null;
+	const echo = (result && typeof result === 'object' ? result : {}) as {
+		sandbox?: { type?: unknown } | null;
+	};
+	const sandboxType = echo.sandbox?.type;
+	if (sandboxType === ECHOED_SANDBOX_TYPE[requested]) return null;
+	return `requested sandbox ${requested}, thread runs ${
+		typeof sandboxType === 'string' ? sandboxType : 'an unreported sandbox'
+	}`;
+}

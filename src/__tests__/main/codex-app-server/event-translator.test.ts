@@ -31,13 +31,13 @@ const TRANSLATED_RESPONSES = new Set<string>(['thread/start', 'thread/resume', '
  * successful responses to the requests whose result the translator needs go to
  * `translateResponse()`, and server requests are left for the spawner to answer.
  */
-function replay(name: string) {
+function replay(name: string, edit: (fixture: FixtureLine[]) => FixtureLine[] = (f) => f) {
 	const translator = new CodexAppServerEventTranslator();
 	const userMessages: CodexAppServerUserMessage[] = [];
 	translator.onUserMessage((message) => userMessages.push(message));
 	const methodsById = new Map<number | string, string>();
 	const lines: CodexExecLine[] = [];
-	const fixture = loadFixture(name);
+	const fixture = edit(loadFixture(name));
 
 	for (const { dir, msg } of fixture) {
 		if (dir === 'send') {
@@ -413,6 +413,153 @@ describe('CodexAppServerEventTranslator', () => {
 				{ type: 'item.completed', item: { id: 'r', type: 'reasoning', text: 'raw' } },
 			]);
 			expect(reasoning([], [])).toEqual([]);
+		});
+
+		it('ignores every notification that names another thread (a sub-agent on the same connection)', () => {
+			const translator = new CodexAppServerEventTranslator();
+			const seen: CodexAppServerUserMessage[] = [];
+			translator.onUserMessage((message) => seen.push(message));
+			started(translator);
+			const child = 'thread-child';
+			const childTurn = 'turn-child';
+
+			// The sub-agent's own thread and turn, then its whole life.
+			expect(
+				translator.translate({
+					method: 'thread/started',
+					params: { thread: { id: child, parentThreadId: 'thread-1', agentRole: 'worker' } },
+				})
+			).toEqual([]);
+			expect(translator.threadId).toBe('thread-1');
+			translator.translate({
+				method: 'turn/started',
+				params: { threadId: child, turn: { id: childTurn } },
+			});
+			expect(translator.activeTurnId).toBe('turn-1');
+			const foreign = [
+				{
+					method: 'item/started',
+					params: {
+						threadId: child,
+						turnId: childTurn,
+						item: { type: 'commandExecution', id: 'c', command: 'ls' },
+					},
+				},
+				{
+					method: 'item/completed',
+					params: {
+						threadId: child,
+						turnId: 'turn-1',
+						item: { type: 'agentMessage', id: 'm', text: 'child says hi' },
+					},
+				},
+				{
+					method: 'item/completed',
+					params: {
+						threadId: child,
+						turnId: 'turn-1',
+						item: { type: 'userMessage', id: 'u', content: [{ type: 'text', text: 'x' }] },
+					},
+				},
+				{
+					method: 'thread/tokenUsage/updated',
+					params: {
+						threadId: child,
+						turnId: 'turn-1',
+						tokenUsage: { total: { inputTokens: 999 }, last: { inputTokens: 999 } },
+					},
+				},
+				{ method: 'error', params: { threadId: child, error: { message: 'child failed' } } },
+				{
+					method: 'turn/completed',
+					params: { threadId: child, turn: { id: childTurn, status: 'failed' } },
+				},
+			];
+			for (const notification of foreign) expect(translator.translate(notification)).toEqual([]);
+			expect(seen).toEqual([]);
+			expect(translator.outcome).toBeNull();
+			expect(translator.activeTurnId).toBe('turn-1');
+
+			// Our own thread still drives the turn, and its usage is untouched.
+			translator.translate({
+				method: 'thread/tokenUsage/updated',
+				params: {
+					threadId: 'thread-1',
+					turnId: 'turn-1',
+					tokenUsage: { total: { inputTokens: 10 }, last: { inputTokens: 10 } },
+				},
+			});
+			expect(
+				translator.translate({
+					method: 'turn/completed',
+					params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+				})
+			).toEqual([
+				{
+					type: 'turn.completed',
+					usage: {
+						input_tokens: 10,
+						cached_input_tokens: 0,
+						output_tokens: 0,
+						reasoning_output_tokens: 0,
+					},
+				},
+			]);
+		});
+
+		it('resumed-turn: per-turn usage does not depend on the replayed total', () => {
+			// Drop the update the server replays for the PREVIOUS turn on resume:
+			// the baseline comes from this turn's own first update (total - last).
+			const withReplay = replay('resumed-turn');
+			const withoutReplay = replay('resumed-turn', (fixture) => {
+				const replayed = fixture.findIndex(({ msg }) => msg.method === 'thread/tokenUsage/updated');
+				return fixture.filter((_, index) => index !== replayed);
+			});
+			const usage = withoutReplay.lines.at(-1)!.usage as Record<string, number>;
+			expect(usage).toEqual(withReplay.lines.at(-1)!.usage);
+			// 61746-token thread, 32895 of them this turn (the fixture's `last`).
+			expect(usage.input_tokens).toBe(32890);
+			expect(usage.output_tokens).toBe(5);
+		});
+
+		it('falls back to the replayed total when an update carries no `last`', () => {
+			const translator = new CodexAppServerEventTranslator();
+			const usage = (turnId: string, inputTokens: number) =>
+				translator.translate({
+					method: 'thread/tokenUsage/updated',
+					params: { threadId: 'thread-1', turnId, tokenUsage: { total: { inputTokens } } },
+				});
+			usage('turn-0', 100);
+			started(translator);
+			usage('turn-1', 130);
+			usage('turn-1', 175);
+			const [completed] = translator.translate({
+				method: 'turn/completed',
+				params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+			});
+			expect((completed.usage as { input_tokens: number }).input_tokens).toBe(75);
+		});
+
+		it('counts a usage update that lands before the turn id is known', () => {
+			const translator = new CodexAppServerEventTranslator();
+			translator.translateResponse('thread/start', { thread: { id: 'thread-1' } });
+			const usage = (total: number, last: number) =>
+				translator.translate({
+					method: 'thread/tokenUsage/updated',
+					params: {
+						threadId: 'thread-1',
+						turnId: 'turn-1',
+						tokenUsage: { total: { inputTokens: total }, last: { inputTokens: last } },
+					},
+				});
+			usage(120, 20);
+			translator.translateResponse('turn/start', { turn: { id: 'turn-1' } });
+			usage(150, 30);
+			const [completed] = translator.translate({
+				method: 'turn/completed',
+				params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+			});
+			expect((completed.usage as { input_tokens: number }).input_tokens).toBe(50);
 		});
 
 		it('omits usage when the turn never reported any', () => {

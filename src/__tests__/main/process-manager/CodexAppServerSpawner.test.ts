@@ -8,7 +8,7 @@
  * CodexOutputParser run downstream, so a test sees what the renderer would.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough, Writable } from 'stream';
 import { readFileSync } from 'fs';
@@ -41,7 +41,10 @@ vi.mock('../../../shared/maestro-lib/control/termination', async (importOriginal
 	return { ...actual, stopProcess: (...args: unknown[]) => mockStopProcess(...(args as [])) };
 });
 
-import { CodexAppServerSpawner } from '../../../main/process-manager/spawners/CodexAppServerSpawner';
+import {
+	CodexAppServerSpawner,
+	CODEX_APP_SERVER_EXIT_GRACE_MS,
+} from '../../../main/process-manager/spawners/CodexAppServerSpawner';
 import { DataBufferManager } from '../../../main/process-manager/handlers/DataBufferManager';
 import type { ManagedProcess, ProcessConfig } from '../../../main/process-manager/types';
 import type { CodexAppServerMessage } from '../../../main/codex-app-server/protocol';
@@ -511,6 +514,192 @@ describe('CodexAppServerSpawner', () => {
 
 		expect(h.fallbackToCli).toHaveBeenCalledTimes(2);
 		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+});
+
+/** Let the fake server's queued writes and closes run. */
+async function flushIo(): Promise<void> {
+	for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+describe('CodexAppServerSpawner fallback and safety', () => {
+	const threadId = 'thread-1';
+	const turnId = 'turn-1';
+
+	/** A server that answers the handshake; `onTurnStart` decides what `turn/start` gets. */
+	function scriptedServer(
+		onTurnStart: (msg: ClientMessage, server: FakeAppServer) => void,
+		threadResult: Record<string, unknown> = { thread: { id: threadId } }
+	) {
+		return new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') s.send({ id: msg.id, result: {} });
+			if (msg.method === 'thread/start' || msg.method === 'thread/resume') {
+				s.send({ id: msg.id, result: threadResult });
+			}
+			if (msg.method === 'turn/start') onTurnStart(msg, s);
+		});
+	}
+
+	it('falls back to exec when the server answers turn/start with an error, having shown nothing', async () => {
+		const server = scriptedServer((msg, s) =>
+			s.send({ id: msg.id, error: { code: -32602, message: 'invalid effort' } })
+		);
+		const h = createHarness(server);
+		const exitSpy = vi.fn();
+		h.emitter.on('exit', exitSpy);
+		const config = h.config();
+
+		h.spawner.spawn(config);
+		await vi.waitFor(() => expect(h.fallbackToCli).toHaveBeenCalledWith(config));
+
+		expect(server.sent('turn/start')).toHaveLength(1);
+		// The held thread.started never reached the tab: exec's own session id will.
+		expect(h.sessionIds).toEqual([]);
+		expect(h.data).toEqual([]);
+		expect(h.errors).toEqual([]);
+		expect(h.processes.has(h.sessionId)).toBe(false);
+		expect(mockStopProcess).toHaveBeenCalledWith(
+			{ child: server },
+			expect.objectContaining({ from: 'terminate', label: 'fallback' })
+		);
+		// The abandoned child's exit reports nothing: exec owns the turn.
+		server.exit(1);
+		await flushIo();
+		expect(exitSpy).not.toHaveBeenCalled();
+		expect(h.fallbackToCli).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not fall back when the child dies with turn/start unanswered, and still reports the session', async () => {
+		const server = scriptedServer((_msg, s) => s.exit(1));
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config());
+		expect(await h.exited).toBe(1);
+
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+		expect(h.sessionIds).toEqual([threadId]);
+	});
+
+	it('commits on turn/started even before the turn/start response arrives', async () => {
+		const server = scriptedServer((msg, s) => {
+			s.send({ method: 'turn/started', params: { threadId, turn: { id: turnId } } });
+			s.send({ id: msg.id, error: { code: -32603, message: 'late refusal' } });
+		});
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config());
+		expect(await h.exited).toBe(1);
+
+		// The turn had started, so the refusal is an error, never a second send.
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+		expect(h.sessionIds).toEqual([threadId]);
+		expect(h.errors).toHaveLength(1);
+	});
+
+	it('falls back to exec when a resumed read-only thread keeps a wider sandbox', async () => {
+		const server = scriptedServer(() => {}, {
+			thread: { id: threadId },
+			sandbox: { type: 'dangerFullAccess' },
+			approvalPolicy: 'never',
+		});
+		const h = createHarness(server);
+		const config = h.config({ args: [...READ_ONLY_ARGS, 'resume', threadId] });
+
+		h.spawner.spawn(config);
+		await vi.waitFor(() => expect(h.fallbackToCli).toHaveBeenCalledWith(config));
+
+		expect(server.sent('thread/resume')[0].params).toMatchObject({ sandbox: 'read-only' });
+		expect(server.sent('turn/start')).toEqual([]);
+		expect(h.sessionIds).toEqual([]);
+		expect(h.errors).toEqual([]);
+	});
+
+	it('runs a resumed read-only thread on app-server when the echo confirms the sandbox', async () => {
+		const server = scriptedServer(
+			(msg, s) => {
+				s.send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
+				s.send({ method: 'turn/started', params: { threadId, turn: { id: turnId } } });
+				s.send({
+					method: 'turn/completed',
+					params: { threadId, turn: { id: turnId, status: 'completed' } },
+				});
+			},
+			{
+				thread: { id: threadId },
+				sandbox: { type: 'readOnly', networkAccess: false },
+				approvalPolicy: 'never',
+			}
+		);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config({ args: [...READ_ONLY_ARGS, 'resume', threadId] }));
+		expect(await h.exited).toBe(0);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+		expect(server.sent('turn/start')).toHaveLength(1);
+	});
+
+	describe('stop ladder start on each platform', () => {
+		const originalPlatform = process.platform;
+		const setPlatform = (platform: NodeJS.Platform) =>
+			Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+
+		afterEach(() => {
+			setPlatform(originalPlatform);
+			vi.useRealTimers();
+		});
+
+		/** Stop a turn whose handshake never finishes: there is no turn to interrupt. */
+		async function stopDuringSetup() {
+			const server = new FakeAppServer(() => {});
+			const h = createHarness(server);
+			h.spawner.spawn(h.config());
+			await vi.waitFor(() => expect(server.sent('initialize')).toHaveLength(1));
+			h.processes.get(h.sessionId)!.sdkController!.interrupt();
+			return server;
+		}
+
+		it('never writes Ctrl+C into the JSON-RPC stdin on Windows', async () => {
+			setPlatform('win32');
+			const server = await stopDuringSetup();
+			expect(mockStopProcess).toHaveBeenCalledWith(
+				{ child: server },
+				expect.objectContaining({ from: 'terminate', label: 'interrupt' })
+			);
+		});
+
+		it('keeps the out-of-band SIGINT stage on POSIX', async () => {
+			setPlatform('darwin');
+			const server = await stopDuringSetup();
+			expect(mockStopProcess).toHaveBeenCalledWith(
+				{ child: server },
+				expect.objectContaining({ from: 'interrupt', label: 'interrupt' })
+			);
+		});
+
+		it('starts the post-interrupt grace ladder at terminate on Windows', async () => {
+			setPlatform('win32');
+			// A server that starts the turn and then ignores turn/interrupt.
+			const server = scriptedServer((msg, s) => {
+				s.send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
+				s.send({ method: 'turn/started', params: { threadId, turn: { id: turnId } } });
+			});
+			const h = createHarness(server);
+			h.spawner.spawn(h.config());
+			await vi.waitFor(() =>
+				expect(h.processes.get(h.sessionId)?.codexAppServer?.activeTurnId).toBe(turnId)
+			);
+
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			h.processes.get(h.sessionId)!.sdkController!.interrupt();
+			expect(server.sent('turn/interrupt')).toHaveLength(1);
+			expect(mockStopProcess).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(CODEX_APP_SERVER_EXIT_GRACE_MS);
+			expect(mockStopProcess).toHaveBeenCalledWith(
+				{ child: server },
+				expect.objectContaining({ from: 'terminate', label: 'codex-app-server' })
+			);
+		});
 	});
 });
 

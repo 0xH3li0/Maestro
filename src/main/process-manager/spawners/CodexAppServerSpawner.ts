@@ -17,9 +17,12 @@
  *
  * A turn this transport cannot carry (an image, a write grant, an arg it does
  * not know) runs on `codex exec` through `fallbackToCli`, and so does a turn
- * whose server will not start or whose handshake fails BEFORE `turn/start` is
- * sent. After that the prompt may already be running, so a failure is reported
- * rather than retried: sending the prompt twice is worse than an error.
+ * whose server will not start, whose handshake fails, whose thread does not
+ * run under the sandbox it asked for, or whose `turn/start` the server answers
+ * with a JSON-RPC ERROR (proof the prompt never started). Any other failure
+ * after `turn/start` is sent (the child dying, a timeout) leaves it unknown
+ * whether the prompt is running, so it is reported rather than retried:
+ * sending the prompt twice is worse than an error.
  */
 
 import { EventEmitter } from 'events';
@@ -36,6 +39,7 @@ import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
+import { isWindows } from '../../../shared/platformDetection';
 import {
 	startTurn,
 	type TurnExit,
@@ -55,9 +59,10 @@ import {
 	isCodexServerRequest,
 	type CodexAppServerMessage,
 } from '../../codex-app-server/protocol';
-import { CodexAppServerRpc } from '../../codex-app-server/rpc-client';
+import { CodexAppServerRpc, CodexRpcRequestError } from '../../codex-app-server/rpc-client';
 import { answerCodexServerRequest } from '../../codex-app-server/server-requests';
 import {
+	codexThreadPolicyMismatch,
 	parseCodexAppServerInvocation,
 	type CodexAppServerInvocation,
 } from '../../codex-app-server/invocation';
@@ -82,11 +87,26 @@ export interface CodexAppServerSpawnerOptions {
 }
 
 /**
- * Where a turn is in its life. Setup failures fall back to exec; once the turn
- * is `committed` (`turn/start` sent) they are errors; `ended` means
+ * Where a turn is in its life. Setup failures fall back to exec. `starting`
+ * means `turn/start` is sent and unanswered: an error RESPONSE still falls back
+ * (the server refused the prompt), anything else is an error. Output stays held
+ * through both, so a turn that falls back has shown nothing. The turn is
+ * `committed` once the server accepts it (the response, or the turn's own
+ * `turn/started`), and failures are errors from then on. `ended` means
  * `turn/completed` arrived or the child is gone.
  */
-type TurnPhase = 'setup' | 'committed' | 'ended';
+type TurnPhase = 'setup' | 'starting' | 'committed' | 'ended';
+
+/**
+ * Where the stop ladder starts for this child when the turn is ending anyway.
+ * On Windows the `interrupt` stage writes Ctrl+C into the child's STDIN, which
+ * here is the JSON-RPC channel: it would land inside (or between) protocol
+ * lines and buys nothing, since `turn/interrupt` already is the protocol's
+ * interrupt. POSIX's SIGINT travels out of band, so it keeps its stage.
+ */
+function softStopStage(): 'interrupt' | 'terminate' {
+	return isWindows() ? 'terminate' : 'interrupt';
+}
 
 /** What every turn a spawner starts shares: the process map, the handlers, the fallback. */
 interface TurnContext {
@@ -322,19 +342,35 @@ class CodexAppServerTurn {
 			if (!this.translator.threadId) {
 				throw new Error(`${threadMethod} returned no thread id`);
 			}
+			// A resumed thread keeps its persisted settings unless the overrides
+			// took; a read-only turn must not run under full access.
+			const mismatch = codexThreadPolicyMismatch(invocation, threadResult);
+			if (mismatch) throw new Error(`${threadMethod}: ${mismatch}`);
 		} catch (error) {
 			if (!this.cancelled) this.fallBack(error);
 			return;
 		}
 
-		// ── Committed: the prompt is going out, never fall back from here ──
-		this.commit();
-		const turnResult = await request('turn/start', {
-			threadId: this.translator.threadId,
-			input: [{ type: 'text', text: config.prompt as string }],
-			...(invocation.effort ? { effort: invocation.effort } : {}),
-			...(invocation.summary ? { summary: invocation.summary } : {}),
-		});
+		// ── Starting: the prompt is going out. Only a refusal falls back ──
+		this.phase = 'starting';
+		let turnResult: unknown;
+		try {
+			turnResult = await request('turn/start', {
+				threadId: this.translator.threadId,
+				input: [{ type: 'text', text: config.prompt as string }],
+				...(invocation.effort ? { effort: invocation.effort } : {}),
+				...(invocation.summary ? { summary: invocation.summary } : {}),
+			});
+		} catch (error) {
+			// An error RESPONSE proves the prompt did not start; a timeout or a
+			// lost child does not, and goes to handleRunError.
+			if (error instanceof CodexRpcRequestError && this.phase === 'starting' && !this.cancelled) {
+				this.fallBack(error);
+				return;
+			}
+			throw error;
+		}
+		if (this.phase === 'starting') this.commit();
 		this.translator.translateResponse('turn/start', turnResult);
 	}
 
@@ -372,7 +408,16 @@ class CodexAppServerTurn {
 				params: message.params,
 			});
 		}
-		this.forward(this.translator.translate(message));
+		const lines = this.translator.translate(message);
+		// The turn's own activity is proof the server accepted the prompt, even
+		// ahead of the `turn/start` response.
+		if (
+			this.phase === 'starting' &&
+			(this.translator.activeTurnId !== null || this.translator.outcome !== null)
+		) {
+			this.commit();
+		}
+		this.forward(lines);
 		if (this.translator.outcome && this.phase !== 'ended') this.endTurn();
 	}
 
@@ -403,7 +448,7 @@ class CodexAppServerTurn {
 
 	private handleStderr(text: string): void {
 		if (this.isSuperseded()) return;
-		if (this.phase === 'setup') {
+		if (this.holding) {
 			this.heldStderr = (this.heldStderr + text).slice(-SETUP_STDERR_LIMIT);
 			return;
 		}
@@ -412,6 +457,11 @@ class CodexAppServerTurn {
 
 	// ── Output ───────────────────────────────────────────────────────────
 
+	/** Output is held until the server accepts the turn, so a fallback has shown nothing. */
+	private get holding(): boolean {
+		return this.phase === 'setup' || this.phase === 'starting';
+	}
+
 	private hold(lines: CodexExecLine[]): void {
 		this.heldLines.push(...lines);
 	}
@@ -419,7 +469,7 @@ class CodexAppServerTurn {
 	/** Forward exec lines to the stdout pipeline, or hold them until the turn is committed. */
 	private forward(lines: CodexExecLine[]): void {
 		if (lines.length === 0) return;
-		if (this.phase === 'setup') {
+		if (this.holding) {
 			this.hold(lines);
 			return;
 		}
@@ -467,6 +517,15 @@ class CodexAppServerTurn {
 		this.armExitGrace('terminate');
 	}
 
+	/**
+	 * The prompt may be running and the turn is about to be reported: release
+	 * what was held so the tab still learns the session id, the turn's output
+	 * and its stderr.
+	 */
+	private flushIfStarting(): void {
+		if (this.phase === 'starting') this.commit();
+	}
+
 	/** Run the stop ladder from `from` if the child is still here after the grace. */
 	private armExitGrace(from: 'interrupt' | 'terminate'): void {
 		if (this.exitGraceTimer) return;
@@ -500,11 +559,11 @@ class CodexAppServerTurn {
 		this.cancelled = true;
 		const sent = this.sendTurnInterrupt();
 		if (!sent && this.childRunning()) {
-			// Nothing to interrupt yet (still in setup): stop the child now.
+			// Nothing to interrupt yet (setup, or `turn/start` unanswered): stop the child now.
 			stopProcess(
 				{ child: this.turn.child },
 				{
-					from: 'interrupt',
+					from: softStopStage(),
 					graceMs: INTERACTIVE_STOP_GRACE_MS,
 					sessionId: this.config.sessionId,
 					label: 'interrupt',
@@ -512,7 +571,7 @@ class CodexAppServerTurn {
 			);
 			return;
 		}
-		this.armExitGrace('interrupt');
+		this.armExitGrace(softStopStage());
 	}
 
 	/** Hard stop: interrupt the turn as a courtesy, then run the ladder from SIGTERM. */
@@ -572,6 +631,8 @@ class CodexAppServerTurn {
 			return;
 		}
 
+		// Gone while `turn/start` was unanswered: the prompt may have run.
+		this.flushIfStarting();
 		this.phase = 'ended';
 		if (exit.spawnError) {
 			this.emitAgentError(exit.spawnError);
@@ -586,11 +647,15 @@ class CodexAppServerTurn {
 		);
 	}
 
-	/** Setup failed before the prompt went out: run the same config on exec. */
+	/**
+	 * The prompt never started (setup failed, or the server refused
+	 * `turn/start`): run the same config on exec. Nothing held was shown, so
+	 * exec's output is the only output the tab sees.
+	 */
 	private fallBack(error: unknown): void {
 		// The child's exit and the request it orphaned both report the same
 		// failure; only the first one falls back.
-		if (this.phase !== 'setup') return;
+		if (!this.holding || this.finished) return;
 		const { sessionId } = this.config;
 		logger.warn(
 			'[CodexAppServerSpawner] app-server setup failed; falling back to exec',
@@ -603,6 +668,7 @@ class CodexAppServerTurn {
 		);
 		this.phase = 'ended';
 		this.heldLines = [];
+		this.heldStderr = '';
 		if (this.childRunning()) {
 			stopProcess(
 				{ child: this.turn.child },
@@ -638,6 +704,7 @@ class CodexAppServerTurn {
 			sessionId: this.config.sessionId,
 			error: String(error),
 		});
+		this.flushIfStarting();
 		this.emitAgentError(error);
 		this.phase = 'ended';
 		this.notifyTurnEnded();

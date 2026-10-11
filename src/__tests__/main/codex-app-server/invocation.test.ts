@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	parseCodexAppServerInvocation,
 	codexAppServerConfigBlocker,
+	codexThreadPolicyMismatch,
 } from '../../../main/codex-app-server/invocation';
 import type { ProcessConfig } from '../../../main/process-manager/types';
 
@@ -119,5 +120,52 @@ describe('codexAppServerConfigBlocker', () => {
 
 	it('allows a plain local text turn', () => {
 		expect(codexAppServerConfigBlocker(config(EXEC))).toBeNull();
+	});
+});
+
+describe('codexThreadPolicyMismatch', () => {
+	const echo = (sandbox: unknown, approvalPolicy: unknown = 'never') => ({
+		thread: { id: 't' },
+		sandbox,
+		approvalPolicy,
+	});
+
+	it('accepts the sandbox the server echoes for each restricted mode', () => {
+		expect(
+			codexThreadPolicyMismatch({ sandbox: 'read-only' }, echo({ type: 'readOnly' }))
+		).toBeNull();
+		expect(
+			codexThreadPolicyMismatch(
+				{ sandbox: 'workspace-write' },
+				echo({ type: 'workspaceWrite', writableRoots: [] })
+			)
+		).toBeNull();
+	});
+
+	it('flags a resumed thread that kept a wider persisted sandbox', () => {
+		expect(
+			codexThreadPolicyMismatch({ sandbox: 'read-only' }, echo({ type: 'dangerFullAccess' }))
+		).toMatch(/read-only.*dangerFullAccess/);
+		expect(
+			codexThreadPolicyMismatch({ sandbox: 'workspace-write' }, echo({ type: 'readOnly' }))
+		).toMatch(/workspace-write/);
+	});
+
+	it('flags a response that does not say which sandbox the thread runs in', () => {
+		expect(codexThreadPolicyMismatch({ sandbox: 'read-only' }, { thread: { id: 't' } })).toMatch(
+			/unreported/
+		);
+		expect(codexThreadPolicyMismatch({ sandbox: 'read-only' }, null)).toMatch(/unreported/);
+	});
+
+	it('does not check full access or a sandbox left to config.toml', () => {
+		expect(codexThreadPolicyMismatch({ sandbox: 'danger-full-access' }, {})).toBeNull();
+		expect(codexThreadPolicyMismatch({}, {})).toBeNull();
+	});
+
+	it('does not check the approval policy, which cannot widen a restricted turn', () => {
+		expect(
+			codexThreadPolicyMismatch({ sandbox: 'read-only' }, echo({ type: 'readOnly' }, 'on-request'))
+		).toBeNull();
 	});
 });
