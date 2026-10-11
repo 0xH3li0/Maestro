@@ -35,6 +35,9 @@ import {
 import type { OnnxTensor } from './runtime/onnx-types';
 import type { LocalModelSource } from './sources';
 import type { TokenizedBatch } from './tokenizer';
+import { l2Normalize } from './vectors';
+
+export { l2Normalize };
 
 /**
  * Texts per ONNX run. Large enough to amortize a run's fixed cost, small enough
@@ -207,13 +210,4 @@ export function poolEmbeddings(
 		vectors.push(l2Normalize(vector));
 	}
 	return vectors;
-}
-
-/** Scale a vector to unit length in place. A zero vector is returned unchanged. */
-export function l2Normalize(vector: Float32Array): Float32Array {
-	let sum = 0;
-	for (let i = 0; i < vector.length; i++) sum += vector[i] * vector[i];
-	const norm = Math.sqrt(sum);
-	if (norm > 0) for (let i = 0; i < vector.length; i++) vector[i] /= norm;
-	return vector;
 }

@@ -11,15 +11,7 @@ import type Database from 'better-sqlite3';
 // Migrations Infrastructure
 // ============================================================================
 
-export const CREATE_MIGRATIONS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS _migrations (
-    version INTEGER PRIMARY KEY,
-    description TEXT NOT NULL,
-    applied_at INTEGER NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
-    error_message TEXT
-  )
-`;
+export { CREATE_MIGRATIONS_TABLE_SQL } from '../utils/sqlite-migrations';
 
 // ============================================================================
 // Metadata Table (for internal key-value storage like vacuum timestamps)

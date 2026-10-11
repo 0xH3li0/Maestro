@@ -98,6 +98,8 @@ export interface QuitHandlerDependencies {
 	tunnelManager: typeof tunnelManagerInstance;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
+	/** Function to close the semantic index's embedding store */
+	closeEmbeddingStore: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 	/** Function to stop settings file watcher (optional, may not be started yet) */
@@ -173,6 +175,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getHistoryManager,
 		tunnelManager,
 		closeStatsDB,
+		closeEmbeddingStore,
 		stopCliWatcher,
 		stopSettingsWatcher,
 		powerManager,
@@ -442,6 +445,9 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// Close stats database
 		logger.info('Closing stats database', 'Shutdown');
 		closeStatsDB();
+
+		// Close the embedding store (a no-op when semantic search never opened it)
+		closeEmbeddingStore();
 
 		logger.info('Shutdown complete', 'Shutdown');
 	}

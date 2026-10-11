@@ -15,7 +15,6 @@ import type Database from 'better-sqlite3';
 import type { Migration, MigrationRecord } from './types';
 import { mapMigrationRecordRow, type MigrationRecordRow } from './row-mappers';
 import {
-	CREATE_MIGRATIONS_TABLE_SQL,
 	CREATE_QUERY_EVENTS_SQL,
 	CREATE_QUERY_EVENTS_INDEXES_SQL,
 	CREATE_AUTO_RUN_SESSIONS_SQL,
@@ -41,6 +40,7 @@ import {
 } from './schema';
 import { LOG_CONTEXT } from './utils';
 import { logger } from '../utils/logger';
+import { runSqliteMigrations, sqliteUserVersion } from '../utils/sqlite-migrations';
 
 // ============================================================================
 // Migration Registry
@@ -157,111 +157,12 @@ function getMigrations(): Migration[] {
 /**
  * Run all pending database migrations.
  *
- * 1. Creates the _migrations table if it doesn't exist
- * 2. Gets the current schema version from user_version pragma
- * 3. Re-applies already-covered migrations whose schema is missing
- * 4. Runs each pending migration in a transaction
- * 5. Records each migration in the _migrations table
- * 6. Updates the user_version pragma
+ * The bookkeeping (the _migrations table, user_version, the repair of a version
+ * number that covers a migration whose schema is missing, one transaction per
+ * migration) is the shared runner's; this module owns only the stats schema.
  */
 export function runMigrations(db: Database.Database): void {
-	// Create migrations table (the only table created outside the migration system)
-	db.prepare(CREATE_MIGRATIONS_TABLE_SQL).run();
-
-	// Get current version (0 if fresh database)
-	const versionResult = db.pragma('user_version') as Array<{ user_version: number }>;
-	const currentVersion = versionResult[0]?.user_version ?? 0;
-
-	const migrations = getMigrations();
-	repairSkippedMigrations(db, migrations, currentVersion);
-
-	const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
-
-	if (pendingMigrations.length === 0) {
-		logger.debug(`Database is up to date (version ${currentVersion})`, LOG_CONTEXT);
-		return;
-	}
-
-	// Sort by version to ensure sequential execution
-	pendingMigrations.sort((a, b) => a.version - b.version);
-
-	logger.info(
-		`Running ${pendingMigrations.length} pending migration(s) (current version: ${currentVersion})`,
-		LOG_CONTEXT
-	);
-
-	for (const migration of pendingMigrations) {
-		applyMigration(db, migration);
-	}
-}
-
-/**
- * Re-apply migrations the version check says ran but whose schema is missing.
- *
- * user_version is a bare number, and it only means the same thing on every
- * branch up to v7. Past that, rc and main number their migrations differently,
- * so a database last opened by an rc build can report a version that covers a
- * main migration it never ran. Every write that touches the missing schema then
- * fails, e.g. `table query_events has no column named input_tokens` on each
- * query event (MAESTRO-113/114). Only migrations that declare `isApplied` are
- * checked, and their bodies are idempotent. user_version is left alone.
- */
-function repairSkippedMigrations(
-	db: Database.Database,
-	migrations: Migration[],
-	currentVersion: number
-): void {
-	for (const migration of migrations) {
-		if (migration.version > currentVersion || !migration.isApplied) continue;
-		if (migration.isApplied(db)) continue;
-
-		logger.warn(
-			`Re-applying migration v${migration.version} (schema missing at version ${currentVersion}): ${migration.description}`,
-			LOG_CONTEXT
-		);
-		db.transaction(() => migration.up(db))();
-	}
-}
-
-/**
- * Apply a single migration within a transaction.
- * Records the migration in the _migrations table with success/failure status.
- */
-function applyMigration(db: Database.Database, migration: Migration): void {
-	const startTime = Date.now();
-	logger.info(`Applying migration v${migration.version}: ${migration.description}`, LOG_CONTEXT);
-
-	try {
-		const runMigrationTxn = db.transaction(() => {
-			migration.up(db);
-
-			db.prepare(
-				`
-        INSERT OR REPLACE INTO _migrations (version, description, applied_at, status, error_message)
-        VALUES (?, ?, ?, 'success', NULL)
-      `
-			).run(migration.version, migration.description, Date.now());
-
-			db.pragma(`user_version = ${migration.version}`);
-		});
-
-		runMigrationTxn();
-
-		const duration = Date.now() - startTime;
-		logger.info(`Migration v${migration.version} completed in ${duration}ms`, LOG_CONTEXT);
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error);
-
-		db.prepare(
-			`
-      INSERT OR REPLACE INTO _migrations (version, description, applied_at, status, error_message)
-      VALUES (?, ?, ?, 'failed', ?)
-    `
-		).run(migration.version, migration.description, Date.now(), errorMessage);
-
-		logger.error(`Migration v${migration.version} failed: ${errorMessage}`, LOG_CONTEXT);
-		throw error;
-	}
+	runSqliteMigrations(db, getMigrations(), LOG_CONTEXT);
 }
 
 // ============================================================================
@@ -297,8 +198,7 @@ export function getMigrationHistory(db: Database.Database): MigrationRecord[] {
  * Get the current database schema version.
  */
 export function getCurrentVersion(db: Database.Database): number {
-	const versionResult = db.pragma('user_version') as Array<{ user_version: number }>;
-	return versionResult[0]?.user_version ?? 0;
+	return sqliteUserVersion(db);
 }
 
 /**

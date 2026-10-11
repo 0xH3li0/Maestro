@@ -119,6 +119,7 @@ describe('app-lifecycle/quit-handler', () => {
 		getHistoryManager: ReturnType<typeof vi.fn>;
 		tunnelManager: typeof mockTunnelManager;
 		closeStatsDB: ReturnType<typeof vi.fn>;
+		closeEmbeddingStore: ReturnType<typeof vi.fn>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
 		powerManager: typeof mockPowerManager;
 		stopSessionCleanup: ReturnType<typeof vi.fn>;
@@ -161,6 +162,7 @@ describe('app-lifecycle/quit-handler', () => {
 			getHistoryManager: vi.fn().mockReturnValue(mockHistoryManager),
 			tunnelManager: mockTunnelManager,
 			closeStatsDB: vi.fn(),
+			closeEmbeddingStore: vi.fn(),
 			stopCliWatcher: vi.fn(),
 			powerManager: mockPowerManager,
 			stopSessionCleanup: vi.fn(),
@@ -380,6 +382,7 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockTunnelManager.stop).toHaveBeenCalled();
 			expect(mockWebServer.stop).toHaveBeenCalled();
 			expect(deps.closeStatsDB).toHaveBeenCalled();
+			expect(deps.closeEmbeddingStore).toHaveBeenCalled();
 		});
 
 		it('saves the multi-window layout during cleanup, before processes are torn down', async () => {

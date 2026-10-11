@@ -77,6 +77,7 @@ flowchart TD
 | `runtime-artifacts.ts`  | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                          |
 | `llama-dependencies.ts` | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload          |
 | `tasks.ts`              | `LOCAL_MODEL_TASKS` (the housekeeping jobs), `LocalModelAssignment`, and the `localModelAssignments` reader and validator      |
+| `embedding-index.ts`    | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)      |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
@@ -100,6 +101,8 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `onnx-encoder.ts`              | `OnnxEncoderPool`: one idle-unloading ONNX session per encoder model; `encoderFeeds()` by input name    |
 | `embeddings.ts`                | `embedTexts()` for a local model or an endpoint; pooling, prefixes, L2 normalization, batching          |
 | `classifier.ts`                | `classifyText()` on a local classifier; overlapping windows, max positive score across them             |
+| `vectors.ts`                   | `l2Normalize()`, `dotProduct()`: import-free vector math shared by the service and the store            |
+| `embedding-store.ts`           | `EmbeddingStore` over `userData/embeddings.db`: upsert, delete, in-memory cosine search (below)         |
 | `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                              |
 | `task-router.ts`               | `runLocalTask()` / `runEmbeddingTask()` / `runClassifierTask()`: assignment decides the source; stats   |
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)             |
@@ -127,6 +130,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 ```
 userData/models/<model-id>/      manifest.json + the model's files
 userData/runtimes/<runtime-id>/  an installed native runtime
+userData/embeddings.db           the semantic index's vectors (SQLite, WAL)
 ```
 
 Both roots resolve through `paths.ts`. `model-store.removeAll()` deletes the whole models root;
@@ -332,6 +336,51 @@ Result, 2026-10-10, darwin-arm64 (Apple Silicon), bge-small-en-v1.5 q8:
 | Per document in that batch                                      | 1.2 ms  |
 | "how do I rename a tab" vs "tab naming" (cosine)                | 0.901   |
 | "how do I rename a tab" vs "SSH remote hosts" (cosine)          | 0.453   |
+
+### The embedding store: `embedding-store.ts`
+
+Semantic search keeps one vector per chunk of indexed text in `userData/embeddings.db`
+(better-sqlite3, WAL). `getEmbeddingStore()` returns the app's one `EmbeddingStore`; the file is
+opened on first use and closed by the quit handler.
+
+| Column        | Holds                                                                    |
+| ------------- | ------------------------------------------------------------------------ |
+| `id`          | `embeddingChunkId(model, sourceType, sourceId, chunkIndex)`, a hash      |
+| `source_type` | `history`, `directors-notes`, or `transcript` (`EMBEDDING_SOURCE_TYPES`) |
+| `source_id`   | The source's own id (a history entry id, a notes id, a tab id)           |
+| `agent_id`    | The agent the source belongs to, or NULL                                 |
+| `chunk_index` | Which window of the source's text this is                                |
+| `text_hash`   | `embeddingTextHash(text)`: SHA-256 of the chunk text, the dedupe key     |
+| `model_id`    | The embedding model that produced the vector                             |
+| `dimensions`  | The vector's width, taken from the vector itself                         |
+| `vector`      | The raw bytes of a `Float32Array`                                        |
+| `created_at`  | Epoch milliseconds                                                       |
+
+| Call                                                              | Does                                                               |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `upsertChunks(rows)`                                              | One transaction; every row validated before the first is written   |
+| `deleteBySource(sourceType, sourceId)`                            | Drops the source's chunks under every model                        |
+| `search(queryVector, { modelId, limit, sourceTypes?, agentId? })` | Best-first `EmbeddingSearchHit[]` (`score` is the cosine, -1 to 1) |
+| `knownTextHashes(modelId, hashes)`                                | Which texts the model has already embedded                         |
+| `stats()`                                                         | Chunks per model and source type, and the file's size              |
+| `clear(modelId?)`                                                 | Deletes one model's rows, or every model's                         |
+
+| Rule                                             | Why                                                                                             |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| Search is brute-force cosine in JavaScript       | Tens of thousands of 384-wide vectors is a few milliseconds. Do not add a native vector module. |
+| One model per search                             | Vectors from two models are not comparable. Old rows stay on disk and are simply not read.      |
+| The active model is loaded on the first SEARCH   | A write before that does not load it, so the indexer never holds the whole index in memory.     |
+| After the load, every write updates the same map | Search does not read disk again, and a rolled-back batch never reaches it.                      |
+| Stored and query vectors are both normalized     | The score is a true cosine even if a source did not return unit vectors.                        |
+| A width that differs from the query is skipped   | The same model id serving another width is stale data, not a match.                             |
+| An unreadable file is moved aside and rebuilt    | Every vector is derivable from text Maestro already stores; `embeddings.corrupt-<stamp>.db`.    |
+
+`upsertChunks` replaces by (model, source, chunk index) and does not trim: a source that now has
+fewer chunks keeps its old tail, so call `deleteBySource` before re-indexing a source whose text
+changed.
+
+Schema changes go through `runSqliteMigrations()` in `src/main/utils/sqlite-migrations.ts`, the
+runner `stats.db` also uses (`_migrations` table, `user_version`, one transaction per migration).
 
 ### Classifiers: `classifyText(source, text)`
 
