@@ -3399,6 +3399,23 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBeUndefined();
 		});
 
+		it.each([
+			{ exitCode: 1, signal: null },
+			{ exitCode: null, signal: 'SIGTERM' },
+		])('preserves Codex stderr on a failed exit: %j', async ({ exitCode, signal }) => {
+			const pending = spawnAgent('codex', '/p', 'hi');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockStderr.emit('data', Buffer.from('Provider configuration unavailable\n'));
+			mockChild.emit('close', exitCode, signal);
+			const result = await pending;
+			expect(result).toMatchObject({
+				success: false,
+				outcome: 'crashed',
+				error: 'Provider configuration unavailable\n',
+			});
+			expect(result.response).toBeUndefined();
+		});
+
 		it('uses the same Codex answer and progress contract over SSH', async () => {
 			mockWrapSpawnWithSsh.mockResolvedValue({
 				command: 'ssh',

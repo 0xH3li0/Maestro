@@ -8,7 +8,7 @@ For the rc integration and bounded startup contract, see
 
 This audit covers the host source in this checkout and a read-only check of the
 installed Relay. It does not activate a plugin, send a Discord message, change
-the Obsidian vault or user service, or package/install a host build.
+external automation or user services, or package/install a host build.
 
 ## Provisioning and identity
 
@@ -29,8 +29,7 @@ answer, dispatch acknowledgement, or desktop callback is not a Discord receipt.
 
 ## Supported return flow
 
-For delegated results, return the worker's result to the **originating Obsidian
-Codex** run (`76fd8ebe-7346-4db0-8799-edcd03071bb2`). That run calls the
+For delegated results, return the worker's result to the **originating Codex** run (`<origin-agent-id>`). That run calls the
 currently advertised Relay MCP tool with the report text and an existing
 permitted destination. It returns the real tool result, including nonempty
 `messageIds`, to its caller. A headless origin can receive the result through
@@ -40,9 +39,9 @@ Do not lend a run proof to a worker or put an originator ID in tool arguments.
 For scheduled shell reports, keep the script's status and report text
 deterministic. A downstream Cue `agent.completed` subscription can select the
 specific shell subscription using `source_session_ids` and `source_sub`, and
-pass `{{CUE_SOURCE_STATUS}}` / `{{CUE_SOURCE_OUTPUT}}` to an Obsidian Codex
+pass `{{CUE_SOURCE_STATUS}}` / `{{CUE_SOURCE_OUTPUT}}` to the designated Codex
 **agent prompt**. The shell step itself cannot call Relay. A manual shell
-orchestrator can instead call `maestro-cli send` for the same stored Obsidian
+orchestrator can instead call `maestro-cli send` for the same stored origin
 Codex agent and inspect its JSON response. In both cases the agent must call
 the live advertised plugin tool, and the caller must require actual returned
 `messageIds`. If the tool is absent or rejects the destination, report failure;
@@ -78,36 +77,25 @@ deciding whether retrying could duplicate a completed send.
 `--require-plugin-tools` remains available as the less specific guard: it
 refuses the standalone fallback but does not prove a Relay send. The installed
 CLI has neither source option until a separately authorized, packaged host
-update. Backstage can draft script migration against this contract now, but
+update. The integration consumer can draft script migration against this contract now, but
 must not execute it against the installed CLI.
 
-## Current activation and migration blocks
+## Historical activation and migration limits
 
-- Read-only `plugin list` reports `sh.maestro.relay` 0.0.13, trusted and
-  `loadStatus: ok`, with `enabled: false`. A fresh MCP initialize and
-  `tools/list` returned `tools: []`. The manifest calls the tool
-  `relay_send_discord`; `sh_maestro_relay__send` was its prior callable MCP
-  name. Rediscover the name after consent rather than assuming it is live.
-- Changed plugin bytes require Chris to enable Relay and confirm the protected
-  permission window, including the previously intended Dispatch allow list and
-  separate Unattended choice. Do not broaden grants. There is no current
-  `MAESTRO_PLUGIN_RUN_TOKEN_FILE` in this audit shell and no reporting Pianola
-  agent. No authenticated Obsidian send or Discord `messageIds` were obtained.
-- The Obsidian vault's `AGENTS.md`, `.maestro/cue.yaml`, seven active HTTP
-  sender scripts (`check-daily-artifacts.py`, `check-cli-updates.py`,
-  `check-claude-tokens.py`, `reap-orphan-mcp.py`, `health-log-helper.py`,
-  `local_llm.py`, `docker-cc-health-check.sh`), and the dependent
-  `local-summary.py` still need migration. Preserve each schedule and
-  notification condition. The vault and user-systemd write override is
-  pending, so none of those files was edited.
-- `maestro-relay.service` remains enabled/failed with exit status 203 and port
-  3457 has no listener. Its retirement requires the pending external write
-  scope. Do not use the legacy HTTP daemon or raw Discord REST meanwhile.
-- No local test package was created. Any later host handoff must first combine
-  the latest RC and the user's PR heads **locally only**, document the exact
-  revisions, and verify the affected feature in the packaged build before
-  installation is proposed. No release, push, or upstream merge is part of
-  this audit.
+The dated read-only audit did not establish live delivery. Plugin trust,
+enablement, granted Dispatch destinations and the separate Unattended choice
+must be verified for the agreed integration build before use. Changed plugin
+bytes require the operator's protected permission review; do not broaden grants
+or infer tool availability from an old manifest name.
+
+External report scripts and automation need their own authorized migration.
+Preserve schedules and notification conditions, and use proof-backed agent
+runs instead of a legacy HTTP sender. This source audit does not authorize
+external file edits, service retirement, installation or provider authentication.
+
+The private deployment inventory, agent identifiers and machine-specific service
+and authentication state are intentionally omitted. They do not define the host
+contract or the current PR acceptance state.
 
 ## Source verification
 
@@ -118,50 +106,22 @@ and malformed results, model-only IDs, risk-blocked and rejected calls,
 deactivation, expiry, and provider failure. These are source tests, not a
 live Discord delivery test.
 
-## Post-RC live diagnosis (2026-10-05)
+## Historical diagnostic lessons
 
-The installed Host and CLI both report `0.18.9-RC`; Relay `0.0.14` is
-trusted, loadable and enabled. `encoreFeatures.plugins` is true. The installed
-Relay private settings contain a Pianola outbound policy for the stored
-Obsidian Codex agent with two allowed channel IDs. No credential was read or
-changed for this audit.
+Host-side MCP initialization and `tools/list` can advertise a Relay tool while
+a particular provider turn lacks it. Provider authentication, ephemeral MCP
+configuration and the model's tool catalog are distinct checks. A provider's
+final prose does not establish that its tool ran or that a destination accepted
+a message.
 
-The receipt-required Obsidian Claude run
-`run_cli-send_1791186640221_8d6f246d` failed after 9.1 seconds; the next
-Claude diagnostic run failed after 7.9 seconds. Both provider transcripts
-contain `authentication_failed: Failed to authenticate: OAuth session expired
-and could not be refreshed` before any model action. `claude auth status --json`
-currently reports `loggedIn: false`. The stored Obsidian Claude agent is local
-with `enableMaestroP: false`, so source routing selects Claude API mode and
-the ephemeral `--mcp-config` injection. Re-authentication by Chris is needed
-before another Claude provider turn can prove tool availability. Do not retry
-the report blindly; there are no observed receipt IDs from these runs.
+A receipt-required run must preserve an earlier provider error when no receipt
+arrives, while still returning `success: false`. The source regression covers
+this error-reporting rule; it does not establish live delivery or change the
+provider's authentication state.
 
-The Obsidian Codex diagnostic run completed, but its tool-catalog check found
-no Relay callable in that run. Host-side MCP initialization plus `tools/list`,
-using both Node and the installed Electron binary with `ELECTRON_RUN_AS_NODE=1`,
-advertised `sh_maestro_relay__send`. Codex CLI `0.159.0` also accepted the
-Host's `-c mcp_servers.maestro.*` config shape via `codex mcp list --json`.
-The provider transcript has no MCP startup error or actual spawn argv, so
-this evidence does not establish whether that particular run loaded the
-ephemeral server into Codex's exposed tool catalog. Its catalog result must
-not be treated as proof that Relay itself is disabled.
-
-One definite Host diagnostic bug was fixed in this checkout: a
-`--require-tool-receipt` run without a receipt previously replaced an earlier
-provider failure with the generic missing-receipt error. The handler now
-preserves the provider failure while still returning `success: false` and no
-receipt. Its regression test, the full WebSocket handler suite (298 tests),
-main TypeScript no-emit check, Prettier and `git diff --check` pass. This
-source fix is not installed; it changes error reporting only, not delivery.
-
-Next safe sequence: Chris restores Claude authentication; then perform a
-fresh no-send tool-catalog diagnostic for the chosen originator and capture
-the full CLI JSON and MCP startup diagnostics. If Codex still lacks
-`mcp__maestro__sh_maestro_relay__send`, inspect that run's effective spawn
-arguments and MCP startup result before changing provider injection. Only
-after tool presence and the destination binding are verified should Chris
-authorize one controlled delivery attempt. Require a host-observed receipt
-with nonempty `messageIds`; do not use the legacy HTTP path or infer delivery
-from provider prose. Installation or restart of a rebuilt Host remains a
-separate Chris decision.
+Any separately authorized live acceptance should begin with a no-send tool
+catalog diagnostic for the chosen originator. Inspect effective spawn arguments
+and MCP startup diagnostics if the tool is missing. Only after tool presence and
+destination binding are verified should the operator authorize controlled
+delivery. Require a host-observed receipt with nonempty `messageIds`; do not
+infer delivery from provider prose or retry potentially delivered work blindly.

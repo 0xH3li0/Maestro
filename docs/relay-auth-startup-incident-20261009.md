@@ -2,10 +2,11 @@
 
 ## Evidence and limits
 
-The incident report records a GNOME Keyring crash at 12:59 CEST and Codex PID
-804542 requesting `org.freedesktop.secrets`, with a password dialog open until
-15:38. Mira's agent-specific `-c cli_auth_credentials_store=file` override and
-successful login-status check were supplied by the incident reporter. No
+The incident reporter described a GNOME Keyring crash followed by a headless
+Codex process waiting on an OS credential dialog. The agent-specific
+`-c cli_auth_credentials_store=file` mitigation was supplied by the reporter;
+it remains an operational choice rather than part of this host fix. Private
+process identifiers and machine-specific authentication state are omitted. No
 credential files, credential contents, or private Relay messages were inspected.
 
 Read-only extraction of the installed app's compiled spawner and timeout module
@@ -61,7 +62,7 @@ processes were modified.
 After review, include the fix in the agreed Relay integration build. Activation
 requires a coordinated maintenance window: drain or cancel outstanding Relay
 runs, preserve current user work, install the reviewed build and its matching
-bundled CLI, then restart Maestro once. Verify Mira's existing credential-store
+bundled CLI, then restart Maestro once. Verify the existing agent-specific credential-store
 argument survives, run one ordinary Relay request, and exercise a deliberately
 non-authenticated test fixture to confirm a failed result within 125 seconds.
 Do not induce a real keyring outage or remove credentials for this test. Acceptance of the specific auth/retry recovery notice requires the agreed

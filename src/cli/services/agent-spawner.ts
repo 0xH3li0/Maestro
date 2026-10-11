@@ -1446,7 +1446,7 @@ async function spawnJsonLineAgent(
 		stdinError: exit.stdinError,
 		errorText:
 			capture.errorText ??
-			(toolType === 'codex' && !codexFinal && !codexCandidate
+			(toolType === 'codex' && exit.exitCode === 0 && !codexFinal && !codexCandidate
 				? 'Agent returned no final text'
 				: undefined),
 		answerText: toolType === 'codex' ? codexFinal || codexCandidate : capture.answerText,
