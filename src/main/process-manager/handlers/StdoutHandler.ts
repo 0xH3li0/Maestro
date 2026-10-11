@@ -90,7 +90,10 @@ function normalizeUsageToDelta(
 }
 
 /** Split a buffer of concatenated JSON objects (no newline separators) into individual complete objects and a partial remainder. */
-function extractConcatenatedJsonObjects(buffer: string): { messages: string[]; remainder: string } {
+export function extractConcatenatedJsonObjects(buffer: string): {
+	messages: string[];
+	remainder: string;
+} {
 	const messages: string[] = [];
 	let start = -1;
 	let depth = 0;

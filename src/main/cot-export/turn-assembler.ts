@@ -25,6 +25,18 @@
  * events of the process are held, in order, and written the moment the answer
  * arrives. If the answer is "not an agent turn" they are dropped.
  *
+ * CUE RUNS
+ * A Cue run does not pass through the process manager, so it has no `spawn`,
+ * no parsed lines, and no `exit` to follow. It is written once, when the run
+ * has completed (`recordCompletedRun`), from the raw stdout the run printed.
+ * The decision to record it is still made at dispatch (`decideCueRun`), so a
+ * switch turned on or off while the run is going applies from the next run.
+ * Two things follow from writing it at the end:
+ * - A crash of the app during a Cue run loses that turn. Nothing of it is on
+ *   disk until the run is over.
+ * - The lines of a run were not timed as they arrived, so every record of the
+ *   turn after `turn-start` carries the time the run ended.
+ *
  * A TURN THAT NEVER REPORTS ITS END
  * Two things leave a turn open with no exit to close it:
  * - The process could not be started. `handleSpawn` is told so by
@@ -60,6 +72,7 @@ import {
 	stripEmbeddedSystemPrompt,
 } from '../../shared/embeddedSystemPrompt';
 import type { ToolType } from '../../shared/types';
+import { createOutputParser } from '../parsers';
 import type {
 	CotRecordPayload,
 	CotTextPayload,
@@ -68,6 +81,7 @@ import type {
 	CotTurnStartPayload,
 } from '../../shared/cotExport/types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
+import { extractConcatenatedJsonObjects } from '../process-manager/handlers/StdoutHandler';
 import type { ProcessConfig } from '../process-manager/types';
 import { sha256Hex } from './hash-chain';
 import { turnFilePath } from './layout';
@@ -99,6 +113,15 @@ export type CotSpawnConfig = Pick<
 	| 'sshRemoteCommand'
 	| 'agentSessionId'
 >;
+
+/**
+ * What `turn-start` is built from: a spawn config with no process id, since the
+ * record carries none, and with a query source of any value, since a Cue run's
+ * is `cue` and the process manager's config type has no such member.
+ */
+type CotTurnStartInput = Omit<CotSpawnConfig, 'sessionId' | 'querySource'> & {
+	querySource?: string;
+};
 
 /** Everything the assembler needs from outside. It reads no store and no clock itself. */
 export interface CotTurnAssemblerDeps {
@@ -309,7 +332,7 @@ function openTurn(
  * conversation. Everywhere else the marker can only be the writer's own text,
  * and cutting there would remove part of the prompt from the record.
  */
-function splitSystemPrompt(config: CotSpawnConfig): {
+function splitSystemPrompt(config: CotTurnStartInput): {
 	prompt: string;
 	systemPromptSha256?: string;
 } {
@@ -327,7 +350,7 @@ function splitSystemPrompt(config: CotSpawnConfig): {
 }
 
 /** True when the config shows the turn runs on another machine over SSH. */
-function runsOverSsh(config: CotSpawnConfig): boolean {
+function runsOverSsh(config: CotTurnStartInput): boolean {
 	return Boolean(config.sshRemoteId || config.sshStdinScript || config.sshRemoteCommand);
 }
 
@@ -339,11 +362,14 @@ function runsOverSsh(config: CotSpawnConfig): boolean {
  * and the spawn site keeps the agent's own directory in `projectPath`.
  */
 function buildTurnStart(
-	config: CotSpawnConfig,
+	config: CotTurnStartInput,
 	target: CotTarget
 ): { start: CotTurnStartPayload; startGaps: string[] } {
 	const ssh = runsOverSsh(config);
-	const { prompt, systemPromptSha256 } = splitSystemPrompt(config);
+	// A Cue run's prompt is the one the subscription wrote. Cue puts no system
+	// prompt in front of it, so a marker in it can only be the writer's own text.
+	const { prompt, systemPromptSha256 } =
+		target.origin === 'cue' ? { prompt: config.prompt ?? '' } : splitSystemPrompt(config);
 	const origin: CotTurnOrigin = target.origin;
 	const start: CotTurnStartPayload = {
 		kind: 'turn-start',
@@ -364,6 +390,22 @@ function buildTurnStart(
 			? []
 			: [ssh ? `${PROMPT_NOT_CAPTURED_REASON}:ssh-remote` : PROMPT_NOT_CAPTURED_REASON];
 	return { start, startGaps };
+}
+
+/**
+ * Hands a failure to `onError`, and never throws. `onError` is the last place a
+ * failure can go, and nothing here may throw into the events that drive it.
+ */
+function reportError(
+	onError: (agentId: string | null, error: Error) => void,
+	agentId: string | null,
+	error: unknown
+): void {
+	try {
+		onError(agentId, error instanceof Error ? error : new Error(String(error)));
+	} catch {
+		// Nowhere left to send it.
+	}
 }
 
 // ============================================================================
@@ -396,12 +438,7 @@ export function createCotTurnAssembler(deps: CotTurnAssemblerDeps): CotTurnAssem
 	const inFlight = new Set<Promise<unknown>>();
 
 	function report(agentId: string | null, error: unknown): void {
-		try {
-			deps.onError(agentId, error instanceof Error ? error : new Error(String(error)));
-		} catch {
-			// `onError` is the last place a failure can go, and nothing here may
-			// throw into the process events that drive this module.
-		}
+		reportError(deps.onError, agentId, error);
 	}
 
 	/**
@@ -595,4 +632,205 @@ export function createCotTurnAssembler(deps: CotTurnAssemblerDeps): CotTurnAssem
 			}
 		},
 	};
+}
+
+// ============================================================================
+// Cue runs
+// ============================================================================
+
+/** Reason of the gap written when a Cue run's provider has no output parser. */
+const OUTPUT_NOT_PARSED_REASON = 'output-not-captured:no-parser';
+
+/** Prefix of the gap written when a parser threw on some lines of a Cue run. */
+const UNPARSED_LINES_REASON = 'unparsed-lines';
+
+/** What the recording of a Cue run needs from outside. */
+export interface CotCueRecorderDeps {
+	/** Whether the agent's turns are recorded right now. */
+	isEnabled: (agentId: string) => boolean;
+	/** The folder the agent's log goes to, or null when none is chosen. */
+	getFolder: (agentId: string) => string | null;
+	writer: Pick<CotWriter, 'append'>;
+	/** The run could not be recorded, in whole or in part. Never throws back. */
+	onError: (agentId: string | null, error: Error) => void;
+	/** A new turn id. Defaults to a random UUID. */
+	newTurnId?: () => string;
+}
+
+/**
+ * The answer to "is this run recorded, and where", taken when the run is
+ * dispatched and kept for the whole run.
+ */
+export interface CotCueRunDecision {
+	agentId: string;
+	folder: string;
+}
+
+/** What is known of a Cue run that has finished. */
+export interface CotCompletedRun {
+	toolType: string;
+	/** The agent's own directory (the remote path, for a run over SSH). */
+	cwd: string;
+	/** The prompt after variable substitution, as it was sent. */
+	prompt: string;
+	/** The run's stdout byte for byte, before any cleaning. */
+	rawStdout: string;
+	/** When the run started, in epoch milliseconds. */
+	startTime: number;
+	/** How long it ran, as Cue measured it (sleep time is not counted). */
+	durationMs: number;
+	exitCode: number | null;
+	/** How Maestro judged the end of the run. See `CotTurnEndPayload.outcome`. */
+	outcome?: string;
+	/** The provider's own conversation id, when the stream carried one. */
+	providerSessionId?: string | null;
+	/** The SSH remote the run was executed on, when it ran on one. */
+	sshRemoteId?: string;
+}
+
+/**
+ * Decides, once, whether a Cue run is recorded. Call it when the run is
+ * dispatched and hand the answer to `recordCompletedRun`: a switch turned on or
+ * off, or a new folder chosen, while the run is going applies from the next one.
+ * Returns null when the run is not recorded. Never throws.
+ */
+export function decideCueRun(
+	agentId: string,
+	deps: Pick<CotCueRecorderDeps, 'isEnabled' | 'getFolder' | 'onError'>
+): CotCueRunDecision | null {
+	try {
+		if (!deps.isEnabled(agentId)) return null;
+		const folder = deps.getFolder(agentId);
+		return folder ? { agentId, folder } : null;
+	} catch (error) {
+		reportError(deps.onError, agentId, error);
+		return null;
+	}
+}
+
+/**
+ * The lines of a stream as the process manager would frame them: one JSON
+ * object for each line, or for Copilot, objects that follow each other with no
+ * newline between them. Text between objects is not a line of the log.
+ */
+function jsonLinesOf(toolType: string, rawStdout: string): string[] {
+	if (toolType !== 'copilot-cli') {
+		return rawStdout.split('\n').filter((line) => line.trim() !== '');
+	}
+	const lines: string[] = [];
+	let rest = rawStdout;
+	for (;;) {
+		const start = rest.indexOf('{');
+		if (start === -1) break;
+		const { messages, remainder } = extractConcatenatedJsonObjects(rest.slice(start));
+		lines.push(...messages);
+		// An empty remainder is the end. One that opens a `{` is an object the
+		// stream never finished. Anything else is text, skipped to the next `{`.
+		if (remainder === '' || remainder.startsWith('{')) break;
+		rest = remainder;
+	}
+	return lines;
+}
+
+/**
+ * The parsed events of a finished run, and how many JSON lines the parser
+ * threw on; or null when the provider has no output parser.
+ *
+ * A parser of its own for each run, and `JSON.parse` followed by
+ * `parseJsonObject` as the process manager's `processLine` does: a line that
+ * is not JSON is skipped, as it is on the live path, and `parseJsonLine` would
+ * make a text event of a JSON line some parsers do not know.
+ */
+function parseRunStdout(
+	toolType: string,
+	rawStdout: string
+): { events: ParsedEvent[]; failedLines: number } | null {
+	const parser = createOutputParser(toolType as ToolType);
+	if (!parser) return null;
+	const events: ParsedEvent[] = [];
+	let failedLines = 0;
+	for (const line of jsonLinesOf(toolType, rawStdout)) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (parsed === null || typeof parsed !== 'object') continue;
+		try {
+			const event = parser.parseJsonObject(parsed);
+			if (event) events.push(event);
+		} catch {
+			// One line the parser cannot read must not cost the turn the rest.
+			failedLines += 1;
+		}
+	}
+	return { events, failedLines };
+}
+
+/**
+ * Writes one complete turn for a Cue run that has finished, with
+ * `origin: 'cue'`. It resolves when the turn is handed to the writer, and it
+ * never rejects: a failure goes to `onError`.
+ *
+ * `decision` is what `decideCueRun` answered at dispatch. The run is parsed and
+ * normalized exactly as a live turn is, so a Cue turn and an interactive one
+ * hold the same kinds of record for the same output.
+ */
+export async function recordCompletedRun(
+	decision: CotCueRunDecision,
+	run: CotCompletedRun,
+	deps: Pick<CotCueRecorderDeps, 'writer' | 'onError' | 'newTurnId'>
+): Promise<void> {
+	const { agentId, folder } = decision;
+	try {
+		const turnId = (deps.newTurnId ?? randomUUID)();
+		const filePath = turnFilePath(folder, new Date(run.startTime), undefined, turnId);
+		const { start, startGaps } = buildTurnStart(
+			{
+				toolType: run.toolType as ToolType,
+				cwd: run.cwd,
+				prompt: run.prompt,
+				querySource: 'cue',
+				...(run.providerSessionId ? { agentSessionId: run.providerSessionId } : {}),
+				...(run.sshRemoteId ? { sshRemoteId: run.sshRemoteId } : {}),
+			},
+			{ agentId, origin: 'cue' }
+		);
+
+		const parsed = parseRunStdout(run.toolType, run.rawStdout);
+		const gaps = [...startGaps];
+		if (parsed === null) gaps.push(OUTPUT_NOT_PARSED_REASON);
+		else if (parsed.failedLines > 0) {
+			gaps.push(`${UNPARSED_LINES_REASON}:${parsed.failedLines}`);
+		}
+
+		const pending: Array<Promise<unknown>> = [];
+		const write = (payload: CotRecordPayload, ts: string): void => {
+			try {
+				pending.push(deps.writer.append(agentId, filePath, { turnId, ts, ...payload }));
+			} catch (error) {
+				reportError(deps.onError, agentId, error);
+			}
+		};
+
+		const endedAt = run.startTime + Math.max(0, run.durationMs);
+		const recorder = openTurn(
+			{
+				agentId,
+				toolType: run.toolType,
+				filePath,
+				turnId,
+				startedAt: run.startTime,
+				start,
+				startGaps: gaps,
+			},
+			write
+		);
+		for (const event of parsed?.events ?? []) recorder.add(event, endedAt);
+		recorder.end(run.exitCode, run.outcome, endedAt);
+		await Promise.allSettled(pending);
+	} catch (error) {
+		reportError(deps.onError, agentId, error);
+	}
 }

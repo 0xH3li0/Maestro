@@ -339,7 +339,10 @@ export interface CotCaptureGapPayload {
 	 * Why records are missing. Known values: `write-failed:<error code>` (for
 	 * example `write-failed:ENOSPC`), `head-mismatch-on-start`,
 	 * `app-restarted-mid-turn`, `unrecognized-block:<block type>` (the provider
-	 * sent a kind of content this version of Maestro cannot record), and
+	 * sent a kind of content this version of Maestro cannot record),
+	 * `output-not-captured:no-parser` (a Cue run whose provider has no output
+	 * parser, so its stream could not be read), `unparsed-lines:<count>` (a Cue
+	 * run whose parser threw on that many lines), and
 	 * `prompt-not-captured` or `prompt-not-captured:ssh-remote` (written right
 	 * after a `turn-start` whose `prompt` is empty because the prompt did not
 	 * reach Maestro's recorder, as on an SSH remote, where it travels inside

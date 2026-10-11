@@ -1,5 +1,5 @@
 /**
- * Chain of thought export: the app's one writer.
+ * Chain of thought export: the app's one writer, and what is bound to it.
  *
  * A chain has one head, and the writer holds it in memory between writes. Two
  * writers on one chain would each seal against a head the other has moved
@@ -11,7 +11,10 @@
  * `src/shared/cotExport/types.ts` before you change or expose anything here.
  */
 
+import type { CueRunTranscript } from '../cue/cue-executor';
 import { getCotConfigStore } from './config-store';
+import { createCueRunCapture } from './cue-capture';
+import type { CotCueRunCapture } from './cue-capture';
 import { createCotWriter } from './writer';
 import type { CotWriter } from './writer';
 
@@ -45,4 +48,38 @@ export function getCotWriter(): CotWriter {
 /** Drops the app's writer so the next call makes a new one. For tests. */
 export function __resetCotWriterForTests(): void {
 	_writer = null;
+	_cueCapture = null;
+}
+
+let _cueCapture: CotCueRunCapture | null = null;
+
+/** The Cue capture bound to the app's store and its one writer, made at first use. */
+function getCueRunCapture(): CotCueRunCapture {
+	if (_cueCapture === null) {
+		const store = getCotConfigStore();
+		_cueCapture = createCueRunCapture({
+			isEnabled: (agentId) => store.isEnabled(agentId),
+			getFolder: (agentId) => store.getAgentConfig(agentId).folder,
+			// The writer the process listener writes through: two writers on one
+			// chain would fork it at the first record.
+			writer: getCotWriter(),
+			onError: (agentId, error) => {
+				if (agentId !== null) store.recordError(agentId, error.message, Date.now());
+			},
+		});
+	}
+	return _cueCapture;
+}
+
+/**
+ * The `onRunTranscript` callback for the Cue run of `agentId` that is being
+ * dispatched, or undefined when the run is not recorded. Never throws: a run
+ * goes on without its record. Do not call it before the app's `ready` event.
+ */
+export function beginCueRunCapture(agentId: string): ((run: CueRunTranscript) => void) | undefined {
+	try {
+		return getCueRunCapture().begin(agentId);
+	} catch {
+		return undefined;
+	}
 }
