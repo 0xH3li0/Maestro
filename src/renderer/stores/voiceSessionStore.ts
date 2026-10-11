@@ -217,6 +217,16 @@ interface VoiceSessionStoreActions {
 	applySnapshot: (snapshot: VoiceSnapshotLike | null) => void;
 	setSubstitutions: (substitutions: VoiceProviderSubstitution[]) => void;
 	setDismissed: (dismissed: boolean) => void;
+	/**
+	 * Re-bind while NO session is live, so the next one starts on this scope.
+	 *
+	 * The one write that is not an event, because there is no session to emit
+	 * one: the HUD stays up after its session ends, the talk button restarts it
+	 * on `scope`, and a user who moved to another tab in between must not be sent
+	 * back to the old one. A live session is re-bound through main
+	 * (`voice.setScope`) and this is left alone.
+	 */
+	rememberScope: (scope: VoiceScope) => void;
 	/** Back to a never-started session. */
 	reset: () => void;
 }
@@ -592,6 +602,9 @@ export const useVoiceSessionStore = create<VoiceSessionStore>()((set) => ({
 	// Closing is what ends `surfaced`; un-dismissing must not invent a HUD for a
 	// session that was never live here.
 	setDismissed: (dismissed) => set(dismissed ? { dismissed, surfaced: false } : { dismissed }),
+
+	rememberScope: (scope) =>
+		set((prev) => (isVoiceSessionActive(prev.state) ? prev : { ...prev, scope })),
 
 	reset: () => set({ ...EMPTY_STATE }),
 }));

@@ -9,7 +9,9 @@
  * Switching re-binds the session without ending it; the new mode applies from
  * the next thing you say. The agent and tab it binds to come from what you were
  * just doing (`scopeForMode`), so Conductor -> Agent lands on the agent your
- * last request went to, and Agent -> Tab pins the tab it landed in.
+ * last request went to, and Agent -> Tab pins the tab it landed in. From there
+ * the binding follows the user to another agent or tab: see
+ * `useVoiceScopeFollow`.
  */
 
 import { useCallback } from 'react';
@@ -24,6 +26,7 @@ import {
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
+import { resolveFocusedAiTabId } from '../../utils/panelLayout';
 
 export interface VoiceModeSwitch {
 	/** The mode the switch shows. A document conversation reads as Tab. */
@@ -55,8 +58,10 @@ export function useVoiceModeSwitch(): VoiceModeSwitch {
 				scope,
 				lastDispatch,
 				focusedAgentId: activeSessionId || null,
+				// The same answer the follow rule uses (`useVoiceScopeFollow`), so
+				// picking Tab mode and then moving tabs agree about "this tab".
 				activeTabOf: (agentId) =>
-					sessions.find((session) => session.id === agentId)?.activeTabId ?? null,
+					resolveFocusedAiTabId(sessions.find((session) => session.id === agentId)),
 			});
 		},
 		[lastDispatch, scope]

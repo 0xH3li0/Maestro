@@ -201,6 +201,8 @@ A session is in one of three modes, shown as **Tab / Agent / Conductor** under t
 
 Switching picks a sensible target for you: **Agent** binds to the agent your last request went to (or the one on screen), and **Tab** pins the tab your last request landed in (or that agent's active tab). The header always names where the next sentence will land.
 
+**Tab** and **Agent** then follow you. Click another agent and Agent mode talks to that one; click another tab, or another agent, and Tab mode talks to the tab now in front. Looking at a file, terminal, or browser tab does not move anything: the conversation behind it is still the one you are talking to. **Conductor** mode is bound to nothing, and a conversation about a document stays with its document, so neither moves. A session that an agent's own wake phrase opened stays with that agent until you go somewhere else.
+
 How a session starts decides its first mode: the **Talk to Maestro** hotkey, the wake word, and the HUD's **Talk** button on a fresh start open in **Conductor** mode; the composer microphone, the **Talk to Current Agent** hotkey, and the Left Bar menu open in **Agent** mode. After that, the HUD's talk button reopens in whatever mode you last used.
 
 ## The two hotkeys

@@ -63,10 +63,13 @@ export function isAgentModeScope(scope: VoiceScope | null | undefined): scope is
  *
  * The utterance is the message. Nothing is stripped (there is no routing
  * chatter to remove: you are not telling a router where to send it), and the
- * tab is recalled by id rather than "current", so clicking another tab while
- * talking cannot move the conversation. Recall is also what wakes a snoozed tab
- * or reopens a closed one, which is the right thing for a conversation the user
- * explicitly pinned.
+ * tab is recalled by id rather than "current": the binding is what decides
+ * where a sentence goes, never whichever tab happens to be in front when it
+ * lands. Moving to another tab does move the conversation, but by re-binding
+ * the session ({@link scopeFollowingFocus}), which the HUD shows, and not as a
+ * side effect of the dispatch. Recall is also what wakes a snoozed tab or
+ * reopens a closed one, which is the right thing for a conversation the user
+ * is bound to.
  */
 export function tabScopeDecision(
 	utterance: string,
@@ -207,4 +210,55 @@ export function scopeForMode(
 		context.lastDispatch?.agentSessionId === agentSessionId ? context.lastDispatch.tabId : null;
 	const tabId = pinned ?? dispatched ?? context.activeTabOf(agentSessionId);
 	return tabId ? { kind: 'agent', sessionId: agentSessionId, tabId } : null;
+}
+
+/** What the user is looking at: the agent on screen and its conversation tab. */
+export interface VoiceFocus {
+	/** The agent on screen, or null. */
+	agentSessionId: string | null;
+	/** That agent's AI tab in front, or null when none is addressed. */
+	tabId: string | null;
+}
+
+/**
+ * The binding after the user moved to another agent or tab, or null when the
+ * session should stay where it is.
+ *
+ * Tab and Agent mode mean "the tab (or agent) I am working in", so the binding
+ * follows the work: switch agents and Agent mode talks to the new one, switch
+ * tabs and Tab mode talks to the new one. Without this the HUD kept sending to
+ * wherever the mode was first picked, and the only way to move it was to leave
+ * the mode and come back.
+ *
+ * Null, which is "do not re-bind", in four cases:
+ *
+ *   - **Conductor.** It is bound to nothing; the Conductor picks per sentence.
+ *   - **A document conversation.** It is about a file, and stays with it.
+ *   - **Tab mode with no conversation in front** (a tiled file pane, an agent
+ *     with no AI tab). The pin is kept rather than degraded to Agent mode: the
+ *     user picked Tab, and losing the mode because they glanced at a file would
+ *     be a mode change nobody asked for.
+ *   - **Nothing changed.** Re-binding clears the Conductor's pending question
+ *     and conversation, so an identical scope must not be sent.
+ *
+ * Call it on a CHANGE of focus, not on every render. A session opened by an
+ * agent's own wake phrase is bound to that agent whatever is on screen, and it
+ * must stay so until the user actually goes somewhere else.
+ */
+export function scopeFollowingFocus(
+	scope: VoiceScope | null | undefined,
+	focus: VoiceFocus
+): VoiceScope | null {
+	const mode = voiceScopeMode(scope);
+	if (!scope || scope.kind !== 'agent' || !focus.agentSessionId) return null;
+
+	if (mode === 'agent') {
+		return scope.sessionId === focus.agentSessionId
+			? null
+			: { kind: 'agent', sessionId: focus.agentSessionId };
+	}
+
+	if (!focus.tabId) return null;
+	if (scope.sessionId === focus.agentSessionId && scope.tabId === focus.tabId) return null;
+	return { kind: 'agent', sessionId: focus.agentSessionId, tabId: focus.tabId };
 }

@@ -74,6 +74,7 @@ import { VoiceModeSwitch } from './VoiceModeSwitch';
 import { VoiceWaitPicker } from './VoiceWaitPicker';
 import { useVoiceModeSwitch } from './useVoiceModeSwitch';
 import { useVoiceScope } from './useVoiceScope';
+import { useVoiceScopeFollow } from './useVoiceScopeFollow';
 import { useOwnsVoiceSession } from './useOwnsVoiceSession';
 import { VoiceInputPicker } from './VoiceInputPicker';
 import { useVoiceInputDevices } from './useVoiceInputDevices';
@@ -362,6 +363,10 @@ export function VoiceHud({ theme, enabled, showDevHarness }: VoiceHudProps) {
 	 * per-window by construction - it is opted into in the window that wants it.
 	 */
 	const ownsSession = useOwnsVoiceSession();
+	// Tab and Agent mode follow the user to another agent or tab. Here rather
+	// than in the mode switch, which is only mounted while a session is live:
+	// the HUD is the one voice surface that is always mounted.
+	useVoiceScopeFollow(enabled && ownsSession);
 	// Only while this window owns the surface: enumerating devices in every window
 	// would have each one subscribing to a list none of them is showing.
 	const inputDevices = useVoiceInputDevices(enabled && ownsSession);

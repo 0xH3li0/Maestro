@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	SWITCHABLE_VOICE_MODES,
 	applyAgentScope,
+	scopeFollowingFocus,
 	scopeForMode,
 	stepSwitchableVoiceMode,
 	switchableVoiceMode,
@@ -234,6 +235,81 @@ describe('scopeForMode', () => {
 				})
 			)
 		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' });
+	});
+});
+
+describe('scopeFollowingFocus', () => {
+	it('moves Agent mode to the agent the user switched to', () => {
+		expect(
+			scopeFollowingFocus(
+				{ kind: 'agent', sessionId: 'philosopher' },
+				{ agentSessionId: 'backend', tabId: 'b-auth' }
+			)
+		).toEqual({ kind: 'agent', sessionId: 'backend' });
+	});
+
+	it('leaves Agent mode alone when only the tab changed', () => {
+		// Agent mode has no tab to follow: the Conductor picks it per sentence.
+		expect(
+			scopeFollowingFocus(
+				{ kind: 'agent', sessionId: 'philosopher' },
+				{ agentSessionId: 'philosopher', tabId: 'p-ideas' }
+			)
+		).toBeNull();
+	});
+
+	it('moves Tab mode to another tab of the same agent, and to another agent’s tab', () => {
+		const pinned = { kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' } as const;
+
+		expect(
+			scopeFollowingFocus(pinned, { agentSessionId: 'philosopher', tabId: 'p-ideas' })
+		).toEqual({ kind: 'agent', sessionId: 'philosopher', tabId: 'p-ideas' });
+		expect(scopeFollowingFocus(pinned, { agentSessionId: 'backend', tabId: 'b-auth' })).toEqual({
+			kind: 'agent',
+			sessionId: 'backend',
+			tabId: 'b-auth',
+		});
+	});
+
+	it('sends nothing when the focus is already what the session is bound to', () => {
+		// Re-binding clears the Conductor's pending question, so an identical scope
+		// is not a harmless write. This is also what makes a dispatch that brings
+		// its own tab to the front a no-op.
+		expect(
+			scopeFollowingFocus(
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
+				{ agentSessionId: 'philosopher', tabId: 'p-main' }
+			)
+		).toBeNull();
+	});
+
+	it('keeps a Tab pin when no conversation is in front, rather than dropping to Agent mode', () => {
+		expect(
+			scopeFollowingFocus(
+				{ kind: 'agent', sessionId: 'philosopher', tabId: 'p-main' },
+				{ agentSessionId: 'backend', tabId: null }
+			)
+		).toBeNull();
+	});
+
+	it('never moves the Conductor or a document conversation', () => {
+		const focus = { agentSessionId: 'backend', tabId: 'b-auth' };
+
+		expect(scopeFollowingFocus({ kind: 'conductor' }, focus)).toBeNull();
+		expect(scopeFollowingFocus(null, focus)).toBeNull();
+		// A document conversation is about a file, and stays with it.
+		expect(
+			scopeFollowingFocus({ kind: 'document', sessionId: 'philosopher', path: '/a.md' }, focus)
+		).toBeNull();
+	});
+
+	it('stays put when no agent is on screen', () => {
+		expect(
+			scopeFollowingFocus(
+				{ kind: 'agent', sessionId: 'philosopher' },
+				{ agentSessionId: null, tabId: null }
+			)
+		).toBeNull();
 	});
 });
 

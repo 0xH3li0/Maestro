@@ -497,3 +497,26 @@ describe('voiceSessionStore surfaced (the HUD stays until it is closed)', () => 
 		expect(useVoiceSessionStore.getState().surfaced).toBe(true);
 	});
 });
+
+describe('voiceSessionStore rememberScope (re-binding with no session to re-bind)', () => {
+	it('moves the scope the next session restarts on once the session has ended', () => {
+		apply(wake(), listenStart(), event('listen-stop', { reason: 'stopped' }));
+
+		useVoiceSessionStore.getState().rememberScope({ kind: 'agent', sessionId: 'agent-2' });
+
+		expect(useVoiceSessionStore.getState().scope).toEqual({
+			kind: 'agent',
+			sessionId: 'agent-2',
+		});
+	});
+
+	// A live session's scope is main's to change: writing it here would show a
+	// binding the session does not have.
+	it('leaves a live session alone', () => {
+		apply(wake(), listenStart());
+
+		useVoiceSessionStore.getState().rememberScope({ kind: 'agent', sessionId: 'agent-2' });
+
+		expect(useVoiceSessionStore.getState().scope).toEqual({ kind: 'conductor' });
+	});
+});

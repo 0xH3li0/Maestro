@@ -26,6 +26,7 @@ import type { LayerStackAPI } from '../../../../renderer/hooks';
 import type { VoiceEvent } from '../../../../shared/acappella/protocol';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 
 const SESSION = 'voice-1';
 
@@ -119,8 +120,53 @@ function seedAgentForTab(): void {
 	act(() => {
 		useSessionStore.setState({
 			activeSessionId: 'agent-1',
-			sessions: [createMockSession({ id: 'agent-1', activeTabId: 'tab-1' })],
+			sessions: [
+				createMockSession({
+					id: 'agent-1',
+					aiTabs: [createMockAITab({ id: 'tab-1' })],
+					activeTabId: 'tab-1',
+				}),
+			],
 		});
+	});
+}
+
+/** Two agents with two tabs each, agent-1 / tab-1 on screen. */
+function seedTwoAgents(): void {
+	act(() => {
+		useSessionStore.setState({
+			activeSessionId: 'agent-1',
+			sessions: [
+				createMockSession({
+					id: 'agent-1',
+					aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				}),
+				createMockSession({
+					id: 'agent-2',
+					aiTabs: [createMockAITab({ id: 'tab-9' })],
+					activeTabId: 'tab-9',
+				}),
+			],
+		});
+	});
+}
+
+/** Click another agent in the Left Bar. */
+function switchToAgent(agentId: string): void {
+	act(() => {
+		useSessionStore.setState({ activeSessionId: agentId });
+	});
+}
+
+/** Click another tab of one agent. */
+function switchToTab(agentId: string, tabId: string): void {
+	act(() => {
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) =>
+				session.id === agentId ? { ...session, activeTabId: tabId } : session
+			),
+		}));
 	});
 }
 
@@ -130,6 +176,9 @@ beforeEach(() => {
 	vi.mocked(window.maestro.voice.onEvent).mockReturnValue(() => {});
 	vi.mocked(window.maestro.voice.getState).mockResolvedValue(null);
 	useVoiceSessionStore.getState().reset();
+	// The HUD follows the agent on screen, so one test's agents must not be the
+	// next test's starting focus.
+	useSessionStore.setState({ activeSessionId: '', sessions: [] });
 	useVoiceUiStore.setState({
 		transcriptVisible: false,
 		hudPosition: null,
@@ -1162,6 +1211,145 @@ describe('VoiceHud stays until Escape', () => {
 		expect(screen.queryByTestId('voice-hud')).toBeNull();
 		// The "just for now" wait goes with it.
 		expect(window.maestro.voice.setSendWait).toHaveBeenCalledWith(null);
+	});
+});
+
+describe('VoiceHud follows the agent and tab on screen', () => {
+	/** Bind the live session, as a mode switch or a wake phrase would. */
+	function bind(scope: Extract<VoiceEvent, { type: 'scope-change' }>['scope']): void {
+		emit(event('scope-change', { scope }));
+		vi.mocked(window.maestro.voice.setScope).mockClear();
+	}
+
+	it('Agent mode: switching agents re-binds to the new agent', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-1' });
+
+		switchToAgent('agent-2');
+
+		expect(window.maestro.voice.setScope).toHaveBeenCalledTimes(1);
+		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-2',
+		});
+	});
+
+	it('Agent mode: switching tabs inside the agent changes nothing', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-1' });
+
+		switchToTab('agent-1', 'tab-2');
+
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+	});
+
+	it('Tab mode: switching tabs, and then agents, re-binds to the tab in front', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-1', tabId: 'tab-1' });
+
+		switchToTab('agent-1', 'tab-2');
+		expect(window.maestro.voice.setScope).toHaveBeenLastCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+			tabId: 'tab-2',
+		});
+
+		bind({ kind: 'agent', sessionId: 'agent-1', tabId: 'tab-2' });
+		switchToAgent('agent-2');
+		expect(window.maestro.voice.setScope).toHaveBeenLastCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-2',
+			tabId: 'tab-9',
+		});
+	});
+
+	it('Conductor mode: moving around re-binds nothing', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		vi.mocked(window.maestro.voice.setScope).mockClear();
+
+		switchToAgent('agent-2');
+		switchToTab('agent-2', 'tab-9');
+
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+	});
+
+	it('does not "correct" a session bound to an agent that is not on screen', () => {
+		// An agent's own wake phrase binds to that agent whatever is in front. It
+		// stays bound until the user actually goes somewhere.
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-2' });
+
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+
+		// The move is what re-binds, and it lands on where they went.
+		switchToAgent('agent-2');
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+		switchToAgent('agent-1');
+		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
+			kind: 'agent',
+			sessionId: 'agent-1',
+		});
+	});
+
+	it('ignores a tab the session itself brought to the front', () => {
+		// Tab mode recalls its pinned tab on dispatch, which focuses it. That is a
+		// change of focus onto the tab already bound, so nothing is sent.
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-1', tabId: 'tab-2' });
+
+		switchToTab('agent-1', 'tab-2');
+
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+	});
+
+	it('after the session ended: remembers the new target for the talk button', () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-1' });
+		emit(event('listen-stop', { reason: 'stopped' }));
+
+		switchToAgent('agent-2');
+
+		// No live session to re-bind, so main is not asked...
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+		// ...and the scope the next session restarts on has moved with the user.
+		expect(useVoiceSessionStore.getState().scope).toEqual({
+			kind: 'agent',
+			sessionId: 'agent-2',
+		});
+	});
+
+	it('does nothing once the HUD has been closed', async () => {
+		seedTwoAgents();
+		renderHud();
+		startSession();
+		bind({ kind: 'agent', sessionId: 'agent-1' });
+		emit(event('listen-stop', { reason: 'stopped' }));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('voice-hud-close'));
+		});
+
+		switchToAgent('agent-2');
+
+		// A finished session's scope is a leftover; the next trigger brings its own.
+		expect(window.maestro.voice.setScope).not.toHaveBeenCalled();
+		expect(useVoiceSessionStore.getState().scope).toEqual({
+			kind: 'agent',
+			sessionId: 'agent-1',
+		});
 	});
 });
 
