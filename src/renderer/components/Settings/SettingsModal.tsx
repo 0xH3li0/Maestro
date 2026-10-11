@@ -43,7 +43,7 @@ import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from '.
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import { PluginSettingsCard } from './PluginSettingsCard';
-import type { SearchableSetting } from './searchableSettings';
+import { settingSubTab, type SearchableSetting, type SubTabRequest } from './searchableSettings';
 import type { SettingsModalData } from '../../stores/modalStore';
 
 /**
@@ -67,7 +67,7 @@ const TAB_ITEMS: Array<{
 	{ id: 'environment', label: 'Environment', icon: Globe },
 	{ id: 'general', label: 'General', icon: Settings },
 	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
-	{ id: 'local-models', label: 'Models', icon: HardDrive },
+	{ id: 'models', label: 'Models', icon: HardDrive },
 	{ id: 'notifications', label: 'Notifications', icon: Bell },
 	// Internal id stays 'encore' (deep links, persisted last-tab, searchable
 	// settings all key on it); the user-facing surface is the Plugins tab.
@@ -285,19 +285,37 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setActiveTab(tab);
 	}, []);
 
+	// The inner tab a jump asked for. One-shot: the tab that owns it clears it
+	// once applied, so reopening that tab later does not undo the user's own pick.
+	const [subTabRequest, setSubTabRequest] = useState<SubTabRequest | undefined>();
+	const requestSubTab = useCallback((subTab: string | undefined) => {
+		if (subTab) setSubTabRequest({ subTab });
+	}, []);
+	const clearSubTabRequest = useCallback(() => setSubTabRequest(undefined), []);
+
 	const handleSearchNavigate = useCallback(
 		(tab: SearchableSetting['tab'], settingId: string) => {
 			pendingScrollIdRef.current = settingId;
 			setQueryRef.current('');
+			requestSubTab(settingSubTab(settingId));
 			selectTab(tab);
 		},
-		[selectTab]
+		[selectTab, requestSubTab]
 	);
 
 	// Deep link from outside Settings (e.g. a disabled control explaining which
 	// setting unlocks it). Bumping the counter re-runs the jump effect below even
 	// when the target tab is already the active one.
 	const [deepLinkJump, setDeepLinkJump] = useState(0);
+	useEffect(() => {
+		if (isOpen) {
+			requestSubTab(
+				initialNavigationRequest?.subTab ??
+					(initialSettingId ? settingSubTab(initialSettingId) : undefined)
+			);
+		}
+	}, [isOpen, initialSettingId, initialNavigationRequest, requestSubTab]);
+
 	useEffect(() => {
 		if (!isOpen || !initialSettingId) {
 			handledSettingIdRef.current = null;
@@ -672,7 +690,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 						{activeTab === 'environment' && <EnvironmentTab theme={theme} />}
 
-						{activeTab === 'local-models' && <ModelsSettingsTab theme={theme} />}
+						{activeTab === 'models' && (
+							<ModelsSettingsTab
+								theme={theme}
+								panelRequest={subTabRequest}
+								onPanelRequestHandled={clearSubTabRequest}
+							/>
+						)}
 
 						{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
 

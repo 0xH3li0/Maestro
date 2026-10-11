@@ -9,8 +9,14 @@ import { join, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
 	searchSettings,
+	settingSubTab,
 	ALL_SEARCHABLE_SETTINGS,
 } from '../../../../renderer/components/Settings/searchableSettings';
+import {
+	MODELS_SETTINGS_PANELS,
+	MODELS_SETTINGS_PANEL_LABELS,
+	type ModelsSettingsPanel,
+} from '../../../../shared/local-models/settings-location';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
 
@@ -51,7 +57,7 @@ describe('searchableSettings', () => {
 			expect(tabs).toContain('ssh');
 			expect(tabs).toContain('environment');
 			expect(tabs).toContain('encore');
-			expect(tabs).toContain('local-models');
+			expect(tabs).toContain('models');
 		});
 
 		it('should have unique ids', () => {
@@ -296,8 +302,10 @@ describe('searchableSettings', () => {
 			['download model', 'local-models-models'],
 			['ollama', 'local-models-endpoints'],
 			['detect local servers', 'local-models-endpoints'],
-			['assignments', 'local-models-assignments'],
-			['utility agent', 'local-models-assignments'],
+			['system one', 'local-models-system-one'],
+			['cue gate', 'local-models-system-one'],
+			['system two', 'local-models-system-two'],
+			['tab naming', 'local-models-system-two'],
 			['utility agent', 'local-models-utility-agent'],
 			['context grooming', 'local-models-utility-agent'],
 			['semantic index', 'local-models-semantic-index'],
@@ -310,6 +318,44 @@ describe('searchableSettings', () => {
 				`Expected "${query}" to surface ${expectedId}. ` +
 					`Add the missing terms to that entry's keywords/label/description in searchableSettings.ts.`
 			).toBe(true);
+		});
+	});
+
+	describe('Models inner tabs', () => {
+		const modelsEntries = ALL_SEARCHABLE_SETTINGS.filter((s) => s.tab === 'models');
+
+		it('points every Models entry at a real inner tab, named in its tab label', () => {
+			expect(modelsEntries.length).toBeGreaterThan(0);
+			for (const entry of modelsEntries) {
+				expect(MODELS_SETTINGS_PANELS, entry.id).toContain(entry.subTab);
+				expect(entry.tabLabel, entry.id).toBe(
+					`Models > ${MODELS_SETTINGS_PANEL_LABELS[entry.subTab as ModelsSettingsPanel]}`
+				);
+			}
+		});
+
+		it('files each Models entry under the inner tab that renders it', () => {
+			const panelOf = Object.fromEntries(modelsEntries.map((s) => [s.id, s.subTab]));
+			expect(panelOf).toEqual({
+				'local-models-models': 'library',
+				'local-models-endpoints': 'sources',
+				'local-models-system-one': 'system-one',
+				'local-models-semantic-index': 'system-one',
+				'local-models-system-two': 'system-two',
+				'local-models-utility-agent': 'system-two',
+				'local-models-gateway': 'gateway',
+			});
+		});
+
+		it('reads an inner tab back by setting id, and none for a plain tab', () => {
+			expect(settingSubTab('local-models-utility-agent')).toBe('system-two');
+			expect(settingSubTab('general-tab-behavior')).toBeUndefined();
+			expect(settingSubTab('no-such-setting')).toBeUndefined();
+		});
+
+		it('gives no entry outside Models an inner tab', () => {
+			const stray = ALL_SEARCHABLE_SETTINGS.filter((s) => s.tab !== 'models' && s.subTab);
+			expect(stray.map((s) => s.id)).toEqual([]);
 		});
 	});
 

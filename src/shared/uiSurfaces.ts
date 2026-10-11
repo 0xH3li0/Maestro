@@ -13,12 +13,28 @@
  * time. Adding a modal means adding one entry here, not touching four files.
  */
 
+import {
+	MODELS_SETTINGS_PANELS,
+	MODELS_SETTINGS_PANEL_LABELS,
+} from './local-models/settings-location';
+
 /** A deep-linkable tab inside a surface. */
 export interface UiSurfaceTab {
 	/** Value passed to `--tab`, matching the renderer's tab id. */
 	id: string;
 	/** Label as it reads in the app. */
 	label: string;
+	/** Retired or alternate ids that still resolve to this tab (a renamed tab keeps its old deep link). */
+	aliases?: string[];
+	/** Deep-linkable tabs inside this tab, passed as `--sub-tab`. */
+	subTabs?: UiSurfaceTab[];
+}
+
+/** What `maestro-cli open` asks the app to open: a surface, and where inside it. */
+export interface OpenUiSurfaceRequest {
+	surface: string;
+	tab?: string;
+	subTab?: string;
 }
 
 /** Encore Feature flag that must be on for a surface to exist. */
@@ -54,6 +70,12 @@ export interface UiSurface {
 	/** Encore Feature that gates the surface. */
 	encore?: UiSurfaceEncoreFlag;
 }
+
+/** The inner tabs of Settings > Models, from the one list the tab itself draws. */
+export const MODELS_SETTINGS_SUB_TABS: UiSurfaceTab[] = MODELS_SETTINGS_PANELS.map((id) => ({
+	id,
+	label: MODELS_SETTINGS_PANEL_LABELS[id],
+}));
 
 export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'dashboard', label: 'Dashboard' },
@@ -112,7 +134,12 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'notifications', label: 'Notifications' },
 			{ id: 'aicommands', label: 'AI Commands' },
 			{ id: 'prompts', label: 'Maestro Prompts' },
-			{ id: 'local-models', label: 'Local Models' },
+			{
+				id: 'models',
+				label: 'Models',
+				aliases: ['local-models'],
+				subTabs: MODELS_SETTINGS_SUB_TABS,
+			},
 		],
 		shortcutId: 'settings',
 		commandPalette: 'Settings',
@@ -330,18 +357,76 @@ export function resolveUiSurface(name: string): UiSurface | null {
 	);
 }
 
-/**
- * Resolve a `--tab` value against a surface. Matches the tab id first, then
- * the label case-insensitively so `--tab "Scheduled Tasks"` works too.
- */
-export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceTab | null {
-	const needle = tab.trim().toLowerCase();
+function matchUiSurfaceTab(tabs: UiSurfaceTab[] | undefined, name: string): UiSurfaceTab | null {
+	const needle = name.trim().toLowerCase();
 	if (needle.length === 0) return null;
 	return (
-		(surface.tabs ?? []).find(
-			(entry) => entry.id.toLowerCase() === needle || entry.label.toLowerCase() === needle
+		(tabs ?? []).find(
+			(entry) =>
+				entry.id.toLowerCase() === needle ||
+				entry.label.toLowerCase() === needle ||
+				(entry.aliases ?? []).some((alias) => alias.toLowerCase() === needle)
 		) ?? null
 	);
+}
+
+/**
+ * Resolve a `--tab` value against a surface. Matches the tab id first, then
+ * the label case-insensitively so `--tab "Scheduled Tasks"` works too, then
+ * any alias so a renamed tab keeps its old deep link.
+ */
+export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceTab | null {
+	return matchUiSurfaceTab(surface.tabs, tab);
+}
+
+/** Resolve a `--sub-tab` value against the tab it sits inside, by the same rules as `--tab`. */
+export function resolveUiSurfaceSubTab(tab: UiSurfaceTab, subTab: string): UiSurfaceTab | null {
+	return matchUiSurfaceTab(tab.subTabs, subTab);
+}
+
+/** Every valid `--sub-tab` value for a tab, or an empty array when it has none. */
+export function surfaceSubTabIds(tab: UiSurfaceTab): string[] {
+	return (tab.subTabs ?? []).map((entry) => entry.id);
+}
+
+/**
+ * Validate the `tab` and `subTab` of an open request against a surface. One
+ * function for the CLI and the main-process handler, so the two cannot disagree
+ * about what a valid deep link is. `subTab` without `tab` is refused: a
+ * sub-tab only means something inside a tab.
+ */
+export function resolveUiSurfaceTarget(
+	surface: UiSurface,
+	request: { tab?: string; subTab?: string }
+): { tab?: UiSurfaceTab; subTab?: UiSurfaceTab } | { error: string } {
+	const { tab: tabName, subTab: subTabName } = request;
+	if (tabName === undefined) {
+		return subTabName === undefined
+			? {}
+			: { error: '--sub-tab needs --tab: a sub-tab is a tab inside a tab.' };
+	}
+	const tab = resolveUiSurfaceTab(surface, tabName);
+	if (!tab) {
+		const valid = surfaceTabIds(surface);
+		return {
+			error:
+				valid.length > 0
+					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+					: `${surface.label} has no tabs, so --tab does not apply.`,
+		};
+	}
+	if (subTabName === undefined) return { tab };
+	const subTab = resolveUiSurfaceSubTab(tab, subTabName);
+	if (!subTab) {
+		const valid = surfaceSubTabIds(tab);
+		return {
+			error:
+				valid.length > 0
+					? `Unknown sub-tab "${subTabName}" for ${surface.label} > ${tab.label}. Valid sub-tabs: ${valid.join(', ')}`
+					: `${surface.label} > ${tab.label} has no sub-tabs, so --sub-tab does not apply.`,
+		};
+	}
+	return { tab, subTab };
 }
 
 /**
@@ -350,7 +435,11 @@ export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceT
  * user the manual paths. `shortcut` is the already-formatted hotkey (the
  * caller owns platform detection); omit it when the surface has none.
  */
-export function describeSurfaceAccess(surface: UiSurface, shortcut?: string): string {
+export function describeSurfaceAccess(
+	surface: UiSurface,
+	shortcut?: string,
+	target?: { tab?: UiSurfaceTab; subTab?: UiSurfaceTab }
+): string {
 	const paths: string[] = [];
 	if (shortcut) paths.push(`press ${shortcut}`);
 	if (surface.commandPalette) {
@@ -358,5 +447,7 @@ export function describeSurfaceAccess(surface: UiSurface, shortcut?: string): st
 	}
 	if (surface.click) paths.push(`click ${surface.click}`);
 	if (paths.length === 0) return '';
-	return `You can also reach ${surface.label} yourself: ${paths.join(', or ')}.`;
+	const where = [target?.tab?.label, target?.subTab?.label].filter(Boolean).join(' > ');
+	const inside = where ? `, then pick ${where}` : '';
+	return `You can also reach ${surface.label} yourself: ${paths.join(', or ')}${inside}.`;
 }

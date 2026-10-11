@@ -556,7 +556,7 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteOpenModal: (
-			callback: (params: { surface: string; tab?: string }) => void
+			callback: (params: import('../shared/uiSurfaces').OpenUiSurfaceRequest) => void
 		) => () => void;
 		onRemoteOpenDocumentGraph: (
 			callback: (params: {

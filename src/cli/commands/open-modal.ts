@@ -1,5 +1,5 @@
 /**
- * `maestro-cli open <surface> [--tab <tab>]` - open one of Maestro's modals
+ * `maestro-cli open <surface> [--tab <tab> [--sub-tab <sub-tab>]]` - open one of Maestro's modals
  * or dashboards in the running desktop app, optionally on a specific tab.
  *
  * The point is teaching, not just navigating: an agent answering "where do I
@@ -17,13 +17,15 @@ import {
 	UI_SURFACES,
 	describeSurfaceAccess,
 	resolveUiSurface,
-	resolveUiSurfaceTab,
+	resolveUiSurfaceTarget,
+	surfaceSubTabIds,
 	surfaceTabIds,
 	type UiSurface,
 } from '../../shared/uiSurfaces';
 
 interface OpenModalOptions {
 	tab?: string;
+	subTab?: string;
 	list?: boolean;
 	json?: boolean;
 }
@@ -53,6 +55,11 @@ function printSurfaceList(options: OpenModalOptions): void {
 					aliases: surface.aliases ?? [],
 					description: surface.description,
 					tabs: surfaceTabIds(surface),
+					sub_tabs: Object.fromEntries(
+						(surface.tabs ?? [])
+							.filter((tab) => surfaceSubTabIds(tab).length > 0)
+							.map((tab) => [tab.id, surfaceSubTabIds(tab)])
+					),
 					shortcut: shortcutFor(surface) ?? '',
 					command_palette: surface.commandPalette ?? '',
 					encore: surface.encore ?? '',
@@ -65,9 +72,13 @@ function printSurfaceList(options: OpenModalOptions): void {
 	for (const surface of UI_SURFACES) {
 		const shortcut = shortcutFor(surface);
 		const tabs = surfaceTabIds(surface);
+		const subTabs = (surface.tabs ?? [])
+			.filter((tab) => surfaceSubTabIds(tab).length > 0)
+			.map((tab) => `${tab.id}: ${surfaceSubTabIds(tab).join(', ')}`);
 		const extras = [
 			shortcut ? `key: ${shortcut}` : null,
 			tabs.length > 0 ? `tabs: ${tabs.join(', ')}` : null,
+			subTabs.length > 0 ? `sub-tabs (--sub-tab), ${subTabs.join('; ')}` : null,
 		]
 			.filter(Boolean)
 			.join('  |  ');
@@ -96,25 +107,15 @@ export async function openModal(
 		fail(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options);
 	}
 
-	let tabId: string | undefined;
-	if (options.tab !== undefined) {
-		const tab = resolveUiSurfaceTab(surface, options.tab);
-		if (!tab) {
-			const valid = surfaceTabIds(surface);
-			fail(
-				valid.length > 0
-					? `Unknown tab "${options.tab}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
-					: `${surface.label} has no tabs, so --tab does not apply.`,
-				options
-			);
-		}
-		tabId = tab.id;
-	}
+	const target = resolveUiSurfaceTarget(surface, { tab: options.tab, subTab: options.subTab });
+	if ('error' in target) fail(target.error, options);
+	const tabId = target.tab?.id;
+	const subTabId = target.subTab?.id;
 
 	try {
 		const result = await withMaestroClient(async (client) =>
 			client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'open_modal', surface: surface.id, tab: tabId },
+				{ type: 'open_modal', surface: surface.id, tab: tabId, subTab: subTabId },
 				'open_modal_result'
 			)
 		);
@@ -123,7 +124,7 @@ export async function openModal(
 			fail(result.error || `Failed to open ${surface.label}`, options);
 		}
 
-		const hint = describeSurfaceAccess(surface, shortcutFor(surface));
+		const hint = describeSurfaceAccess(surface, shortcutFor(surface), target);
 		if (options.json) {
 			console.log(
 				JSON.stringify({
@@ -131,6 +132,7 @@ export async function openModal(
 					surface: surface.id,
 					label: surface.label,
 					tab: tabId ?? '',
+					sub_tab: subTabId ?? '',
 					shortcut: shortcutFor(surface) ?? '',
 					command_palette: surface.commandPalette ?? '',
 					click: surface.click ?? '',
@@ -139,7 +141,7 @@ export async function openModal(
 			);
 			return;
 		}
-		const tabSuffix = tabId ? ` (${tabId} tab)` : '';
+		const tabSuffix = tabId ? ` (${[tabId, subTabId].filter(Boolean).join(' > ')} tab)` : '';
 		console.log(`Opened ${surface.label}${tabSuffix} in Maestro.`);
 		if (hint) console.log(hint);
 	} catch (error) {

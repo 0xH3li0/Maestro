@@ -47,6 +47,7 @@ import type {
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
+import type { OpenUiSurfaceRequest } from '../../../../shared/uiSurfaces';
 import type { CreateGistResult } from '../../../../shared/gitUtils';
 import type { CueGateSetting, CueGateWriteResult } from '../../../../shared/cue/gate';
 import type {
@@ -173,8 +174,8 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
-	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
-	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
+	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab and sub-tab id. */
+	openModal: (params: OpenUiSurfaceRequest) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {
 		sessionId: string;

@@ -6,6 +6,7 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type { OpenUiSurfaceRequest } from '../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
@@ -462,10 +463,10 @@ export type OpenDocumentGraphParams = {
 export type OpenDocumentGraphCallback = (params: OpenDocumentGraphParams) => Promise<boolean>;
 /**
  * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
- * registry). `surface` is a `UiSurface.id`; `tab` is an optional tab id within
- * it, already validated against that surface.
+ * registry). `surface` is a `UiSurface.id`; `tab` and `subTab` are optional ids
+ * within it, already validated against that surface.
  */
-export type OpenModalParams = { surface: string; tab?: string };
+export type OpenModalParams = OpenUiSurfaceRequest;
 export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
 /**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.

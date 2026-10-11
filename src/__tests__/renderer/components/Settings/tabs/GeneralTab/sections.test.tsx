@@ -19,6 +19,7 @@ import type {
 } from '../../../../../../renderer/components/Settings/tabs/GeneralTab/types';
 import type { MaestroCliStatus } from '../../../../../../shared/maestro-cli';
 import { mockTheme } from '../../../../../helpers/mockTheme';
+import { selectModalData, useModalStore } from '../../../../../../renderer/stores/modalStore';
 
 const cliStatus: MaestroCliStatus = {
 	expectedVersion: '0.18.2',
@@ -271,6 +272,36 @@ describe('GeneralTab section components', () => {
 		const fileSection = screen.getByText('Opened file placement').parentElement!;
 		fireEvent.click(within(fileSection).getByRole('button', { name: 'After current tab' }));
 		expect(setOpenedFilePlacement).toHaveBeenCalledWith('after-current');
+	});
+
+	it('points the tab naming switch at the Models > System Two inner tab', () => {
+		const setAutomaticTabNamingEnabled = vi.fn();
+		useModalStore.getState().closeModal('settings');
+
+		render(
+			<TabBehaviorSection
+				theme={mockTheme}
+				automaticTabNamingEnabled={true}
+				setAutomaticTabNamingEnabled={setAutomaticTabNamingEnabled}
+				newTabPlacement="end"
+				setNewTabPlacement={vi.fn()}
+				newBrowserTabPlacement="end"
+				setNewBrowserTabPlacement={vi.fn()}
+				newTerminalPlacement="end"
+				setNewTerminalPlacement={vi.fn()}
+				openedFilePlacement="end"
+				setOpenedFilePlacement={vi.fn()}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Models > System Two' }));
+
+		// The link opens the inner tab; it does not flip the switch beside it.
+		expect(setAutomaticTabNamingEnabled).not.toHaveBeenCalled();
+		expect(selectModalData('settings')(useModalStore.getState())).toMatchObject({
+			tab: 'models',
+			subTab: 'system-two',
+		});
 	});
 
 	it('wires power, rendering, and update switches', () => {

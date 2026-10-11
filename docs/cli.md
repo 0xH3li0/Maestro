@@ -1447,15 +1447,19 @@ maestro-cli open cue
 maestro-cli open cue --tab scheduled
 maestro-cli open settings --tab shortcuts
 maestro-cli open usage-dashboard --tab cue
+
+# Deep-link to a tab inside a tab (Settings > Models has five)
+maestro-cli open settings --tab models --sub-tab system-one
 ```
 
-| Flag              | Description                                             |
-| ----------------- | ------------------------------------------------------- |
-| `-t, --tab <tab>` | Deep-link to a tab within the surface                   |
-| `--list`          | List every openable surface, its tabs, and its shortcut |
-| `--json`          | Output as JSON (for scripting)                          |
+| Flag                  | Description                                                   |
+| --------------------- | ------------------------------------------------------------- |
+| `-t, --tab <tab>`     | Deep-link to a tab within the surface                         |
+| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs `--tab`)            |
+| `--list`              | List every openable surface, its tabs, sub-tabs, and shortcut |
+| `--json`              | Output as JSON (for scripting)                                |
 
-Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` value matches either the tab id (`scheduled`) or its label (`"Scheduled Tasks"`).
+Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` or `--sub-tab` value matches either the id (`scheduled`) or the label (`"Scheduled Tasks"`). A renamed tab keeps its old id as an alias: `--tab local-models` still opens Settings > Models. The Models tab has the sub-tabs `library`, `sources`, `system-one`, `system-two`, and `gateway`.
 
 On success the command also prints how to reach that surface by hand:
 

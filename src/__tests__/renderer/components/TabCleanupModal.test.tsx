@@ -336,7 +336,8 @@ describe('TabCleanupModal', () => {
 		fireEvent.click(screen.getByText('Open Models Settings'));
 
 		expect(onClose).toHaveBeenCalledTimes(1);
-		expect(openSettings).toHaveBeenCalledWith('local-models');
+		// tab-cleanup is a System One task, so its assignment lives in that inner tab.
+		expect(openSettings).toHaveBeenCalledWith('models', undefined, 'system-one');
 	});
 
 	it('shows why a run failed, and a rejected call as a failure rather than a crash', async () => {

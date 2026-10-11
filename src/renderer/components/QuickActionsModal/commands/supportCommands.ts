@@ -99,7 +99,7 @@ export function buildSupportCommands({
 			subtext: 'Library, sources, System One and Two, and the gateway',
 			action: () => {
 				setSettingsModalOpen(true);
-				setSettingsTab('local-models');
+				setSettingsTab('models');
 				setQuickActionOpen(false);
 			},
 		},

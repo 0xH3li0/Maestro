@@ -867,6 +867,7 @@ program
 	.command('open [surface]')
 	.description('Open a Maestro modal or dashboard (use --list to see every surface)')
 	.option('-t, --tab <tab>', 'Deep-link to a tab within the surface')
+	.option('--sub-tab <sub-tab>', 'Deep-link to a tab inside that tab (needs --tab)')
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);

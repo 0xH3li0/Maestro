@@ -27,6 +27,7 @@
  * model list refreshed in Sources is what the assignment pickers offer.
  */
 
+import { useEffect } from 'react';
 import { Brain, HardDrive, Router, Server, Sparkles, type LucideIcon } from 'lucide-react';
 import {
 	MODELS_SETTINGS_PANELS,
@@ -41,6 +42,7 @@ import {
 import { usePersistedChoice } from '../../../../hooks/ui/usePersistedChoice';
 import type { Theme } from '../../../../types';
 import { ModalTabStrip, tabPanelProps, type ModalTab } from '../../../ui/ModalTabStrip';
+import type { SubTabRequest } from '../../searchableSettings';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
@@ -69,9 +71,17 @@ const ID_PREFIX = 'settings-models';
 
 export interface ModelsSettingsTabProps {
 	theme: Theme;
+	/** A jump to an inner tab (a deep link or a search result). Ids that name no panel are ignored. */
+	panelRequest?: SubTabRequest;
+	/** Called once `panelRequest` has been applied, so the owner can drop it. */
+	onPanelRequestHandled?: () => void;
 }
 
-export function ModelsSettingsTab({ theme }: ModelsSettingsTabProps) {
+export function ModelsSettingsTab({
+	theme,
+	panelRequest,
+	onPanelRequestHandled,
+}: ModelsSettingsTabProps) {
 	const models = useLocalModels();
 	const endpoints = useLocalModelEndpoints();
 	const runtimes = useLocalRuntimes();
@@ -80,6 +90,13 @@ export function ModelsSettingsTab({ theme }: ModelsSettingsTabProps) {
 		MODELS_SETTINGS_PANELS,
 		'library'
 	);
+
+	useEffect(() => {
+		if (!panelRequest) return;
+		const requested = MODELS_SETTINGS_PANELS.find((id) => id === panelRequest.subTab);
+		if (requested) setPanel(requested);
+		onPanelRequestHandled?.();
+	}, [panelRequest, setPanel, onPanelRequestHandled]);
 
 	return (
 		<div className="space-y-5" data-testid="models-settings-tab">
@@ -118,7 +135,7 @@ export function ModelsSettingsTab({ theme }: ModelsSettingsTabProps) {
 				)}
 
 				{panel === 'system-one' && (
-					<div data-setting-id="local-models-assignments">
+					<div data-setting-id="local-models-system-one">
 						<SettingsSectionHeading
 							icon={Brain}
 							description="Fast judgments. A task here returns a decision, label, score, vector, or transcript, never text for someone to read. A task left Off keeps its existing behavior."
@@ -136,7 +153,7 @@ export function ModelsSettingsTab({ theme }: ModelsSettingsTabProps) {
 
 				{panel === 'system-two' && (
 					<>
-						<div data-setting-id="local-models-assignments">
+						<div data-setting-id="local-models-system-two">
 							<SettingsSectionHeading
 								icon={Sparkles}
 								description="Generation. A task here writes text for someone to read or run. A task left Off keeps its existing behavior."

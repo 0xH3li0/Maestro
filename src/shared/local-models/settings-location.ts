@@ -45,7 +45,12 @@ export function modelsSettingsLocation(panel: ModelsSettingsPanel): string {
 	return `${MODELS_SETTINGS_LOCATION} > ${MODELS_SETTINGS_PANEL_LABELS[panel]}`;
 }
 
+/** The inner tab where a person assigns a task its source. */
+export function taskAssignmentPanel(taskId: LocalModelTaskId): ModelsSettingsPanel {
+	return systemSettingsPanel(LOCAL_MODEL_TASKS[taskId].system);
+}
+
 /** Where a person assigns a task its source: "Settings > Models > System One". */
 export function taskAssignmentLocation(taskId: LocalModelTaskId): string {
-	return modelsSettingsLocation(systemSettingsPanel(LOCAL_MODEL_TASKS[taskId].system));
+	return modelsSettingsLocation(taskAssignmentPanel(taskId));
 }

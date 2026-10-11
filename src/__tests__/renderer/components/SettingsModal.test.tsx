@@ -601,6 +601,49 @@ describe('SettingsModal', () => {
 			expect(document.querySelector('[data-setting-id="general-forced-parallel"]')).not.toBeNull();
 		});
 
+		it('should open the Models inner tab named by initialNavigationRequest.subTab', async () => {
+			// `maestro-cli open settings --tab models --sub-tab gateway`
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'models',
+						initialNavigationRequest: { tab: 'models', subTab: 'gateway' },
+					})}
+				/>
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('tab', { name: 'Gateway' })).toHaveAttribute('aria-selected', 'true');
+		});
+
+		it('should open the inner tab that renders the setting named by initialSettingId', async () => {
+			// A Settings search result for a System Two control has to land where
+			// the control is drawn, not on whichever inner tab was open last.
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'models',
+						initialSettingId: 'local-models-utility-agent',
+					})}
+				/>
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByRole('tab', { name: 'System Two' })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(
+				document.querySelector('[data-setting-id="local-models-utility-agent"]')
+			).not.toBeNull();
+		});
+
 		it('should switch to shortcuts tab when clicked', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 

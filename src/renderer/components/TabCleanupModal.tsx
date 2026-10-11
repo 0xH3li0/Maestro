@@ -40,6 +40,7 @@ import {
 	type TabCleanupAction,
 	type TabCleanupResult,
 } from '../../shared/tabCleanup';
+import { taskAssignmentPanel } from '../../shared/local-models/settings-location';
 import { SNOOZE_PRESETS, formatSnoozeTarget, parseSnoozeInput } from '../../shared/snooze';
 
 export interface TabCleanupModalProps {
@@ -195,7 +196,7 @@ export function TabCleanupModal({ theme, onClose }: TabCleanupModalProps) {
 
 	const openAssignments = useCallback(() => {
 		onClose();
-		getModalActions().openSettings('local-models');
+		getModalActions().openSettings('models', undefined, taskAssignmentPanel('tab-cleanup'));
 	}, [onClose]);
 
 	const failure = result && !result.success ? result : null;

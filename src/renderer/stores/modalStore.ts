@@ -77,6 +77,9 @@ export interface SettingsModalData {
 	/** A `data-setting-id` (see searchableSettings.ts) to scroll to and flash on
 	 *  open, the same jump a Settings search result makes. Belongs to `tab`. */
 	settingId?: string;
+	/** An inner tab of `tab` to open on (Models > System One), the way `--sub-tab`
+	 *  reaches one. A setting jump needs none: the searchable entry names its own. */
+	subTab?: string;
 }
 
 /** New instance modal data */
@@ -853,8 +856,8 @@ export function getModalActions() {
 		setSettingsModalOpen: (open: boolean) =>
 			open ? openModal('settings', { tab: undefined }) : closeModal('settings'),
 		setSettingsTab: (tab: SettingsTab) => updateModalData('settings', { tab }),
-		openSettings: (tab?: SettingsTab, settingId?: string) =>
-			openModal('settings', { tab, settingId }),
+		openSettings: (tab?: SettingsTab, settingId?: string, subTab?: string) =>
+			openModal('settings', { tab, settingId, subTab }),
 		closeSettings: () => closeModal('settings'),
 
 		// New Instance Modal

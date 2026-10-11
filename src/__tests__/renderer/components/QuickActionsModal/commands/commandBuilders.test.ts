@@ -993,7 +993,7 @@ describe('buildSupportCommands: Models settings', () => {
 		entry!.action();
 
 		expect(setSettingsModalOpen).toHaveBeenCalledWith(true);
-		expect(setSettingsTab).toHaveBeenCalledWith('local-models');
+		expect(setSettingsTab).toHaveBeenCalledWith('models');
 		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 });

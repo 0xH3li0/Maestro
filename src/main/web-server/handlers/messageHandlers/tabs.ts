@@ -19,8 +19,7 @@ import type { WebClient, WebClientMessage, MessageHandlerContext } from './types
 import {
 	UI_SURFACES,
 	resolveUiSurface,
-	resolveUiSurfaceTab,
-	surfaceTabIds,
+	resolveUiSurfaceTarget,
 } from '../../../../shared/uiSurfaces';
 import { normalizeRenameTabResult } from '../../types';
 
@@ -1085,6 +1084,8 @@ export function handleOpenModal(
 	const surfaceName = typeof message.surface === 'string' ? message.surface : '';
 	const tabName =
 		typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
+	const subTabName =
+		typeof message.subTab === 'string' && message.subTab.length > 0 ? message.subTab : undefined;
 
 	const sendResult = (success: boolean, error?: string) => {
 		ctx.send(client, {
@@ -1104,24 +1105,16 @@ export function handleOpenModal(
 		return;
 	}
 
-	let tabId: string | undefined;
-	if (tabName !== undefined) {
-		const tab = resolveUiSurfaceTab(surface, tabName);
-		if (!tab) {
-			const valid = surfaceTabIds(surface);
-			sendResult(
-				false,
-				valid.length > 0
-					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
-					: `${surface.label} has no tabs.`
-			);
-			return;
-		}
-		tabId = tab.id;
+	const target = resolveUiSurfaceTarget(surface, { tab: tabName, subTab: subTabName });
+	if ('error' in target) {
+		sendResult(false, target.error);
+		return;
 	}
+	const tabId = target.tab?.id;
+	const subTabId = target.subTab?.id;
 
 	logger.info(
-		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}`,
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}`,
 		LOG_CONTEXT
 	);
 
@@ -1131,7 +1124,7 @@ export function handleOpenModal(
 	}
 
 	ctx.callbacks
-		.openModal({ surface: surface.id, tab: tabId })
+		.openModal({ surface: surface.id, tab: tabId, subTab: subTabId })
 		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
 		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

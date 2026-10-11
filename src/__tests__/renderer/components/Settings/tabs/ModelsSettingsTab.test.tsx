@@ -9,7 +9,7 @@
  * (nothing downloads or probes on open).
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { Theme } from '../../../../../renderer/types';
 import { ModelsSettingsTab } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab';
@@ -18,6 +18,7 @@ import { LOCAL_MODELS_SETTINGS } from '../../../../../renderer/components/Settin
 import {
 	MODELS_SETTINGS_PANELS,
 	MODELS_SETTINGS_PANEL_LABELS,
+	type ModelsSettingsPanel,
 } from '../../../../../shared/local-models/settings-location';
 import { tasksForSystem } from '../../../../../shared/local-models/tasks';
 import { installLocalStorageMock } from '../../../../helpers/mockLocalStorage';
@@ -121,19 +122,62 @@ describe('ModelsSettingsTab', () => {
 		expect(screen.getByRole('tab', { name: 'Library' })).toHaveAttribute('aria-selected', 'true');
 	});
 
-	it('renders every searchable-settings entry on one of its inner tabs', () => {
+	it('renders every searchable-settings entry on the inner tab it names', () => {
 		const { container } = render(<ModelsSettingsTab theme={theme} />);
-		const seen = new Set<string>();
-		for (const panel of MODELS_SETTINGS_PANELS) {
-			openPanel(MODELS_SETTINGS_PANEL_LABELS[panel]);
-			for (const el of container.querySelectorAll('[data-setting-id]')) {
-				seen.add(el.getAttribute('data-setting-id')!);
-			}
-		}
 		for (const entry of LOCAL_MODELS_SETTINGS) {
-			expect(entry.tab).toBe('local-models');
-			expect(seen.has(entry.id)).toBe(true);
+			expect(entry.tab).toBe('models');
+			openPanel(MODELS_SETTINGS_PANEL_LABELS[entry.subTab as ModelsSettingsPanel]);
+			expect(
+				container.querySelector(`[data-setting-id="${entry.id}"]`),
+				`${entry.id} is not rendered on ${entry.subTab}`
+			).not.toBeNull();
 		}
+	});
+
+	describe('panelRequest', () => {
+		it('switches to the requested inner tab, remembers it, and reports it handled', () => {
+			const onHandled = vi.fn();
+			render(
+				<ModelsSettingsTab
+					theme={theme}
+					panelRequest={{ subTab: 'system-two' }}
+					onPanelRequestHandled={onHandled}
+				/>
+			);
+			expect(screen.getByRole('tab', { name: 'System Two' })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(localStorage.getItem(MODELS_SETTINGS_PANEL_STORAGE_KEY)).toBe('system-two');
+			expect(onHandled).toHaveBeenCalledTimes(1);
+		});
+
+		it('moves a mounted tab to a later request', () => {
+			const { rerender } = render(<ModelsSettingsTab theme={theme} />);
+			expect(screen.getByRole('tab', { name: 'Library' })).toHaveAttribute('aria-selected', 'true');
+
+			rerender(<ModelsSettingsTab theme={theme} panelRequest={{ subTab: 'gateway' }} />);
+			expect(screen.getByRole('tab', { name: 'Gateway' })).toHaveAttribute('aria-selected', 'true');
+		});
+
+		it('ignores an id that names no inner tab, but still reports it handled', () => {
+			const onHandled = vi.fn();
+			render(
+				<ModelsSettingsTab
+					theme={theme}
+					panelRequest={{ subTab: 'assignments' }}
+					onPanelRequestHandled={onHandled}
+				/>
+			);
+			expect(screen.getByRole('tab', { name: 'Library' })).toHaveAttribute('aria-selected', 'true');
+			expect(onHandled).toHaveBeenCalledTimes(1);
+		});
+
+		it('leaves the remembered inner tab alone when there is no request', () => {
+			localStorage.setItem(MODELS_SETTINGS_PANEL_STORAGE_KEY, 'sources');
+			render(<ModelsSettingsTab theme={theme} />);
+			expect(screen.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true');
+		});
 	});
 
 	it('says that nothing downloads until the user asks', () => {

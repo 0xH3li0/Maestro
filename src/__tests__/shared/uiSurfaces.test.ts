@@ -11,9 +11,13 @@ import {
 	UI_SURFACES,
 	describeSurfaceAccess,
 	resolveUiSurface,
+	resolveUiSurfaceSubTab,
 	resolveUiSurfaceTab,
+	resolveUiSurfaceTarget,
+	surfaceSubTabIds,
 	surfaceTabIds,
 } from '../../shared/uiSurfaces';
+import { MODELS_SETTINGS_PANELS } from '../../shared/local-models/settings-location';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
 
@@ -74,16 +78,110 @@ describe('resolveUiSurfaceTab', () => {
 		expect(resolveUiSurfaceTab(cue, 'Scheduled Tasks')?.id).toBe('scheduled');
 	});
 
-	it('deep-links Settings to the Local Models tab (`open settings --tab local-models`)', () => {
+	it('deep-links Settings to the Models tab (`open settings --tab models`)', () => {
 		const settings = resolveUiSurface('settings')!;
-		expect(resolveUiSurfaceTab(settings, 'local-models')?.id).toBe('local-models');
-		expect(resolveUiSurfaceTab(settings, 'Local Models')?.id).toBe('local-models');
+		expect(resolveUiSurfaceTab(settings, 'models')?.id).toBe('models');
+		expect(resolveUiSurfaceTab(settings, 'Models')?.id).toBe('models');
+	});
+
+	it('keeps `local-models` working as an alias of the Models tab', () => {
+		const settings = resolveUiSurface('settings')!;
+		expect(resolveUiSurfaceTab(settings, 'local-models')?.id).toBe('models');
+		expect(resolveUiSurfaceTab(settings, 'Local-Models')?.id).toBe('models');
+	});
+
+	it('does not leave a retired tab id as a tab of its own', () => {
+		const settings = resolveUiSurface('settings')!;
+		expect(surfaceTabIds(settings)).not.toContain('local-models');
 	});
 
 	it('returns null for a tab the surface does not have', () => {
 		expect(resolveUiSurfaceTab(cue, 'nope')).toBeNull();
 		const about = resolveUiSurface('about')!;
 		expect(resolveUiSurfaceTab(about, 'anything')).toBeNull();
+	});
+});
+
+describe('sub-tabs', () => {
+	const settings = resolveUiSurface('settings')!;
+	const models = resolveUiSurfaceTab(settings, 'models')!;
+
+	it('lists every inner tab of Models, in strip order, from the one panel list', () => {
+		expect(surfaceSubTabIds(models)).toEqual([...MODELS_SETTINGS_PANELS]);
+		expect(surfaceSubTabIds(models)).toEqual([
+			'library',
+			'sources',
+			'system-one',
+			'system-two',
+			'gateway',
+		]);
+	});
+
+	it('resolves a sub-tab by id and by its display label', () => {
+		expect(resolveUiSurfaceSubTab(models, 'system-one')?.id).toBe('system-one');
+		expect(resolveUiSurfaceSubTab(models, 'System Two')?.id).toBe('system-two');
+		expect(resolveUiSurfaceSubTab(models, 'nope')).toBeNull();
+	});
+
+	it('gives only the Models tab sub-tabs', () => {
+		const withSubTabs = UI_SURFACES.flatMap((surface) =>
+			(surface.tabs ?? []).filter((tab) => surfaceSubTabIds(tab).length > 0).map((tab) => tab.id)
+		);
+		expect(withSubTabs).toEqual(['models']);
+	});
+});
+
+describe('resolveUiSurfaceTarget', () => {
+	const settings = resolveUiSurface('settings')!;
+	const cue = resolveUiSurface('cue')!;
+
+	it('resolves nothing when no tab was asked for', () => {
+		expect(resolveUiSurfaceTarget(settings, {})).toEqual({});
+	});
+
+	it('resolves a tab and, inside it, a sub-tab', () => {
+		const target = resolveUiSurfaceTarget(settings, { tab: 'local-models', subTab: 'System One' });
+		expect(target).toMatchObject({
+			tab: { id: 'models' },
+			subTab: { id: 'system-one' },
+		});
+	});
+
+	it('resolves a tab without a sub-tab', () => {
+		const target = resolveUiSurfaceTarget(settings, { tab: 'shortcuts' });
+		expect(target).toMatchObject({ tab: { id: 'shortcuts' } });
+		expect(target).not.toHaveProperty('subTab');
+	});
+
+	it('refuses a sub-tab with no tab', () => {
+		expect(resolveUiSurfaceTarget(settings, { subTab: 'library' })).toEqual({
+			error: expect.stringContaining('--sub-tab needs --tab'),
+		});
+	});
+
+	it('names the valid tabs when the tab is unknown', () => {
+		expect(resolveUiSurfaceTarget(settings, { tab: 'nope' })).toEqual({
+			error: expect.stringContaining('Valid tabs: general'),
+		});
+	});
+
+	it('says a surface without tabs has none', () => {
+		const about = resolveUiSurface('about')!;
+		expect(resolveUiSurfaceTarget(about, { tab: 'x' })).toEqual({
+			error: expect.stringContaining('has no tabs'),
+		});
+	});
+
+	it('names the valid sub-tabs when the sub-tab is unknown', () => {
+		expect(resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'nope' })).toEqual({
+			error: expect.stringContaining('Valid sub-tabs: library, sources, system-one'),
+		});
+	});
+
+	it('says a tab without sub-tabs has none', () => {
+		expect(resolveUiSurfaceTarget(cue, { tab: 'scheduled', subTab: 'x' })).toEqual({
+			error: expect.stringContaining('has no sub-tabs'),
+		});
 	});
 });
 
@@ -95,6 +193,18 @@ describe('describeSurfaceAccess', () => {
 		expect(hint).toContain('Alt+Q');
 		expect(hint).toContain('command palette');
 		expect(hint).toContain(cue.click!);
+	});
+
+	it('names the tab and sub-tab to pick once the surface is open', () => {
+		const settings = resolveUiSurface('settings')!;
+		const target = resolveUiSurfaceTarget(settings, { tab: 'models', subTab: 'system-one' });
+		if ('error' in target) throw new Error(target.error);
+		const hint = describeSurfaceAccess(settings, undefined, target);
+		expect(hint).toContain('then pick Models > System One.');
+		expect(describeSurfaceAccess(settings, undefined, { tab: target.tab })).toContain(
+			'then pick Models.'
+		);
+		expect(describeSurfaceAccess(settings)).not.toContain('then pick');
 	});
 
 	it('omits the hotkey clause when the surface has none', () => {

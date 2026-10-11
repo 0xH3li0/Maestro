@@ -1358,7 +1358,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// straight hand-off to the shared opener.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
-			openUiSurface(params.surface, params.tab);
+			openUiSurface(params.surface, params.tab, params.subTab);
 		});
 		return () => {
 			unsubscribe();

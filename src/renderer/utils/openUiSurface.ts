@@ -14,7 +14,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { notifyToast } from '../stores/notificationStore';
-import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
+import { resolveUiSurface, resolveUiSurfaceTarget } from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
@@ -25,18 +25,23 @@ export interface OpenUiSurfaceResult {
 }
 
 /**
- * Open `surfaceId`, optionally deep-linking to `tabId`.
+ * Open `surfaceId`, optionally deep-linking to `tabId` and, inside it, `subTabId`.
  *
  * Refuses (with a toast) when the surface is behind an Encore Feature the user
  * has turned off: silently opening nothing would look like the CLI lied, and
  * silently enabling the feature would change a setting the user never touched.
  */
-export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceResult {
+export function openUiSurface(
+	surfaceId: string,
+	tabId?: string,
+	subTabId?: string
+): OpenUiSurfaceResult {
 	const surface = resolveUiSurface(surfaceId);
 	if (!surface) return { ok: false, error: `Unknown surface "${surfaceId}"` };
 
-	const tab = tabId ? resolveUiSurfaceTab(surface, tabId) : null;
-	if (tabId && !tab) return { ok: false, error: `Unknown tab "${tabId}" for ${surface.label}` };
+	const target = resolveUiSurfaceTarget(surface, { tab: tabId, subTab: subTabId });
+	if ('error' in target) return { ok: false, error: target.error };
+	const { tab, subTab } = target;
 
 	if (surface.encore) {
 		const enabled = useSettingsStore.getState().encoreFeatures[surface.encore];
@@ -51,7 +56,7 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 
 	switch (surface.id) {
 		case 'settings':
-			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined);
+			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined, undefined, subTab?.id);
 			return { ok: true };
 		case 'cue':
 			if (tab) actions.openCueModalWithTab(tab.id as NonNullable<CueModalData['initialTab']>);

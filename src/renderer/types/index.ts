@@ -107,7 +107,7 @@ export type SettingsTab =
 	| 'environment'
 	| 'encore'
 	| 'prompts'
-	| 'local-models';
+	| 'models';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 

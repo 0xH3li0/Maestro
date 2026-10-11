@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type { AITabData } from '../../web-server/types';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import type { OpenUiSurfaceRequest } from '../../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 
 export function createTabRemoteApi() {
@@ -252,10 +253,8 @@ export function createTabRemoteApi() {
 		 * and `tab` (when present) has already been validated against it in
 		 * the main process.
 		 */
-		onRemoteOpenModal: (
-			callback: (params: { surface: string; tab?: string }) => void
-		): (() => void) => {
-			const handler = (_: unknown, params: { surface: string; tab?: string }) => callback(params);
+		onRemoteOpenModal: (callback: (params: OpenUiSurfaceRequest) => void): (() => void) => {
+			const handler = (_: unknown, params: OpenUiSurfaceRequest) => callback(params);
 			ipcRenderer.on('remote:openModal', handler);
 			return () => ipcRenderer.removeListener('remote:openModal', handler);
 		},
