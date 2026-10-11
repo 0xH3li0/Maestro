@@ -26,6 +26,7 @@ import { closeTab, createTab, revealAiTab } from '../utils/tabHelpers';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
 import { jumpToAgent } from './agentNavigation';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 /** The name a Quick Chat tab carries until the user renames it. */
 export const QUICK_CHAT_TAB_NAME = 'Quick Chat';
@@ -94,7 +95,8 @@ function saveToHistoryFor(persistent: boolean): boolean {
 export function buildQuickChatSnapshot(error: string | null = null): QuickChatSnapshot {
 	const session = resolveAgent();
 	const tab = currentTab(session);
-	const sessions = useSessionStore.getState().sessions;
+	const { sessions, groups } = useSessionStore.getState();
+	const groupNames = new Map(groups.map((g) => [g.id, g.name]));
 	return {
 		...EMPTY_QUICK_CHAT_SNAPSHOT,
 		agentId: session?.id ?? null,
@@ -104,7 +106,12 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 		busy: tab?.state === 'busy',
 		busySince: tab?.state === 'busy' ? (tab.thinkingStartTime ?? null) : null,
 		messages: tab ? logsToQuickChatMessages(tab.logs) : [],
-		agents: sessions.filter(canChat).map((s) => ({ id: s.id, name: s.name })),
+		agents: sessions.filter(canChat).map((s) => ({
+			id: s.id,
+			name: s.name,
+			groupName: (s.groupId && groupNames.get(s.groupId)) || undefined,
+			provider: getAgentDisplayName(s.toolType),
+		})),
 		error,
 	};
 }
@@ -290,7 +297,9 @@ function snapshotKey(snapshot: QuickChatSnapshot): string {
 		snapshot.busy,
 		snapshot.messages.length,
 		last?.text.length ?? 0,
-		snapshot.agents.map((a) => `${a.id}:${a.name}`).join(','),
+		snapshot.agents
+			.map((a) => `${a.id}:${a.name}:${a.groupName ?? ''}:${a.provider ?? ''}`)
+			.join(','),
 	].join('|');
 }
 

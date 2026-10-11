@@ -32,7 +32,7 @@ Tips and gotchas:
 
 [Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
 
-Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, and `Esc` closes the window.
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+K` / `Ctrl+K` opens the agent picker, and `Esc` closes the window (or, with the picker open, just the picker).
 
 The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
 
