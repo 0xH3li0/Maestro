@@ -29,7 +29,7 @@
  * lives in exactly one place.
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Puzzle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PanelContribution } from '../../../shared/plugins/contributions';
@@ -46,6 +46,7 @@ import {
 } from '../../../shared/plugins/panel-theme';
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 
 // webview.send throws when the guest webContents is not attached yet (a push can
 // land before the panel finishes loading) or is tearing down - both are expected
@@ -80,6 +81,12 @@ interface PanelIpcMessageEvent extends Event {
 export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFrameProps) {
 	const [failed, setFailed] = useState(false);
 	const webviewRef = useRef<PanelWebviewElement | null>(null);
+	const [webviewElement, setWebviewElement] = useState<PanelWebviewElement | null>(null);
+	const attachWebview = useCallback((element: HTMLElement | null) => {
+		const webview = element as PanelWebviewElement | null;
+		webviewRef.current = webview;
+		setWebviewElement(webview);
+	}, []);
 	const readyWebviewRef = useRef<PanelWebviewElement | null>(null);
 	// dom-ready can arrive after several theme changes. Its listener reads this
 	// ref so the first frame always receives the newest palette.
@@ -90,23 +97,25 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 	}, [themePayload]);
 
 	useEffect(() => {
-		const webview = webviewRef.current;
-		if (!webview) return;
 		readyWebviewRef.current = null;
-		const onReady = (): void => {
-			readyWebviewRef.current = webview;
+		return () => {
+			if (readyWebviewRef.current === webviewElement) readyWebviewRef.current = null;
+		};
+	}, [panel.id, panel.pluginId, failed, webviewElement]);
+
+	useEventListener(
+		'dom-ready',
+		() => {
+			if (!webviewElement) return;
+			readyWebviewRef.current = webviewElement;
 			try {
-				webview.send(PANEL_THEME_CHANNEL, latestThemeRef.current);
+				webviewElement.send(PANEL_THEME_CHANNEL, latestThemeRef.current);
 			} catch (error) {
 				if (!isDetachedWebviewError(error)) captureException(error);
 			}
-		};
-		webview.addEventListener('dom-ready', onReady);
-		return () => {
-			webview.removeEventListener('dom-ready', onReady);
-			if (readyWebviewRef.current === webview) readyWebviewRef.current = null;
-		};
-	}, [panel.id, panel.pluginId, failed]);
+		},
+		{ target: webviewElement, enabled: !failed }
+	);
 
 	useEffect(() => {
 		const webview = webviewRef.current;
@@ -124,11 +133,9 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 	// panel can only ever invoke its own plugin's commands, then hand it to the
 	// broker-gated RPC. Also surface load failures (unknown/ungranted panel ⇒
 	// the protocol handler refuses the document).
-	useEffect(() => {
-		const webview = webviewRef.current;
-		if (!webview) return;
-
-		const onIpcMessage = (event: Event): void => {
+	useEventListener(
+		'ipc-message',
+		(event) => {
 			const message = event as PanelIpcMessageEvent;
 			if (message.channel !== PANEL_BRIDGE_CHANNEL) return;
 			const payload = message.args?.[0];
@@ -144,17 +151,13 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 						message: `Command failed: ${String(err)}`,
 					});
 				});
-		};
-
-		const onFailLoad = (): void => setFailed(true);
-
-		webview.addEventListener('ipc-message', onIpcMessage);
-		webview.addEventListener('did-fail-load', onFailLoad);
-		return () => {
-			webview.removeEventListener('ipc-message', onIpcMessage);
-			webview.removeEventListener('did-fail-load', onFailLoad);
-		};
-	}, [panel.pluginId, failed]);
+		},
+		{ target: webviewElement, enabled: !failed }
+	);
+	useEventListener('did-fail-load', () => setFailed(true), {
+		target: webviewElement,
+		enabled: !failed,
+	});
 
 	// Host-to-panel push (`ui.panelPost`). Main validated ownership, JSON-ness and
 	// size before broadcasting; here we only route the event to the ONE frame
@@ -202,9 +205,7 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 					</div>
 				) : (
 					<webview
-						ref={(element) => {
-							webviewRef.current = element as unknown as PanelWebviewElement | null;
-						}}
+						ref={attachWebview}
 						title={panel.title}
 						partition={pluginPanelPartition(panel.pluginId)}
 						src={pluginPanelUrl(panel.id)}

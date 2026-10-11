@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { PluginPanelFrame } from '../PluginPanelFrame';
 import { THEMES } from '../../../constants/themes';
 import { PANEL_THEME_CHANNEL } from '../../../../shared/plugins/panel-theme';
+import { PANEL_BRIDGE_CHANNEL } from '../../../../shared/plugins/panel-host';
 import type { PanelContribution } from '../../../../shared/plugins/contributions';
 
 const panel: PanelContribution = {
@@ -19,7 +20,7 @@ const panel: PanelContribution = {
 beforeEach(() => {
 	window.maestro.plugins = {
 		onPanelData: vi.fn(() => () => {}),
-		invokeCommand: vi.fn(),
+		invokeCommand: vi.fn().mockResolvedValue(undefined),
 	} as unknown as typeof window.maestro.plugins;
 });
 afterEach(() => cleanup());
@@ -72,5 +73,34 @@ describe('PluginPanelFrame theme transfer', () => {
 		webview.dispatchEvent(new Event('dom-ready'));
 		expect(send).toHaveBeenCalledTimes(1);
 		expect(send.mock.calls[0][1].colorScheme).toBe('light');
+	});
+
+	it('routes bridge commands to the current plugin and removes listeners after load failure', () => {
+		const { container, rerender } = render(
+			<PluginPanelFrame theme={THEMES.dracula} panel={panel} />
+		);
+		const webview = container.querySelector('webview')!;
+		const send = vi.fn();
+		Object.assign(webview, { send });
+		rerender(
+			<PluginPanelFrame
+				theme={THEMES.dracula}
+				panel={{ ...panel, id: 'other.tools/board', pluginId: 'other.tools' }}
+			/>
+		);
+		const command = Object.assign(new Event('ipc-message'), {
+			channel: PANEL_BRIDGE_CHANNEL,
+			args: [{ commandId: 'run', args: { value: 1 } }],
+		});
+		fireEvent(webview, command);
+		expect(window.maestro.plugins.invokeCommand).toHaveBeenCalledWith('other.tools/run', {
+			value: 1,
+		});
+		fireEvent(webview, new Event('did-fail-load'));
+		expect(container.querySelector('webview')).toBeNull();
+		fireEvent(webview, new Event('dom-ready'));
+		fireEvent(webview, command);
+		expect(send).not.toHaveBeenCalled();
+		expect(window.maestro.plugins.invokeCommand).toHaveBeenCalledTimes(1);
 	});
 });
