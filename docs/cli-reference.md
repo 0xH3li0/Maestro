@@ -1868,7 +1868,23 @@ List the local model catalog grouped by kind, with install status, size, and wha
 
 ## `maestro-cli models install <model-id>`
 
-Download and verify a local model; waits until it finishes (requires the desktop app)
+Download and verify a local model, resuming a paused download; waits until it finishes (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models pause <model-id>`
+
+Pause a running download and keep what arrived; models install resumes it (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models cancel <model-id>`
+
+Cancel a download and delete its partial files; an installed model is not touched (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1984,9 +2000,32 @@ Add an endpoint. Ollama and LM Studio default to their standard local port
 | `--disabled`           | Add it switched off                                                                               | -       |
 | `--json`               | Output as JSON (for scripting)                                                                    | -       |
 
+## `maestro-cli models endpoints update <endpoint>`
+
+Edit an endpoint, named by id, id prefix, or name; only the fields you pass change
+
+| Option                 | Description                                                                                       | Default |
+| ---------------------- | ------------------------------------------------------------------------------------------------- | ------- |
+| `--name <name>`        | Display name                                                                                      | -       |
+| `--url <url>`          | Base URL (http/https, no credentials)                                                             | -       |
+| `--kind <kind>`        | ollama \| lmstudio \| openai-compatible                                                           | -       |
+| `--api-key-env <name>` | NAME of the Settings -> Environment variable holding the API key (the key itself is never stored) | -       |
+| `--clear-api-key-env`  | Stop sending an API key                                                                           | -       |
+| `--enable`             | Switch the endpoint on                                                                            | -       |
+| `--disable`            | Switch the endpoint off; tasks assigned to it become unavailable                                  | -       |
+| `--json`               | Output as JSON (for scripting)                                                                    | -       |
+
 ## `maestro-cli models endpoints remove <endpoint>`
 
 Remove an endpoint, named by id, id prefix, or name
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models endpoints models <endpoint>`
+
+List the models an endpoint serves now, for models assign endpoint:<endpoint>:<model> (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

@@ -1,5 +1,5 @@
-// `maestro-cli models list|install|remove|verify` - the local model catalog
-// and what is on disk.
+// `maestro-cli models list|install|pause|cancel|remove|verify` - the local
+// model catalog and what is on disk.
 //
 // Every verb runs in the desktop over the WS bridge, through the same service
 // functions (`src/main/local-models/service.ts`) as the `localModels:*` IPC
@@ -225,6 +225,58 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 		return;
 	}
 	console.log(formatSuccess(`Installed ${entry.displayName}`));
+}
+
+/**
+ * Pause a running download and keep what arrived. There is no `resume` verb:
+ * `models install` is the same call the row's Resume button makes, and it picks
+ * the partial file back up.
+ */
+export async function modelsPause(modelId: string, options: JsonOption): Promise<void> {
+	const entry = requireModel(modelId, options.json);
+
+	const reply = await send<{ success: boolean; error?: string; paused?: boolean }>(
+		{ type: 'local_models_pause', modelId },
+		'local_models_pause_result',
+		options.json
+	);
+	const paused = reply.paused === true;
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, modelId, paused }));
+		return;
+	}
+	if (!paused) {
+		console.log(`${entry.displayName} is not downloading; nothing to pause.`);
+		return;
+	}
+	console.log(formatSuccess(`Paused ${entry.displayName}`));
+	console.log(`  Resume it: maestro-cli models install ${modelId}`);
+}
+
+/**
+ * Cancel a download and delete everything it wrote, the partial file of a
+ * paused one included. An installed model is not touched: that is `remove`.
+ */
+export async function modelsCancel(modelId: string, options: JsonOption): Promise<void> {
+	const entry = requireModel(modelId, options.json);
+
+	const reply = await send<{ success: boolean; error?: string; cancelled?: boolean }>(
+		{ type: 'local_models_cancel', modelId },
+		'local_models_cancel_result',
+		options.json
+	);
+	const cancelled = reply.cancelled === true;
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, modelId, cancelled }));
+		return;
+	}
+	console.log(
+		cancelled
+			? formatSuccess(`Cancelled the download of ${entry.displayName}`)
+			: `${entry.displayName} was not downloading; any partial file is cleared.`
+	);
 }
 
 export async function modelsRemove(modelId: string, options: RemoveOptions): Promise<void> {

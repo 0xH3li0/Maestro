@@ -1,9 +1,10 @@
 /**
  * Local Models WebSocket message handlers.
  *
- * Handles: local_models_list, local_models_download, local_models_verify,
- * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
- * local_models_run_task, local_models_task_readiness, local_models_git_draft,
+ * Handles: local_models_list, local_models_download, local_models_pause,
+ * local_models_cancel, local_models_verify, local_models_remove,
+ * local_models_endpoints_detect, local_models_endpoint_models,
+ * local_models_endpoint_test, local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
  * local_models_tab_cleanup, local_models_transcribe, local_models_proxy_status,
  * local_models_proxy_block, notify_speak.
@@ -15,8 +16,8 @@
  * budget, and `maestro-cli models run` goes through the same task router (and
  * the same assignment) as an in-app caller.
  *
- * Adding and removing an endpoint, and assigning a task, do NOT come through
- * here: like SSH remotes, the CLI edits `localModelEndpoints` and
+ * Adding, editing and removing an endpoint, and assigning a task, do NOT come
+ * through here: like SSH remotes, the CLI edits `localModelEndpoints` and
  * `localModelAssignments` in the settings file through the shared helpers, and
  * the settings watcher reloads every window. Only the verbs that need the model
  * store, the network, or Settings -> Environment run in the app.
@@ -24,12 +25,15 @@
 
 import {
 	detectNewLocalModelEndpoints,
+	listLocalModelEndpointModels,
 	testLocalModelEndpoint,
 } from '../../../local-models/endpoint-service';
 import {
+	cancelLocalModel,
 	downloadLocalModel,
 	listLocalModels,
 	localModelsFootprint,
+	pauseLocalModel,
 	removeLocalModel,
 	verifyLocalModel,
 } from '../../../local-models/service';
@@ -97,6 +101,36 @@ export function handleLocalModelsDownload(
 	}));
 }
 
+/**
+ * Handle local_models_pause - abort one running download and keep its partial
+ * file (`maestro-cli models pause`). `paused` is false when nothing was running,
+ * which is an answer, not an error. Resume is `local_models_download` again.
+ */
+export function handleLocalModelsPause(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_pause_result', async () => ({
+		paused: pauseLocalModel(message.modelId),
+	}));
+}
+
+/**
+ * Handle local_models_cancel - abort one download and delete what it wrote
+ * (`maestro-cli models cancel`). `cancelled` is false when no job was running;
+ * a partial file left by an earlier run is cleared either way.
+ */
+export function handleLocalModelsCancel(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_cancel_result', async () => ({
+		cancelled: await cancelLocalModel(message.modelId),
+	}));
+}
+
 /** Handle local_models_verify - re-hash one model against the catalog. */
 export function handleLocalModelsVerify(
 	ctx: MessageHandlerContext,
@@ -131,6 +165,23 @@ export function handleLocalModelsEndpointsDetect(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_endpoints_detect_result', async () => ({
 		detected: await detectNewLocalModelEndpoints(),
+	}));
+}
+
+/**
+ * Handle local_models_endpoint_models - the models one saved endpoint serves
+ * now, named by id, id prefix, or name (`maestro-cli models endpoints models`).
+ * A server that cannot be listed is still a successful round trip: the verdict
+ * rides in `result`, with the same error kinds as the test.
+ */
+export function handleLocalModelsEndpointModels(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const ref = typeof message.endpoint === 'string' ? message.endpoint : '';
+	return respond(ctx, client, message, 'local_models_endpoint_models_result', async () => ({
+		result: await listLocalModelEndpointModels(ref),
 	}));
 }
 

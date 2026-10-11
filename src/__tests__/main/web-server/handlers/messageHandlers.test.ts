@@ -78,10 +78,14 @@ vi.mock('../../../../main/local-models/endpoint-service', () => ({
 			{ kind: 'ollama', name: 'Ollama', baseUrl: 'http://127.0.0.1:11434', models: [] },
 		]),
 	testLocalModelEndpoint: vi.fn().mockResolvedValue({ ok: true, model: 'qwen3', latencyMs: 42 }),
+	listLocalModelEndpointModels: vi
+		.fn()
+		.mockResolvedValue({ ok: true, models: [{ id: 'qwen3:4b', sizeBytes: 1024 }] }),
 }));
 
 import {
 	detectNewLocalModelEndpoints,
+	listLocalModelEndpointModels,
 	testLocalModelEndpoint,
 } from '../../../../main/local-models/endpoint-service';
 
@@ -218,11 +222,15 @@ vi.mock('../../../../main/local-models/service', () => ({
 		.fn()
 		.mockResolvedValue({ id: 'bge-small-en-v1.5', ok: true, status: 'installed' }),
 	removeLocalModel: vi.fn().mockResolvedValue(2048),
+	pauseLocalModel: vi.fn().mockReturnValue(true),
+	cancelLocalModel: vi.fn().mockResolvedValue(false),
 }));
 
 import {
+	cancelLocalModel,
 	downloadLocalModel,
 	listLocalModels,
+	pauseLocalModel,
 	removeLocalModel,
 	verifyLocalModel,
 } from '../../../../main/local-models/service';
@@ -5315,6 +5323,42 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			});
 		});
 
+		it('local_models_endpoint_models passes the reference through and returns the verdict', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_models',
+				requestId: 'm1',
+				endpoint: 'ollama',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_endpoint_models_result')
+			);
+			expect(listLocalModelEndpointModels).toHaveBeenCalledWith('ollama');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'm1',
+				result: { ok: true, models: [{ id: 'qwen3:4b', sizeBytes: 1024 }] },
+			});
+		});
+
+		it('local_models_endpoint_models carries an unreachable server as a verdict', async () => {
+			vi.mocked(listLocalModelEndpointModels).mockResolvedValueOnce({
+				ok: false,
+				error: { kind: 'network', message: 'Nothing is listening' },
+			} as never);
+			handler.handleMessage(client, {
+				type: 'local_models_endpoint_models',
+				requestId: 'm2',
+				endpoint: 'ollama',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_endpoint_models_result')
+			);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { ok: false, error: { kind: 'network' } },
+			});
+		});
+
 		it('local_models_endpoint_test reports a thrown failure as success: false', async () => {
 			vi.mocked(testLocalModelEndpoint).mockRejectedValueOnce(new Error('store gone'));
 			handler.handleMessage(client, {
@@ -5638,6 +5682,41 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				requestId: 'dl1',
 				result: { status: 'complete' },
 			});
+		});
+
+		it('local_models_pause passes the model id through and says whether it paused', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_pause',
+				requestId: 'p1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_pause_result'));
+			expect(pauseLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 'p1', paused: true });
+		});
+
+		it('local_models_pause reports an unknown model as success: false', async () => {
+			vi.mocked(pauseLocalModel).mockImplementationOnce(() => {
+				throw new Error('UnknownLocalModel: nope');
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_pause',
+				requestId: 'p2',
+				modelId: 'nope',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_pause_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'UnknownLocalModel: nope' });
+		});
+
+		it('local_models_cancel passes the model id through and says whether a job ran', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_cancel',
+				requestId: 'c1',
+				modelId: 'bge-small-en-v1.5',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_cancel_result'));
+			expect(cancelLocalModel).toHaveBeenCalledWith('bge-small-en-v1.5');
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 'c1', cancelled: false });
 		});
 
 		it('local_models_verify passes the model id through and returns the verdict', async () => {

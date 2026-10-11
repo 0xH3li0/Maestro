@@ -279,9 +279,12 @@ of taking a second round trip or trusting a value the caller guessed.
 | Auto Run panel: Change folder                        | `auto-run-folder <path> -a <agent>`                                                               |
 | Playbook Exchange: browse, README, install           | `marketplace list`, `marketplace show <id>`, `marketplace import`                                 |
 | Local Models catalog: list, Download, Verify, Remove | `models list [--kind]`, `models install`, `models verify`, `models remove [--force] <model-id>`   |
+| Local Models download: Pause, Resume, Cancel         | `models pause <model-id>`, `models install <model-id>` (resumes), `models cancel <model-id>`      |
 | Local Models Assignments picker                      | `models assign <task-id> <off\|utility-agent\|local:<id>\|endpoint:<ep>:<model>>`, `models tasks` |
 | A Cappella Conductor Brain picker: an endpoint model | `models assign voice-routing endpoint:<ep>:<model>` (`off` returns to the voice-specific Brain)   |
 | Local Models endpoints: add, remove, test, detect    | `models endpoints list\|add\|remove\|test\|detect`                                                |
+| Local Models endpoint: Edit form, enabled switch     | `models endpoints update <ep> [--name --url --kind --api-key-env] [--enable \| --disable]`        |
+| Local Models endpoint: list the models it serves     | `models endpoints models <endpoint>` (same `listLocalModelEndpointModels()` as the row's button)  |
 | Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                   |
 | Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                         |
 | Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)           |
@@ -370,14 +373,16 @@ a design constraint; they are simply not built yet.
     `acappella:wake-test`). The feature is an Encore Feature still being made
     to work end to end; a `maestro-cli voice` group belongs with it once the
     session surface is stable, and reads back through `acappella:get-state`.
-15. **Local Models: Pause / Cancel a running download, and Edit / enable an
-    endpoint.** `models install` blocks until the download settles and Ctrl+C
-    only ends the wait; the download keeps running in the app, where its row's
-    Pause and Cancel live (`localModels:pause` / `localModels:cancel`). An
-    endpoint's Edit form and enabled toggle (`updateLocalModelEndpoint()`) have
-    no `models endpoints update` yet; `remove` then `add` approximates it but
-    changes the id. Both are small: the service functions and shared helpers
-    exist, only the verbs do not.
+15. **Local Models: install a native runtime, and Remove All.** The llama.cpp
+    and ONNX Runtime downloads (`localModels:runtimes:install`) are offered only
+    in Voice Setup and A Cappella's Models page; Settings -> Local Models has no
+    control for them either, so a task whose runtime is missing reports
+    `runtime-unavailable` in `models status` with no verb to fix it. The control
+    and a `models runtimes list|install` pair belong in one change, over
+    `listLocalRuntimes()` / `installLocalRuntime()`. "Remove All" on the same
+    voice page (`localModels:remove-all`) is left out on purpose: unfiltered, it
+    deletes every consumer's models, and `models remove <model-id>` reaches each
+    one by name.
 
 ### Audit backlog (2026-09-27)
 

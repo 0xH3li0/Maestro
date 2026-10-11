@@ -356,19 +356,22 @@ maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
 - The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
 - `--gateway-url <url|none>` rides the `update_session_config` message as `gatewayUrl` (a normalized URL, or `null` to clear). Both ends validate with `parseGatewayUrlEdit()` (`src/shared/local-models/gateway.ts`): the CLI before it contacts the app, when it can read the agent's provider, and the renderer before it writes, so a provider that cannot use a gateway or a value that is not a URL is refused instead of being stored for the launch to trip over. The handler's `setMany` flush matters here: the desktop spawn reads the gateway from the main-process sessions store. Read it back with `show agent <id> --json` (`gatewayUrl`).
 
-### `models list|install|remove|verify`
+### `models list|install|pause|cancel|remove|verify`
 
 The local model catalog and what is on disk. Implemented in `src/cli/commands/models-manage.ts`.
 
 ```bash
 maestro-cli models list [-k <text-gen|embedding|classifier|stt|tts|wake-word>] [--json]
 maestro-cli models install <model-id> [--json]
+maestro-cli models pause <model-id> [--json]
+maestro-cli models cancel <model-id> [--json]
 maestro-cli models remove <model-id> [--force] [--json]
 maestro-cli models verify <model-id> [--json]
 ```
 
-- All four run in the desktop over the WS bridge (`local_models_list`, `local_models_download`, `local_models_remove`, `local_models_verify`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `src/main/local-models/service.ts` functions as the `localModels:*` IPC channels the Settings -> Local Models rows call. A download started from the CLI is the same job the app shows progress for; a second `install` of a running download joins it.
+- All six run in the desktop over the WS bridge (`local_models_list`, `local_models_download`, `local_models_pause`, `local_models_cancel`, `local_models_remove`, `local_models_verify`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `src/main/local-models/service.ts` functions as the `localModels:*` IPC channels the Settings -> Local Models rows call. A download started from the CLI is the same job the app shows progress for; a second `install` of a running download joins it.
 - Ids are checked against the shared catalog before the bridge opens. `install` refuses a `pending` model (one this build cannot run), matching the Settings row, which offers no Download button for it. It waits up to two hours for the job to settle; if the wait ends, the download keeps running in the app.
+- `pause` and `cancel` are the row's Pause and Cancel buttons (`pauseLocalModel()` / `cancelLocalModel()`). `pause` keeps the partial file; there is no `resume` verb because `install` is the same call the Resume button makes. `cancel` deletes everything the job wrote, the partial file of a paused download included, and leaves an installed model alone (that is `remove`). Both answer `paused: false` / `cancelled: false` with exit code 0 when nothing was downloading: that is an answer, not a failure.
 - `remove` refuses a model whose EFFECTIVE assignment (`tasksUsingLocalModel()`) is a task, naming the tasks, until `--force`; Settings shows the same warning inline. Voice usage is reported but does not block, as in Settings.
 - `verify` never deletes or re-downloads; a mismatch exits non-zero and prints the file and both hashes.
 
@@ -464,21 +467,25 @@ maestro-cli notify speak "<text>" [--json]
 - Text is limited to 600 characters (refused as a usage error before the app is called) and is flattened to one speakable line: markup and URLs are removed.
 - The mode itself is a setting, not a verb: `maestro-cli settings set spokenNotices <off|unfocused|always>`.
 
-### `models endpoints list|add|remove|test|detect`
+### `models endpoints list|add|update|remove|models|test|detect`
 
 Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.
 
 ```bash
 maestro-cli models endpoints list [--json]
 maestro-cli models endpoints add --kind <ollama|lmstudio|openai-compatible> [--url <url>] [--name <name>] [--api-key-env <VAR>] [--disabled] [--json]
+maestro-cli models endpoints update <id|id-prefix|name> [--name <name>] [--url <url>] [--kind <kind>] [--api-key-env <VAR> | --clear-api-key-env] [--enable | --disable] [--json]
 maestro-cli models endpoints remove <id|id-prefix|name> [--json]
+maestro-cli models endpoints models <id|id-prefix|name> [--json]
 maestro-cli models endpoints test <id|id-prefix|name> [-m <model>] [--json]
 maestro-cli models endpoints detect [--json]
 ```
 
-- `list` / `add` / `remove` edit the `localModelEndpoints` setting on disk (`readLocalModelEndpoints()` / `writeLocalModelEndpoints()`), like the SSH remote verbs, so they work with the app closed; the settings watcher reloads every window. The list changes go through the shared `addLocalModelEndpoint()` / `removeLocalModelEndpoint()` / `findLocalModelEndpoint()` in `src/shared/local-models/endpoints.ts`, so the CLI cannot save a record the app would drop (bad URL, credentials in the URL, taken id, or a server already configured under another loopback spelling).
+- `list` / `add` / `update` / `remove` edit the `localModelEndpoints` setting on disk (`readLocalModelEndpoints()` / `writeLocalModelEndpoints()`), like the SSH remote verbs, so they work with the app closed; the settings watcher reloads every window. The list changes go through the shared `addLocalModelEndpoint()` / `updateLocalModelEndpoint()` / `removeLocalModelEndpoint()` / `findLocalModelEndpoint()` in `src/shared/local-models/endpoints.ts`, so the CLI cannot save a record the app would drop (bad URL, credentials in the URL, taken id, or a server already configured under another loopback spelling).
 - `--url` defaults to the standard local port for `ollama` and `lmstudio`; `openai-compatible` requires it. `--api-key-env` stores the NAME of a Settings -> Environment variable, never the key. `list` and `add` flag a name that is not set there yet.
-- `test` and `detect` need the network and Settings -> Environment, so they run in the desktop over the WS bridge (`local_models_endpoint_test`, `local_models_endpoints_detect`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `endpoint-service.ts` functions as the `localModels:endpoints:*` IPC channels. A failed test exits non-zero and reports the failure `kind` (`missing-key`, `auth`, `network`, `timeout`, ...) in `--json`. `detect` saves nothing; it prints the `add` command for each server it finds.
+- `update` is the row's Edit form and its enabled switch in one verb. Only the fields a flag names change; the id and the list position are kept, so an assignment that names the endpoint still resolves. A call with no field flag, with both `--enable` and `--disable`, or with both `--api-key-env` and `--clear-api-key-env` is a usage error. `--disable` is not checked against assignments (neither is the switch in Settings): a task assigned to a disabled endpoint reports `endpoint-disabled` in `models status`.
+- `models` prints the ids the server lists now, one per line, with the on-disk size when the server reports one (Ollama does). It is the row's "List the models this server serves now" button and the source of the `<model>` half of `models assign <task> endpoint:<endpoint>:<model>`. A server that cannot be listed exits non-zero with the same failure kinds as `test`.
+- `models`, `test` and `detect` need the network and Settings -> Environment, so they run in the desktop over the WS bridge (`local_models_endpoint_models`, `local_models_endpoint_test`, `local_models_endpoints_detect`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `endpoint-service.ts` functions as the `localModels:endpoints:*` IPC channels. A failed test exits non-zero and reports the failure `kind` (`missing-key`, `auth`, `network`, `timeout`, ...) in `--json`. `detect` saves nothing; it prints the `add` command for each server it finds.
 
 ### `list ssh-remotes`
 

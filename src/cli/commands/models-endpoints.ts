@@ -1,17 +1,18 @@
-// `maestro-cli models endpoints list|add|remove|test|detect` - the model
-// servers the user runs (Ollama, LM Studio, any OpenAI-compatible base URL).
+// `maestro-cli models endpoints list|add|update|remove|models|test|detect` - the
+// model servers the user runs (Ollama, LM Studio, any OpenAI-compatible base URL).
 //
 // Two halves, split by what each verb needs:
 //
-// - list / add / remove edit the `localModelEndpoints` setting in the settings
-//   file, exactly as the SSH remote verbs do, so they work with Maestro closed.
-//   The settings watcher reloads every open window. The list is changed through
-//   the SAME shared helpers (`addLocalModelEndpoint`, `removeLocalModelEndpoint`)
-//   the app validates with, so the CLI cannot save a record the app would drop.
-// - test / detect need the network and Settings -> Environment (where an API
-//   key is looked up by name), so they run in the desktop over the WS bridge,
-//   through the same endpoint-service functions as the `localModels:endpoints:*`
-//   IPC channels.
+// - list / add / update / remove edit the `localModelEndpoints` setting in the
+//   settings file, exactly as the SSH remote verbs do, so they work with Maestro
+//   closed. The settings watcher reloads every open window. The list is changed
+//   through the SAME shared helpers (`addLocalModelEndpoint`,
+//   `updateLocalModelEndpoint`, `removeLocalModelEndpoint`) the app validates
+//   with, so the CLI cannot save a record the app would drop.
+// - models / test / detect need the network and Settings -> Environment (where
+//   an API key is looked up by name), so they run in the desktop over the WS
+//   bridge, through the same endpoint-service functions as the
+//   `localModels:endpoints:*` IPC channels.
 
 import * as crypto from 'crypto';
 import {
@@ -30,14 +31,21 @@ import {
 import {
 	addLocalModelEndpoint,
 	DEFAULT_ENDPOINT_BASE_URLS,
+	findLocalModelEndpoint,
 	isLocalModelEndpointKind,
 	LOCAL_MODEL_ENDPOINT_KIND_LABELS,
 	LOCAL_MODEL_ENDPOINT_KINDS,
 	removeLocalModelEndpoint,
 	resolveEndpointApiKey,
+	updateLocalModelEndpoint,
 	type LocalModelEndpoint,
 } from '../../shared/local-models/endpoints';
-import type { DetectedEndpoint, EndpointTestResult } from '../../main/local-models/endpoint-client';
+import { formatSize } from '../../shared/formatters';
+import type {
+	DetectedEndpoint,
+	EndpointModelsResult,
+	EndpointTestResult,
+} from '../../main/local-models/endpoint-client';
 
 /**
  * The app's test budget is 30s (a cold model has to load before it answers one
@@ -56,6 +64,16 @@ interface AddOptions extends JsonOption {
 	name?: string;
 	apiKeyEnv?: string;
 	disabled?: boolean;
+}
+
+interface UpdateOptions extends JsonOption {
+	kind?: string;
+	url?: string;
+	name?: string;
+	apiKeyEnv?: string;
+	clearApiKeyEnv?: boolean;
+	enable?: boolean;
+	disable?: boolean;
 }
 
 interface TestOptions extends JsonOption {
@@ -167,6 +185,82 @@ export function modelsEndpointsAdd(options: AddOptions): void {
 	}
 }
 
+/**
+ * Edit one saved endpoint: the Edit form and the enabled switch of its Settings
+ * row in one verb. Only the fields a flag names change; the id and the place in
+ * the list are kept, so assignments that name the endpoint still resolve.
+ */
+export function modelsEndpointsUpdate(ref: string, options: UpdateOptions): void {
+	// A declaration, not an arrow: only a declared `never` return narrows below.
+	function usage(message: string): never {
+		return fail(message, options.json, ExitCode.InvalidUsage);
+	}
+	if (options.enable && options.disable) usage('Pass --enable or --disable, not both.');
+	if (options.apiKeyEnv !== undefined && options.clearApiKeyEnv) {
+		usage('Pass --api-key-env or --clear-api-key-env, not both.');
+	}
+	const kind = options.kind?.trim();
+	if (kind !== undefined && !isLocalModelEndpointKind(kind)) {
+		usage(`--kind must be one of: ${LOCAL_MODEL_ENDPOINT_KINDS.join(', ')}`);
+	}
+	const changesSomething =
+		kind !== undefined ||
+		options.url !== undefined ||
+		options.name !== undefined ||
+		options.apiKeyEnv !== undefined ||
+		options.clearApiKeyEnv ||
+		options.enable ||
+		options.disable;
+	if (!changesSomething) {
+		usage(
+			'Nothing to change. Pass --name, --url, --kind, --api-key-env, --clear-api-key-env, --enable, or --disable.'
+		);
+	}
+
+	const endpoints = readLocalModelEndpoints();
+	const found = findLocalModelEndpoint(endpoints, ref);
+	if (!found.ok) fail(found.message, options.json);
+	const current = found.endpoint;
+
+	const apiKeyEnvVar = options.clearApiKeyEnv
+		? undefined
+		: (options.apiKeyEnv ?? current.apiKeyEnvVar);
+	const change = updateLocalModelEndpoint(endpoints, current.id, {
+		name: options.name ?? current.name,
+		kind: kind ?? current.kind,
+		baseUrl: options.url ?? current.baseUrl,
+		...(apiKeyEnvVar !== undefined ? { apiKeyEnvVar } : {}),
+		enabled: options.enable ? true : options.disable ? false : current.enabled,
+	});
+	if (!change.ok) usage(change.message);
+
+	writeLocalModelEndpoints(change.endpoints);
+	const endpoint = change.endpoint;
+	const resolved = apiKeyResolved(endpoint, shellEnvVars());
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				endpoint,
+				...(resolved === undefined ? {} : { apiKeyResolved: resolved }),
+			})
+		);
+		return;
+	}
+	console.log(formatSuccess(`Updated endpoint "${endpoint.name}" (${endpoint.id})`));
+	console.log(`  Kind: ${LOCAL_MODEL_ENDPOINT_KIND_LABELS[endpoint.kind]}`);
+	console.log(`  URL:  ${endpoint.baseUrl}`);
+	console.log(`  ${endpoint.enabled ? 'Enabled' : 'Disabled'}`);
+	if (resolved === false) {
+		console.log(
+			formatWarning(
+				`$${endpoint.apiKeyEnvVar} is not set in Settings -> Environment yet. Requests will be refused until it is.`
+			)
+		);
+	}
+}
+
 export function modelsEndpointsRemove(ref: string, options: JsonOption): void {
 	const change = removeLocalModelEndpoint(readLocalModelEndpoints(), ref);
 	if (!change.ok) fail(change.message, options.json);
@@ -175,6 +269,58 @@ export function modelsEndpointsRemove(ref: string, options: JsonOption): void {
 	const { id, name } = change.endpoint;
 	if (options.json) console.log(JSON.stringify({ success: true, id, name }));
 	else console.log(formatSuccess(`Removed endpoint "${name}" (${id})`));
+}
+
+/**
+ * The models one saved endpoint serves right now: the row's "List the models
+ * this server serves now" button, and where the `<model>` half of
+ * `models assign <task> endpoint:<endpoint>:<model>` comes from.
+ */
+export async function modelsEndpointsModels(ref: string, options: JsonOption): Promise<void> {
+	let reply: { success: boolean; result?: EndpointModelsResult; error?: string };
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand(
+				{ type: 'local_models_endpoint_models', endpoint: ref },
+				'local_models_endpoint_models_result'
+			)
+		);
+	} catch (error) {
+		fail(
+			error instanceof Error ? error.message : String(error),
+			options.json,
+			exitCodeForError(error)
+		);
+	}
+
+	if (!reply.success || !reply.result) {
+		fail(reply.error || 'Could not list the endpoint models', options.json);
+	}
+	const result = reply.result;
+
+	if (!result.ok) {
+		// Same failure kinds as `test`, so a script branches on them the same way.
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: result.error }));
+		} else {
+			console.error(`Error: ${result.error.message} [${result.error.kind}]`);
+		}
+		exitWith(ExitCode.GeneralError);
+	}
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, models: result.models }));
+		return;
+	}
+	if (result.models.length === 0) {
+		console.log('The server answered and lists no models.');
+		return;
+	}
+	for (const model of result.models) {
+		console.log(
+			model.sizeBytes === undefined ? model.id : `${model.id}  ${formatSize(model.sizeBytes)}`
+		);
+	}
 }
 
 export async function modelsEndpointsTest(ref: string, options: TestOptions): Promise<void> {

@@ -109,11 +109,20 @@ import {
 	modelsEndpointsAdd,
 	modelsEndpointsDetect,
 	modelsEndpointsList,
+	modelsEndpointsModels,
 	modelsEndpointsRemove,
 	modelsEndpointsTest,
+	modelsEndpointsUpdate,
 } from './commands/models-endpoints';
 import { modelsAssign, modelsTasks } from './commands/models-assign';
-import { modelsInstall, modelsList, modelsRemove, modelsVerify } from './commands/models-manage';
+import {
+	modelsCancel,
+	modelsInstall,
+	modelsList,
+	modelsPause,
+	modelsRemove,
+	modelsVerify,
+} from './commands/models-manage';
 import { modelsRun } from './commands/models-run';
 import { modelsIndex } from './commands/models-index';
 import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
@@ -2286,10 +2295,26 @@ models
 models
 	.command('install <model-id>')
 	.description(
-		'Download and verify a local model; waits until it finishes (requires the desktop app)'
+		'Download and verify a local model, resuming a paused download; waits until it finishes (requires the desktop app)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsInstall);
+
+models
+	.command('pause <model-id>')
+	.description(
+		'Pause a running download and keep what arrived; models install resumes it (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsPause);
+
+models
+	.command('cancel <model-id>')
+	.description(
+		'Cancel a download and delete its partial files; an installed model is not touched (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsCancel);
 
 models
 	.command('remove <model-id>')
@@ -2407,10 +2432,34 @@ modelEndpoints
 	.action(modelsEndpointsAdd);
 
 modelEndpoints
+	.command('update <endpoint>')
+	.description('Edit an endpoint, named by id, id prefix, or name; only the fields you pass change')
+	.option('--name <name>', 'Display name')
+	.option('--url <url>', 'Base URL (http/https, no credentials)')
+	.option('--kind <kind>', 'ollama | lmstudio | openai-compatible')
+	.option(
+		'--api-key-env <name>',
+		'NAME of the Settings -> Environment variable holding the API key (the key itself is never stored)'
+	)
+	.option('--clear-api-key-env', 'Stop sending an API key')
+	.option('--enable', 'Switch the endpoint on')
+	.option('--disable', 'Switch the endpoint off; tasks assigned to it become unavailable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsUpdate);
+
+modelEndpoints
 	.command('remove <endpoint>')
 	.description('Remove an endpoint, named by id, id prefix, or name')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsEndpointsRemove);
+
+modelEndpoints
+	.command('models <endpoint>')
+	.description(
+		'List the models an endpoint serves now, for models assign endpoint:<endpoint>:<model> (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsEndpointsModels);
 
 modelEndpoints
 	.command('test <endpoint>')

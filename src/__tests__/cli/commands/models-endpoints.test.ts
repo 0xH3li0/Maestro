@@ -1,8 +1,9 @@
 /**
  * @file models-endpoints.test.ts
- * @description Tests for `maestro-cli models endpoints`: list/add/remove edit the
- * `localModelEndpoints` setting through the shared list helpers, and test/detect
- * cross the WS bridge with the message shapes the desktop handlers expect.
+ * @description Tests for `maestro-cli models endpoints`: list/add/update/remove
+ * edit the `localModelEndpoints` setting through the shared list helpers, and
+ * models/test/detect cross the WS bridge with the message shapes the desktop
+ * handlers expect.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -26,8 +27,10 @@ import {
 	modelsEndpointsAdd,
 	modelsEndpointsDetect,
 	modelsEndpointsList,
+	modelsEndpointsModels,
 	modelsEndpointsRemove,
 	modelsEndpointsTest,
+	modelsEndpointsUpdate,
 } from '../../../cli/commands/models-endpoints';
 import {
 	readLocalModelEndpoints,
@@ -175,6 +178,94 @@ describe('models endpoints command', () => {
 		});
 	});
 
+	describe('update', () => {
+		it('changes only the named fields and keeps the id and the place in the list', () => {
+			vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama, gateway]);
+
+			modelsEndpointsUpdate('ollama', { name: 'Desk Ollama', json: true });
+
+			const saved = { ...ollama, name: 'Desk Ollama' };
+			expect(writeLocalModelEndpoints).toHaveBeenCalledWith([saved, gateway]);
+			expect(lastJson(logSpy)).toEqual({ success: true, endpoint: saved });
+		});
+
+		it('switches an endpoint off and back on, leaving every other field', () => {
+			vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama, gateway]);
+
+			modelsEndpointsUpdate('bbbb', { disable: true, json: true });
+			expect(writeLocalModelEndpoints).toHaveBeenLastCalledWith([
+				ollama,
+				{ ...gateway, enabled: false },
+			]);
+
+			vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama, { ...gateway, enabled: false }]);
+			modelsEndpointsUpdate('bbbb', { enable: true, json: true });
+			expect(writeLocalModelEndpoints).toHaveBeenLastCalledWith([ollama, gateway]);
+		});
+
+		it('sets, replaces and clears the key variable name', () => {
+			vi.mocked(readLocalModelEndpoints).mockReturnValue([gateway]);
+			vi.mocked(readSettingValue).mockReturnValue({ OTHER_KEY: 'sk-2' });
+
+			modelsEndpointsUpdate('gateway', { apiKeyEnv: 'OTHER_KEY', json: true });
+			expect(writeLocalModelEndpoints).toHaveBeenLastCalledWith([
+				{ ...gateway, apiKeyEnvVar: 'OTHER_KEY' },
+			]);
+			expect(lastJson(logSpy).apiKeyResolved).toBe(true);
+
+			modelsEndpointsUpdate('gateway', { clearApiKeyEnv: true, json: true });
+			const { apiKeyEnvVar: _dropped, ...keyless } = gateway;
+			expect(writeLocalModelEndpoints).toHaveBeenLastCalledWith([keyless]);
+			expect(lastJson(logSpy)).toEqual({ success: true, endpoint: keyless });
+		});
+
+		it('normalizes a new URL and refuses one another endpoint already holds', () => {
+			vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama, gateway]);
+
+			modelsEndpointsUpdate('gateway', { url: 'https://llm2.example.com/', json: true });
+			expect(writeLocalModelEndpoints).toHaveBeenLastCalledWith([
+				ollama,
+				{ ...gateway, baseUrl: 'https://llm2.example.com' },
+			]);
+
+			vi.mocked(writeLocalModelEndpoints).mockClear();
+			expect(() =>
+				modelsEndpointsUpdate('gateway', { url: 'http://localhost:11434', json: true })
+			).toThrow('__exit__');
+			expect(lastJson(logSpy).error).toContain('already configured as "Ollama"');
+			expect(writeLocalModelEndpoints).not.toHaveBeenCalled();
+		});
+
+		it('refuses a call that changes nothing, contradicts itself, or names a bad kind', () => {
+			expect(() => modelsEndpointsUpdate('ollama', { json: true })).toThrow('__exit__');
+			expect(lastJson(logSpy).error).toContain('Nothing to change');
+
+			expect(() =>
+				modelsEndpointsUpdate('ollama', { enable: true, disable: true, json: true })
+			).toThrow('__exit__');
+			expect(lastJson(logSpy).error).toContain('not both');
+
+			expect(() =>
+				modelsEndpointsUpdate('ollama', { apiKeyEnv: 'K', clearApiKeyEnv: true, json: true })
+			).toThrow('__exit__');
+			expect(lastJson(logSpy).error).toContain('not both');
+
+			expect(() => modelsEndpointsUpdate('ollama', { kind: 'vllm', json: true })).toThrow(
+				'__exit__'
+			);
+			expect(exitSpy).toHaveBeenLastCalledWith(ExitCode.InvalidUsage);
+			expect(writeLocalModelEndpoints).not.toHaveBeenCalled();
+		});
+
+		it('exits non-zero for an unknown endpoint without writing', () => {
+			expect(() => modelsEndpointsUpdate('nope', { disable: true, json: true })).toThrow(
+				'__exit__'
+			);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+			expect(writeLocalModelEndpoints).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('remove', () => {
 		it('removes by name and writes the rest back', () => {
 			vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama, gateway]);
@@ -189,6 +280,47 @@ describe('models endpoints command', () => {
 			expect(() => modelsEndpointsRemove('nope', { json: true })).toThrow('__exit__');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 			expect(writeLocalModelEndpoints).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('models', () => {
+		it('sends the reference and prints the ids the server lists', async () => {
+			const models = [{ id: 'qwen3:4b', sizeBytes: 2_500_000_000 }, { id: 'nomic-embed-text' }];
+			const cap = mockSend({ success: true, result: { ok: true, models } });
+
+			await modelsEndpointsModels('ollama', { json: true });
+
+			expect(cap.payload).toEqual({ type: 'local_models_endpoint_models', endpoint: 'ollama' });
+			expect(cap.responseType).toBe('local_models_endpoint_models_result');
+			expect(lastJson(logSpy)).toEqual({ success: true, models });
+		});
+
+		it('prints one model per line, with the size when the server reports it', async () => {
+			mockSend({
+				success: true,
+				result: { ok: true, models: [{ id: 'qwen3:4b', sizeBytes: 1024 }, { id: 'bge' }] },
+			});
+
+			await modelsEndpointsModels('ollama', {});
+
+			const lines = logSpy.mock.calls.map((call) => call[0] as string);
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toMatch(/^qwen3:4b {2}\S/);
+			expect(lines[1]).toBe('bge');
+		});
+
+		it('passes the failure kind through and exits non-zero', async () => {
+			mockSend({
+				success: true,
+				result: { ok: false, error: { kind: 'network', message: 'Nothing is listening' } },
+			});
+
+			await expect(modelsEndpointsModels('ollama', { json: true })).rejects.toThrow('__exit__');
+			expect(lastJson(logSpy)).toEqual({
+				success: false,
+				error: { kind: 'network', message: 'Nothing is listening' },
+			});
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 		});
 	});
 

@@ -263,17 +263,21 @@ The "Hey Jarvis" wake phrase is CC-BY-NC-SA-4.0, which does not allow commercial
 
 ## From the command line
 
-Everything in the tab has a `maestro-cli models` verb, so an agent can set this up for you. Verbs that touch downloads or servers need the desktop app running; `assign` and `endpoints add` / `remove` work with it closed.
+Everything in the tab has a `maestro-cli models` verb, so an agent can set this up for you. Verbs that touch downloads or servers need the desktop app running; `assign` and `endpoints add` / `update` / `remove` work with it closed.
 
 ```bash
 maestro-cli models list [--kind <kind>]          # catalog by kind, with status and what uses each model
-maestro-cli models install <model-id>            # download and verify; waits until done
+maestro-cli models install <model-id>            # download and verify; waits until done; resumes a paused download
+maestro-cli models pause <model-id>              # stop a running download, keep what arrived
+maestro-cli models cancel <model-id>             # stop a download and delete its partial files
 maestro-cli models verify <model-id>             # re-hash; never deletes or re-downloads
 maestro-cli models remove <model-id> [--force]   # refuses a model a task uses, unless --force
 
 maestro-cli models endpoints list
 maestro-cli models endpoints detect              # probe for Ollama and LM Studio; adds nothing
 maestro-cli models endpoints add --kind ollama [--url <url>] [--name <name>] [--api-key-env <VAR>]
+maestro-cli models endpoints update <endpoint> [--name <name>] [--url <url>] [--kind <kind>] [--api-key-env <VAR> | --clear-api-key-env] [--enable | --disable]
+maestro-cli models endpoints models <endpoint>   # the models the server lists now, for `assign endpoint:...`
 maestro-cli models endpoints test <endpoint> [--model <model>]
 maestro-cli models endpoints remove <endpoint>
 

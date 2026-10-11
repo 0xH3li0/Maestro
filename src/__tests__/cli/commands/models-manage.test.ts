@@ -1,6 +1,6 @@
 /**
  * @file models-manage.test.ts
- * @description Tests for `maestro-cli models list|install|remove|verify`: ids
+ * @description Tests for `maestro-cli models list|install|pause|cancel|remove|verify`: ids
  * are checked against the catalog before the bridge is opened, every verb
  * crosses the WS bridge in the shape the desktop handler expects, a pending
  * model is never offered for download, and removing a model a task runs on is
@@ -19,8 +19,10 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 }));
 
 import {
+	modelsCancel,
 	modelsInstall,
 	modelsList,
+	modelsPause,
 	modelsRemove,
 	modelsVerify,
 } from '../../../cli/commands/models-manage';
@@ -70,7 +72,7 @@ function listing(id: string, status: 'installed' | 'not-installed' | 'corrupt'):
 
 const PENDING = LOCAL_MODEL_CATALOG.find((entry) => entry.pending);
 
-describe('models list|install|remove|verify commands', () => {
+describe('models list|install|pause|cancel|remove|verify commands', () => {
 	let logSpy: MockInstance;
 	let errorSpy: MockInstance;
 	let exitSpy: MockInstance;
@@ -191,6 +193,72 @@ describe('models list|install|remove|verify commands', () => {
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 			expect(errorSpy.mock.calls[0][0]).toMatch(/Unknown model "gpt-17"/);
 			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('pause', () => {
+		it('pauses through the bridge and names the command that resumes', async () => {
+			const captured = mockSend({ success: true, paused: true });
+
+			await modelsPause(BGE_SMALL_EN_ID, {});
+
+			expect(captured.payload).toEqual({ type: 'local_models_pause', modelId: BGE_SMALL_EN_ID });
+			expect(captured.responseType).toBe('local_models_pause_result');
+			const output = logSpy.mock.calls.map((call) => call[0] as string).join('\n');
+			expect(output).toMatch(/Paused/);
+			expect(output).toContain(`maestro-cli models install ${BGE_SMALL_EN_ID}`);
+		});
+
+		it('reports a model that was not downloading as an answer, not a failure', async () => {
+			mockSend({ success: true, paused: false });
+
+			await modelsPause(BGE_SMALL_EN_ID, { json: true });
+
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				success: true,
+				modelId: BGE_SMALL_EN_ID,
+				paused: false,
+			});
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown model id without opening the bridge', async () => {
+			await expect(modelsPause('nope', {})).rejects.toThrow('__exit__');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('cancel', () => {
+		it('cancels through the bridge and reports whether a download was running', async () => {
+			const captured = mockSend({ success: true, cancelled: true });
+
+			await modelsCancel(BGE_SMALL_EN_ID, { json: true });
+
+			expect(captured.payload).toEqual({ type: 'local_models_cancel', modelId: BGE_SMALL_EN_ID });
+			expect(captured.responseType).toBe('local_models_cancel_result');
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				success: true,
+				modelId: BGE_SMALL_EN_ID,
+				cancelled: true,
+			});
+		});
+
+		it('says so when nothing was downloading', async () => {
+			mockSend({ success: true, cancelled: false });
+
+			await modelsCancel(BGE_SMALL_EN_ID, {});
+
+			expect(logSpy.mock.calls[0][0] as string).toMatch(/was not downloading/);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('reports a refused request from the app', async () => {
+			mockSend({ success: false, error: 'UnknownLocalModel: nope' });
+
+			await expect(modelsCancel(BGE_SMALL_EN_ID, {})).rejects.toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0] as string).toContain('UnknownLocalModel');
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 		});
 	});
 

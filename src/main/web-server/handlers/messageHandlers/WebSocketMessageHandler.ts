@@ -88,12 +88,15 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import {
+	handleLocalModelsCancel,
 	handleLocalModelsDownload,
+	handleLocalModelsEndpointModels,
 	handleLocalModelsEndpointsDetect,
 	handleLocalModelsEndpointTest,
 	handleLocalModelsGitDraft,
 	handleLocalModelsTranscribe,
 	handleLocalModelsList,
+	handleLocalModelsPause,
 	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
@@ -715,6 +718,14 @@ export class WebSocketMessageHandler {
 				void handleLocalModelsDownload(this.ctx, client, message);
 				break;
 
+			case 'local_models_pause':
+				void handleLocalModelsPause(this.ctx, client, message);
+				break;
+
+			case 'local_models_cancel':
+				void handleLocalModelsCancel(this.ctx, client, message);
+				break;
+
 			case 'local_models_verify':
 				void handleLocalModelsVerify(this.ctx, client, message);
 				break;
@@ -725,6 +736,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_endpoints_detect':
 				void handleLocalModelsEndpointsDetect(this.ctx, client, message);
+				break;
+
+			case 'local_models_endpoint_models':
+				void handleLocalModelsEndpointModels(this.ctx, client, message);
 				break;
 
 			case 'local_models_endpoint_test':
