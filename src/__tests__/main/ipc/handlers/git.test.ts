@@ -6034,7 +6034,7 @@ branch refs/heads/bugfix-123
 
 			expect(mockFs.access).toHaveBeenCalledWith('/parent/worktrees');
 			expect(mockChokidar.watch).toHaveBeenCalledWith('/parent/worktrees', {
-				ignored: [/(^|[/\\])\../, expect.any(RegExp)],
+				ignored: [expect.any(Function), expect.any(RegExp)],
 				persistent: true,
 				ignoreInitial: true,
 				depth: 1,
