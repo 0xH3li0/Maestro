@@ -185,74 +185,79 @@ describe('PluginSandboxHost per-plugin observability', () => {
 		}
 	});
 
-	it('rejects duplicate close waiters without blocking cancellation of the other owned job', async () => {
-		const a = Promise.withResolvers<void>();
-		const b = Promise.withResolvers<void>();
-		const close = Object.assign(
-			vi.fn((_pluginId: string, params: unknown) =>
-				(params as { jobId: string }).jobId === 'a' ? a.promise : b.promise
-			),
-			{ ownsReleaseResource: () => true }
-		);
-		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
-		bounded.start('bounded', dir, 'entry.js');
-		const dispatch = bounded as unknown as HostInternals;
-		const running = (
-			bounded as unknown as {
-				running: Map<
-					string,
-					{ inFlight: number; windowCount: number; mediaClosingJobs: Set<string> }
-				>;
-			}
-		).running.get('bounded')!;
-		running.inFlight = 32;
-		running.windowCount = 201;
-		const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
-		try {
-			const first = dispatch.handleChildMessage('bounded', proc, {
-				id: 1,
-				method: 'media.close',
-				params: { jobId: 'a' },
-			});
-			for (let id = 2; id <= 202; id++) {
+	it.each(['media.close', 'services.cancel'] as const)(
+		'rejects duplicate %s waiters without blocking release of the other owned resource',
+		async (method) => {
+			const resourceKey = method === 'media.close' ? 'jobId' : 'callId';
+			const busyCode = method === 'media.close' ? 'MediaBusy' : 'ServiceBusy';
+			const a = Promise.withResolvers<void>();
+			const b = Promise.withResolvers<void>();
+			const close = Object.assign(
+				vi.fn((_pluginId: string, params: unknown) =>
+					(params as Record<string, string>)[resourceKey] === 'a' ? a.promise : b.promise
+				),
+				{ ownsReleaseResource: () => true }
+			);
+			const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { [method]: close } });
+			bounded.start('bounded', dir, 'entry.js');
+			const dispatch = bounded as unknown as HostInternals;
+			const running = (
+				bounded as unknown as {
+					running: Map<
+						string,
+						{ inFlight: number; windowCount: number; mediaClosingJobs: Set<string> }
+					>;
+				}
+			).running.get('bounded')!;
+			running.inFlight = 32;
+			running.windowCount = 201;
+			const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+			try {
+				const first = dispatch.handleChildMessage('bounded', proc, {
+					id: 1,
+					method,
+					params: { [resourceKey]: 'a' },
+				});
+				for (let id = 2; id <= 202; id++) {
+					await dispatch.handleChildMessage('bounded', proc, {
+						id,
+						method,
+						params: { [resourceKey]: 'a' },
+					});
+					expect(proc.postMessage).toHaveBeenLastCalledWith({
+						id,
+						ok: false,
+						error: busyCode,
+						errorCode: busyCode,
+					});
+				}
+				expect(close).toHaveBeenCalledTimes(1);
+				expect(running.inFlight).toBe(33);
+				// Even after a duplicate flood exhausts the close-rate window, job B can abort.
+				const second = dispatch.handleChildMessage('bounded', proc, {
+					id: 203,
+					method,
+					params: { [resourceKey]: 'b' },
+				});
+				expect(close).toHaveBeenCalledTimes(2);
+				expect(running.inFlight).toBe(34);
+				a.resolve();
+				b.reject(new Error('MediaProcessFailed'));
+				await Promise.all([first, second]);
+				expect(running.inFlight).toBe(32);
+				expect(running.mediaClosingJobs.size).toBe(0);
+				// A failed cleanup does not leave a stale duplicate marker blocking a retry.
 				await dispatch.handleChildMessage('bounded', proc, {
-					id,
-					method: 'media.close',
-					params: { jobId: 'a' },
+					id: 204,
+					method,
+					params: { [resourceKey]: 'b' },
 				});
-				expect(proc.postMessage).toHaveBeenLastCalledWith({
-					id,
-					ok: false,
-					error: 'MediaBusy',
-					errorCode: 'MediaBusy',
-				});
+				expect(close).toHaveBeenCalledTimes(3);
+			} finally {
+				now.mockRestore();
 			}
-			expect(close).toHaveBeenCalledTimes(1);
-			expect(running.inFlight).toBe(33);
-			// Even after a duplicate flood exhausts the close-rate window, job B can abort.
-			const second = dispatch.handleChildMessage('bounded', proc, {
-				id: 203,
-				method: 'media.close',
-				params: { jobId: 'b' },
-			});
-			expect(close).toHaveBeenCalledTimes(2);
-			expect(running.inFlight).toBe(34);
-			a.resolve();
-			b.reject(new Error('MediaProcessFailed'));
-			await Promise.all([first, second]);
-			expect(running.inFlight).toBe(32);
-			expect(running.mediaClosingJobs.size).toBe(0);
-			// A failed cleanup does not leave a stale duplicate marker blocking a retry.
-			await dispatch.handleChildMessage('bounded', proc, {
-				id: 204,
-				method: 'media.close',
-				params: { jobId: 'b' },
-			});
-			expect(close).toHaveBeenCalledTimes(3);
-		} finally {
-			now.mockRestore();
 		}
-	});
+	);
 
 	it('lists a started plugin with zeroed counters', () => {
 		const map = host.getActivity();

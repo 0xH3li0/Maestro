@@ -322,7 +322,7 @@ export class PluginServiceHost {
 				? 'ServiceBusy'
 				: code === 'MediaDenied'
 					? 'ServiceDenied'
-					: code === 'MediaInvalid'
+					: code === 'MediaInvalid' || code === 'MediaTooLong' || code === 'MediaTooLarge'
 						? 'ServiceInvalid'
 						: code === 'MediaBusy'
 							? 'ServiceBusy'

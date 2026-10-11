@@ -650,6 +650,34 @@ describe('media tools boundary', () => {
 });
 
 describe('service media leases', () => {
+	it.each([
+		['vorbis', 1, 'MediaInvalid'],
+		['opus', 121, 'MediaTooLong'],
+	] as const)(
+		'preserves %s probe failures in the lease abort signal before provider replies',
+		async (codec, seconds, code) => {
+			probeCodec = codec;
+			probeDuration = seconds;
+			const jobId = await open();
+			const audioId = await download(jobId);
+			const lease = tools.delegate(
+				'p',
+				jobId,
+				audioId,
+				{ model: 'base', language: 'de' },
+				() => {}
+			);
+			// SandboxHost races a provider reply against this signal, so its reason
+			// must retain the input failure even when cleanup aborts first.
+			const invocation = new Promise((_, reject) => {
+				lease.signal.addEventListener('abort', () => reject(lease.signal.reason), { once: true });
+			});
+			const probe = lease.call('probe', lease.audioId);
+			await expect(Promise.race([probe, invocation])).rejects.toMatchObject({ code });
+			await expect(probe).rejects.toMatchObject({ code });
+			expect(await fs.readdir(root)).toEqual([]);
+		}
+	);
 	it('runs a valid registry transcription through the real media broker and native run boundary', async () => {
 		const provider = validatePluginManifest(
 			JSON.parse(

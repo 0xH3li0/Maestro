@@ -345,8 +345,14 @@ export class PluginMediaTools {
 					return value;
 				} catch (error) {
 					job.operation = undefined;
-					await this.close(job, 'MediaProcessFailed');
-					throw error;
+					// Cleanup aborts the provider invocation before its RPC reply arrives.
+					// Preserve the media failure in that signal as well as the reply.
+					const failure = job.controller.signal.aborted ? job.controller.signal.reason : error;
+					await this.close(
+						job,
+						failure instanceof MediaError ? failure.code : 'MediaProcessFailed'
+					);
+					throw failure;
 				} finally {
 					job.operation = undefined;
 				}

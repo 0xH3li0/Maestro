@@ -131,6 +131,23 @@ afterEach(async () => {
 });
 
 describe('host-mediated service lifecycle', () => {
+	it.each(['MediaInvalid', 'MediaTooLong', 'MediaTooLarge'])(
+		'preserves invalid media classification across delegated %s failures',
+		async (code) => {
+			invoke.mockImplementation(async (_provider, _command, args) => {
+				leases[0].call = vi.fn(async () => {
+					throw Object.assign(new Error(code), { code });
+				});
+				return host.media('provider', 'probe', args.callId, args.audioId);
+			});
+			const { callId } = host.start('consumer', 'voice', request);
+			await expect(host.result('consumer', callId)).rejects.toMatchObject({
+				code: 'ServiceInvalid',
+				message: 'ServiceInvalid',
+			});
+			expect(cleaned).toBeGreaterThan(0);
+		}
+	);
 	it('uses native manifest permissions for exact consent and denies foreign or revoked scopes', async () => {
 		for (const id of ['consumer', 'provider']) {
 			const parsed = validatePluginManifest({

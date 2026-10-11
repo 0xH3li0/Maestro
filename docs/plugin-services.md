@@ -231,6 +231,8 @@ message: `ServiceDenied`, `ServiceUnavailable`, `ServiceIncompatible`,
 `ServiceBusy`, `ServiceTimeout`, `ServiceCancelled`, `ServiceInvalid`,
 `ServiceEmpty`, `ServiceFailed`. Provider exceptions, paths, inputs and raw
 process diagnostics do not cross this boundary.
+Invalid media, oversized input and excessive duration map to `ServiceInvalid`;
+resource/cancellation/time budgets keep their corresponding service codes.
 
 ## Maestro-Backstage migration
 
