@@ -1806,6 +1806,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
+	/**
+	 * Release watchers/wake locks and initiate best-effort socket closure for a stopped plugin.
+	 * Return the rejecting media/service drain barrier; mutation acknowledgments must await it.
+	 */
 	const cleanupPluginResources = (pluginId: string): Promise<void> => {
 		const drain = Promise.all([
 			services.cleanupPlugin(pluginId),
