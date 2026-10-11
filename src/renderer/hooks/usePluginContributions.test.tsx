@@ -102,7 +102,20 @@ describe('usePluginContributions', () => {
 		const plugins = {
 			contributions: vi
 				.fn()
-				.mockResolvedValueOnce({ ...EMPTY, panels: [panel] })
+				.mockResolvedValueOnce({
+					...EMPTY,
+					panels: [panel],
+					uiItems: [
+						{
+							id: 'p/open',
+							localId: 'open',
+							pluginId: 'p',
+							surface: 'emptyState',
+							label: 'Stale action',
+							command: 'run',
+						},
+					],
+				})
 				.mockReturnValueOnce(refresh)
 				.mockReturnValueOnce(new Promise(() => {})),
 			onChanged: vi.fn((listener: (ids?: string[]) => void) => {
@@ -114,7 +127,9 @@ describe('usePluginContributions', () => {
 		render(<Probe />);
 		const guest = await screen.findByRole('textbox', { name: panel.id });
 		(guest as HTMLInputElement).value = 'unsaved edits';
+		expect(screen.getByText('Stale action')).toBeInTheDocument();
 		act(() => notifyChanged([panel.id]));
+		expect(screen.queryByText('Stale action')).not.toBeInTheDocument();
 		expect(screen.getByRole('textbox', { name: panel.id })).toBe(guest);
 		await act(async () => resolveRefresh({ ...EMPTY, panels: [{ ...panel }] }));
 		expect(screen.getByRole('textbox', { name: panel.id })).toBe(guest);

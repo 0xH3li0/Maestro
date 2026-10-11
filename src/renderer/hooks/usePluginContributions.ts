@@ -59,7 +59,7 @@ export function usePluginContributions(): AggregatedContributions {
 			// immediately while retaining unaffected guests and their unsaved edits.
 			// A legacy notification without IDs cannot confirm eligibility.
 			setContributions((previous) => ({
-				...previous,
+				...EMPTY,
 				panels: previous.panels.filter((panel) => activePanelIds?.includes(panel.id)),
 			}));
 			void load();
