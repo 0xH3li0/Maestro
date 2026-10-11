@@ -143,6 +143,12 @@ transcripts, private filesystem paths or tokens in diagnostics.
 
 ## Runtime prerequisites
 
+**Before using transcription:** on the computer running Maestro, you must have a
+working local whisper.cpp `whisper-cli`, `ffmpeg` and `ffprobe`, plus at least one
+supported, readable multilingual `ggml-<model-id>.bin` model file (for example,
+`ggml-base.bin`). Maestro does not bundle, download or automatically install these
+binaries or models; you must provide them yourself.
+
 The host resolves existing `ffprobe`, `ffmpeg` and `whisper-cli` using the canonical
 binary discovery at call time. Optional **host-owned** absolute executable overrides
 are `MAESTRO_MEDIA_FFPROBE`, `MAESTRO_MEDIA_FFMPEG`, `MAESTRO_MEDIA_WHISPER_CLI`.
@@ -153,6 +159,7 @@ containing `ggml-<model-id>.bin` and choose **Save directory**. The host verifie
 it is a directory and saves its canonical realpath as `mediaModelDirectory` using the
 existing settings store. The broker re-reads the setting at call time, so no host or
 plugin restart is required. Plugins cannot write this host setting through their SDK.
+This configures the model directory only; select an available model in Relay.
 
 A non-empty `mediaModelDirectory` takes precedence over the host launch environment's
 `MAESTRO_MEDIA_MODEL_DIR`. An empty or absent setting uses that environment fallback;
