@@ -244,7 +244,11 @@ describe('TabCleanupModal', () => {
 		expect(a1.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
 		expect(a1.snoozedTabs).toHaveLength(1);
 		expect(a1.snoozedTabs![0].tab).toMatchObject({ id: 't2' });
-		expect(a1.snoozedTabs![0].wakeAt).toBeGreaterThan(before + DAY);
+		// "Next week" is the coming Monday morning. Not `before + DAY`: on a Sunday
+		// that Monday is under a day away, so the test failed one day in seven.
+		const wakeAt = a1.snoozedTabs![0].wakeAt;
+		expect(wakeAt).toBeGreaterThan(before);
+		expect(new Date(wakeAt).getDay()).toBe(1);
 		expect(notifyCenterFlash).toHaveBeenCalledWith({ message: 'Snoozed 1', color: 'green' });
 	});
 
