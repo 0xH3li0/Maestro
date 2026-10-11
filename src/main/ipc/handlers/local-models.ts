@@ -9,7 +9,9 @@
  *
  * Registering these channels opens no socket and reads no remote metadata. The
  * only calls that reach the network are `download`, `resume`, and
- * `runtimes:install`, each of which a user pressed a button to send.
+ * `runtimes:install`, each of which a user pressed a button to send, plus the
+ * `endpoints:*` calls, which talk to a model server the user runs.
+ * `endpoints:detect` probes loopback only and saves nothing.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`.
@@ -17,6 +19,16 @@
 
 import { ipcMain } from 'electron';
 
+import type {
+	DetectedEndpoint,
+	EndpointModelsResult,
+	EndpointTestResult,
+} from '../../local-models/endpoint-client';
+import {
+	detectNewLocalModelEndpoints,
+	listLocalModelEndpointModels,
+	testLocalModelEndpoint,
+} from '../../local-models/endpoint-service';
 import type { DownloadProgress, DownloadResult } from '../../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../local-models/model-store';
 import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-installer';
@@ -175,6 +187,29 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('runtimes:remove-all'),
 			async (): Promise<void> => removeAllLocalRuntimes()
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:endpoints:detect',
+		withIpcErrorLogging(
+			handlerOpts('endpoints:detect'),
+			async (): Promise<DetectedEndpoint[]> => detectNewLocalModelEndpoints()
+		)
+	);
+	ipcMain.handle(
+		'localModels:endpoints:listModels',
+		withIpcErrorLogging(
+			handlerOpts('endpoints:listModels'),
+			async (ref: unknown): Promise<EndpointModelsResult> => listLocalModelEndpointModels(ref)
+		)
+	);
+	ipcMain.handle(
+		'localModels:endpoints:test',
+		withIpcErrorLogging(
+			handlerOpts('endpoints:test'),
+			async (ref: unknown, model?: unknown): Promise<EndpointTestResult> =>
+				testLocalModelEndpoint(ref, model)
 		)
 	);
 }

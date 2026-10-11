@@ -14,6 +14,8 @@
  *     on the core channel is joined, not duplicated, by the voice channel, and
  *     its progress is broadcast on both.
  *   - **Re-registering never doubles a broadcast.**
+ *   - **Endpoint channels are thin.** `endpoints:*` hand their arguments to the
+ *     endpoint service untouched, the same functions the CLI bridge calls.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -74,6 +76,14 @@ vi.mock('../../../../main/local-models/runtime/native-loader', () => ({
 	resetNativeRuntimes: vi.fn(),
 }));
 
+vi.mock('../../../../main/local-models/endpoint-service', () => ({
+	detectNewLocalModelEndpoints: vi.fn(async () => [
+		{ kind: 'ollama', name: 'Ollama', baseUrl: 'http://127.0.0.1:11434', models: [] },
+	]),
+	listLocalModelEndpointModels: vi.fn(async () => ({ ok: true, models: [{ id: 'm' }] })),
+	testLocalModelEndpoint: vi.fn(async () => ({ ok: true, model: 'm', latencyMs: 12 })),
+}));
+
 import {
 	registerLocalModelsHandlers,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
@@ -89,6 +99,10 @@ import { remove, removeAll, verify } from '../../../../main/local-models/model-s
 import { installNativeRuntime } from '../../../../main/local-models/runtime/runtime-installer';
 import { removeAllRuntimes } from '../../../../main/local-models/runtime/runtime-store';
 import { resetNativeRuntimes } from '../../../../main/local-models/runtime/native-loader';
+import {
+	listLocalModelEndpointModels,
+	testLocalModelEndpoint,
+} from '../../../../main/local-models/endpoint-service';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -250,5 +264,31 @@ describe('one service behind both transports', () => {
 		await handlerFor('models:download')({}, MODEL_ID);
 		expect(downloader.download).toHaveBeenCalledWith(MODEL_ID);
 		await expect(handlerFor('models:remove')({}, 'nope')).rejects.toThrow('UnknownLocalModel');
+	});
+});
+
+describe('endpoint channels', () => {
+	it('detects without arguments', async () => {
+		await expect(handlerFor('localModels:endpoints:detect')({})).resolves.toEqual([
+			expect.objectContaining({ kind: 'ollama' }),
+		]);
+	});
+
+	it('hands listModels its endpoint reference untouched', async () => {
+		await expect(handlerFor('localModels:endpoints:listModels')({}, 'ep-1')).resolves.toEqual({
+			ok: true,
+			models: [{ id: 'm' }],
+		});
+		expect(listLocalModelEndpointModels).toHaveBeenCalledWith('ep-1');
+	});
+
+	it('hands test its endpoint reference and model untouched', async () => {
+		const draft = { id: 'draft' };
+		await expect(handlerFor('localModels:endpoints:test')({}, draft, 'llama')).resolves.toEqual({
+			ok: true,
+			model: 'm',
+			latencyMs: 12,
+		});
+		expect(testLocalModelEndpoint).toHaveBeenCalledWith(draft, 'llama');
 	});
 });

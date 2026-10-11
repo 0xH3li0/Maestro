@@ -7,7 +7,11 @@ import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_ENDPOINT_BASE_URLS,
 	endpointBaseUrlProblem,
+	LOCAL_MODEL_ENDPOINT_KINDS,
+	LOCAL_MODEL_ENDPOINT_KIND_LABELS,
 	isLocalModelEndpointKind,
+	isLoopbackEndpointUrl,
+	isSameEndpointServer,
 	normalizeEndpointBaseUrl,
 	parseLocalModelEndpoints,
 	resolveEndpointApiKey,
@@ -168,6 +172,49 @@ describe('localModelEndpoints setting', () => {
 	it('ships default base URLs that pass validation', () => {
 		for (const url of Object.values(DEFAULT_ENDPOINT_BASE_URLS)) {
 			expect(endpointBaseUrlProblem(url!)).toBeNull();
+		}
+	});
+});
+
+describe('isLoopbackEndpointUrl', () => {
+	it('accepts every loopback spelling, including every default base URL', () => {
+		expect(isLoopbackEndpointUrl('http://127.0.0.1:11434')).toBe(true);
+		expect(isLoopbackEndpointUrl('http://LOCALHOST:1234')).toBe(true);
+		expect(isLoopbackEndpointUrl('http://[::1]:11434')).toBe(true);
+		for (const url of Object.values(DEFAULT_ENDPOINT_BASE_URLS)) {
+			expect(isLoopbackEndpointUrl(url!)).toBe(true);
+		}
+	});
+
+	it('rejects anything off this machine, and garbage', () => {
+		expect(isLoopbackEndpointUrl('http://192.168.1.10:11434')).toBe(false);
+		expect(isLoopbackEndpointUrl('http://127.0.0.1.example.com')).toBe(false);
+		expect(isLoopbackEndpointUrl('not a url')).toBe(false);
+	});
+});
+
+describe('isSameEndpointServer', () => {
+	it('treats every loopback spelling as one host, and ignores a trailing slash', () => {
+		expect(isSameEndpointServer('http://localhost:11434/', 'http://127.0.0.1:11434')).toBe(true);
+		expect(isSameEndpointServer('http://[::1]:11434', 'http://127.0.0.1:11434')).toBe(true);
+	});
+
+	it('distinguishes port, scheme, path, and a remote host', () => {
+		expect(isSameEndpointServer('http://127.0.0.1:11435', 'http://127.0.0.1:11434')).toBe(false);
+		expect(isSameEndpointServer('https://127.0.0.1:11434', 'http://127.0.0.1:11434')).toBe(false);
+		expect(isSameEndpointServer('http://127.0.0.1:11434/v1', 'http://127.0.0.1:11434')).toBe(false);
+		expect(isSameEndpointServer('http://box.lan:11434', 'http://127.0.0.1:11434')).toBe(false);
+	});
+
+	it('is false when either side does not parse', () => {
+		expect(isSameEndpointServer('nope', 'http://127.0.0.1:11434')).toBe(false);
+	});
+});
+
+describe('LOCAL_MODEL_ENDPOINT_KIND_LABELS', () => {
+	it('names every kind', () => {
+		for (const kind of LOCAL_MODEL_ENDPOINT_KINDS) {
+			expect(LOCAL_MODEL_ENDPOINT_KIND_LABELS[kind]).not.toBe('');
 		}
 	});
 });

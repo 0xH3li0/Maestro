@@ -24,11 +24,20 @@
  */
 
 import {
+	DEFAULT_ENDPOINT_BASE_URLS,
+	LOCAL_MODEL_ENDPOINT_KIND_LABELS,
+	isLoopbackEndpointUrl,
+	isSameEndpointServer,
 	resolveEndpointApiKey,
 	type LocalModelEndpoint,
+	type LocalModelEndpointKind,
 } from '../../shared/local-models/endpoints';
 import { fetchWithTimeout, isFetchTimeoutError } from '../utils/fetchWithTimeout';
-import { LocalModelEndpointError, type LocalModelEndpointErrorKind } from './errors';
+import {
+	LocalModelEndpointError,
+	isLocalModelEndpointError,
+	type LocalModelEndpointErrorKind,
+} from './errors';
 
 /** Listing is a metadata read; a healthy local server answers in milliseconds. */
 export const ENDPOINT_LIST_TIMEOUT_MS = 5_000;
@@ -40,6 +49,20 @@ export const ENDPOINT_LIST_TIMEOUT_MS = 5_000;
 export const ENDPOINT_CHAT_TIMEOUT_MS = 120_000;
 
 export const ENDPOINT_EMBED_TIMEOUT_MS = 60_000;
+
+/**
+ * A server on loopback that is running answers in a few milliseconds, and one
+ * that is not refuses the connection at once. The budget only matters for a
+ * port held by something that accepts and never answers.
+ */
+export const ENDPOINT_DETECT_TIMEOUT_MS = 800;
+
+/**
+ * Shorter than a real chat, longer than a listing: a Test is often the first
+ * request after idle, and the server loads the model before it answers even one
+ * token.
+ */
+export const ENDPOINT_TEST_TIMEOUT_MS = 30_000;
 
 /** Longest server-supplied error detail quoted into a message. */
 const MAX_ERROR_DETAIL_CHARS = 200;
@@ -231,6 +254,173 @@ export async function endpointEmbed(
 		),
 		model: stringOr((payload as { model?: unknown }).model, request.model),
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Detection and testing
+// ---------------------------------------------------------------------------
+
+/**
+ * A failure in the shape that survives IPC and the CLI bridge. An `Error`
+ * thrown across `ipcMain.handle` arrives as a bare message, which would lose
+ * `kind`, the field a UI switches on to tell "not running" from "bad key".
+ */
+export interface EndpointFailure {
+	kind: LocalModelEndpointErrorKind;
+	message: string;
+	httpStatus?: number;
+}
+
+export type EndpointModelsResult =
+	| { ok: true; models: EndpointModel[] }
+	| { ok: false; error: EndpointFailure };
+
+export type EndpointTestResult =
+	| {
+			ok: true;
+			/** The model that answered. */
+			model: string;
+			/** Round trip of the one-token chat, from send to parsed reply. */
+			latencyMs: number;
+			/** How many models the server lists. Absent when the caller named the model. */
+			modelCount?: number;
+	  }
+	| { ok: false; error: EndpointFailure };
+
+/** A running server on this machine that is not configured yet. Nothing is saved. */
+export interface DetectedEndpoint {
+	kind: LocalModelEndpointKind;
+	/** Suggested display name ("Ollama"). */
+	name: string;
+	baseUrl: string;
+	/** What it serves right now, so the offer can say "3 models". */
+	models: EndpointModel[];
+}
+
+export interface EndpointTestRequest extends EndpointCallOptions {
+	/** Test against this model. Defaults to the first model the server lists. */
+	model?: string;
+}
+
+/** Flatten a classified endpoint error into its serializable form. */
+export function toEndpointFailure(error: LocalModelEndpointError): EndpointFailure {
+	return {
+		kind: error.kind,
+		message: error.message,
+		...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+	};
+}
+
+/**
+ * Look for Ollama and LM Studio on their default loopback ports and return the
+ * ones not already in `configured`.
+ *
+ * Read-only by contract: it never adds an endpoint. A found server is an OFFER
+ * the user accepts with an explicit click, because a server on a port is not
+ * consent to route prompts to it. Only loopback is probed, ever, so running
+ * detection cannot send a request off this machine. A probe that fails for any
+ * classified reason (refused, timed out, not the dialect expected) simply means
+ * nothing is there.
+ */
+export async function detectLocalEndpoints(
+	configured: readonly Pick<LocalModelEndpoint, 'baseUrl'>[],
+	options: Pick<EndpointCallOptions, 'timeoutMs' | 'signal'> = {}
+): Promise<DetectedEndpoint[]> {
+	const candidates = (
+		Object.entries(DEFAULT_ENDPOINT_BASE_URLS) as [LocalModelEndpointKind, string][]
+	).filter(
+		([, baseUrl]) =>
+			isLoopbackEndpointUrl(baseUrl) &&
+			!configured.some((endpoint) => isSameEndpointServer(endpoint.baseUrl, baseUrl))
+	);
+
+	const probes = candidates.map(async ([kind, baseUrl]): Promise<DetectedEndpoint | null> => {
+		const name = LOCAL_MODEL_ENDPOINT_KIND_LABELS[kind];
+		const probe: LocalModelEndpoint = {
+			id: `detected-${kind}`,
+			name,
+			kind,
+			baseUrl,
+			enabled: false,
+		};
+		try {
+			const models = await listEndpointModels(probe, {
+				timeoutMs: options.timeoutMs ?? ENDPOINT_DETECT_TIMEOUT_MS,
+				...(options.signal ? { signal: options.signal } : {}),
+			});
+			return { kind, name, baseUrl, models };
+		} catch (error) {
+			if (isLocalModelEndpointError(error)) return null;
+			throw error;
+		}
+	});
+
+	return (await Promise.all(probes)).filter((found): found is DetectedEndpoint => found !== null);
+}
+
+/** {@link listEndpointModels}, answered as a result instead of a throw. */
+export async function listEndpointModelsResult(
+	endpoint: LocalModelEndpoint,
+	options: EndpointCallOptions = {}
+): Promise<EndpointModelsResult> {
+	try {
+		return { ok: true, models: await listEndpointModels(endpoint, options) };
+	} catch (error) {
+		if (isLocalModelEndpointError(error)) return { ok: false, error: toEndpointFailure(error) };
+		throw error;
+	}
+}
+
+/**
+ * Prove an endpoint works end to end: send a one-token chat and time it.
+ *
+ * Listing alone is not enough, since a server can list models it then fails to
+ * load, and a gateway can list models the key is not allowed to call. With no
+ * `model` named, the first listed model is used; a server that lists none is
+ * reported as `no-models` rather than tested against a guess.
+ */
+export async function testEndpoint(
+	endpoint: LocalModelEndpoint,
+	request: EndpointTestRequest = {}
+): Promise<EndpointTestResult> {
+	const { model: requestedModel, ...call } = request;
+	try {
+		let model = requestedModel;
+		let modelCount: number | undefined;
+		if (!model) {
+			const models = await listEndpointModels(endpoint, call);
+			modelCount = models.length;
+			model = models[0]?.id;
+			if (!model) {
+				return {
+					ok: false,
+					error: {
+						kind: 'no-models',
+						message: `${describeEndpoint(endpoint)} is running but serves no models. Load or pull one, then test again.`,
+					},
+				};
+			}
+		}
+
+		const started = performance.now();
+		const reply = await endpointChat(endpoint, {
+			...call,
+			timeoutMs: call.timeoutMs ?? ENDPOINT_TEST_TIMEOUT_MS,
+			model,
+			messages: [{ role: 'user', content: 'Reply with OK.' }],
+			maxTokens: 1,
+			temperature: 0,
+		});
+		return {
+			ok: true,
+			model: reply.model,
+			latencyMs: Math.round(performance.now() - started),
+			...(modelCount !== undefined ? { modelCount } : {}),
+		};
+	} catch (error) {
+		if (isLocalModelEndpointError(error)) return { ok: false, error: toEndpointFailure(error) };
+		throw error;
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -9,9 +9,12 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+	detectLocalEndpoints,
 	endpointChat,
 	endpointEmbed,
 	listEndpointModels,
+	listEndpointModelsResult,
+	testEndpoint,
 } from '../../../main/local-models/endpoint-client';
 import {
 	LocalModelEndpointError,
@@ -65,6 +68,26 @@ function requestBody(mock: ReturnType<typeof vi.fn>, call: number): Record<strin
 function requestHeaders(mock: ReturnType<typeof vi.fn>, call: number): Record<string, string> {
 	return (mock.mock.calls[call][1] as RequestInit).headers as Record<string, string>;
 }
+
+/** Answers from a `full URL -> response` table; anything else is refused like a closed port. */
+function urlFetch(routes: Record<string, Response | (() => Promise<Response>)>) {
+	const mock = vi.fn(async (url: string, init: RequestInit = {}) => {
+		const route = routes[url];
+		if (!route) {
+			// A port with nothing listening: the connection is refused at once.
+			throw new TypeError('fetch failed');
+		}
+		if (typeof route !== 'function') return route;
+		return new Promise<Response>((resolve, reject) => {
+			init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+			route().then(resolve, reject);
+		});
+	});
+	globalThis.fetch = mock as unknown as typeof fetch;
+	return mock;
+}
+
+const never = () => new Promise<Response>(() => {});
 
 async function rejection(promise: Promise<unknown>): Promise<LocalModelEndpointError> {
 	try {
@@ -457,6 +480,181 @@ describe('endpoint-client', () => {
 			);
 
 			expect(error.kind).toBe('malformed');
+		});
+	});
+
+	describe('detectLocalEndpoints', () => {
+		const OLLAMA_TAGS = 'http://127.0.0.1:11434/api/tags';
+		const LMSTUDIO_MODELS = 'http://127.0.0.1:1234/v1/models';
+
+		it('finds Ollama and LM Studio on their default loopback ports, with their models', async () => {
+			urlFetch({
+				[OLLAMA_TAGS]: jsonResponse(200, { models: [{ name: 'llama3.2:3b' }] }),
+				[LMSTUDIO_MODELS]: jsonResponse(200, { data: [{ id: 'qwen' }, { id: 'phi' }] }),
+			});
+
+			const found = await detectLocalEndpoints([]);
+
+			expect(found).toEqual([
+				{
+					kind: 'ollama',
+					name: 'Ollama',
+					baseUrl: 'http://127.0.0.1:11434',
+					models: [{ id: 'llama3.2:3b' }],
+				},
+				{
+					kind: 'lmstudio',
+					name: 'LM Studio',
+					baseUrl: 'http://127.0.0.1:1234',
+					models: [{ id: 'qwen' }, { id: 'phi' }],
+				},
+			]);
+		});
+
+		it('probes only loopback, and only the two default routes', async () => {
+			const mock = urlFetch({});
+
+			await detectLocalEndpoints([]);
+
+			const probed = mock.mock.calls.map(([url]) => url).sort();
+			expect(probed).toEqual([OLLAMA_TAGS, LMSTUDIO_MODELS]);
+			for (const url of probed) expect(new URL(url).hostname).toBe('127.0.0.1');
+		});
+
+		it('returns nothing when no server is running', async () => {
+			urlFetch({});
+
+			await expect(detectLocalEndpoints([])).resolves.toEqual([]);
+		});
+
+		it('skips a server that is already configured, under any loopback spelling', async () => {
+			const mock = urlFetch({
+				[OLLAMA_TAGS]: jsonResponse(200, { models: [] }),
+				[LMSTUDIO_MODELS]: jsonResponse(200, { data: [] }),
+			});
+
+			const found = await detectLocalEndpoints([{ baseUrl: 'http://localhost:11434/' }]);
+
+			expect(found.map((candidate) => candidate.kind)).toEqual(['lmstudio']);
+			// A configured server is not even probed.
+			expect(mock.mock.calls.map(([url]) => url)).toEqual([LMSTUDIO_MODELS]);
+		});
+
+		it('treats a port that accepts and never answers as nothing there, within the budget', async () => {
+			urlFetch({
+				[OLLAMA_TAGS]: never,
+				[LMSTUDIO_MODELS]: jsonResponse(200, { data: [{ id: 'qwen' }] }),
+			});
+
+			const found = await detectLocalEndpoints([], { timeoutMs: 20 });
+
+			expect(found.map((candidate) => candidate.kind)).toEqual(['lmstudio']);
+		});
+
+		it('treats a port serving the wrong dialect as nothing there', async () => {
+			urlFetch({
+				[OLLAMA_TAGS]: jsonResponse(200, { hello: 'world' }),
+				[LMSTUDIO_MODELS]: jsonResponse(404, '<html>not found</html>'),
+			});
+
+			await expect(detectLocalEndpoints([])).resolves.toEqual([]);
+		});
+	});
+
+	describe('listEndpointModelsResult', () => {
+		it('answers a failure as a serializable result that keeps the kind and status', async () => {
+			routeFetch({ '/v1/models': jsonResponse(401, { error: { message: 'bad key' } }) });
+
+			const result = await listEndpointModelsResult(endpoint('openai-compatible'));
+
+			expect(result).toEqual({
+				ok: false,
+				error: expect.objectContaining({ kind: 'auth', httpStatus: 401 }),
+			});
+		});
+	});
+
+	describe('testEndpoint', () => {
+		it('sends a one-token chat to the first listed model and reports latency', async () => {
+			const mock = routeFetch({
+				'/api/tags': jsonResponse(200, { models: [{ name: 'llama3.2:3b' }, { name: 'phi' }] }),
+				'/v1/chat/completions': jsonResponse(200, {
+					model: 'llama3.2:3b',
+					choices: [{ message: { content: 'OK' } }],
+				}),
+			});
+
+			const result = await testEndpoint(endpoint('ollama'));
+
+			expect(result).toEqual({
+				ok: true,
+				model: 'llama3.2:3b',
+				latencyMs: expect.any(Number),
+				modelCount: 2,
+			});
+			expect(requestBody(mock, 1)).toMatchObject({
+				model: 'llama3.2:3b',
+				max_tokens: 1,
+				temperature: 0,
+			});
+		});
+
+		it('tests the named model without listing', async () => {
+			const mock = routeFetch({
+				'/v1/chat/completions': jsonResponse(200, {
+					model: 'gpt-x',
+					choices: [{ message: { content: 'O' } }],
+				}),
+			});
+
+			const result = await testEndpoint(endpoint('openai-compatible'), { model: 'gpt-x' });
+
+			expect(result).toEqual({ ok: true, model: 'gpt-x', latencyMs: expect.any(Number) });
+			expect(mock).toHaveBeenCalledTimes(1);
+		});
+
+		it('reports a server with no models as no-models instead of guessing one', async () => {
+			const mock = routeFetch({ '/v1/models': jsonResponse(200, { data: [] }) });
+
+			const result = await testEndpoint(endpoint('lmstudio'));
+
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.error.kind).toBe('no-models');
+			expect(result.error.message).toContain('"My lmstudio"');
+			expect(mock).toHaveBeenCalledTimes(1);
+		});
+
+		it('reports a chat failure with its kind and status', async () => {
+			routeFetch({
+				'/v1/models': jsonResponse(200, { data: [{ id: 'm' }] }),
+				'/v1/chat/completions': jsonResponse(500, { error: 'model failed to load' }),
+			});
+
+			const result = await testEndpoint(endpoint('lmstudio'));
+
+			expect(result).toEqual({
+				ok: false,
+				error: {
+					kind: 'http',
+					httpStatus: 500,
+					message: expect.stringContaining('model failed to load'),
+				},
+			});
+		});
+
+		it('refuses an unset key before sending anything', async () => {
+			const mock = routeFetch({});
+
+			const result = await testEndpoint(
+				endpoint('openai-compatible', { apiKeyEnvVar: 'LITELLM_KEY' }),
+				{ shellEnvVars: {} }
+			);
+
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.error.kind).toBe('missing-key');
+			expect(mock).not.toHaveBeenCalled();
 		});
 	});
 });

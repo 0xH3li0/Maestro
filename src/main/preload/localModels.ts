@@ -8,11 +8,18 @@
  * one is the same transfer the other sees.
  *
  * Nothing in here touches the network except {@link download}, {@link resume},
- * and `runtimes.install`. `list()` is a disk read against a frozen local catalog.
+ * `runtimes.install`, and the `endpoints.*` calls, which talk to model servers
+ * the user runs. `list()` is a disk read against a frozen local catalog.
  */
 
 import { ipcRenderer } from 'electron';
 import type { LocalModelListing, LocalRuntimeListing } from '../local-models/service';
+import type {
+	DetectedEndpoint,
+	EndpointModelsResult,
+	EndpointTestResult,
+} from '../local-models/endpoint-client';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { DownloadProgress, DownloadResult } from '../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../local-models/model-store';
 import type { RuntimeInstallProgress } from '../local-models/runtime/runtime-installer';
@@ -47,6 +54,31 @@ function createLocalRuntimesApi() {
 		/** Install progress. Broadcast, so every window sees the same transfer. */
 		onProgress: (handler: (progress: RuntimeInstallProgress) => void): (() => void) =>
 			subscribe('localModels:runtimes:progress', handler),
+	};
+}
+
+/**
+ * `window.maestro.localModels.endpoints.*` - model servers the user runs
+ * (Ollama, LM Studio, OpenAI-compatible). The configured list itself is the
+ * `localModelEndpoints` setting. An endpoint is named by saved id or passed as
+ * a whole record, so a form can test before it saves. Failures come back as
+ * `{ ok: false, error }` rather than a rejection, keeping the error `kind`.
+ */
+function createLocalModelEndpointsApi() {
+	return {
+		/**
+		 * Probe the default Ollama and LM Studio ports on loopback and return the
+		 * running servers that are not configured. Adds nothing.
+		 */
+		detect: (): Promise<DetectedEndpoint[]> => ipcRenderer.invoke('localModels:endpoints:detect'),
+
+		/** The models one endpoint serves right now. */
+		listModels: (endpoint: string | LocalModelEndpoint): Promise<EndpointModelsResult> =>
+			ipcRenderer.invoke('localModels:endpoints:listModels', endpoint),
+
+		/** A one-token chat, reporting latency. `model` defaults to the first listed. */
+		test: (endpoint: string | LocalModelEndpoint, model?: string): Promise<EndpointTestResult> =>
+			ipcRenderer.invoke('localModels:endpoints:test', endpoint, model),
 	};
 }
 
@@ -94,6 +126,8 @@ export function createLocalModelsApi() {
 			subscribe('localModels:progress', handler),
 
 		runtimes: createLocalRuntimesApi(),
+
+		endpoints: createLocalModelEndpointsApi(),
 	};
 }
 

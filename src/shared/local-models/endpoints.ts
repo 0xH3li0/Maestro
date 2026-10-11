@@ -35,6 +35,13 @@ export const DEFAULT_ENDPOINT_BASE_URLS: Readonly<Partial<Record<LocalModelEndpo
 		lmstudio: 'http://127.0.0.1:1234',
 	};
 
+/** What each kind is called in front of a person, and the name a detected server is offered under. */
+export const LOCAL_MODEL_ENDPOINT_KIND_LABELS: Readonly<Record<LocalModelEndpointKind, string>> = {
+	ollama: 'Ollama',
+	lmstudio: 'LM Studio',
+	'openai-compatible': 'OpenAI-compatible',
+};
+
 export interface LocalModelEndpoint {
 	/** Stable id, assigned when the endpoint is added. Never derived from the URL. */
 	id: string;
@@ -220,4 +227,47 @@ export function resolveEndpointApiKey(
 	const value = shellEnvVars?.[endpoint.apiKeyEnvVar];
 	if (value === undefined || isBlankEnvValue(value)) return undefined;
 	return value.trim();
+}
+
+/** Every spelling of "this machine" a base URL can carry. `URL` keeps IPv6 hosts bracketed. */
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Whether a base URL points at this machine. Detection only ever probes URLs
+ * that pass this, so an auto-detect can never reach out to the network.
+ */
+export function isLoopbackEndpointUrl(baseUrl: string): boolean {
+	try {
+		return LOOPBACK_HOSTNAMES.has(new URL(baseUrl).hostname.toLowerCase());
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Whether two base URLs name the same server: same scheme, port, and path, and
+ * the same host, where every loopback spelling counts as one host. A user who
+ * configured `http://localhost:11434` must not be offered `http://127.0.0.1:11434`
+ * as a newly detected Ollama.
+ */
+export function isSameEndpointServer(a: string, b: string): boolean {
+	let left: URL;
+	let right: URL;
+	try {
+		left = new URL(a.trim());
+		right = new URL(b.trim());
+	} catch {
+		return false;
+	}
+	const hostOf = (url: URL) => {
+		const host = url.hostname.toLowerCase();
+		return LOOPBACK_HOSTNAMES.has(host) ? 'loopback' : host;
+	};
+	const pathOf = (url: URL) => url.pathname.replace(/\/+$/, '');
+	return (
+		left.protocol === right.protocol &&
+		left.port === right.port &&
+		hostOf(left) === hostOf(right) &&
+		pathOf(left) === pathOf(right)
+	);
 }

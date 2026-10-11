@@ -66,6 +66,10 @@ export function isLocalModelError(error: unknown): error is LocalModelError {
  *   - `network`     - the server could not be reached at all.
  *   - `cancelled`   - the caller aborted. Not a fault; never shown as one.
  *   - `malformed`   - a 2xx answer whose body was not the shape this kind serves.
+ *   - `no-models`   - the server answered, but serves no model to test against.
+ *   - `invalid`     - the endpoint record or id handed in is not usable (an
+ *                     unknown id, a record that fails validation), so nothing
+ *                     was sent.
  */
 export type LocalModelEndpointErrorKind =
 	| 'missing-key'
@@ -75,7 +79,9 @@ export type LocalModelEndpointErrorKind =
 	| 'timeout'
 	| 'network'
 	| 'cancelled'
-	| 'malformed';
+	| 'malformed'
+	| 'no-models'
+	| 'invalid';
 
 export interface LocalModelEndpointErrorOptions {
 	kind: LocalModelEndpointErrorKind;
