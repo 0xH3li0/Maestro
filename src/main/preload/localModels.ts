@@ -10,6 +10,8 @@
  * Nothing in here touches the network except {@link download}, {@link resume},
  * `runtimes.install`, and the `endpoints.*` calls, which talk to model servers
  * the user runs. `list()` is a disk read against a frozen local catalog.
+ * `taskReadiness()` lists an endpoint's models only when a task is assigned to
+ * one.
  */
 
 import { ipcRenderer } from 'electron';
@@ -25,6 +27,7 @@ import type { ModelFootprint, VerifyResult } from '../local-models/model-store';
 import type { RuntimeInstallProgress } from '../local-models/runtime/runtime-installer';
 import type { LocalTaskInput, LocalTaskResult } from '../local-models/task-router';
 import type { LocalModelTaskId } from '../../shared/local-models/tasks';
+import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -136,6 +139,14 @@ export function createLocalModelsApi() {
 			taskId: LocalModelTaskId,
 			input: Omit<LocalTaskInput, 'signal'>
 		): Promise<LocalTaskResult> => ipcRenderer.invoke('localModels:runTask', taskId, input),
+
+		/**
+		 * Whether a task's assigned source would answer now, and if not why and
+		 * what to do. Omit the task id for every task (registry order); a named
+		 * task answers a one-entry list.
+		 */
+		taskReadiness: (taskId?: LocalModelTaskId): Promise<LocalModelTaskReadiness[]> =>
+			ipcRenderer.invoke('localModels:taskReadiness', taskId),
 
 		runtimes: createLocalRuntimesApi(),
 

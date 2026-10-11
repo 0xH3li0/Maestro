@@ -29,7 +29,7 @@ import { LocalModelError } from './errors';
 import { isInstalled, modelFilePath } from './model-store';
 import { loadLocalRuntime } from './runtime/load-runtime';
 import type { OnnxModule, OnnxSession, OnnxTensor } from './runtime/onnx-types';
-import { nativeRuntimeConsumerFor } from './runtime/runtime-consumers';
+import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { loadTokenizer, type LocalTokenizer, type TokenizedBatch } from './tokenizer';
 
 /** The encoder kinds: the catalog kinds that carry a {@link LocalEncoderGraph}. */
@@ -76,11 +76,6 @@ const KIND_LABEL: Record<EncoderKind, string> = {
 	classifier: 'text-classifier',
 };
 
-/** Where a person downloads and verifies ONNX models, for recovery sentences. */
-function modelSetupLocation(): string {
-	return nativeRuntimeConsumerFor('onnx')?.downloadLocation ?? 'Settings';
-}
-
 function encoderSpec(entry: LocalModelEntry, kind: EncoderKind): LocalEncoderGraph | undefined {
 	if (entry.kind !== kind || entry.runtime !== 'onnx') return undefined;
 	return kind === 'embedding' ? entry.embedding : entry.classifier;
@@ -110,7 +105,7 @@ export async function resolveInstalledEncoder(
 	if (!(await isInstalled(modelId))) {
 		throw new LocalModelError(`${entry.displayName} is not downloaded.`, {
 			code: 'model-not-installed',
-			recovery: `Download it in ${modelSetupLocation()}.`,
+			recovery: `Download it in ${runtimeSetupLocation('onnx')}.`,
 			consumerId,
 		});
 	}
@@ -332,7 +327,7 @@ export function encoderRunFailure(
 function openFailure(entry: LocalModelEntry, consumerId: string, cause: unknown): LocalModelError {
 	return new LocalModelError(`${entry.displayName} could not be opened.`, {
 		code: 'generation-failed',
-		recovery: `Verify or re-download it in ${modelSetupLocation()}.`,
+		recovery: `Verify or re-download it in ${runtimeSetupLocation('onnx')}.`,
 		consumerId,
 		cause,
 	});

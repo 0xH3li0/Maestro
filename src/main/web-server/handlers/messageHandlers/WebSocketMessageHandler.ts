@@ -91,6 +91,7 @@ import {
 	handleLocalModelsEndpointsDetect,
 	handleLocalModelsEndpointTest,
 	handleLocalModelsRunTask,
+	handleLocalModelsTaskReadiness,
 } from './localModels';
 import {
 	handleRefreshAutoRunDocs,
@@ -694,6 +695,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_run_task':
 				void handleLocalModelsRunTask(this.ctx, client, message);
+				break;
+
+			case 'local_models_task_readiness':
+				void handleLocalModelsTaskReadiness(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

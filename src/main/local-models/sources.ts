@@ -5,7 +5,8 @@
  * assignment into a source once for all of them.
  */
 
-import type { LocalModelAssignment } from '../../shared/local-models/tasks';
+import type { LocalModelAssignment, LocalModelAssignments } from '../../shared/local-models/tasks';
+import { getSettingsStore } from '../stores/getters';
 
 export type LocalModelSource =
 	| { type: 'local'; modelId: string }
@@ -18,4 +19,13 @@ export function sourceForAssignment(assignment: LocalModelAssignment): LocalMode
 		return { type: 'endpoint', endpointId: assignment.endpointId, model: assignment.model };
 	}
 	return null;
+}
+
+/**
+ * The persisted `localModelAssignments` setting, unparsed. The task router and
+ * task readiness both resolve it through `resolveLocalModelAssignment`, so they
+ * cannot disagree about which source a task is on.
+ */
+export function readLocalModelAssignments(): LocalModelAssignments | undefined {
+	return getSettingsStore().get('localModelAssignments', {}) as LocalModelAssignments | undefined;
 }

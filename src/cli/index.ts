@@ -112,6 +112,7 @@ import {
 	modelsEndpointsTest,
 } from './commands/models-endpoints';
 import { modelsRun } from './commands/models-run';
+import { modelsStatus } from './commands/models-status';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -2160,7 +2161,7 @@ notify
 
 // Local Models commands - model servers the user runs (Ollama, LM Studio,
 // OpenAI-compatible) and the task router. Endpoint list/add/remove edit
-// settings directly; test/detect/run run in the desktop app.
+// settings directly; test/detect/run/status run in the desktop app.
 const models = program.command('models').description('Local Models: model sources Maestro can use');
 
 models
@@ -2173,6 +2174,14 @@ models
 	.option('--max-tokens <n>', 'Token budget for the reply (default 512)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsRun);
+
+models
+	.command('status [task-id]')
+	.description(
+		'Whether each task (or one) would run on its assignment, and if not why and what to do (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsStatus);
 
 const modelEndpoints = models
 	.command('endpoints')

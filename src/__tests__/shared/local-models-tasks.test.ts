@@ -10,6 +10,7 @@ import {
 	isLocalModelTaskId,
 	isSameLocalModelAssignment,
 	localModelAssignmentProblem,
+	endpointServesNeed,
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
 	resolveLocalModelAssignment,
@@ -231,6 +232,17 @@ describe('localModelAssignmentProblem', () => {
 			localModelAssignmentProblem('git-drafts', { type: 'endpoint', endpointId: 'ep' })
 		).toMatch(/endpoint id and a model name/);
 		expect(localModelAssignmentProblem('git-drafts', { type: 'cloud' })).toMatch(/must be one of/);
+	});
+
+	it('refuses an endpoint for a need no endpoint serves', () => {
+		const endpoint = { type: 'endpoint', endpointId: 'ep', model: 'guard' };
+		expect(localModelAssignmentProblem('injection-screen', endpoint)).toMatch(
+			/an endpoint cannot serve/
+		);
+		expect(localModelAssignmentProblem('dictation', endpoint)).toMatch(/an endpoint cannot serve/);
+		expect(localModelAssignmentProblem('semantic-search', endpoint)).toBeNull();
+		expect(endpointServesNeed('text-gen')).toBe(true);
+		expect(endpointServesNeed('classifier')).toBe(false);
 	});
 });
 

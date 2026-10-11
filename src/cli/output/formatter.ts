@@ -2,6 +2,7 @@
 // Provides beautiful, colored terminal output
 
 import { formatDurationDecimal } from '../../shared/formatters';
+import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 
 // ANSI color codes
 const colors = {
@@ -908,6 +909,50 @@ export function formatLocalModelEndpoints(endpoints: LocalModelEndpointDisplay[]
 		lines.push(`      ${dim(endpoint.id)}`);
 	}
 
+	return lines.join('\n');
+}
+
+const TASK_READINESS_STATE: Record<
+	LocalModelTaskReadiness['state'],
+	{ label: string; color: keyof typeof colors }
+> = {
+	ready: { label: 'ready', color: 'green' },
+	'utility-agent': { label: 'utility agent', color: 'blue' },
+	off: { label: 'off', color: 'gray' },
+	unavailable: { label: 'unavailable', color: 'red' },
+};
+
+/**
+ * `maestro-cli models status`: one row per task. The suggested action is shown
+ * for an unavailable task, and for an off task only when it is the one asked
+ * about (most tasks are off by default, so a full listing would repeat it).
+ */
+export function formatLocalModelTaskReadiness(
+	rows: LocalModelTaskReadiness[],
+	options: { single?: boolean } = {}
+): string {
+	const lines: string[] = [];
+	if (!options.single) {
+		lines.push(bold(c('cyan', 'LOCAL MODEL TASKS')) + dim(` (${rows.length})`));
+		lines.push('');
+	}
+	const idWidth = Math.max(...rows.map((row) => row.taskId.length));
+	const stateWidth = Math.max(
+		...Object.values(TASK_READINESS_STATE).map((state) => state.label.length)
+	);
+	for (const row of rows) {
+		const state = TASK_READINESS_STATE[row.state];
+		const reason = row.reason ? dim(` [${row.reason}]`) : '';
+		lines.push(
+			`  ${c('white', row.taskId.padEnd(idWidth))}  ${c(state.color, state.label.padEnd(stateWidth))}  ${row.detail}${reason}`
+		);
+		const showAction =
+			row.suggestedAction &&
+			(row.state === 'unavailable' || (row.state === 'off' && options.single));
+		if (showAction) {
+			lines.push(`  ${' '.repeat(idWidth + stateWidth + 2)}  ${dim(`-> ${row.suggestedAction}`)}`);
+		}
+	}
 	return lines.join('\n');
 }
 

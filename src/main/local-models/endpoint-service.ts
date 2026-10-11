@@ -93,31 +93,50 @@ export async function testLocalModelEndpoint(
 }
 
 /**
- * A SAVED endpoint by its exact id, ready to call, or a classified refusal.
+ * Why a saved endpoint cannot be called right now, or the endpoint itself.
  *
- * This is the path real work takes (text generation, embeddings), so it is
- * stricter than Test: the id must match exactly (an assignment stores the full
- * id, and a prefix that later becomes ambiguous must not quietly pick another
- * server), and a disabled endpoint is refused rather than called. The client
- * leaves `enabled` to its caller; this is that caller.
+ * This is the path real work takes (text generation, embeddings) and the one
+ * task readiness asks, so it is stricter than Test: the id must match exactly
+ * (an assignment stores the full id, and a prefix that later becomes ambiguous
+ * must not quietly pick another server), and a disabled endpoint is refused
+ * rather than called. The client leaves `enabled` to its caller; this is that
+ * caller.
  */
-function requireUsableEndpoint(endpointId: string): LocalModelEndpoint {
+export type UsableLocalModelEndpoint =
+	| { ok: true; endpoint: LocalModelEndpoint }
+	| { ok: false; problem: 'unknown' | 'disabled'; message: string; endpoint?: LocalModelEndpoint };
+
+/** A SAVED endpoint by its exact id, or why it cannot be called. */
+export function findUsableLocalModelEndpoint(endpointId: string): UsableLocalModelEndpoint {
 	const endpoint = getConfiguredLocalModelEndpoints().find((entry) => entry.id === endpointId);
 	if (!endpoint) {
-		throw new LocalModelEndpointError(`No saved endpoint has the id "${endpointId}".`, {
-			kind: 'invalid',
-			endpointId,
-			endpointName: endpointId,
-			url: '',
-		});
+		return {
+			ok: false,
+			problem: 'unknown',
+			message: `No saved endpoint has the id "${endpointId}".`,
+		};
 	}
 	if (!endpoint.enabled) {
-		throw new LocalModelEndpointError(
-			`${endpoint.name} is disabled. Enable it in the endpoint list to use it.`,
-			{ kind: 'invalid', endpointId, endpointName: endpoint.name, url: endpoint.baseUrl }
-		);
+		return {
+			ok: false,
+			problem: 'disabled',
+			message: `${endpoint.name} is disabled. Enable it in the endpoint list to use it.`,
+			endpoint,
+		};
 	}
-	return endpoint;
+	return { ok: true, endpoint };
+}
+
+/** {@link findUsableLocalModelEndpoint}, as a classified throw for a call about to be sent. */
+function requireUsableEndpoint(endpointId: string): LocalModelEndpoint {
+	const found = findUsableLocalModelEndpoint(endpointId);
+	if (found.ok) return found.endpoint;
+	throw new LocalModelEndpointError(found.message, {
+		kind: 'invalid',
+		endpointId,
+		endpointName: found.endpoint?.name ?? endpointId,
+		url: found.endpoint?.baseUrl ?? '',
+	});
 }
 
 /** One chat completion against a saved, enabled endpoint, named by its exact id. */

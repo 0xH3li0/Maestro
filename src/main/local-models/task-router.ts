@@ -33,7 +33,6 @@ import {
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASKS,
 	resolveLocalModelAssignment,
-	type LocalModelAssignments,
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
@@ -47,7 +46,7 @@ import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker
 import { classifyText, type ClassificationResult } from './classifier';
 import { embedTexts, type EmbeddingMode } from './embeddings';
 import { isLocalModelCancelled, isLocalModelEndpointError, isLocalModelError } from './errors';
-import { sourceForAssignment, type LocalModelSource } from './sources';
+import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
 import { generateText } from './text-gen';
 
 /** Token budget when a caller names none. Housekeeping output is short. */
@@ -281,7 +280,7 @@ async function runThroughAssignment<T>(
 	call: (source: LocalModelSource) => Promise<T>,
 	metrics: (value: T) => RunMetrics = () => ({})
 ): Promise<AssignedVerdict<T>> {
-	const assignment = resolveLocalModelAssignment(readAssignments(), taskId);
+	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
 	const source = sourceForAssignment(assignment);
 	if (!source) return { status: assignment.type === 'off' ? 'off' : 'use-utility-agent' };
 
@@ -378,10 +377,6 @@ export function parseLocalTaskInput(value: unknown): LocalTaskInput {
 		input.jsonSchema = schema as Record<string, unknown>;
 	}
 	return input;
-}
-
-function readAssignments(): LocalModelAssignments | undefined {
-	return getSettingsStore().get('localModelAssignments', {}) as LocalModelAssignments | undefined;
 }
 
 /**

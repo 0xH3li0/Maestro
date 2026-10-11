@@ -1812,6 +1812,14 @@ Run a text-generation task through its assignment; prints the text, or why it di
 | `--max-tokens <n>`    | Token budget for the reply (default 512) | -       |
 | `--json`              | Output as JSON (for scripting)           | -       |
 
+## `maestro-cli models status [task-id]`
+
+Whether each task (or one) would run on its assignment, and if not why and what to do (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli models endpoints`
 
 Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL

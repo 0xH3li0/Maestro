@@ -100,8 +100,9 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `onnx-encoder.ts`              | `OnnxEncoderPool`: one idle-unloading ONNX session per encoder model; `encoderFeeds()` by input name    |
 | `embeddings.ts`                | `embedTexts()` for a local model or an endpoint; pooling, prefixes, L2 normalization, batching          |
 | `classifier.ts`                | `classifyText()` on a local classifier; overlapping windows, max positive score across them             |
-| `sources.ts`                   | `LocalModelSource` and `sourceForAssignment()`, shared by every service and the router                  |
+| `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                              |
 | `task-router.ts`               | `runLocalTask()` / `runEmbeddingTask()` / `runClassifierTask()`: assignment decides the source; stats   |
+| `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)             |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`          |
 | `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
 | `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)   |
@@ -111,7 +112,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 
 - `src/main/ipc/handlers/local-models.ts` registers `localModels:{list,download,pause,resume,cancel,verify,remove,remove-all,footprint}`
   and `localModels:runtimes:{list,install,footprint,remove-all}`, plus `localModels:runTask` (the
-  task router) and `localModels:endpoints:*`, broadcasting on
+  task router), `localModels:taskReadiness` (task readiness) and `localModels:endpoints:*`, broadcasting on
   `localModels:progress` and `localModels:runtimes:progress`. It is **not** gated by the A Cappella
   Encore flag. It is wired in `setupIpcHandlers()`.
 - Preload: `window.maestro.localModels` (with a `.runtimes` sub-namespace), in
@@ -420,6 +421,37 @@ Transports: `localModels:runTask` (IPC, `window.maestro.localModels.runTask`) an
 `maestro-cli models run <task-id> --input <text>` (WS bridge message `local_models_run_task`) both
 call `runLocalTaskRequest()`, which validates the task id and input once. The CLI exits 0 only for
 `ok`, printing just the text, so a script's `$(...)` captures text or fails.
+
+## Task readiness
+
+The router says `unavailable` only after a call failed. `resolveTaskReadiness(taskId)` in
+`src/main/local-models/task-readiness.ts` answers BEFORE, in the style of A Cappella's capability gate
+(which stays voice-specific): a verdict is about the source that was assigned, never another, and
+every unavailable verdict carries a closed `reason`, a `detail` sentence, and a `suggestedAction`.
+Shapes live in `src/shared/local-models/task-readiness.ts` (`LocalModelTaskReadiness`,
+`LOCAL_MODEL_TASK_UNREADY_REASONS`, `isTaskRunnable()`).
+
+| Assignment      | Checked, in order                                                                                  | Reasons                                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off`           | nothing (state `off`, with how to assign one)                                                      | -                                                                                                                                                              |
+| `utility-agent` | nothing (state `utility-agent`; the caller's own path)                                             | -                                                                                                                                                              |
+| `local`         | catalog entry, kind, runtime WITHOUT loading it (`knownNativeRuntimeUnavailability`), model status | `model-unknown`, `model-wrong-kind`, `runtime-unavailable`, `model-not-installed`, `model-corrupt`                                                             |
+| `endpoint`      | need is servable (`endpointServesNeed`), saved and enabled, one model listing, model is listed     | `endpoint-unsupported`, `endpoint-unknown`, `endpoint-disabled`, `endpoint-key-missing`, `endpoint-rejected`, `endpoint-unreachable`, `endpoint-model-missing` |
+
+Runtime is checked before the model for the same reason the voice gate does: a runtime that will not
+load is not fixed by a download. Local checks never re-hash and never dlopen; only an endpoint
+assignment reaches the network (one listing inside the 5s list budget, shared by every task on that
+endpoint when all tasks are resolved together). Ollama's bare `name` matches its `name:latest` tag.
+An endpoint can only serve `text-gen` and `embedding` (`ENDPOINT_SERVED_NEEDS` in `tasks.ts`);
+`localModelAssignmentProblem()` refuses an endpoint for any other need at save time too.
+
+Transports: `localModels:taskReadiness(taskId?)` (IPC, `window.maestro.localModels.taskReadiness`)
+and `maestro-cli models status [task-id]` (WS bridge message `local_models_task_readiness`) both call
+`resolveTaskReadinessRequest()`, which answers a list (every task, or one). With a task id the CLI
+exits 0 only when the task would run; without one it exits non-zero only when an assigned task is
+unavailable. Known gap: the runtime and model recovery sentences name the first registered runtime
+consumer's download location (A Cappella's Voice Setup today), since no Local Models settings panel
+registers its own yet.
 
 ## Related
 

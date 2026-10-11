@@ -49,6 +49,23 @@ export type LocalModelAssignment =
 
 export type LocalModelAssignmentType = LocalModelAssignment['type'];
 
+/**
+ * The needs a user-run model server can serve. Endpoints speak chat
+ * completions and embeddings (`endpoint-client.ts`); no server runs a sequence
+ * classifier or a speech model through those, so an endpoint assignment for
+ * any other need is refused when saved and reported by readiness, rather than
+ * accepted and then failing on every run.
+ */
+export const ENDPOINT_SERVED_NEEDS: readonly LocalModelTaskNeed[] = Object.freeze([
+	'text-gen',
+	'embedding',
+]);
+
+/** Whether an endpoint can serve a task with this need. */
+export function endpointServesNeed(need: LocalModelTaskNeed): boolean {
+	return ENDPOINT_SERVED_NEEDS.includes(need);
+}
+
 export const LOCAL_MODEL_ASSIGNMENT_TYPES: readonly LocalModelAssignmentType[] = Object.freeze([
 	'off',
 	'utility-agent',
@@ -346,8 +363,10 @@ export function resolveLocalModelAssignments(
  * when it does. Stricter than {@link parseLocalModelAssignment}: a local model
  * must be in the catalog and of the kind the task needs, because picking a
  * text model for an embedding task is a mistake to refuse at the picker, not a
- * failure to discover at run time. Endpoint models are discovered at run time,
- * so only their shape is checked here; readiness reports a wrong one.
+ * failure to discover at run time. An endpoint is refused for a need no server
+ * serves ({@link endpointServesNeed}); otherwise its models are discovered at
+ * run time, so only their shape is checked here and readiness reports a wrong
+ * one.
  */
 export function localModelAssignmentProblem(
 	taskId: LocalModelTaskId,
@@ -371,6 +390,9 @@ export function localModelAssignmentProblem(
 		if (model.kind !== task.needs) {
 			return `${model.displayName} is a ${model.kind} model, but ${task.label} needs a ${task.needs} model.`;
 		}
+	}
+	if (assignment.type === 'endpoint' && !endpointServesNeed(task.needs)) {
+		return `${task.label} needs a ${task.needs} model, which an endpoint cannot serve. Choose off or a local model.`;
 	}
 	return null;
 }

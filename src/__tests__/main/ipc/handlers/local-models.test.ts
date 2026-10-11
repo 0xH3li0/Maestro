@@ -18,6 +18,8 @@
  *     endpoint service untouched, the same functions the CLI bridge calls.
  *   - **`runTask` is thin too.** It hands the task id and input to the task
  *     router's request entry, which the CLI bridge also calls.
+ *   - **So is `taskReadiness`.** It hands the (optional) task id to the
+ *     readiness request entry `maestro-cli models status` also reaches.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -90,6 +92,10 @@ vi.mock('../../../../main/local-models/task-router', () => ({
 	runLocalTaskRequest: vi.fn(async () => ({ status: 'use-utility-agent' })),
 }));
 
+vi.mock('../../../../main/local-models/task-readiness', () => ({
+	resolveTaskReadinessRequest: vi.fn(async () => [{ taskId: 'semantic-search', state: 'off' }]),
+}));
+
 import {
 	registerLocalModelsHandlers,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
@@ -110,6 +116,7 @@ import {
 	testLocalModelEndpoint,
 } from '../../../../main/local-models/endpoint-service';
 import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
+import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -307,5 +314,15 @@ describe('task router channel', () => {
 			status: 'use-utility-agent',
 		});
 		expect(runLocalTaskRequest).toHaveBeenCalledWith('tab-naming', input);
+	});
+
+	it('hands taskReadiness the task id untouched, including none', async () => {
+		await expect(handlerFor('localModels:taskReadiness')({}, 'semantic-search')).resolves.toEqual([
+			{ taskId: 'semantic-search', state: 'off' },
+		]);
+		expect(resolveTaskReadinessRequest).toHaveBeenLastCalledWith('semantic-search');
+
+		await handlerFor('localModels:taskReadiness')({});
+		expect(resolveTaskReadinessRequest).toHaveBeenLastCalledWith(undefined);
 	});
 });

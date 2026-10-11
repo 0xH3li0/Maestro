@@ -12,7 +12,9 @@
  * `runtimes:install`, each of which a user pressed a button to send, plus the
  * `endpoints:*` calls, which talk to a model server the user runs.
  * `endpoints:detect` probes loopback only and saves nothing. `runTask` reaches
- * a model only when the user assigned one to that task.
+ * a model only when the user assigned one to that task. `taskReadiness` reads
+ * disk and settings, and reaches the network only to list the models of an
+ * endpoint a task is assigned to.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`.
@@ -34,6 +36,8 @@ import type { DownloadProgress, DownloadResult } from '../../local-models/model-
 import type { ModelFootprint, VerifyResult } from '../../local-models/model-store';
 import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-installer';
 import { runLocalTaskRequest, type LocalTaskResult } from '../../local-models/task-router';
+import { resolveTaskReadinessRequest } from '../../local-models/task-readiness';
+import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import {
 	cancelLocalModel,
 	downloadLocalModel,
@@ -221,6 +225,15 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('runTask'),
 			async (taskId: unknown, input: unknown): Promise<LocalTaskResult> =>
 				runLocalTaskRequest(taskId, input)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:taskReadiness',
+		withIpcErrorLogging(
+			handlerOpts('taskReadiness'),
+			async (taskId?: unknown): Promise<LocalModelTaskReadiness[]> =>
+				resolveTaskReadinessRequest(taskId)
 		)
 	);
 }

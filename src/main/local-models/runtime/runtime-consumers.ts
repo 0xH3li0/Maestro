@@ -47,6 +47,15 @@ export function nativeRuntimeConsumerFor(runtimeId: NativeRuntimeId): NativeRunt
 	return null;
 }
 
+/**
+ * Where a person downloads and verifies models that run on this runtime, for
+ * recovery sentences. Every refusal (text generation, the ONNX encoders, task
+ * readiness) names the same place by asking here.
+ */
+export function runtimeSetupLocation(runtimeId: NativeRuntimeId): string {
+	return nativeRuntimeConsumerFor(runtimeId)?.downloadLocation ?? 'Settings';
+}
+
 /** Whether any registered consumer runs on this runtime. */
 export function isNativeRuntimeInUse(runtimeId: NativeRuntimeId): boolean {
 	return nativeRuntimeConsumerFor(runtimeId) !== null;

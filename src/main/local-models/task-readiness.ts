@@ -1,0 +1,323 @@
+/**
+ * Local Models task readiness: may this task run on its assignment, and if not,
+ * exactly why.
+ *
+ * The task router answers "unavailable" only AFTER a call failed. A surface
+ * that offers a task (a settings row, `maestro-cli models status`, a consumer
+ * deciding whether to show its affordance) needs the answer BEFORE, with a
+ * reason a person can act on. That is this module, in the same style as A
+ * Cappella's `capability-gate.ts` (which stays voice-specific):
+ *
+ *   - **No substitution.** A verdict is about the source the user assigned. A
+ *     missing local model is never answered with "but an endpoint is up".
+ *   - **No bare boolean.** Every unavailable verdict carries a closed `reason`,
+ *     a sentence naming the missing piece, and a suggested action.
+ *   - **Runtime before model.** A native runtime that will not load here is not
+ *     fixed by downloading the model, so that is reported first.
+ *   - **Cheap for local models.** Model status is the store's manifest-and-length
+ *     check (never a re-hash), and the runtime is checked WITHOUT loading it,
+ *     exactly as the voice gate does. Only an endpoint assignment reaches the
+ *     network: one model listing, inside the client's short list budget.
+ */
+
+import { getLocalModel } from '../../shared/local-models/model-catalog';
+import {
+	endpointServesNeed,
+	isLocalModelTaskId,
+	LOCAL_MODEL_TASK_IDS,
+	LOCAL_MODEL_TASKS,
+	resolveLocalModelAssignment,
+	type LocalModelAssignment,
+	type LocalModelAssignments,
+	type LocalModelTaskDefinition,
+	type LocalModelTaskId,
+} from '../../shared/local-models/tasks';
+import type {
+	LocalModelTaskReadiness,
+	LocalModelTaskUnreadyReason,
+} from '../../shared/local-models/task-readiness';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type { NativeRuntimeId } from '../../shared/local-models/native-runtimes';
+import type { EndpointModel, EndpointModelsResult } from './endpoint-client';
+import {
+	findUsableLocalModelEndpoint,
+	listLocalModelEndpointModels,
+	type UsableLocalModelEndpoint,
+} from './endpoint-service';
+import { getStatus, type ModelStatus } from './model-store';
+import {
+	knownNativeRuntimeUnavailability,
+	type NativeRuntimeUnavailable,
+} from './runtime/native-loader';
+import { runtimeSetupLocation } from './runtime/runtime-consumers';
+import { readLocalModelAssignments } from './sources';
+
+/** Where a person assigns a task's source, for recovery sentences. */
+const ASSIGNMENT_LOCATION = 'Settings -> Local Models';
+
+const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
+	'text-gen': 'text-generation',
+	embedding: 'embedding',
+	classifier: 'text-classifier',
+	stt: 'speech-to-text',
+	tts: 'text-to-speech',
+};
+
+/** "a text-generation model", "an embedding model". */
+function aNeed(need: LocalModelTaskDefinition['needs']): string {
+	const label = NEED_LABELS[need];
+	return `${/^[aeiou]/.test(label) ? 'an' : 'a'} ${label}`;
+}
+
+export interface ResolveTaskReadinessOptions {
+	/** The persisted assignments. Defaults to the `localModelAssignments` setting. */
+	assignments?: LocalModelAssignments;
+	/** Injected for tests. Defaults to the model store's cheap status check. */
+	readModelStatus?: (modelId: string) => Promise<ModelStatus>;
+	/** Why a runtime will not load, WITHOUT loading it. Defaults to the loader's answer. */
+	readRuntimeFailure?: (runtimeId: NativeRuntimeId) => Promise<NativeRuntimeUnavailable | null>;
+	/** A saved, enabled endpoint by exact id. Defaults to the endpoint service. */
+	findEndpoint?: (endpointId: string) => UsableLocalModelEndpoint;
+	/** The models an endpoint serves. Defaults to the endpoint service's listing. */
+	listEndpointModels?: (endpoint: LocalModelEndpoint) => Promise<EndpointModelsResult>;
+}
+
+/** One task's readiness against its effective assignment. */
+export async function resolveTaskReadiness(
+	taskId: LocalModelTaskId,
+	options: ResolveTaskReadinessOptions = {}
+): Promise<LocalModelTaskReadiness> {
+	const assignments = options.assignments ?? readLocalModelAssignments();
+	return resolveForAssignment(
+		LOCAL_MODEL_TASKS[taskId],
+		resolveLocalModelAssignment(assignments, taskId),
+		options
+	);
+}
+
+/**
+ * Every task's readiness, in registry order. An endpoint several tasks share is
+ * listed once, so a status page does not probe the same server per task.
+ */
+export async function resolveAllTaskReadiness(
+	options: ResolveTaskReadinessOptions = {}
+): Promise<LocalModelTaskReadiness[]> {
+	const assignments = options.assignments ?? readLocalModelAssignments();
+	const list = options.listEndpointModels ?? defaultListEndpointModels;
+	const listings = new Map<string, Promise<EndpointModelsResult>>();
+	const shared: ResolveTaskReadinessOptions = {
+		...options,
+		assignments,
+		listEndpointModels: (endpoint) => {
+			let listing = listings.get(endpoint.id);
+			if (!listing) {
+				listing = list(endpoint);
+				listings.set(endpoint.id, listing);
+			}
+			return listing;
+		},
+	};
+	return Promise.all(LOCAL_MODEL_TASK_IDS.map((taskId) => resolveTaskReadiness(taskId, shared)));
+}
+
+/**
+ * The transport-facing entry: IPC (`localModels:taskReadiness`) and the CLI
+ * bridge (`maestro-cli models status`) hand over an untrusted value. No task id
+ * means every task; a named task answers a one-entry list, so both transports
+ * render one shape.
+ */
+export async function resolveTaskReadinessRequest(
+	taskId: unknown
+): Promise<LocalModelTaskReadiness[]> {
+	if (taskId === undefined || taskId === null || taskId === '') return resolveAllTaskReadiness();
+	if (!isLocalModelTaskId(taskId)) {
+		throw new Error(`Unknown task "${String(taskId)}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`);
+	}
+	return [await resolveTaskReadiness(taskId)];
+}
+
+function defaultListEndpointModels(endpoint: LocalModelEndpoint): Promise<EndpointModelsResult> {
+	return listLocalModelEndpointModels(endpoint);
+}
+
+async function resolveForAssignment(
+	task: LocalModelTaskDefinition,
+	assignment: LocalModelAssignment,
+	options: ResolveTaskReadinessOptions
+): Promise<LocalModelTaskReadiness> {
+	const base = { taskId: task.id, label: task.label, needs: task.needs, assignment };
+	switch (assignment.type) {
+		case 'off':
+			return {
+				...base,
+				state: 'off',
+				detail: `${task.label} is off.`,
+				suggestedAction: `Assign it ${
+					endpointServesNeed(task.needs) ? 'a local model or an endpoint' : 'a local model'
+				} in ${ASSIGNMENT_LOCATION}.`,
+			};
+		case 'utility-agent':
+			return {
+				...base,
+				state: 'utility-agent',
+				detail: `${task.label} runs on the Utility Agent.`,
+			};
+		case 'local':
+			return { ...base, ...(await resolveLocal(task, assignment.modelId, options)) };
+		case 'endpoint':
+			return {
+				...base,
+				...(await resolveEndpoint(task, assignment.endpointId, assignment.model, options)),
+			};
+	}
+}
+
+type Verdict = Omit<LocalModelTaskReadiness, 'taskId' | 'label' | 'needs' | 'assignment'>;
+
+function unavailable(
+	reason: LocalModelTaskUnreadyReason,
+	detail: string,
+	suggestedAction: string,
+	extra: Partial<Verdict> = {}
+): Verdict {
+	return { state: 'unavailable', reason, detail, suggestedAction, ...extra };
+}
+
+async function resolveLocal(
+	task: LocalModelTaskDefinition,
+	modelId: string,
+	options: ResolveTaskReadinessOptions
+): Promise<Verdict> {
+	const needLabel = aNeed(task.needs);
+	const entry = getLocalModel(modelId);
+	if (!entry) {
+		return unavailable(
+			'model-unknown',
+			`"${modelId}" is not a model in this build's catalog.`,
+			`Assign ${needLabel} model from the Local Models catalog in ${ASSIGNMENT_LOCATION}.`
+		);
+	}
+	if (entry.kind !== task.needs) {
+		return unavailable(
+			'model-wrong-kind',
+			`${entry.displayName} is not ${needLabel} model, which ${task.label} needs.`,
+			`Assign ${needLabel} model in ${ASSIGNMENT_LOCATION}.`
+		);
+	}
+
+	const runtimeId = entry.runtime;
+	const readRuntimeFailure = options.readRuntimeFailure ?? knownNativeRuntimeUnavailability;
+	const runtimeFailure = await readRuntimeFailure(runtimeId);
+	if (runtimeFailure) {
+		return unavailable(
+			'runtime-unavailable',
+			runtimeFailure.message,
+			runtimeFailure.suggestedAction,
+			{
+				runtimeId,
+			}
+		);
+	}
+
+	const status = await (options.readModelStatus ?? getStatus)(modelId);
+	const location = runtimeSetupLocation(runtimeId);
+	if (status.status === 'installed') {
+		return { state: 'ready', detail: `Runs ${entry.displayName} on this machine.`, runtimeId };
+	}
+	if (status.status === 'corrupt') {
+		return unavailable(
+			'model-corrupt',
+			`${entry.displayName} is installed but failed verification${
+				status.detail ? ` (${status.detail})` : ''
+			}.`,
+			`Verify or re-download it in ${location}.`,
+			{ runtimeId }
+		);
+	}
+	// The store's "Not installed" restates the verdict; anything else (a stale
+	// revision, a missing file) is worth naming.
+	const why = status.detail && status.detail !== 'Not installed' ? ` (${status.detail})` : '';
+	return unavailable(
+		'model-not-installed',
+		`${entry.displayName} is not downloaded${why}.`,
+		`Download it in ${location}.`,
+		{ runtimeId }
+	);
+}
+
+async function resolveEndpoint(
+	task: LocalModelTaskDefinition,
+	endpointId: string,
+	model: string,
+	options: ResolveTaskReadinessOptions
+): Promise<Verdict> {
+	if (!endpointServesNeed(task.needs)) {
+		return unavailable(
+			'endpoint-unsupported',
+			`${task.label} needs ${aNeed(task.needs)} model, which an endpoint cannot serve.`,
+			`Assign a local model in ${ASSIGNMENT_LOCATION}.`
+		);
+	}
+
+	const found = (options.findEndpoint ?? findUsableLocalModelEndpoint)(endpointId);
+	if (!found.ok) {
+		return found.problem === 'disabled'
+			? unavailable(
+					'endpoint-disabled',
+					found.message,
+					`Enable it in the endpoint list, or assign another source in ${ASSIGNMENT_LOCATION}.`
+				)
+			: unavailable(
+					'endpoint-unknown',
+					found.message,
+					`Add the endpoint again (maestro-cli models endpoints add), or assign another source in ${ASSIGNMENT_LOCATION}.`
+				);
+	}
+
+	const endpoint = found.endpoint;
+	const listing = await (options.listEndpointModels ?? defaultListEndpointModels)(endpoint);
+	if (!listing.ok) {
+		const { kind, message } = listing.error;
+		if (kind === 'missing-key') {
+			return unavailable(
+				'endpoint-key-missing',
+				message,
+				`Set ${endpoint.apiKeyEnvVar ?? 'the API key variable'} in Settings -> Environment.`
+			);
+		}
+		if (kind === 'auth') {
+			return unavailable(
+				'endpoint-rejected',
+				message,
+				`Check the API key in ${endpoint.apiKeyEnvVar ?? 'Settings -> Environment'}, and that it may call ${endpoint.name}.`
+			);
+		}
+		return unavailable(
+			'endpoint-unreachable',
+			message,
+			`Start ${endpoint.name}, or check its base URL (${endpoint.baseUrl}).`
+		);
+	}
+
+	if (!endpointListsModel(listing.models, model)) {
+		return unavailable(
+			'endpoint-model-missing',
+			`${endpoint.name} does not serve "${model}".`,
+			endpoint.kind === 'ollama'
+				? `Pull it (ollama pull ${model}), or assign a model ${endpoint.name} lists.`
+				: `Load it on ${endpoint.name}, or assign a model it lists.`
+		);
+	}
+	return { state: 'ready', detail: `Runs ${model} on ${endpoint.name}.` };
+}
+
+/**
+ * Whether a listing includes the assigned model. Ollama lists tags in full
+ * (`qwen3:latest`) and answers a bare name with its `latest` tag, so a bare
+ * assigned name matches its `:latest` entry.
+ */
+export function endpointListsModel(models: readonly EndpointModel[], model: string): boolean {
+	return models.some(
+		(entry) => entry.id === model || (!model.includes(':') && entry.id === `${model}:latest`)
+	);
+}

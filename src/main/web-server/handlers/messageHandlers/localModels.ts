@@ -2,8 +2,8 @@
  * Local Models WebSocket message handlers.
  *
  * Handles: local_models_endpoints_detect, local_models_endpoint_test,
- * local_models_run_task. These are the CLI's route to the same service functions
- * the `localModels:*` IPC channels call, so `maestro-cli models endpoints test`
+ * local_models_run_task, local_models_task_readiness. These are the CLI's route
+ * to the same service functions the `localModels:*` IPC channels call, so `maestro-cli models endpoints test`
  * and Settings' Test button use the same record, the same key lookup, and the
  * same budget, and `maestro-cli models run` goes through the same task router
  * (and the same assignment) as an in-app caller.
@@ -19,6 +19,7 @@ import {
 	testLocalModelEndpoint,
 } from '../../../local-models/endpoint-service';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
+import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /** Handle local_models_endpoints_detect - running loopback servers not configured yet. */
@@ -75,6 +76,27 @@ export async function handleLocalModelsRunTask(
 	try {
 		const result = await runLocalTaskRequest(message.taskId, message.input);
 		ctx.send(client, { type, success: true, result, requestId: message.requestId });
+	} catch (error) {
+		const errMsg = error instanceof Error ? error.message : String(error);
+		ctx.send(client, { type, success: false, error: errMsg, requestId: message.requestId });
+	}
+}
+
+/**
+ * Handle local_models_task_readiness - whether each task's assigned source
+ * would answer now (`maestro-cli models status`). An unavailable task is a
+ * successful round trip with the verdict in `readiness`; only an unknown task
+ * id comes back as an error.
+ */
+export async function handleLocalModelsTaskReadiness(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const type = 'local_models_task_readiness_result';
+	try {
+		const readiness = await resolveTaskReadinessRequest(message.taskId);
+		ctx.send(client, { type, success: true, readiness, requestId: message.requestId });
 	} catch (error) {
 		const errMsg = error instanceof Error ? error.message : String(error);
 		ctx.send(client, { type, success: false, error: errMsg, requestId: message.requestId });

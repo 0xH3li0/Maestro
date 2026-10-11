@@ -41,7 +41,7 @@ import {
 import { isInstalled, modelFilePath } from './model-store';
 import { LLAMA_GET_OPTIONS } from './runtime/llama-options';
 import { loadLocalRuntime } from './runtime/load-runtime';
-import { nativeRuntimeConsumerFor } from './runtime/runtime-consumers';
+import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import type { LocalModelSource } from './sources';
 
 // ---------------------------------------------------------------------------
@@ -253,11 +253,6 @@ export interface LocalTextEngineOptions {
 	resolveModelPath?: (modelId: string) => Promise<string>;
 }
 
-/** Where a person downloads and verifies llama models, for recovery sentences. */
-function modelSetupLocation(): string {
-	return nativeRuntimeConsumerFor('llama')?.downloadLocation ?? 'Settings';
-}
-
 /**
  * The installed GGUF for a catalog text-generation model, or a classified refusal.
  *
@@ -282,7 +277,7 @@ export async function resolveInstalledTextModelPath(modelId: string): Promise<st
 	if (!(await isInstalled(modelId))) {
 		throw new LocalModelError(`${entry.displayName} is not downloaded.`, {
 			code: 'model-not-installed',
-			recovery: `Download it in ${modelSetupLocation()}.`,
+			recovery: `Download it in ${runtimeSetupLocation('llama')}.`,
 			consumerId: CONSUMER_ID,
 		});
 	}
@@ -393,7 +388,7 @@ export class LocalTextEngine {
 		} catch (error) {
 			throw new LocalModelError(`${modelLabel(modelId)} could not be opened.`, {
 				code: 'generation-failed',
-				recovery: `Verify or re-download it in ${modelSetupLocation()}.`,
+				recovery: `Verify or re-download it in ${runtimeSetupLocation('llama')}.`,
 				consumerId: CONSUMER_ID,
 				cause: error,
 			});

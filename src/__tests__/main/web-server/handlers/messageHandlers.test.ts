@@ -93,6 +93,16 @@ vi.mock('../../../../main/local-models/task-router', () => ({
 
 import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 
+// The readiness resolver reads the model store and lists endpoints; the handler
+// tests only care that `maestro-cli models status` reaches it.
+vi.mock('../../../../main/local-models/task-readiness', () => ({
+	resolveTaskReadinessRequest: vi
+		.fn()
+		.mockResolvedValue([{ taskId: 'injection-screen', state: 'unavailable' }]),
+}));
+
+import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -4984,6 +4994,36 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				input: { prompt: 'p' },
 			});
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_task_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown task "x".' });
+		});
+
+		it('local_models_task_readiness passes the task id through and returns the verdicts', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_task_readiness',
+				requestId: 'q1',
+				taskId: 'injection-screen',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_task_readiness_result')
+			);
+			expect(resolveTaskReadinessRequest).toHaveBeenCalledWith('injection-screen');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'q1',
+				readiness: [{ taskId: 'injection-screen', state: 'unavailable' }],
+			});
+		});
+
+		it('local_models_task_readiness reports an unknown task as success: false', async () => {
+			vi.mocked(resolveTaskReadinessRequest).mockRejectedValueOnce(new Error('Unknown task "x".'));
+			handler.handleMessage(client, {
+				type: 'local_models_task_readiness',
+				requestId: 'q2',
+				taskId: 'x',
+			});
+			await vi.waitFor(() =>
+				expect(lastResponse().type).toBe('local_models_task_readiness_result')
+			);
 			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown task "x".' });
 		});
 	});
