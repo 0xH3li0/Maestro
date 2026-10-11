@@ -26,6 +26,9 @@ function Probe() {
 	const contributions = usePluginContributions();
 	return (
 		<>
+			<output aria-label="Contribution read">
+				{contributions.isLoading ? 'loading' : 'settled'}
+			</output>
 			{contributions.panels.map((panel) => (
 				<input key={panel.id} aria-label={panel.id} defaultValue="draft" />
 			))}
@@ -77,8 +80,10 @@ describe('usePluginContributions', () => {
 		expect(await screen.findByText('Project grouping')).toBeInTheDocument();
 		act(() => notifyChanged([]));
 		expect(screen.getByText('Project grouping')).toBeInTheDocument();
+		expect(screen.getByLabelText('Contribution read')).toHaveTextContent('loading');
 		await act(async () => resolveRefresh(active));
 		expect(screen.getByText('Project grouping')).toBeInTheDocument();
+		expect(screen.getByLabelText('Contribution read')).toHaveTextContent('settled');
 		act(() => notifyChanged([]));
 		await waitFor(() => expect(screen.queryByText('Project grouping')).not.toBeInTheDocument());
 	});
@@ -100,12 +105,14 @@ describe('usePluginContributions', () => {
 
 		render(<Probe />);
 		await waitFor(() => expect(plugins.contributions).toHaveBeenCalledTimes(1));
+		expect(screen.getByLabelText('Contribution read')).toHaveTextContent('loading');
 
 		act(() => notifyChanged());
 		await waitFor(() => expect(plugins.contributions).toHaveBeenCalledTimes(2));
 		await act(async () => {
 			await Promise.resolve();
 		});
+		expect(screen.getByLabelText('Contribution read')).toHaveTextContent('settled');
 
 		await act(async () => {
 			resolveInitial({
@@ -125,6 +132,7 @@ describe('usePluginContributions', () => {
 		});
 
 		await waitFor(() => expect(screen.queryByText('Revoked action')).not.toBeInTheDocument());
+		expect(screen.getByLabelText('Contribution read')).toHaveTextContent('settled');
 	});
 	it('preserves a live settings guest during unrelated refresh and removes it immediately on revoke', async () => {
 		const panel = {
@@ -221,5 +229,6 @@ describe('usePluginContributions', () => {
 		expect(screen.queryByRole('textbox', { name: 'p/config' })).not.toBeInTheDocument();
 		await act(async () => resolveRefresh(active));
 		expect(screen.queryByRole('textbox', { name: 'p/config' })).not.toBeInTheDocument();
+		expect(screen.getByLabelText('Contribution read')).toHaveTextContent('settled');
 	});
 });

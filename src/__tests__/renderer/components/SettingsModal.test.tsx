@@ -44,8 +44,13 @@ import {
 	type PanelContribution,
 } from '../../../shared/plugins/contributions';
 let settingsPanels: PanelContribution[] = [];
+let contributionsLoading = false;
 vi.mock('../../../renderer/hooks/usePluginContributions', () => ({
-	usePluginContributions: () => ({ ...aggregateContributions([]), panels: settingsPanels }),
+	usePluginContributions: () => ({
+		...aggregateContributions([]),
+		panels: settingsPanels,
+		isLoading: contributionsLoading,
+	}),
 }));
 vi.mock('../../../renderer/components/plugins/PluginPanelFrame', () => ({
 	PluginPanelFrame: ({ panel }: { panel: PanelContribution }) => (
@@ -3008,6 +3013,9 @@ describe('SettingsModal', () => {
 });
 
 describe('plugin settings destinations', () => {
+	beforeEach(() => {
+		contributionsLoading = false;
+	});
 	const panel: PanelContribution = {
 		id: 'example.plugin/config',
 		localId: 'config',
@@ -3118,6 +3126,7 @@ describe('plugin settings destinations', () => {
 	it('resolves a deferred link once but lets a user cancel it before contributions arrive', async () => {
 		__resetLastOpenSettingsTabForTests();
 		settingsPanels = [];
+		contributionsLoading = true;
 		const props = {
 			isOpen: true,
 			onClose: vi.fn(),
@@ -3127,15 +3136,37 @@ describe('plugin settings destinations', () => {
 		};
 		const view = render(<SettingsModal {...props} />);
 		settingsPanels = [panel];
+		contributionsLoading = false;
 		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
 		expect(await screen.findByTestId('plugin-settings-frame')).toBeInTheDocument();
 		view.rerender(<SettingsModal {...props} isOpen={false} />);
 		settingsPanels = [];
+		contributionsLoading = true;
 		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
 		fireEvent.click(screen.getByTitle('General'));
 		settingsPanels = [panel];
+		contributionsLoading = false;
 		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
 		expect(screen.getByTitle('General')).toHaveClass('font-bold');
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+	});
+	it('consumes a missing deferred link after the read settles without replaying it later', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [];
+		contributionsLoading = true;
+		const props = {
+			isOpen: true,
+			onClose: vi.fn(),
+			theme: mockTheme,
+			themes: { dracula: mockTheme },
+			initialSettingId: 'plugin-settings:example.plugin/config',
+		};
+		const view = render(<SettingsModal {...props} />);
+		contributionsLoading = false;
+		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
+		settingsPanels = [panel];
+		view.rerender(<SettingsModal {...props} theme={{ ...mockTheme }} />);
+		expect(screen.getByRole('button', { name: 'Plugins', exact: true })).toHaveClass('font-bold');
 		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
 	});
 	it('honors repeated external launches of the same card while Settings stays open', async () => {

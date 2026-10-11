@@ -44,6 +44,9 @@ sidebar groupings remain until the read completes, preventing a transient empty
 list from overwriting the saved sidebar selection with the manual fallback.
 Deep links are consumed once; a user tab selection cancels a pending link, and a
 new external launch can navigate to the same card again.
+Missing links stay deferred only while the contribution read is loading. A
+settled read without the target consumes the link, so a later registry change
+cannot unexpectedly navigate away from plugin management.
 
 `hostSettings` is an optional closed list, currently only `["media"]`, accepted
 only on settings panels. It draws a host-owned button to the existing

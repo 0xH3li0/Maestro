@@ -333,12 +333,17 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	useEffect(() => {
 		const targetId = pendingPluginSettingIdRef.current;
 		if (!isOpen || !targetId) return;
-		if (!settingsPanels.some((p) => pluginSettingsId(p.id) === targetId)) return;
+		if (!settingsPanels.some((p) => pluginSettingsId(p.id) === targetId)) {
+			// A missing link is deferred only while the contribution read is pending.
+			// Once it settles, later registry changes must not replay a stale request.
+			if (!contributions.isLoading) pendingPluginSettingIdRef.current = null;
+			return;
+		}
 		pendingPluginSettingIdRef.current = null;
 		pendingScrollIdRef.current = targetId;
 		setActiveTab(targetId as SettingsTabId);
 		setDeepLinkJump((n) => n + 1);
-	}, [isOpen, initialSettingId, initialNavigationRequest, settingsPanels]);
+	}, [isOpen, initialSettingId, initialNavigationRequest, settingsPanels, contributions.isLoading]);
 
 	useEffect(() => {
 		const targetId = pendingScrollIdRef.current;
