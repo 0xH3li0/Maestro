@@ -124,9 +124,15 @@ describe('redactSecrets - adversarial input stays linear (ReDoS)', () => {
 		'one long word': 'a'.repeat(K),
 	};
 
-	it.each(Object.entries(adversarial))('%s redacts in under 50 ms', (_name, input) => {
+	// A linear pass over 64 KB takes about 20 ms on a laptop and about 60 ms on
+	// a loaded Windows CI runner, so a tight wall-clock budget fails there
+	// without any regression. A pattern that backtracks quadratically takes
+	// seconds at this size, which is what this guards against.
+	const BUDGET_MS = 1000;
+
+	it.each(Object.entries(adversarial))(`%s redacts in under ${BUDGET_MS} ms`, (_name, input) => {
 		const start = performance.now();
 		redactSecrets(input, { hexBlobs: true });
-		expect(performance.now() - start).toBeLessThan(50);
+		expect(performance.now() - start).toBeLessThan(BUDGET_MS);
 	});
 });
