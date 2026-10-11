@@ -416,6 +416,36 @@ describe('media SDK contract', () => {
 		expect(bridge.log).toHaveBeenCalledWith('info', 'cancelled:true');
 		expect(bridge.log).not.toHaveBeenCalledWith('info', 'escaped');
 	});
+	it('releases cancelled invocation records even when the provider never settles', async () => {
+		const bridge = makeBridge();
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			`
+			var originalDelete = Map.prototype.delete;
+			Map.prototype.delete = function(key) {
+				var result = originalDelete.call(this, key);
+				if (key === 'pending-call') console.log('remaining:' + this.size);
+				return result;
+			};
+			module.exports = { activate: function(sdk) {
+				void sdk.services.register('transcription', function(request, context) {
+					context.onCancel(function() { console.log('cancelled:' + context.isCancelled()); });
+					return new Promise(function() {});
+				});
+			} };`,
+			'unsettled-provider'
+		);
+		await realm.activate();
+		void realm.invokeTool(
+			JSON.stringify({ commandId: 'service:transcription', args: { callId: 'pending-call' } })
+		);
+		await Promise.resolve();
+		realm.deliverEvent(
+			JSON.stringify({ topic: 'services.cancel', payload: { callId: 'pending-call' } })
+		);
+		expect(bridge.log).toHaveBeenCalledWith('info', 'remaining:0');
+		expect(bridge.log).toHaveBeenCalledWith('info', 'cancelled:true');
+	});
 	it('sends opaque media params and preserves machine-readable failure codes in the sandbox realm', async () => {
 		const sent: string[] = [];
 		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });

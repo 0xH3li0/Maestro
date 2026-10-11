@@ -191,6 +191,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
    var invocation = serviceInvocations.get(msg.payload.callId);
    if (invocation && !invocation.cancelled) {
     invocation.cancelled = true;
+    serviceInvocations.delete(msg.payload.callId);
     invocation.callbacks.forEach(function (fn) { try { fn(); } catch (error) { safeLog('error', 'service cancellation callback failed'); } });
     invocation.callbacks.clear();
    }

@@ -140,6 +140,40 @@ describe('PluginSandboxHost per-plugin observability', () => {
 		expect(running.inFlight).toBe(32);
 	});
 
+	it('keeps both API release budgets available when one call and its parent job drain together', async () => {
+		const gate = Promise.withResolvers<void>();
+		const release = vi.fn(() => gate.promise);
+		const bounded = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: { 'media.close': release, 'services.cancel': release },
+		});
+		bounded.start('bounded', dir, 'entry.js');
+		const dispatch = bounded as unknown as HostInternals;
+		const requests = [
+			{ method: 'services.cancel', params: { callId: 'a' } },
+			{ method: 'media.close', params: { jobId: 'parent-a' } },
+			{ method: 'services.cancel', params: { callId: 'b' } },
+			{ method: 'media.close', params: { jobId: 'parent-b' } },
+		];
+		const pending = requests.map((request, id) =>
+			dispatch.handleChildMessage('bounded', proc, { id, ...request })
+		);
+		expect(release).toHaveBeenCalledTimes(4);
+		await dispatch.handleChildMessage('bounded', proc, {
+			id: 5,
+			method: 'services.cancel',
+			params: { callId: 'c' },
+		});
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 5,
+			ok: false,
+			error: 'ServiceBusy',
+			errorCode: 'ServiceBusy',
+		});
+		gate.resolve();
+		await Promise.all(pending);
+	});
+
 	it('bounds sequential unknown close requests while preserving owned-job cancellation', async () => {
 		const close = Object.assign(
 			vi.fn(async () => undefined),

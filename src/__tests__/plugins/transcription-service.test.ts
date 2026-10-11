@@ -103,6 +103,9 @@ describe('transcription provider authoring fixture', () => {
 				'services.media.run',
 			]);
 			expect(
+				calls.filter((c) => c.method.startsWith('services.media')).map((c) => c.params.audioId)
+			).toEqual(['source-alias', 'source-alias', 'decoded-alias', 'decoded-alias']);
+			expect(
 				calls
 					.filter((c) => c.method.startsWith('services.media'))
 					.every((c) => c.params.callId === 'call-alias')

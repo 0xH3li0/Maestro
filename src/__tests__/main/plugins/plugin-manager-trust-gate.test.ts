@@ -244,6 +244,64 @@ describe('settings panel activation boundary', () => {
 });
 
 describe('explicit service startup dependencies', () => {
+	it.each(['before-exit', 'during-cleanup', 'failed-cleanup'] as const)(
+		'rechecks a mandatory consumer after drain (%s)',
+		async (phase) => {
+			let available = true;
+			let draining = false;
+			const cleanup = Promise.withResolvers<void>();
+			const sandbox = makeSandbox();
+			const start = sandbox.start;
+			const stop = sandbox.stop;
+			sandbox.start = vi.fn((...args) => {
+				if (draining) throw new Error('PluginDrainPending');
+				start(...args);
+			});
+			sandbox.stop = vi.fn((id) => {
+				draining = true;
+				if (phase !== 'before-exit') stop(id);
+				return cleanup.promise.then(() => {
+					stop(id);
+					draining = false;
+				});
+			});
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox,
+				trustedKeys: () => [trustedSigner.publicKeyB64],
+				serviceAvailable: () => available,
+			});
+			const requirement = {
+				id: 'voice',
+				provider: 'example.media',
+				service: 'transcription',
+				contract: 'maestro.audio.transcribe' as const,
+				version: '^1.0.0',
+			};
+			signPluginDir(
+				writeCodePlugin('mandatory.consumer', { requires: [requirement] }),
+				trustedSigner
+			);
+			manager.refresh();
+			manager.setEnabled('mandatory.consumer', true);
+			expect(sandbox.isRunning('mandatory.consumer')).toBe(true);
+			available = false;
+			manager.reconcileServiceDependencies();
+			available = true;
+			manager.reconcileServiceDependencies();
+			if (phase === 'failed-cleanup') {
+				cleanup.reject(new Error('MediaProcessFailed'));
+				await Promise.resolve();
+				await Promise.resolve();
+				expect(sandbox.isRunning('mandatory.consumer')).toBe(false);
+			} else {
+				cleanup.resolve();
+				await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2));
+				expect(sandbox.isRunning('mandatory.consumer')).toBe(true);
+			}
+		}
+	);
+
 	it('starts/stops mandatory consumers with availability while optional denial leaves text plugins running', () => {
 		let available = false;
 		const sandbox = makeSandbox();

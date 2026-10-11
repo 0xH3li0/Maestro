@@ -12,7 +12,7 @@
  * children down (graceful shutdown message, then hard kill after a grace).
  */
 
-import { SERVICE_ERROR_CODES } from '../../shared/plugins/services';
+import { SERVICE_ERROR_CODES, SERVICE_LIMITS } from '../../shared/plugins/services';
 import { MEDIA_ERROR_CODES, MEDIA_LIMITS } from '../../shared/plugins/media-tools';
 import { utilityProcess, type UtilityProcess } from 'electron';
 import * as fs from 'fs';
@@ -114,6 +114,7 @@ interface RunningPlugin {
 	stopping?: boolean;
 	/** Separate bounded release slots so saturated ordinary calls cannot block cancellation. */
 	mediaClosesInFlight: number;
+	serviceCancelsInFlight: number;
 	/** Do not spend both release slots awaiting duplicate cleanup of one job. */
 	mediaClosingJobs: Set<string>;
 	mediaCloseWindowCount: number;
@@ -154,6 +155,7 @@ function toActivitySnapshot(a: Activity): ActivitySnapshot {
 export class PluginSandboxHost {
 	/** Retain failed drains: a cleanup failure must never authorize a fresh process. */
 	private readonly drains = new Map<string, Promise<void>>();
+	private readonly failedDrains = new Map<string, () => void | Promise<void>>();
 	private running = new Map<string, RunningPlugin>();
 	/** Per-plugin observability, keyed by plugin id. Separate from `running` so
 	 *  it survives a crashed child (crash counts must persist). */
@@ -255,6 +257,7 @@ export class PluginSandboxHost {
 			windowStart: Date.now(),
 			windowCount: 0,
 			mediaClosesInFlight: 0,
+			serviceCancelsInFlight: 0,
 			mediaClosingJobs: new Set(),
 			mediaCloseWindowCount: 0,
 			pendingTools: new Map(),
@@ -295,7 +298,13 @@ export class PluginSandboxHost {
 						this.drains.delete(pluginId);
 					});
 					this.drains.set(pluginId, drain);
-					void drain.catch(() => {});
+					void drain.catch(() => {
+						if (this.drains.get(pluginId) === drain) {
+							this.failedDrains.set(pluginId, () =>
+								this.deps.onStop ? this.deps.onStop(pluginId) : this.deps.onCrash?.(pluginId, code)
+							);
+						}
+					});
 				}
 			}
 		});
@@ -451,7 +460,21 @@ export class PluginSandboxHost {
 	/** Stop a plugin: ask it to shut down, then hard-kill after a grace period. */
 	stop(pluginId: string): Promise<void> {
 		const existingDrain = this.drains.get(pluginId);
-		if (existingDrain) return existingDrain;
+		if (existingDrain) {
+			const retryCleanup = this.failedDrains.get(pluginId);
+			if (this.running.has(pluginId) || !retryCleanup) return existingDrain;
+			this.failedDrains.delete(pluginId);
+			const retry = Promise.resolve()
+				.then(retryCleanup)
+				.then(() => {
+					if (this.drains.get(pluginId) === retry) this.drains.delete(pluginId);
+				});
+			this.drains.set(pluginId, retry);
+			void retry.catch(() => {
+				if (this.drains.get(pluginId) === retry) this.failedDrains.set(pluginId, retryCleanup);
+			});
+			return retry;
+		}
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.resolve();
 		record.stopping = true;
@@ -465,7 +488,10 @@ export class PluginSandboxHost {
 			this.drains.delete(pluginId);
 		});
 		this.drains.set(pluginId, drain);
-		void drain.catch(() => {});
+		void drain.catch(() => {
+			if (this.drains.get(pluginId) === drain)
+				this.failedDrains.set(pluginId, () => this.deps.onStop?.(pluginId));
+		});
 		try {
 			record.proc.postMessage({ kind: 'shutdown' });
 		} catch {
@@ -571,8 +597,10 @@ export class PluginSandboxHost {
 				return;
 			}
 			if (
-				(request.method === 'media.close' || request.method === 'services.cancel') &&
-				record.mediaClosesInFlight >= MEDIA_LIMITS.maxJobsPerPlugin
+				(request.method === 'media.close' &&
+					record.mediaClosesInFlight >= MEDIA_LIMITS.maxJobsPerPlugin) ||
+				(request.method === 'services.cancel' &&
+					record.serviceCancelsInFlight >= SERVICE_LIMITS.callsPerPlugin)
 			) {
 				respond({ ok: false, error: 'release concurrency limit exceeded' });
 				return;
@@ -661,7 +689,8 @@ export class PluginSandboxHost {
 
 		if (record) {
 			record.inFlight += 1;
-			if (method === 'media.close' || method === 'services.cancel') record.mediaClosesInFlight += 1;
+			if (method === 'media.close') record.mediaClosesInFlight += 1;
+			if (method === 'services.cancel') record.serviceCancelsInFlight += 1;
 		}
 		const act = this.activityFor(pluginId);
 		act.totalCalls += 1;
@@ -676,8 +705,10 @@ export class PluginSandboxHost {
 		} finally {
 			if (record) {
 				record.inFlight = Math.max(0, record.inFlight - 1);
-				if (method === 'media.close' || method === 'services.cancel')
+				if (method === 'media.close')
 					record.mediaClosesInFlight = Math.max(0, record.mediaClosesInFlight - 1);
+				if (method === 'services.cancel')
+					record.serviceCancelsInFlight = Math.max(0, record.serviceCancelsInFlight - 1);
 				if (closeJobId !== undefined) record.mediaClosingJobs.delete(closeJobId);
 			}
 			act.inFlight = Math.max(0, act.inFlight - 1);

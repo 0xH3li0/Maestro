@@ -329,7 +329,16 @@ export class PluginManager {
 		for (const record of this.registry.records) {
 			if (!record.manifest?.requires?.some((r) => !r.optional)) continue;
 			if (!this.isRunnable(record)) {
-				if (sandbox.isRunning(record.id)) sandbox.stop(record.id);
+				if (sandbox.isRunning(record.id)) {
+					// Provider registration can race both child exit and resource cleanup.
+					// Re-read the current registry and availability only after a successful drain.
+					void Promise.resolve(sandbox.stop(record.id)).then(
+						() => this.reconcileServiceDependencies(),
+						() => {
+							/* retain failed cleanup barriers */
+						}
+					);
+				}
 			} else if (!sandbox.isRunning(record.id) && record.manifest.entry) {
 				try {
 					sandbox.start(record.id, record.source, record.manifest.entry);

@@ -193,6 +193,37 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 		expect(() => stopping.start('p', dir, 'entry.js')).toThrow('PluginDrainPending');
 	});
 
+	it.each(['stop', 'crash'] as const)(
+		'retries a failed %s cleanup without admitting a restart early',
+		async (mode) => {
+			const retry = Promise.withResolvers<void>();
+			const cleanup = vi
+				.fn()
+				.mockRejectedValueOnce(new Error('MediaProcessFailed'))
+				.mockImplementation(() => retry.promise);
+			const stopping = new PluginSandboxHost({
+				broker: allowAll,
+				handlers: {},
+				onStop: cleanup,
+				onCrash: cleanup,
+			});
+			stopping.start('p', dir, 'entry.js');
+			const first = mode === 'stop' ? stopping.stop('p') : undefined;
+			emit('exit', mode === 'stop' ? 0 : 1);
+			if (first) await expect(first).rejects.toThrow('MediaProcessFailed');
+			else await expect(stopping.stop('p')).rejects.toThrow('MediaProcessFailed');
+			expect(() => stopping.start('p', dir, 'entry.js')).toThrow('PluginDrainPending');
+			const next = stopping.stop('p');
+			await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(2));
+			expect(stopping.stop('p')).toBe(next);
+			expect(() => stopping.start('p', dir, 'entry.js')).toThrow('PluginDrainPending');
+			retry.resolve();
+			await next;
+			stopping.start('p', dir, 'entry.js');
+			expect(stopping.isRunning('p')).toBe(true);
+		}
+	);
+
 	it.each(['ServiceEmpty', 'unknown', 'late-start'])(
 		'preserves only allowlisted errors across provider realm, host invocation and consumer SDK (%s)',
 		async (code) => {

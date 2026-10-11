@@ -321,6 +321,10 @@ describe('vendored services contract parity', () => {
 				},
 			],
 		};
+		for (const scope of ['example.media/transcription', 'example.media/*', undefined]) {
+			const scoped = { ...manifest, permissions: [{ capability: 'services:call', scope }] };
+			expect(validatePluginManifest(scoped)).toEqual(srcValidatePluginManifest(scoped));
+		}
 		expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
 	});
 });
