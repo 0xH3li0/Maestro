@@ -340,7 +340,7 @@ describe('cot-export ledger runs', () => {
 			});
 
 			// The long run is still going when the short one ends.
-			await recorder.recordPending(() => [{ ...long, status: 'running' }, short]);
+			await recorder.recordPending(() => [{ ...long, status: 'running' as const }, short]);
 			expect(await promptsIn()).toEqual(['The short one.']);
 
 			await recorder.recordPending(() => [long, short]);
