@@ -250,6 +250,28 @@ export function QuickChatRoot() {
 	const shownError = error ?? snapshot.error;
 	const c = theme.colors;
 
+	// The switcher sits at the TOP in both shapes. The window grows downward
+	// from a fixed top edge, so a trigger at the top stays under the cursor
+	// while the picker opens just below it.
+	const agentButton = (
+		<button
+			type="button"
+			onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+			title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
+			aria-label="Switch agent"
+			aria-expanded={pickerOpen}
+			className="flex items-center gap-1 text-sm font-medium max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
+			style={{ ...NO_DRAG_REGION, color: c.textMain }}
+			data-testid="quick-chat-agent-button"
+		>
+			<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
+			<ChevronDown
+				className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
+				style={{ color: c.textDim }}
+			/>
+		</button>
+	);
+
 	const composer = (
 		<div
 			className={`rounded-3xl px-4 pb-2 flex flex-col gap-2 ${expanded ? 'pt-3' : 'pt-1 h-full justify-between'}`}
@@ -260,8 +282,11 @@ export function QuickChatRoot() {
 			}}
 		>
 			{!expanded && (
-				<div className="-mb-1">
-					<DragHandle theme={theme} />
+				<div className="relative flex items-center h-6 -mb-1" style={DRAG_REGION}>
+					<div className="absolute inset-x-0 top-0">
+						<DragHandle theme={theme} />
+					</div>
+					<div className="relative flex min-w-0">{agentButton}</div>
 				</div>
 			)}
 			<textarea
@@ -281,21 +306,6 @@ export function QuickChatRoot() {
 				style={{ color: c.textMain }}
 			/>
 			<div className="flex items-center gap-2">
-				<button
-					type="button"
-					onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
-					title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
-					aria-label="Switch agent"
-					aria-expanded={pickerOpen}
-					className="flex items-center gap-1 text-sm max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
-					style={{ color: c.textDim }}
-					data-testid="quick-chat-agent-button"
-				>
-					<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
-					<ChevronDown
-						className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
-					/>
-				</button>
 				<div className="flex-1" />
 				<IconButton
 					theme={theme}
@@ -371,11 +381,9 @@ export function QuickChatRoot() {
 					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
 						<X className="w-4 h-4" />
 					</IconButton>
-					<div className="flex-1 min-w-0 truncate text-sm">
-						<span className="font-medium" style={{ color: c.textMain }}>
-							{agentName}
-						</span>
-						<span className="ml-2" style={{ color: c.textDim }}>
+					<div className="flex-1 min-w-0 flex items-center gap-2 text-sm">
+						{agentButton}
+						<span className="truncate" style={{ color: c.textDim }}>
 							{snapshot.persistent ? 'Quick Chat tab' : 'Quick Chat'}
 						</span>
 					</div>
