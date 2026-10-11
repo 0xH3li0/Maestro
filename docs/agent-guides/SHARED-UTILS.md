@@ -1013,12 +1013,13 @@ the spelled-out platforms.
 
 ### Context Usage (`src/renderer/utils/contextUsage.ts`)
 
-| Function                                                                                | Signature                                       | Purpose                                                                              |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `calculateContextTokens(stats, agentId?)`                                               | `(UsageStats, string?) => number`               | Agent-specific context token calculation. Claude: input+cache. OpenAI: input+output. |
-| `estimateContextUsage(stats, agentId?)`                                                 | `(UsageStats, string?) => number \| null`       | Estimate context usage %. Returns null for accumulated multi-tool turns.             |
-| `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                  |
-| `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.      |
+| Function                                                                                | Signature                                       | Purpose                                                                                                                                                        |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `calculateContextTokens(stats, agentId?)`                                               | `(UsageStats, string?) => number`               | Agent-specific context token calculation. Claude: input+cache. OpenAI: input+output.                                                                           |
+| `estimateContextUsage(stats, agentId?)`                                                 | `(UsageStats, string?) => number \| null`       | Estimate context usage %. Returns null for accumulated multi-tool turns.                                                                                       |
+| `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                                                                                            |
+| `resolveGaugeTokenStats(stats, agentId?)`                                               | Returns the token fields to measure             | Picks the provider occupancy snapshot (`absoluteUsage`) over a turn's summed token spend. Run a stored tab record through it before `calculateContextDisplay`. |
+| `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.                                                                                |
 
 ### Context Window Precedence (`src/renderer/utils/contextWindowPrecedence.ts`)
 
