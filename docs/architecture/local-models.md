@@ -2023,6 +2023,60 @@ Not run: the `openai` route, compression of a Responses or Chat Completions body
 tier (`token-proxy` was off), an SSH remote agent, and a session long enough to show the
 crossover in total cost.
 
+## Verification
+
+### Smoke test: 2026-10-11, dev build at `2f019d8881`, darwin-arm64
+
+**Method.** A dev build (`npm run dev`) ran on a new, empty data directory (`MAESTRO_DEMO_DIR`)
+with `MAESTRO_CDP_PORT` set, and with the `MAESTRO_*` variables of the agent shell removed from
+its environment. It ran beside a dev instance that was already open on the `maestro-dev` profile;
+the second instance took the next Vite port and the first was not touched. The app was driven over
+CDP with `scripts/cdp-eval.mjs`. Settings was opened with `openUiSurface('settings',
+'local-models')`, the call `maestro-cli open settings --tab local-models` makes. Values were read
+from the DOM by `data-testid` and from `window.maestro.settings.get()`.
+
+| Check                              | Result                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| The tab renders                    | PASS. Four sections: Models, Endpoints, Assignments, Gateway                                  |
+| The tab is empty by default        | PASS. On disk `0 B`, Installed `0`, Needs attention `0`; ten catalog models, none installed   |
+| No endpoint by default             | PASS. "No endpoints configured."; `localModelEndpoints` is `[]`                               |
+| No stored assignment by default    | PASS. `localModelAssignments` is `{}`                                                         |
+| Gateway is empty by default        | PASS. "No agents yet."; the token proxy reads "Not set up"                                    |
+| Detect local servers               | PASS. Found Ollama at `http://127.0.0.1:11434` with 9 models and an Add button                |
+| Detection saves nothing            | PASS. `localModelEndpoints` was still `[]` after the scan                                     |
+| Assignments lists every task       | PASS. 13 rows, one for each id in `LOCAL_MODEL_TASK_IDS`                                      |
+| Utility Agent defaults             | PASS. `tab-naming`, `tab-summary` and `ai-command` read Utility Agent; the other ten read Off |
+| Voice Setup lists from the store   | PASS. Three models and the ONNX runtime, total 742.5 MB, each path under `<userData>/models/` |
+| Voice Setup downloads to the store | PASS. See below                                                                               |
+| Main-process log                   | PASS. No `[ERROR]` line and no uncaught exception during the run                              |
+
+**The download.** With the A Cappella flag on, the two wake word models (openWakeWord Base, 2.3 MB;
+"Hey Jarvis", 1.2 MB) were downloaded with the row buttons in the Voice Setup modal. Each row went
+from Not installed to Downloading to Installed. The files and a `manifest.json` for each model were
+on disk under `<userData>/models/openwakeword-base/` and `<userData>/models/openwakeword-hey-jarvis/`.
+The modal's total went from 742.5 MB to 739.0 MB. The Local Models tab, opened after that with no
+restart, showed On disk `3.5 MB` and Installed `2`, and both rows showed Installed with Re-verify
+and Remove. One store serves both surfaces.
+
+**What a new profile shows that is not a failure.** Qwen3 1.7B and Kokoro 82M have no Download
+button. Each shows its catalog `pending` text ("Not usable yet"). Qwen3 is the only text
+generation model in the catalog, so on a new profile the nine tasks that take a text model can run
+only on an endpoint or on the Utility Agent. This is the state recorded under "Llama runtime on
+real hardware".
+
+**Not run.**
+
+- The "Reports none" result of Detect local servers. Ollama was running on the test machine, so
+  the scan found a server. The unit tests cover the empty result.
+- The Parakeet download (630.7 MB), the ONNX runtime install (108.3 MB), and the one button that
+  fetches all of them. No voice session was started.
+- The automatic opening of Voice Setup when the Encore flag is switched on. The flag was set
+  through the settings store and the modal was opened through the modal store.
+- Add endpoint, an endpoint test, and a change of assignment.
+
+The screenshot is `/tmp/local-models-tab.png` (the top of the tab on the empty profile). It is not
+in the repository. The data directory and the capture script were deleted after the run.
+
 ## Related
 
 - [[model-manager]] - download, verification, and disk rules, and voice's capability gate.
