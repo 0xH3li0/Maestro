@@ -17,6 +17,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
+
 vi.mock('electron', () => ({
 	app: { getPath: () => os.tmpdir() },
 }));
@@ -375,6 +380,49 @@ describe('explicit service startup dependencies', () => {
 			}
 		}
 	);
+
+	it('does not restart a retained old record when the feature is disabled during a failed update', async () => {
+		let enabled = true;
+		const gate = Promise.withResolvers<void>();
+		const sandbox = makeSandbox();
+		const stop = sandbox.stop;
+		sandbox.stop = vi.fn((id) => {
+			stop(id);
+			return gate.promise;
+		});
+		const source = writeCodePlugin('feature.consumer');
+		signPluginDir(source, trustedSigner);
+		const replacement = path.join(workDir, 'replacement');
+		fs.cpSync(source, replacement, { recursive: true });
+		const manifest = JSON.parse(fs.readFileSync(path.join(replacement, 'plugin.json'), 'utf8'));
+		manifest.version = '2.0.0';
+		fs.writeFileSync(path.join(replacement, 'plugin.json'), JSON.stringify(manifest));
+		signPluginDir(replacement, trustedSigner);
+		const manager = new PluginManager({
+			isEnabled: () => enabled,
+			sandbox,
+			trustedKeys: () => [trustedSigner.publicKeyB64],
+		});
+		manager.refresh();
+		manager.setEnabled('feature.consumer', true);
+		const pending = manager.update(replacement);
+		await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledWith('feature.consumer'));
+		enabled = false;
+		manager.stopAllSandboxes();
+		const rename = vi.mocked(fs.renameSync).mockImplementation(() => {
+			throw new Error('swap failed');
+		});
+		try {
+			const rejected = expect(pending).rejects.toThrow('swap failed');
+			gate.resolve();
+			await rejected;
+			expect(fs.existsSync(source)).toBe(true);
+			expect(sandbox.start).toHaveBeenCalledTimes(1);
+			expect(sandbox.isRunning('feature.consumer')).toBe(false);
+		} finally {
+			rename.mockReset();
+		}
+	});
 
 	it('starts/stops mandatory consumers with availability while optional denial leaves text plugins running', () => {
 		let available = false;

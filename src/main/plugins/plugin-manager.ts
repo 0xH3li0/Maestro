@@ -312,6 +312,7 @@ export class PluginManager {
 	 */
 	private isRunnable(record: PluginRecord): boolean {
 		return (
+			this.deps.isEnabled() &&
 			!this.pendingMutations.has(record.id) &&
 			record.enabled &&
 			record.loadStatus === 'ok' &&
