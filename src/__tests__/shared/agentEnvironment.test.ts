@@ -11,6 +11,7 @@ import {
 	resolveAgentEnvironment,
 	isBlankEnvValue,
 	isBlankEnvKey,
+	isValidEnvVarName,
 	stripBlankEnvVars,
 } from '../../shared/agentEnvironment';
 
@@ -191,5 +192,21 @@ describe('isBlankEnvKey', () => {
 	it('treats any real name as named', () => {
 		expect(isBlankEnvKey('A')).toBe(false);
 		expect(isBlankEnvKey('CLAUDE_CONFIG_DIR')).toBe(false);
+	});
+});
+
+describe('isValidEnvVarName', () => {
+	it('accepts portable names', () => {
+		expect(isValidEnvVarName('OPENAI_API_KEY')).toBe(true);
+		expect(isValidEnvVarName('_private')).toBe(true);
+		expect(isValidEnvVarName('a1')).toBe(true);
+	});
+
+	it('rejects names a shell cannot export', () => {
+		expect(isValidEnvVarName('')).toBe(false);
+		expect(isValidEnvVarName('1KEY')).toBe(false);
+		expect(isValidEnvVarName('MY-KEY')).toBe(false);
+		expect(isValidEnvVarName('MY KEY')).toBe(false);
+		expect(isValidEnvVarName('$KEY')).toBe(false);
 	});
 });

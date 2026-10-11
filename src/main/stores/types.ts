@@ -8,6 +8,7 @@
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -142,6 +143,9 @@ export interface MaestroSettings {
 	// Collapse repeated Cue runs in the History panel into one row per trigger.
 	// Declared explicitly for the same reason as the retention days above.
 	groupCueEntries: boolean;
+	// Local Models endpoints (Ollama, LM Studio, OpenAI-compatible servers the
+	// user runs). API keys are referenced by env-var name, never stored here.
+	localModelEndpoints: LocalModelEndpoint[];
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

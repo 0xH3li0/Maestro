@@ -158,6 +158,16 @@ export function isBlankEnvKey(key: string): boolean {
 }
 
 /**
+ * Whether a string is a portable environment variable NAME: a letter or
+ * underscore, then letters, digits, or underscores. POSIX shells refuse anything
+ * else in `export`, so a name outside this shape is a typo that no process will
+ * ever be able to read back.
+ */
+export function isValidEnvVarName(name: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+/**
  * Drop entries a spawn must not export: blank values, and unnamed rows.
  *
  * Note this is the SPAWN-time rule, and it deliberately differs from

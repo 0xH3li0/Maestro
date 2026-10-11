@@ -82,6 +82,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'advanced',
 	},
+	localModelEndpoints: {
+		description:
+			'Local Models endpoints: model servers you run (Ollama, LM Studio, any OpenAI-compatible URL). Each entry is { id, name, kind, baseUrl, apiKeyEnvVar?, enabled }. API keys are never stored here: apiKeyEnvVar names a variable in Settings -> Environment.',
+		type: 'array',
+		default: [],
+		category: 'integrations',
+	},
 	directorNotesSettings: {
 		description:
 			"Director's Notes settings: provider (or auto-select), lookback window, default reading mode, optional ideal end state.",

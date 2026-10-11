@@ -160,6 +160,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	encoreFeatures: { ...ENCORE_FEATURE_DEFAULTS },
 	cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	groupCueEntries: true,
+	// Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
+	// See shared/local-models/endpoints.ts.
+	localModelEndpoints: [],
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

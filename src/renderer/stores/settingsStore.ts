@@ -39,6 +39,10 @@ import {
 } from '../../shared/typography';
 import { parseTypographySnapshot } from '../../shared/typographySnapshot';
 import {
+	parseLocalModelEndpoints,
+	type LocalModelEndpoint,
+} from '../../shared/local-models/endpoints';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -350,6 +354,12 @@ export interface SettingsStoreState
 	 * value for later. Never merge this into a spawn env.
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
+	/**
+	 * Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
+	 * API keys are referenced by env-var name and resolved from `shellEnvVars`
+	 * at call time; see shared/local-models/endpoints.ts.
+	 */
+	localModelEndpoints: LocalModelEndpoint[];
 	ghPath: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
@@ -497,6 +507,7 @@ export interface SettingsStoreActions
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
 	setGhPath: (value: string) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
@@ -748,6 +759,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellArgs: '',
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
+		localModelEndpoints: [],
 		ghPath: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
@@ -899,6 +911,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setShellEnvVarsDisabled: (value) => {
 			set({ shellEnvVarsDisabled: value });
 			window.maestro.settings.set('shellEnvVarsDisabled', value);
+		},
+
+		setLocalModelEndpoints: (value) => {
+			set({ localModelEndpoints: value });
+			window.maestro.settings.set('localModelEndpoints', value);
 		},
 
 		setGhPath: (value) => {
@@ -2001,6 +2018,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['shellEnvVarsDisabled'] !== undefined)
 			patch.shellEnvVarsDisabled = allSettings['shellEnvVarsDisabled'] as Record<string, string>;
 
+		if (allSettings['localModelEndpoints'] !== undefined)
+			patch.localModelEndpoints = parseLocalModelEndpoints(allSettings['localModelEndpoints']);
+
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
 		hydrateThemeSettings(allSettings, patch);
@@ -2779,6 +2799,7 @@ export function getSettingsActions() {
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
 		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
+		setLocalModelEndpoints: state.setLocalModelEndpoints,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
