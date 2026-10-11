@@ -203,6 +203,38 @@ maestro-cli update-agent <agent-id> --gateway-url none
 maestro-cli show agent <agent-id> --json   # gatewayUrl
 ```
 
+### The Maestro proxy
+
+Maestro has a proxy of its own, so you do not need to run one to save tokens. Each row of the Gateway table has a **Maestro proxy** control with three modes:
+
+| Mode            | What happens to the agent's requests                                                                |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| **Off**         | They do not go through Maestro's proxy. This is the default.                                        |
+| **Passthrough** | They go through it unchanged. Maestro only counts them.                                             |
+| **Compress**    | Large tool results (file reads, command output) in each request are shortened before it is sent on. |
+
+Choosing Passthrough or Compress sets the agent's gateway URL to the proxy for you. Choosing Off clears it. The proxy listens on `127.0.0.1` only, starts when the first agent uses it, and stops when none do.
+
+What Compress does, and does not do:
+
+- **It shortens only tool results**, and only ones over about 1,000 tokens. Your messages, the system prompt, tool definitions, and the agent's own text are never changed.
+- **The model reads every tool result in full once.** A result is shortened from the next request on, when it is history.
+- **The same text always shortens to the same bytes.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working.
+- **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine.
+- **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
+- **A local model is optional.** Rules do most of the work (minified JSON, repeated log lines folded, long lines cut). Assign the **Token proxy** task a model in Assignments to also summarize results that are still very large.
+
+Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
+
+The proxy cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider with no base-URL variable. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
+
+```bash
+maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress
+maestro-cli show agent <agent-id> --json                    # tokenProxyMode
+maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
+maestro-cli models proxy block <hash>                       # a diff of one shortened block
+```
+
 ## Privacy
 
 A downloaded model runs inside Maestro, so the text it reads never leaves your machine. An endpoint at a loopback address (`127.0.0.1`, `localhost`, `::1`) is also on your machine.
@@ -250,6 +282,7 @@ maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
 maestro-cli models status [task-id]              # would it run, and if not, why and what to do
 maestro-cli models index                         # the semantic index: state, and how much is indexed
+maestro-cli models proxy status                  # the Maestro token proxy: agents, tokens saved, added latency
 maestro-cli search "<query>" --semantic          # find past work by meaning (drop --semantic for exact text)
 maestro-cli models run <task-id> --input "..."   # run a text-generation task once
 maestro-cli models run git-drafts --cwd <repo> [--base <branch>]   # draft a pull request title and body

@@ -15,6 +15,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
@@ -41,6 +42,7 @@ import {
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
+import { setAgentTokenProxyMode } from '../../services/agentGateway';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
@@ -1788,6 +1790,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customEnvVars: undefined,
 				// A gateway speaks one provider's API, so it does not carry across.
 				gatewayUrl: undefined,
+				tokenProxyMode: undefined,
 				customModel: undefined,
 				customContextWindow: undefined,
 				// Provenance describes the value cleared above and must not outlive
@@ -1971,6 +1974,42 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			updated.gatewayUrl = edit.gatewayUrl ?? undefined;
+		}
+		// A proxy mode belongs to the gateway it was chosen for: a different
+		// gateway starts from the default, the same rule `setAgentGatewayUrl` has.
+		if ('gatewayUrl' in patch && (updated.gatewayUrl ?? undefined) !== session.gatewayUrl) {
+			updated.tokenProxyMode = undefined;
+		}
+
+		// The Maestro token proxy mode (`update-agent --proxy-mode`). It is not a
+		// plain field: turning the proxy on points the gateway at it, and turning
+		// it off clears that gateway, so it goes through the same service the
+		// Gateway section's mode control calls. The result is folded into this
+		// patch so the write below carries it rather than undoing it.
+		if ('tokenProxyMode' in patch) {
+			const mode = asTokenProxyMode(patch.tokenProxyMode);
+			const modeResult =
+				mode === undefined
+					? ({
+							ok: false,
+							error: `tokenProxyMode must be one of: ${TOKEN_PROXY_MODES.join(', ')}.`,
+						} as const)
+					: 'gatewayUrl' in patch
+						? ({
+								ok: false,
+								error:
+									'Set the gateway URL or the proxy mode, not both: the proxy mode chooses the gateway URL.',
+							} as const)
+						: await setAgentTokenProxyMode(sessionId, mode);
+			if (!modeResult.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: modeResult.error,
+				});
+				return;
+			}
+			updated.gatewayUrl = modeResult.gatewayUrl;
+			updated.tokenProxyMode = modeResult.mode === 'off' ? undefined : modeResult.mode;
 		}
 
 		// Clearing the window clears its provenance too, even when the caller sent

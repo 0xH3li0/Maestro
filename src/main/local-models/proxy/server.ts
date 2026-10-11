@@ -1,11 +1,22 @@
 /**
- * The Maestro token proxy's HTTP server: an exact passthrough.
+ * The Maestro token proxy's HTTP server.
  *
- * A request arrives on loopback, its first path segment names the upstream
- * (`resolveTokenProxyTarget`), and it is forwarded there with its headers and
- * body bytes unchanged. The response comes back the same way, streamed chunk
- * by chunk. This module changes NOTHING in either direction; it only counts
- * the bytes it carried.
+ * A request arrives on loopback, its path names the upstream and, when the
+ * launch put one there, the agent (`resolveTokenProxyTarget`), and it is
+ * forwarded with its headers and body bytes unchanged. The response comes back
+ * the same way, streamed chunk by chunk. In `passthrough` mode, which is every
+ * request unless an agent chose otherwise, this module changes NOTHING in
+ * either direction; it only counts the bytes it carried.
+ *
+ * `compress` mode is the one exception, and it is narrow: for an agent whose
+ * mode is `compress` (`modeFor`), a request that holds a message list is read
+ * whole, handed to `compress` (`compress.ts`), and sent with the body that
+ * comes back. Everything else about that request, and every other request,
+ * stays on the passthrough path. A body that cannot be read (an encoding this
+ * module does not know, bytes that are not UTF-8, a body past
+ * {@link MAX_COMPRESS_BODY_BYTES}) or a compressor that throws leaves the
+ * request exactly as it arrived: compression is an optimization, so its
+ * failure never costs the user the turn. The response is never touched.
  *
  * Built on Node's `http` / `https` rather than `fetch` (and so not on
  * `fetchWithTimeout`) on purpose. `fetch` decodes a compressed response and
@@ -37,6 +48,9 @@
 import * as http from 'http';
 import * as https from 'https';
 import type { AddressInfo } from 'net';
+import { promisify } from 'util';
+import * as zlib from 'zlib';
+import { estimateTokenCount } from '../../../shared/formatters';
 import {
 	defaultTokenProxyUpstreams,
 	resolveTokenProxyTarget,
@@ -45,8 +59,44 @@ import {
 	tokenProxyErrorBody,
 	type TokenProxyErrorCode,
 	type TokenProxyRequestKind,
+	type TokenProxyRequestMode,
 	type TokenProxyUpstreams,
 } from '../../../shared/local-models/token-proxy';
+import type { CompressedBlock, CompressRequestResult, CompressRequestStats } from './compress';
+
+/**
+ * The largest request body `compress` mode reads into memory, encoded or
+ * decoded. A larger one is forwarded as a stream, unread.
+ */
+export const MAX_COMPRESS_BODY_BYTES = 64 * 1024 * 1024;
+
+/** Why a `compress` mode request was forwarded without being read. */
+export type TokenProxyCompressionSkip =
+	/** A `Content-Encoding` this module cannot decode. */
+	| 'encoding'
+	/** The decoded body is not UTF-8 text. */
+	| 'not-text'
+	/** The body is past {@link MAX_COMPRESS_BODY_BYTES}. */
+	| 'too-large'
+	/** Decoding or the compressor threw. */
+	| 'failed';
+
+/** What `compress` mode did with one request. */
+export interface TokenProxyCompressionLog {
+	/** Set when the body went out as it arrived, unread or after a failure. */
+	skipped?: TokenProxyCompressionSkip;
+	/** The failure, for `skipped: 'failed'`. */
+	error?: string;
+	/** Whether the body sent differs from the body received. */
+	changed: boolean;
+	/** How long the request was held to be read and shortened. */
+	addedLatencyMs: number;
+	/** Tokens (characters / 4) of the body as it arrived and as it was sent. */
+	originalTokens?: number;
+	sentTokens?: number;
+	stats?: CompressRequestStats;
+	blocks?: CompressedBlock[];
+}
 
 /** How one request ended. */
 export type TokenProxyRequestOutcome =
@@ -64,19 +114,28 @@ export interface TokenProxyRequestLog {
 	/** The route prefix, or null when the request named none. */
 	route: string | null;
 	kind: TokenProxyRequestKind;
+	/** The agent the base URL named, or null when it named none. */
+	agentId: string | null;
+	mode: TokenProxyRequestMode;
+	/** Epoch ms the request arrived. */
+	startedAt: number;
 	method: string;
 	/** The forwarded path, without the route prefix or the query string. */
 	path: string;
 	/** The status sent to the client, or 0 when none was. */
 	status: number;
-	/** Request body bytes received from the client and sent upstream. */
+	/** Request body bytes received from the client. */
 	requestBytes: number;
+	/** Request body bytes sent upstream. Differs only when the body was compressed. */
+	sentBytes: number;
 	/** Response body bytes received from the upstream and sent to the client. */
 	responseBytes: number;
 	durationMs: number;
 	outcome: TokenProxyRequestOutcome;
 	/** The failure, when the proxy itself failed. */
 	error?: string;
+	/** Present when the request went down the `compress` path. */
+	compression?: TokenProxyCompressionLog;
 }
 
 export interface TokenProxyServerOptions {
@@ -84,6 +143,16 @@ export interface TokenProxyServerOptions {
 	upstreams?: TokenProxyUpstreams;
 	/** Called once per request, when it has ended. */
 	onRequest?: (entry: TokenProxyRequestLog) => void;
+	/**
+	 * How one agent's requests are carried. Asked once per request, so a mode
+	 * the user changes applies to the next request. Defaults to `passthrough`.
+	 */
+	modeFor?: (agentId: string | null) => TokenProxyRequestMode;
+	/**
+	 * Shortens a request body in `compress` mode (`compressRequestBody`). It
+	 * takes and returns text. Without it every request is a passthrough.
+	 */
+	compress?: (kind: TokenProxyRequestKind, body: string) => Promise<CompressRequestResult>;
 }
 
 export interface TokenProxyServer {
@@ -137,6 +206,54 @@ export function forwardableHeaders(
 	return kept;
 }
 
+type BodyDecoder = (input: Buffer, options: zlib.ZlibOptions) => Promise<Buffer>;
+
+/** `Content-Encoding` value -> decoder. Absent: the body is forwarded unread. */
+function bodyDecoders(): Record<string, BodyDecoder> {
+	const decoders: Record<string, BodyDecoder> = {
+		gzip: promisify(zlib.gunzip),
+		'x-gzip': promisify(zlib.gunzip),
+		deflate: promisify(zlib.inflate),
+		br: promisify(zlib.brotliDecompress) as BodyDecoder,
+	};
+	// Codex has sent zstd. Older Node builds have no decoder for it.
+	const zstd = (zlib as unknown as { zstdDecompress?: typeof zlib.gunzip }).zstdDecompress;
+	if (typeof zstd === 'function') decoders.zstd = promisify(zstd);
+	return decoders;
+}
+
+/** The request's `Content-Encoding`, lowercased. Null when it has none. */
+function contentEncoding(rawHeaders: readonly string[]): string | null {
+	const values: string[] = [];
+	for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
+		if (rawHeaders[i].toLowerCase() === 'content-encoding') values.push(rawHeaders[i + 1]);
+	}
+	const encoding = values.join(',').trim().toLowerCase();
+	return encoding === '' || encoding === 'identity' ? null : encoding;
+}
+
+/**
+ * The text of a request body, or why it cannot be read. The decode is strict:
+ * a body whose bytes are not UTF-8 would not survive the trip back to bytes,
+ * so it is not read at all.
+ */
+async function decodeRequestBody(
+	raw: Buffer,
+	encoding: string | null
+): Promise<{ text: string } | { skipped: TokenProxyCompressionSkip }> {
+	let bytes = raw;
+	if (encoding !== null) {
+		const decode = bodyDecoders()[encoding];
+		if (!decode) return { skipped: 'encoding' };
+		bytes = await decode(raw, { maxOutputLength: MAX_COMPRESS_BODY_BYTES });
+	}
+	try {
+		return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) };
+	} catch {
+		return { skipped: 'not-text' };
+	}
+}
+
 function errorText(error: unknown): string {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	const message = error instanceof Error ? error.message : String(error);
@@ -163,13 +280,18 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		const startedAt = Date.now();
 		const method = req.method ?? 'GET';
 		const target = resolveTokenProxyTarget(method, req.url ?? '/', upstreams);
+		const agentId = target.ok ? target.agentId : null;
 		const entry: TokenProxyRequestLog = {
 			route: target.ok ? target.route : null,
 			kind: target.ok ? target.kind : 'other',
+			agentId,
+			mode: target.ok ? (options.modeFor?.(agentId) ?? 'passthrough') : 'passthrough',
+			startedAt,
 			method,
 			path: target.ok ? target.path : (req.url ?? '/').split('?')[0],
 			status: 0,
 			requestBytes: 0,
+			sentBytes: 0,
 			responseBytes: 0,
 			durationMs: 0,
 			outcome: 'completed',
@@ -177,12 +299,16 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		let failure: { outcome: TokenProxyRequestOutcome; error: string } | null = null;
 		let closed = false;
 		let upstreamRequest: http.ClientRequest | null = null;
+		// Set when the body sent is not the body received. Otherwise the two
+		// counts are the same number.
+		let sentBytes: number | null = null;
 
 		// 'close' is the one event every ending reaches: a finished response, a
 		// client that went away, and a response this module destroyed.
 		res.once('close', () => {
 			closed = true;
 			entry.durationMs = Date.now() - startedAt;
+			entry.sentBytes = sentBytes ?? (upstreamRequest ? entry.requestBytes : 0);
 			if (failure) {
 				entry.outcome = failure.outcome;
 				entry.error = failure.error;
@@ -242,18 +368,6 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			return;
 		}
 		const secure = upstream.protocol === 'https:';
-		const outgoing = (secure ? https : http).request({
-			protocol: upstream.protocol,
-			hostname: upstream.hostname.replace(/^\[|\]$/g, ''),
-			port: upstream.port || undefined,
-			method,
-			// The client's path and query are appended as the text they arrived
-			// as. Only the upstream base (a constant) goes through `URL`.
-			path: `${upstream.pathname.replace(/\/+$/, '')}${target.path}${target.query}` || '/',
-			headers: [...forwardableHeaders(req.rawHeaders, ['host']), 'Host', upstream.host],
-			agent: secure ? httpsAgent : httpAgent,
-		});
-		upstreamRequest = outgoing;
 
 		const upstreamFailed = (error: unknown): void => {
 			answerAsProxy(
@@ -264,34 +378,62 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			);
 		};
 
-		outgoing.on('error', upstreamFailed);
-		outgoing.on('response', (upstreamResponse) => {
-			entry.status = upstreamResponse.statusCode ?? 0;
-			try {
-				res.writeHead(
-					upstreamResponse.statusCode ?? 502,
-					upstreamResponse.statusMessage || undefined,
-					forwardableHeaders(upstreamResponse.rawHeaders)
-				);
-			} catch (error) {
-				upstreamResponse.destroy();
-				upstreamFailed(error);
-				return;
-			}
-			// Send the status line now and every chunk as it lands: a server-sent
-			// event must not wait for the next one to fill a packet.
-			res.flushHeaders();
-			res.socket?.setNoDelay(true);
-			upstreamResponse.on('data', (chunk: Buffer) => {
-				entry.responseBytes += chunk.length;
+		/** The request's own headers, for a body that goes out as it arrived. */
+		const arrivedHeaders = (): string[] => [
+			...forwardableHeaders(req.rawHeaders, ['host']),
+			'Host',
+			upstream.host,
+		];
+
+		/**
+		 * Open the request to the upstream and wire its response to the client.
+		 * The headers are fixed here (Node writes an array of raw headers at
+		 * once), so a body whose length changed needs them built first.
+		 */
+		const openUpstream = (headers: string[]): http.ClientRequest => {
+			const outgoing = (secure ? https : http).request({
+				protocol: upstream.protocol,
+				hostname: upstream.hostname.replace(/^\[|\]$/g, ''),
+				port: upstream.port || undefined,
+				method,
+				// The client's path and query are appended as the text they arrived
+				// as. Only the upstream base (a constant) goes through `URL`.
+				path: `${upstream.pathname.replace(/\/+$/, '')}${target.path}${target.query}` || '/',
+				headers,
+				agent: secure ? httpsAgent : httpAgent,
 			});
-			upstreamResponse.on('error', upstreamFailed);
-			upstreamResponse.on('close', () => {
-				if (!upstreamResponse.complete)
-					upstreamFailed(new Error('the upstream closed mid-response'));
+			upstreamRequest = outgoing;
+
+			outgoing.on('error', upstreamFailed);
+			outgoing.on('response', (upstreamResponse) => {
+				entry.status = upstreamResponse.statusCode ?? 0;
+				try {
+					res.writeHead(
+						upstreamResponse.statusCode ?? 502,
+						upstreamResponse.statusMessage || undefined,
+						forwardableHeaders(upstreamResponse.rawHeaders)
+					);
+				} catch (error) {
+					upstreamResponse.destroy();
+					upstreamFailed(error);
+					return;
+				}
+				// Send the status line now and every chunk as it lands: a server-sent
+				// event must not wait for the next one to fill a packet.
+				res.flushHeaders();
+				res.socket?.setNoDelay(true);
+				upstreamResponse.on('data', (chunk: Buffer) => {
+					entry.responseBytes += chunk.length;
+				});
+				upstreamResponse.on('error', upstreamFailed);
+				upstreamResponse.on('close', () => {
+					if (!upstreamResponse.complete)
+						upstreamFailed(new Error('the upstream closed mid-response'));
+				});
+				upstreamResponse.pipe(res);
 			});
-			upstreamResponse.pipe(res);
-		});
+			return outgoing;
+		};
 
 		req.on('data', (chunk: Buffer) => {
 			entry.requestBytes += chunk.length;
@@ -299,7 +441,83 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		// A client that drops mid-upload is handled by the response's 'close'
 		// above; this only keeps the stream error from going unhandled.
 		req.on('error', () => {});
-		req.pipe(outgoing);
+
+		const compress = options.compress;
+		if (entry.mode !== 'compress' || !compress || target.kind === 'other') {
+			req.pipe(openUpstream(arrivedHeaders()));
+			return;
+		}
+
+		// `compress` mode, for a request that holds a message list: the body has
+		// to be whole before any of it is sent, because shortening it changes
+		// its length.
+		const kind = target.kind;
+		const received: Buffer[] = [];
+		let receivedBytes = 0;
+
+		const shortenAndSend = async (raw: Buffer): Promise<void> => {
+			const heldAt = Date.now();
+			const log: TokenProxyCompressionLog = { changed: false, addedLatencyMs: 0 };
+			let body = raw;
+			let headers = arrivedHeaders();
+			try {
+				const decoded = await decodeRequestBody(raw, contentEncoding(req.rawHeaders));
+				if ('skipped' in decoded) {
+					log.skipped = decoded.skipped;
+				} else {
+					const result = await compress(kind, decoded.text);
+					log.originalTokens = estimateTokenCount(decoded.text);
+					log.sentTokens = log.originalTokens;
+					log.stats = result.stats;
+					log.blocks = result.blocks;
+					if (result.changed) {
+						// The new body goes out as plain UTF-8, so the length and
+						// the encoding the client declared no longer describe it.
+						body = Buffer.from(result.body, 'utf-8');
+						headers = [
+							...forwardableHeaders(req.rawHeaders, ['host', 'content-length', 'content-encoding']),
+							'Content-Length',
+							String(body.length),
+							'Host',
+							upstream.host,
+						];
+						log.changed = true;
+						log.sentTokens = estimateTokenCount(result.body);
+					}
+				}
+			} catch (error) {
+				// The request goes out as it arrived. Nothing else is safe to send.
+				log.skipped = 'failed';
+				log.error = errorText(error);
+				log.changed = false;
+				body = raw;
+				headers = arrivedHeaders();
+			}
+			log.addedLatencyMs = Date.now() - heldAt;
+			entry.compression = log;
+			// The client left while the body was held: there is nobody to answer.
+			if (closed) return;
+			if (log.changed) sentBytes = body.length;
+			openUpstream(headers).end(body);
+		};
+
+		const onBodyEnd = (): void => void shortenAndSend(Buffer.concat(received));
+		const onBodyChunk = (chunk: Buffer): void => {
+			received.push(chunk);
+			receivedBytes += chunk.length;
+			if (receivedBytes <= MAX_COMPRESS_BODY_BYTES) return;
+			// Too large to hold. Send what has arrived and stream the rest.
+			req.off('data', onBodyChunk);
+			req.off('end', onBodyEnd);
+			req.pause();
+			entry.compression = { skipped: 'too-large', changed: false, addedLatencyMs: 0 };
+			const outgoing = openUpstream(arrivedHeaders());
+			for (const part of received) outgoing.write(part);
+			received.length = 0;
+			req.pipe(outgoing);
+		};
+		req.on('data', onBodyChunk);
+		req.once('end', onBodyEnd);
 	}
 
 	return {

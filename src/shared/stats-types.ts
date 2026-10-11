@@ -329,6 +329,95 @@ export interface LocalModelRun {
 	tokensOut?: number;
 }
 
+/** One block the token proxy shortened for the first time in a request. */
+export interface ProxyCompressedBlock {
+	/** SHA-256 of the original text: the key of the content-addressed cache. */
+	hash: string;
+	originalTokens: number;
+	compressedTokens: number;
+	/** The compressors that contributed ('json', 'logs', 'long-lines', 'model'). */
+	compressors: string[];
+}
+
+/**
+ * One model request the Maestro token proxy carried (see
+ * `src/main/local-models/proxy/`). Only requests that hold a message list are
+ * recorded; token counting, model lists and the like are not.
+ */
+export interface ProxyRequest {
+	id: string;
+	/** The agent the base URL named. Absent for a request that named none. */
+	agentId?: string;
+	/** The route prefix ('anthropic', 'openai', 'chatgpt'). */
+	route: string;
+	/** The API the request spoke ('anthropic-messages', ...). */
+	kind: string;
+	mode: 'passthrough' | 'compress';
+	/** Epoch ms the request arrived. */
+	startedAt: number;
+	durationMs: number;
+	/** The status sent to the client, or 0 when none was. */
+	status: number;
+	/** 'completed', 'client-aborted' or 'upstream-failed'. */
+	outcome: string;
+	/** Body bytes received from the agent. */
+	requestBytes: number;
+	/** Body bytes sent to the provider. Differs from `requestBytes` when compressed. */
+	sentBytes: number;
+	responseBytes: number;
+	/**
+	 * Tokens of the body as it arrived and as it was sent, both estimated as
+	 * characters / 4. Present only when the proxy read the body (`compress`
+	 * mode): a passthrough request is counted in bytes alone.
+	 */
+	originalTokens?: number;
+	sentTokens?: number;
+	/** Time the proxy held the request to read and shorten it. `compress` only. */
+	addedLatencyMs?: number;
+	/** Tool results sent shortened in this request, cached ones included. */
+	blocksCompressed: number;
+	/** Verdicts that came from the cache: no compressor ran for them. */
+	cacheHits: number;
+	/** Compressed blocks per compressor. Absent when nothing was compressed. */
+	compressorCounts?: Record<string, number>;
+	/** Blocks shortened for the first time in this request. */
+	newBlocks?: ProxyCompressedBlock[];
+	/** Why the body was forwarded unread in `compress` mode, when it was. */
+	skipReason?: string;
+}
+
+/** What the proxy carried, summed. */
+export interface ProxyRequestTotals {
+	requests: number;
+	/** Requests whose body the proxy read (`compress` mode, not skipped). */
+	compressRequests: number;
+	/** Tokens of those requests as they arrived, and as they were sent. */
+	originalTokens: number;
+	sentTokens: number;
+	tokensSaved: number;
+	/** Mean time those requests were held. 0 when there were none. */
+	avgAddedLatencyMs: number;
+}
+
+/** {@link ProxyRequestTotals} for one agent. `agentId` is null for unattributed requests. */
+export interface ProxyAgentTotals extends ProxyRequestTotals {
+	agentId: string | null;
+}
+
+export interface ProxyRequestUsage {
+	range: StatsTimeRange;
+	totals: ProxyRequestTotals;
+	/** Most requests first. */
+	byAgent: ProxyAgentTotals[];
+}
+
+/** One row of the "Recent compressions" list. */
+export interface ProxyCompressionEntry extends ProxyCompressedBlock {
+	agentId: string | null;
+	/** When the request that first shortened the block arrived. */
+	at: number;
+}
+
 /**
  * File format for a Usage Dashboard export. `json` is one file holding every
  * table plus the dashboard aggregation; `csv` is a zip with one CSV per table.

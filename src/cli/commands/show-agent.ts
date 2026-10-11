@@ -87,6 +87,10 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			customEnvVars: agent.customEnvVars ?? null,
 			// Local Models gateway (settable with `update-agent --gateway-url`).
 			gatewayUrl: agent.gatewayUrl ?? null,
+			// How the Maestro token proxy carries this agent's requests when the
+			// gateway points at it (settable with `update-agent --proxy-mode`).
+			// Null means the default, passthrough.
+			tokenProxyMode: agent.tokenProxyMode ?? null,
 			customModel: agent.customModel ?? null,
 			customEffort: agent.customEffort ?? null,
 			customContextWindow: agent.customContextWindow ?? null,

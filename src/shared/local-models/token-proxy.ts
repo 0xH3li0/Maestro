@@ -10,13 +10,18 @@
  *   http://127.0.0.1:<port>/chatgpt     ->  https://chatgpt.com/backend-api/codex
  *
  * so one port serves every provider and a request never has to be inspected to
- * learn where it goes. The server (`src/main/local-models/proxy/`) owns sockets
+ * learn where it goes. A launch in the desktop app puts the agent in front of
+ * the route (`/agent/<agent id>/anthropic`, see `tokenProxyAgentGatewayUrl`),
+ * which is how the proxy knows whose request it carries and which mode that
+ * agent chose. The server (`src/main/local-models/proxy/`) owns sockets
  * and lifecycle; everything that is only arithmetic on a URL lives here, so the
  * server, the settings UI and the CLI cannot disagree about what a gateway URL
  * means.
  */
 
-import { isLoopbackGatewayUrl } from './gateway';
+import { classifyCredentialKind } from '../providerAuthIdentity';
+import type { ProxyCompressionEntry, ProxyRequestUsage } from '../stats-types';
+import { agentGatewaySupport, isLoopbackGatewayUrl } from './gateway';
 
 /** The only interface the proxy listens on. Never a wildcard address. */
 export const TOKEN_PROXY_HOST = '127.0.0.1';
@@ -108,8 +113,30 @@ export type TokenProxyTarget =
 			/** The query string with its `?`, or empty. */
 			query: string;
 			kind: TokenProxyRequestKind;
+			/** The agent the base URL named, or null when it named none. */
+			agentId: string | null;
 	  }
 	| { ok: false; error: string };
+
+/**
+ * The path segment that puts an agent in front of a route. Not a route id, so
+ * no upstream can ever be reached through it.
+ */
+export const TOKEN_PROXY_AGENT_SEGMENT = 'agent';
+
+/** Split `/agent/<id>` off the front of a request path, when it is there. */
+function splitAgentPrefix(rawPath: string): { agentId: string | null; path: string } | null {
+	const match = new RegExp(`^/${TOKEN_PROXY_AGENT_SEGMENT}(?:/([^/]*)(/.*)?)?$`).exec(rawPath);
+	if (!match) return { agentId: null, path: rawPath };
+	let agentId = '';
+	try {
+		agentId = decodeURIComponent(match[1] ?? '');
+	} catch {
+		return null;
+	}
+	if (agentId === '' || match[2] === undefined) return null;
+	return { agentId, path: match[2] };
+}
 
 /**
  * Where a request goes. `requestUrl` is the request line's target
@@ -125,7 +152,8 @@ export function resolveTokenProxyTarget(
 	const queryAt = requestUrl.indexOf('?');
 	const rawPath = queryAt === -1 ? requestUrl : requestUrl.slice(0, queryAt);
 	const query = queryAt === -1 ? '' : requestUrl.slice(queryAt);
-	const match = /^\/([^/]+)(\/.*)?$/.exec(rawPath);
+	const scoped = splitAgentPrefix(rawPath);
+	const match = scoped ? /^\/([^/]+)(\/.*)?$/.exec(scoped.path) : null;
 	const route = match?.[1] ?? '';
 	const upstream = Object.prototype.hasOwnProperty.call(upstreams, route)
 		? upstreams[route]
@@ -147,6 +175,7 @@ export function resolveTokenProxyTarget(
 		path,
 		query,
 		kind: classifyTokenProxyPath(method, path),
+		agentId: scoped?.agentId ?? null,
 	};
 }
 
@@ -173,6 +202,155 @@ export function gatewayPointsAtTokenProxy(
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * The base URL one agent's process is given for a launch: the stored gateway
+ * with `/agent/<agent id>` in front of its route. Only a gateway that reaches
+ * the Maestro proxy on `port` is changed; any other URL (Headroom, LiteLLM, a
+ * loopback proxy on another port) comes back as it was, because a path segment
+ * added to somebody else's proxy is a different address there.
+ *
+ * The stored URL stays the plain one. The agent is a fact about the launch,
+ * so a worktree agent that inherited its parent's gateway is still counted as
+ * itself.
+ */
+export function tokenProxyAgentGatewayUrl(
+	gatewayUrl: string,
+	port: number,
+	agentId: string
+): string {
+	if (agentId === '' || !gatewayPointsAtTokenProxy(gatewayUrl, port)) return gatewayUrl;
+	let parsed: URL;
+	try {
+		parsed = new URL(gatewayUrl.trim());
+	} catch {
+		return gatewayUrl;
+	}
+	if (splitAgentPrefix(parsed.pathname)?.agentId) return gatewayUrl;
+	const path = parsed.pathname.replace(/\/+$/, '');
+	return `${parsed.protocol}//${parsed.host}/${TOKEN_PROXY_AGENT_SEGMENT}/${encodeURIComponent(agentId)}${path}`;
+}
+
+/**
+ * What the proxy does with one agent's requests.
+ *
+ * - `off`: the agent's gateway is not the Maestro proxy (it has none, or it
+ *   points somewhere else).
+ * - `passthrough`: requests are forwarded unchanged and counted.
+ * - `compress`: large tool results in a request are shortened first
+ *   (`src/main/local-models/proxy/compress.ts`).
+ */
+export type TokenProxyMode = 'off' | 'passthrough' | 'compress';
+
+export const TOKEN_PROXY_MODES: readonly TokenProxyMode[] = ['off', 'passthrough', 'compress'];
+
+/** The part of the mode that is stored on the agent. `off` is the gateway's absence. */
+export type StoredTokenProxyMode = Exclude<TokenProxyMode, 'off'>;
+
+/** What a request is carried as. A request that names no agent is `passthrough`. */
+export type TokenProxyRequestMode = StoredTokenProxyMode;
+
+export const TOKEN_PROXY_MODE_LABELS: Record<TokenProxyMode, string> = {
+	off: 'Off',
+	passthrough: 'Passthrough (count only)',
+	compress: 'Compress tool results',
+};
+
+/** Narrow a value from the CLI, the bridge or a stored record. Never a cast. */
+export function asTokenProxyMode(value: unknown): TokenProxyMode | undefined {
+	return TOKEN_PROXY_MODES.includes(value as TokenProxyMode)
+		? (value as TokenProxyMode)
+		: undefined;
+}
+
+/** The stored half of {@link asTokenProxyMode}: anything but `compress` is passthrough. */
+export function asStoredTokenProxyMode(value: unknown): StoredTokenProxyMode {
+	return value === 'compress' ? 'compress' : 'passthrough';
+}
+
+/**
+ * An agent's proxy mode, from what is stored on it. `off` unless its gateway
+ * reaches the proxy; then the stored mode, and `passthrough` when none is
+ * stored: a gateway pointed at the proxy by hand changes nothing until the user
+ * asks for compression.
+ */
+export function resolveTokenProxyMode(input: {
+	gatewayUrl?: string | null;
+	storedMode?: unknown;
+	/** The proxy's port, or null when none has been chosen yet. */
+	port: number | null;
+}): TokenProxyMode {
+	if (input.port === null || !gatewayPointsAtTokenProxy(input.gatewayUrl, input.port)) return 'off';
+	return asStoredTokenProxyMode(input.storedMode);
+}
+
+/**
+ * Which route an agent's traffic takes through the proxy, or null with the
+ * reason when it cannot use the proxy at all. `env` is the agent's effective
+ * environment (`resolveAgentEnvironment`): Codex with an API key talks to
+ * api.openai.com, and with a ChatGPT login to a different host.
+ */
+export function tokenProxyRouteForAgent(
+	toolType: string,
+	env: Record<string, string>
+): { ok: true; route: TokenProxyRouteId } | { ok: false; error: string } {
+	const support = agentGatewaySupport(toolType);
+	if (!support.supported) return { ok: false, error: support.reason };
+	if (toolType === 'claude-code') return { ok: true, route: 'anthropic' };
+	if (toolType === 'codex') {
+		const apiKey = classifyCredentialKind(toolType, env).kind === 'api-key';
+		return { ok: true, route: apiKey ? 'openai' : 'chatgpt' };
+	}
+	return { ok: false, error: `${TOKEN_PROXY_NAME} has no route for "${toolType}".` };
+}
+
+/** What the proxy is doing now. */
+export interface TokenProxyStatus {
+	/** The proxy's port, or null when none has been chosen yet. */
+	port: number | null;
+	/** Whether it is listening right now. */
+	running: boolean;
+	/** The local agents whose gateway points at it. */
+	agentIds: string[];
+	/** Why the last start failed, or null. Cleared by a start that works. */
+	lastError: string | null;
+	/** The base URL to give an agent, per route. Null until a port exists. */
+	gatewayUrls: Record<TokenProxyRouteId, string> | null;
+}
+
+/** One agent that uses the proxy, as the report names it. */
+export interface TokenProxyAgentRow {
+	id: string;
+	name: string;
+	toolType: string;
+	mode: StoredTokenProxyMode;
+	gatewayUrl: string;
+}
+
+/**
+ * Everything the Gateway section and `maestro-cli models proxy status` show:
+ * the listener, the agents on it, what it carried, and what it last shortened.
+ */
+export interface TokenProxyReport {
+	status: TokenProxyStatus;
+	agents: TokenProxyAgentRow[];
+	/** Null when usage statistics are off or the stats database is not ready. */
+	usage: ProxyRequestUsage | null;
+	recentCompressions: ProxyCompressionEntry[];
+}
+
+/** Both sides of one compressed block, from the content-addressed cache. */
+export interface TokenProxyBlockDetail {
+	hash: string;
+	/** The text the agent sent. Null when the cache no longer holds it. */
+	original: string | null;
+	/** The text sent in its place, marker included. */
+	compressed: string;
+	originalTokens: number;
+	compressedTokens: number;
+	compressors: string[];
+	createdAt: number;
 }
 
 export type TokenProxyErrorCode =

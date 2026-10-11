@@ -1582,6 +1582,9 @@ export interface Session {
 	// through. Applied at launch as the provider's base-URL variable unless the
 	// agent's own env vars already set it. See shared/local-models/gateway.ts.
 	gatewayUrl?: string;
+	// How the Maestro token proxy carries this agent's requests when gatewayUrl
+	// points at it. Absent means passthrough. See shared/local-models/token-proxy.ts.
+	tokenProxyMode?: 'passthrough' | 'compress';
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

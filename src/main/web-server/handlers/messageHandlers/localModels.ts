@@ -5,7 +5,8 @@
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
  * local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
- * local_models_tab_cleanup, local_models_transcribe, notify_speak.
+ * local_models_tab_cleanup, local_models_transcribe, local_models_proxy_status,
+ * local_models_proxy_block, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -40,6 +41,7 @@ import { resolveTaskReadinessRequest } from '../../../local-models/task-readines
 import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../../local-models/work-search';
 import { suggestTabCleanup } from '../../../local-models/tab-cleanup';
+import { getTokenProxyReport, readTokenProxyBlock } from '../../../local-models/proxy/service';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -213,6 +215,38 @@ export function handleLocalModelsSemanticIndexStatus(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_semantic_index_status_result', async () => ({
 		progress: semanticIndexProgress(),
+	}));
+}
+
+/**
+ * Handle local_models_proxy_status - what the Maestro token proxy is doing, the
+ * agents on it with their mode, what it carried and what it last shortened
+ * (`maestro-cli models proxy status`). The same report the
+ * `localModels:proxy:report` IPC channel answers with; it never chooses a port.
+ */
+export function handleLocalModelsProxyStatus(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_proxy_status_result', async () => ({
+		report: await getTokenProxyReport(),
+	}));
+}
+
+/**
+ * Handle local_models_proxy_block - both sides of one compressed block from the
+ * content-addressed cache (`maestro-cli models proxy block <hash>`). A hash the
+ * cache has no compressed verdict for answers `block: null`; a value that is
+ * not a hash is an error.
+ */
+export function handleLocalModelsProxyBlock(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_proxy_block_result', async () => ({
+		block: await readTokenProxyBlock(message.hash),
 	}));
 }
 

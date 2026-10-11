@@ -733,6 +733,16 @@ const mockMaestro = {
 		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
 		search: vi.fn().mockResolvedValue({ status: 'off' }),
+		proxy: {
+			report: vi.fn().mockResolvedValue({
+				status: { port: null, running: false, agentIds: [], lastError: null, gatewayUrls: null },
+				agents: [],
+				usage: null,
+				recentCompressions: [],
+			}),
+			ensurePort: vi.fn().mockResolvedValue(48123),
+			block: vi.fn().mockResolvedValue(null),
+		},
 		semanticIndex: {
 			status: vi.fn().mockResolvedValue({
 				state: 'off',

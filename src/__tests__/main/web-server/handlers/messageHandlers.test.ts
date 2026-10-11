@@ -150,6 +150,26 @@ vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 }));
 import { semanticIndexProgress } from '../../../../main/local-models/semantic-indexer';
 
+vi.mock('../../../../main/local-models/proxy/service', () => ({
+	getTokenProxyReport: vi.fn(async () => ({
+		status: { port: 48123, running: true, agentIds: ['a'], lastError: null, gatewayUrls: null },
+		agents: [
+			{ id: 'a', name: 'Alpha', toolType: 'claude-code', mode: 'compress', gatewayUrl: 'x' },
+		],
+		usage: null,
+		recentCompressions: [],
+	})),
+	readTokenProxyBlock: vi.fn(async () => ({
+		hash: 'a'.repeat(64),
+		original: 'long',
+		compressed: 'short',
+	})),
+}));
+import {
+	getTokenProxyReport,
+	readTokenProxyBlock,
+} from '../../../../main/local-models/proxy/service';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -5514,6 +5534,64 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				expect(lastResponse().type).toBe('local_models_semantic_index_status_result')
 			);
 			expect(lastResponse()).toMatchObject({ success: false, error: 'indexer exploded' });
+		});
+
+		it('local_models_proxy_status answers with the proxy report', async () => {
+			handler.handleMessage(client, { type: 'local_models_proxy_status', requestId: 'px-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_status_result'));
+			expect(getTokenProxyReport).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'px-1',
+				report: {
+					status: { port: 48123, running: true },
+					agents: [{ id: 'a', mode: 'compress' }],
+				},
+			});
+		});
+
+		it('local_models_proxy_status reports a failed read as success: false', async () => {
+			vi.mocked(getTokenProxyReport).mockRejectedValueOnce(new Error('state file unreadable'));
+			handler.handleMessage(client, { type: 'local_models_proxy_status', requestId: 'px-2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_status_result'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'state file unreadable' });
+		});
+
+		it('local_models_proxy_block answers with both sides of the block', async () => {
+			const hash = 'a'.repeat(64);
+			handler.handleMessage(client, { type: 'local_models_proxy_block', hash, requestId: 'pb-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_block_result'));
+			expect(readTokenProxyBlock).toHaveBeenCalledWith(hash);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'pb-1',
+				block: { hash, original: 'long', compressed: 'short' },
+			});
+		});
+
+		it('local_models_proxy_block answers null for a block the cache does not hold, and an error for a value that is not a hash', async () => {
+			vi.mocked(readTokenProxyBlock).mockResolvedValueOnce(null);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash: 'b'.repeat(64),
+				requestId: 'pb-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-2'));
+			expect(lastResponse()).toMatchObject({ success: true, block: null });
+
+			vi.mocked(readTokenProxyBlock).mockRejectedValueOnce(
+				new Error('A compressed block is named by its SHA-256 hash')
+			);
+			handler.handleMessage(client, {
+				type: 'local_models_proxy_block',
+				hash: '../x',
+				requestId: 'pb-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('pb-3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'A compressed block is named by its SHA-256 hash',
+			});
 		});
 
 		it('local_models_search passes the request through and answers with the verdict', async () => {

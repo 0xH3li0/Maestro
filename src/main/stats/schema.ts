@@ -288,6 +288,52 @@ export const CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Proxy Requests (Migration v16)
+// ============================================================================
+
+/**
+ * One row per model request the Maestro token proxy carried (see `ProxyRequest`
+ * in shared/stats-types.ts). Only requests that hold a message list are
+ * recorded.
+ *
+ * `agent_id` is NULL for a request whose base URL named no agent (a launch
+ * outside the desktop app). `original_tokens`, `sent_tokens` and
+ * `added_latency_ms` are NULL unless the proxy read the body, which it does
+ * only in `compress` mode. `compressor_counts` and `new_blocks` are JSON;
+ * `new_blocks` lists only the blocks shortened for the first time in this
+ * request, so a block appears in one row however many later requests resend it.
+ */
+export const CREATE_PROXY_REQUESTS_SQL = `
+  CREATE TABLE IF NOT EXISTS proxy_requests (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT,
+    route TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('passthrough', 'compress')),
+    started_at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    request_bytes INTEGER NOT NULL,
+    sent_bytes INTEGER NOT NULL,
+    response_bytes INTEGER NOT NULL,
+    original_tokens INTEGER,
+    sent_tokens INTEGER,
+    added_latency_ms INTEGER,
+    blocks_compressed INTEGER NOT NULL DEFAULT 0,
+    cache_hits INTEGER NOT NULL DEFAULT 0,
+    compressor_counts TEXT,
+    new_blocks TEXT,
+    skip_reason TEXT
+  )
+`;
+
+export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_proxy_requests_started ON proxy_requests(started_at);
+  CREATE INDEX IF NOT EXISTS idx_proxy_requests_agent ON proxy_requests(agent_id, started_at)
+`;
+
+// ============================================================================
 // Compound Indexes (Migration v4)
 // ============================================================================
 

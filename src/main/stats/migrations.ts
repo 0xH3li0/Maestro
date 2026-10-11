@@ -36,6 +36,8 @@ import {
 	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
 	CREATE_LOCAL_MODEL_RUNS_SQL,
 	CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL,
+	CREATE_PROXY_REQUESTS_SQL,
+	CREATE_PROXY_REQUESTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -146,6 +148,12 @@ function getMigrations(): Migration[] {
 			description: 'Add local_model_runs table for Local Models task router runs',
 			up: (db) => migrateV15(db),
 			isApplied: (db) => hasTable(db, 'local_model_runs'),
+		},
+		{
+			version: 16,
+			description: 'Add proxy_requests table for the Maestro token proxy',
+			up: (db) => migrateV16(db),
+			isApplied: (db) => hasTable(db, 'proxy_requests'),
 		},
 	];
 }
@@ -432,6 +440,17 @@ function migrateV15(db: Database.Database): void {
 	runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
 	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
 	logger.debug('Created local_model_runs table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v16: proxy_requests - one row per model request the Maestro token
+ * proxy carried, so the Local Models tab can show what it saved and what it
+ * cost in latency. Declares `isApplied` for the same reason v15 does.
+ */
+function migrateV16(db: Database.Database): void {
+	runStatements(db, CREATE_PROXY_REQUESTS_SQL);
+	runStatements(db, CREATE_PROXY_REQUESTS_INDEXES_SQL);
+	logger.debug('Created proxy_requests table', LOG_CONTEXT);
 }
 
 /**

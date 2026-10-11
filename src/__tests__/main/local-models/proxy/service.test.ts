@@ -4,6 +4,11 @@
  * The token proxy's lifecycle: the port is chosen once and kept, the listener
  * is up exactly while a local agent's gateway points at it, and a launch that
  * needs it gets a running proxy or a failure that names it.
+ *
+ * And what it tells the server and the user: an agent's mode is read from its
+ * stored record on every request, a launch gets a base URL with the agent in
+ * it only when the gateway is the proxy, each request is handed to the stats
+ * recorder, and the report and the block read answer from the same stores.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -26,18 +31,48 @@ const logger = vi.hoisted(() => ({
 }));
 vi.mock('../../../../main/utils/logger', () => ({ logger }));
 
+// The stats database and the compressor are their own suites. Here they are
+// the two things the service must hand a request to.
+const requestStats = vi.hoisted(() => ({
+	recordTokenProxyRequest: vi.fn(),
+	readTokenProxyUsage: vi.fn(() => ({ usage: null, recentCompressions: [] as unknown[] })),
+}));
+vi.mock('../../../../main/local-models/proxy/request-stats', () => requestStats);
+
+const compressor = vi.hoisted(() => ({
+	compressRequestBody: vi.fn(),
+}));
+vi.mock('../../../../main/local-models/proxy/compress', () => compressor);
+
+const taskNotices = vi.hoisted(() => ({ reportLocalTaskUnavailable: vi.fn() }));
+vi.mock('../../../../main/local-models/task-notices', () => taskNotices);
+
+const cache = vi.hoisted(() => ({
+	read: vi.fn(),
+	write: vi.fn(),
+	readOriginal: vi.fn(),
+}));
+vi.mock('../../../../main/local-models/proxy/compression-cache', () => ({
+	getCompressionCache: () => cache,
+	isContentHash: (value: unknown) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value),
+}));
+
 import {
 	configureTokenProxy,
 	ensureTokenProxyForGateway,
 	ensureTokenProxyPort,
+	getTokenProxyReport,
 	getTokenProxyStatus,
+	readTokenProxyBlock,
 	resetTokenProxyForTests,
 	stopTokenProxy,
 	syncTokenProxy,
 	TOKEN_PROXY_STATE_FILE,
+	tokenProxyLaunchGatewayUrl,
 } from '../../../../main/local-models/proxy/service';
 import {
 	createTokenProxyServer,
+	type TokenProxyServer,
 	type TokenProxyServerOptions,
 } from '../../../../main/local-models/proxy/server';
 
@@ -375,5 +410,216 @@ describe('request logging', () => {
 		);
 		expect(JSON.stringify(logger.info.mock.calls)).not.toContain('sk-secret');
 		await new Promise<void>((resolve) => upstream.close(() => resolve()));
+	});
+});
+
+/** Start the proxy with a server that only records the options it was built with. */
+async function startWithCapturedOptions(): Promise<{
+	port: number;
+	options: TokenProxyServerOptions;
+}> {
+	let captured: TokenProxyServerOptions | undefined;
+	configureTokenProxy({
+		sessions: () => agents,
+		dataDir: () => tempRoot.dir,
+		safeSend: vi.fn() as never,
+		createServer: (options): TokenProxyServer => {
+			captured = options;
+			let bound: number | null = null;
+			return {
+				listen: async (port) => (bound = port),
+				port: () => bound,
+				close: async () => {
+					bound = null;
+				},
+			};
+		},
+	});
+	const port = await ensureTokenProxyPort();
+	await ensureTokenProxyForGateway(`http://127.0.0.1:${port}/anthropic`);
+	return { port, options: captured! };
+}
+
+describe("an agent's mode", () => {
+	it('is read from the stored agent on every request', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [{ id: 'a', tokenProxyMode: 'compress' }, { id: 'b' }];
+
+		expect(options.modeFor?.('a')).toBe('compress');
+		expect(options.modeFor?.('b')).toBe('passthrough');
+
+		// The user switches both. No restart: the next request sees it.
+		agents = [{ id: 'a' }, { id: 'b', tokenProxyMode: 'compress' }];
+		expect(options.modeFor?.('a')).toBe('passthrough');
+		expect(options.modeFor?.('b')).toBe('compress');
+	});
+
+	it('is passthrough for a request with no agent, an unknown agent, and a bad value', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [{ id: 'a', tokenProxyMode: 'everything' }];
+
+		expect(options.modeFor?.(null)).toBe('passthrough');
+		expect(options.modeFor?.('gone')).toBe('passthrough');
+		expect(options.modeFor?.('a')).toBe('passthrough');
+	});
+
+	it('compresses through compress.ts, and reports a model that could not run', async () => {
+		const { options } = await startWithCapturedOptions();
+		const result = { body: '{}', changed: false, blocks: [], stats: {} };
+		compressor.compressRequestBody.mockResolvedValueOnce(result);
+
+		await expect(options.compress?.('anthropic-messages', '{"a":1}')).resolves.toBe(result);
+
+		expect(compressor.compressRequestBody).toHaveBeenCalledWith(
+			'anthropic-messages',
+			'{"a":1}',
+			expect.objectContaining({ onModelUnavailable: expect.any(Function) })
+		);
+		const verdict = { status: 'unavailable', code: 'model-not-installed', reason: 'Not installed' };
+		compressor.compressRequestBody.mock.calls[0][2].onModelUnavailable(verdict);
+		expect(taskNotices.reportLocalTaskUnavailable).toHaveBeenCalledWith(
+			expect.objectContaining({ taskId: 'token-proxy', verdict })
+		);
+	});
+
+	it('hands every finished request to the stats recorder', async () => {
+		const { options } = await startWithCapturedOptions();
+		const entry = {
+			route: 'anthropic',
+			kind: 'anthropic-messages',
+			agentId: 'a',
+			mode: 'compress',
+			startedAt: 1,
+			method: 'POST',
+			path: '/v1/messages',
+			status: 200,
+			requestBytes: 10,
+			sentBytes: 8,
+			responseBytes: 5,
+			durationMs: 3,
+			outcome: 'completed',
+		} as const;
+
+		options.onRequest?.(entry);
+
+		expect(requestStats.recordTokenProxyRequest).toHaveBeenCalledWith(entry);
+	});
+});
+
+describe('tokenProxyLaunchGatewayUrl', () => {
+	it('puts the agent in the base URL of a gateway that is the proxy', async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+
+		await expect(
+			tokenProxyLaunchGatewayUrl('agent-1', `http://127.0.0.1:${port}/anthropic`)
+		).resolves.toBe(`http://127.0.0.1:${port}/agent/agent-1/anthropic`);
+	});
+
+	it('returns any other gateway, and no gateway, as it was', async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+
+		await expect(
+			tokenProxyLaunchGatewayUrl('agent-1', 'http://127.0.0.1:1/anthropic')
+		).resolves.toBe('http://127.0.0.1:1/anthropic');
+		await expect(tokenProxyLaunchGatewayUrl('agent-1', undefined)).resolves.toBeUndefined();
+		await expect(
+			tokenProxyLaunchGatewayUrl(undefined, `http://127.0.0.1:${port}/anthropic`)
+		).resolves.toBe(`http://127.0.0.1:${port}/anthropic`);
+	});
+
+	it('changes nothing, and chooses no port, before one exists', async () => {
+		configure();
+
+		await expect(
+			tokenProxyLaunchGatewayUrl('agent-1', 'http://127.0.0.1:41234/anthropic')
+		).resolves.toBe('http://127.0.0.1:41234/anthropic');
+		await expect(fs.access(stateFile())).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+});
+
+describe('getTokenProxyReport', () => {
+	it('names the agents on the proxy with their mode, and carries the usage', async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+		const onProxy = `http://127.0.0.1:${port}/anthropic`;
+		agents = [
+			{ id: 'a', name: 'Alpha', toolType: 'claude-code', gatewayUrl: onProxy },
+			{
+				id: 'b',
+				name: 'Beta',
+				toolType: 'claude-code',
+				gatewayUrl: onProxy,
+				tokenProxyMode: 'compress',
+			},
+			{ id: 'c', name: 'Elsewhere', toolType: 'codex', gatewayUrl: 'http://127.0.0.1:1' },
+		];
+		const usage = { range: 'month', totals: { requests: 2 }, byAgent: [] };
+		const recentCompressions = [{ hash: 'f'.repeat(64) }];
+		requestStats.readTokenProxyUsage.mockReturnValueOnce({ usage, recentCompressions } as never);
+
+		const report = await getTokenProxyReport();
+
+		expect(report.status.agentIds).toEqual(['a', 'b']);
+		expect(report.agents).toEqual([
+			{ id: 'a', name: 'Alpha', toolType: 'claude-code', mode: 'passthrough', gatewayUrl: onProxy },
+			{ id: 'b', name: 'Beta', toolType: 'claude-code', mode: 'compress', gatewayUrl: onProxy },
+		]);
+		expect(report.usage).toBe(usage);
+		expect(report.recentCompressions).toBe(recentCompressions);
+	});
+
+	it('answers before a port exists, without choosing one', async () => {
+		configure();
+
+		const report = await getTokenProxyReport();
+
+		expect(report.status.port).toBeNull();
+		expect(report.agents).toEqual([]);
+		await expect(fs.access(stateFile())).rejects.toMatchObject({ code: 'ENOENT' });
+	});
+});
+
+describe('readTokenProxyBlock', () => {
+	const hash = 'c'.repeat(64);
+
+	it('returns both sides of a compressed block', async () => {
+		cache.read.mockResolvedValueOnce({
+			outcome: 'compressed',
+			hash,
+			originalTokens: 2000,
+			compressedTokens: 300,
+			compressors: ['logs', 'long-lines'],
+			text: 'short\n[maestro-compressed]',
+			createdAt: 42,
+		});
+		cache.readOriginal.mockResolvedValueOnce('the long original');
+
+		await expect(readTokenProxyBlock(hash)).resolves.toEqual({
+			hash,
+			original: 'the long original',
+			compressed: 'short\n[maestro-compressed]',
+			originalTokens: 2000,
+			compressedTokens: 300,
+			compressors: ['logs', 'long-lines'],
+			createdAt: 42,
+		});
+	});
+
+	it('answers null for a block that was kept, or that the cache does not hold', async () => {
+		cache.read.mockResolvedValueOnce({ outcome: 'kept', hash, originalTokens: 9, createdAt: 1 });
+		await expect(readTokenProxyBlock(hash)).resolves.toBeNull();
+
+		cache.read.mockResolvedValueOnce(null);
+		await expect(readTokenProxyBlock(hash)).resolves.toBeNull();
+		expect(cache.readOriginal).not.toHaveBeenCalled();
+	});
+
+	it('refuses a value that is not a hash before it reaches the cache', async () => {
+		for (const value of ['../../etc/passwd', 'ABC', '', undefined, 12]) {
+			await expect(readTokenProxyBlock(value)).rejects.toThrow('SHA-256');
+		}
+		expect(cache.read).not.toHaveBeenCalled();
 	});
 });

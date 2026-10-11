@@ -11,6 +11,15 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 import { useAppRemoteEventListeners } from '../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import type { Session } from '../../../renderer/types';
 
+// The mode switch is its own suite (agentGateway.test.ts). Here it is the one
+// call a `tokenProxyMode` patch must make, and whose answer it must carry.
+const gatewayService = vi.hoisted(() => ({
+	setAgentTokenProxyMode: vi.fn(),
+	flushAgentToStore: vi.fn(async () => {}),
+	setAgentGatewayUrl: vi.fn(),
+}));
+vi.mock('../../../renderer/services/agentGateway', () => gatewayService);
+
 const RESPONSE_CHANNEL = 'remote:updateSessionConfig:response:test';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -69,6 +78,7 @@ async function applyPatch(
 }
 
 beforeEach(() => {
+	gatewayService.setAgentTokenProxyMode.mockReset();
 	vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
 	// Not part of the shared preload mock in setup.ts, so stub it here rather
 	// than widening the global surface for one branch.
@@ -137,6 +147,100 @@ describe('remoteUpdateSessionConfig - Local Models gateway', () => {
 
 		expect(reply.success).toBe(false);
 		expect(reply.error).toContain('not a URL');
+	});
+});
+
+describe('remoteUpdateSessionConfig - token proxy mode', () => {
+	const onProxy = 'http://127.0.0.1:48123/anthropic';
+
+	it('applies the mode through the gateway service and carries the gateway it chose', async () => {
+		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+			ok: true,
+			mode: 'compress',
+			gatewayUrl: onProxy,
+		});
+		const session = makeSession();
+
+		const updated = await applyPatch(session, { tokenProxyMode: 'compress' });
+
+		expect(gatewayService.setAgentTokenProxyMode).toHaveBeenCalledWith(session.id, 'compress');
+		expect(updated).toMatchObject({ gatewayUrl: onProxy, tokenProxyMode: 'compress' });
+		// The final write is built from the session as it was before the
+		// service ran. It must restate both fields, or it would undo them.
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ gatewayUrl: onProxy, tokenProxyMode: 'compress' })],
+			[]
+		);
+	});
+
+	it('off clears the gateway and the stored mode', async () => {
+		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+			ok: true,
+			mode: 'off',
+			gatewayUrl: undefined,
+		});
+
+		const updated = await applyPatch(
+			makeSession({ gatewayUrl: onProxy, tokenProxyMode: 'compress' }),
+			{ tokenProxyMode: 'off' }
+		);
+
+		expect(updated.gatewayUrl).toBeUndefined();
+		expect(updated.tokenProxyMode).toBeUndefined();
+	});
+
+	it('reports the reason the service refused, and writes nothing', async () => {
+		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+			ok: false,
+			error: 'Copilot CLI ignores base-URL variables',
+		});
+
+		const reply = await refusePatch(makeSession({ toolType: 'copilot-cli' } as Partial<Session>), {
+			tokenProxyMode: 'compress',
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('Copilot CLI ignores base-URL variables');
+	});
+
+	it('refuses a value that is not a mode, without asking the service', async () => {
+		const reply = await refusePatch(makeSession(), { tokenProxyMode: 'on' });
+
+		expect(reply).toEqual({
+			success: false,
+			error: 'tokenProxyMode must be one of: off, passthrough, compress.',
+		});
+		expect(gatewayService.setAgentTokenProxyMode).not.toHaveBeenCalled();
+	});
+
+	it('refuses a mode beside a gateway URL: the mode chooses the URL', async () => {
+		const reply = await refusePatch(makeSession(), {
+			tokenProxyMode: 'compress',
+			gatewayUrl: 'http://127.0.0.1:8787',
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('not both');
+		expect(gatewayService.setAgentTokenProxyMode).not.toHaveBeenCalled();
+	});
+
+	it('drops the stored mode when a patch changes the gateway', async () => {
+		const updated = await applyPatch(
+			makeSession({ gatewayUrl: onProxy, tokenProxyMode: 'compress' }),
+			{ gatewayUrl: 'http://127.0.0.1:8787' }
+		);
+
+		expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787');
+		expect(updated.tokenProxyMode).toBeUndefined();
+	});
+
+	it('keeps the stored mode when a patch restates the same gateway', async () => {
+		const updated = await applyPatch(
+			makeSession({ gatewayUrl: onProxy, tokenProxyMode: 'compress' }),
+			{ gatewayUrl: `${onProxy}/` }
+		);
+
+		expect(updated.tokenProxyMode).toBe('compress');
 	});
 });
 

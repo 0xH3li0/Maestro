@@ -68,7 +68,7 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 			<div data-setting-id="local-models-gateway">
 				<SettingsSectionHeading
 					icon={Router}
-					description="Send an agent's provider traffic through a proxy such as Headroom or LiteLLM."
+					description="Send an agent's provider traffic through a proxy: Headroom, LiteLLM, or Maestro's own."
 				>
 					Gateway
 				</SettingsSectionHeading>

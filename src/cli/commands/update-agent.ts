@@ -19,6 +19,7 @@ import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/clau
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
 import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
+import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../shared/local-models/token-proxy';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -41,6 +42,7 @@ interface UpdateAgentOptions {
 	env?: string[];
 	clearEnv?: boolean;
 	gatewayUrl?: string;
+	proxyMode?: string;
 	model?: string;
 	effort?: string;
 	contextWindow?: string;
@@ -113,6 +115,24 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		patch.gatewayUrl = raw === '' || raw.toLowerCase() === 'none' ? null : raw;
 	}
 
+	// `--proxy-mode <off|passthrough|compress>`: how the Maestro token proxy
+	// carries this agent's requests. The app points the agent's gateway at the
+	// proxy (or clears it for `off`), so the two flags cannot be combined.
+	if (options.proxyMode !== undefined) {
+		const mode = asTokenProxyMode(options.proxyMode.trim().toLowerCase());
+		if (!mode) {
+			throw new Error(
+				`--proxy-mode expects ${TOKEN_PROXY_MODES.join(', ')}, got "${options.proxyMode}"`
+			);
+		}
+		if (options.gatewayUrl !== undefined) {
+			throw new Error(
+				'Use --proxy-mode or --gateway-url, not both: the proxy mode chooses the gateway URL.'
+			);
+		}
+		patch.tokenProxyMode = mode;
+	}
+
 	if (options.contextWindow !== undefined) {
 		const raw = options.contextWindow.trim().toLowerCase();
 		if (raw === '' || raw === 'none' || raw === '0') {
@@ -173,7 +193,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env, --gateway-url). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env, --gateway-url, --proxy-mode). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -452,6 +472,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			customArgs: 'Custom args',
 			customEnvVars: 'Env vars',
 			gatewayUrl: 'Gateway URL',
+			tokenProxyMode: 'Token proxy mode',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',

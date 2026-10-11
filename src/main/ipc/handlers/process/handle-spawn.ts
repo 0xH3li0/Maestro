@@ -54,7 +54,10 @@ import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver'
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
-import { ensureTokenProxyForGateway } from '../../../local-models/proxy/service';
+import {
+	ensureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl,
+} from '../../../local-models/proxy/service';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
@@ -271,6 +274,14 @@ export async function handleProcessSpawn(
 
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
 	if (config.toolType !== 'terminal') {
+		// A gateway that is the Maestro token proxy is given to the process with
+		// this agent's id in its path, which is how the proxy knows whose request
+		// it carries and which mode (passthrough or compress) the agent chose.
+		// Any other gateway comes back unchanged.
+		const launchGatewayUrl = await tokenProxyLaunchGatewayUrl(
+			baseSessionId,
+			storedAgent?.gatewayUrl
+		);
 		const planResult = buildAgentLaunchPlan({
 			surface: 'desktop',
 			agent: agent ?? undefined,
@@ -283,7 +294,7 @@ export async function handleProcessSpawn(
 			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
 			readOnlyMode: isReadOnly,
-			gateway: { toolType: config.toolType, url: storedAgent?.gatewayUrl },
+			gateway: { toolType: config.toolType, url: launchGatewayUrl },
 			sshRemoteConfig: config.sessionSshRemoteConfig,
 			sshStore: createSshRemoteStoreAdapter(settingsStore),
 		});

@@ -536,6 +536,11 @@ maestro-cli update-agent <agent-id> --clear-env
 maestro-cli update-agent <agent-id> --gateway-url http://127.0.0.1:8787
 maestro-cli update-agent <agent-id> --gateway-url none
 
+# Or use Maestro's own proxy: off | passthrough | compress (it sets the gateway URL for you)
+maestro-cli update-agent <agent-id> --proxy-mode compress
+maestro-cli models proxy status              # what it carried, saved, and shortened
+maestro-cli models proxy block <hash>        # a diff of one block it shortened
+
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
@@ -565,6 +570,7 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 | `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                                                     | -       |
 | `--clear-env`                     | Clear all per-agent environment variables                                                                                                          | -       |
 | `--gateway-url <url\|none>`       | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                            | -       |
+| `--proxy-mode <mode>`             | [Maestro's own proxy](/local-models#the-maestro-proxy) for this agent: `off`, `passthrough` or `compress`. Not with `--gateway-url`                | -       |
 | `--model <model>`                 | Model override (e.g. sonnet, opus). Empty string clears                                                                                            | -       |
 | `--effort <level>`                | Effort/reasoning level override. Empty string clears                                                                                               | -       |
 | `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |

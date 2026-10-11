@@ -1,8 +1,8 @@
 /**
  * The Maestro token proxy's lifecycle: which port it owns, and when it listens.
  *
- * The server (`server.ts`) is a passthrough with no opinions. This module
- * decides the three things around it:
+ * The server (`server.ts`) carries requests and has no opinions. This module
+ * decides the things around it:
  *
  * 1. **The port is chosen once and kept.** An agent's stored gateway URL names
  *    the port, so a port that moved between launches would leave every such
@@ -23,26 +23,46 @@
  *    it a port held by another program would receive the agent's request,
  *    credentials included.
  *
+ * 4. **It knows whose request it carries, and how that agent wants it carried.**
+ *    A launch in this process gives the agent a base URL with its id in it
+ *    (`tokenProxyLaunchGatewayUrl`). The server asks `modeFor` per request,
+ *    which reads the agent's stored `tokenProxyMode`, so a mode the user
+ *    changes applies to the next request, mid-turn. A request that names no
+ *    agent, or an agent that is gone, is a passthrough.
+ *
  * `maestro-cli send` spawns in the CLI's own process and cannot start anything
  * here. It relies on (2): the proxy is already up while the app is, and with
  * the app closed the agent's connection to the gateway URL is refused, which is
- * the error the user sees.
+ * the error the user sees. A CLI launch also carries no agent id, so its
+ * requests are passthrough and are counted without an agent.
  */
 
 import * as fs from 'fs/promises';
 import * as net from 'net';
 import * as path from 'path';
 import {
+	asStoredTokenProxyMode,
 	gatewayPointsAtTokenProxy,
 	TOKEN_PROXY_HOST,
 	TOKEN_PROXY_NAME,
 	TOKEN_PROXY_ROUTES,
+	tokenProxyAgentGatewayUrl,
 	tokenProxyGatewayUrl,
+	type TokenProxyAgentRow,
+	type TokenProxyBlockDetail,
+	type TokenProxyReport,
+	type TokenProxyRequestMode,
 	type TokenProxyRouteId,
+	type TokenProxyStatus,
 } from '../../../shared/local-models/token-proxy';
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
+import type { SafeSendFn } from '../../utils/safe-send';
 import { localModelsDataDir } from '../paths';
+import { reportLocalTaskUnavailable } from '../task-notices';
+import { compressRequestBody } from './compress';
+import { getCompressionCache, isContentHash } from './compression-cache';
+import { readTokenProxyUsage, recordTokenProxyRequest } from './request-stats';
 import {
 	createTokenProxyServer,
 	type TokenProxyRequestLog,
@@ -62,20 +82,11 @@ export interface TokenProxyDeps {
 	dataDir?: () => string;
 	/** Builds the server. A seam for tests. */
 	createServer?: (options: TokenProxyServerOptions) => TokenProxyServer;
+	/** Raises the one toast that says the `token-proxy` model could not run. */
+	safeSend?: SafeSendFn;
 }
 
-export interface TokenProxyStatus {
-	/** The proxy's port, or null when none has been chosen yet. */
-	port: number | null;
-	/** Whether it is listening right now. */
-	running: boolean;
-	/** The local agents whose gateway points at it. */
-	agentIds: string[];
-	/** Why the last start failed, or null. Cleared by a start that works. */
-	lastError: string | null;
-	/** The base URL to give an agent, per route. Null until a port exists. */
-	gatewayUrls: Record<TokenProxyRouteId, string> | null;
-}
+export type { TokenProxyStatus };
 
 export type TokenProxyEnsureResult = { ok: true } | { ok: false; error: string };
 
@@ -152,24 +163,65 @@ function agentsPointingAt(port: number): string[] {
 	return ids;
 }
 
+/** The stored record of one agent, or undefined when there is none. */
+function agentRecord(agentId: string): Record<string, unknown> | undefined {
+	return deps?.sessions().find((record) => record?.id === agentId);
+}
+
+/**
+ * How one agent's requests are carried, read from its stored record each time
+ * so a change applies to the next request. Passthrough for a request that
+ * names no agent and for an agent that no longer exists: compression is
+ * something an agent asks for, never a default.
+ */
+function modeFor(agentId: string | null): TokenProxyRequestMode {
+	if (agentId === null) return 'passthrough';
+	return asStoredTokenProxyMode(agentRecord(agentId)?.tokenProxyMode);
+}
+
 function logRequest(entry: TokenProxyRequestLog): void {
+	const compression = entry.compression;
 	const data = {
 		route: entry.route,
 		kind: entry.kind,
+		agentId: entry.agentId,
+		mode: entry.mode,
 		method: entry.method,
 		path: entry.path,
 		status: entry.status,
 		requestBytes: entry.requestBytes,
+		sentBytes: entry.sentBytes,
 		responseBytes: entry.responseBytes,
 		durationMs: entry.durationMs,
 		outcome: entry.outcome,
+		...(compression
+			? {
+					compression: {
+						skipped: compression.skipped,
+						error: compression.error,
+						changed: compression.changed,
+						addedLatencyMs: compression.addedLatencyMs,
+						originalTokens: compression.originalTokens,
+						sentTokens: compression.sentTokens,
+						compressed: compression.stats?.compressed,
+						cacheHits: compression.stats?.cacheHits,
+					},
+				}
+			: {}),
 	};
+	if (compression?.skipped === 'failed') {
+		logger.warn(
+			`${TOKEN_PROXY_NAME} could not compress a request and sent it as it arrived: ${compression.error ?? 'unknown error'}`,
+			LOG_CONTEXT,
+			data
+		);
+	}
 	if (entry.outcome === 'upstream-failed' || entry.outcome === 'unknown-route') {
 		logger.warn(entry.error ?? `${TOKEN_PROXY_NAME} failed a request`, LOG_CONTEXT, data);
 		return;
 	}
 	logger.info(
-		`${entry.method} /${entry.route}${entry.path} -> ${entry.status}: ${entry.requestBytes} bytes sent, ${entry.responseBytes} bytes received`,
+		`${entry.method} /${entry.route}${entry.path} -> ${entry.status}: ${entry.sentBytes} bytes sent, ${entry.responseBytes} bytes received`,
 		LOG_CONTEXT,
 		data
 	);
@@ -188,7 +240,22 @@ async function start(port: number): Promise<void> {
 	if (server) return;
 	let next: TokenProxyServer;
 	try {
-		next = (deps?.createServer ?? createTokenProxyServer)({ onRequest: logRequest });
+		next = (deps?.createServer ?? createTokenProxyServer)({
+			onRequest: (entry) => {
+				logRequest(entry);
+				recordTokenProxyRequest(entry);
+			},
+			modeFor,
+			compress: (kind, body) =>
+				compressRequestBody(kind, body, {
+					onModelUnavailable: (verdict) =>
+						reportLocalTaskUnavailable({
+							safeSend: deps?.safeSend,
+							taskId: 'token-proxy',
+							verdict,
+						}),
+				}),
+		});
 		await next.listen(port);
 	} catch (error) {
 		lastError = startFailureReason(port, error);
@@ -277,6 +344,21 @@ export function ensureTokenProxyForGateway(gatewayUrl: string): Promise<TokenPro
 	});
 }
 
+/**
+ * The base URL to give one agent's process for a launch: its stored gateway,
+ * with the agent in front of the route when that gateway is the Maestro proxy
+ * (`tokenProxyAgentGatewayUrl`). Any other gateway, and no gateway, come back
+ * as they were. Reads the port; never chooses one.
+ */
+export async function tokenProxyLaunchGatewayUrl(
+	agentId: string | undefined,
+	gatewayUrl: string | undefined
+): Promise<string | undefined> {
+	if (!agentId || !gatewayUrl) return gatewayUrl;
+	const port = await readPort();
+	return port === null ? gatewayUrl : tokenProxyAgentGatewayUrl(gatewayUrl, port, agentId);
+}
+
 /** What the proxy is doing now. Reads only; never chooses a port. */
 export async function getTokenProxyStatus(): Promise<TokenProxyStatus> {
 	const port = await readPort();
@@ -294,6 +376,54 @@ export async function getTokenProxyStatus(): Promise<TokenProxyStatus> {
 		agentIds: port === null ? [] : agentsPointingAt(port),
 		lastError,
 		gatewayUrls,
+	};
+}
+
+/**
+ * The proxy's whole picture, for the Gateway section and `maestro-cli models
+ * proxy status`: the listener, the agents on it with their mode, what it
+ * carried lately, and the blocks it last shortened. Reads only.
+ */
+export async function getTokenProxyReport(): Promise<TokenProxyReport> {
+	const status = await getTokenProxyStatus();
+	const agents: TokenProxyAgentRow[] = [];
+	for (const id of status.agentIds) {
+		const record = agentRecord(id);
+		if (!record) continue;
+		agents.push({
+			id,
+			name: typeof record.name === 'string' ? record.name : id,
+			toolType: typeof record.toolType === 'string' ? record.toolType : '',
+			mode: asStoredTokenProxyMode(record.tokenProxyMode),
+			gatewayUrl: String(record.gatewayUrl),
+		});
+	}
+	return { status, agents, ...readTokenProxyUsage() };
+}
+
+/**
+ * Both sides of one compressed block, from the content-addressed cache: what
+ * the agent sent and what went out in its place. Null for a hash the cache
+ * holds no compressed verdict for. `hash` arrives over IPC and the CLI, so it
+ * is checked before it is used as a path.
+ */
+export async function readTokenProxyBlock(hash: unknown): Promise<TokenProxyBlockDetail | null> {
+	if (!isContentHash(hash)) {
+		throw new Error(
+			'A compressed block is named by its SHA-256 hash: 64 lowercase hex characters.'
+		);
+	}
+	const cache = getCompressionCache();
+	const verdict = await cache.read(hash);
+	if (!verdict || verdict.outcome !== 'compressed') return null;
+	return {
+		hash,
+		original: await cache.readOriginal(hash),
+		compressed: verdict.text,
+		originalTokens: verdict.originalTokens,
+		compressedTokens: verdict.compressedTokens,
+		compressors: [...verdict.compressors],
+		createdAt: verdict.createdAt,
 	};
 }
 

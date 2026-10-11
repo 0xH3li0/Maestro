@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 15;
+const RC_TARGET_VERSION = 16;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -93,6 +93,7 @@ function crossBranchDb(
 		wizard?: boolean;
 		wizardActiveMs?: boolean;
 		localModelRuns?: boolean;
+		proxyRequests?: boolean;
 	}
 ): Database.Database {
 	const db = openDb();
@@ -107,6 +108,7 @@ function crossBranchDb(
 	if (missing.wizard) db.exec('DROP TABLE wizard_runs');
 	if (missing.wizardActiveMs) db.exec('ALTER TABLE wizard_runs DROP COLUMN active_ms');
 	if (missing.localModelRuns) db.exec('DROP TABLE local_model_runs');
+	if (missing.proxyRequests) db.exec('DROP TABLE proxy_requests');
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -201,5 +203,17 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(hasTable(db, 'local_model_runs')).toBe(true);
 		expect(logger.warn).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v15');
+	});
+
+	it('creates proxy_requests for a database stamped v16 without it', () => {
+		// v16 declares isApplied for the same reason v15 does.
+		const db = crossBranchDb(RC_TARGET_VERSION, { proxyRequests: true });
+		expect(hasTable(db, 'proxy_requests')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'proxy_requests')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v16');
 	});
 });

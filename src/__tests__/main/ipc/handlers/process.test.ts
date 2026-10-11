@@ -291,8 +291,14 @@ const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
 		})
 	)
 );
+// The launch URL is the stored gateway unless it is the Maestro proxy, which
+// only the service (it knows the port) can tell.
+const mockTokenProxyLaunchGatewayUrl = vi.hoisted(() =>
+	vi.fn(async (_agentId: string | undefined, gatewayUrl: string | undefined) => gatewayUrl)
+);
 vi.mock('../../../../main/local-models/proxy/service', () => ({
 	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl: mockTokenProxyLaunchGatewayUrl,
 }));
 
 // Mock the prompt manager so the copilot-preamble injection has deterministic
@@ -645,6 +651,27 @@ describe('process IPC handlers', () => {
 					'agent-gw-ai-tab-1',
 					expect.stringContaining(`gateway (${gatewayUrl}) is a loopback address`)
 				);
+			});
+
+			it("gives the process the agent's own base URL when the gateway is the token proxy", async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl: `${gatewayUrl}/anthropic` });
+				const scoped = `${gatewayUrl}/agent/agent-gw/anthropic`;
+				mockTokenProxyLaunchGatewayUrl.mockResolvedValueOnce(scoped);
+
+				await spawnClaude();
+
+				// The agent id (tab suffix stripped) and the stored URL go in; what
+				// comes back is what the process is given and what must be up.
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith(
+					'agent-gw',
+					`${gatewayUrl}/anthropic`
+				);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ ANTHROPIC_BASE_URL: scoped }),
+					})
+				);
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(scoped);
 			});
 
 			it('asks the token proxy to be up for the gateway before it spawns', async () => {

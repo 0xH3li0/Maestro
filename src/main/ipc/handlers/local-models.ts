@@ -59,6 +59,11 @@ import {
 	semanticIndexProgress,
 } from '../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../local-models/work-search';
+import {
+	ensureTokenProxyPort,
+	getTokenProxyReport,
+	readTokenProxyBlock,
+} from '../../local-models/proxy/service';
 import { suggestTabCleanup } from '../../local-models/tab-cleanup';
 import type {
 	DictationInterruption,
@@ -68,6 +73,10 @@ import type {
 import type { SemanticIndexProgress } from '../../../shared/local-models/embedding-index';
 import type { SpokenNoticeResult } from '../../../shared/spokenNotices';
 import type { WorkSearchResult } from '../../../shared/local-models/work-search';
+import type {
+	TokenProxyBlockDetail,
+	TokenProxyReport,
+} from '../../../shared/local-models/token-proxy';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
 import type { TabCleanupResult } from '../../../shared/tabCleanup';
@@ -330,6 +339,32 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('semanticIndex:status'),
 			async (): Promise<SemanticIndexProgress> => semanticIndexProgress()
+		)
+	);
+
+	// The Maestro token proxy. `report` and `block` read; `ensurePort` is the
+	// one write, and it only chooses and persists the port the first time.
+	ipcMain.handle(
+		'localModels:proxy:report',
+		withIpcErrorLogging(
+			handlerOpts('proxy:report'),
+			async (): Promise<TokenProxyReport> => getTokenProxyReport()
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:proxy:ensurePort',
+		withIpcErrorLogging(
+			handlerOpts('proxy:ensurePort'),
+			async (): Promise<number> => ensureTokenProxyPort()
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:proxy:block',
+		withIpcErrorLogging(
+			handlerOpts('proxy:block'),
+			async (hash: unknown): Promise<TokenProxyBlockDetail | null> => readTokenProxyBlock(hash)
 		)
 	);
 

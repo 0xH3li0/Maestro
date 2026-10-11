@@ -1389,17 +1389,24 @@ table's **Show environment** draws it with `<EnvVarList>`.
 ## Token conservation proxy
 
 Maestro's own proxy is an HTTP server on `127.0.0.1` that an agent reaches through its gateway
-URL. In this phase it is an **exact passthrough**: it changes nothing in either direction and logs
-the bytes it carried. The compressor exists (`proxy/compress.ts`, see
-[Compression](#compression)) but the server does not call it yet: that is the next phase.
+URL. Each agent has a mode ([Modes](#modes-off-passthrough-compress)):
+
+- **passthrough** (the default for a gateway that points at the proxy): an **exact passthrough**.
+  It changes nothing in either direction and counts the bytes it carried.
+- **compress**: the request body of a model request is read, large tool results in it are
+  shortened by `proxy/compress.ts` ([Compression](#compression)), and the shorter body is sent.
+  Nothing else about the request changes, and the response is never touched.
 
 ```mermaid
 flowchart LR
-	A["agent CLI<br/>base URL = http://127.0.0.1:PORT/anthropic"] -->|"POST /anthropic/v1/messages"| P["proxy/server.ts<br/>resolveTokenProxyTarget()"]
-	P -->|"headers and body bytes as sent<br/>Host rewritten"| U["https://api.anthropic.com/v1/messages"]
+	A["agent CLI<br/>base URL = http://127.0.0.1:PORT/agent/ID/anthropic"] -->|"POST .../v1/messages"| P["proxy/server.ts<br/>resolveTokenProxyTarget()"]
+	P --> M{"modeFor(agent)"}
+	M -->|"passthrough"| U["https://api.anthropic.com/v1/messages"]
+	M -->|"compress, and the request<br/>holds a message list"| C["compressRequestBody()"]
+	C -->|"shorter body, new Content-Length"| U
 	U -->|"status, headers, stream"| P
 	P -->|"chunk by chunk"| A
-	P --> L["one log line per request<br/>bytes sent, bytes received"]
+	P --> L["one log line and one<br/>proxy_requests row per request"]
 ```
 
 ### Addressing
@@ -1417,17 +1424,33 @@ request is never inspected to learn where it goes. The table is `TOKEN_PROXY_ROU
 The `chatgpt` route has not been confirmed against a real run yet. The proxy forwards to these
 hosts and no others: a request cannot name its own destination.
 
+**The agent rides in front of the route.** The URL stored on an agent is the plain one in the
+table. When the desktop app or Cue launches that agent, `tokenProxyLaunchGatewayUrl()` (service)
+gives the process `http://127.0.0.1:PORT/agent/<agent id>/anthropic` instead
+(`tokenProxyAgentGatewayUrl()`), and `resolveTokenProxyTarget()` returns the id as `agentId`.
+That is how the proxy knows whose request it carries, which mode applies, and which agent to
+count it under. Three rules:
+
+- Only a gateway that reaches the proxy's own port is rewritten. LiteLLM serves an Anthropic
+  passthrough at `/anthropic` on its own port, so the path alone says nothing; the port does.
+- The id is a fact about the launch, not about the stored URL. A worktree agent that inherited
+  its parent's gateway is still counted as itself.
+- `agent` is a prefix and never a route. It cannot be given an upstream.
+
 EVERY path under a route is forwarded (a provider CLI also calls token counting and model lists).
 `classifyTokenProxyPath()` only labels the three that carry a message list (`/v1/messages`,
 `.../chat/completions`, `.../responses`), which are the ones a later phase may compress.
 
-| Function                                          | Answers                                                            |
-| ------------------------------------------------- | ------------------------------------------------------------------ |
-| `resolveTokenProxyTarget(method, url, upstreams)` | Route, upstream, path and query of one request, or a named refusal |
-| `classifyTokenProxyPath(method, path)`            | Which API a forwarded request speaks                               |
-| `tokenProxyGatewayUrl(port, route)`               | The base URL to store on an agent                                  |
-| `gatewayPointsAtTokenProxy(gatewayUrl, port)`     | Whether a stored gateway reaches the proxy (any loopback spelling) |
-| `tokenProxyErrorBody(code, message)`              | The body of an error the PROXY raises                              |
+| Function                                                  | Answers                                                            |
+| --------------------------------------------------------- | ------------------------------------------------------------------ |
+| `resolveTokenProxyTarget(method, url, upstreams)`         | Route, upstream, path and query of one request, or a named refusal |
+| `classifyTokenProxyPath(method, path)`                    | Which API a forwarded request speaks                               |
+| `tokenProxyGatewayUrl(port, route)`                       | The base URL to store on an agent                                  |
+| `tokenProxyAgentGatewayUrl(url, port, agentId)`           | The base URL to give that agent's process for one launch           |
+| `tokenProxyRouteForAgent(toolType, env)`                  | Which route an agent's provider and credential take                |
+| `gatewayPointsAtTokenProxy(gatewayUrl, port)`             | Whether a stored gateway reaches the proxy (any loopback spelling) |
+| `resolveTokenProxyMode({ gatewayUrl, storedMode, port })` | An agent's mode: `off`, `passthrough` or `compress`                |
+| `tokenProxyErrorBody(code, message)`                      | The body of an error the PROXY raises                              |
 
 ### What "exact passthrough" means
 
@@ -1456,9 +1479,111 @@ different response, and it wants a total timeout while a model stream runs for m
 7. **A client that leaves ends the upstream request,** so an abandoned turn stops generating at the
    provider.
 
-Each request produces one `TokenProxyRequestLog` (route, kind, method, path, status, request
-bytes, response bytes, duration, outcome). It never holds a header or a body. The service writes
-it to the system log under `[TokenProxy]`.
+Each request produces one `TokenProxyRequestLog` (route, kind, agent id, mode, method, path,
+status, request bytes, sent bytes, response bytes, duration, outcome, and what compress mode did).
+It never holds a header or a body. The service writes it to the system log under `[TokenProxy]`
+and hands it to `recordTokenProxyRequest()` ([Measurement](#measurement-proxy_requests)).
+
+### Modes: off, passthrough, compress
+
+An agent's mode is `resolveTokenProxyMode()` over two stored fields:
+
+| Mode          | Stored on the agent                                          | What the proxy does                      |
+| ------------- | ------------------------------------------------------------ | ---------------------------------------- |
+| `off`         | `gatewayUrl` does not reach the proxy (none, or another URL) | Nothing: the agent's traffic is not here |
+| `passthrough` | `gatewayUrl` reaches the proxy, no `tokenProxyMode`          | Forwards unchanged and counts            |
+| `compress`    | `gatewayUrl` reaches the proxy, `tokenProxyMode: 'compress'` | Shortens large tool results, then sends  |
+
+```mermaid
+flowchart TD
+	UI["Gateway table: Maestro proxy select"] --> SVC["setAgentTokenProxyMode(agentId, mode)<br/>renderer/services/agentGateway.ts"]
+	CLI["maestro-cli update-agent --proxy-mode"] -->|"update_session_config<br/>{ tokenProxyMode }"| SVC
+	SVC -->|"passthrough / compress"| PORT["proxy.ensurePort()<br/>tokenProxyRouteForAgent()"]
+	PORT --> WRITE["gatewayUrl = proxy URL<br/>tokenProxyMode = mode"]
+	SVC -->|"off"| CLEAR["gatewayUrl cleared if it is the proxy<br/>tokenProxyMode cleared"]
+	WRITE --> FLUSH["flushAgentToStore()<br/>sessions:setMany"]
+	CLEAR --> FLUSH
+	FLUSH --> SYNC["syncTokenProxy()<br/>start or stop the listener"]
+	FLUSH --> READ["modeFor(agentId)<br/>read per request from the sessions store"]
+```
+
+1. **Choosing a mode is choosing the gateway.** `passthrough` and `compress` point the agent's
+   gateway at the proxy, and `off` clears that gateway. The mode and the URL are written together
+   and flushed together. A gateway that already reaches the proxy keeps its route (the user may
+   have picked `/openai/v1` over `/chatgpt` by hand); a gateway that points elsewhere is replaced.
+2. **The default is passthrough.** A gateway the user typed by hand that happens to reach the
+   proxy is carried unchanged until they ask for compression.
+3. **A mode belongs to the gateway it was chosen for.** `setAgentGatewayUrl()`, the Edit Agent
+   save and a `gatewayUrl` bridge patch all drop `tokenProxyMode` when the gateway changes, so
+   compression is never carried onto a URL typed afterwards. A provider switch clears both.
+4. **The server asks per request.** `modeFor(agentId)` (service) reads the agent's stored record
+   each time, so a mode change applies to the next request, mid-turn, with no restart. A request
+   with no agent id, an agent that is gone, and a stored value that is not `compress` are all
+   passthrough: compression is something an agent asks for, never a default.
+5. **Refused, by name:** a provider that cannot use a gateway (`agentGatewaySupport`), and an
+   agent on an SSH remote, which cannot reach this machine's loopback. The select is disabled
+   with the same reason before the click (`tokenProxyModeBlocker`).
+6. **Compress mode is narrow.** Only a request that holds a message list (`kind` is not `other`)
+   is read. The body is buffered whole, `Content-Encoding` is decoded (gzip, deflate, br, zstd
+   where Node has it), and the text goes to `compressRequestBody()`. When it changed, the new body
+   is sent as plain UTF-8 with a new `Content-Length` and no `Content-Encoding`. When it did not,
+   the bytes that arrived are sent with the headers that arrived.
+7. **A failure of the optimization never costs the turn.** A body in an encoding with no decoder
+   (`encoding`), bytes that are not strict UTF-8 (`not-text`), a body past 64 MB (`too-large`,
+   sent on as a stream) and a decoder or compressor that throws (`failed`) all leave the request
+   exactly as it arrived. The reason is logged and recorded as `skip_reason`.
+
+### Measurement: `proxy_requests`
+
+Stats migration v16 adds one table. `proxyRequestFromLog()` in
+`src/main/local-models/proxy/request-stats.ts` maps a request log entry to a row, and
+`recordTokenProxyRequest()` writes it on the same contract as `local_model_runs`: it honors
+`statsCollectionEnabled`, and a failed write is reported and swallowed.
+
+| Column                                                 | Holds                                                           |
+| ------------------------------------------------------ | --------------------------------------------------------------- |
+| `agent_id`                                             | The agent the base URL named. NULL for a launch outside the app |
+| `route`, `kind`, `mode`, `status`, `outcome`           | What the request was and how it ended                           |
+| `started_at`, `duration_ms`                            | When it arrived and how long it took end to end                 |
+| `request_bytes`, `sent_bytes`, `response_bytes`        | Body bytes received, sent upstream, and returned                |
+| `original_tokens`, `sent_tokens`                       | The body as it arrived and as it was sent, characters / 4       |
+| `added_latency_ms`                                     | How long the request was held to be read and shortened          |
+| `blocks_compressed`, `cache_hits`, `compressor_counts` | Blocks sent shortened, verdicts from the cache, per compressor  |
+| `new_blocks`                                           | JSON: the blocks shortened for the FIRST time in this request   |
+| `skip_reason`                                          | Why a compress mode request went out unread                     |
+
+1. **Only requests that hold a message list are recorded.** Token counting and model lists are
+   forwarded and logged, not recorded: they have no tokens to save and would dilute the averages.
+2. **Tokens are measured only where the body was read.** A passthrough request has NULL tokens
+   and NULL latency and counts as a request. Mixing bytes / 4 for one mode with characters / 4
+   for the other would make "tokens saved" a sum of two different units.
+3. **Tokens saved is the whole body, before and after.** It includes blocks whose verdict came
+   from the cache, which is where most of the saving on later turns comes from.
+4. **A block is listed once.** Every request resends the conversation, so every compressed block
+   appears in every later request. `new_blocks` holds only the blocks with `cached: false`, and
+   the cache makes the first verdict the only one, so "Recent compressions" needs no dedupe.
+
+`readTokenProxyUsage()` returns the totals for the last 30 days (`getProxyRequestUsage`, in all
+and per agent) and the 25 newest compressions (`getRecentProxyCompressions`).
+
+### The report and the diff
+
+| Surface                                 | Reads                                                               |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| Settings > Local Models > Gateway       | `window.maestro.localModels.proxy.report()` (`useTokenProxyReport`) |
+| `maestro-cli models proxy status`       | `local_models_proxy_status`                                         |
+| A row of "Recent compressions"          | `window.maestro.localModels.proxy.block(hash)`                      |
+| `maestro-cli models proxy block <hash>` | `local_models_proxy_block`                                          |
+
+Both pairs end in the same two service functions. `getTokenProxyReport()` returns the listener
+status, the agents on it with their mode, the usage and the recent compressions; it never chooses
+a port. `readTokenProxyBlock(hash)` returns both sides of one compressed block from the
+content-addressed cache (`cache.read` for the replacement, `cache.readOriginal` for what the
+agent sent); it checks the hash with `isContentHash()` before the hash is used as a path, and
+answers `null` for a block that was kept or is gone. The Gateway section draws the two sides with
+`<TextDiff>` (`src/renderer/components/ui/TextDiff.tsx`), the same `react-diff-view` renderer the
+Git Diff viewer uses. The report is read on mount, on Refresh and after a mode change; nothing is
+pushed, because the proxy handles a request every few seconds while an agent works.
 
 ### Lifecycle
 
@@ -1510,12 +1635,13 @@ Limits of this phase:
 - `maestro-cli send` and playbooks spawn in the CLI's own process, which cannot start the proxy.
   They rely on rule 2: the proxy is up while the app is. With the app closed, the agent's
   connection to the gateway URL is refused, and that is the error the user sees.
+- A CLI launch also gives the agent its stored URL, with no agent id in it. Its requests are
+  therefore passthrough whatever the agent's mode, and are counted under "No agent". Only the
+  desktop app and Cue launch with the agent's id.
 - Only the agent's gateway field starts the proxy. An agent that sets the base-URL variable itself
   to the proxy's address (rule 1 of the gateway) is not counted.
-- No UI or CLI surface shows the proxy's address yet. `getTokenProxyStatus()` returns the port,
-  the per-route gateway URLs, the agents that point at it and the last start error for the surfaces
-  a later phase adds.
 - WebSocket upgrades are not forwarded.
+- Nothing prunes `proxy_requests`, like the other stats tables.
 
 ### Compression
 
@@ -1704,7 +1830,6 @@ every prefix stable and costs the model its one full read.
 
 Limits of this phase:
 
-- The server does not call `compressRequestBody()` yet, so no request is changed.
 - The local model is called inside the request. A large result on a small local model can hold the
   request for up to 60 seconds, once per block.
 - Parallel tool results in a Responses request that the client interleaves with their calls

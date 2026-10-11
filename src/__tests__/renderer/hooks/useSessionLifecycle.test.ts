@@ -331,6 +331,39 @@ describe('useSessionLifecycle', () => {
 				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
 			});
 
+			it('drops the token proxy mode when the save changes the gateway', async () => {
+				// A mode belongs to the gateway it was chosen for.
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:8787');
+				});
+
+				expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBeUndefined();
+			});
+
+			it('keeps the token proxy mode when the save leaves the gateway alone', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, 'http://127.0.0.1:48123/anthropic');
+				});
+
+				expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBe('compress');
+			});
+
 			it('does not flush a save that left the gateway alone', async () => {
 				const session = createMockSession({ id: 'session-1', gatewayUrl: 'http://127.0.0.1:8787' });
 				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });

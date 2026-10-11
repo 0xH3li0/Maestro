@@ -224,6 +224,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					customEnvVars,
 					customEnvVarsDisabled,
 					gatewayUrl,
+					// A proxy mode belongs to the gateway it was chosen for.
+					...((current?.gatewayUrl ?? undefined) !== gatewayUrl
+						? { tokenProxyMode: undefined }
+						: {}),
 					customModel,
 					customEffort,
 					customContextWindow,

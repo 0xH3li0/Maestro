@@ -295,6 +295,13 @@ export interface SessionInfo {
 	 * agent's own vars already set it (see `shared/local-models/gateway.ts`).
 	 */
 	gatewayUrl?: string;
+	/**
+	 * How the Maestro token proxy carries this agent's requests, when
+	 * `gatewayUrl` points at it. Absent means `passthrough`; the third mode,
+	 * `off`, is the gateway not pointing at the proxy at all (see
+	 * `resolveTokenProxyMode` in `shared/local-models/token-proxy.ts`).
+	 */
+	tokenProxyMode?: 'passthrough' | 'compress';
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

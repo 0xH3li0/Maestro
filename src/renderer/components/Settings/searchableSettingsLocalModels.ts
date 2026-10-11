@@ -135,7 +135,7 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		tabLabel: TAB_LABEL,
 		label: 'Gateway',
 		description:
-			"Send an agent's provider traffic through a proxy such as Headroom or LiteLLM, set per agent",
+			"Send an agent's provider traffic through a proxy such as Headroom, LiteLLM, or Maestro's own, which can compress tool results; set per agent",
 		keywords: [
 			'gateway',
 			'proxy',
@@ -147,6 +147,10 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'token',
 			'tokens',
 			'compression',
+			'compress',
+			'passthrough',
+			'token proxy',
+			'tokens saved',
 			'conservation',
 			'agent',
 		],

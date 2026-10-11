@@ -127,6 +127,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// Same provider, same environment, so the same gateway: a worktree agent
 		// that went direct while its parent was proxied would be a silent change.
 		gatewayUrl: params.parentSession.gatewayUrl,
+		tokenProxyMode: params.parentSession.tokenProxyMode,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,

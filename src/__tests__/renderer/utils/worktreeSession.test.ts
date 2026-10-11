@@ -29,6 +29,7 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		customEnvVars: { KEY: 'val' },
 		customEnvVarsDisabled: { PARKED: 'later' },
 		gatewayUrl: 'http://127.0.0.1:8787',
+		tokenProxyMode: 'compress' as const,
 		customModel: 'opus',
 		customContextWindow: 200000,
 		contextWindowSource: 'user-edited' as const,
@@ -78,6 +79,9 @@ describe('buildWorktreeSession', () => {
 		// The gateway too: a worktree agent that went direct while its parent
 		// was proxied would be a silent change of endpoint.
 		expect(session.gatewayUrl).toBe('http://127.0.0.1:8787');
+		// And how the Maestro proxy carries it, when that gateway is the proxy:
+		// a worktree agent of a compressing parent compresses too.
+		expect(session.tokenProxyMode).toBe('compress');
 		expect(session.customModel).toBe('opus');
 		expect(session.customContextWindow).toBe(200000);
 		// Provenance travels with the value (finding AD1): inheriting the number

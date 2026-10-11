@@ -231,6 +231,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Create / rename / remove an agent                    | `create-agent`, `rename-agent`, `remove-agent`                                                    |
 | Edit Agent modal fields                              | `update-agent`, `settings agent set`                                                              |
 | Set an agent's Local Models gateway                  | `update-agent --gateway-url <url\|none>`; read it with `show agent --json`                        |
+| Set an agent's Maestro proxy mode (Gateway table)    | `update-agent --proxy-mode <off\|passthrough\|compress>`; read: `show agent --json`               |
 | Switch an agent's provider                           | `update-agent --provider --force`                                                                 |
 | Move an agent to a group                             | `update-agent --group`                                                                            |
 | Change working directory                             | `update-agent --cwd`                                                                              |
@@ -291,6 +292,8 @@ of taking a second round trip or trusting a value the caller guessed.
 | Tab Cleanup Suggestions: Apply a ticked row          | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`          |
 | Open Tab Cleanup Suggestions                         | `open tab-cleanup`                                                                                |
 | Local Models: semantic index status and progress     | `models index` (same record as `localModels:semanticIndex:status`)                                |
+| Local Models: token proxy status and totals          | `models proxy status` (same report as `localModels:proxy:report`)                                 |
+| Local Models: diff of one compressed block           | `models proxy block <hash>` (same record as `localModels:proxy:block`)                            |
 | Local Models: Index Cue runs toggle                  | `settings set semanticIndexCue <true\|false>` (read: `settings get semanticIndexCue`)             |
 | History panel: Semantic toggle (search by meaning)   | `search "<query>" --semantic --source history --agent <id>` (same `searchPastWork()`)             |
 | Search Messages (All Agent Tabs): Semantic toggle    | `search "<query>" --semantic --source transcripts --agent <id>`                                   |

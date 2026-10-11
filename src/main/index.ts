@@ -3308,6 +3308,7 @@ app
 				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
 					(record) => typeof record === 'object' && record !== null
 				),
+			safeSend,
 		});
 		void syncTokenProxy();
 

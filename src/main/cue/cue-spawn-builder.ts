@@ -16,7 +16,10 @@ import {
 	type SshSpawnWrapConfig,
 } from '../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../shared/maestro-lib/launch/launch-plan';
-import { ensureTokenProxyForGateway } from '../local-models/proxy/service';
+import {
+	ensureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl,
+} from '../local-models/proxy/service';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
@@ -147,6 +150,10 @@ export async function buildSpawnSpec(
 	// vars, with the prompt on the command line. An SSH remote that cannot be
 	// resolved fails the run here: it never falls back to running the agent on
 	// this machine.
+	// A gateway that is the Maestro token proxy carries the agent's id in its
+	// path for this launch, so the proxy applies the agent's mode and counts the
+	// run under it. Any other gateway comes back unchanged.
+	const launchGatewayUrl = await tokenProxyLaunchGatewayUrl(session.id, gatewayUrl);
 	const planResult = buildAgentLaunchPlan({
 		surface: 'cue',
 		agent: { ...agentDef, capabilities: agentConfig.capabilities },
@@ -162,7 +169,7 @@ export async function buildSpawnSpec(
 		sessionCustomEnvVars: sanitizeLayer(customEnvVars),
 		// The agent's Local Models gateway. A gateway that cannot be used (a
 		// loopback URL for an SSH remote) fails the run by name below.
-		gateway: { toolType, url: gatewayUrl },
+		gateway: { toolType, url: launchGatewayUrl },
 		// A Cue run is a Cue run no matter what the agent's env overrides say.
 		// Without this every downstream consumer of the spawned process (Claude
 		// Code hooks, telemetry sidecars) sees a turn indistinguishable from one

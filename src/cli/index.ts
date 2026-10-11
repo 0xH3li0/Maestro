@@ -116,6 +116,7 @@ import { modelsAssign, modelsTasks } from './commands/models-assign';
 import { modelsInstall, modelsList, modelsRemove, modelsVerify } from './commands/models-manage';
 import { modelsRun } from './commands/models-run';
 import { modelsIndex } from './commands/models-index';
+import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
 import { modelsStatus } from './commands/models-status';
 import { search } from './commands/search';
 import { tabSuggestCleanup } from './commands/tab-suggest-cleanup';
@@ -1490,6 +1491,10 @@ program
 		'--gateway-url <url|none>',
 		'Local Models gateway: an HTTP proxy this agent\'s provider traffic goes through, set as its base-URL variable at launch ("none" clears)'
 	)
+	.option(
+		'--proxy-mode <mode>',
+		'Maestro token proxy for this agent: off | passthrough | compress. passthrough and compress point the gateway at the proxy; off clears it (requires the desktop app)'
+	)
 	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
 	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')
@@ -2354,6 +2359,28 @@ models
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsIndex);
+
+const modelProxy = models
+	.command('proxy')
+	.description('The Maestro token proxy: what it carried, saved, and shortened');
+
+modelProxy
+	.command('status')
+	.description(
+		'Whether the proxy is listening, the agents on it and their mode, tokens saved and added latency for the last 30 days, and recent compressions (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsProxyStatus);
+
+modelProxy
+	.command('block <hash>')
+	.description(
+		'Show one compressed block from the cache: a diff of what the agent sent against what was sent in its place (requires the desktop app)'
+	)
+	.option('--original', 'Print only the text the agent sent')
+	.option('--compressed', 'Print only the text sent in its place')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsProxyBlock);
 
 const modelEndpoints = models
 	.command('endpoints')

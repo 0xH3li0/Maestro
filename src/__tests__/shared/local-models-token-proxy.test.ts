@@ -3,18 +3,26 @@
  *
  * The token proxy's addressing rules: which upstream a request path names, that
  * the path and query are carried as text, which requests carry a message list,
- * and when an agent's gateway URL means "the Maestro proxy".
+ * and when an agent's gateway URL means "the Maestro proxy". Also the two
+ * things a launch and a mode switch decide: the base URL that carries an
+ * agent's id, and an agent's mode (off, passthrough, compress) with the route
+ * its provider and credential take.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
+	asStoredTokenProxyMode,
+	asTokenProxyMode,
 	classifyTokenProxyPath,
 	defaultTokenProxyUpstreams,
 	gatewayPointsAtTokenProxy,
+	resolveTokenProxyMode,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_ROUTES,
+	tokenProxyAgentGatewayUrl,
 	tokenProxyErrorBody,
 	tokenProxyGatewayUrl,
+	tokenProxyRouteForAgent,
 } from '../../shared/local-models/token-proxy';
 import { parseGatewayUrl } from '../../shared/local-models/gateway';
 
@@ -27,6 +35,7 @@ describe('resolveTokenProxyTarget', () => {
 			path: '/v1/messages',
 			query: '',
 			kind: 'anthropic-messages',
+			agentId: null,
 		});
 		expect(resolveTokenProxyTarget('POST', '/openai/v1/responses')).toMatchObject({
 			route: 'openai',
@@ -75,6 +84,38 @@ describe('resolveTokenProxyTarget', () => {
 				expect(target.error).toContain('/openai');
 			}
 		}
+	});
+
+	it('reads the agent a launch put in front of the route', () => {
+		expect(
+			resolveTokenProxyTarget('POST', '/agent/agent-1/anthropic/v1/messages?beta=true')
+		).toEqual({
+			ok: true,
+			route: 'anthropic',
+			upstream: 'https://api.anthropic.com',
+			path: '/v1/messages',
+			query: '?beta=true',
+			kind: 'anthropic-messages',
+			agentId: 'agent-1',
+		});
+		// An id is decoded; the forwarded path is still carried as text.
+		expect(resolveTokenProxyTarget('POST', '/agent/a%20b/openai/v1/files/x%2Fy')).toMatchObject({
+			agentId: 'a b',
+			route: 'openai',
+			path: '/v1/files/x%2Fy',
+		});
+	});
+
+	it('refuses an agent prefix with no agent or no route behind it', () => {
+		for (const url of ['/agent', '/agent/', '/agent/agent-1', '/agent//anthropic/v1/messages']) {
+			expect(resolveTokenProxyTarget('POST', url).ok).toBe(false);
+		}
+		// `agent` is a prefix, never a route: it cannot be given an upstream.
+		expect(
+			resolveTokenProxyTarget('POST', '/agent/x/v1/messages', { agent: 'http://127.0.0.1:9' }).ok
+		).toBe(false);
+		// A route that merely starts with the word is an ordinary unknown route.
+		expect(resolveTokenProxyTarget('POST', '/agents/v1/messages').ok).toBe(false);
 	});
 
 	it('does not treat an inherited object key as a route', () => {
@@ -164,5 +205,127 @@ describe('tokenProxyErrorBody', () => {
 				message: 'could not reach it',
 			},
 		});
+	});
+});
+
+describe('tokenProxyAgentGatewayUrl', () => {
+	it('puts the agent in front of the route of a gateway that is the proxy', () => {
+		expect(tokenProxyAgentGatewayUrl('http://127.0.0.1:41234/anthropic', 41234, 'agent-1')).toBe(
+			'http://127.0.0.1:41234/agent/agent-1/anthropic'
+		);
+		expect(tokenProxyAgentGatewayUrl('http://localhost:41234/openai/v1/', 41234, 'a b')).toBe(
+			'http://localhost:41234/agent/a%20b/openai/v1'
+		);
+	});
+
+	it('resolves back to the same route, with the agent', () => {
+		for (const route of Object.keys(TOKEN_PROXY_ROUTES) as Array<keyof typeof TOKEN_PROXY_ROUTES>) {
+			const scoped = tokenProxyAgentGatewayUrl(
+				tokenProxyGatewayUrl(41234, route),
+				41234,
+				'agent-1'
+			);
+			expect(parseGatewayUrl(scoped)).toEqual({ ok: true, url: scoped });
+			expect(gatewayPointsAtTokenProxy(scoped, 41234)).toBe(true);
+			expect(
+				resolveTokenProxyTarget('POST', `${new URL(scoped).pathname}/responses`)
+			).toMatchObject({ ok: true, route, agentId: 'agent-1' });
+		}
+	});
+
+	it("leaves somebody else's proxy alone, whatever its path looks like", () => {
+		// LiteLLM serves an Anthropic passthrough at /anthropic on its own port.
+		for (const url of [
+			'http://127.0.0.1:4000/anthropic',
+			'https://gateway.example.com:41234/anthropic',
+			'not a url',
+		]) {
+			expect(tokenProxyAgentGatewayUrl(url, 41234, 'agent-1')).toBe(url);
+		}
+	});
+
+	it('does not scope twice, and does nothing without an agent', () => {
+		const scoped = 'http://127.0.0.1:41234/agent/agent-1/anthropic';
+		expect(tokenProxyAgentGatewayUrl(scoped, 41234, 'agent-2')).toBe(scoped);
+		expect(tokenProxyAgentGatewayUrl('http://127.0.0.1:41234/anthropic', 41234, '')).toBe(
+			'http://127.0.0.1:41234/anthropic'
+		);
+	});
+});
+
+describe('resolveTokenProxyMode', () => {
+	const onProxy = 'http://127.0.0.1:41234/anthropic';
+
+	it('is off unless the gateway reaches the proxy', () => {
+		expect(
+			resolveTokenProxyMode({ gatewayUrl: undefined, storedMode: 'compress', port: 41234 })
+		).toBe('off');
+		expect(
+			resolveTokenProxyMode({
+				gatewayUrl: 'http://127.0.0.1:8787',
+				storedMode: 'compress',
+				port: 41234,
+			})
+		).toBe('off');
+		// No port has been chosen, so no gateway can be the proxy.
+		expect(resolveTokenProxyMode({ gatewayUrl: onProxy, storedMode: 'compress', port: null })).toBe(
+			'off'
+		);
+	});
+
+	it('defaults to passthrough for a gateway that points at the proxy', () => {
+		expect(resolveTokenProxyMode({ gatewayUrl: onProxy, port: 41234 })).toBe('passthrough');
+		expect(resolveTokenProxyMode({ gatewayUrl: onProxy, storedMode: 'bogus', port: 41234 })).toBe(
+			'passthrough'
+		);
+	});
+
+	it('is compress only when the agent stored it', () => {
+		expect(
+			resolveTokenProxyMode({ gatewayUrl: onProxy, storedMode: 'compress', port: 41234 })
+		).toBe('compress');
+	});
+});
+
+describe('asTokenProxyMode', () => {
+	it('narrows the three modes and nothing else', () => {
+		expect(asTokenProxyMode('off')).toBe('off');
+		expect(asTokenProxyMode('passthrough')).toBe('passthrough');
+		expect(asTokenProxyMode('compress')).toBe('compress');
+		for (const value of ['', 'on', 'Compress', true, null, undefined, 1]) {
+			expect(asTokenProxyMode(value)).toBeUndefined();
+		}
+	});
+
+	it('reads anything but compress as passthrough when stored', () => {
+		expect(asStoredTokenProxyMode('compress')).toBe('compress');
+		for (const value of ['passthrough', 'off', undefined, null, true]) {
+			expect(asStoredTokenProxyMode(value)).toBe('passthrough');
+		}
+	});
+});
+
+describe('tokenProxyRouteForAgent', () => {
+	it('sends Claude Code to the Anthropic route', () => {
+		expect(tokenProxyRouteForAgent('claude-code', {})).toEqual({ ok: true, route: 'anthropic' });
+	});
+
+	it('sends Codex by its credential: an API key or a ChatGPT login', () => {
+		expect(tokenProxyRouteForAgent('codex', { OPENAI_API_KEY: 'sk-test' })).toEqual({
+			ok: true,
+			route: 'openai',
+		});
+		expect(tokenProxyRouteForAgent('codex', {})).toEqual({ ok: true, route: 'chatgpt' });
+		expect(tokenProxyRouteForAgent('codex', { OPENAI_API_KEY: '  ' })).toEqual({
+			ok: true,
+			route: 'chatgpt',
+		});
+	});
+
+	it('refuses a provider that cannot use a gateway, with its reason', () => {
+		const copilot = tokenProxyRouteForAgent('copilot-cli', {});
+		expect(copilot.ok).toBe(false);
+		if (!copilot.ok) expect(copilot.error).toContain('Copilot CLI ignores base-URL variables');
+		expect(tokenProxyRouteForAgent('terminal', {}).ok).toBe(false);
 	});
 });

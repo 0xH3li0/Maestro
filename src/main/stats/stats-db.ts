@@ -21,6 +21,9 @@ import type {
 	ResilienceEvent,
 	WizardRun,
 	LocalModelRun,
+	ProxyCompressionEntry,
+	ProxyRequest,
+	ProxyRequestUsage,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -63,6 +66,12 @@ import {
 	getLocalModelRuns,
 	clearLocalModelRunsCache,
 } from './local-model-runs';
+import {
+	recordProxyRequest,
+	getProxyRequestUsage,
+	getRecentProxyCompressions,
+	clearProxyRequestsCache,
+} from './proxy-requests';
 import { getAggregatedStats } from './aggregations';
 import {
 	getQuerySourceTotals,
@@ -219,6 +228,7 @@ export class StatsDB {
 			clearResilienceCache();
 			clearWizardRunsCache();
 			clearLocalModelRunsCache();
+			clearProxyRequestsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
@@ -863,6 +873,22 @@ export class StatsDB {
 
 	getLocalModelRuns(range: StatsTimeRange): LocalModelRun[] {
 		return getLocalModelRuns(this.database, range);
+	}
+
+	// ============================================================================
+	// Token Proxy Requests (delegated)
+	// ============================================================================
+
+	recordProxyRequest(request: Omit<ProxyRequest, 'id'>): string {
+		return recordProxyRequest(this.database, request);
+	}
+
+	getProxyRequestUsage(range: StatsTimeRange): ProxyRequestUsage {
+		return getProxyRequestUsage(this.database, range);
+	}
+
+	getRecentProxyCompressions(limit: number): ProxyCompressionEntry[] {
+		return getRecentProxyCompressions(this.database, limit);
 	}
 
 	// ============================================================================

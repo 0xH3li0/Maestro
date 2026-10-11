@@ -1066,6 +1066,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                 | `[]`    |
 | `--clear-env`                     | Clear all per-agent environment variables                                                      | -       |
 | `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                | -       |
+| `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress (requires the desktop app)  | -       |
 | `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                        | -       |
 | `--effort <level>`                | Effort/reasoning level override (empty string clears)                                          | -       |
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                             | -       |
@@ -1935,6 +1936,28 @@ What the semantic index is doing: its state, and how many sources are indexed (r
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models proxy`
+
+The Maestro token proxy: what it carried, saved, and shortened
+
+## `maestro-cli models proxy status`
+
+Whether the proxy is listening, the agents on it and their mode, tokens saved and added latency for the last 30 days, and recent compressions (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models proxy block <hash>`
+
+Show one compressed block from the cache: a diff of what the agent sent against what was sent in its place (requires the desktop app)
+
+| Option         | Description                           | Default |
+| -------------- | ------------------------------------- | ------- |
+| `--original`   | Print only the text the agent sent    | -       |
+| `--compressed` | Print only the text sent in its place | -       |
+| `--json`       | Output as JSON (for scripting)        | -       |
 
 ## `maestro-cli models endpoints`
 

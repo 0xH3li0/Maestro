@@ -15,6 +15,12 @@ import {
 	type WorkSearchHit,
 	type WorkSearchResult,
 } from '../../shared/local-models/work-search';
+import {
+	TOKEN_PROXY_HOST,
+	type TokenProxyBlockDetail,
+	type TokenProxyReport,
+} from '../../shared/local-models/token-proxy';
+import type { ProxyRequestTotals } from '../../shared/stats-types';
 import { formatSnoozeTarget } from '../../shared/snooze';
 import {
 	describeTabCleanupCoverage,
@@ -538,6 +544,7 @@ export interface AgentDetailDisplay {
 	customArgs?: string | null;
 	customEnvVars?: Record<string, string> | null;
 	gatewayUrl?: string | null;
+	tokenProxyMode?: string | null;
 	customModel?: string | null;
 	customEffort?: string | null;
 	customContextWindow?: number | null;
@@ -631,6 +638,7 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 		addConfig('Env vars', Object.keys(agent.customEnvVars).join(', '));
 	}
 	addConfig('Gateway URL', agent.gatewayUrl ? dim(agent.gatewayUrl) : undefined);
+	addConfig('Token proxy mode', agent.tokenProxyMode ?? undefined);
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);
 	}
@@ -1028,6 +1036,86 @@ export function formatSemanticIndexProgress(progress: SemanticIndexProgress): st
 	lines.push(`  ${bold('Total'.padEnd(labelWidth))}  ${progress.indexed} / ${progress.total}`);
 	if (progress.lastPassAt === undefined) lines.push('', dim('  No pass has finished yet.'));
 	return lines.join('\n');
+}
+
+/** Tokens saved with the share of what arrived, or a dash when nothing was read. */
+function proxyTokensSaved(totals: ProxyRequestTotals): string {
+	if (totals.compressRequests === 0) return '-';
+	const share =
+		totals.originalTokens > 0 ? Math.round((totals.tokensSaved / totals.originalTokens) * 100) : 0;
+	return `${totals.tokensSaved} tokens saved (${share}%)`;
+}
+
+function proxyUsageLine(label: string, totals: ProxyRequestTotals): string {
+	const latency =
+		totals.compressRequests === 0 ? '' : `, ${totals.avgAddedLatencyMs} ms average added latency`;
+	return `  ${c('white', label)}  ${totals.requests} ${totals.requests === 1 ? 'request' : 'requests'}, ${proxyTokensSaved(totals)}${latency}`;
+}
+
+/**
+ * `maestro-cli models proxy status`: the listener, the agents on it with their
+ * mode, what it carried in the last 30 days, and the blocks it last shortened
+ * (each with the hash `models proxy block` takes).
+ */
+export function formatTokenProxyReport(report: TokenProxyReport): string {
+	const { status } = report;
+	const state =
+		status.port === null
+			? c('gray', 'not set up')
+			: status.running
+				? c('green', `listening on ${TOKEN_PROXY_HOST}:${status.port}`)
+				: status.lastError
+					? c('red', `could not start on ${TOKEN_PROXY_HOST}:${status.port}`)
+					: c('gray', `stopped (port ${status.port})`);
+	const lines = [`${bold(c('cyan', 'TOKEN PROXY'))}  ${state}`];
+	if (status.lastError && !status.running) lines.push(`  ${status.lastError}`);
+	if (status.port === null) {
+		lines.push(
+			'',
+			dim('  -> Turn it on for an agent: maestro-cli update-agent <agent> --proxy-mode passthrough')
+		);
+		return lines.join('\n');
+	}
+
+	lines.push('', bold('Agents'));
+	if (report.agents.length === 0) lines.push(dim('  No agent points at the proxy.'));
+	const names = new Map(report.agents.map((agent) => [agent.id, agent.name]));
+	for (const agent of report.agents) {
+		lines.push(`  ${c('white', agent.name)}  ${agent.mode}  ${dim(agent.gatewayUrl)}`);
+	}
+
+	lines.push('', bold('Last 30 days'));
+	if (!report.usage) {
+		lines.push(dim('  Usage statistics are not available.'));
+	} else if (report.usage.totals.requests === 0) {
+		lines.push(dim('  No requests.'));
+	} else {
+		lines.push(proxyUsageLine('All agents', report.usage.totals));
+		for (const row of report.usage.byAgent) {
+			const label =
+				row.agentId === null ? 'No agent' : (names.get(row.agentId) ?? row.agentId.slice(0, 8));
+			lines.push(proxyUsageLine(label, row));
+		}
+	}
+
+	if (report.recentCompressions.length > 0) {
+		lines.push('', bold('Recent compressions'));
+		for (const entry of report.recentCompressions) {
+			lines.push(
+				`  ${entry.hash}  ${entry.originalTokens} -> ${entry.compressedTokens} tokens  ${dim(`${entry.compressors.join(', ')}, ${formatRelativeTime(entry.at)}`)}`
+			);
+		}
+	}
+	return lines.join('\n');
+}
+
+/** The lines above a `models proxy block` diff: what the block is and what it cost. */
+export function formatTokenProxyBlockHeader(block: TokenProxyBlockDetail): string {
+	return [
+		`${bold(c('cyan', 'COMPRESSED BLOCK'))}  ${block.hash}`,
+		`  ${block.originalTokens} -> ${block.compressedTokens} tokens  ${dim(`${block.compressors.join(', ')}, ${formatRelativeTime(block.createdAt)}`)}`,
+		'',
+	].join('\n');
 }
 
 /** What ranks a hit, as the first column of its row: a score, or a match count. */

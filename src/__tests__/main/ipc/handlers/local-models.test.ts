@@ -147,6 +147,22 @@ vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 	}),
 }));
 
+const tokenProxy = vi.hoisted(() => ({
+	report: {
+		status: { port: 48123, running: true, agentIds: ['a'], lastError: null, gatewayUrls: null },
+		agents: [],
+		usage: null,
+		recentCompressions: [],
+	},
+	block: { hash: 'a'.repeat(64), original: 'long', compressed: 'short' },
+}));
+
+vi.mock('../../../../main/local-models/proxy/service', () => ({
+	getTokenProxyReport: vi.fn(async () => tokenProxy.report),
+	ensureTokenProxyPort: vi.fn(async () => 48123),
+	readTokenProxyBlock: vi.fn(async () => tokenProxy.block),
+}));
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn(async () => ({
 		success: false,
@@ -219,6 +235,10 @@ import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
 import { searchPastWorkRequest } from '../../../../main/local-models/work-search';
+import {
+	ensureTokenProxyPort,
+	readTokenProxyBlock,
+} from '../../../../main/local-models/proxy/service';
 import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
@@ -457,6 +477,24 @@ describe('task router channel', () => {
 			status: 'off',
 		});
 		expect(searchPastWorkRequest).toHaveBeenCalledWith(request);
+	});
+});
+
+describe('token proxy channels', () => {
+	it('answers report with the proxy report, untouched', async () => {
+		await expect(handlerFor('localModels:proxy:report')({})).resolves.toBe(tokenProxy.report);
+	});
+
+	it('answers ensurePort with the port the service chose', async () => {
+		await expect(handlerFor('localModels:proxy:ensurePort')({})).resolves.toBe(48123);
+		expect(ensureTokenProxyPort).toHaveBeenCalledTimes(1);
+	});
+
+	it('hands block the hash as it arrived, for the service to check', async () => {
+		await expect(handlerFor('localModels:proxy:block')({}, '../not-a-hash')).resolves.toBe(
+			tokenProxy.block
+		);
+		expect(readTokenProxyBlock).toHaveBeenCalledWith('../not-a-hash');
 	});
 });
 

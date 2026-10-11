@@ -5,6 +5,11 @@
  * a streamed response is delivered chunk by chunk, headers and encoded bodies
  * arrive as they were sent in both directions, an upstream error is forwarded
  * whole, and only a failure of the proxy itself is answered by the proxy.
+ *
+ * Then the mode switch: a request is read and handed to the compressor only
+ * for an agent whose mode is `compress` and only when it holds a message list,
+ * and a body that cannot be read, or a compressor that fails, goes out exactly
+ * as it arrived.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -17,7 +22,9 @@ import {
 	forwardableHeaders,
 	type TokenProxyRequestLog,
 	type TokenProxyServer,
+	type TokenProxyServerOptions,
 } from '../../../../main/local-models/proxy/server';
+import type { CompressRequestResult } from '../../../../main/local-models/proxy/compress';
 
 interface SeenRequest {
 	method: string;
@@ -80,9 +87,16 @@ interface RunningProxy {
 	logs: TokenProxyRequestLog[];
 }
 
-async function startProxy(upstreams: Record<string, string>): Promise<RunningProxy> {
+async function startProxy(
+	upstreams: Record<string, string>,
+	extra: Pick<TokenProxyServerOptions, 'modeFor' | 'compress'> = {}
+): Promise<RunningProxy> {
 	const logs: TokenProxyRequestLog[] = [];
-	const proxy = createTokenProxyServer({ upstreams, onRequest: (entry) => logs.push(entry) });
+	const proxy = createTokenProxyServer({
+		upstreams,
+		onRequest: (entry) => logs.push(entry),
+		...extra,
+	});
 	const port = await proxy.listen(0);
 	cleanups.push(() => proxy.close({ force: true }));
 	return { proxy, port, logs };
@@ -642,6 +656,337 @@ describe('token proxy server', () => {
 			expect(whole).toBe('first second');
 			expect(proxy.port()).toBeNull();
 		});
+	});
+});
+
+describe('token proxy server, compress mode', () => {
+	/** What a compressor run reports, for a body it changed or left alone. */
+	function compressResult(body: string, changed: boolean): CompressRequestResult {
+		return {
+			body,
+			changed,
+			blocks: changed
+				? [
+						{
+							hash: 'a'.repeat(64),
+							originalTokens: 2000,
+							compressedTokens: 200,
+							compressors: ['logs'],
+							cached: false,
+						},
+					]
+				: [],
+			stats: {
+				candidates: 1,
+				belowThreshold: 0,
+				compressed: changed ? 1 : 0,
+				kept: changed ? 0 : 1,
+				cacheHits: 0,
+				originalTokens: changed ? 2000 : 0,
+				compressedTokens: changed ? 200 : 0,
+				compressors: { json: 0, logs: changed ? 1 : 0, 'long-lines': 0, model: 0 },
+				modelFailures: 0,
+				storeFailures: 0,
+			},
+		};
+	}
+
+	const original = JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(4000) }] });
+	const shortened = JSON.stringify({ messages: [{ role: 'user', content: 'short' }] });
+	const jsonHeaders = (body: Buffer): string[] => [
+		'Content-Type',
+		'application/json',
+		'x-api-key',
+		'sk-test',
+		'Content-Length',
+		String(body.length),
+	];
+
+	it('sends the shortened body, with its own length, for an agent in compress mode', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const modeFor = vi.fn(() => 'compress' as const);
+		const { port, logs } = await startProxy({ anthropic: upstream.origin }, { modeFor, compress });
+		const body = Buffer.from(original, 'utf-8');
+
+		const answer = await send(port, {
+			path: '/agent/agent-1/anthropic/v1/messages?beta=true',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(answer.body.toString()).toBe('ok');
+		expect(modeFor).toHaveBeenCalledWith('agent-1');
+		expect(compress).toHaveBeenCalledWith('anthropic-messages', original);
+		const seen = upstream.seen[0];
+		// The agent prefix is the proxy's own: the upstream never sees it.
+		expect(seen.url).toBe('/v1/messages?beta=true');
+		expect(seen.body.toString('utf-8')).toBe(shortened);
+		expect(rawValues(seen.rawHeaders, 'Content-Length')).toEqual([
+			String(Buffer.byteLength(shortened)),
+		]);
+		// Everything else about the request is as it was sent.
+		expect(rawValues(seen.rawHeaders, 'x-api-key')).toEqual(['sk-test']);
+		expect(rawValues(seen.rawHeaders, 'Content-Type')).toEqual(['application/json']);
+
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0]).toMatchObject({
+			agentId: 'agent-1',
+			mode: 'compress',
+			kind: 'anthropic-messages',
+			requestBytes: body.length,
+			sentBytes: Buffer.byteLength(shortened),
+			outcome: 'completed',
+		});
+		expect(logs[0].compression).toMatchObject({
+			changed: true,
+			originalTokens: Math.ceil(original.length / 4),
+			sentTokens: Math.ceil(shortened.length / 4),
+		});
+		expect(logs[0].compression?.addedLatencyMs).toBeGreaterThanOrEqual(0);
+		expect(logs[0].compression?.blocks).toHaveLength(1);
+	});
+
+	it('forwards the bytes that arrived when the compressor changes nothing', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async (_kind: string, text: string) => compressResult(text, false));
+		const { port, logs } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = Buffer.from(original, 'utf-8');
+
+		await send(port, {
+			path: '/agent/agent-1/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		expect(rawValues(upstream.seen[0].rawHeaders, 'Content-Length')).toEqual([String(body.length)]);
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0].sentBytes).toBe(body.length);
+		expect(logs[0].compression).toMatchObject({
+			changed: false,
+			originalTokens: Math.ceil(original.length / 4),
+			sentTokens: Math.ceil(original.length / 4),
+		});
+	});
+
+	it('never reads a request in passthrough mode, the default', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const body = Buffer.from(original, 'utf-8');
+
+		// An agent whose mode is passthrough, and a request that names no agent.
+		const modeFor = vi.fn((agentId: string | null) =>
+			agentId === 'agent-c' ? ('compress' as const) : ('passthrough' as const)
+		);
+		const { port, logs } = await startProxy({ anthropic: upstream.origin }, { modeFor, compress });
+		await send(port, {
+			path: '/agent/agent-p/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+		await send(port, { path: '/anthropic/v1/messages', headers: jsonHeaders(body), body });
+
+		expect(compress).not.toHaveBeenCalled();
+		expect(modeFor).toHaveBeenCalledWith('agent-p');
+		expect(modeFor).toHaveBeenCalledWith(null);
+		expect(upstream.seen.map((seen) => seen.body.equals(body))).toEqual([true, true]);
+		await vi.waitFor(() => expect(logs).toHaveLength(2));
+		expect(logs.map((entry) => [entry.agentId, entry.mode, entry.compression])).toEqual([
+			['agent-p', 'passthrough', undefined],
+			[null, 'passthrough', undefined],
+		]);
+		expect(logs[0].sentBytes).toBe(body.length);
+	});
+
+	it('applies a mode change to the next request', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		let mode: 'passthrough' | 'compress' = 'passthrough';
+		const { port } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => mode, compress }
+		);
+		const body = Buffer.from(original, 'utf-8');
+		const request = { path: '/agent/a/anthropic/v1/messages', headers: jsonHeaders(body), body };
+
+		await send(port, request);
+		mode = 'compress';
+		await send(port, request);
+		mode = 'passthrough';
+		await send(port, request);
+
+		expect(upstream.seen.map((seen) => seen.body.toString('utf-8'))).toEqual([
+			original,
+			shortened,
+			original,
+		]);
+		expect(compress).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves a request with no message list on the passthrough path', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const { port, logs } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = Buffer.from(original, 'utf-8');
+
+		await send(port, {
+			path: '/agent/a/anthropic/v1/messages/count_tokens',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(compress).not.toHaveBeenCalled();
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0]).toMatchObject({ kind: 'other', mode: 'compress' });
+		expect(logs[0].compression).toBeUndefined();
+	});
+
+	it('decodes a gzip body to read it, and sends the shortened body plain', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const { port } = await startProxy(
+			{ openai: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = zlib.gzipSync(Buffer.from(original, 'utf-8'));
+
+		await send(port, {
+			path: '/agent/a/openai/v1/responses',
+			headers: ['Content-Encoding', 'gzip', 'Content-Length', String(body.length)],
+			body,
+		});
+
+		expect(compress).toHaveBeenCalledWith('openai-responses', original);
+		const seen = upstream.seen[0];
+		expect(seen.body.toString('utf-8')).toBe(shortened);
+		// The declared encoding no longer describes the body, so it is gone.
+		expect(lowerNames(seen.rawHeaders)).not.toContain('content-encoding');
+	});
+
+	it('forwards an encoded body untouched when nothing in it changes', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async (_kind: string, text: string) => compressResult(text, false));
+		const { port } = await startProxy(
+			{ openai: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = zlib.gzipSync(Buffer.from(original, 'utf-8'));
+
+		await send(port, {
+			path: '/agent/a/openai/v1/responses',
+			headers: ['Content-Encoding', 'gzip', 'Content-Length', String(body.length)],
+			body,
+		});
+
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		expect(rawValues(upstream.seen[0].rawHeaders, 'Content-Encoding')).toEqual(['gzip']);
+	});
+
+	it('sends a body it cannot read as it arrived, and says why', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const { port, logs } = await startProxy(
+			{ openai: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const cases: Array<{ headers: string[]; body: Buffer; skipped: string }> = [
+			// An encoding this module has no decoder for.
+			{ headers: ['Content-Encoding', 'snappy'], body: randomBytes(512), skipped: 'encoding' },
+			// Bytes that are not UTF-8 would not survive the trip back.
+			{ headers: [], body: Buffer.from([0xff, 0xfe, 0x00, 0xc3]), skipped: 'not-text' },
+			// A gzip label on bytes that are not gzip.
+			{ headers: ['Content-Encoding', 'gzip'], body: randomBytes(512), skipped: 'failed' },
+		];
+
+		for (const [index, entry] of cases.entries()) {
+			const answer = await send(port, {
+				path: '/agent/a/openai/v1/responses',
+				headers: [...entry.headers, 'Content-Length', String(entry.body.length)],
+				body: entry.body,
+			});
+			expect(answer.status).toBe(200);
+			expect(upstream.seen[index].body.equals(entry.body)).toBe(true);
+			await vi.waitFor(() => expect(logs).toHaveLength(index + 1));
+			expect(logs[index].compression).toMatchObject({ skipped: entry.skipped, changed: false });
+			expect(logs[index].sentBytes).toBe(entry.body.length);
+		}
+		expect(compress).not.toHaveBeenCalled();
+	});
+
+	it('sends the request as it arrived when the compressor throws', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const compress = vi.fn(async () => {
+			throw new Error('cache directory is gone');
+		});
+		const { port, logs } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = Buffer.from(original, 'utf-8');
+
+		const answer = await send(port, {
+			path: '/agent/a/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		// The turn is not lost to a failure of the optimization.
+		expect(answer.status).toBe(200);
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0].outcome).toBe('completed');
+		expect(logs[0].compression).toMatchObject({
+			skipped: 'failed',
+			changed: false,
+			error: 'cache directory is gone',
+		});
+	});
+
+	it('is a passthrough when no compressor was given, whatever the mode', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		const { port, logs } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => 'compress' }
+		);
+		const body = Buffer.from(original, 'utf-8');
+
+		await send(port, {
+			path: '/agent/a/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0].compression).toBeUndefined();
+	});
+
+	it('still answers an upstream that cannot be reached by name', async () => {
+		const compress = vi.fn(async () => compressResult(shortened, true));
+		const { port, logs } = await startProxy(
+			{ anthropic: 'http://127.0.0.1:1' },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = Buffer.from(original, 'utf-8');
+
+		const answer = await send(port, {
+			path: '/agent/a/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(answer.status).toBe(502);
+		expect(JSON.parse(answer.body.toString()).error.code).toBe('upstream-unreachable');
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0].outcome).toBe('upstream-failed');
 	});
 });
 

@@ -411,6 +411,72 @@ describe('update-agent command', () => {
 		});
 	});
 
+	describe('--proxy-mode', () => {
+		function mockAgent() {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		it.each([
+			['off', 'off'],
+			['passthrough', 'passthrough'],
+			[' Compress ', 'compress'],
+		])('sends %j as the mode for the app to apply', async (value, mode) => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { proxyMode: value });
+
+			// The app chooses the gateway URL the mode implies; the CLI sends
+			// only the mode.
+			expect(sendCommand).toHaveBeenCalledWith(
+				{
+					type: 'update_session_config',
+					sessionId: 'full-session-id',
+					configPatch: { tokenProxyMode: mode },
+				},
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(`  Token proxy mode: ${mode}`);
+		});
+
+		it('refuses a mode that is not one of the three, before it reaches the app', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { proxyMode: 'on' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--proxy-mode expects off, passthrough, compress')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(sendCommand).not.toHaveBeenCalledWith(
+				expect.objectContaining({ configPatch: expect.anything() }),
+				'update_session_config_result'
+			);
+		});
+
+		it('refuses to be combined with --gateway-url: the mode chooses the URL', async () => {
+			mockAgent();
+
+			await updateAgent('agent-1', { proxyMode: 'compress', gatewayUrl: 'http://127.0.0.1:1' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('Use --proxy-mode or --gateway-url, not both')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	it('refuses --provider without --force', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({

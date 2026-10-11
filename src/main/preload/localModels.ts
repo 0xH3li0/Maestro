@@ -26,6 +26,10 @@ import type {
 	EndpointTestResult,
 } from '../local-models/endpoint-client';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type {
+	TokenProxyBlockDetail,
+	TokenProxyReport,
+} from '../../shared/local-models/token-proxy';
 import type { DownloadProgress, DownloadResult } from '../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../local-models/model-store';
 import type { RuntimeInstallProgress } from '../local-models/runtime/runtime-installer';
@@ -115,6 +119,26 @@ function createSemanticIndexApi() {
 		/** Progress pushes, throttled at the source. Broadcast to every window. */
 		onProgress: (handler: (progress: SemanticIndexProgress) => void): (() => void) =>
 			subscribe('localModels:semanticIndex:progress', handler),
+	};
+}
+
+/**
+ * `window.maestro.localModels.proxy.*` - the Maestro token proxy: what it is
+ * doing, what it carried, and the blocks it shortened. An agent's mode is not
+ * set here: it is a field on the agent, written through the sessions store
+ * like its gateway URL.
+ */
+function createTokenProxyApi() {
+	return {
+		/** The listener, the agents on it, usage totals and recent compressions. */
+		report: (): Promise<TokenProxyReport> => ipcRenderer.invoke('localModels:proxy:report'),
+
+		/** The proxy's port, chosen and persisted on the first call. */
+		ensurePort: (): Promise<number> => ipcRenderer.invoke('localModels:proxy:ensurePort'),
+
+		/** Both sides of one compressed block, or null when the cache has none. */
+		block: (hash: string): Promise<TokenProxyBlockDetail | null> =>
+			ipcRenderer.invoke('localModels:proxy:block', hash),
 	};
 }
 
@@ -266,6 +290,8 @@ export function createLocalModelsApi() {
 		spokenNotices: createSpokenNoticesApi(),
 
 		semanticIndex: createSemanticIndexApi(),
+
+		proxy: createTokenProxyApi(),
 
 		runtimes: createLocalRuntimesApi(),
 

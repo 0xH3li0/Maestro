@@ -88,8 +88,14 @@ const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
 		})
 	)
 );
+// The launch URL is the stored gateway unless it is the Maestro proxy, which
+// only the service (it knows the port) can tell.
+const mockTokenProxyLaunchGatewayUrl = vi.hoisted(() =>
+	vi.fn(async (_agentId: string | undefined, gatewayUrl: string | undefined) => gatewayUrl)
+);
 vi.mock('../../../main/local-models/proxy/service', () => ({
 	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl: mockTokenProxyLaunchGatewayUrl,
 }));
 vi.mock('../../../main/stores/claudeUsageStore', () => ({
 	getSnapshot: () => null,
@@ -401,6 +407,24 @@ describe('cue-spawn-builder', () => {
 				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(
 					'http://127.0.0.1:8787/anthropic'
 				);
+			});
+
+			it("gives the run the agent's own base URL when the gateway is the token proxy", async () => {
+				const scoped = 'http://127.0.0.1:8787/agent/session-1/anthropic';
+				mockTokenProxyLaunchGatewayUrl.mockResolvedValueOnce(scoped);
+
+				const result = await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith(
+					'session-1',
+					'http://127.0.0.1:8787/anthropic'
+				);
+				expect(result.ok).toBe(true);
+				if (result.ok) expect(result.spec.env.ANTHROPIC_BASE_URL).toBe(scoped);
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(scoped);
 			});
 
 			it('does not ask the token proxy for a run with no gateway', async () => {

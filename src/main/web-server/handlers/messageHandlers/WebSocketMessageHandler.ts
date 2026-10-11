@@ -97,6 +97,8 @@ import {
 	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
+	handleLocalModelsProxyStatus,
+	handleLocalModelsProxyBlock,
 	handleLocalModelsSearch,
 	handleLocalModelsTabCleanup,
 	handleLocalModelsTaskReadiness,
@@ -751,6 +753,14 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_semantic_index_status':
 				void handleLocalModelsSemanticIndexStatus(this.ctx, client, message);
+				break;
+
+			case 'local_models_proxy_status':
+				void handleLocalModelsProxyStatus(this.ctx, client, message);
+				break;
+
+			case 'local_models_proxy_block':
+				void handleLocalModelsProxyBlock(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':
