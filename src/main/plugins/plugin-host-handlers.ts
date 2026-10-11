@@ -1382,7 +1382,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	}
 
 	// ui.openPanel / ui.closePanel / ui.togglePanel: let a plugin summon or dismiss
-	// its OWN modal panel (the hotkey-summoned overlay path). Same own-panels-only
+	// its OWN modal panel, or open its own Settings card. Same own-panels-only
 	// resolution as ui.panelPost, so a plugin can never open, close, or flicker
 	// another plugin's surface, and no new consent is needed: anything that can
 	// contribute a panel at all already holds `ui:panel`. The verbs carry no data -
@@ -1406,9 +1406,9 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!panel) {
 					throw new Error(`panel "${panelId}" is not declared by this plugin`);
 				}
-				// Only `modal` panels have a summonable host; docked ones are always
-				// mounted and have their own hide control, so this would be a no-op the
-				// plugin could not distinguish from success.
+				// Modal panels support all visibility actions. Settings cards can only
+				// be opened; plugins cannot close or toggle the host Settings modal.
+				// Other docked panels are always mounted, so visibility would be a no-op.
 				if (panel.placement !== 'modal' && !(panel.placement === 'settings' && action === 'open')) {
 					throw new Error(`panel "${panelId}" is not a modal panel`);
 				}

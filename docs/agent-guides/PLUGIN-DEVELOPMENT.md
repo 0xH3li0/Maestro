@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.17.0`)                                                                                                                                                                        |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.23.0`)                                                                                                                                                                        |
 | `description` | string                   | no        |                                                                                                                                                                                                                    |
 | `author`      | string                   | no        |                                                                                                                                                                                                                    |
 | `license`     | string                   | no        |                                                                                                                                                                                                                    |
@@ -289,7 +289,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
+`{ id, title, entry, placement, size?, hostSettings? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders in its own searchable Settings card, never inside plugin management, consent, uninstall, or grant/revoke UI. From Host API 1.23.0, `hostSettings: ["media"]` adds a host-owned navigation link without granting access to host settings. See [the settings-card contract](../plugin-settings-cards.md).
 
 `size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`). As an explicit exception to the general contribution policy above (where a bad item is dropped), an unknown `size` reports a manifest error but keeps the panel, falling back to `default` rather than dropping the contribution. `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 
@@ -489,9 +489,9 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                    | `ui:hostView`                |
 | `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                            | `ui:hostView`                |
 | `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)   | `ui:panel`                   |
-| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)        | `ui:panel`                   |
-| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)       | `ui:panel`                   |
-| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)      | `ui:panel`                   |
+| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own panels, see below)          | `ui:panel`                   |
+| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own panels, see below)         | `ui:panel`                   |
+| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own panels, see below)        | `ui:panel`                   |
 | `maestro.events.on(topic, handler(payload, meta))`                                  | - (delivery needs subscribe) |
 | `maestro.events.subscribe(topics[])`                                                | `events:subscribe`           |
 | `maestro.events.unsubscribe(topics?)`                                               | `events:subscribe`           |
@@ -621,7 +621,7 @@ await maestro.ui.panelPost('my-panel', { nodes });
 
 ### Summoning your own panel
 
-A `modal` panel normally opens from Settings -> Encore -> Plugins. To open it yourself - e.g. bind a `keybindings` chord to a command that pops a full-window overlay - call `maestro.ui.openPanel(panelId)`, `maestro.ui.closePanel(panelId)`, or `maestro.ui.togglePanel(panelId)`. All three take the LOCAL panel id, require `ui:panel` (no extra consent), and act ONLY on your own `modal` panels: a docked (`left`/`right`/`main`/`settings`) panel is rejected, since it is always mounted and has its own hide control, and `closePanel` is a no-op unless that exact panel is the one currently open, so you can never dismiss another plugin's surface. Escape, the backdrop, and the close button dismiss the panel too. Requires `minHostApi: '1.16.0'`.
+A `modal` panel normally opens from Settings -> Encore -> Plugins. To open it yourself - e.g. bind a `keybindings` chord to a command that pops a full-window overlay - call `maestro.ui.openPanel(panelId)`, `maestro.ui.closePanel(panelId)`, or `maestro.ui.togglePanel(panelId)`. All three take the LOCAL panel id and require `ui:panel` (no extra consent). `ui.openPanel` also opens your own `settings` card from Host API 1.23.0. Close and toggle stay modal-only. Other docked (`left`/`right`/`main`) panels are rejected, since they are always mounted and have their own hide control. `closePanel` is a no-op unless that exact panel is the one currently open, so you can never dismiss another plugin's surface. Escape, the backdrop, and the close button dismiss the panel too. Requires `minHostApi: '1.16.0'`.
 
 ```js
 maestro.commands.register('overlay', () => maestro.ui.togglePanel('flow'));

@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.17.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.23.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -109,7 +109,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `agents.dispatch` and `process.spawn`: LIVE but fully gated. Each registers only when `deps.dispatch` / `deps.spawn` are injected (both are wired in `index.ts`). Every call runs the gate stack: allowlist-scope grant (`assertBrokerAllowed`), trusted signature (`assertTrustedActVerb`), Pianola risk ceiling (`assertLowOrMediumRisk`), a closed input schema, and the `ActionGuard` rate/concurrency cap. `agents.dispatch` ADDITIONALLY requires the separate unattended consent (see below) because plugin-initiated dispatch is never user-present.
   - `net.connect` / `net.send` / `net.close`: LIVE, trusted-only persistent outbound WebSocket. Registers only when `deps.netConnect` is injected. `wss:` only; the connect is pinned through the same `EgressGuard` lookup as `net.fetch` (loopback / RFC1918 / link-local / metadata blocked); caps at `MAX_SOCKETS_PER_PLUGIN = 4` per plugin and `MAX_FRAME_BYTES = 64 KB` per frame in both directions; `send`/`close` re-authorize the still-held host grant on every call so a mid-stream revoke denies the next call. The host owns the real socket; the plugin gets a `socketId` handle and receives frames as `net.connect:<socketId>` topic events (via `pushEvent`, not the `PLUGIN_EVENT_TOPICS` catalog). Sockets are force-closed on disable / crash / uninstall.
   - `ui.panelPost`: requires `ui:panel` and targets ONLY one of the plugin's own declared panels (own-panels-only); JSON-only payload capped at `MAX_PANEL_POST_BYTES = 64 KB`; delivered to the panel page as a `maestro:panelData` window message. One-way push - there is no reply channel back to the sandbox.
-  - `ui.openPanel` / `ui.closePanel` / `ui.togglePanel`: requires `ui:panel` (no new consent); built by one shared factory and resolved through the SAME `deps.getPanel` lookup `ui.panelPost` uses, so a plugin can only summon its OWN panels. Non-`modal` placements are REJECTED (docked panels are always mounted, so open/close would be an untellable no-op). Registered only when `deps.panelVisibility` is wired (fail closed). Main broadcasts `plugins:panel-visibility` `{ pluginId, panelId, action }`; the renderer's App-level `PluginModalPanelMount` drives the `uiStore.openPluginPanelId` field (transient, namespaced `<pluginId>/<panelId>`), and `close` only closes when that exact panel is the open one.
+  - `ui.openPanel` / `ui.closePanel` / `ui.togglePanel`: requires `ui:panel` (no new consent); built by one shared factory and resolved through the SAME `deps.getPanel` lookup `ui.panelPost` uses, so a plugin can only summon its OWN panels. `ui.openPanel` also opens own `settings` cards (Host API 1.23.0); close/toggle stay modal-only. Other docked placements are rejected. Registered only when `deps.panelVisibility` is wired (fail closed). Main broadcasts `plugins:panel-visibility` `{ pluginId, panelId, action }`; the renderer's App-level `PluginModalPanelMount` drives the `uiStore.openPluginPanelId` field (transient, namespaced `<pluginId>/<panelId>`), and `close` only closes when that exact panel is the open one.
 
   **Direct dispatch requires unattended consent.** The `agents.dispatch` handler additionally calls the injected `dispatchUnattendedAllowed(pluginId, agentId)` predicate (wired in `index.ts` to `isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId)`) and denies the call unless the plugin holds the separate, revocable UNATTENDED grant on top of the interactive `agents:dispatch` allowlist grant. The time-based scheduler (`PluginSchedulerHost`) enforces the same unattended check independently and calls the dispatch SINK directly, so it is unaffected by this handler.
 
@@ -206,7 +206,8 @@ Bundled plugins (e.g. `agent-flow`) ship trusted via a build-time signature, not
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.17.0`; it added `media:tools` with the exact
+The current host is `1.23.0`; it adds independent plugin settings cards.
+`1.17.0` added `media:tools` with the exact
 `discord-voice` scope, opaque media jobs and fixed native profiles. STT remains
 in the plugin; tools and models are not bundled. (`1.15.0` is taken by the
 Board + Profiles work on this fork, so it is skipped here.)

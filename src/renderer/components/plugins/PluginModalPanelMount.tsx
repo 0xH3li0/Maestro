@@ -13,9 +13,9 @@
  * (then `usePluginContributions` returns empty buckets), or when the open id no
  * longer resolves to a live panel - so uninstalling or disabling a plugin with
  * its overlay up cleanly drops the overlay instead of stranding it. Resolution
- * is by id alone: the Settings launch button has always been able to pop a
- * DOCKED panel into this host too, and the modal-only restriction belongs on
- * the `ui.*Panel` verbs (where it is enforced) rather than here.
+ * is by id. Settings panels route to their own Settings card without mounting
+ * a second guest here. Other docked panels can still be launched as overlays
+ * from plugin management; plugin visibility verbs reject those placements.
  */
 
 import { useEffect, useMemo, useRef } from 'react';

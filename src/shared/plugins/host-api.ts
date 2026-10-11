@@ -21,7 +21,8 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. 1.17.0 adds the bounded
+ * The host API version this Maestro build implements. 1.23.0 adds independent
+ * plugin settings cards and host-owned navigation links. 1.17.0 added the bounded
  * media:tools job API (Discord attachments and fixed local profiles).
  * 1.16.0 added three backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
