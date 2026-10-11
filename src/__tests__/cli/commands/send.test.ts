@@ -588,6 +588,31 @@ describe('send command', () => {
 			expect(entry.fullResponse).toBe('Refactored the parser.');
 		});
 
+		it('still writes an entry from the response when the synopsis turn throws', async () => {
+			ready();
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Refactored the parser.',
+					agentSessionId: 'session-1',
+				})
+				.mockRejectedValueOnce(new Error('spawn ENOENT'));
+
+			await send('agent-abc', 'refactor', {});
+
+			expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+			const entry = vi.mocked(addHistoryEntry).mock.calls[0][0];
+			expect(entry).toMatchObject({
+				success: true,
+				summary: 'Refactored the parser.',
+				fullResponse: 'Refactored the parser.',
+			});
+			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('spawn ENOENT'));
+			expect(processExitSpy).not.toHaveBeenCalled();
+			errSpy.mockRestore();
+		});
+
 		it('keeps the agent model for the synopsis when the cheap tier would shrink the context window', async () => {
 			ready({ customModel: 'opus[1m]' });
 			vi.mocked(spawnAgent)

@@ -83,14 +83,22 @@ async function recordSendHistory(
 			fullResponse = response;
 
 			if (options.synopsis !== false && result.agentSessionId && !signal.aborted) {
-				const synopsis = await requestCliSynopsis(agent, result.agentSessionId, {
-					source: 'cli:send-synopsis',
-					readOnlyMode: options.readOnly,
-					signal,
-				});
-				if (synopsis) {
-					summary = synopsis.shortSummary;
-					fullResponse = synopsis.fullSynopsis;
+				// Its own try: the response already stands in as the summary, so a
+				// synopsis turn that throws (missing prompt file, spawn rejection)
+				// costs the synopsis, not the entry.
+				try {
+					const synopsis = await requestCliSynopsis(agent, result.agentSessionId, {
+						source: 'cli:send-synopsis',
+						readOnlyMode: options.readOnly,
+						signal,
+					});
+					if (synopsis) {
+						summary = synopsis.shortSummary;
+						fullResponse = synopsis.fullSynopsis;
+					}
+				} catch (error) {
+					const msg = error instanceof Error ? error.message : String(error);
+					console.error(`Warning: Could not generate history synopsis: ${msg}`);
 				}
 			}
 		}
