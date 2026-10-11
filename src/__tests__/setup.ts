@@ -706,6 +706,27 @@ const mockMaestro = {
 			onProgress: vi.fn().mockReturnValue(() => {}),
 		},
 	},
+	// The core Local Models service (ungated). Same shape as `voice.models` and
+	// `voice.runtimes`, which front the same main-process service.
+	localModels: {
+		list: vi.fn().mockResolvedValue([]),
+		download: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+		pause: vi.fn().mockResolvedValue(true),
+		resume: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+		cancel: vi.fn().mockResolvedValue(true),
+		verify: vi.fn().mockResolvedValue({ modelId: '', ok: true, status: 'installed' }),
+		remove: vi.fn().mockResolvedValue(0),
+		removeAll: vi.fn().mockResolvedValue(0),
+		footprint: vi.fn().mockResolvedValue({ bytes: 0, models: [] }),
+		onProgress: vi.fn().mockReturnValue(() => {}),
+		runtimes: {
+			list: vi.fn().mockResolvedValue([]),
+			install: vi.fn().mockResolvedValue(true),
+			footprint: vi.fn().mockResolvedValue(0),
+			removeAll: vi.fn().mockResolvedValue(undefined),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
