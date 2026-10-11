@@ -16,6 +16,7 @@ const FEATURES: Record<string, string> = {
 	maestroCue: 'Maestro Cue',
 	pianola: 'Pianola (Manager Agent)',
 	computerHistory: 'Computer History',
+	quickChat: 'Quick Chat',
 };
 
 const ALIASES: Record<string, string> = {
@@ -39,6 +40,8 @@ const ALIASES: Record<string, string> = {
 	'computer-history': 'computerHistory',
 	computerhistory: 'computerHistory',
 	'screen-history': 'computerHistory',
+	'quick-chat': 'quickChat',
+	quickchat: 'quickChat',
 };
 
 interface EncoreOptions {
