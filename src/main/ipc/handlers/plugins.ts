@@ -84,6 +84,10 @@ function snapshotOf(registry: PluginRegistry): PluginListSnapshot {
 	return { hostApiVersion: HOST_API_VERSION, plugins: registry.records };
 }
 
+/**
+ * Register feature-gated plugin IPC with sealed-ledger authorization for code-tier enablement.
+ * Disable, revoke and uninstall await resource drains; validation, authorization or cleanup failures reject.
+ */
 export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void {
 	const { settingsStore, manager, sandboxHost, authStore, groupingRegistry } = deps;
 
@@ -105,7 +109,9 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 				// window via plugins:request-consent). The renderer cannot flip it on.
 				if (tier >= 1 && !authStore.isEnabled(id)) throw new Error('PluginNotAuthorized');
 			}
-			return snapshotOf(manager.setEnabled(id, enabled));
+			const registry = manager.setEnabled(id, enabled);
+			if (!enabled) await manager.stopAndDrain(id);
+			return snapshotOf(registry);
 		}
 	);
 	const wrappedInstall = withIpcErrorLogging(
@@ -131,7 +137,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 		async (id: unknown): Promise<{ success: boolean; error?: string }> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidPluginId');
 			if (!PLUGIN_ID_PATTERN.test(id)) throw new Error('InvalidPluginId');
-			const result = manager.uninstall(id);
+			const result = await manager.uninstall(id);
 			// Authoritative removal in the ledger too (tombstone), so a restored folder
 			// is recognized as removed-by-user and cannot silently re-enable.
 			authStore.uninstall(id);
@@ -170,6 +176,7 @@ export function registerPluginsHandlers(deps: PluginsHandlerDependencies): void 
 			// must not keep running without grants.
 			authStore.revoke(id);
 			manager.setEnabled(id, false);
+			await manager.stopAndDrain(id);
 			return { requested: manager.getRequestedPermissions(id) ?? [], granted: [] };
 		}
 	);
