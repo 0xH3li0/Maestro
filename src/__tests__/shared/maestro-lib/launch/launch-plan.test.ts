@@ -241,10 +241,37 @@ describe('buildAgentLaunchPlan', () => {
 				const result = buildAgentLaunchPlan(input({ surface, gateway: { toolType, url } }));
 
 				if (!result.ok) throw new Error(result.error);
-				expect(result.plan.gateway).toEqual({ envVar, url });
+				expect(result.plan.gateway).toMatchObject({ envVar, url });
 				expect(result.plan.envVars).toMatchObject({ [envVar]: url });
 				expect(result.plan.env?.[envVar]).toBe(url);
 			}
+		});
+
+		it('puts the Codex config argument ahead of the subcommand, on every surface', () => {
+			const override = ['-c', `openai_base_url=${JSON.stringify(url)}`];
+			for (const surface of ['desktop', 'cli', 'cue'] as const) {
+				const result = buildAgentLaunchPlan(
+					input({ surface, gateway: { toolType: 'codex', url } })
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				// A global option: `codex -c ... exec --json ...`, never after `exec`'s
+				// own arguments, where a resume subcommand would read it as its own.
+				expect(result.plan.args.slice(0, 4)).toEqual([...override, 'exec', '--json']);
+				expect(result.plan.gateway?.args).toEqual(override);
+			}
+		});
+
+		it('adds no argument for a provider whose variable is enough, or with no gateway', () => {
+			const claude = buildAgentLaunchPlan(input({ gateway: { toolType: 'claude-code', url } }));
+			if (!claude.ok) throw new Error(claude.error);
+			expect(claude.plan.gateway?.args).toEqual([]);
+			expect(claude.plan.args.slice(0, 2)).toEqual(['exec', '--json']);
+
+			const none = buildAgentLaunchPlan(input({ gateway: { toolType: 'codex', url: '' } }));
+			if (!none.ok) throw new Error(none.error);
+			expect(none.plan.gateway).toBeUndefined();
+			expect(none.plan.args.slice(0, 2)).toEqual(['exec', '--json']);
 		});
 
 		it('beats the provider defaults, the global Settings vars and the inherited value', () => {

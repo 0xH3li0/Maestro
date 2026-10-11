@@ -123,8 +123,11 @@ interface LaunchPlanCommon {
 	/**
 	 * The gateway this launch goes through, when `envVars` carries its base-URL
 	 * variable. Undefined when the agent has none or sets the variable itself.
+	 * `gateway.args` are the provider's config arguments for it (Codex), already
+	 * placed at the FRONT of `args`. A caller that builds its own argument list
+	 * instead of using `args` (desktop) must put them at the front of that list.
 	 */
-	gateway: { envVar: string; url: string } | undefined;
+	gateway: { envVar: string; url: string; args: string[] } | undefined;
 }
 
 export type AgentLaunchPlan =
@@ -171,7 +174,11 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		return { ok: false, reason: gateway.code, error: gateway.message };
 	}
 	const planGateway =
-		gateway.kind === 'inject' ? { envVar: gateway.envVar, url: gateway.url } : undefined;
+		gateway.kind === 'inject'
+			? { envVar: gateway.envVar, url: gateway.url, args: gateway.args }
+			: undefined;
+	// A global option: ahead of the agent's own arguments, subcommand included.
+	const gatewayArgs = planGateway?.args ?? [];
 	const layers = {
 		defaultEnvVars: agent?.defaultEnvVars,
 		batchModeEnvVars: input.batchMode ? agent?.batchModeEnvVars : undefined,
@@ -204,7 +211,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 				target,
 				command: input.remoteCommand || agent?.binaryName || input.command,
 				// The SSH wrapper places the prompt itself (inline or via its script).
-				args: [...input.args],
+				args: [...gatewayArgs, ...input.args],
 				cwd: input.cwd,
 				prompt,
 				stdin: undefined,
@@ -217,8 +224,8 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 
 	const args =
 		prompt.via === 'argv' || prompt.via === 'stdin'
-			? [...input.args, ...prompt.args]
-			: [...input.args];
+			? [...gatewayArgs, ...input.args, ...prompt.args]
+			: [...gatewayArgs, ...input.args];
 	return {
 		ok: true,
 		plan: {

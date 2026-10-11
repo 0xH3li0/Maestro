@@ -1388,15 +1388,16 @@ The rules, and why each is a rule:
    it when the user layer leaves the variable unset, so its position never decides between the two.
    It does beat the provider defaults, Settings -> Environment, and (on the CLI) a value exported in
    the shell: a gateway on one agent is more specific than any of them.
-2. **Only verified variables.** `GATEWAY_SUPPORT` is keyed by `AgentId`, so a new provider does not
-   compile until it has a variable or a reason. Claude Code (`ANTHROPIC_BASE_URL`) and Codex
-   (`OPENAI_BASE_URL`) are mapped. Copilot CLI ignores base-URL variables. OpenCode and Factory
+2. **Only verified mappings.** `GATEWAY_SUPPORT` is keyed by `AgentId`, so a new provider does not
+   compile until it has a variable or a reason. Claude Code is reached through
+   `ANTHROPIC_BASE_URL`. Codex is reached through `OPENAI_BASE_URL` AND a config argument,
+   `-c openai_base_url="<url>"`, placed ahead of its own arguments (`configArgs` on the mapping,
+   `gateway.args` on the launch plan). Copilot CLI ignores base-URL variables. OpenCode and Factory
    Droid set a base URL per model provider in their own config files, so no single variable routes
    them. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
-   says it is proxied. **The Codex mapping is now exactly that failure:** Codex CLI 0.162.1 does
-   not read `OPENAI_BASE_URL` (its override is the config key `openai_base_url`), so a Codex
-   agent with a gateway runs direct. See
-   [Real run](#real-run-2026-10-11-darwin-arm64), finding 2.
+   says it is proxied. **The Codex mapping shipped as exactly that failure**, with the variable
+   alone: Codex CLI 0.162.1 on a ChatGPT login does not read `OPENAI_BASE_URL`. See
+   [Real run](#real-run-2026-10-11-darwin-arm64), finding 2, for the measurement and the fix.
 3. **Never silent.** A gateway that cannot work is a launch failure whose message names the
    gateway: a loopback URL for an agent on an SSH remote (`gateway-loopback-on-remote`, since the
    remote host cannot reach this machine's loopback), a stored URL on a provider that cannot use one
@@ -2036,6 +2037,14 @@ Codex 0.162.1 with a ChatGPT login does not read `OPENAI_BASE_URL`. Its override
 key `openai_base_url`. So the Gateway table says the agent is proxied while it runs direct, which
 is the silent case rule 3 of the gateway forbids. Not tested: a Codex API key login.
 
+**Fixed the same day.** The Codex mapping now carries `configArgs`, so a launch with a gateway is
+`codex -c openai_base_url="<url>" exec ...` with the variable still set (it is what rule 1 reads to
+let a user's own value win). The argument goes at the ROOT of the command line, ahead of the
+subcommand, checked against the real binary: `codex -c 'openai_base_url="http://127.0.0.1:1"' exec
+...` refuses on every attempt (`failed to connect to websocket ... ws://127.0.0.1:1/responses`),
+where the variable alone answered normally. Not re-run through the proxy from the app after the
+fix; the route itself was already shown working below.
+
 With the config key, the `chatgpt` route works:
 
 ```bash
@@ -2047,17 +2056,24 @@ codex exec -c 'openai_base_url="http://127.0.0.1:PORT/agent/<id>/chatgpt"' '...'
 - `POST /responses` then returns 200 through the proxy (kind `openai-responses`, 51150 bytes
   sent, 139499 received) and the answer is correct. The upstream
   `https://chatgpt.com/backend-api/codex` is right.
-- That request is recorded with outcome `client-aborted` although the turn completed.
+- That request was recorded with outcome `client-aborted` although the turn completed: Codex hangs
+  up once it has `response.completed`, without waiting for the upstream to close. Fixed: a stream
+  the client leaves after its terminal event (`streamAnnouncedItsEnd` in `proxy/server.ts`) is
+  `completed`.
 
 #### Other things the run showed
 
-1. **The History synopsis does not go through the proxy.** Each turn was followed by a synopsis
-   request that resumes the same provider session (6 API calls in the transcript of run B, 5
-   requests in the proxy log). It is one of the spawns outside the launch plan, so it sends every
-   tool result in full, and it cannot read a cache entry that holds a compressed result. In run B
-   it wrote 51883 tokens under compress and 37306 under passthrough. The two were not separated
-   from Claude Code's own behavior on resume: in passthrough the synopsis also re-wrote results
-   that were byte-identical to cached ones, and in run A it showed no steady penalty.
+1. **The History synopsis did not go through the proxy, and neither did Auto Run.** Each turn was
+   followed by a synopsis request that resumes the same provider session (6 API calls in the
+   transcript of run B, 5 requests in the proxy log), so it sent every tool result in full and
+   could not read a cache entry that held a compressed result. In run B it wrote 51883 tokens under
+   compress and 37306 under passthrough. The cause was not that the synopsis is spawned outside the
+   launch plan (it is not): the desktop spawn looked the agent's gateway up by an id that strips
+   only the `-ai-{tab}` suffix, and a synopsis spawns as `{agentId}-synopsis-{ts}`. An Auto Run
+   task spawns as `{agentId}-batch-{ts}` and missed the gateway the same way, which is the larger
+   half: an agent's Auto Run turns ran direct while its typed turns were proxied. **Fixed:**
+   `agentIdFromProcessId()` (`src/main/utils/process-ids.ts`) strips every suffix, and
+   `handle-spawn.ts` uses it for the gateway lookup. Not re-measured.
 2. **"Tokens saved" under-reports on log text.** The proxy counts characters / 4. The provider
    counted about 12300 tokens for a block the proxy called 6352, and about 1750 for one it called 886. The ratio is about 1.9 on this text (paths, punctuation, digits), so the 1000 token
    threshold is nearer 1900 real tokens there, and the real saving in these runs was about 1.9
@@ -2069,6 +2085,13 @@ codex exec -c 'openai_base_url="http://127.0.0.1:PORT/agent/<id>/chatgpt"' '...'
 Not run: the `openai` route, compression of a Responses or Chat Completions body, the model
 tier (`token-proxy` was off), an SSH remote agent, and a session long enough to show the
 crossover in total cost.
+
+**Direct by design:** housekeeping Maestro runs for an agent. A group chat turn, a cross-agent
+consult, tab naming on the Utility Agent path, and `groomContext()` (context grooming, Director's
+Notes, AI command on the agent path) do not go through `process:spawn` or the launch plan, build
+their own environment, and never read the agent's gateway. The user docs say so ("It covers the
+agent's own turns"). Someone who runs a gateway as a REQUIRED route (a company proxy that holds the
+key) should know those calls reach the provider direct.
 
 ## Verification
 

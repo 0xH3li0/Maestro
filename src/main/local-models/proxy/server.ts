@@ -102,7 +102,10 @@ export interface TokenProxyCompressionLog {
 export type TokenProxyRequestOutcome =
 	/** The upstream's response (whatever its status) reached the client whole. */
 	| 'completed'
-	/** The client went away before the response finished. */
+	/**
+	 * The client went away before the response finished, and before an event
+	 * stream announced the end of its turn (see `streamAnnouncedItsEnd`).
+	 */
 	| 'client-aborted'
 	/** The upstream could not be reached, or dropped mid-response. */
 	| 'upstream-failed'
@@ -233,6 +236,35 @@ function contentEncoding(rawHeaders: readonly string[]): string | null {
 }
 
 /**
+ * The events that say a streamed turn is over, by provider: the Responses API
+ * (`response.completed` and its failed and incomplete siblings), Chat
+ * Completions (`[DONE]`), and Anthropic Messages (`message_stop`).
+ */
+const STREAM_END_MARKERS = [
+	'response.completed',
+	'response.failed',
+	'response.incomplete',
+	'data: [DONE]',
+	'message_stop',
+] as const;
+
+const STREAM_END_MARKER_MAX_LENGTH = Math.max(...STREAM_END_MARKERS.map((marker) => marker.length));
+
+/**
+ * Whether an event stream has already told the client its turn is finished.
+ *
+ * A client is free to hang up once it has that event, without waiting for the
+ * upstream to close the connection, and Codex does: on real traffic every one
+ * of its turns was recorded `client-aborted` although each had completed. The
+ * response then never "finishes" from this side, so the terminal event is the
+ * only evidence that the hang-up was the end of a turn and not an abandoned
+ * one. The bytes are read, never changed: this only decides one word of the log.
+ */
+export function streamAnnouncedItsEnd(text: string): boolean {
+	return STREAM_END_MARKERS.some((marker) => text.includes(marker));
+}
+
+/**
  * The text of a request body, or why it cannot be read. The decode is strict:
  * a body whose bytes are not UTF-8 would not survive the trip back to bytes,
  * so it is not read at all.
@@ -299,6 +331,10 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		let failure: { outcome: TokenProxyRequestOutcome; error: string } | null = null;
 		let closed = false;
 		let upstreamRequest: http.ClientRequest | null = null;
+		// Whether the upstream has already said the turn is over on an event
+		// stream that the client then hung up on (see `streamAnnouncedItsEnd`).
+		let streamEnded = false;
+		let streamTail = '';
 		// Set when the body sent is not the body received. Otherwise the two
 		// counts are the same number.
 		let sentBytes: number | null = null;
@@ -312,7 +348,7 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			if (failure) {
 				entry.outcome = failure.outcome;
 				entry.error = failure.error;
-			} else if (!res.writableFinished) {
+			} else if (!res.writableFinished && !streamEnded) {
 				entry.outcome = 'client-aborted';
 				// The client leaving ends the upstream request too, so an
 				// abandoned turn stops generating (and billing) at the provider.
@@ -422,8 +458,18 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 				// event must not wait for the next one to fill a packet.
 				res.flushHeaders();
 				res.socket?.setNoDelay(true);
+				const eventStream = /^text\/event-stream\b/i.test(
+					String(upstreamResponse.headers['content-type'] ?? '')
+				);
 				upstreamResponse.on('data', (chunk: Buffer) => {
 					entry.responseBytes += chunk.length;
+					if (eventStream && !streamEnded) {
+						// The marker can straddle two chunks, so the end of the last one
+						// is kept and read together with this one.
+						const text = streamTail + chunk.toString('latin1');
+						streamEnded = streamAnnouncedItsEnd(text);
+						streamTail = text.slice(-STREAM_END_MARKER_MAX_LENGTH);
+					}
 				});
 				upstreamResponse.on('error', upstreamFailed);
 				upstreamResponse.on('close', () => {

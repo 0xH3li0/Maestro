@@ -596,6 +596,50 @@ describe('process IPC handlers', () => {
 				);
 			});
 
+			it.each([
+				['an Auto Run task', 'agent-gw-batch-1760000000000'],
+				['the History synopsis', 'agent-gw-synopsis-1760000000000'],
+			])('applies the gateway to %s, not only to a typed turn', async (_label, sessionId) => {
+				// These spawn under the agent's id plus a suffix that is not `-ai-`.
+				// Looking the gateway up without stripping it found no agent, so the
+				// agent's Auto Run turns went direct while its typed turns were proxied.
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude({ sessionId });
+
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith('agent-gw', gatewayUrl);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ ANTHROPIC_BASE_URL: gatewayUrl }),
+					})
+				);
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(gatewayUrl);
+			});
+
+			it('points Codex at the gateway with its config argument, ahead of its own arguments', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 3101, success: true });
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-gw-ai-tab-1',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: ['exec', '--json'],
+				});
+
+				// Codex CLI ignores OPENAI_BASE_URL on a ChatGPT login; the variable
+				// alone left the agent running direct while the UI said it was proxied.
+				const spawned = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawned.args.slice(0, 2)).toEqual([
+					'-c',
+					`openai_base_url=${JSON.stringify(gatewayUrl)}`,
+				]);
+				expect(spawned.args.indexOf('exec')).toBeGreaterThan(1);
+				expect(spawned.customEnvVars).toMatchObject({ OPENAI_BASE_URL: gatewayUrl });
+			});
+
 			it('sets nothing for an agent with no gateway', async () => {
 				storeAgent({ id: 'agent-gw' });
 

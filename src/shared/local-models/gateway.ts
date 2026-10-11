@@ -2,10 +2,11 @@
  * The per-agent Local Models gateway: one URL on an agent that sends its
  * provider traffic through an HTTP proxy (Headroom, LiteLLM, or Maestro's own).
  *
- * A gateway is reached through the provider's base-URL environment variable,
- * so "which variable" is a per-provider fact and "may Maestro set it" is a
- * per-launch decision. Both live here, pure, so the launch plan, the env
- * provenance view, the settings UI and the CLI cannot disagree about them.
+ * A gateway is reached through the provider's base-URL environment variable
+ * (and, for a CLI that does not read one, a config argument as well), so "how
+ * is this provider pointed at a URL" is a per-provider fact and "may Maestro do
+ * it" is a per-launch decision. Both live here, pure, so the launch plan, the
+ * env provenance view, the settings UI and the CLI cannot disagree about them.
  *
  * Three rules every caller inherits:
  *
@@ -14,7 +15,9 @@
  *    base-URL variable keeps that value, and the gateway is not applied.
  * 2. A provider whose base-URL variable Maestro does not know is refused, never
  *    guessed. A wrong variable name is ignored by the CLI, so the agent would
- *    run direct while the UI says it is proxied.
+ *    run direct while the UI says it is proxied. A mapping is only as good as
+ *    its last check against the real CLI: Codex's variable shipped unverified
+ *    and was exactly this failure until its config argument was added.
  * 3. A gateway that cannot work is a launch failure that names the gateway. It
  *    is never dropped so the turn can go to another endpoint.
  */
@@ -29,6 +32,12 @@ export type AgentGatewaySupport =
 			supported: true;
 			/** The base-URL variable this provider's CLI reads. */
 			envVar: string;
+			/**
+			 * Arguments that carry the gateway, for a CLI whose variable is not
+			 * enough on its own. They go BEFORE the agent's own arguments (ahead of
+			 * any subcommand), which is where a CLI reads a global option.
+			 */
+			configArgs?: (url: string) => string[];
 	  }
 	| {
 			supported: false;
@@ -46,7 +55,21 @@ const OWN_CONFIG_REASON =
  */
 const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	'claude-code': { supported: true, envVar: 'ANTHROPIC_BASE_URL' },
-	codex: { supported: true, envVar: 'OPENAI_BASE_URL' },
+	// Codex needs BOTH. Measured on 2026-10-11 against Codex CLI 0.162.1 with a
+	// ChatGPT login: `OPENAI_BASE_URL` alone is ignored (the turn completed with
+	// the variable pointed at a closed port), so an agent with a gateway ran
+	// direct while every surface said it was proxied. The config override
+	// `-c openai_base_url="<url>"` at the root of the command line IS honored
+	// (the same closed port then refuses every attempt). The variable is still
+	// set: it is what rule 1 reads to let a user's own value win, and other
+	// Codex builds and logins may read it.
+	codex: {
+		supported: true,
+		envVar: 'OPENAI_BASE_URL',
+		// The value is parsed as TOML; a JSON string literal is a valid TOML
+		// basic string for any URL `parseGatewayUrl` accepts.
+		configArgs: (url) => ['-c', `openai_base_url=${JSON.stringify(url)}`],
+	},
 	'copilot-cli': {
 		supported: false,
 		reason: 'Copilot CLI ignores base-URL variables, so its traffic cannot go through a gateway.',
@@ -146,8 +169,17 @@ export type AgentGatewayRefusalCode =
 export type AgentGatewayResolution =
 	/** The agent has no gateway. */
 	| { kind: 'none' }
-	/** Set this variable on the agent's process. */
-	| { kind: 'inject'; envVar: string; url: string; envVars: Record<string, string> }
+	/**
+	 * Set this variable on the agent's process, and put `args` ahead of its own
+	 * arguments (empty for a provider whose variable is enough).
+	 */
+	| {
+			kind: 'inject';
+			envVar: string;
+			url: string;
+			envVars: Record<string, string>;
+			args: string[];
+	  }
 	/** The agent sets the variable itself; the gateway is not applied (rule 1). */
 	| { kind: 'user-override'; envVar: string; url: string; userValue: string }
 	/** The launch must fail with this message (rule 3). */
@@ -215,6 +247,7 @@ export function resolveAgentGateway(input: AgentGatewayInput): AgentGatewayResol
 		envVar: support.envVar,
 		url: parsed.url,
 		envVars: { [support.envVar]: parsed.url },
+		args: support.configArgs?.(parsed.url) ?? [],
 	};
 }
 

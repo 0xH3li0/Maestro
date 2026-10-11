@@ -19,6 +19,7 @@ import { randomBytes } from 'crypto';
 import type { AddressInfo } from 'net';
 import {
 	createTokenProxyServer,
+	streamAnnouncedItsEnd,
 	forwardableHeaders,
 	type TokenProxyRequestLog,
 	type TokenProxyServer,
@@ -589,6 +590,55 @@ describe('token proxy server', () => {
 			await upstreamSawClose;
 			await vi.waitFor(() => expect(logs).toHaveLength(1));
 			expect(logs[0]).toMatchObject({ outcome: 'client-aborted' });
+		});
+
+		it('counts a stream the client left after its final event as completed', async () => {
+			// Codex hangs up as soon as it has `response.completed`, without waiting
+			// for the upstream to close. On real traffic every one of its turns was
+			// logged `client-aborted` although each had finished.
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(200, { 'content-type': 'text/event-stream' });
+				// The marker is split across two writes, as a network would split it.
+				res.write(
+					'event: response.output_text.delta\ndata: {"delta":"ok"}\n\nevent: response.comp'
+				);
+				setTimeout(() => res.write('leted\ndata: {"type":"response.completed"}\n\n'), 20);
+				// Never ends: the client decides when it is done.
+			});
+			const { port, logs } = await startProxy({ chatgpt: upstream.origin });
+
+			await new Promise<void>((resolve) => {
+				const req = http.request(
+					{ host: '127.0.0.1', port, method: 'POST', path: '/chatgpt/responses', agent: false },
+					(res) => {
+						let seen = '';
+						res.on('error', () => {});
+						res.on('data', (chunk: Buffer) => {
+							seen += chunk.toString();
+							if (seen.includes('response.completed')) {
+								req.destroy();
+								resolve();
+							}
+						});
+					}
+				);
+				req.on('error', () => {});
+				req.end('{}');
+			});
+
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 200, outcome: 'completed' });
+		});
+
+		it('reads the end of a turn from each provider, and from nothing else', () => {
+			expect(streamAnnouncedItsEnd('event: response.completed\ndata: {}')).toBe(true);
+			expect(streamAnnouncedItsEnd('event: response.failed\ndata: {}')).toBe(true);
+			expect(streamAnnouncedItsEnd('data: [DONE]\n\n')).toBe(true);
+			expect(streamAnnouncedItsEnd('event: message_stop\ndata: {"type":"message_stop"}')).toBe(
+				true
+			);
+			expect(streamAnnouncedItsEnd('event: content_block_delta\ndata: {"n":1}')).toBe(false);
+			expect(streamAnnouncedItsEnd('')).toBe(false);
 		});
 	});
 

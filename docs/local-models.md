@@ -189,17 +189,17 @@ The check is a safety net. It does not find every secret, and a clean result is 
 
 A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
 
-A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro sets the provider's base-URL variable to that URL:
+A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
 
-| Provider    | Variable                                                                |
-| ----------- | ----------------------------------------------------------------------- |
-| Claude Code | `ANTHROPIC_BASE_URL`                                                    |
-| Codex       | `OPENAI_BASE_URL`                                                       |
-| Copilot CLI | None. Copilot CLI ignores base-URL variables, so the field is disabled. |
-| OpenCode    | None. It sets a base URL per model provider in its own config file.     |
-| Others      | None known to Maestro. The field is disabled and says so.               |
+| Provider    | How it is pointed at the gateway                                           |
+| ----------- | -------------------------------------------------------------------------- |
+| Claude Code | `ANTHROPIC_BASE_URL`                                                       |
+| Codex       | `OPENAI_BASE_URL`, and the argument `-c openai_base_url="<url>"`           |
+| Copilot CLI | Nothing. Copilot CLI ignores base-URL variables, so the field is disabled. |
+| OpenCode    | Nothing. It sets a base URL per model provider in its own config file.     |
+| Others      | Nothing known to Maestro. The field is disabled and says so.               |
 
-Known problem: Codex CLI 0.162.1 does not read `OPENAI_BASE_URL` (tested with a ChatGPT login). A Codex agent with a gateway runs without it, and nothing reports that. Until this is fixed, check your proxy's own request log before you rely on a gateway for Codex.
+Codex gets both because Codex CLI does not read `OPENAI_BASE_URL` on a ChatGPT login (tested with 0.162.1); the argument is what it honors.
 
 Four rules:
 

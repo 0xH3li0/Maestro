@@ -29,6 +29,7 @@ import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX } from '../../../constants';
+import { agentIdFromProcessId } from '../../../utils/process-ids';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
 import {
@@ -272,6 +273,19 @@ export async function handleProcessSpawn(
 		}>
 	).find((s) => s?.id === baseSessionId);
 
+	// The agent whose gateway this spawn uses. NOT `baseSessionId`, which strips
+	// only the `-ai-{tab}` suffix: an Auto Run task spawns as
+	// `{agentId}-batch-{ts}` and the History synopsis as `{agentId}-synopsis-{ts}`,
+	// so looking the gateway up by `baseSessionId` found no agent for either and
+	// sent both direct, while the agent's typed turns went through the gateway.
+	const gatewayAgentId = agentIdFromProcessId(config.sessionId);
+	const gatewayAgent =
+		gatewayAgentId === baseSessionId
+			? storedAgent
+			: (
+					deps.sessionsStore.get('sessions', []) as Array<{ id?: string; gatewayUrl?: string }>
+				).find((s) => s?.id === gatewayAgentId);
+
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
 	if (config.toolType !== 'terminal') {
 		// A gateway that is the Maestro token proxy is given to the process with
@@ -279,8 +293,8 @@ export async function handleProcessSpawn(
 		// it carries and which mode (passthrough or compress) the agent chose.
 		// Any other gateway comes back unchanged.
 		const launchGatewayUrl = await tokenProxyLaunchGatewayUrl(
-			baseSessionId,
-			storedAgent?.gatewayUrl
+			gatewayAgentId,
+			gatewayAgent?.gatewayUrl
 		);
 		const planResult = buildAgentLaunchPlan({
 			surface: 'desktop',
@@ -312,6 +326,11 @@ export async function handleProcessSpawn(
 		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
 		if (planResult.plan.gateway) {
+			// A provider whose base-URL variable is not enough (Codex) is pointed at
+			// the gateway by a config argument too. This handler spawns from
+			// `finalArgs`, not from the plan's own list, so they are placed here:
+			// at the front, where a CLI reads a global option.
+			finalArgs = [...planResult.plan.gateway.args, ...finalArgs];
 			logger.info(`Routing ${config.toolType} through its Local Models gateway`, LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				envVar: planResult.plan.gateway.envVar,

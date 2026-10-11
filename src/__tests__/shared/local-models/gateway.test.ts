@@ -19,7 +19,22 @@ describe('agentGatewaySupport', () => {
 		['claude-code', 'ANTHROPIC_BASE_URL'],
 		['codex', 'OPENAI_BASE_URL'],
 	])('%s is reached through %s', (toolType, envVar) => {
-		expect(agentGatewaySupport(toolType)).toEqual({ supported: true, envVar });
+		expect(agentGatewaySupport(toolType)).toMatchObject({ supported: true, envVar });
+	});
+
+	it('gives Codex a config argument too, because its variable alone is ignored', () => {
+		const support = agentGatewaySupport('codex');
+		if (!support.supported) throw new Error('expected supported');
+		// Codex CLI 0.162.1 with a ChatGPT login ignores OPENAI_BASE_URL; the root
+		// config override is what it honors. A TOML basic string, quotes included.
+		expect(support.configArgs?.('http://127.0.0.1:8787/chatgpt')).toEqual([
+			'-c',
+			'openai_base_url="http://127.0.0.1:8787/chatgpt"',
+		]);
+
+		const claude = agentGatewaySupport('claude-code');
+		if (!claude.supported) throw new Error('expected supported');
+		expect(claude.configArgs).toBeUndefined();
 	});
 
 	it('refuses Copilot CLI and says it ignores base-URL variables', () => {
@@ -108,15 +123,28 @@ describe('resolveAgentGateway', () => {
 	});
 
 	it.each([
-		['claude-code', 'ANTHROPIC_BASE_URL'],
-		['codex', 'OPENAI_BASE_URL'],
-	])('injects the base-URL variable for %s', (toolType, envVar) => {
+		['claude-code', 'ANTHROPIC_BASE_URL', []],
+		['codex', 'OPENAI_BASE_URL', ['-c', `openai_base_url=${JSON.stringify(url)}`]],
+	])('injects the base-URL variable for %s', (toolType, envVar, args) => {
 		expect(resolveAgentGateway({ toolType, gatewayUrl: `${url}/` })).toEqual({
 			kind: 'inject',
 			envVar,
 			url,
 			envVars: { [envVar]: url },
+			args,
 		});
+	});
+
+	it('adds no config argument when the agent sets the variable itself', () => {
+		// Rule 1 covers both halves: a user's own base URL wins, so Maestro's
+		// argument must not override it from the command line.
+		const resolution = resolveAgentGateway({
+			toolType: 'codex',
+			gatewayUrl: url,
+			userEnvVars: { OPENAI_BASE_URL: 'https://mine.example.com' },
+		});
+		expect(resolution.kind).toBe('user-override');
+		expect(resolution).not.toHaveProperty('args');
 	});
 
 	it('lets a variable the agent sets itself win', () => {
