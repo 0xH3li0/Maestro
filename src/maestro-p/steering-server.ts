@@ -44,7 +44,11 @@ export interface SteeringServerOptions {
 }
 
 export interface SteeringServer {
-	/** Stop listening and remove the socket file. Safe to call more than once. */
+	/**
+	 * Stop listening and remove the socket file, but only one THIS process bound
+	 * (never a path it found taken). Synchronous, so a force-exit path can call it
+	 * right before `process.exit`. Safe to call more than once.
+	 */
 	close: () => void;
 }
 
@@ -58,17 +62,10 @@ export interface SteeringServer {
  */
 export function startSteeringServer(options: SteeringServerOptions): SteeringServer | null {
 	const warn = options.warn ?? ((m: string) => process.stderr.write(`${m}\n`));
-
-	// A stale socket file from a crashed predecessor makes listen() fail with
-	// EADDRINUSE, which would cost every later run its channel. Nothing else owns
-	// this path (the caller mints a per-run name), so removing it is safe.
-	try {
-		if (process.platform !== 'win32' && fs.existsSync(options.socketPath)) {
-			fs.unlinkSync(options.socketPath);
-		}
-	} catch {
-		// Fall through: listen() will report it if it still matters.
-	}
+	const { socketPath } = options;
+	// A Windows named pipe is not a file: there is nothing to stat, probe-and-unlink,
+	// or remove on close, and the OS frees the name when the last handle closes.
+	const isPipe = isNamedPipePath(socketPath);
 
 	let server: net.Server;
 	try {
@@ -79,6 +76,12 @@ export function startSteeringServer(options: SteeringServerOptions): SteeringSer
 		);
 		return null;
 	}
+
+	let closed = false;
+	// Set once THIS process is bound to the path. Only then is the socket file ours
+	// to remove: a server that lost the path to a live owner must never delete it.
+	let listening = false;
+	let reclaimAttempted = false;
 
 	server.on('connection', (socket) => {
 		socket.setEncoding('utf8');
@@ -152,12 +155,64 @@ export function startSteeringServer(options: SteeringServerOptions): SteeringSer
 		};
 	});
 
-	server.on('error', (err) => {
+	server.on('listening', () => {
+		listening = true;
+	});
+
+	server.on('error', (err: NodeJS.ErrnoException) => {
+		if (!listening && !closed && err.code === 'EADDRINUSE' && !isPipe && !reclaimAttempted) {
+			reclaimAttempted = true;
+			reclaimIfStale();
+			return;
+		}
 		warn(`maestro-p: steering channel error (${String(err)}); this turn cannot be steered.`);
 	});
 
+	// The path is taken. Either a crashed predecessor left its socket file behind
+	// (nothing answers), or a LIVE maestro-p is listening on it - a nested one, or a
+	// turn still winding down on the same tab. Unlinking unconditionally would kill
+	// that live channel: its owner keeps listening on an inode nobody can reach
+	// again, so its steers silently stop arriving. So ask first, and only reclaim a
+	// path nothing answers on.
+	const reclaimIfStale = (): void => {
+		const probe = net.connect(socketPath);
+		probe.once('connect', () => {
+			probe.destroy();
+			warn(
+				`maestro-p: another process is already serving the steering channel at ${socketPath}; leaving it alone, so this turn cannot be steered.`
+			);
+		});
+		probe.once('error', (probeErr: NodeJS.ErrnoException) => {
+			probe.destroy();
+			if (closed) return;
+			if (!STALE_SOCKET_CODES.has(probeErr.code ?? '')) {
+				warn(
+					`maestro-p: could not tell whether the steering channel at ${socketPath} is in use (${String(probeErr)}); leaving it alone, so this turn cannot be steered.`
+				);
+				return;
+			}
+			try {
+				fs.unlinkSync(socketPath);
+			} catch (unlinkErr) {
+				if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+					warn(
+						`maestro-p: could not remove a stale steering socket at ${socketPath} (${String(unlinkErr)}); this turn cannot be steered.`
+					);
+					return;
+				}
+			}
+			try {
+				server.listen(socketPath);
+			} catch (listenErr) {
+				warn(
+					`maestro-p: could not listen on the steering channel (${String(listenErr)}); this turn cannot be steered.`
+				);
+			}
+		});
+	};
+
 	try {
-		server.listen(options.socketPath);
+		server.listen(socketPath);
 	} catch (err) {
 		warn(
 			`maestro-p: could not listen on the steering channel (${String(err)}); this turn cannot be steered.`
@@ -169,25 +224,36 @@ export function startSteeringServer(options: SteeringServerOptions): SteeringSer
 	// listening socket is a libuv handle that would outlive it and hang the run.
 	server.unref();
 
-	let closed = false;
 	return {
 		close: () => {
 			if (closed) return;
 			closed = true;
+			const owned = listening;
 			try {
 				server.close();
 			} catch {
 				// Already down.
 			}
+			if (!owned || isPipe) return;
 			try {
-				if (process.platform !== 'win32' && fs.existsSync(options.socketPath)) {
-					fs.unlinkSync(options.socketPath);
-				}
+				if (fs.existsSync(socketPath)) fs.unlinkSync(socketPath);
 			} catch {
 				// Best effort - a leftover socket file only costs the next run an unlink.
 			}
 		},
 	};
+}
+
+/**
+ * Probe errors that mean nobody is serving the path, so the file there is stale
+ * and safe to remove: nothing listening on a socket file (ECONNREFUSED), the file
+ * gone in the meantime (ENOENT), or a path that is not a socket at all (ENOTSOCK).
+ */
+const STALE_SOCKET_CODES = new Set(['ECONNREFUSED', 'ENOENT', 'ENOTSOCK']);
+
+/** True for a Windows named-pipe path (`\\.\pipe\name` or `\\?\pipe\name`). */
+export function isNamedPipePath(socketPath: string): boolean {
+	return /^\\\\[.?]\\pipe\\/i.test(socketPath);
 }
 
 /** Cap on one un-terminated control line. A steer is a sentence, not a stream. */

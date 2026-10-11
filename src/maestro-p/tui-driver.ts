@@ -34,7 +34,7 @@ import { replayTerminalScreen } from './screen-replay';
 import {
 	describeBlockingDialog,
 	editorIsAcceptingInput,
-	screenShowsTypedText,
+	editorShowsTypedText,
 } from './steering-screen';
 import type { SteeringRefusal } from '../shared/chatSteering';
 
@@ -181,9 +181,25 @@ export interface InjectOutcome {
 // a CR or CRLF left in the text submits the first half of the message mid-type
 // and leaves the rest in the editor; LF is claude's in-editor newline. Tabs are
 // expanded for the same reason send() expands them (see PROMPT_TAB_SPACES).
+//
+// Every other control byte is a KEYSTROKE to the TUI, not text, so it is removed
+// rather than typed: an ESC (alone or opening a sequence) interrupts the running
+// turn, DEL is Backspace, Ctrl+C/Ctrl+D quit, Ctrl+U clears the composer. Escape
+// sequences go first, through the shared stripper, so a pasted `ESC[31m` vanishes
+// whole instead of leaving `[31m` behind once its ESC is dropped; then the
+// remaining C0 controls (all but LF), DEL, and the C1 range go. The result is
+// what gets typed AND what the verdict is matched against, so a steer carrying
+// controls still recognizes its own transcript row.
+const INJECT_CONTROL_CHARS_RE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
+
 export function normalizeInjectedText(text: string): string {
-	return expandPromptTabs(text.replace(/\r\n?/g, '\n'));
+	const withoutCr = text.replace(/\r\n?/g, '\n');
+	return expandPromptTabs(stripAnsiCodes(withoutCr)).replace(INJECT_CONTROL_CHARS_RE, '');
 }
+
+// Ctrl+U: claude's editor clears the current line on it. quit() uses it to empty
+// a composer an aborted injection left text in, before typing `/quit`.
+const CLEAR_LINE_KEY = '\u0015';
 
 // After a steering injection is typed, how long to let the composer repaint
 // before reading it back (see inject()). A turn in flight repaints constantly for
@@ -392,6 +408,23 @@ export class TuiDriver extends EventEmitter {
 	private exited = false;
 	/** Tail of the inject() chain; see inject(). */
 	private injectQueue: Promise<void> = Promise.resolve();
+	/**
+	 * Set by beginShutdown(): the run is ending, so no new injection may start and
+	 * one in flight stops before its Enter. Without it, quit()'s `/quit\r` could
+	 * land in the middle of a half-typed steer and submit the two as one message.
+	 */
+	private shuttingDown = false;
+	/**
+	 * Text an injection typed into the composer and did NOT submit (aborted by a
+	 * shutdown, or refused at the pre-Enter check). quit() clears it before typing
+	 * `/quit`, which would otherwise be appended to it. Null when the composer
+	 * holds nothing of ours.
+	 */
+	private unsubmittedInjection: string | null = null;
+	/** inject() calls not yet settled; quit() waits only when this is non-zero. */
+	private injectionsInFlight = 0;
+	/** send()'s pending submit taps; see cancelSubmitRetries(). */
+	private submitTapTimers: Array<ReturnType<typeof setTimeout>> = [];
 	private tapsSent = 0;
 	private tapTimer: ReturnType<typeof setInterval> | null = null;
 	private readyTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -716,8 +749,26 @@ export class TuiDriver extends EventEmitter {
 			}
 		};
 		for (let tap = 0; tap <= SUBMIT_ENTER_RETRIES; tap += 1) {
-			setTimeout(sendEnter, SEND_ENTER_DELAY_MS + tap * SUBMIT_ENTER_RETRY_INTERVAL_MS);
+			this.submitTapTimers.push(
+				setTimeout(sendEnter, SEND_ENTER_DELAY_MS + tap * SUBMIT_ENTER_RETRY_INTERVAL_MS)
+			);
 		}
+	}
+
+	/**
+	 * Cancel send()'s submit taps that have not fired yet. The run-mode flow calls
+	 * this the moment the turn is proven to have started (its first transcript
+	 * entry), and inject() calls it before typing.
+	 *
+	 * The taps are harmless only while the composer is empty, and steering is
+	 * exactly what makes it not empty: the steer gate opens on the first transcript
+	 * entry, which on a warm TUI lands about a second in, while the taps run out to
+	 * ~3s. A stray tap landing between two of a steer's paced chunks submits the
+	 * first half on its own and leaves the rest in the editor.
+	 */
+	cancelSubmitRetries(): void {
+		for (const timer of this.submitTapTimers) clearTimeout(timer);
+		this.submitTapTimers = [];
 	}
 
 	/**
@@ -741,8 +792,9 @@ export class TuiDriver extends EventEmitter {
 	 *    settling editor at startup, which cannot be the situation mid-turn.
 	 *
 	 * 3. The screen is CHECKED, twice. Before typing, the input editor must be
-	 *    drawn (`editorIsAcceptingInput`); after typing, the text must be visible
-	 *    (`screenShowsTypedText`) before any Enter is sent. Typing alone is inert -
+	 *    drawn (`editorIsAcceptingInput`); after typing, on one fresh read, the
+	 *    editor must STILL be drawn and the text must be visible inside it
+	 *    (`editorShowsTypedText`) before any Enter is sent. Typing alone is inert -
 	 *    measured: a live permission dialog fed "option 2 or 3 would be wrong, use
 	 *    1" did not move its selector and wrote nothing - so typing first and
 	 *    deciding afterwards is safe, and it catches a dialog that appeared in the
@@ -763,16 +815,36 @@ export class TuiDriver extends EventEmitter {
 	 * for the previous to submit and the composer to repaint empty.
 	 */
 	inject(text: string): Promise<InjectOutcome> {
+		this.injectionsInFlight += 1;
 		const run = this.injectQueue.then(() => this.injectNow(text));
-		this.injectQueue = run.then(
-			async (outcome) => {
-				if (!outcome.submitted || this.exited) return;
-				await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
-				await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
-			},
-			() => undefined
-		);
+		this.injectQueue = run
+			.then(
+				async (outcome) => {
+					if (!outcome.submitted || this.exited || this.shuttingDown) return;
+					await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+					await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
+				},
+				() => undefined
+			)
+			.then(() => {
+				this.injectionsInFlight -= 1;
+			});
 		return run;
+	}
+
+	/**
+	 * The run is ending. From here no injection starts, and one in flight stops at
+	 * its next checkpoint without pressing Enter. quit() calls this itself; the
+	 * run-mode flow calls it earlier, the moment it decides to finalize, so a steer
+	 * cannot be typed into a turn whose result is already being written.
+	 */
+	beginShutdown(): void {
+		this.shuttingDown = true;
+	}
+
+	/** Resolves once every queued or in-flight injection has finished. */
+	injectionsSettled(): Promise<void> {
+		return this.injectQueue;
 	}
 
 	private async injectNow(text: string): Promise<InjectOutcome> {
@@ -780,6 +852,7 @@ export class TuiDriver extends EventEmitter {
 			throw new Error('TuiDriver.inject() called before start()');
 		}
 		if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+		if (this.shuttingDown) return this.shutdownRefusal();
 		if (!this.options.captureScreen) {
 			return {
 				submitted: false,
@@ -789,18 +862,24 @@ export class TuiDriver extends EventEmitter {
 		}
 
 		const gate = this.readScreen();
-		if (!editorIsAcceptingInput(gate)) {
-			const dialog = describeBlockingDialog(gate);
-			return dialog
-				? { submitted: false, refusal: 'blocking-dialog', detail: dialog }
-				: {
-						submitted: false,
-						refusal: 'editor-unavailable',
-						detail: 'the input editor is not on screen',
-					};
-		}
+		if (!editorIsAcceptingInput(gate)) return this.editorRefusal(gate);
 
 		const typed = normalizeInjectedText(text);
+		if (typed.replace(/\s+/g, '').length === 0) {
+			// Nothing printable survived normalization (a steer of only control
+			// characters or whitespace). Pressing Enter on it would report a delivery
+			// of nothing, and the empty text would then match any transcript row.
+			return {
+				submitted: false,
+				refusal: 'echo-missing',
+				detail: 'the message has no printable text once control characters are removed',
+			};
+		}
+
+		// The turn is running (that is what made it steerable), so a submit tap
+		// send() still has pending can only land in the middle of this steer.
+		this.cancelSubmitRetries();
+
 		const chunks = chunkPromptForPty(typed);
 		for (let i = 0; i < chunks.length; i += 1) {
 			try {
@@ -808,11 +887,13 @@ export class TuiDriver extends EventEmitter {
 			} catch {
 				return { submitted: false, refusal: 'tui-exited' };
 			}
+			this.unsubmittedInjection = typed;
 			if (i === chunks.length - 1) break;
 			await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
 			if (this.exited) return { submitted: false, refusal: 'tui-exited' };
 			await new Promise<void>((resolve) => setTimeout(resolve, PROMPT_CHUNK_INTERVAL_MS));
 			if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+			if (this.shuttingDown) return this.shutdownRefusal();
 		}
 
 		// Let the composer repaint before reading it back. A turn in flight paints
@@ -822,11 +903,22 @@ export class TuiDriver extends EventEmitter {
 		await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
 		await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
 		if (this.exited) return { submitted: false, refusal: 'tui-exited' };
+		if (this.shuttingDown) return this.shutdownRefusal();
 
-		if (!screenShowsTypedText(this.readScreen(), typed)) {
-			// Deliberately no cleanup keystroke. Ctrl+U / Escape would be a guess at
-			// this point, and Escape mid-turn INTERRUPTS the turn - the one outcome
-			// worse than a stray draft. The caller still owns the message.
+		// The pre-Enter check, on ONE fresh read: the editor must STILL own the
+		// keyboard, and our text must be visible INSIDE it. Both, because typing
+		// takes time and the screen can change under it: a permission dialog that
+		// opened mid-type replaces the editor box, and the Enter below would then
+		// select its highlighted "1. Yes". The echo half is scoped to the editor
+		// rows for the same reason - a short steer is usually somewhere in the
+		// transcript already, which a whole-screen search would take as proof.
+		//
+		// Deliberately no cleanup keystroke on refusal. Ctrl+U / Escape would be a
+		// guess at this point, and Escape mid-turn INTERRUPTS the turn - the one
+		// outcome worse than a stray draft. The caller still owns the message.
+		const beforeEnter = this.readScreen();
+		if (!editorIsAcceptingInput(beforeEnter)) return this.editorRefusal(beforeEnter);
+		if (!editorShowsTypedText(beforeEnter, typed)) {
 			return {
 				submitted: false,
 				refusal: 'echo-missing',
@@ -839,7 +931,27 @@ export class TuiDriver extends EventEmitter {
 		} catch {
 			return { submitted: false, refusal: 'tui-exited' };
 		}
+		this.unsubmittedInjection = null;
 		return { submitted: true, typed };
+	}
+
+	private editorRefusal(screen: string): InjectOutcome {
+		const dialog = describeBlockingDialog(screen);
+		return dialog
+			? { submitted: false, refusal: 'blocking-dialog', detail: dialog }
+			: {
+					submitted: false,
+					refusal: 'editor-unavailable',
+					detail: 'the input editor is not on screen',
+				};
+	}
+
+	private shutdownRefusal(): InjectOutcome {
+		return {
+			submitted: false,
+			refusal: 'not-running',
+			detail: 'the turn is ending, so the message was not submitted',
+		};
 	}
 
 	/**
@@ -918,6 +1030,15 @@ export class TuiDriver extends EventEmitter {
 
 	async quit(): Promise<void> {
 		if (!this.ptyProcess || this.exited) return;
+		// An injection still typing must stop BEFORE `/quit` is typed, or the two
+		// share one composer and claude receives "<half a steer>/quit" as a message.
+		// beginShutdown() makes it bail at its next checkpoint, so the wait is short;
+		// it is capped anyway, because a quit that never happens is worse.
+		this.beginShutdown();
+		if (this.injectionsInFlight > 0) {
+			await this.waitForInjectionsToSettle(QUIT_GRACE_MS);
+			if (this.exited) return;
+		}
 		// `/quit\r` is only safe when the input editor owns the keyboard. With a
 		// permission dialog on screen the text is inert but the Enter CONFIRMS the
 		// highlighted option, which is "1. Yes" - so the way out of a turn grants the
@@ -934,12 +1055,23 @@ export class TuiDriver extends EventEmitter {
 		// purpose: a false positive costs a graceful `/quit` we were abandoning the
 		// turn without anyway, while a false negative approves a filesystem write, a
 		// command, or a push.
-		const dialog = describeBlockingDialog(this.dialogScreen());
-		if (dialog) {
-			process.stderr.write(
-				`maestro-p: not sending /quit - ${dialog} is on screen and its Enter would accept it. Terminating the TUI instead.\n`
-			);
-		} else {
+		let skipQuit = this.dialogBlockingQuit();
+		if (!skipQuit && this.unsubmittedInjection !== null) {
+			// An injection was cut off (by this shutdown, or refused before its Enter)
+			// and its text is still in the composer, where `/quit` would be appended to
+			// it and submitted as one message. Clear it first; if it will not clear,
+			// terminate instead - the same trade as the dialog case. Clearing takes a
+			// repaint, so the dialog check is made again on the screen after it.
+			if (!(await this.clearUnsubmittedInjection())) {
+				process.stderr.write(
+					'maestro-p: not sending /quit - an unsent steer is still in the composer. Terminating the TUI instead.\n'
+				);
+				skipQuit = true;
+			} else {
+				skipQuit = this.exited || this.dialogBlockingQuit();
+			}
+		}
+		if (!skipQuit) {
 			try {
 				this.ptyProcess.write('/quit\r');
 			} catch {
@@ -974,6 +1106,57 @@ export class TuiDriver extends EventEmitter {
 			}, QUIT_GRACE_MS);
 			this.once('exit', onExit);
 		});
+	}
+
+	/** True (and says why on stderr) when a dialog on screen makes `/quit\r` unsafe. */
+	private dialogBlockingQuit(): boolean {
+		const dialog = describeBlockingDialog(this.dialogScreen());
+		if (!dialog) return false;
+		process.stderr.write(
+			`maestro-p: not sending /quit - ${dialog} is on screen and its Enter would accept it. Terminating the TUI instead.\n`
+		);
+		return true;
+	}
+
+	private async waitForInjectionsToSettle(maxMs: number): Promise<void> {
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		await Promise.race([
+			this.injectQueue,
+			new Promise<void>((resolve) => {
+				timer = setTimeout(resolve, maxMs);
+			}),
+		]);
+		if (timer) clearTimeout(timer);
+	}
+
+	/**
+	 * Empty a composer an aborted injection left text in. Resolves true when the
+	 * composer is (now) free of our text, false when it still shows it - in which
+	 * case quit() must not type `/quit`.
+	 *
+	 * Ctrl+U clears the current line; it is sent generously (twice per logical
+	 * line, so a press that only joins a line onto the one above is covered) since
+	 * a surplus press on an empty composer does nothing. Whether it worked is then
+	 * READ OFF THE SCREEN rather than assumed: an injection only ever types with
+	 * the raw capture on, so the grid is always there to check.
+	 */
+	private async clearUnsubmittedInjection(): Promise<boolean> {
+		const leftover = this.unsubmittedInjection;
+		if (leftover === null) return true;
+		const presses = leftover.split('\n').length * 2;
+		try {
+			this.ptyProcess?.write(CLEAR_LINE_KEY.repeat(presses));
+		} catch {
+			return false;
+		}
+		await this.waitForPaint(PROMPT_CHUNK_DRAIN_TIMEOUT_MS);
+		await new Promise<void>((resolve) => setTimeout(resolve, INJECT_ECHO_SETTLE_MS));
+		if (this.exited) return false;
+		if (this.options.captureScreen && editorShowsTypedText(this.readScreen(), leftover)) {
+			return false;
+		}
+		this.unsubmittedInjection = null;
+		return true;
 	}
 
 	// SIGTERM lets claude shut down its MCP servers; SIGKILL is the hard stop.
@@ -1079,6 +1262,7 @@ export class TuiDriver extends EventEmitter {
 		this.notifyPaint();
 		this.clearReadyTimers();
 		this.clearTrustSelectionTimers();
+		this.cancelSubmitRetries();
 		// Flush any trailing partial line so consumers (notably the /usage
 		// panel parser in --status mode) don't lose the last row.
 		if (this.lineBuffer.length > 0) {

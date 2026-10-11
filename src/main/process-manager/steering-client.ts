@@ -22,6 +22,7 @@ import {
 	type SteeringResultFrame,
 	type SteeringRequestFrame,
 } from '../../shared/chatSteering';
+import { isWindows } from '../../shared/platformDetection';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = '[Steering]';
@@ -41,6 +42,11 @@ const LOG_CONTEXT = '[Steering]';
  */
 export function steeringSocketPathFor(processKey: string): string {
 	const digest = crypto.createHash('sha1').update(processKey).digest('hex').slice(0, 16);
+	// Node on Windows implements a local socket as a named pipe, whose address must
+	// live in the pipe namespace: a filesystem path there fails to bind, so every
+	// Windows turn would silently be un-steerable. The server recognizes this form
+	// and never stats or unlinks it (a pipe is not a file).
+	if (isWindows()) return `\\\\.\\pipe\\maestro-steer-${digest}`;
 	return path.join(os.tmpdir(), `maestro-steer-${digest}.sock`);
 }
 

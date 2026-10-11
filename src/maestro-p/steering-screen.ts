@@ -11,6 +11,37 @@ const EDITOR_PROMPT_RE = /^[›❯>]/;
 const RULE_RE = /^[─-]{40,}$/;
 
 /**
+ * Most rows the editor box is allowed to span between its two rules. A typed
+ * steer grows the box (an explicit newline, or a soft wrap at the pane width),
+ * so the box is not always one row tall; the cap only stops two unrelated rules
+ * far apart on the replayed grid from reading as one enormous editor.
+ */
+export const MAX_EDITOR_ROWS = 64;
+
+/**
+ * The rows INSIDE the input editor box, prompt row first, or null when no box is
+ * drawn. The box is a full-width rule, a row opening with the prompt glyph, any
+ * number of continuation rows (a multi-line or soft-wrapped draft), and another
+ * full-width rule. When several boxes survive on the replayed grid, the LOWEST
+ * one is returned: claude draws the live editor at the bottom, and anything above
+ * it is scrollback.
+ */
+export function findEditorRegion(screen: string): string[] | null {
+	const lines = screen.split('\n').map((l) => l.trim());
+	for (let bottom = lines.length - 1; bottom >= 2; bottom -= 1) {
+		if (!RULE_RE.test(lines[bottom])) continue;
+		let top = bottom - 1;
+		while (top >= 0 && bottom - top - 1 <= MAX_EDITOR_ROWS && !RULE_RE.test(lines[top])) {
+			top -= 1;
+		}
+		if (top < 0 || bottom - top - 1 > MAX_EDITOR_ROWS) continue;
+		const region = lines.slice(top + 1, bottom);
+		if (region.length > 0 && EDITOR_PROMPT_RE.test(region[0])) return region;
+	}
+	return null;
+}
+
+/**
  * True when the TUI's input editor is drawn, i.e. keystrokes will land in the
  * composer rather than in a dialog.
  *
@@ -24,19 +55,14 @@ const RULE_RE = /^[─-]{40,}$/;
  * a naive ANSI strip, which mashes rows together and cannot see this structure):
  * the box is present on the idle editor and on every 2.5s sample through a
  * streaming multi-tool turn, and absent while a permission prompt is up.
+ *
+ * The box may be taller than one row: inject() re-checks this immediately before
+ * its Enter, when the composer holds the steer it just typed, and a steer that
+ * wraps or carries a newline grows the box. A one-row-only check would refuse
+ * every such steer at the last moment.
  */
 export function editorIsAcceptingInput(screen: string): boolean {
-	const lines = screen.split('\n').map((l) => l.trim());
-	for (let i = 0; i + 2 < lines.length; i += 1) {
-		if (
-			RULE_RE.test(lines[i]) &&
-			EDITOR_PROMPT_RE.test(lines[i + 1]) &&
-			RULE_RE.test(lines[i + 2])
-		) {
-			return true;
-		}
-	}
-	return false;
+	return findEditorRegion(screen) !== null;
 }
 
 // Named dialogs, used ONLY to explain a refusal the allowlist above already
@@ -84,6 +110,22 @@ export function screenShowsTypedText(screen: string, text: string): boolean {
 	const head = flat.slice(0, ECHO_MATCH_CHARS);
 	const tail = flat.slice(-ECHO_MATCH_CHARS);
 	return haystack.includes(head) || haystack.includes(tail);
+}
+
+/**
+ * Whether `text` visibly landed IN THE EDITOR, the check inject() makes before its
+ * Enter.
+ *
+ * Scoped to the rows inside the editor box rather than the whole screen: the
+ * replayed grid also holds the transcript, so a short steer ("yes", "stop") is
+ * almost always somewhere in the scrollback already, and a whole-screen search
+ * would call it landed while a dialog owns the keyboard. False when no editor box
+ * is drawn at all.
+ */
+export function editorShowsTypedText(screen: string, text: string): boolean {
+	const region = findEditorRegion(screen);
+	if (!region) return false;
+	return screenShowsTypedText(region.join('\n'), text);
 }
 
 /**

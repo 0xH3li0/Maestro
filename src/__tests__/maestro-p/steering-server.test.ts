@@ -10,14 +10,18 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	STEERING_MAX_TEXT_BYTES,
 	STEERING_TOO_LONG_DETAIL,
 	type SteeringResultFrame,
 } from '../../shared/chatSteering';
-import { MAX_PENDING_LINE_BYTES, startSteeringServer } from '../../maestro-p/steering-server';
+import {
+	isNamedPipePath,
+	MAX_PENDING_LINE_BYTES,
+	startSteeringServer,
+} from '../../maestro-p/steering-server';
 
 const opened: Array<{ close: () => void }> = [];
 const socketPaths: string[] = [];
@@ -66,6 +70,24 @@ async function waitForListening(socketPath: string): Promise<void> {
 		await new Promise((r) => setTimeout(r, 10));
 	}
 	throw new Error(`steering socket never appeared at ${socketPath}`);
+}
+
+async function waitForServing(socketPath: string): Promise<void> {
+	// A file at the path is not proof: a stale one is there before anything
+	// listens. Only a successful connect is.
+	for (let i = 0; i < 100; i += 1) {
+		const ok = await new Promise<boolean>((resolve) => {
+			const probe = net.createConnection(socketPath);
+			probe.once('connect', () => {
+				probe.destroy();
+				resolve(true);
+			});
+			probe.once('error', () => resolve(false));
+		});
+		if (ok) return;
+		await new Promise((r) => setTimeout(r, 10));
+	}
+	throw new Error(`nothing ever served ${socketPath}`);
 }
 
 afterEach(() => {
@@ -248,13 +270,41 @@ describe('startSteeringServer', () => {
 		});
 		expect(server).not.toBeNull();
 		opened.push(server!);
-		await waitForListening(socketPath);
+		await waitForServing(socketPath);
 
 		const lines = await exchange(
 			socketPath,
 			`${JSON.stringify({ type: 'steer', id: 's', text: 'hi' })}\n`
 		);
 		expect(lines.map((l) => JSON.parse(l).id)).toEqual(['s']);
+	});
+
+	it('leaves a LIVE socket alone instead of unlinking it out from under its owner', async () => {
+		// A nested maestro-p (or a second turn on the same tab) used to unlink the
+		// path unconditionally, which left the first server listening on an inode
+		// nobody could reach - its steers silently stopped arriving.
+		const socketPath = serve(async (id) => ({ type: 'steering', id, verdict: 'delivered' }));
+		await waitForServing(socketPath);
+
+		const warnings: string[] = [];
+		const intruder = startSteeringServer({
+			socketPath,
+			onSteer: async (id) => ({ type: 'steering', id, verdict: 'unknown' }),
+			warn: (m) => warnings.push(m),
+		});
+		expect(intruder).not.toBeNull();
+		await vi.waitFor(() => expect(warnings.join('\n')).toMatch(/already serving/));
+
+		// The intruder never bound, so closing it must not delete the owner's file.
+		intruder!.close();
+		expect(fs.existsSync(socketPath)).toBe(true);
+
+		// The ORIGINAL server still answers.
+		const lines = await exchange(
+			socketPath,
+			`${JSON.stringify({ type: 'steer', id: 'still-mine', text: 'hi' })}\n`
+		);
+		expect(lines.map((l) => JSON.parse(l).verdict)).toEqual(['delivered']);
 	});
 
 	it('removes the socket file on close, and close is idempotent', async () => {
@@ -266,5 +316,17 @@ describe('startSteeringServer', () => {
 		server.close();
 
 		expect(fs.existsSync(socketPath)).toBe(false);
+	});
+});
+
+describe('isNamedPipePath', () => {
+	it('recognizes the Windows pipe namespace, which is never stat-ed or unlinked', () => {
+		expect(isNamedPipePath('\\\\.\\pipe\\maestro-steer-0123456789abcdef')).toBe(true);
+		expect(isNamedPipePath('\\\\?\\pipe\\maestro-steer-0123456789abcdef')).toBe(true);
+	});
+
+	it('treats a filesystem path as a socket file', () => {
+		expect(isNamedPipePath('/tmp/maestro-steer-0123456789abcdef.sock')).toBe(false);
+		expect(isNamedPipePath('C:\\Users\\me\\AppData\\Local\\Temp\\x.sock')).toBe(false);
 	});
 });

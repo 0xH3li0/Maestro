@@ -14,6 +14,9 @@ import { describe, expect, it } from 'vitest';
 import {
 	describeBlockingDialog,
 	editorIsAcceptingInput,
+	editorShowsTypedText,
+	findEditorRegion,
+	MAX_EDITOR_ROWS,
 	screenShowsTypedText,
 } from '../../maestro-p/steering-screen';
 
@@ -119,6 +122,52 @@ describe('editorIsAcceptingInput', () => {
 	it('refuses an empty screen', () => {
 		// What a trimmed raw capture replays to. Refusing is the safe answer.
 		expect(editorIsAcceptingInput('')).toBe(false);
+	});
+
+	it('accepts an editor box a multi-line steer has grown', () => {
+		// inject() re-checks the box right before its Enter, with the steer typed. A
+		// newline or a soft wrap makes the box taller than one row.
+		const grown = [RULE, '❯ first do this', '  then do that', RULE].join('\n');
+		expect(editorIsAcceptingInput(grown)).toBe(true);
+	});
+
+	it('refuses two rules whose first inner row is not the prompt', () => {
+		const framed = [RULE, ' Create file', ' ❯ 1. Yes', '   2. No', RULE].join('\n');
+		expect(editorIsAcceptingInput(framed)).toBe(false);
+	});
+});
+
+describe('findEditorRegion', () => {
+	it('returns the rows inside the box, prompt row first', () => {
+		expect(findEditorRegion(STREAMING_SCREEN)).toEqual(['❯']);
+	});
+
+	it('picks the LOWEST box, which is the live editor', () => {
+		const screen = [RULE, '❯ an old draft', RULE, '⏺ Working.', RULE, '❯ live', RULE].join('\n');
+		expect(findEditorRegion(screen)).toEqual(['❯ live']);
+	});
+
+	it('does not stretch one box across rules that are too far apart', () => {
+		const filler = Array.from({ length: MAX_EDITOR_ROWS + 1 }, (_, i) => `row ${i}`);
+		expect(findEditorRegion([RULE, '❯ x', ...filler, RULE].join('\n'))).toBeNull();
+	});
+});
+
+describe('editorShowsTypedText', () => {
+	it('ignores a match that is only in the transcript above the editor', () => {
+		// The short-steer trap: "stop" is already in scrollback, the box is empty.
+		const screen = ['❯ stop', '⏺ Stopping.', RULE, '❯', RULE].join('\n');
+		expect(screenShowsTypedText(screen, 'stop')).toBe(true);
+		expect(editorShowsTypedText(screen, 'stop')).toBe(false);
+	});
+
+	it('matches text inside the editor box, across rows', () => {
+		const screen = [RULE, '❯ stop reading files and', '  answer instead', RULE].join('\n');
+		expect(editorShowsTypedText(screen, 'stop reading files and answer instead')).toBe(true);
+	});
+
+	it('is false when no editor box is drawn, whatever the screen quotes', () => {
+		expect(editorShowsTypedText(PERMISSION_SCREEN, 'probe-perm.txt')).toBe(false);
 	});
 });
 

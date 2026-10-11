@@ -20,9 +20,21 @@ vi.mock('../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), debug: vi.fn(), info: vi.fn() },
 }));
 
+// Real platform by default, so the socket tests below bind what this OS binds;
+// individual tests pin one platform to check the path shape on the other.
+const platformMock = vi.hoisted(() => ({ windows: undefined as boolean | undefined }));
+vi.mock('../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../shared/platformDetection')>();
+	return {
+		...actual,
+		isWindows: () => platformMock.windows ?? actual.isWindows(),
+	};
+});
+
 const servers: net.Server[] = [];
 
 afterEach(async () => {
+	platformMock.windows = undefined;
 	while (servers.length) {
 		const server = servers.pop()!;
 		await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -66,6 +78,19 @@ describe('steeringSocketPathFor', () => {
 		const a = steeringSocketPathFor('agent-1-ai-tab-1');
 		expect(steeringSocketPathFor('agent-1-ai-tab-1')).toBe(a);
 		expect(steeringSocketPathFor('agent-1-ai-tab-2')).not.toBe(a);
+	});
+
+	it('is a named pipe on Windows, where Node cannot bind a filesystem path', () => {
+		platformMock.windows = true;
+		const pipe = steeringSocketPathFor('agent-1-ai-tab-1');
+		expect(pipe).toMatch(/^\\\\\.\\pipe\\maestro-steer-[0-9a-f]{16}$/);
+
+		// Same hash on both platforms: only the namespace differs.
+		platformMock.windows = false;
+		const sock = steeringSocketPathFor('agent-1-ai-tab-1');
+		expect(sock.endsWith('.sock')).toBe(true);
+		expect(sock).not.toContain('\\pipe\\');
+		expect(pipe.slice(-16)).toBe(sock.slice(-21, -5));
 	});
 
 	it('stays short enough to bind however long the process key is', async () => {
