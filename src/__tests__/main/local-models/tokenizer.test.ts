@@ -131,3 +131,61 @@ describe('truncation', () => {
 		expect(() => tokenizer.encode('How do I rename a tab?', { maxLength: 2 })).toThrow(/no room/);
 	});
 });
+
+describe('batching', () => {
+	let definition: object;
+	let config: Record<string, unknown>;
+
+	beforeEach(async () => {
+		definition = JSON.parse(await fs.readFile(path.join(FIXTURE_DIR, TOKENIZER_FILENAME), 'utf8'));
+		config = JSON.parse(
+			await fs.readFile(path.join(FIXTURE_DIR, TOKENIZER_CONFIG_FILENAME), 'utf8')
+		);
+	});
+
+	it('reads the pad id from the configured pad_token', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		expect(tokenizer.padTokenId).toBe(0); // [PAD] in the BERT vocabulary
+	});
+
+	it('prefers the padding block, and accepts an AddedToken-shaped pad_token', () => {
+		const withBlock = createLocalTokenizer(
+			FIXTURE_DIR,
+			{ ...definition, padding: { pad_id: 7 } },
+			config
+		);
+		expect(withBlock.padTokenId).toBe(7);
+		const withObject = createLocalTokenizer(FIXTURE_DIR, definition, {
+			...config,
+			pad_token: { content: '[SEP]' },
+		});
+		expect(withObject.padTokenId).toBe(102);
+	});
+
+	it('pads every row to the longest on the right, masking the padding out', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const batch = tokenizer.encodeBatch(['Hello, World!', 'How do I rename a tab?']);
+
+		expect(batch.batchSize).toBe(2);
+		expect(batch.sequenceLength).toBe(10);
+		expect(ids(batch.inputIds)).toEqual([
+			101, 7592, 1010, 2088, 999, 102, 0, 0, 0, 0, 101, 2129, 2079, 1045, 14916, 14074, 1037, 21628,
+			1029, 102,
+		]);
+		expect(ids(batch.attentionMask)).toEqual([
+			1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+		]);
+		expect(ids(batch.tokenTypeIds)).toEqual(new Array(20).fill(0));
+	});
+
+	it('truncates each row before padding', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		const batch = tokenizer.encodeBatch(['How do I rename a tab?'], { maxLength: 5 });
+		expect(ids(batch.inputIds)).toEqual([101, 2129, 2079, 1045, 102]);
+	});
+
+	it('refuses an empty batch', () => {
+		const tokenizer = createLocalTokenizer(FIXTURE_DIR, definition, config);
+		expect(() => tokenizer.encodeBatch([])).toThrow(/empty batch/);
+	});
+});

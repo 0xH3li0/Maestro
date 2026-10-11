@@ -32,20 +32,24 @@ import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
 import { chatWithLocalModelEndpoint } from './endpoint-service';
 import type { EndpointChatMessage } from './endpoint-client';
-import { isLocalModelError, LocalModelError } from './errors';
+import {
+	isLocalModelCancelled,
+	LocalModelError,
+	localModelCancelledError,
+	throwIfLocalModelCancelled,
+} from './errors';
 import { isInstalled, modelFilePath } from './model-store';
 import { LLAMA_GET_OPTIONS } from './runtime/llama-options';
 import { loadLocalRuntime } from './runtime/load-runtime';
 import { nativeRuntimeConsumerFor } from './runtime/runtime-consumers';
+import type { LocalModelSource } from './sources';
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
 /** Where the text comes from. */
-export type TextGenSource =
-	| { type: 'local'; modelId: string }
-	| { type: 'endpoint'; endpointId: string; model: string };
+export type TextGenSource = LocalModelSource;
 
 export interface GenerateTextRequest {
 	source: TextGenSource;
@@ -505,25 +509,18 @@ export function __setLocalTextEngine(engine: LocalTextEngine | null): void {
 }
 
 /** True when an error from {@link generateText} means the caller cancelled. */
-export function isTextGenCancelled(error: unknown): boolean {
-	if (isLocalModelError(error)) return error.code === 'cancelled';
-	return (error as { kind?: unknown } | null)?.kind === 'cancelled';
-}
+export const isTextGenCancelled = isLocalModelCancelled;
 
 function modelLabel(modelId: string): string {
 	return getLocalModel(modelId)?.displayName ?? modelId;
 }
 
 function cancelledError(): LocalModelError {
-	return new LocalModelError('The request was cancelled.', {
-		code: 'cancelled',
-		recovery: 'Nothing to do: it was stopped on purpose.',
-		consumerId: CONSUMER_ID,
-	});
+	return localModelCancelledError(CONSUMER_ID);
 }
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {
-	if (signal?.aborted) throw cancelledError();
+	throwIfLocalModelCancelled(signal, CONSUMER_ID);
 }
 
 function tokenCount(value: unknown): number | undefined {

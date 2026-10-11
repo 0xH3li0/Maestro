@@ -22,6 +22,7 @@ const client = vi.hoisted(() => ({
 	listEndpointModelsResult: vi.fn(async () => ({ ok: true, models: [] })),
 	testEndpoint: vi.fn(async () => ({ ok: true, model: 'm', latencyMs: 5 })),
 	endpointChat: vi.fn(async () => ({ content: 'hi', model: 'm' })),
+	endpointEmbed: vi.fn(async () => ({ embeddings: [[1, 0]], model: 'm' })),
 }));
 
 vi.mock('../../../main/local-models/endpoint-client', () => client);
@@ -29,6 +30,7 @@ vi.mock('../../../main/local-models/endpoint-client', () => client);
 import {
 	chatWithLocalModelEndpoint,
 	detectNewLocalModelEndpoints,
+	embedWithLocalModelEndpoint,
 	getConfiguredLocalModelEndpoints,
 	listLocalModelEndpointModels,
 	testLocalModelEndpoint,
@@ -145,5 +147,28 @@ describe('endpoint-service', () => {
 			kind: 'invalid',
 		});
 		expect(client.endpointChat).not.toHaveBeenCalled();
+	});
+
+	it('embeds on a saved endpoint by exact id, with the key from Settings -> Environment', async () => {
+		await embedWithLocalModelEndpoint('ep-1', { model: 'nomic-embed-text', input: ['a', 'b'] });
+
+		expect(client.endpointEmbed).toHaveBeenCalledWith(expect.objectContaining({ id: 'ep-1' }), {
+			model: 'nomic-embed-text',
+			input: ['a', 'b'],
+			shellEnvVars: { LITELLM_KEY: 'sk-test' },
+		});
+	});
+
+	it('refuses to embed on an unknown or disabled endpoint, by the same rule as chat', async () => {
+		settings.set('localModelEndpoints', [saved, { ...saved, id: 'ep-off', enabled: false }]);
+		const request = { model: 'm', input: ['a'] };
+
+		await expect(embedWithLocalModelEndpoint('ep-', request)).rejects.toMatchObject({
+			kind: 'invalid',
+		});
+		await expect(embedWithLocalModelEndpoint('ep-off', request)).rejects.toMatchObject({
+			kind: 'invalid',
+		});
+		expect(client.endpointEmbed).not.toHaveBeenCalled();
 	});
 });

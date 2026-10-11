@@ -20,10 +20,11 @@
  *                             or the dlopen failed.
  *   - `model-unsupported`   - the model id is not a catalog model this call can
  *                             run (an assignment naming a model that is not, or
- *                             is no longer, a text-generation model).
+ *                             is no longer, of the kind the task needs).
  *   - `model-not-installed` - the model is in the catalog but its files are not
  *                             on disk, or are the wrong length.
- *   - `generation-failed`   - the model would not open, or failed mid-turn.
+ *   - `generation-failed`   - the model would not open, or failed mid-call
+ *                             (a generation turn, an embedding or classifier run).
  *   - `cancelled`           - the caller aborted. Not a fault; never shown as one.
  */
 export type LocalModelErrorCode =
@@ -63,6 +64,32 @@ export class LocalModelError extends Error {
 
 export function isLocalModelError(error: unknown): error is LocalModelError {
 	return error instanceof LocalModelError;
+}
+
+/** The error a local-model call throws when its caller aborted. */
+export function localModelCancelledError(consumerId: string): LocalModelError {
+	return new LocalModelError('The request was cancelled.', {
+		code: 'cancelled',
+		recovery: 'Nothing to do: it was stopped on purpose.',
+		consumerId,
+	});
+}
+
+/** Throw {@link localModelCancelledError} when `signal` has fired. */
+export function throwIfLocalModelCancelled(
+	signal: AbortSignal | undefined,
+	consumerId: string
+): void {
+	if (signal?.aborted) throw localModelCancelledError(consumerId);
+}
+
+/**
+ * True when a failure from any local-model call (a local model or an endpoint)
+ * means the caller cancelled, which is never a fault to report.
+ */
+export function isLocalModelCancelled(error: unknown): boolean {
+	if (isLocalModelError(error)) return error.code === 'cancelled';
+	return (error as { kind?: unknown } | null)?.kind === 'cancelled';
 }
 
 /**

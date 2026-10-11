@@ -96,7 +96,11 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()`; the llama probe initializes the real backend   |
 | `runtime/llama-options.ts`     | `LLAMA_GET_OPTIONS` (never compile from source) and `llamaBackendLabel()`, shared by every `getLlama()` |
 | `text-gen.ts`                  | `generateText()` for a local model or an endpoint; the one shared, idle-unloading `LocalTextEngine`     |
-| `task-router.ts`               | `runLocalTask()`: a task's assignment decides off / Utility Agent / model; records `local_model_runs`   |
+| `tokenizer.ts`                 | `loadTokenizer()`: a model's own `tokenizer.json`, truncation that keeps specials, padded batches       |
+| `onnx-encoder.ts`              | `OnnxEncoderPool`: one idle-unloading ONNX session per encoder model; `encoderFeeds()` by input name    |
+| `embeddings.ts`                | `embedTexts()` for a local model or an endpoint; pooling, prefixes, L2 normalization, batching          |
+| `sources.ts`                   | `LocalModelSource` and `sourceForAssignment()`, shared by every service and the router                  |
+| `task-router.ts`               | `runLocalTask()` / `runEmbeddingTask()`: the assignment decides off / Utility Agent / model; stats      |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`          |
 | `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
 | `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)   |
@@ -283,6 +287,49 @@ Notes a consumer must not re-derive:
   `last_hidden_state`; Prompt Guard takes `input_ids`, `attention_mask` and returns `logits`.
 - None of these is part of voice's `hands-free-local` bundle.
 
+### Running an encoder: `OnnxEncoderPool`
+
+`onnx-encoder.ts` owns what every encoder consumer needs before a batch runs: the model resolved as
+installed and of the right kind (`resolveInstalledEncoder`), ONNX Runtime through
+`loadLocalRuntime`, the graph opened from its install location (so an external `.onnx_data` file
+resolves), and the model's tokenizer. Sessions are one per model, several may be resident (encoders
+are tens to hundreds of MB, not gigabytes), and each is freed after 5 idle minutes. Work on one
+model is serialized through a keyed queue; different models run concurrently. Inputs are fed by the
+names the graph declares (`encoderFeeds`): BERT takes `token_type_ids` and Gemma does not, and a
+graph asking for anything else is refused by name.
+
+### Embeddings: `embedTexts(source, texts, { mode })`
+
+`embeddings.ts` returns one L2-normalized `Float32Array` per text, in order, so any two compare by a
+dot product.
+
+| Rule                                       | Why                                                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Local runs go 16 texts per batch           | Amortizes a run's fixed cost without padding every row to one very long text.                    |
+| Padding is right-side and masked out       | `mean` pooling averages only masked-in positions, so a padded row equals the same text alone.    |
+| `mode` picks the query or document prefix  | A model trained with prefixes (EmbeddingGemma) retrieves badly without them, with no error.      |
+| Endpoints get no prefix, 64 texts per call | The endpoint model is the user's choice; this service cannot know what it was trained with.      |
+| Output width must equal `dimensions`       | A different width means a different graph, whose vectors live in a different space.              |
+| Failures are classified, never swapped     | `LocalModelError` (`generation-failed` naming the model) or the endpoint's own error, as itself. |
+
+### Embeddings on real hardware
+
+`src/__tests__/main/local-models/embeddings-e2e.test.ts`, opt-in with the same
+`MAESTRO_LOCAL_MODEL_E2E=1` and scratch dir as the llama check, installs ONNX Runtime and
+bge-small-en-v1.5 through the core service and embeds through the real pool and tokenizer. Results
+go to `embeddings-e2e-results.json` in the scratch dir.
+
+Result, 2026-10-10, darwin-arm64 (Apple Silicon), bge-small-en-v1.5 q8:
+
+| Measure                                                         | Value   |
+| --------------------------------------------------------------- | ------- |
+| First query, cold (runtime import, graph open, tokenizer parse) | 1056 ms |
+| Two short documents, warm                                       | 2 ms    |
+| 64 one-sentence documents, warm (4 batches)                     | 78 ms   |
+| Per document in that batch                                      | 1.2 ms  |
+| "how do I rename a tab" vs "tab naming" (cosine)                | 0.901   |
+| "how do I rename a tab" vs "SSH remote hosts" (cosine)          | 0.453   |
+
 ## Tasks and assignments
 
 A **task** is a named job (`tab-naming`, `git-drafts`, `semantic-search`, ...), never a model.
@@ -323,8 +370,11 @@ A caller abort is `cancelled`, not a failure. `unavailable` carries a `reason` t
 or endpoint and what to do. **There is no fallback**: an unavailable local model is never swapped for
 an endpoint, and the router never reaches for a cloud agent on its own, because that would spend
 money or send text somewhere the user did not choose. An unclassified failure is a bug and is
-rethrown for Sentry. Only `needs: 'text-gen'` tasks run here; embedding and classifier tasks get
-their own entries in phase 04.
+rethrown for Sentry. `runLocalTask` runs `needs: 'text-gen'` tasks; `runEmbeddingTask(taskId, {
+texts, mode })` runs `needs: 'embedding'` tasks (`semantic-search`) through `embedTexts` with the
+same assignment, classification, and recording path (`ok` carries `vectors`). Embedding tasks are
+in-process only: no consumer outside the main process needs raw vectors yet, so there is no IPC or
+CLI verb for them.
 
 Every call that reaches a model is recorded in the stats database as a `local_model_runs` row (stats
 migration v15: task, source type, model, endpoint id, start, sleep-aware duration, `ok` / `error` /

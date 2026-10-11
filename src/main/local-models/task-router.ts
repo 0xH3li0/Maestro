@@ -3,7 +3,8 @@
  * goes through before it touches a model.
  *
  * A caller names a task (`tab-naming`, `git-drafts`, ...) and hands over its
- * prompt. The router reads the user's assignment for that task
+ * input: a prompt for a text-generation task ({@link runLocalTask}), texts for
+ * an embedding task ({@link runEmbeddingTask}). The router reads the user's assignment for that task
  * (`localModelAssignments`, resolved against the registry defaults in
  * `src/shared/local-models/tasks.ts`) and answers with one of:
  *
@@ -32,6 +33,7 @@ import {
 	LOCAL_MODEL_TASKS,
 	resolveLocalModelAssignment,
 	type LocalModelAssignments,
+	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
 import type { LocalModelRun } from '../../shared/stats-types';
@@ -41,8 +43,10 @@ import { getSettingsStore } from '../stores/getters';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
-import { isLocalModelEndpointError, isLocalModelError } from './errors';
-import { generateText, isTextGenCancelled, type TextGenSource } from './text-gen';
+import { embedTexts, type EmbeddingMode } from './embeddings';
+import { isLocalModelCancelled, isLocalModelEndpointError, isLocalModelError } from './errors';
+import { sourceForAssignment, type LocalModelSource } from './sources';
+import { generateText } from './text-gen';
 
 /** Token budget when a caller names none. Housekeeping output is short. */
 export const DEFAULT_TASK_MAX_TOKENS = 512;
@@ -71,22 +75,49 @@ export type LocalTaskResult =
 			status: 'ok';
 			text: string;
 			json?: unknown;
-			source: TextGenSource;
+			source: LocalModelSource;
 			durationMs: number;
 			tokensIn?: number;
 			tokensOut?: number;
 	  }
-	| {
-			status: 'unavailable';
-			source: TextGenSource;
-			/** Written for a person; names the model or endpoint and what to do. */
-			reason: string;
-			/** The classified failure (`model-not-installed`, `network`, ...). */
-			code: string;
-	  }
-	| { status: 'cancelled'; source: TextGenSource };
+	| LocalTaskUnavailable
+	| { status: 'cancelled'; source: LocalModelSource };
+
+/** The assigned source could not run. Shared by every task kind. */
+export interface LocalTaskUnavailable {
+	status: 'unavailable';
+	source: LocalModelSource;
+	/** Written for a person; names the model or endpoint and what to do. */
+	reason: string;
+	/** The classified failure (`model-not-installed`, `network`, ...). */
+	code: string;
+}
 
 export type LocalTaskStatus = LocalTaskResult['status'];
+
+/** What an embedding task hands the router. */
+export interface EmbeddingTaskInput {
+	texts: readonly string[];
+	/** Which side of a search the texts are on (see `embedTexts`). */
+	mode: EmbeddingMode;
+	signal?: AbortSignal;
+}
+
+/**
+ * An embedding task's verdict. No `use-utility-agent`: an agent cannot produce
+ * vectors, so no embedding task accepts that assignment.
+ */
+export type EmbeddingTaskResult =
+	| { status: 'off' }
+	| {
+			status: 'ok';
+			/** One L2-normalized vector per input text, in order. */
+			vectors: Float32Array[];
+			source: LocalModelSource;
+			durationMs: number;
+	  }
+	| LocalTaskUnavailable
+	| { status: 'cancelled'; source: LocalModelSource };
 
 /**
  * Run a text-generation task through its assignment.
@@ -98,50 +129,125 @@ export async function runLocalTask(
 	taskId: LocalModelTaskId,
 	input: LocalTaskInput
 ): Promise<LocalTaskResult> {
-	const task = LOCAL_MODEL_TASKS[taskId];
-	if (task.needs !== 'text-gen') {
-		throw new Error(
-			`${task.label} is a ${task.needs} task; runLocalTask runs text-generation tasks only.`
-		);
+	requireTaskNeed(taskId, 'text-gen', 'runLocalTask');
+	const verdict = await runThroughAssignment(
+		taskId,
+		(source) =>
+			generateText({
+				source,
+				prompt: input.prompt,
+				maxTokens: input.maxTokens ?? DEFAULT_TASK_MAX_TOKENS,
+				...(input.system !== undefined ? { system: input.system } : {}),
+				...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+				...(input.jsonSchema ? { jsonSchema: input.jsonSchema } : {}),
+				...(input.signal ? { signal: input.signal } : {}),
+			}),
+		(result) => ({
+			durationMs: result.durationMs,
+			tokensIn: result.tokensIn,
+			tokensOut: result.tokensOut,
+		})
+	);
+	if (verdict.status !== 'ok') return verdict;
+	const { value: result, source, durationMs } = verdict;
+	return {
+		status: 'ok',
+		text: result.text,
+		...(result.json !== undefined ? { json: result.json } : {}),
+		source,
+		durationMs,
+		...(result.tokensIn !== undefined ? { tokensIn: result.tokensIn } : {}),
+		...(result.tokensOut !== undefined ? { tokensOut: result.tokensOut } : {}),
+	};
+}
+
+/**
+ * Run an embedding task (`semantic-search`) through its assignment.
+ *
+ * Throws only for a caller bug (a task that is not an embedding task) or an
+ * unclassified failure inside the service.
+ */
+export async function runEmbeddingTask(
+	taskId: LocalModelTaskId,
+	input: EmbeddingTaskInput
+): Promise<EmbeddingTaskResult> {
+	requireTaskNeed(taskId, 'embedding', 'runEmbeddingTask');
+	const verdict = await runThroughAssignment(taskId, (source) =>
+		embedTexts(source, input.texts, {
+			mode: input.mode,
+			...(input.signal ? { signal: input.signal } : {}),
+		})
+	);
+	if (verdict.status === 'use-utility-agent') {
+		// The registry refuses this assignment for every embedding task.
+		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on the Utility Agent.`);
 	}
+	if (verdict.status !== 'ok') return verdict;
+	return {
+		status: 'ok',
+		vectors: verdict.value,
+		source: verdict.source,
+		durationMs: verdict.durationMs,
+	};
+}
 
+function requireTaskNeed(
+	taskId: LocalModelTaskId,
+	need: LocalModelTaskDefinition['needs'],
+	entry: string
+): void {
+	const task = LOCAL_MODEL_TASKS[taskId];
+	if (task.needs !== need) {
+		throw new Error(`${task.label} is a ${task.needs} task; ${entry} runs ${need} tasks only.`);
+	}
+}
+
+/** What a model call measured, for the stats row. */
+interface RunMetrics {
+	durationMs?: number;
+	tokensIn?: number;
+	tokensOut?: number;
+}
+
+type AssignedVerdict<T> =
+	| { status: 'off' }
+	| { status: 'use-utility-agent' }
+	| { status: 'ok'; value: T; source: LocalModelSource; durationMs: number }
+	| LocalTaskUnavailable
+	| { status: 'cancelled'; source: LocalModelSource };
+
+/**
+ * The part every task kind shares: read the assignment, run the call on its
+ * source, classify a failure, and record the run. There is no fallback branch:
+ * a source that fails is reported as itself.
+ *
+ * `metrics` lets a service that measures its own call (text generation does)
+ * supply the duration and token counts; otherwise the router's own sleep-aware
+ * span is used.
+ */
+async function runThroughAssignment<T>(
+	taskId: LocalModelTaskId,
+	call: (source: LocalModelSource) => Promise<T>,
+	metrics: (value: T) => RunMetrics = () => ({})
+): Promise<AssignedVerdict<T>> {
 	const assignment = resolveLocalModelAssignment(readAssignments(), taskId);
-	if (assignment.type === 'off') return { status: 'off' };
-	if (assignment.type === 'utility-agent') return { status: 'use-utility-agent' };
-
-	const source: TextGenSource =
-		assignment.type === 'local'
-			? { type: 'local', modelId: assignment.modelId }
-			: { type: 'endpoint', endpointId: assignment.endpointId, model: assignment.model };
+	const source = sourceForAssignment(assignment);
+	if (!source) return { status: assignment.type === 'off' ? 'off' : 'use-utility-agent' };
 
 	const startedAt = Date.now();
 	const span = beginSleepAwareSpan();
 	try {
-		const result = await generateText({
-			source,
-			prompt: input.prompt,
-			maxTokens: input.maxTokens ?? DEFAULT_TASK_MAX_TOKENS,
-			...(input.system !== undefined ? { system: input.system } : {}),
-			...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
-			...(input.jsonSchema ? { jsonSchema: input.jsonSchema } : {}),
-			...(input.signal ? { signal: input.signal } : {}),
+		const value = await call(source);
+		const measured = metrics(value);
+		const durationMs = measured.durationMs ?? sleepAwareElapsedMs(span);
+		recordRun(taskId, source, startedAt, durationMs, 'ok', {
+			tokensIn: measured.tokensIn,
+			tokensOut: measured.tokensOut,
 		});
-		recordRun(taskId, source, startedAt, result.durationMs, 'ok', {
-			tokensIn: result.tokensIn,
-			tokensOut: result.tokensOut,
-		});
-		return {
-			status: 'ok',
-			text: result.text,
-			...(result.json !== undefined ? { json: result.json } : {}),
-			source,
-			durationMs: result.durationMs,
-			...(result.tokensIn !== undefined ? { tokensIn: result.tokensIn } : {}),
-			...(result.tokensOut !== undefined ? { tokensOut: result.tokensOut } : {}),
-		};
+		return { status: 'ok', value, source, durationMs };
 	} catch (error) {
 		const durationMs = sleepAwareElapsedMs(span);
-		if (isTextGenCancelled(error)) {
+		if (isLocalModelCancelled(error)) {
 			recordRun(taskId, source, startedAt, durationMs, 'cancelled', { errorCode: 'cancelled' });
 			return { status: 'cancelled', source };
 		}
@@ -234,7 +340,7 @@ function readAssignments(): LocalModelAssignments | undefined {
  */
 function recordRun(
 	taskId: LocalModelTaskId,
-	source: TextGenSource,
+	source: LocalModelSource,
 	startedAt: number,
 	durationMs: number,
 	outcome: LocalModelRun['outcome'],

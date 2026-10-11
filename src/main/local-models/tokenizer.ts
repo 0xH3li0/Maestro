@@ -17,7 +17,9 @@
  *     post-processor added, so the layout is right for every tokenizer family
  *     without knowing which one it is.
  *   - **Tensors-ready output.** ONNX Runtime wants `int64` inputs, so ids come
- *     back as `BigInt64Array`s rather than number arrays each caller converts.
+ *     back as `BigInt64Array`s rather than number arrays each caller converts,
+ *     and {@link LocalTokenizer.encodeBatch} pads a batch into the flat
+ *     `[batch, sequence]` layout a tensor is built from.
  *
  * Loaded tokenizers are cached per directory: `tokenizer.json` is large (the
  * bge-small one is 700 KB of vocabulary) and parsing it per call would dwarf
@@ -60,12 +62,35 @@ export interface TokenizedInput {
 	tokenTypeIds?: BigInt64Array;
 }
 
+/**
+ * Several inputs padded to one length, flattened row-major into the
+ * `[batchSize, sequenceLength]` layout an ONNX tensor is built from. Padding is
+ * on the right and masked out (`attentionMask` 0), so a padded row produces the
+ * same states for its real tokens as it would alone.
+ */
+export interface TokenizedBatch {
+	batchSize: number;
+	sequenceLength: number;
+	inputIds: BigInt64Array;
+	attentionMask: BigInt64Array;
+	/** Present when the tokenizer assigns segment ids; padding positions are 0. */
+	tokenTypeIds?: BigInt64Array;
+}
+
 export interface LocalTokenizer {
 	/** Directory the tokenizer was loaded from (resolved). */
 	readonly dir: string;
 	/** The model's own window, or `undefined` when the config records none. */
 	readonly modelMaxLength: number | undefined;
+	/**
+	 * The id padding positions carry. Read from the tokenizer's own padding
+	 * block, else its `pad_token`; 0 when it names neither (the positions are
+	 * masked out, so the value only has to be a valid id).
+	 */
+	readonly padTokenId: number;
 	encode(text: string, options?: TokenizerEncodeOptions): TokenizedInput;
+	/** Encode every text and pad them to the longest. An empty list is an error. */
+	encodeBatch(texts: readonly string[], options?: TokenizerEncodeOptions): TokenizedBatch;
 }
 
 const cache = new Map<string, Promise<LocalTokenizer>>();
@@ -126,10 +151,12 @@ export function createLocalTokenizer(
 		typeof declared === 'number' && declared > 0 && declared < UNBOUNDED_MODEL_MAX_LENGTH
 			? declared
 			: undefined;
+	const padTokenId = resolvePadTokenId(tokenizer, definition, config);
 
-	return {
+	const local: LocalTokenizer = {
 		dir: path.resolve(dir),
 		modelMaxLength,
+		padTokenId,
 		encode(text, options = {}) {
 			const maxLength = options.maxLength ?? modelMaxLength;
 			const truncation = options.truncation ?? true;
@@ -148,6 +175,53 @@ export function createLocalTokenizer(
 				...(typeIds ? { tokenTypeIds: toInt64(typeIds) } : {}),
 			};
 		},
+		encodeBatch(texts, options = {}) {
+			if (texts.length === 0) throw new Error('Cannot encode an empty batch');
+			const rows = texts.map((text) => local.encode(text, options));
+			return padRows(rows, padTokenId);
+		},
+	};
+	return local;
+}
+
+/** The pad id, from the padding block, else the configured `pad_token`, else 0. */
+function resolvePadTokenId(
+	tokenizer: Tokenizer,
+	definition: object,
+	config: Record<string, unknown>
+): number {
+	const padding = (definition as { padding?: { pad_id?: unknown } | null }).padding;
+	if (typeof padding?.pad_id === 'number') return padding.pad_id;
+	const declared = config.pad_token;
+	// `pad_token` is a bare string in most configs and an AddedToken object in some.
+	const token =
+		typeof declared === 'string'
+			? declared
+			: typeof (declared as { content?: unknown } | null)?.content === 'string'
+				? (declared as { content: string }).content
+				: undefined;
+	return (token !== undefined ? tokenizer.token_to_id(token) : undefined) ?? 0;
+}
+
+function padRows(rows: readonly TokenizedInput[], padTokenId: number): TokenizedBatch {
+	const sequenceLength = Math.max(...rows.map((row) => row.inputIds.length));
+	const size = rows.length * sequenceLength;
+	const inputIds = new BigInt64Array(size).fill(BigInt(padTokenId));
+	const attentionMask = new BigInt64Array(size);
+	// Segment ids are all-or-nothing per tokenizer, so the first row decides.
+	const tokenTypeIds = rows[0].tokenTypeIds ? new BigInt64Array(size) : undefined;
+	rows.forEach((row, index) => {
+		const offset = index * sequenceLength;
+		inputIds.set(row.inputIds, offset);
+		attentionMask.set(row.attentionMask, offset);
+		if (tokenTypeIds && row.tokenTypeIds) tokenTypeIds.set(row.tokenTypeIds, offset);
+	});
+	return {
+		batchSize: rows.length,
+		sequenceLength,
+		inputIds,
+		attentionMask,
+		...(tokenTypeIds ? { tokenTypeIds } : {}),
 	};
 }
 

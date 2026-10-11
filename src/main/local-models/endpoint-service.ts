@@ -20,11 +20,14 @@ import { getSettingsStore } from '../stores/getters';
 import {
 	detectLocalEndpoints,
 	endpointChat,
+	endpointEmbed,
 	listEndpointModelsResult,
 	testEndpoint,
 	type DetectedEndpoint,
 	type EndpointChatRequest,
 	type EndpointChatResult,
+	type EndpointEmbedRequest,
+	type EndpointEmbedResult,
 	type EndpointFailure,
 	type EndpointModelsResult,
 	type EndpointTestResult,
@@ -90,18 +93,15 @@ export async function testLocalModelEndpoint(
 }
 
 /**
- * One chat completion against a SAVED endpoint, named by its exact id.
+ * A SAVED endpoint by its exact id, ready to call, or a classified refusal.
  *
- * This is the path real work takes (the text-generation service), so it is
+ * This is the path real work takes (text generation, embeddings), so it is
  * stricter than Test: the id must match exactly (an assignment stores the full
  * id, and a prefix that later becomes ambiguous must not quietly pick another
  * server), and a disabled endpoint is refused rather than called. The client
  * leaves `enabled` to its caller; this is that caller.
  */
-export async function chatWithLocalModelEndpoint(
-	endpointId: string,
-	request: Omit<EndpointChatRequest, 'shellEnvVars'>
-): Promise<EndpointChatResult> {
+function requireUsableEndpoint(endpointId: string): LocalModelEndpoint {
 	const endpoint = getConfiguredLocalModelEndpoints().find((entry) => entry.id === endpointId);
 	if (!endpoint) {
 		throw new LocalModelEndpointError(`No saved endpoint has the id "${endpointId}".`, {
@@ -117,5 +117,27 @@ export async function chatWithLocalModelEndpoint(
 			{ kind: 'invalid', endpointId, endpointName: endpoint.name, url: endpoint.baseUrl }
 		);
 	}
-	return endpointChat(endpoint, { ...request, shellEnvVars: shellEnvVars() });
+	return endpoint;
+}
+
+/** One chat completion against a saved, enabled endpoint, named by its exact id. */
+export async function chatWithLocalModelEndpoint(
+	endpointId: string,
+	request: Omit<EndpointChatRequest, 'shellEnvVars'>
+): Promise<EndpointChatResult> {
+	return endpointChat(requireUsableEndpoint(endpointId), {
+		...request,
+		shellEnvVars: shellEnvVars(),
+	});
+}
+
+/** Embed inputs on a saved, enabled endpoint, named by its exact id. */
+export async function embedWithLocalModelEndpoint(
+	endpointId: string,
+	request: Omit<EndpointEmbedRequest, 'shellEnvVars'>
+): Promise<EndpointEmbedResult> {
+	return endpointEmbed(requireUsableEndpoint(endpointId), {
+		...request,
+		shellEnvVars: shellEnvVars(),
+	});
 }

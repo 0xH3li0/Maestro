@@ -22,6 +22,7 @@ const stats = vi.hoisted(() => ({
 	recordLocalModelRun: vi.fn((_run: unknown) => 'id'),
 }));
 const generate = vi.hoisted(() => ({ generateText: vi.fn() }));
+const embed = vi.hoisted(() => ({ embedTexts: vi.fn() }));
 
 vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({
@@ -49,15 +50,20 @@ vi.mock('../../../main/local-models/text-gen', async (importOriginal) => ({
 	generateText: generate.generateText,
 }));
 
+vi.mock('../../../main/local-models/embeddings', () => ({
+	embedTexts: embed.embedTexts,
+}));
+
 import {
 	DEFAULT_TASK_MAX_TOKENS,
 	parseLocalTaskInput,
+	runEmbeddingTask,
 	runLocalTask,
 	runLocalTaskRequest,
 } from '../../../main/local-models/task-router';
 import { LocalModelEndpointError, LocalModelError } from '../../../main/local-models/errors';
 import { captureException } from '../../../main/utils/sentry';
-import { QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import { BGE_SMALL_EN_ID, QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
 
 const LOCAL = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
 const ENDPOINT = { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.2' } as const;
@@ -294,6 +300,92 @@ describe('runLocalTask', () => {
 			});
 			expect(captureException).toHaveBeenCalledTimes(1);
 		});
+	});
+});
+
+describe('runEmbeddingTask', () => {
+	const BGE = { type: 'local', modelId: BGE_SMALL_EN_ID } as const;
+	const NOMIC = { type: 'endpoint', endpointId: 'ep-1', model: 'nomic-embed-text' } as const;
+
+	beforeEach(() => {
+		settings.clear();
+		stats.ready = true;
+		stats.recordLocalModelRun.mockReset().mockReturnValue('id');
+		embed.embedTexts.mockReset();
+	});
+
+	it('answers off on the default assignment and embeds nothing', async () => {
+		await expect(
+			runEmbeddingTask('semantic-search', { texts: ['a'], mode: 'query' })
+		).resolves.toEqual({ status: 'off' });
+		expect(embed.embedTexts).not.toHaveBeenCalled();
+		expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
+	});
+
+	it('embeds on the assigned local model with the mode, and records the run', async () => {
+		assign('semantic-search', { type: 'local', modelId: BGE_SMALL_EN_ID });
+		const vectors = [new Float32Array([1, 0])];
+		embed.embedTexts.mockResolvedValue(vectors);
+
+		const result = await runEmbeddingTask('semantic-search', {
+			texts: ['how do I rename a tab'],
+			mode: 'query',
+		});
+
+		expect(embed.embedTexts).toHaveBeenCalledWith(BGE, ['how do I rename a tab'], {
+			mode: 'query',
+		});
+		expect(result).toMatchObject({ status: 'ok', vectors, source: BGE });
+		expect(recorded()).toMatchObject({
+			taskId: 'semantic-search',
+			sourceType: 'local',
+			modelId: BGE_SMALL_EN_ID,
+			outcome: 'ok',
+		});
+	});
+
+	it('embeds on an endpoint and reports a down server as unavailable, trying nothing else', async () => {
+		assign('semantic-search', NOMIC);
+		embed.embedTexts.mockRejectedValue(
+			new LocalModelEndpointError('Ollama is not reachable.', {
+				kind: 'network',
+				endpointId: 'ep-1',
+				endpointName: 'Ollama',
+				url: 'http://127.0.0.1:11434',
+			})
+		);
+
+		await expect(
+			runEmbeddingTask('semantic-search', { texts: ['a'], mode: 'document' })
+		).resolves.toEqual({
+			status: 'unavailable',
+			source: NOMIC,
+			reason: 'Ollama is not reachable.',
+			code: 'network',
+		});
+		expect(embed.embedTexts).toHaveBeenCalledTimes(1);
+		expect(recorded()).toMatchObject({ outcome: 'error', errorCode: 'network' });
+	});
+
+	it('reports a cancellation as cancelled', async () => {
+		assign('semantic-search', { type: 'local', modelId: BGE_SMALL_EN_ID });
+		embed.embedTexts.mockRejectedValue(
+			new LocalModelError('The request was cancelled.', {
+				code: 'cancelled',
+				recovery: 'Nothing to do.',
+				consumerId: 'embeddings',
+			})
+		);
+
+		await expect(
+			runEmbeddingTask('semantic-search', { texts: ['a'], mode: 'query' })
+		).resolves.toEqual({ status: 'cancelled', source: BGE });
+	});
+
+	it('refuses a task that is not an embedding task (a caller bug)', async () => {
+		await expect(runEmbeddingTask('tab-naming', { texts: ['a'], mode: 'query' })).rejects.toThrow(
+			/text-gen task/
+		);
 	});
 });
 
