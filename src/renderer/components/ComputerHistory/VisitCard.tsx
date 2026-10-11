@@ -116,7 +116,7 @@ function EventRow({
 	return (
 		<li className="group flex gap-2 text-sm" data-kind={event.kind}>
 			<span
-				className="text-xs tabular-nums pt-0.5 w-11 flex-shrink-0 select-none"
+				className="text-xs tabular-nums pt-0.5 min-w-[2.75rem] whitespace-nowrap flex-shrink-0 select-none"
 				style={{ color: theme.colors.textDim }}
 			>
 				{clockLabel(Date.parse(event.ts))}
