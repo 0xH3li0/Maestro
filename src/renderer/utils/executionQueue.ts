@@ -12,7 +12,14 @@
  * not finished until the agents it consulted have replied.
  */
 
-import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import type {
+	AITab,
+	LogEntry,
+	QueuedItem,
+	QueuedItemEditPatch,
+	Session,
+	SessionState,
+} from '../types';
 import { generateId } from './ids';
 import { steeringTextTooLong } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
@@ -517,11 +524,49 @@ export type SteerBlockedReason =
 	| 'waiting-for-connection'
 	| 'ssh-remote'
 	| 'steer-in-flight'
-	| 'tui-command-prefix';
+	| 'tui-command-prefix'
+	| 'read-only';
 
 export interface SteerEligibility {
 	canSteer: boolean;
 	blockedReason?: SteerBlockedReason;
+}
+
+function findQueueTargetTab(session: Session, tabId: string): AITab | undefined {
+	return (
+		session.aiTabs?.find((tab) => tab.id === tabId) ??
+		session.orphanedThinkingTabs?.find((tab) => tab.id === tabId)
+	);
+}
+
+/**
+ * Whether `item` would run read-only if dispatched now. Mirrors the dispatch rule
+ * in agentStore.processQueuedItem: the item's own flag, or the target tab's
+ * current read-only setting.
+ */
+function queuedItemWantsReadOnly(
+	session: Session,
+	tabId: string,
+	item: Pick<QueuedItem, 'readOnlyMode'>
+): boolean {
+	const tab = findQueueTargetTab(session, tabId);
+	return (
+		item.readOnlyMode === true || tab?.readOnlyMode === true || tab?.permissionMode === 'readonly'
+	);
+}
+
+/**
+ * Whether the turn running on `tabId` is KNOWN to be read-only, read from the
+ * user entry that started it (stamped `readOnly` at send). Unknown counts as not
+ * read-only: the cost is a Steer button that is not offered, never a message run
+ * with more access than the user gave it.
+ */
+function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
+	const logs = findQueueTargetTab(session, tabId)?.logs ?? [];
+	for (let i = logs.length - 1; i >= 0; i -= 1) {
+		if (logs[i].source === 'user') return logs[i].readOnly === true;
+	}
+	return false;
 }
 
 /**
@@ -569,9 +614,11 @@ export function getSteerEligibility(
 		| 'agentContext'
 		| 'paused'
 		| 'waitingForConnection'
+		| 'readOnlyMode'
 	>
 ): SteerEligibility {
-	if (!resolveQueuedItemTarget(session, item)) {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) {
 		return { canSteer: false, blockedReason: 'no-target-tab' };
 	}
 	// Busy-ness comes from the SAME helper Force Send reads, so the two controls
@@ -615,6 +662,17 @@ export function getSteerEligibility(
 	}
 	if (item.waitingForConnection) {
 		return { canSteer: false, blockedReason: 'waiting-for-connection' };
+	}
+	// Steering types into a process spawned with the permissions of the turn
+	// ALREADY running; nothing re-applies the queued message's own. A read-only
+	// message dispatched normally spawns read-only, so steering it into a turn
+	// that started with full access would run it with access the user took away.
+	// Allowed only when the running turn is known to be read-only too.
+	if (
+		queuedItemWantsReadOnly(session, target.tabId, item) &&
+		!runningTurnIsReadOnly(session, target.tabId)
+	) {
+		return { canSteer: false, blockedReason: 'read-only' };
 	}
 	// An item carrying images cannot be steered without LOSING them. Images reach a
 	// maestro-p turn as `@/path` mentions translated from a stream-json envelope on

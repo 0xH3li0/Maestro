@@ -776,6 +776,48 @@ describe('getSteerEligibility', () => {
 		expect(getSteerEligibility(codex, { tabId: 'tab-1', text: '/compact' }).canSteer).toBe(true);
 	});
 
+	it('refuses a read-only message into a turn that started with full access', () => {
+		// Steering cannot narrow the permissions the running turn was spawned with.
+		const fullAccessTurn = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'refactor it' }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(fullAccessTurn, { ...item, readOnlyMode: true }).blockedReason).toBe(
+			'read-only'
+		);
+		// The tab flipped to read-only after the turn started: dispatch would honor it.
+		const flipped = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					readOnlyMode: true,
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'refactor it' }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(flipped, item).blockedReason).toBe('read-only');
+	});
+
+	it('allows a read-only message into a turn known to be read-only', () => {
+		const readOnlyTurn = steerableSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					readOnlyMode: true,
+					logs: [{ id: 'u1', timestamp: 0, source: 'user', text: 'plan it', readOnly: true }],
+				}),
+			],
+		});
+		expect(getSteerEligibility(readOnlyTurn, { ...item, readOnlyMode: true }).canSteer).toBe(true);
+	});
+
 	it('refuses an item held for a reconnect', () => {
 		expect(
 			getSteerEligibility(steerableSession(), { ...item, waitingForConnection: true }).blockedReason

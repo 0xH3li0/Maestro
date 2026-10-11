@@ -35,9 +35,14 @@ function parseEnqueueFailureReason(raw: unknown): EnqueueCommandFailureReason | 
 
 export function registerQueueCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow'>
+	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
 ): void {
-	const { getMainWindow } = deps;
+	const { getMainWindow, getWindowForSession } = deps;
+	// Each window owns its own agents' queues, so a request about ONE agent has to
+	// reach the window that owns it. The primary would answer from a queue that
+	// does not hold the item.
+	const resolveSessionWindow = (sessionId: string) =>
+		getWindowForSession?.(sessionId) ?? getMainWindow();
 
 	// Round-trip the CLI's `dispatch --queue` into the renderer, which owns
 	// the authoritative execution queue. The renderer decides (busy -> queue,
@@ -53,7 +58,7 @@ export function registerQueueCallbacks(
 			images?: string[],
 			background?: boolean
 		) => {
-			const mainWindow = getMainWindow();
+			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for enqueueCommand', 'WebServer');
 				return { success: false, error: 'Desktop window unavailable' };
@@ -161,7 +166,7 @@ export function registerQueueCallbacks(
 
 	// Round-trip `maestro-cli queue remove <itemId>` into the renderer.
 	server.setRemoveQueueItemCallback(async (sessionId: string, itemId: string) => {
-		const mainWindow = getMainWindow();
+		const mainWindow = resolveSessionWindow(sessionId);
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for removeQueueItem', 'WebServer');
 			return { success: false, removed: false, error: 'Desktop window unavailable' };
@@ -204,7 +209,7 @@ export function registerQueueCallbacks(
 	// the same steerQueuedItem() the Steer button does. Waits longer than the
 	// remove round trip because the renderer itself waits on maestro-p's socket.
 	server.setSteerQueueItemCallback(async (sessionId: string, itemId: string) => {
-		const mainWindow = getMainWindow();
+		const mainWindow = resolveSessionWindow(sessionId);
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for steerQueueItem', 'WebServer');
 			return { success: false, error: 'Desktop window unavailable' };

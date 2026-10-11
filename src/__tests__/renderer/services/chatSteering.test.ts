@@ -89,7 +89,7 @@ describe('steerQueuedItem', () => {
 		expect(pendingSteerCount()).toBe(1);
 	});
 
-	it('does not hold a refused steer: it never left the queue', async () => {
+	it('puts a refused steer back in the queue, without its bubble', async () => {
 		useSessionStore.setState({ sessions: [steerableSession([item()])] });
 		steer.mockResolvedValue({
 			type: 'steering',
@@ -103,6 +103,7 @@ describe('steerQueuedItem', () => {
 		expect(result).toMatchObject({ outcome: 'refused', refusal: 'blocking-dialog' });
 		expect(queue()).toEqual([item()]);
 		expect(pendingSteerCount()).toBe(0);
+		expect(tabLogs()).toEqual([]);
 	});
 
 	it('reports an unknown item as not-found without steering', async () => {
@@ -176,18 +177,46 @@ describe('steerQueuedItem', () => {
 		expect(steer).toHaveBeenCalledTimes(1);
 	});
 
-	it('does not park an item the queue already sent while the steer was in flight', async () => {
+	it('holds the item out of the queue while the socket answer is outstanding', async () => {
+		// Otherwise a turn that ends during the wait lets the queue drain dispatch the
+		// same message as a new turn on top of the text already typed.
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		let duringWait: { queued: QueuedItem[]; parked: number } | undefined;
+		steer.mockImplementation(async () => {
+			duringWait = { queued: queue(), parked: pendingSteerCount() };
+			return { type: 'steering', id: 'steer-1', verdict: 'delivered' };
+		});
+
+		await steerQueuedItem('sess-1', 'item-a');
+
+		expect(duringWait).toEqual({ queued: [], parked: 1 });
+	});
+
+	it('leaves the item paused when the process exits before the socket answers', async () => {
 		useSessionStore.setState({ sessions: [steerableSession([item()])] });
 		steer.mockImplementation(async () => {
-			// The turn ended during the await and the drain took the item.
-			useSessionStore.setState({ sessions: [steerableSession([])] });
+			settlePendingSteersOnExit(PROCESS_KEY);
+			return { type: 'steering', id: 'steer-1', verdict: 'delivered' };
+		});
+
+		await steerQueuedItem('sess-1', 'item-a');
+
+		expect(queue()).toEqual([{ ...item(), paused: true }]);
+		expect(pendingSteerCount()).toBe(0);
+	});
+
+	it('applies a transcript verdict that arrived before its socket reply', async () => {
+		useSessionStore.setState({ sessions: [steerableSession([item()])] });
+		steer.mockImplementation(async () => {
+			applySteeringVerdict(PROCESS_KEY, { type: 'steering', id: 'steer-1', verdict: 'absorbed' });
 			return { type: 'steering', id: 'steer-1', verdict: 'delivered' };
 		});
 
 		await steerQueuedItem('sess-1', 'item-a');
 
 		expect(pendingSteerCount()).toBe(0);
-		expect(tabLogs()).toEqual([]);
+		expect(queue()).toEqual([]);
+		expect(tabLogs()).toHaveLength(1);
 	});
 
 	it('pauses the item when the steer bridge itself fails', async () => {

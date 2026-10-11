@@ -26,10 +26,15 @@ import {
 const opened: Array<{ close: () => void }> = [];
 const socketPaths: string[] = [];
 
+/** Windows has no socket files: `net` listens on a named pipe instead. */
+const isWindows = process.platform === 'win32';
+
 function tempSocketPath(): string {
+	const name = `mpst-${Math.random().toString(36).slice(2, 8)}`;
+	if (isWindows) return `\\\\.\\pipe\\${name}`;
 	// Short path on purpose: a unix socket address is capped near 104 bytes on
 	// macOS, and the default tmpdir plus a long name can exceed it.
-	const p = path.join(os.tmpdir(), `mpst-${Math.random().toString(36).slice(2, 8)}.sock`);
+	const p = path.join(os.tmpdir(), `${name}.sock`);
 	socketPaths.push(p);
 	return p;
 }
@@ -64,6 +69,8 @@ function exchange(socketPath: string, payload: string, waitMs = 250): Promise<st
 }
 
 async function waitForListening(socketPath: string): Promise<void> {
+	// A named pipe leaves no file to watch for; a connect is the only proof.
+	if (isWindows) return waitForServing(socketPath);
 	// listen() on a unix socket is asynchronous; the file appears a tick later.
 	for (let i = 0; i < 50; i += 1) {
 		if (fs.existsSync(socketPath)) return;
@@ -257,7 +264,7 @@ describe('startSteeringServer', () => {
 		expect(frame.detail).toContain('injection blew up');
 	});
 
-	it('replaces a stale socket file left by a crashed predecessor', async () => {
+	it.skipIf(isWindows)('replaces a stale socket file left by a crashed predecessor', async () => {
 		// Otherwise listen() fails with EADDRINUSE and every later run silently
 		// loses its channel.
 		const socketPath = tempSocketPath();
@@ -279,35 +286,38 @@ describe('startSteeringServer', () => {
 		expect(lines.map((l) => JSON.parse(l).id)).toEqual(['s']);
 	});
 
-	it('leaves a LIVE socket alone instead of unlinking it out from under its owner', async () => {
-		// A nested maestro-p (or a second turn on the same tab) used to unlink the
-		// path unconditionally, which left the first server listening on an inode
-		// nobody could reach - its steers silently stopped arriving.
-		const socketPath = serve(async (id) => ({ type: 'steering', id, verdict: 'delivered' }));
-		await waitForServing(socketPath);
+	it.skipIf(isWindows)(
+		'leaves a LIVE socket alone instead of unlinking it out from under its owner',
+		async () => {
+			// A nested maestro-p (or a second turn on the same tab) used to unlink the
+			// path unconditionally, which left the first server listening on an inode
+			// nobody could reach - its steers silently stopped arriving.
+			const socketPath = serve(async (id) => ({ type: 'steering', id, verdict: 'delivered' }));
+			await waitForServing(socketPath);
 
-		const warnings: string[] = [];
-		const intruder = startSteeringServer({
-			socketPath,
-			onSteer: async (id) => ({ type: 'steering', id, verdict: 'unknown' }),
-			warn: (m) => warnings.push(m),
-		});
-		expect(intruder).not.toBeNull();
-		await vi.waitFor(() => expect(warnings.join('\n')).toMatch(/already serving/));
+			const warnings: string[] = [];
+			const intruder = startSteeringServer({
+				socketPath,
+				onSteer: async (id) => ({ type: 'steering', id, verdict: 'unknown' }),
+				warn: (m) => warnings.push(m),
+			});
+			expect(intruder).not.toBeNull();
+			await vi.waitFor(() => expect(warnings.join('\n')).toMatch(/already serving/));
 
-		// The intruder never bound, so closing it must not delete the owner's file.
-		intruder!.close();
-		expect(fs.existsSync(socketPath)).toBe(true);
+			// The intruder never bound, so closing it must not delete the owner's file.
+			intruder!.close();
+			expect(fs.existsSync(socketPath)).toBe(true);
 
-		// The ORIGINAL server still answers.
-		const lines = await exchange(
-			socketPath,
-			`${JSON.stringify({ type: 'steer', id: 'still-mine', text: 'hi' })}\n`
-		);
-		expect(lines.map((l) => JSON.parse(l).verdict)).toEqual(['delivered']);
-	});
+			// The ORIGINAL server still answers.
+			const lines = await exchange(
+				socketPath,
+				`${JSON.stringify({ type: 'steer', id: 'still-mine', text: 'hi' })}\n`
+			);
+			expect(lines.map((l) => JSON.parse(l).verdict)).toEqual(['delivered']);
+		}
+	);
 
-	it('removes the socket file on close, and close is idempotent', async () => {
+	it.skipIf(isWindows)('removes the socket file on close, and close is idempotent', async () => {
 		const socketPath = serve(async (id) => ({ type: 'steering', id, verdict: 'delivered' }));
 		await waitForListening(socketPath);
 

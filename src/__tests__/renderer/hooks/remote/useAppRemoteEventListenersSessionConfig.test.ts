@@ -199,17 +199,18 @@ describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
 		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBeUndefined();
 	});
 
-	it('drops an unknown transport instead of persisting it', async () => {
+	it('rejects an unknown transport by name instead of persisting it', async () => {
 		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];
 		const { setSessions } = setup(sessions);
 
-		dispatchPatch('session-1', { codexTransport: 'websocket' });
+		// Alongside a valid field: the whole patch is refused, not applied in part.
+		dispatchPatch('session-1', { codexTransport: 'websocket', customModel: 'gpt-x' });
 		await flush();
 
 		expect(setSessions).not.toHaveBeenCalled();
 		expect(ack).toHaveBeenCalledWith('ch', {
 			success: false,
-			error: 'No editable config fields in patch',
+			error: "Invalid value for field 'codexTransport'",
 		});
 	});
 });

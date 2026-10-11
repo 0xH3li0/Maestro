@@ -1950,7 +1950,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		for (const key of Object.keys(patch)) {
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
-			if (key === 'codexTransport' && value !== null && !isCodexTransport(value)) continue;
+			if (key === 'codexTransport' && value !== null && !isCodexTransport(value)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Invalid value for field '${key}'`,
+				});
+				return;
+			}
 			// `exec` is the default, so it is stored the way the Edit Agent modal
 			// stores it: as an unset field.
 			if (key === 'codexTransport' && value === 'exec') {

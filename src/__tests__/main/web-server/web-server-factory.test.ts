@@ -2012,6 +2012,33 @@ describe('web-server/web-server-factory', () => {
 
 			await expect(resultPromise).resolves.toMatchObject({ success: false });
 		});
+
+		it('routes agent-scoped queue requests to the window that owns the agent', () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
+			const server = createWebServerFactory(deps)() as any;
+
+			void server.setSteerQueueItemCallback.mock.calls[0][0]('session-2', 'item-1');
+			void server.setRemoveQueueItemCallback.mock.calls[0][0]('session-2', 'item-2');
+			void server.setEnqueueCommandCallback.mock.calls[0][0]('session-2', 'hi', 'ai');
+
+			const channels = secondaryWebContents.send.mock.calls.map((call) => call[0]);
+			expect(channels).toEqual([
+				'remote:steerQueueItem',
+				'remote:removeQueueItem',
+				'remote:enqueueCommand',
+			]);
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('gistCallbacks smoke', () => {

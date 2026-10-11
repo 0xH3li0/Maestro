@@ -85,8 +85,8 @@ interface QueuedItemsListProps {
 	onForceSendQueuedItem?: (itemId: string) => void;
 	// Chat steering: hand this message to the turn ALREADY RUNNING on its tab
 	// instead of waiting for that turn to finish. Only offered for a Claude turn on
-	// the interactive token source, which is the one shape with a live PTY to type
-	// into - see getSteerEligibility.
+	// the interactive token source (a live PTY to type into) or a Codex turn on the
+	// app-server transport (`turn/steer`) - see getSteerEligibility.
 	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
 	onSteerQueuedItem?: (itemId: string) => void;
 	// Lookup for tab state/name used by the Force Send button + confirm modal.
@@ -798,7 +798,7 @@ function QueuedItemRow({
 									backgroundColor: theme.colors.accent + '33',
 									color: theme.colors.accent,
 								}}
-								title="Send this into the turn that is running now, so Claude can change course mid-task"
+								title="Send this into the turn that is running now, so the agent can change course mid-task"
 							>
 								<Navigation className="w-3.5 h-3.5" />
 								Steer

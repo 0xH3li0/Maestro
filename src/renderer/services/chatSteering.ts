@@ -8,9 +8,10 @@
  * src/shared/chatSteering.ts). The socket reply says whether the text was typed
  * (`delivered` / `refused`); the transcript-observed outcome (`absorbed` /
  * `queued` / `dropped`) arrives later, forwarded as `process:steering-verdict`.
- * The card has to leave the queue on `delivered`, or the same message sends again
- * when the turn ends - so the item is parked on the agent's `pendingSteers` until
- * the second answer lands, and put back if the agent never took it.
+ * The card has to leave the queue before the text is typed, or the same message
+ * sends again when the turn ends - so the item is parked on the agent's
+ * `pendingSteers` from the moment the steer starts until the second answer lands,
+ * and put back if the agent never took it.
  *
  * The parked record lives on the SESSION rather than in module state, so it is
  * persisted: a reload between the two answers must not lose the only copy of a
@@ -38,9 +39,38 @@ import { getSteerEligibility } from '../utils/executionQueue';
  */
 const steersInFlight = new Set<string>();
 
+/**
+ * Verdicts that arrived before their steer's socket reply, keyed
+ * `processKey:steerId`. The reply and the verdict travel on different channels, so
+ * nothing orders them; a verdict that beats the reply finds no parked record with
+ * its id yet. Kept only while a steer on that process is still waiting.
+ */
+const earlyVerdicts = new Map<string, SteeringResultFrame>();
+/** How many steers per process key are still waiting on their socket reply. */
+const awaitingReply = new Map<string, number>();
+
 /** Test seam: in-flight bookkeeping is module state. */
 export function resetPendingSteersForTests(): void {
 	steersInFlight.clear();
+	earlyVerdicts.clear();
+	awaitingReply.clear();
+}
+
+function noteAwaitingReply(processKey: string, delta: 1 | -1): void {
+	const next = (awaitingReply.get(processKey) ?? 0) + delta;
+	if (next > 0) {
+		awaitingReply.set(processKey, next);
+		return;
+	}
+	awaitingReply.delete(processKey);
+	for (const key of earlyVerdicts.keys()) {
+		if (key.startsWith(`${processKey}:`)) earlyVerdicts.delete(key);
+	}
+}
+
+/** A placeholder steer id for a record parked before the socket has named it. */
+function provisionalSteerId(): string {
+	return `provisional:${generateId()}`;
 }
 
 function allPendingSteers(): Array<{ sessionId: string; pending: PendingSteer }> {
@@ -143,8 +173,9 @@ function notifyUnconfirmed(sessionId: string, tabId: string): void {
 
 /**
  * Steer one queued message into the turn running on its tab. Never loses the
- * message: it leaves the queue only once the agent has it, and comes back if the
- * transcript later shows the agent never took it.
+ * message and never sends it twice: it leaves the queue before it is typed, and
+ * comes back if the socket refuses it or the transcript shows the agent never
+ * took it.
  *
  * The one implementation behind both the Steer button and `maestro-cli queue
  * steer`, so it reports what it did rather than leaving the caller to infer it
@@ -198,8 +229,37 @@ export async function steerQueuedItem(
 	const processKey = `${sessionId}-ai-${target.tabId}`;
 	const name = agentLabel(session);
 
+	// Take the item out of the queue BEFORE typing it. While the socket answer is
+	// outstanding the turn can end, and a queue drain that still saw the item would
+	// dispatch it as a new turn on top of the text already typed into the old one.
+	// Parked with a provisional id: an exit during the wait finds it by process key
+	// and puts it back paused, and every answer below either names it or returns it.
+	const provisionalId = provisionalSteerId();
+	const logEntry = steeredLogEntry(item);
+	let parked = false;
+	updateSessionWith(sessionId, (s) => {
+		if (!s.executionQueue.some((i) => i.id === itemId)) return s;
+		parked = true;
+		const record: PendingSteer = {
+			steerId: provisionalId,
+			processKey,
+			tabId: target.tabId,
+			item,
+			logEntryId: logEntry.id,
+		};
+		return {
+			...mapTabLogs(s, target.tabId, (logs) => [...logs, logEntry]),
+			executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
+			pendingSteers: [...(s.pendingSteers ?? []), record],
+		};
+	});
+	if (!parked) {
+		return { outcome: 'not-found', detail: `no queued item ${itemId} for agent ${sessionId}` };
+	}
+
 	let result: SteeringResultFrame;
 	steersInFlight.add(flightKey);
+	noteAwaitingReply(processKey, 1);
 	try {
 		result = await steer(processKey, text);
 	} catch (error) {
@@ -215,30 +275,26 @@ export async function steerQueuedItem(
 		steersInFlight.delete(flightKey);
 	}
 
-	if (result.verdict === 'delivered') {
-		// The agent has the text, so the queue lets go of it and the item is parked
-		// on the agent until the transcript says what happened. Both in ONE update,
-		// and only if the item is still queued: the turn can end during the await,
-		// and a queue drain that already sent the item owns it now.
-		let held = false;
-		updateSessionWith(sessionId, (s) => {
-			if (!s.executionQueue.some((i) => i.id === itemId)) return s;
-			held = true;
-			const logEntry = steeredLogEntry(item);
-			const parked: PendingSteer = {
-				steerId: result.id,
-				processKey,
-				tabId: target.tabId,
-				item,
-				logEntryId: logEntry.id,
-			};
-			return {
-				...mapTabLogs(s, target.tabId, (logs) => [...logs, logEntry]),
-				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
-				pendingSteers: [...(s.pendingSteers ?? []), parked],
-			};
-		});
-		if (held) {
+	// The record is gone when the process exited during the wait: the exit put the
+	// item back paused, which already settled it.
+	const stillParked = () =>
+		(useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.pendingSteers ?? []).some(
+			(p) => p.steerId === provisionalId
+		);
+	const provisional = new Set([provisionalId]);
+
+	try {
+		if (result.verdict === 'delivered') {
+			// The agent has the text. Name the record with the socket's id so the
+			// transcript verdict can settle it.
+			if (!stillParked()) return { outcome: 'delivered', verdict: result.verdict };
+			const steerId = result.id;
+			updateSessionWith(sessionId, (s) => ({
+				...s,
+				pendingSteers: (s.pendingSteers ?? []).map((p) =>
+					p.steerId === provisionalId ? { ...p, steerId } : p
+				),
+			}));
 			notifyToast({
 				color: 'green',
 				title: 'Sent to the running turn',
@@ -246,52 +302,55 @@ export async function steerQueuedItem(
 				sessionId,
 				tabId: target.tabId,
 			});
+			const early = earlyVerdicts.get(`${processKey}:${steerId}`);
+			if (early) {
+				earlyVerdicts.delete(`${processKey}:${steerId}`);
+				applySteeringVerdict(processKey, early);
+			}
+			return { outcome: 'delivered', verdict: result.verdict };
 		}
-		return { outcome: 'delivered', verdict: result.verdict };
-	}
 
-	if (result.verdict === 'absorbed' || result.verdict === 'queued') {
-		// Already settled; nothing left to wait for, but the message still belongs
-		// in the transcript.
-		updateSessionWith(sessionId, (s) => {
-			if (!s.executionQueue.some((i) => i.id === itemId)) return s;
+		if (result.verdict === 'absorbed' || result.verdict === 'queued') {
+			// Already settled; nothing left to wait for. The bubble stays.
+			updateSessionWith(sessionId, (s) => ({
+				...s,
+				pendingSteers: (s.pendingSteers ?? []).filter((p) => p.steerId !== provisionalId),
+			}));
+			return { outcome: 'settled', verdict: result.verdict };
+		}
+
+		// Refused: nothing was typed, so the message is still ours. Back at the head
+		// of the queue, live, and it sends normally when the turn ends.
+		if (result.verdict === 'refused') {
+			updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, provisional, false));
+			notifyToast({
+				color: 'yellow',
+				title: 'Could not steer this turn',
+				message: `${result.detail ?? `${name} could not take the message right now.`} It stays queued.`,
+				sessionId,
+				tabId: target.tabId,
+			});
 			return {
-				...mapTabLogs(s, target.tabId, (logs) => [...logs, steeredLogEntry(item)]),
-				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
+				outcome: 'refused',
+				verdict: result.verdict,
+				refusal: result.refusal,
+				detail: result.detail,
 			};
-		});
-		return { outcome: 'settled', verdict: result.verdict };
-	}
+		}
 
-	// Refused: nothing was typed, so the message is still ours and stays queued
-	// exactly where it was. It will send normally when the turn ends.
-	if (result.verdict === 'refused') {
-		notifyToast({
-			color: 'yellow',
-			title: 'Could not steer this turn',
-			message: `${result.detail ?? `${name} could not take the message right now.`} It stays queued.`,
-			sessionId,
-			tabId: target.tabId,
-		});
-		return {
-			outcome: 'refused',
-			verdict: result.verdict,
-			refusal: result.refusal,
-			detail: result.detail,
-		};
+		// Unknown (or a `dropped` on the socket): the text MAY have been typed and we
+		// never got confirmation. Dropping the item can lose a message the user wrote,
+		// and leaving it queued sends it a second time without asking. So PAUSE it:
+		// kept, nothing sends behind the user's back, and the card's own play button is
+		// the one-click resolution.
+		if (stillParked()) {
+			updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, provisional, true));
+			notifyUnconfirmed(sessionId, target.tabId);
+		}
+		return { outcome: 'unconfirmed', verdict: result.verdict, detail: result.detail };
+	} finally {
+		noteAwaitingReply(processKey, -1);
 	}
-
-	// Unknown (or a `dropped` on the socket): the text MAY have been typed and we
-	// never got confirmation. Dropping the item can lose a message the user wrote,
-	// and leaving it queued sends it a second time without asking. So PAUSE it:
-	// kept, nothing sends behind the user's back, and the card's own play button is
-	// the one-click resolution.
-	updateSessionWith(sessionId, (s) => ({
-		...s,
-		executionQueue: s.executionQueue.map((i) => (i.id === itemId ? { ...i, paused: true } : i)),
-	}));
-	notifyUnconfirmed(sessionId, target.tabId);
-	return { outcome: 'unconfirmed', verdict: result.verdict, detail: result.detail };
 }
 
 /**
@@ -303,7 +362,13 @@ export function applySteeringVerdict(processKey: string, verdict: SteeringResult
 	const found = allPendingSteers().find(
 		({ pending }) => pending.steerId === verdict.id && pending.processKey === processKey
 	);
-	if (!found) return;
+	if (!found) {
+		// Possibly ahead of its own socket reply; held until that reply names the record.
+		if (awaitingReply.has(processKey) && verdict.id) {
+			earlyVerdicts.set(`${processKey}:${verdict.id}`, verdict);
+		}
+		return;
+	}
 	const { sessionId, pending } = found;
 	const ids = new Set([pending.steerId]);
 	const name = labelFor(sessionId);

@@ -147,6 +147,21 @@ describe('findEditorRegion', () => {
 		expect(findEditorRegion(screen)).toEqual(['❯ live']);
 	});
 
+	it('refuses when the lowest framed region is not the editor, whatever is above it', () => {
+		// A dialog framed below stale editor rows: searching upward would find the
+		// old box and send an Enter to the dialog.
+		const screen = [
+			RULE,
+			'❯ stale draft',
+			RULE,
+			' Do you want to proceed?',
+			' ❯ 1. Yes',
+			RULE,
+		].join('\n');
+		expect(findEditorRegion(screen)).toBeNull();
+		expect(editorIsAcceptingInput(screen)).toBe(false);
+	});
+
 	it('does not stretch one box across rules that are too far apart', () => {
 		const filler = Array.from({ length: MAX_EDITOR_ROWS + 1 }, (_, i) => `row ${i}`);
 		expect(findEditorRegion([RULE, '❯ x', ...filler, RULE].join('\n'))).toBeNull();

@@ -22,23 +22,24 @@ export const MAX_EDITOR_ROWS = 64;
  * The rows INSIDE the input editor box, prompt row first, or null when no box is
  * drawn. The box is a full-width rule, a row opening with the prompt glyph, any
  * number of continuation rows (a multi-line or soft-wrapped draft), and another
- * full-width rule. When several boxes survive on the replayed grid, the LOWEST
- * one is returned: claude draws the live editor at the bottom, and anything above
- * it is scrollback.
+ * full-width rule. Only the LOWEST rule-delimited region is considered: claude
+ * draws the live editor at the bottom, and anything above it is scrollback. If
+ * that region is not the editor (a dialog framed below stale editor rows), the
+ * answer is null rather than a search upward, which would find the stale box
+ * and let an Enter land on the dialog.
  */
 export function findEditorRegion(screen: string): string[] | null {
 	const lines = screen.split('\n').map((l) => l.trim());
-	for (let bottom = lines.length - 1; bottom >= 2; bottom -= 1) {
-		if (!RULE_RE.test(lines[bottom])) continue;
-		let top = bottom - 1;
-		while (top >= 0 && bottom - top - 1 <= MAX_EDITOR_ROWS && !RULE_RE.test(lines[top])) {
-			top -= 1;
-		}
-		if (top < 0 || bottom - top - 1 > MAX_EDITOR_ROWS) continue;
-		const region = lines.slice(top + 1, bottom);
-		if (region.length > 0 && EDITOR_PROMPT_RE.test(region[0])) return region;
+	let bottom = lines.length - 1;
+	while (bottom >= 0 && !RULE_RE.test(lines[bottom])) bottom -= 1;
+	if (bottom < 2) return null;
+	let top = bottom - 1;
+	while (top >= 0 && bottom - top - 1 <= MAX_EDITOR_ROWS && !RULE_RE.test(lines[top])) {
+		top -= 1;
 	}
-	return null;
+	if (top < 0 || bottom - top - 1 > MAX_EDITOR_ROWS) return null;
+	const region = lines.slice(top + 1, bottom);
+	return region.length > 0 && EDITOR_PROMPT_RE.test(region[0]) ? region : null;
 }
 
 /**
