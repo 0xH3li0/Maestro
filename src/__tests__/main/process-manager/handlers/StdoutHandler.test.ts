@@ -2516,6 +2516,209 @@ function createMinimalOutputParser(usageReturn: {
 
 // ── Performance: single JSON.parse per NDJSON line ──────────────────────
 
+describe('StdoutHandler - parsed-event', () => {
+	const assistantText = {
+		type: 'assistant',
+		message: {
+			id: 'msg_1',
+			model: 'claude-opus-5',
+			role: 'assistant',
+			content: [{ type: 'text', text: 'Hello.' }],
+		},
+		session_id: 'claude-session',
+	};
+
+	const toolUse = {
+		type: 'assistant',
+		message: {
+			id: 'msg_1',
+			model: 'claude-opus-5',
+			role: 'assistant',
+			content: [{ type: 'tool_use', id: 'toolu_1', name: 'Edit', input: {} }],
+		},
+		session_id: 'claude-session',
+	};
+
+	// The in-turn notice the error branch holds: an assistant line with content.
+	const heldNotice = {
+		type: 'assistant',
+		error: 'server_error',
+		is_api_error_message: true,
+		message: {
+			model: '<synthetic>',
+			role: 'assistant',
+			content: [{ type: 'text', text: 'API Error: Connection lost mid-response.' }],
+		},
+		session_id: 'claude-session',
+	};
+
+	function claudeContext() {
+		return createTestContext({
+			isStreamJsonMode: true,
+			toolType: 'claude-code',
+			outputParser: new ClaudeOutputParser(),
+		});
+	}
+
+	/** Everything emitted under one event name, as argument lists. */
+	function emitsOf(calls: unknown[][], name: string): unknown[][] {
+		return calls.filter((call) => call[0] === name).map((call) => call.slice(1));
+	}
+
+	it('emits nothing while nobody is subscribed', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const emitSpy = vi.spyOn(emitter, 'emit');
+
+		sendJsonLine(handler, sessionId, assistantText);
+		sendJsonLine(handler, sessionId, toolUse);
+
+		expect(emitsOf(emitSpy.mock.calls, 'parsed-event')).toEqual([]);
+		// The lines were handled all the same.
+		expect(emitsOf(emitSpy.mock.calls, 'tool-execution')).toHaveLength(1);
+	});
+
+	it('emits each line once, with the event the parser built, while something is subscribed', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const seen: Array<{ sessionId: string; raw: unknown; type: string }> = [];
+		emitter.on('parsed-event', (id: string, event: { raw: unknown; type: string }) => {
+			seen.push({ sessionId: id, raw: event.raw, type: event.type });
+		});
+
+		sendJsonLine(handler, sessionId, assistantText);
+		sendJsonLine(handler, sessionId, toolUse);
+
+		expect(seen).toHaveLength(2);
+		expect(seen.map((entry) => entry.sessionId)).toEqual([sessionId, sessionId]);
+		expect(seen[0].raw).toEqual(assistantText);
+		expect(seen[1].raw).toEqual(toolUse);
+	});
+
+	it('stops emitting when the last subscriber leaves', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const listener = vi.fn();
+		emitter.on('parsed-event', listener);
+		sendJsonLine(handler, sessionId, assistantText);
+		emitter.off('parsed-event', listener);
+		const emitSpy = vi.spyOn(emitter, 'emit');
+		sendJsonLine(handler, sessionId, toolUse);
+
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(emitsOf(emitSpy.mock.calls, 'parsed-event')).toEqual([]);
+	});
+
+	it('emits ahead of the early return for a tool call it has already shown', () => {
+		const toolEvent = {
+			type: 'tool_use' as const,
+			toolName: 'run',
+			toolCallId: 'call-1',
+			toolState: { status: 'running' },
+		};
+		const mockParser = {
+			agentId: 'opencode',
+			parseJsonLine: vi.fn(() => toolEvent),
+			parseJsonObject: vi.fn((parsed: unknown) => ({ ...toolEvent, raw: parsed })),
+			isResultMessage: vi.fn(() => false),
+			extractSessionId: vi.fn(() => null),
+			extractUsage: vi.fn(() => null),
+			extractSlashCommands: vi.fn(() => null),
+			detectErrorFromLine: vi.fn(() => null),
+			detectErrorFromParsed: vi.fn(() => null),
+			detectErrorFromExit: vi.fn(() => null),
+		};
+		const { handler, sessionId, emitter } = createTestContext({
+			isStreamJsonMode: true,
+			toolType: 'opencode',
+			outputParser: mockParser as any,
+		});
+		const parsedEvents = vi.fn();
+		const toolExecutions = vi.fn();
+		emitter.on('parsed-event', parsedEvents);
+		emitter.on('tool-execution', toolExecutions);
+
+		sendJsonLine(handler, sessionId, { n: 1 });
+		sendJsonLine(handler, sessionId, { n: 2 });
+
+		// The repeat is not shown a second time, and is still handed on.
+		expect(toolExecutions).toHaveBeenCalledTimes(1);
+		expect(parsedEvents).toHaveBeenCalledTimes(2);
+	});
+
+	it('emits a line the error branch holds back, which never reaches the event handler', () => {
+		const { handler, sessionId, emitter, proc } = claudeContext();
+		const seen: unknown[] = [];
+		emitter.on('parsed-event', (_id: string, event: { raw: unknown }) => seen.push(event.raw));
+
+		sendJsonLine(handler, sessionId, heldNotice);
+
+		expect(proc.provisionalError).toBeDefined();
+		expect(seen).toEqual([heldNotice]);
+	});
+
+	it('emits a failed result once, with the usage it carries', () => {
+		const failedResult = {
+			type: 'result',
+			subtype: 'error_during_execution',
+			is_error: true,
+			result: 'API Error: 500 Internal server error',
+			session_id: 'claude-session',
+			modelUsage: {
+				'claude-opus-5': {
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					contextWindow: 200000,
+				},
+			},
+			total_cost_usd: 0.01,
+		};
+		const { handler, sessionId, emitter, proc } = claudeContext();
+		const errors = vi.fn();
+		const seen: Array<{ raw: unknown; usage?: unknown }> = [];
+		emitter.on('agent-error', errors);
+		emitter.on('parsed-event', (_id: string, event: { raw: unknown; usage?: unknown }) =>
+			seen.push(event)
+		);
+
+		sendJsonLine(handler, sessionId, failedResult);
+
+		// The line left through the error branch, and was still handed on once.
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect(proc.errorEmitted).toBe(true);
+		expect(seen).toHaveLength(1);
+		expect(seen[0].raw).toEqual(failedResult);
+		expect(seen[0].usage).toBeDefined();
+	});
+
+	it('emits nothing for a line that is not JSON', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const listener = vi.fn();
+		emitter.on('parsed-event', listener);
+
+		handler.handleData(sessionId, 'Loading shell profile...\n');
+
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	it('goes on handling the line when a subscriber throws', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		emitter.on('parsed-event', () => {
+			throw new Error('subscriber failed');
+		});
+		const toolExecutions = vi.fn();
+		emitter.on('tool-execution', toolExecutions);
+
+		expect(() => sendJsonLine(handler, sessionId, toolUse)).not.toThrow();
+
+		expect(toolExecutions).toHaveBeenCalledTimes(1);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('parsed-event listener threw'),
+			'ProcessManager',
+			expect.objectContaining({ sessionId })
+		);
+	});
+});
+
 describe('StdoutHandler - single JSON parse per line', () => {
 	it('parses JSON exactly once per NDJSON line (output parser path)', () => {
 		// Instrument JSON.parse to count calls

@@ -247,6 +247,49 @@ export function __resetCotResolverLogForTests(): void {
 }
 
 /**
+ * The agent a shape points at, from the agents in memory. `undefined` for a
+ * shape that is not an agent turn, and for an agent Maestro does not have.
+ *
+ * The agents are asked for only when the shape is an agent turn: reading them
+ * is a store read, and most processes Maestro starts are not agent turns.
+ */
+function agentOfShape(
+	shape: CotSessionShape,
+	getSessions: CotResolverDeps['getSessions']
+): CotResolverSession | undefined {
+	switch (shape.kind) {
+		case 'agent-turn':
+			return getSessions().find((session) => session.id === shape.agentId);
+		case 'group-chat-participant':
+			return findSessionForParticipantName(shape.participantName, getSessions());
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * The agent a process turn WOULD be recorded under, from what is in memory:
+ * no read and no wait. `null` when the process is not an agent turn.
+ *
+ * This is the half of `resolveCotTarget` that can answer at the moment a
+ * process starts, which is when "is this agent recorded?" has to be decided. A
+ * turn of an agent that is not recorded then costs this lookup and nothing
+ * more.
+ *
+ * `resolveCotTarget` can still answer `null` for the same process (a group
+ * chat participant whose provider no longer matches its agent), so the answer
+ * here is a candidate, never a final decision to record.
+ */
+export function peekCotAgentId(
+	processSessionId: string,
+	deps: Pick<CotResolverDeps, 'getSessions'>
+): string | null {
+	const shape = classifyCotSessionId(processSessionId);
+	if (shape.kind === 'unknown') noteUnknownShape(processSessionId);
+	return agentOfShape(shape, deps.getSessions)?.id ?? null;
+}
+
+/**
  * Work out whom a process turn belongs to.
  *
  * Returns `null` for anything that is not an agent turn the person asked for,
@@ -263,25 +306,18 @@ export async function resolveCotTarget(
 	deps: CotResolverDeps
 ): Promise<CotTarget | null> {
 	const shape = classifyCotSessionId(processSessionId);
+	if (shape.kind === 'unknown') noteUnknownShape(processSessionId);
+
+	const agent = agentOfShape(shape, deps.getSessions);
+	if (!agent) return null;
 
 	switch (shape.kind) {
-		case 'internal':
-			return null;
-
-		case 'unknown':
-			noteUnknownShape(processSessionId);
-			return null;
-
-		case 'agent-turn': {
-			if (!deps.getSessions().some((session) => session.id === shape.agentId)) return null;
+		case 'agent-turn':
 			return shape.origin === 'interactive'
-				? { agentId: shape.agentId, origin: 'interactive', tabId: shape.tabId }
-				: { agentId: shape.agentId, origin: 'auto-run' };
-		}
+				? { agentId: agent.id, origin: 'interactive', tabId: shape.tabId }
+				: { agentId: agent.id, origin: 'auto-run' };
 
 		case 'group-chat-participant': {
-			const agent = findSessionForParticipantName(shape.participantName, deps.getSessions());
-			if (!agent) return null;
 			const participant = await deps.getGroupChatParticipant(
 				shape.groupChatId,
 				shape.participantName
@@ -289,5 +325,8 @@ export async function resolveCotTarget(
 			if (!participant || participant.agentId !== agent.toolType) return null;
 			return { agentId: agent.id, origin: 'group-chat' };
 		}
+
+		default:
+			return null;
 	}
 }

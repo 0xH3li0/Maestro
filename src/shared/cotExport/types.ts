@@ -301,8 +301,19 @@ export interface CotUsagePayload {
  */
 export interface CotTurnEndPayload {
 	kind: 'turn-end';
-	/** Exit code of the agent process. `null` when it ended without one. */
+	/**
+	 * Exit code of the agent process. `null` when Maestro saw none: the process
+	 * could not be started, or it was replaced before its exit was reported.
+	 */
 	exitCode: number | null;
+	/**
+	 * How Maestro judged the end of the turn, when it did: `completed`,
+	 * `completed-with-warning`, `interrupted` (someone stopped it), or
+	 * `crashed`. Read it together with `exitCode`: a turn that was stopped is
+	 * reported with exit code 0. A plain string, not the live union, for the
+	 * same reason as `querySource`.
+	 */
+	outcome?: string;
 	/** Milliseconds from the start of the turn to its end. */
 	durationMs: number;
 	/**
@@ -327,9 +338,12 @@ export interface CotCaptureGapPayload {
 	/**
 	 * Why records are missing. Known values: `write-failed:<error code>` (for
 	 * example `write-failed:ENOSPC`), `head-mismatch-on-start`,
-	 * `app-restarted-mid-turn`, and `unrecognized-block:<block type>` (the
-	 * provider sent a kind of content this version of Maestro cannot record).
-	 * Left open so a new cause does not need a format change.
+	 * `app-restarted-mid-turn`, `unrecognized-block:<block type>` (the provider
+	 * sent a kind of content this version of Maestro cannot record), and
+	 * `prompt-not-captured` or `prompt-not-captured:ssh-remote` (written right
+	 * after a `turn-start` whose `prompt` is empty because the prompt did not
+	 * reach Maestro's recorder, as on an SSH remote, where it travels inside
+	 * the SSH command). Left open so a new cause does not need a format change.
 	 */
 	reason: string;
 	/** How many records were lost, when Maestro knows the count. */

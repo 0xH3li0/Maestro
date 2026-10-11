@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
-import type { AgentOutputParser } from '../parsers';
+import type { AgentOutputParser, ParsedEvent } from '../parsers';
 import type { AgentError } from '../../shared/types';
 import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
@@ -224,6 +224,10 @@ export interface ProcessManagerEvents {
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;
+	/** One parsed output line, as the parser built it and before anything
+	 *  interprets it. Fires once per line, and only while something is
+	 *  subscribed (see `utils/parsedEvent.ts`). */
+	'parsed-event': (sessionId: string, event: ParsedEvent) => void;
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;

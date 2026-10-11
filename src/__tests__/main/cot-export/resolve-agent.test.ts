@@ -21,6 +21,7 @@ vi.mock('../../../main/utils/logger', () => ({ logger: loggerMock }));
 import {
 	__resetCotResolverLogForTests,
 	classifyCotSessionId,
+	peekCotAgentId,
 	resolveCotTarget,
 } from '../../../main/cot-export/resolve-agent';
 import type {
@@ -350,5 +351,89 @@ describe('resolveCotTarget', () => {
 			expect(loggerMock.warn).not.toHaveBeenCalled();
 			expect(loggerMock.error).not.toHaveBeenCalled();
 		});
+	});
+});
+
+describe('peekCotAgentId', () => {
+	const participantId = (name: string) => `group-chat-${CHAT}-participant-${name}-1767225600000`;
+
+	// The answer every shape gets from memory alone, beside the answer the full
+	// lookup gives. A peek may name an agent the full lookup then refuses. It
+	// must never name a DIFFERENT agent, and never miss one the lookup accepts.
+	const cases: Array<{ name: string; id: string; agentId: string | null }> = [
+		{ name: 'an interactive turn', id: `${AGENT}-ai-${TAB}`, agentId: AGENT },
+		{ name: 'a failover turn', id: `${AGENT}-ai-${TAB}-fp-1767225600000`, agentId: AGENT },
+		{ name: 'an older bare AI id', id: `${AGENT}-ai`, agentId: AGENT },
+		{ name: 'an Auto Run task', id: `${AGENT}-batch-1767225600000`, agentId: AGENT },
+		{ name: 'a group chat participant', id: participantId('Backend'), agentId: AGENT },
+		{
+			name: 'a participant by its safe-normalized name',
+			id: participantId('Review-Bot-Linux'),
+			agentId: OTHER_AGENT,
+		},
+		{ name: 'a participant no agent is named after', id: participantId('Ghost'), agentId: null },
+		{
+			name: 'a turn of an agent Maestro no longer has',
+			id: `deadbeef-0000-4000-8000-000000000000-ai-${TAB}`,
+			agentId: null,
+		},
+		{
+			name: 'a group chat moderator',
+			id: `group-chat-${CHAT}-moderator-1767225600000`,
+			agentId: null,
+		},
+		{ name: 'an exit synopsis', id: `${AGENT}-synopsis-1767225600000`, agentId: null },
+		{ name: 'a terminal tab', id: `${AGENT}-terminal-${TAB}`, agentId: null },
+		{ name: 'a tab naming run', id: `tab-naming-${UUID_TAIL}`, agentId: null },
+		{ name: 'a consult', id: `cross-agent-${UUID_TAIL}`, agentId: null },
+		{ name: 'a shape nobody listed', id: 'mystery-1767225600000', agentId: null },
+	];
+
+	it.each(cases)('answers $name', ({ id, agentId }) => {
+		expect(peekCotAgentId(id, makeDeps())).toBe(agentId);
+	});
+
+	it.each(cases)('never disagrees with the full lookup about $name', async ({ id, agentId }) => {
+		const target = await resolveCotTarget(
+			id,
+			makeDeps({
+				// The provider each named agent runs, so the full lookup accepts.
+				getGroupChatParticipant: (_chat, name) => ({
+					agentId: name === 'Backend' ? 'claude-code' : 'codex',
+				}),
+			})
+		);
+		expect(target?.agentId ?? null).toBe(agentId);
+	});
+
+	it('answers without the participant lookup, which needs a read', () => {
+		const getGroupChatParticipant = vi.fn();
+		const deps = makeDeps({ getGroupChatParticipant });
+		expect(peekCotAgentId(participantId('Backend'), deps)).toBe(AGENT);
+		expect(getGroupChatParticipant).not.toHaveBeenCalled();
+	});
+
+	it('can name an agent the full lookup then refuses', async () => {
+		// The participant was created on another provider than the agent that
+		// now carries its name, so the turn is not that agent's to record.
+		const deps = makeDeps({ getGroupChatParticipant: () => ({ agentId: 'codex' }) });
+		expect(peekCotAgentId(participantId('Backend'), deps)).toBe(AGENT);
+		await expect(resolveCotTarget(participantId('Backend'), deps)).resolves.toBeNull();
+	});
+
+	it('does not read the agents for a process that is not an agent turn', () => {
+		const getSessions = vi.fn(() => SESSIONS);
+		peekCotAgentId(`${AGENT}-synopsis-1767225600000`, { getSessions });
+		peekCotAgentId(`${AGENT}-terminal`, { getSessions });
+		peekCotAgentId(`group-chat-${CHAT}-moderator-1767225600000`, { getSessions });
+		peekCotAgentId('mystery-1767225600000', { getSessions });
+		expect(getSessions).not.toHaveBeenCalled();
+	});
+
+	it('writes the one debug line for a shape nobody listed, shared with the full lookup', async () => {
+		expect(peekCotAgentId('mystery-1767225600000', makeDeps())).toBeNull();
+		await resolveCotTarget('mystery-1767225600001', makeDeps());
+		expect(loggerMock.debug).toHaveBeenCalledTimes(1);
+		expect(loggerMock.debug.mock.calls[0][0]).toContain('mystery-<n>');
 	});
 });
