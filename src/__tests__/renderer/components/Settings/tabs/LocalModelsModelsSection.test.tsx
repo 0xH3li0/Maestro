@@ -12,6 +12,7 @@ import type { Theme } from '../../../../../renderer/types';
 import type { LocalModelListing } from '../../../../../main/local-models/service';
 import { LocalModelsModelsSection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsModelsSection';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { useLocalModels } from '../../../../../renderer/hooks/localModels';
 import {
 	BGE_SMALL_EN_ID,
 	LOCAL_MODEL_CATALOG,
@@ -53,6 +54,12 @@ function listing(id: string, installed: boolean): LocalModelListing {
 	};
 }
 
+/** The section takes the tab's hook state; this stands in for the tab. */
+function ModelsSection() {
+	const models = useLocalModels();
+	return <LocalModelsModelsSection theme={theme} models={models} />;
+}
+
 const api = () => window.maestro.localModels as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 describe('LocalModelsModelsSection', () => {
@@ -70,7 +77,7 @@ describe('LocalModelsModelsSection', () => {
 	});
 
 	it('groups the catalog by kind and shows the disk total', async () => {
-		render(<LocalModelsModelsSection theme={theme} />);
+		render(<ModelsSection />);
 		expect(await screen.findByTestId('local-models-kind-embedding')).toBeInTheDocument();
 		expect(screen.getByText('Text generation')).toBeInTheDocument();
 		expect(screen.getByText('Embeddings')).toBeInTheDocument();
@@ -84,7 +91,7 @@ describe('LocalModelsModelsSection', () => {
 	});
 
 	it('reads the listing on mount and downloads nothing until a click', async () => {
-		render(<LocalModelsModelsSection theme={theme} />);
+		render(<ModelsSection />);
 		await screen.findByTestId('local-models-kind-embedding');
 		expect(api().list).toHaveBeenCalled();
 		expect(api().download).not.toHaveBeenCalled();
@@ -96,7 +103,7 @@ describe('LocalModelsModelsSection', () => {
 	});
 
 	it('names the voice slot a voice model serves', async () => {
-		render(<LocalModelsModelsSection theme={theme} />);
+		render(<ModelsSection />);
 		expect(
 			await screen.findByTestId(`local-model-used-by-${PARAKEET_TDT_V2_ID}`)
 		).toHaveTextContent('Voice (speech-to-text)');
@@ -104,7 +111,7 @@ describe('LocalModelsModelsSection', () => {
 
 	it('removes an unassigned model without a warning', async () => {
 		useSettingsStore.setState({ localModelAssignments: {} });
-		render(<LocalModelsModelsSection theme={theme} />);
+		render(<ModelsSection />);
 		const name = getLocalModel(BGE_SMALL_EN_ID)!.displayName;
 		const row = (await screen.findByText(name)).closest('.rounded.border') as HTMLElement;
 		fireEvent.click(within(row).getByRole('button', { name: /^Remove/ }));
@@ -116,7 +123,7 @@ describe('LocalModelsModelsSection', () => {
 		useSettingsStore.setState({
 			localModelAssignments: { 'semantic-search': { type: 'local', modelId: BGE_SMALL_EN_ID } },
 		});
-		render(<LocalModelsModelsSection theme={theme} />);
+		render(<ModelsSection />);
 		expect(await screen.findByTestId(`local-model-used-by-${BGE_SMALL_EN_ID}`)).toHaveTextContent(
 			'Semantic search'
 		);

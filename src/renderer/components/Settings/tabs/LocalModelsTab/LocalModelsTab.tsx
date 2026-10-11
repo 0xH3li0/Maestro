@@ -9,11 +9,18 @@
  * It is a CORE tab, not an Encore Feature, and it starts empty: opening it
  * reads what is on disk and downloads nothing. Every download, detection, and test
  * is an explicit click inside a section.
+ *
+ * The tab owns the ONE `useLocalModels()` and `useLocalModelEndpoints()`
+ * instance and hands it to each section, so a download started in Models or a
+ * model list refreshed in Endpoints is what the Assignments picker offers, and
+ * an enabled endpoint is listed once rather than once per section.
  */
 
 import { HardDrive, ListChecks, Server } from 'lucide-react';
+import { useLocalModelEndpoints, useLocalModels } from '../../../../hooks/localModels';
 import type { Theme } from '../../../../types';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
+import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 
@@ -22,6 +29,8 @@ export interface LocalModelsTabProps {
 }
 
 export function LocalModelsTab({ theme }: LocalModelsTabProps) {
+	const models = useLocalModels();
+	const endpoints = useLocalModelEndpoints();
 	return (
 		<div className="space-y-5" data-testid="local-models-tab">
 			<div data-setting-id="local-models-models">
@@ -31,7 +40,7 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 				>
 					Models
 				</SettingsSectionHeading>
-				<LocalModelsModelsSection theme={theme} />
+				<LocalModelsModelsSection theme={theme} models={models} />
 			</div>
 
 			<div data-setting-id="local-models-endpoints">
@@ -41,7 +50,7 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 				>
 					Endpoints
 				</SettingsSectionHeading>
-				<LocalModelsEndpointsSection theme={theme} />
+				<LocalModelsEndpointsSection theme={theme} state={endpoints} />
 			</div>
 
 			<div data-setting-id="local-models-assignments">
@@ -51,6 +60,7 @@ export function LocalModelsTab({ theme }: LocalModelsTabProps) {
 				>
 					Assignments
 				</SettingsSectionHeading>
+				<LocalModelsAssignmentsSection theme={theme} models={models} endpoints={endpoints} />
 			</div>
 		</div>
 	);

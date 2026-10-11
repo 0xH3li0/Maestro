@@ -455,3 +455,47 @@ export function tasksUsingEndpoint(
 		return assignment.type === 'endpoint' && assignment.endpointId === endpointId;
 	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
 }
+
+/**
+ * The one-string spelling of an assignment: `off`, `utility-agent`,
+ * `local:<model-id>`, or `endpoint:<endpoint-id>:<model>`. The settings picker
+ * uses it as an option value and `maestro-cli models assign` takes it as an
+ * argument, so the two cannot disagree about what a choice means. Endpoint ids
+ * are UUIDs and never contain a colon, so everything after the second colon is
+ * the model, which keeps an Ollama tag (`qwen3:latest`) intact.
+ */
+export function formatLocalModelAssignmentSpec(assignment: LocalModelAssignment): string {
+	switch (assignment.type) {
+		case 'off':
+		case 'utility-agent':
+			return assignment.type;
+		case 'local':
+			return `local:${assignment.modelId}`;
+		case 'endpoint':
+			return `endpoint:${assignment.endpointId}:${assignment.model}`;
+	}
+}
+
+/**
+ * Read a spelling written by {@link formatLocalModelAssignmentSpec}, or `null`
+ * when it is not one. Only the SHAPE is checked; whether it fits a task is
+ * {@link localModelAssignmentProblem}.
+ */
+export function parseLocalModelAssignmentSpec(spec: string): LocalModelAssignment | null {
+	const trimmed = spec.trim();
+	if (trimmed === 'off') return OFF_ASSIGNMENT;
+	if (trimmed === 'utility-agent') return UTILITY_AGENT_ASSIGNMENT;
+	if (trimmed.startsWith('local:')) {
+		const modelId = nonEmptyString(trimmed.slice('local:'.length));
+		return modelId ? { type: 'local', modelId } : null;
+	}
+	if (trimmed.startsWith('endpoint:')) {
+		const rest = trimmed.slice('endpoint:'.length);
+		const separator = rest.indexOf(':');
+		if (separator < 0) return null;
+		const endpointId = nonEmptyString(rest.slice(0, separator));
+		const model = nonEmptyString(rest.slice(separator + 1));
+		return endpointId && model ? { type: 'endpoint', endpointId, model } : null;
+	}
+	return null;
+}

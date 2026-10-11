@@ -1,0 +1,417 @@
+/**
+ * LocalModelsAssignmentsSection - the Assignments section of the Local Models
+ * tab: one row per task in `LOCAL_MODEL_TASKS`, each with a source picker and
+ * the task's readiness.
+ *
+ * The Utility Agent controls sit on top because they DEFINE one of the
+ * picker's choices: a task assigned "Utility Agent" runs on whatever is set
+ * there.
+ *
+ * Nothing about readiness is decided here. Every verdict comes from the main
+ * process (`resolveTaskReadiness`, through `useLocalModelTaskReadiness`), the
+ * same answer `maestro-cli models status` prints. This surface only adds a
+ * button for the recoveries it can perform in place: download the assigned
+ * model, enable the assigned endpoint, or check a server again.
+ *
+ * A choice is validated with `localModelAssignmentProblem` before it is saved
+ * and written through `withLocalModelAssignment`, so the stored record stays
+ * sparse and cannot hold a pick the router would refuse.
+ */
+
+import { useCallback, useMemo, useState } from 'react';
+import { AlertTriangle, Download, Loader2, Power, RefreshCw } from 'lucide-react';
+
+import {
+	LOCAL_MODEL_TASK_IDS,
+	LOCAL_MODEL_TASKS,
+	formatLocalModelAssignmentSpec,
+	localModelAssignmentProblem,
+	parseLocalModelAssignmentSpec,
+	resolveLocalModelAssignment,
+	withLocalModelAssignment,
+	type LocalModelAssignment,
+	type LocalModelTaskDefinition,
+	type LocalModelTaskId,
+} from '../../../../../shared/local-models/tasks';
+import type { LocalModelTaskReadiness } from '../../../../../shared/local-models/task-readiness';
+import {
+	useLocalModelTaskReadiness,
+	type LocalModelEndpointsState,
+	type LocalModelsState,
+} from '../../../../hooks/localModels';
+import { useSettingsStore } from '../../../../stores/settingsStore';
+import type { Theme } from '../../../../types';
+import { SectionCard } from '../DisplayTab/components/SectionCard';
+import { buildAssignmentOptionGroups } from './assignmentOptions';
+import { downloadPercent, isActive } from './LocalModelRow';
+import { UtilityAgentSettings } from './UtilityAgentSettings';
+
+export interface LocalModelsAssignmentsSectionProps {
+	theme: Theme;
+	/** The tab's one `useLocalModels()` instance. */
+	models: LocalModelsState;
+	/** The tab's one `useLocalModelEndpoints()` instance. */
+	endpoints: LocalModelEndpointsState;
+}
+
+export function LocalModelsAssignmentsSection({
+	theme,
+	models,
+	endpoints,
+}: LocalModelsAssignmentsSectionProps) {
+	const assignments = useSettingsStore((s) => s.localModelAssignments);
+	const setLocalModelAssignments = useSettingsStore((s) => s.setLocalModelAssignments);
+	// The last refused pick per task, shown under its row until the next pick.
+	const [problems, setProblems] = useState<Partial<Record<LocalModelTaskId, string>>>({});
+
+	// Everything a verdict depends on that the renderer can see. A change to any
+	// of it asks main again; per-chunk download progress deliberately is not in
+	// here, only the install status a finished download changes.
+	const revision = useMemo(
+		() =>
+			JSON.stringify([
+				assignments,
+				endpoints.endpoints,
+				models.listings.map((listing) => [listing.entry.id, listing.status.status]),
+			]),
+		[assignments, endpoints.endpoints, models.listings]
+	);
+	const readiness = useLocalModelTaskReadiness(revision);
+
+	const choose = useCallback(
+		(taskId: LocalModelTaskId, spec: string) => {
+			const assignment = parseLocalModelAssignmentSpec(spec);
+			const problem = assignment
+				? localModelAssignmentProblem(taskId, assignment)
+				: `"${spec}" is not a source.`;
+			setProblems((prev) => {
+				const next = { ...prev };
+				if (problem) next[taskId] = problem;
+				else delete next[taskId];
+				return next;
+			});
+			if (problem || !assignment) return;
+			setLocalModelAssignments(withLocalModelAssignment(assignments, taskId, assignment));
+		},
+		[assignments, setLocalModelAssignments]
+	);
+
+	return (
+		<div className="select-none space-y-3" data-testid="local-models-assignments-section">
+			<UtilityAgentSettings theme={theme} />
+			<SectionCard theme={theme} className="space-y-4">
+				{readiness.error && (
+					<div
+						className="flex items-start gap-1.5 text-xs select-text"
+						style={{ color: theme.colors.error }}
+					>
+						<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+						<span>Could not check task readiness: {readiness.error}</span>
+					</div>
+				)}
+				{LOCAL_MODEL_TASK_IDS.map((taskId) => (
+					<TaskAssignmentRow
+						key={taskId}
+						theme={theme}
+						task={LOCAL_MODEL_TASKS[taskId]}
+						assignment={resolveLocalModelAssignment(assignments, taskId)}
+						models={models}
+						endpoints={endpoints}
+						readiness={readiness.readiness[taskId]}
+						checking={readiness.loading}
+						problem={problems[taskId]}
+						onChoose={(spec) => choose(taskId, spec)}
+						onRecheck={readiness.refresh}
+					/>
+				))}
+			</SectionCard>
+		</div>
+	);
+}
+
+interface TaskAssignmentRowProps {
+	theme: Theme;
+	task: LocalModelTaskDefinition;
+	assignment: LocalModelAssignment;
+	models: LocalModelsState;
+	endpoints: LocalModelEndpointsState;
+	readiness: LocalModelTaskReadiness | undefined;
+	checking: boolean;
+	problem: string | undefined;
+	onChoose: (spec: string) => void;
+	onRecheck: () => Promise<void>;
+}
+
+function TaskAssignmentRow({
+	theme,
+	task,
+	assignment,
+	models,
+	endpoints,
+	readiness,
+	checking,
+	problem,
+	onChoose,
+	onRecheck,
+}: TaskAssignmentRowProps) {
+	const groups = useMemo(
+		() =>
+			buildAssignmentOptionGroups(task, assignment, {
+				listings: models.listings,
+				endpoints: endpoints.endpoints,
+				endpointModels: endpoints.models,
+			}),
+		[task, assignment, models.listings, endpoints.endpoints, endpoints.models]
+	);
+	const selectId = `local-models-task-source-${task.id}`;
+
+	return (
+		<div className="space-y-1.5" data-testid={`local-models-task-${task.id}`}>
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0">
+					<label
+						htmlFor={selectId}
+						className="text-sm font-medium block"
+						style={{ color: theme.colors.textMain }}
+					>
+						{task.label}
+					</label>
+					<p className="text-xs opacity-70 mt-0.5">{task.description}</p>
+				</div>
+				<select
+					id={selectId}
+					value={formatLocalModelAssignmentSpec(assignment)}
+					onChange={(e) => onChoose(e.target.value)}
+					className="w-56 flex-shrink-0 p-1.5 rounded border bg-transparent outline-none text-xs"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				>
+					{groups.map((group) =>
+						group.label === null ? (
+							group.options.map((option) => (
+								<option key={option.value} value={option.value}>
+									{option.label}
+								</option>
+							))
+						) : (
+							<optgroup key={group.label} label={group.label}>
+								{group.options.map((option) => (
+									<option key={option.value} value={option.value}>
+										{option.label}
+									</option>
+								))}
+							</optgroup>
+						)
+					)}
+				</select>
+			</div>
+			{problem && (
+				<p className="text-xs select-text" style={{ color: theme.colors.error }}>
+					{problem}
+				</p>
+			)}
+			<TaskReadinessLine
+				theme={theme}
+				readiness={readiness}
+				checking={checking}
+				models={models}
+				endpoints={endpoints}
+				onRecheck={onRecheck}
+			/>
+		</div>
+	);
+}
+
+interface TaskReadinessLineProps {
+	theme: Theme;
+	readiness: LocalModelTaskReadiness | undefined;
+	checking: boolean;
+	models: LocalModelsState;
+	endpoints: LocalModelEndpointsState;
+	onRecheck: () => Promise<void>;
+}
+
+function TaskReadinessLine({
+	theme,
+	readiness,
+	checking,
+	models,
+	endpoints,
+	onRecheck,
+}: TaskReadinessLineProps) {
+	if (!readiness) {
+		return (
+			<div className="text-xs opacity-70" data-testid="local-models-task-readiness">
+				{checking ? 'Checking...' : 'Readiness unknown.'}
+			</div>
+		);
+	}
+
+	const dotColor =
+		readiness.state === 'ready'
+			? theme.colors.success
+			: readiness.state === 'utility-agent'
+				? theme.colors.accent
+				: readiness.state === 'unavailable'
+					? theme.colors.warning
+					: theme.colors.border;
+	const headline =
+		readiness.state === 'ready'
+			? 'Ready'
+			: readiness.state === 'utility-agent'
+				? 'Utility Agent'
+				: readiness.state === 'off'
+					? 'Off'
+					: 'Unavailable';
+
+	return (
+		<div
+			className="space-y-1"
+			data-testid="local-models-task-readiness"
+			data-readiness-state={readiness.state}
+		>
+			<div className="flex items-start gap-1.5 text-xs">
+				<span
+					className="w-2 h-2 rounded-full flex-shrink-0 mt-1"
+					style={{ backgroundColor: dotColor }}
+					aria-hidden
+				/>
+				<span
+					className="font-medium flex-shrink-0"
+					style={{
+						color: readiness.state === 'unavailable' ? theme.colors.warning : theme.colors.textMain,
+					}}
+				>
+					{headline}
+				</span>
+				{readiness.state !== 'off' && (
+					<span className="opacity-70 select-text">{readiness.detail}</span>
+				)}
+			</div>
+			{readiness.state === 'unavailable' && (
+				<div className="flex flex-wrap items-center gap-2 pl-3.5">
+					{readiness.suggestedAction && (
+						<span className="text-xs opacity-70 select-text">{readiness.suggestedAction}</span>
+					)}
+					<RecoveryButton
+						theme={theme}
+						readiness={readiness}
+						models={models}
+						endpoints={endpoints}
+						onRecheck={onRecheck}
+					/>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** The reasons a fresh look at the server can clear, once the user fixed it outside Maestro. */
+const RECHECKABLE_ENDPOINT_REASONS = new Set<LocalModelTaskReadiness['reason']>([
+	'endpoint-unreachable',
+	'endpoint-rejected',
+	'endpoint-key-missing',
+	'endpoint-model-missing',
+]);
+
+interface RecoveryButtonProps {
+	theme: Theme;
+	readiness: LocalModelTaskReadiness;
+	models: LocalModelsState;
+	endpoints: LocalModelEndpointsState;
+	onRecheck: () => Promise<void>;
+}
+
+/**
+ * The one in-place recovery for an unavailable task, or nothing when the fix is
+ * a different pick (an unknown model, a wrong kind, an unsupported need) or
+ * lives elsewhere (a native runtime). The suggested action beside it already
+ * says what to do in those cases.
+ */
+function RecoveryButton({ theme, readiness, models, endpoints, onRecheck }: RecoveryButtonProps) {
+	const [rechecking, setRechecking] = useState(false);
+	const { assignment, reason } = readiness;
+
+	const buttonClass = 'px-2 py-1 rounded border text-xs flex items-center gap-1.5';
+	const buttonStyle = { borderColor: theme.colors.border, color: theme.colors.textMain };
+
+	if (
+		assignment.type === 'local' &&
+		(reason === 'model-not-installed' || reason === 'model-corrupt')
+	) {
+		const modelId = assignment.modelId;
+		const listing = models.listings.find((candidate) => candidate.entry.id === modelId);
+		const name = listing?.entry.displayName ?? modelId;
+		const progress = models.progress[modelId];
+		if (isActive(progress)) {
+			return (
+				<span className="text-xs flex items-center gap-1.5 opacity-70">
+					<Loader2 className="w-3 h-3 animate-spin" />
+					Downloading {name} ({downloadPercent(progress)}%)
+				</span>
+			);
+		}
+		const paused = progress?.phase === 'paused';
+		return (
+			<button
+				type="button"
+				className={buttonClass}
+				style={buttonStyle}
+				onClick={() => void (paused ? models.resume(modelId) : models.download(modelId))}
+				data-testid="local-models-task-recovery"
+			>
+				<Download className="w-3 h-3" />
+				{paused
+					? `Resume ${name}`
+					: reason === 'model-corrupt'
+						? `Re-download ${name}`
+						: `Download ${name}`}
+			</button>
+		);
+	}
+
+	if (assignment.type === 'endpoint' && reason === 'endpoint-disabled') {
+		const endpoint = endpoints.endpoints.find(
+			(candidate) => candidate.id === assignment.endpointId
+		);
+		if (!endpoint) return null;
+		return (
+			<button
+				type="button"
+				className={buttonClass}
+				style={buttonStyle}
+				onClick={() => endpoints.setEnabled(endpoint.id, true)}
+				data-testid="local-models-task-recovery"
+			>
+				<Power className="w-3 h-3" />
+				Enable {endpoint.name}
+			</button>
+		);
+	}
+
+	if (assignment.type === 'endpoint' && RECHECKABLE_ENDPOINT_REASONS.has(reason)) {
+		const recheck = async () => {
+			setRechecking(true);
+			try {
+				await endpoints.refreshModels(assignment.endpointId);
+				await onRecheck();
+			} finally {
+				setRechecking(false);
+			}
+		};
+		return (
+			<button
+				type="button"
+				className={buttonClass}
+				style={buttonStyle}
+				onClick={() => void recheck()}
+				disabled={rechecking}
+				data-testid="local-models-task-recovery"
+			>
+				<RefreshCw className={`w-3 h-3${rechecking ? ' animate-spin' : ''}`} />
+				Check again
+			</button>
+		);
+	}
+
+	return null;
+}

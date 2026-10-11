@@ -1,8 +1,8 @@
 /**
  * Local Models tab searchable-settings entries.
  *
- * One entry per section of `LocalModelsTab`; each `id` matches the
- * `data-setting-id` on that section's root.
+ * One entry per section of `LocalModelsTab`, plus the Utility Agent controls
+ * inside Assignments; each `id` matches a rendered `data-setting-id`.
  */
 
 import type { SearchableSetting } from './searchableSettings';
@@ -78,6 +78,28 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'tab naming',
 			'semantic search',
 			'prompt injection',
+		],
+	},
+	{
+		id: 'local-models-utility-agent',
+		tab: TAB,
+		tabLabel: TAB_LABEL,
+		label: 'Utility Agent',
+		description:
+			'Route auxiliary tasks (tab naming, context grooming) to a cheaper or faster agent with an optional model override',
+		keywords: [
+			'utility',
+			'auxiliary',
+			'agent',
+			'model',
+			'tab naming',
+			'context grooming',
+			'grooming',
+			'cheaper',
+			'faster',
+			'background',
+			'haiku',
+			'override',
 		],
 	},
 ];

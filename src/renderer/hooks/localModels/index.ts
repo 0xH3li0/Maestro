@@ -22,3 +22,5 @@ export type {
 	EndpointTestVerdict,
 	LocalModelEndpointsState,
 } from './useLocalModelEndpoints';
+export { useLocalModelTaskReadiness } from './useLocalModelTaskReadiness';
+export type { LocalModelTaskReadinessState } from './useLocalModelTaskReadiness';

@@ -1,40 +1,40 @@
 import { useEffect, useState } from 'react';
 import { Bot } from 'lucide-react';
-import type { Theme } from '../../../../../types';
-import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { useSettingsStore } from '../../../../stores/settingsStore';
+import type { Theme } from '../../../../types';
+import { SectionCard } from '../DisplayTab/components/SectionCard';
 
-interface UtilityAgentSectionProps {
+export interface UtilityAgentSettingsProps {
 	theme: Theme;
-	isOpen: boolean;
-	utilityAgentId: string | null;
-	setUtilityAgentId: (value: string | null) => void;
-	utilityModelId: string | null;
-	setUtilityModelId: (value: string | null) => void;
 }
 
 /**
- * Utility Agent settings.
+ * The Utility Agent: what the "Utility Agent" choice in the Assignments picker
+ * means.
  *
- * Lets the user route auxiliary/background tasks (tab naming, context grooming)
- * to a cheaper or faster agent instead of the tab's own session agent, with an
- * optional model override. When the agent is left as "Default", behavior is
- * unchanged and the session agent is used (fully backward compatible).
+ * Tasks that already ran through an agent before Local Models (tab naming,
+ * summaries) keep doing so when assigned `utility-agent`, and this is the agent
+ * they run on: a cheaper or faster agent than the tab's own, with an optional
+ * model override. Left as Default, each tab's own agent is used, exactly as
+ * before. It lives beside the assignments rather than in General so the two
+ * halves of "which model names my tabs" are read in one place.
+ *
+ * The stored values are still `utilityAgentId` / `utilityModelId`, so moving
+ * the control changed nothing about what runs.
  */
-export function UtilityAgentSection({
-	theme,
-	isOpen,
-	utilityAgentId,
-	setUtilityAgentId,
-	utilityModelId,
-	setUtilityModelId,
-}: UtilityAgentSectionProps) {
+export function UtilityAgentSettings({ theme }: UtilityAgentSettingsProps) {
+	const utilityAgentId = useSettingsStore((s) => s.utilityAgentId);
+	const setUtilityAgentId = useSettingsStore((s) => s.setUtilityAgentId);
+	const utilityModelId = useSettingsStore((s) => s.utilityModelId);
+	const setUtilityModelId = useSettingsStore((s) => s.setUtilityModelId);
 	const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
 	const [agentsLoaded, setAgentsLoaded] = useState(false);
 	const [detectionFailed, setDetectionFailed] = useState(false);
 
-	// Detect available agents for the dropdown, lazily when the tab opens.
+	// Detect available agents for the dropdown. The tab mounts only while it is
+	// the one on screen, so this runs when the user opens it, not at app start.
 	useEffect(() => {
-		if (!isOpen || agentsLoaded) return;
+		if (agentsLoaded) return;
 		let cancelled = false;
 		window.maestro.agents
 			.detect()
@@ -57,7 +57,7 @@ export function UtilityAgentSection({
 		return () => {
 			cancelled = true;
 		};
-	}, [isOpen, agentsLoaded]);
+	}, [agentsLoaded]);
 
 	// A persisted id that matches no <option> makes the select render as its
 	// FIRST option, so the UI would read "Default" while the stored agent is what
@@ -71,18 +71,22 @@ export function UtilityAgentSection({
 	const unmatchedAgentId = missingAgentId ?? unverifiedAgentId;
 
 	return (
-		<div data-setting-id="general-utility-agent">
-			<SettingsSectionHeading icon={Bot}>Utility Agent</SettingsSectionHeading>
-			<div
-				className="p-3 rounded border space-y-3"
-				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-			>
+		<div data-setting-id="local-models-utility-agent">
+			<SectionCard theme={theme}>
+				<div
+					className="flex items-center gap-2 font-medium"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Bot className="w-4 h-4" />
+					Utility Agent
+				</div>
 				{/* Opacity alone, no textDim override: stacking the two multiplies the
 				    dimming and drops contrast below 3:1 in most themes
 				    (CLAUDE-SETTINGS.md rule 1). Descriptions inherit textMain. */}
 				<div className="text-xs opacity-50">
-					Route auxiliary tasks (tab naming, context grooming) to a cheaper or faster agent instead
-					of the session agent. Leave as Default to keep using each tab's own agent.
+					What the Utility Agent choice below runs on. Route auxiliary tasks (tab naming, context
+					grooming) to a cheaper or faster agent instead of the session agent, or leave as Default
+					to keep using each tab's own agent.
 				</div>
 				<div>
 					<label
@@ -150,7 +154,7 @@ export function UtilityAgentSection({
 						/>
 					</div>
 				)}
-			</div>
+			</SectionCard>
 		</div>
 	);
 }

@@ -26,7 +26,7 @@ import {
 import { tasksNeedingKind, tasksUsingLocalModel } from '../../../../../shared/local-models/tasks';
 import { voiceModelUsageLabel } from '../../../../../shared/acappella/voice-models';
 import { formatSize } from '../../../../../shared/formatters';
-import { useLocalModels } from '../../../../hooks/localModels';
+import type { LocalModelsState } from '../../../../hooks/localModels';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Theme } from '../../../../types';
 import { StatCardGrid, type StatCardDatum } from '../../../widgets';
@@ -36,10 +36,11 @@ import { RemoveInUseWarning } from './RemoveInUseWarning';
 
 export interface LocalModelsModelsSectionProps {
 	theme: Theme;
+	/** The tab's one `useLocalModels()` instance, shared with Assignments. */
+	models: LocalModelsState;
 }
 
-export function LocalModelsModelsSection({ theme }: LocalModelsModelsSectionProps) {
-	const models = useLocalModels();
+export function LocalModelsModelsSection({ theme, models }: LocalModelsModelsSectionProps) {
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
 	// The model whose removal is waiting on the in-use warning, if any.
 	const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);

@@ -15,6 +15,7 @@ import type { Theme } from '../../../../../renderer/types';
 import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
 import { LocalModelsEndpointsSection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsEndpointsSection';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { useLocalModelEndpoints } from '../../../../../renderer/hooks/localModels';
 
 const theme = {
 	colors: {
@@ -40,6 +41,12 @@ const ollama: LocalModelEndpoint = {
 	enabled: true,
 };
 
+/** The section takes the tab's hook state; this stands in for the tab. */
+function EndpointsSection() {
+	const state = useLocalModelEndpoints();
+	return <LocalModelsEndpointsSection theme={theme} state={state} />;
+}
+
 const endpointsApi = () =>
 	window.maestro.localModels.endpoints as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -52,7 +59,7 @@ describe('LocalModelsEndpointsSection', () => {
 	});
 
 	it('shows the empty state and probes nothing on mount', () => {
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 		expect(screen.getByTestId('local-models-endpoints-empty')).toBeInTheDocument();
 		expect(endpointsApi().detect).not.toHaveBeenCalled();
 		expect(endpointsApi().listModels).not.toHaveBeenCalled();
@@ -69,7 +76,7 @@ describe('LocalModelsEndpointsSection', () => {
 				{ ...ollama, id: 'ep-off', name: 'Off', baseUrl: 'http://127.0.0.1:1234', enabled: false },
 			],
 		});
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 		expect(await screen.findByText('llama3.2:3b')).toBeInTheDocument();
 		expect(endpointsApi().listModels).toHaveBeenCalledTimes(1);
 		expect(endpointsApi().listModels).toHaveBeenCalledWith(ollama);
@@ -85,7 +92,7 @@ describe('LocalModelsEndpointsSection', () => {
 				models: [{ id: 'qwen3:1.7b' }],
 			},
 		]);
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 
 		fireEvent.click(screen.getByTestId('local-models-detect-endpoints'));
 		expect(await screen.findByTestId('local-models-detected-ollama')).toHaveTextContent('1 model');
@@ -108,13 +115,13 @@ describe('LocalModelsEndpointsSection', () => {
 	});
 
 	it('says so when detection finds nothing new', async () => {
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 		fireEvent.click(screen.getByTestId('local-models-detect-endpoints'));
 		expect(await screen.findByTestId('local-models-detect-none')).toBeInTheDocument();
 	});
 
 	it('adds an endpoint from the form, refusing an invalid URL first', async () => {
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 		fireEvent.click(screen.getByTestId('local-models-add-endpoint'));
 
 		const url = screen.getByTestId('local-model-endpoint-url').querySelector('input')!;
@@ -141,7 +148,7 @@ describe('LocalModelsEndpointsSection', () => {
 			error: { kind: 'network', message: 'Ollama is not running at http://127.0.0.1:11434.' },
 		});
 		useSettingsStore.setState({ localModelEndpoints: [ollama] });
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 
 		fireEvent.click(screen.getByTestId(`local-model-endpoint-test-${ollama.id}`));
 		expect(
@@ -153,7 +160,7 @@ describe('LocalModelsEndpointsSection', () => {
 	it('shows latency when a Test passes', async () => {
 		endpointsApi().test.mockResolvedValue({ ok: true, model: 'llama3.2:3b', latencyMs: 412.4 });
 		useSettingsStore.setState({ localModelEndpoints: [ollama] });
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 
 		fireEvent.click(screen.getByTestId(`local-model-endpoint-test-${ollama.id}`));
 		expect(
@@ -168,7 +175,7 @@ describe('LocalModelsEndpointsSection', () => {
 				'tab-naming': { type: 'endpoint', endpointId: ollama.id, model: 'llama3.2:3b' },
 			},
 		});
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 
 		fireEvent.click(screen.getByTestId(`local-model-endpoint-remove-${ollama.id}`));
 		const warning = await screen.findByTestId('local-model-endpoint-remove-warning');
@@ -181,7 +188,7 @@ describe('LocalModelsEndpointsSection', () => {
 
 	it('removes an unused endpoint at once', () => {
 		useSettingsStore.setState({ localModelEndpoints: [ollama] });
-		render(<LocalModelsEndpointsSection theme={theme} />);
+		render(<EndpointsSection />);
 		fireEvent.click(screen.getByTestId(`local-model-endpoint-remove-${ollama.id}`));
 		expect(useSettingsStore.getState().localModelEndpoints).toEqual([]);
 	});

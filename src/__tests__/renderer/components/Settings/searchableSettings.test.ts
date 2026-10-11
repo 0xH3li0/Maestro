@@ -246,6 +246,8 @@ describe('searchableSettings', () => {
 			['detect local servers', 'local-models-endpoints'],
 			['assignments', 'local-models-assignments'],
 			['utility agent', 'local-models-assignments'],
+			['utility agent', 'local-models-utility-agent'],
+			['context grooming', 'local-models-utility-agent'],
 		])('should find "%s" and return id %s', (query, expectedId) => {
 			const results = searchSettings(query);
 			expect(

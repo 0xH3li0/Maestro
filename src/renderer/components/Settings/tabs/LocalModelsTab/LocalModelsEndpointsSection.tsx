@@ -24,7 +24,7 @@ import {
 } from '../../../../../shared/local-models/endpoints';
 import { tasksUsingEndpoint } from '../../../../../shared/local-models/tasks';
 import { formatSize } from '../../../../../shared/formatters';
-import { useLocalModelEndpoints, type EndpointModelsState } from '../../../../hooks/localModels';
+import type { EndpointModelsState, LocalModelEndpointsState } from '../../../../hooks/localModels';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Theme } from '../../../../types';
 import { generateId } from '../../../../utils/ids';
@@ -38,13 +38,14 @@ import { RemoveInUseWarning } from './RemoveInUseWarning';
 
 export interface LocalModelsEndpointsSectionProps {
 	theme: Theme;
+	/** The tab's one `useLocalModelEndpoints()` instance, shared with Assignments. */
+	state: LocalModelEndpointsState;
 }
 
 /** Which form is open: the add form, or the edit form of one endpoint. */
 type OpenForm = { mode: 'add' } | { mode: 'edit'; id: string } | null;
 
-export function LocalModelsEndpointsSection({ theme }: LocalModelsEndpointsSectionProps) {
-	const state = useLocalModelEndpoints();
+export function LocalModelsEndpointsSection({ theme, state }: LocalModelsEndpointsSectionProps) {
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
 	const [form, setForm] = useState<OpenForm>(null);
 	const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null);

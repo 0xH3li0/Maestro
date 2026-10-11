@@ -731,6 +731,7 @@ const mockMaestro = {
 			listModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
 			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
 		},
+		taskReadiness: vi.fn().mockResolvedValue([]),
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),

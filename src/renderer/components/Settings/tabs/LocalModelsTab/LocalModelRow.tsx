@@ -50,8 +50,15 @@ export interface LocalModelRowProps {
 	usedBy?: readonly string[];
 }
 
-/** A download is "in flight" in every phase except the terminal ones. */
-function isActive(progress?: DownloadProgress): boolean {
+/** A download is "in flight" while queued, transferring, or verifying (not paused, not finished). */
+/** Whole-model download progress as 0-100; 0 before the total is known. */
+export function downloadPercent(progress?: DownloadProgress): number {
+	return progress && progress.bytesTotal > 0
+		? Math.min(100, Math.round((progress.bytesReceived / progress.bytesTotal) * 100))
+		: 0;
+}
+
+export function isActive(progress?: DownloadProgress): boolean {
 	if (!progress) return false;
 	return (
 		progress.phase === 'queued' ||
@@ -77,10 +84,7 @@ function LocalModelRowInner({
 	const { entry, status, installPaths } = listing;
 	const active = isActive(progress);
 	const paused = progress?.phase === 'paused';
-	const percent =
-		progress && progress.bytesTotal > 0
-			? Math.min(100, Math.round((progress.bytesReceived / progress.bytesTotal) * 100))
-			: 0;
+	const percent = downloadPercent(progress);
 
 	return (
 		<div

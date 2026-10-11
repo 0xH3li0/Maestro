@@ -11,6 +11,8 @@ import {
 	isSameLocalModelAssignment,
 	localModelAssignmentProblem,
 	endpointServesNeed,
+	formatLocalModelAssignmentSpec,
+	parseLocalModelAssignmentSpec,
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
 	tasksNeedingKind,
@@ -350,5 +352,34 @@ describe('tasksUsingEndpoint', () => {
 		expect(tasksUsingEndpoint({ 'tab-naming': { type: 'local', modelId: 'e1' } }, 'e1')).toEqual(
 			[]
 		);
+	});
+});
+
+describe('assignment spec', () => {
+	it('round-trips every assignment type', () => {
+		for (const assignment of [
+			{ type: 'off' },
+			{ type: 'utility-agent' },
+			{ type: 'local', modelId: BGE_SMALL_EN_ID },
+			{ type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' },
+		] as const) {
+			expect(parseLocalModelAssignmentSpec(formatLocalModelAssignmentSpec(assignment))).toEqual(
+				assignment
+			);
+		}
+	});
+
+	it('keeps an Ollama tag that contains a colon in the model name', () => {
+		expect(parseLocalModelAssignmentSpec('endpoint:ep-1:qwen3:latest')).toEqual({
+			type: 'endpoint',
+			endpointId: 'ep-1',
+			model: 'qwen3:latest',
+		});
+	});
+
+	it('refuses spellings that are not a source', () => {
+		for (const spec of ['', 'on', 'local:', 'endpoint:ep-1', 'endpoint::m', 'endpoint:ep-1:']) {
+			expect(parseLocalModelAssignmentSpec(spec)).toBeNull();
+		}
 	});
 });
