@@ -37,7 +37,7 @@ import {
 } from '../../../shared/local-models/native-runtimes';
 import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import type { MicPermission } from '../../../shared/acappella/protocol';
-import { runSelfTest, type RuntimeSelfTestReport } from '../../acappella/runtime/runtime-selftest';
+import { runVoiceSelfTest, type VoiceSelfTestReport } from '../../acappella/voice-self-test';
 
 export interface VoiceRuntimeInfo {
 	/** The Encore Feature. When false, none of the rest is expected to work. */
@@ -58,7 +58,7 @@ export interface VoiceRuntimeInfo {
 		requiresElectronRebuild: boolean;
 	}>;
 	/** Null when the self-test did not run. `selfTestSkipped` or `selfTestError` says why. */
-	selfTest: RuntimeSelfTestReport | null;
+	selfTest: VoiceSelfTestReport | null;
 	selfTestError?: string;
 	/**
 	 * Why the self-test was deliberately not run. Distinct from `selfTestError`,
@@ -82,7 +82,7 @@ export async function collectVoiceRuntime(settingsStore: Store<any>): Promise<Vo
 
 	const enabled = isACappellaEnabled(settingsStore);
 
-	let selfTest: RuntimeSelfTestReport | null = null;
+	let selfTest: VoiceSelfTestReport | null = null;
 	let selfTestError: string | undefined;
 	let selfTestSkipped: string | undefined;
 	if (!enabled) {
@@ -90,9 +90,9 @@ export async function collectVoiceRuntime(settingsStore: Store<any>): Promise<Vo
 			'A Cappella is switched off in Encore Features, so no native runtime was loaded.';
 	} else {
 		try {
-			selfTest = await runSelfTest();
+			selfTest = await runVoiceSelfTest();
 		} catch (error) {
-			// runSelfTest is written not to throw, so this is belt and braces: a
+			// runVoiceSelfTest is written not to throw, so this is belt and braces: a
 			// diagnostic that takes the whole debug package down with it would remove
 			// the one artifact the user was trying to produce.
 			selfTestError = error instanceof Error ? error.message : String(error);

@@ -25,7 +25,7 @@ vi.mock('electron', () => ({
 	app: { getPath: () => tempRoot.dir },
 }));
 
-vi.mock('../../../../main/utils/logger', () => ({
+vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
@@ -42,9 +42,9 @@ const fixture = vi.hoisted(() => {
 	};
 });
 
-vi.mock('../../../../shared/local-models/model-catalog', async (importOriginal) => {
+vi.mock('../../../shared/local-models/model-catalog', async (importOriginal) => {
 	const actual =
-		await importOriginal<typeof import('../../../../shared/local-models/model-catalog')>();
+		await importOriginal<typeof import('../../../shared/local-models/model-catalog')>();
 	const testEntry = Object.freeze({
 		id: fixture.id,
 		displayName: 'Test Tiny Model',
@@ -79,12 +79,8 @@ import {
 	ModelDownloader,
 	type DownloadProgress,
 	type FetchLike,
-} from '../../../../main/acappella/models/model-downloader';
-import {
-	modelDir,
-	modelFilePath,
-	readManifest,
-} from '../../../../main/acappella/models/model-store';
+} from '../../../main/local-models/model-downloader';
+import { modelDir, modelFilePath, readManifest } from '../../../main/local-models/model-store';
 
 const FILE_PATH = 'tiny.bin';
 

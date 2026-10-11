@@ -45,8 +45,8 @@ import {
 	WAKE_WORD_PROVIDER_ID,
 	wakeClassifierPath,
 } from '../models/capability-gate';
-import { modelFilePath } from '../models/model-store';
-import { loadLocalRuntime } from '../providers/local/runtime';
+import { modelFilePath } from '../../local-models/model-store';
+import { loadVoiceRuntime } from '../providers/local/runtime';
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -563,7 +563,7 @@ const MAX_PENDING_HOPS = 25;
 export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 	let ort: OnnxRuntime;
 	try {
-		ort = await loadLocalRuntime<OnnxRuntime>('onnx', WAKE_WORD_PROVIDER_ID);
+		ort = await loadVoiceRuntime<OnnxRuntime>('onnx', WAKE_WORD_PROVIDER_ID);
 	} catch (err) {
 		logger.info(`Wake word runtime unavailable: ${(err as Error).message}`, LOG_CONTEXT);
 		return null;

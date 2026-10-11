@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { PARAKEET_TDT_V2_ID } from '../../../../shared/local-models/model-catalog';
 import { LOCAL_STT_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
-import { modelFilePath } from '../../models/model-store';
+import { modelFilePath } from '../../../local-models/model-store';
 import {
 	ChunkedLocalSttProvider,
 	type ChunkedLocalSttOptions,

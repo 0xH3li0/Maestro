@@ -112,12 +112,18 @@ vi.mock('../../../../shared/local-models/native-runtimes', () => {
 	};
 });
 
-vi.mock('../../../../main/acappella/runtime/runtime-store', () => ({
+vi.mock('../../../../shared/local-models/runtime-artifacts', () => ({
+	// Only the stand-in `whisper` has a fetchable artifact. Whether that makes it
+	// "not downloaded" or "not part of this build" is the consumers' call.
+	isNativeRuntimeDownloadable: (id: string) => id === 'whisper',
+}));
+
+vi.mock('../../../../main/local-models/runtime/runtime-store', () => ({
 	// Steered per test. The real one reaches for `app.getPath` and the filesystem.
 	installedRuntimeEntry: vi.fn(async () => null),
 }));
 
-import { installedRuntimeEntry } from '../../../../main/acappella/runtime/runtime-store';
+import { installedRuntimeEntry } from '../../../../main/local-models/runtime/runtime-store';
 import {
 	NativeRuntimeUnavailableError,
 	__setNativeImporter,
@@ -130,7 +136,11 @@ import {
 	resetNativeRuntimes,
 	tryLoadNativeRuntime,
 	unloadNativeRuntime,
-} from '../../../../main/acappella/runtime/native-loader';
+} from '../../../../main/local-models/runtime/native-loader';
+import {
+	__resetNativeRuntimeConsumers,
+	registerNativeRuntimeConsumer,
+} from '../../../../main/local-models/runtime/runtime-consumers';
 
 const REAL_PLATFORM = process.platform;
 const REAL_ARCH = process.arch;
@@ -157,6 +167,7 @@ describe('native-loader', () => {
 	afterEach(() => {
 		__setNativeImporter(null);
 		resetNativeRuntimes();
+		__resetNativeRuntimeConsumers();
 		setPlatform(REAL_PLATFORM, REAL_ARCH);
 	});
 
@@ -517,6 +528,60 @@ describe('native-loader', () => {
 			// lists failures that HAPPENED, not answers to hypothetical questions.
 			expect(allNativeRuntimeFailures()).toHaveLength(0);
 			expect(lastNativeRuntimeFailure('whisper')).toBeNull();
+		});
+	});
+
+	/**
+	 * The core cannot know which features run on a runtime, so it asks the
+	 * consumers. A fetchable runtime nothing uses is not part of this build; one a
+	 * consumer uses is merely not downloaded yet, and the consumer names where.
+	 */
+	describe('runtime consumers', () => {
+		const voice = {
+			id: 'voice',
+			usesRuntime: (id: string) => id === 'whisper' || id === 'llama',
+			downloadLocation: 'Voice Setup',
+			selfTestLocation: 'the Models page',
+		};
+
+		it('calls a fetchable runtime nothing uses "not part of this build"', async () => {
+			const verdict = await knownNativeRuntimeUnavailability('whisper');
+			expect(verdict?.failure).toBe('not-a-dependency');
+		});
+
+		it('calls a fetchable runtime a consumer uses "not downloaded", and says where to get it', async () => {
+			registerNativeRuntimeConsumer(voice);
+
+			const verdict = await knownNativeRuntimeUnavailability('whisper');
+
+			expect(verdict?.failure).toBe('not-downloaded');
+			expect(verdict?.suggestedAction).toBe('Download it in Voice Setup.');
+		});
+
+		it('names the consumer self-test location in a load failure', async () => {
+			registerNativeRuntimeConsumer(voice);
+			__setNativeImporter(vi.fn().mockRejectedValue(new Error('boom')));
+
+			const result = await tryLoadNativeRuntime('llama');
+
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.error.suggestedAction).toContain('the Models page');
+		});
+
+		it('falls back to Settings when no consumer claims the runtime', async () => {
+			__setNativeImporter(vi.fn().mockRejectedValue(new Error('boom')));
+
+			const result = await tryLoadNativeRuntime('llama');
+
+			expect(result.ok === false && result.error.suggestedAction).toContain('in Settings');
+		});
+
+		it('forgets a consumer once it unregisters', async () => {
+			const unregister = registerNativeRuntimeConsumer(voice);
+			unregister();
+
+			expect((await knownNativeRuntimeUnavailability('whisper'))?.failure).toBe('not-a-dependency');
 		});
 	});
 });

@@ -1,8 +1,8 @@
 /**
  * @file runtime-selftest.test.ts
  *
- * The self-test is what a support report carries instead of "voice does not
- * work". So the things worth asserting are the ones that would make that report
+ * The self-test is what a support report carries instead of "the local model
+ * does not work". So the things worth asserting are the ones that would make that report
  * misleading: a runtime that is not part of the build reading as broken, a
  * failure taking the whole diagnostic down with it, or a hung load turning the
  * diagnostic into a second copy of the bug being diagnosed.
@@ -11,19 +11,14 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('electron', () => ({
-	app: { getPath: () => '/tmp/acappella-selftest-test' },
-	shell: { openExternal: vi.fn() },
-	systemPreferences: {
-		getMediaAccessStatus: () => 'granted',
-		askForMediaAccess: vi.fn(),
-	},
+	app: { getPath: () => '/tmp/local-models-selftest-test' },
 }));
 
 import {
-	runSelfTest,
-	formatSelfTestReport,
-} from '../../../../main/acappella/runtime/runtime-selftest';
-import type { NativeRuntimeResult } from '../../../../main/acappella/runtime/native-loader';
+	runRuntimeSelfTest,
+	formatRuntimeSelfTestLines,
+} from '../../../../main/local-models/runtime/runtime-selftest';
+import type { NativeRuntimeResult } from '../../../../main/local-models/runtime/native-loader';
 import {
 	selfTestVerdict,
 	type NativeRuntimeId,
@@ -72,11 +67,9 @@ function loader(
 	};
 }
 
-const mic = () => ({ state: 'granted' as const, canPrompt: false });
-
 describe('runtime-selftest', () => {
 	it('reports every registered runtime, in registry order', async () => {
-		const report = await runSelfTest({ loadRuntime: loader({}), readMicPermission: mic });
+		const report = await runRuntimeSelfTest({ loadRuntime: loader({}) });
 
 		expect(report.entries.map((entry) => entry.runtimeId)).toEqual(['llama', 'onnx']);
 		expect(report.entries.every((entry) => entry.status === 'pass')).toBe(true);
@@ -84,9 +77,8 @@ describe('runtime-selftest', () => {
 	});
 
 	it('reports a per-runtime failure without failing the others', async () => {
-		const report = await runSelfTest({
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({ onnx: 'fail' }),
-			readMicPermission: mic,
 		});
 
 		const onnx = report.entries.find((entry) => entry.runtimeId === 'onnx')!;
@@ -101,9 +93,8 @@ describe('runtime-selftest', () => {
 	});
 
 	it('skips a runtime that is not part of the build rather than calling it broken', async () => {
-		const report = await runSelfTest({
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({ onnx: 'skip' }),
-			readMicPermission: mic,
 		});
 
 		expect(report.entries.find((entry) => entry.runtimeId === 'onnx')?.status).toBe('skipped');
@@ -114,10 +105,9 @@ describe('runtime-selftest', () => {
 
 	it('marks a fetchable runtime that was never downloaded as missing, and says the run is incomplete', async () => {
 		// The report a user pasted: ONNX never downloaded, filed as "skipped", run
-		// "passed" - while every local voice slot was dead.
-		const report = await runSelfTest({
+		// "passed" - while every local model on it was dead.
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({ onnx: 'missing' }),
-			readMicPermission: mic,
 		});
 
 		const onnx = report.entries.find((entry) => entry.runtimeId === 'onnx')!;
@@ -127,18 +117,17 @@ describe('runtime-selftest', () => {
 		expect(report.passed).toBe(true);
 		// ...but it is not a pass either.
 		expect(selfTestVerdict(report)).toBe('INCOMPLETE');
-		expect(formatSelfTestReport(report)).toContain('INCOMPLETE');
+		expect(formatRuntimeSelfTestLines(report, 'Self-test')[0]).toContain('INCOMPLETE');
 	});
 
 	it('calls a run with every runtime loaded a pass', async () => {
-		const report = await runSelfTest({ loadRuntime: loader({}), readMicPermission: mic });
+		const report = await runRuntimeSelfTest({ loadRuntime: loader({}) });
 		expect(selfTestVerdict(report)).toBe('PASS');
 	});
 
 	it('fails a runtime that loads but has lost the API the provider calls', async () => {
-		const report = await runSelfTest({
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({ onnx: 'bad-surface' }),
-			readMicPermission: mic,
 		});
 
 		const onnx = report.entries.find((entry) => entry.runtimeId === 'onnx')!;
@@ -148,14 +137,13 @@ describe('runtime-selftest', () => {
 	});
 
 	it('reports the probe detail on success, so a version reaches the report', async () => {
-		const report = await runSelfTest({ loadRuntime: loader({}), readMicPermission: mic });
+		const report = await runRuntimeSelfTest({ loadRuntime: loader({}) });
 		expect(report.entries.find((entry) => entry.runtimeId === 'onnx')?.detail).toContain('1.27.0');
 	});
 
 	it('times out instead of hanging, which is the bug it is diagnosing', async () => {
-		const report = await runSelfTest({
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({ llama: 'hang' }),
-			readMicPermission: mic,
 			timeoutMs: 20,
 		});
 
@@ -166,9 +154,8 @@ describe('runtime-selftest', () => {
 
 	it('records timings from the injected clock', async () => {
 		let clock = 1000;
-		const report = await runSelfTest({
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({}),
-			readMicPermission: mic,
 			now: () => (clock += 5),
 		});
 
@@ -176,25 +163,13 @@ describe('runtime-selftest', () => {
 		expect(report.ranAt).toBeGreaterThan(1000);
 	});
 
-	it('carries the microphone permission, because it is the other half of the diagnosis', async () => {
-		const report = await runSelfTest({
-			loadRuntime: loader({}),
-			readMicPermission: () => ({ state: 'denied', canPrompt: false }),
-		});
-
-		expect(report.microphone.permission).toBe('denied');
-		// A microphone problem must be visible in the same artifact as a runtime
-		// problem, or half the reports name the wrong cause.
-		expect(formatSelfTestReport(report)).toContain('Microphone: denied');
-	});
-
 	it('formats a report that names each runtime and its verdict', async () => {
-		const report = await runSelfTest({
+		const report = await runRuntimeSelfTest({
 			loadRuntime: loader({ onnx: 'fail' }),
-			readMicPermission: mic,
 		});
 
-		const text = formatSelfTestReport(report);
+		const text = formatRuntimeSelfTestLines(report, 'Local Models self-test').join('\n');
+		expect(text).toContain('Local Models self-test on');
 		expect(text).toContain('FAIL');
 		expect(text).toContain('PASS');
 		expect(text).toContain('node-llama-cpp');

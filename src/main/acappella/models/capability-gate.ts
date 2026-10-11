@@ -48,13 +48,13 @@ import { getMicPermission } from '../permissions/mic-permission';
 import {
 	knownNativeRuntimeUnavailability,
 	type NativeRuntimeUnavailable,
-} from '../runtime/native-loader';
+} from '../../local-models/runtime/native-loader';
 import {
 	systemVoiceUnavailability,
 	type SystemVoiceUnavailable,
 } from '../providers/local/system-tts';
 import { DEFAULT_PROVIDER_IDS, type VoiceProviderSettings } from '../providers/provider-registry';
-import { getStatus, modelFilePath, type ModelStatus } from './model-store';
+import { getStatus, modelFilePath, type ModelStatus } from '../../local-models/model-store';
 
 /**
  * Provider ids for the local tier.

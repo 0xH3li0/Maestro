@@ -49,8 +49,8 @@ import type {
 import { estimateSpokenDurationMs } from '../../../../shared/acappella/sentences';
 import { logger } from '../../../utils/logger';
 import { PcmBuffer } from '../pcm';
-import type { OnnxModule } from './onnx-types';
-import { loadLocalRuntime } from './runtime';
+import type { OnnxModule } from '../../../local-models/runtime/onnx-types';
+import { loadVoiceRuntime } from './runtime';
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -97,7 +97,7 @@ export interface LocalSttEngine {
 export interface ChunkedLocalSttOptions {
 	partialIntervalMs?: number;
 	/** Injected in tests; production goes through `native-loader.ts`. */
-	loadRuntime?: typeof loadLocalRuntime;
+	loadRuntime?: typeof loadVoiceRuntime;
 	/** Injected in tests, so the streaming policy can be exercised without ONNX. */
 	engine?: LocalSttEngine;
 }
@@ -122,7 +122,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	protected abstract createEngine(): Promise<LocalSttEngine>;
 
 	private readonly partialIntervalMs: number;
-	private readonly loadRuntime: typeof loadLocalRuntime;
+	private readonly loadRuntime: typeof loadVoiceRuntime;
 	private readonly injectedEngine?: LocalSttEngine;
 
 	private callbacks: SttCallbacks | null = null;
@@ -144,7 +144,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 
 	constructor(options: ChunkedLocalSttOptions = {}) {
 		this.partialIntervalMs = Math.max(0, options.partialIntervalMs ?? DEFAULT_PARTIAL_INTERVAL_MS);
-		this.loadRuntime = options.loadRuntime ?? loadLocalRuntime;
+		this.loadRuntime = options.loadRuntime ?? loadVoiceRuntime;
 		this.injectedEngine = options.engine;
 	}
 

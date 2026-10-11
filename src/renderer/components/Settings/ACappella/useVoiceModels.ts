@@ -18,9 +18,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { DownloadProgress } from '../../../../main/acappella/models/model-downloader';
+import type { DownloadProgress } from '../../../../main/local-models/model-downloader';
 import type { VoiceModelListing } from '../../../../main/ipc/handlers/acappella-models';
-import type { ModelFootprint, VerifyResult } from '../../../../main/acappella/models/model-store';
+import type { ModelFootprint, VerifyResult } from '../../../../main/local-models/model-store';
 import type { VoiceReadiness } from '../../../../shared/acappella/readiness';
 import { useThrottledCallback } from '../../../hooks/utils/useThrottle';
 

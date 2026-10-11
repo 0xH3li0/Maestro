@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { WHISPER_BASE_EN_ID } from '../../../../shared/local-models/model-catalog';
 import { WHISPER_STT_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
-import { modelFilePath } from '../../models/model-store';
+import { modelFilePath } from '../../../local-models/model-store';
 import {
 	ChunkedLocalSttProvider,
 	type ChunkedLocalSttOptions,

@@ -34,11 +34,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('../../../../main/acappella/runtime/runtime-installer', () => ({
+vi.mock('../../../../main/local-models/runtime/runtime-installer', () => ({
 	installNativeRuntime: vi.fn(),
 }));
 
-vi.mock('../../../../main/acappella/runtime/runtime-store', () => ({
+vi.mock('../../../../main/local-models/runtime/runtime-store', () => ({
 	artifactForThisPlatform: vi.fn(),
 	isRuntimeInstalled: vi.fn(async () => false),
 	isRuntimeStale: vi.fn(async () => false),
@@ -46,13 +46,13 @@ vi.mock('../../../../main/acappella/runtime/runtime-store', () => ({
 	runtimesFootprint: vi.fn(async () => 0),
 }));
 
-vi.mock('../../../../main/acappella/runtime/native-loader', () => ({
+vi.mock('../../../../main/local-models/runtime/native-loader', () => ({
 	resetNativeRuntimes: vi.fn(),
 }));
 
 // The model half of this handler module reaches for a downloader singleton and
 // the capability gate; neither is what these tests are about.
-vi.mock('../../../../main/acappella/models/model-downloader', () => ({
+vi.mock('../../../../main/local-models/model-downloader', () => ({
 	getModelDownloader: () => ({ onProgress: vi.fn(), download: vi.fn() }),
 }));
 
@@ -61,15 +61,15 @@ import {
 	ACAPPELLA_RUNTIME_PROGRESS_CHANNEL,
 	type VoiceRuntimeListing,
 } from '../../../../main/ipc/handlers/acappella-models';
-import { installNativeRuntime } from '../../../../main/acappella/runtime/runtime-installer';
+import { installNativeRuntime } from '../../../../main/local-models/runtime/runtime-installer';
 import {
 	artifactForThisPlatform,
 	isRuntimeInstalled,
 	isRuntimeStale,
 	removeAllRuntimes,
 	runtimesFootprint,
-} from '../../../../main/acappella/runtime/runtime-store';
-import { resetNativeRuntimes } from '../../../../main/acappella/runtime/native-loader';
+} from '../../../../main/local-models/runtime/runtime-store';
+import { resetNativeRuntimes } from '../../../../main/local-models/runtime/native-loader';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 

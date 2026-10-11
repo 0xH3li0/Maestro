@@ -35,7 +35,7 @@ import {
 	resetMicPermissionObservation,
 } from '../../../../main/acappella/permissions/mic-permission';
 import { resolveVoiceReadiness } from '../../../../main/acappella/models/capability-gate';
-import type { ModelStatus } from '../../../../main/acappella/models/model-store';
+import type { ModelStatus } from '../../../../main/local-models/model-store';
 import { WHISPER_BASE_EN_ID } from '../../../../shared/local-models/model-catalog';
 
 const REAL_PLATFORM = process.platform;

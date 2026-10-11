@@ -94,7 +94,7 @@ export function runtimesRoot(): string {
  * fails as an unknown id long before it becomes a path.
  */
 export function runtimeDir(id: NativeRuntimeId): string {
-	if (!getNativeRuntime(id)) throw new Error(`UnknownVoiceRuntime: ${id}`);
+	if (!getNativeRuntime(id)) throw new Error(`UnknownLocalRuntime: ${id}`);
 	return path.join(runtimesRoot(), id);
 }
 

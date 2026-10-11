@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { VoiceRuntimeListing } from '../../../../main/ipc/handlers/acappella-models';
-import type { RuntimeInstallProgress } from '../../../../main/acappella/runtime/runtime-installer';
+import type { RuntimeInstallProgress } from '../../../../main/local-models/runtime/runtime-installer';
 import { useThrottledCallback } from '../../../hooks/utils/useThrottle';
 
 /** How often mirrored progress is allowed to re-render the panel. */

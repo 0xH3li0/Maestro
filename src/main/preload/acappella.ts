@@ -24,9 +24,9 @@ import type {
 import type { GlobalHotkeyStatus } from '../../shared/global-hotkeys';
 import type { VoiceHotkeyRefusalInfo } from '../acappella/hotkeys/voice-hotkeys';
 import type { VoiceModelListing, VoiceRuntimeListing } from '../ipc/handlers/acappella-models';
-import type { RuntimeInstallProgress } from '../acappella/runtime/runtime-installer';
-import type { DownloadProgress, DownloadResult } from '../acappella/models/model-downloader';
-import type { ModelFootprint, VerifyResult } from '../acappella/models/model-store';
+import type { RuntimeInstallProgress } from '../local-models/runtime/runtime-installer';
+import type { DownloadProgress, DownloadResult } from '../local-models/model-downloader';
+import type { ModelFootprint, VerifyResult } from '../local-models/model-store';
 import type { MicPermissionInfo } from '../acappella/permissions/mic-permission';
 import type { RoutingLogEntry, RoutingQuality } from '../acappella/router/routing-log';
 import type { CredentialState, CredentialValidation } from '../acappella/providers/credentials';

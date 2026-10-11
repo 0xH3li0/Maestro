@@ -23,9 +23,9 @@ import {
 	X,
 } from 'lucide-react';
 
-import type { DownloadProgress } from '../../../../main/acappella/models/model-downloader';
+import type { DownloadProgress } from '../../../../main/local-models/model-downloader';
 import type { VoiceModelListing } from '../../../../main/ipc/handlers/acappella-models';
-import type { VerifyResult } from '../../../../main/acappella/models/model-store';
+import type { VerifyResult } from '../../../../main/local-models/model-store';
 import { formatSize } from '../../../../shared/formatters';
 import { formatDurationHuman } from '../../../../shared/duration';
 import type { Theme } from '../../../types';

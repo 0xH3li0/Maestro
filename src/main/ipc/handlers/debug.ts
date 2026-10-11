@@ -27,7 +27,7 @@ import {
 	setProfilingAutoStopHandler,
 	finalizeCapture,
 } from '../../profiling';
-import { runSelfTest, type RuntimeSelfTestReport } from '../../acappella/runtime/runtime-selftest';
+import { runVoiceSelfTest, type VoiceSelfTestReport } from '../../acappella/voice-self-test';
 import { selfTestVerdict } from '../../../shared/local-models/native-runtimes';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -154,8 +154,8 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		'debug:voiceSelfTest',
 		createIpcHandler(
 			handlerOpts('voiceSelfTest'),
-			async (): Promise<{ report: RuntimeSelfTestReport }> => {
-				const report = await runSelfTest();
+			async (): Promise<{ report: VoiceSelfTestReport }> => {
+				const report = await runVoiceSelfTest();
 				logger.info(`Voice self-test: ${selfTestVerdict(report).toLowerCase()}`, LOG_CONTEXT);
 				// Nested rather than spread: `createIpcHandler` merges the result into
 				// its `{ success }` envelope, and a report field named `passed` sitting

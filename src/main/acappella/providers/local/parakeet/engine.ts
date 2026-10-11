@@ -28,7 +28,11 @@
  */
 
 import { VoiceProviderError } from '../../../../../shared/acappella/provider-errors';
-import type { OnnxModule, OnnxSession, OnnxTensor } from '../onnx-types';
+import type {
+	OnnxModule,
+	OnnxSession,
+	OnnxTensor,
+} from '../../../../local-models/runtime/onnx-types';
 
 /** Sample rate the preprocessor graph was exported for. */
 export const PARAKEET_SAMPLE_RATE = 16000;

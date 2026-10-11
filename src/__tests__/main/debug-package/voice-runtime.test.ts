@@ -23,8 +23,8 @@ vi.mock('electron', () => ({
 
 const selfTest = vi.hoisted(() => ({ run: vi.fn() }));
 
-vi.mock('../../../main/acappella/runtime/runtime-selftest', () => ({
-	runSelfTest: selfTest.run,
+vi.mock('../../../main/acappella/voice-self-test', () => ({
+	runVoiceSelfTest: selfTest.run,
 }));
 
 import { collectVoiceRuntime } from '../../../main/debug-package/collectors/voice-runtime';
@@ -66,7 +66,7 @@ describe('collectVoiceRuntime', () => {
 	it('loads no native runtime when the feature is off', async () => {
 		const info = await collectVoiceRuntime(storeWith(false));
 
-		// The whole point. `runSelfTest` is what dlopens whisper.cpp, llama.cpp, and
+		// The whole point. `runVoiceSelfTest` is what dlopens whisper.cpp, llama.cpp, and
 		// onnxruntime, and it also populates the loader's process-wide failure memo
 		// that the capability gate reads.
 		expect(selfTest.run).not.toHaveBeenCalled();

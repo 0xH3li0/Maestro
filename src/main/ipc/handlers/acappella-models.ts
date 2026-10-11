@@ -34,7 +34,7 @@ import {
 	getModelDownloader,
 	type DownloadProgress,
 	type DownloadResult,
-} from '../../acappella/models/model-downloader';
+} from '../../local-models/model-downloader';
 import {
 	installPathFor,
 	listStatuses,
@@ -45,20 +45,21 @@ import {
 	type ModelFootprint,
 	type ModelStatus,
 	type VerifyResult,
-} from '../../acappella/models/model-store';
+} from '../../local-models/model-store';
 import { readVoiceProviderSettings } from '../../acappella/providers/provider-registry';
+import { registerACappellaRuntimeConsumer } from '../../acappella/runtime-consumer';
 import {
 	installNativeRuntime,
 	type RuntimeInstallProgress,
-} from '../../acappella/runtime/runtime-installer';
+} from '../../local-models/runtime/runtime-installer';
 import {
 	artifactForThisPlatform,
 	isRuntimeInstalled,
 	isRuntimeStale,
 	removeAllRuntimes,
 	runtimesFootprint,
-} from '../../acappella/runtime/runtime-store';
-import { resetNativeRuntimes } from '../../acappella/runtime/native-loader';
+} from '../../local-models/runtime/runtime-store';
+import { resetNativeRuntimes } from '../../local-models/runtime/native-loader';
 import {
 	NATIVE_RUNTIMES,
 	type NativeRuntimeId,
@@ -177,6 +178,10 @@ const runtimeInstalls = new Map<NativeRuntimeId, Promise<void>>();
  */
 export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDependencies): void {
 	const { settingsStore, safeSend } = deps;
+
+	// Tells the core loader which runtimes voice runs on. Before any handler can
+	// answer, and whether or not the feature is on (see `runtime-consumer.ts`).
+	registerACappellaRuntimeConsumer();
 
 	// Subscribed once, for the life of the app. The downloader is a singleton and
 	// its listener set would otherwise grow one entry per registration.

@@ -34,9 +34,9 @@ import type {
 	TtsSpeakOptions,
 } from '../../../../shared/acappella/providers';
 import { splitIntoSpokenSentences } from '../../../../shared/acappella/sentences';
-import { modelFilePath } from '../../models/model-store';
+import { modelFilePath } from '../../../local-models/model-store';
 import { float32ToInt16 } from '../pcm';
-import { loadLocalRuntime } from './runtime';
+import { loadVoiceRuntime } from './runtime';
 
 /** Catalog files this provider loads. */
 const MODEL_FILE = 'onnx/model.onnx';
@@ -95,7 +95,7 @@ export interface KokoroTtsOptions {
 	modelPath?: string;
 	voicePackPath?: string;
 	/** Injected in tests; production goes through `native-loader.ts`. */
-	loadRuntime?: typeof loadLocalRuntime;
+	loadRuntime?: typeof loadVoiceRuntime;
 	/** Injected in tests. Production reads the installed voice pack from disk. */
 	readVoicePack?: (path: string) => Promise<Float32Array>;
 }
@@ -108,7 +108,7 @@ export class KokoroTtsProvider implements TtsProvider {
 	private readonly phonemize?: Phonemizer;
 	private readonly modelPathOverride?: string;
 	private readonly voicePackPathOverride?: string;
-	private readonly loadRuntime: typeof loadLocalRuntime;
+	private readonly loadRuntime: typeof loadVoiceRuntime;
 	private readonly readVoicePack: (path: string) => Promise<Float32Array>;
 
 	/** Bumped by `cancel()` and by every new run, so a stale iterator returns. */
@@ -123,7 +123,7 @@ export class KokoroTtsProvider implements TtsProvider {
 		this.phonemize = options.phonemize;
 		this.modelPathOverride = options.modelPath;
 		this.voicePackPathOverride = options.voicePackPath;
-		this.loadRuntime = options.loadRuntime ?? loadLocalRuntime;
+		this.loadRuntime = options.loadRuntime ?? loadVoiceRuntime;
 		this.readVoicePack = options.readVoicePack ?? readVoicePackFromDisk;
 	}
 

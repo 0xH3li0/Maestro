@@ -1,42 +1,50 @@
 /**
- * The one way a local provider reaches a native runtime.
+ * The one way a voice provider reaches a native runtime.
  *
- * `native-loader.ts` already owns the dynamic imports, the classification, and
- * the memory of what has failed. What it does NOT do is speak the providers'
- * language: it returns a `NativeRuntimeUnavailable`, and a provider needs a
+ * The core loader (`local-models/runtime/load-runtime.ts`) throws a
+ * `LocalModelError`, which is the core's vocabulary. A provider needs a
  * `VoiceProviderError` so the session can announce the failure with the right
- * code and the right recovery.
+ * code and the right recovery. This is that translation, written once rather
+ * than once per provider with slightly different wording for the same event.
  *
- * That translation is three lines and it was about to be written three times, in
- * three providers, each with slightly different wording for the same event. Doing
- * it once also keeps one property true by construction: **a local provider that
- * cannot load its runtime fails as itself and never reaches for another
+ * It keeps the core's property true on the voice side too: **a local provider
+ * that cannot load its runtime fails as itself and never reaches for another
  * provider.** There is no branch in here that could.
- *
- * The failure stays remembered inside the loader, which is what the capability
- * gate reads to explain the blocked slot afterwards.
  */
 
 import type { NativeRuntimeId } from '../../../../shared/local-models/native-runtimes';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
-import { tryLoadNativeRuntime } from '../../runtime/native-loader';
+import { isLocalModelError, type LocalModelError } from '../../../local-models/errors';
+import { loadLocalRuntime } from '../../../local-models/runtime/load-runtime';
+
+/** A core Local Models failure, restated as the voice provider that hit it. */
+export function voiceErrorFromLocalModel(
+	error: LocalModelError,
+	providerId: string
+): VoiceProviderError {
+	return new VoiceProviderError(error.message, {
+		// Every core code today means "this engine cannot run here", which is what
+		// `unavailable` says: fixed in Voice Setup, not by pressing Retry.
+		kind: 'unavailable',
+		providerId,
+		cause: (error as { cause?: unknown }).cause ?? error,
+	});
+}
 
 /**
- * Load a native runtime for a provider, or throw a classified provider failure.
+ * Load a native runtime for a voice provider, or throw a classified provider failure.
  *
  * @param runtimeId The runtime, as named in `shared/local-models/native-runtimes.ts`.
  * @param providerId The provider asking, so the error can name the engine.
  */
-export async function loadLocalRuntime<T>(
+export async function loadVoiceRuntime<T>(
 	runtimeId: NativeRuntimeId,
 	providerId: string
 ): Promise<T> {
-	const result = await tryLoadNativeRuntime<T>(runtimeId);
-	if (result.ok) return result.module;
-
-	throw new VoiceProviderError(result.error.message, {
-		kind: 'unavailable',
-		providerId,
-		cause: result.error,
-	});
+	try {
+		return await loadLocalRuntime<T>(runtimeId, providerId);
+	} catch (error) {
+		if (isLocalModelError(error)) throw voiceErrorFromLocalModel(error, providerId);
+		throw error;
+	}
 }

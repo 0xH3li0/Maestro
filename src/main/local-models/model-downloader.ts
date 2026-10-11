@@ -1,5 +1,5 @@
 /**
- * A Cappella model downloader - resumable, verified, and never optimistic.
+ * Local Models downloader - resumable, verified, and never optimistic.
  *
  * The invariant everything else in this subsystem rests on:
  *
@@ -44,9 +44,9 @@ import { createReadStream, createWriteStream } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
-import { getLocalModel } from '../../../shared/local-models/model-catalog';
-import type { LocalModelEntry, LocalModelFile } from '../../../shared/local-models/types';
-import { logger } from '../../utils/logger';
+import { getLocalModel } from '../../shared/local-models/model-catalog';
+import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
+import { logger } from '../utils/logger';
 import {
 	ensureModelDir,
 	markInstalled,
@@ -56,7 +56,7 @@ import {
 	type ModelManifest,
 } from './model-store';
 
-const LOG_CONTEXT = 'ACappella';
+const LOG_CONTEXT = 'LocalModels';
 
 /**
  * Two at a time. One is too conservative for a set of four small files; three or

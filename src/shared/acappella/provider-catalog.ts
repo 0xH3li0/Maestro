@@ -493,7 +493,7 @@ function formatServiceList(services: VoiceCredentialService[]): string {
 }
 
 /**
- * Whether anything a user can pick in this build runs on a native runtime.
+ * Whether any voice provider a user can pick in this build runs on a native runtime.
  *
  * A runtime can be fetchable and still useless: llama.cpp downloads, but the
  * only provider on it (Qwen3) is unlisted because the payload lacks the
@@ -502,7 +502,7 @@ function formatServiceList(services: VoiceCredentialService[]): string {
  * for a download that enables nothing. The wake word is not a catalog provider
  * but always rides ONNX, so it counts.
  */
-export function isNativeRuntimeInUse(runtimeId: NativeRuntimeId): boolean {
+export function isNativeRuntimeUsedByVoice(runtimeId: NativeRuntimeId): boolean {
 	if (runtimeId === 'onnx') return true;
 	return VOICE_PROVIDER_CATALOG.some(
 		(entry) => entry.requires.kind === 'model' && entry.requires.runtimeId === runtimeId

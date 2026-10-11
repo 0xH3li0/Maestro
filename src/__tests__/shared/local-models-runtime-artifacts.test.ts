@@ -31,7 +31,7 @@ import {
 	nativeRuntimeArtifact,
 	nativeRuntimeDownloadBytes,
 } from '../../shared/local-models/runtime-artifacts';
-import { shouldKeepArchiveEntry } from '../../main/acappella/runtime/runtime-installer';
+import { shouldKeepArchiveEntry } from '../../main/local-models/runtime/runtime-installer';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 

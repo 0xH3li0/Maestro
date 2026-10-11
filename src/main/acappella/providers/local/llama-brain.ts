@@ -31,7 +31,7 @@ import type {
 } from '../../../../shared/acappella/providers';
 import type { RouteDecision } from '../../../../shared/acappella/route-decision';
 import { ROUTE_DECISION_JSON_SCHEMA } from '../../../../shared/acappella/route-decision';
-import { modelFilePath } from '../../models/model-store';
+import { modelFilePath } from '../../../local-models/model-store';
 import {
 	buildConverseUserPrompt,
 	buildRouteUserPrompt,
@@ -40,7 +40,7 @@ import {
 	parseRouteDecision,
 	routeSystemPrompt,
 } from '../brain-prompt';
-import { loadLocalRuntime } from './runtime';
+import { loadVoiceRuntime } from './runtime';
 
 /** The catalog file this provider loads. */
 const MODEL_FILE = 'Qwen3-1.7B-Q4_K_M.gguf';
@@ -103,7 +103,7 @@ export interface LlamaBrainOptions {
 	/** Idle time before the model is freed. 0 keeps it loaded forever. */
 	idleUnloadMs?: number;
 	/** Injected in tests; production goes through `native-loader.ts`. */
-	loadRuntime?: typeof loadLocalRuntime;
+	loadRuntime?: typeof loadVoiceRuntime;
 }
 
 export class LlamaBrainProvider implements BrainProvider {
@@ -113,7 +113,7 @@ export class LlamaBrainProvider implements BrainProvider {
 
 	private readonly modelPathOverride?: string;
 	private readonly idleUnloadMs: number;
-	private readonly loadRuntime: typeof loadLocalRuntime;
+	private readonly loadRuntime: typeof loadVoiceRuntime;
 
 	private loaded: LoadedBrain | null = null;
 	/** In-flight load, so two turns racing do not each open the model. */
@@ -123,7 +123,7 @@ export class LlamaBrainProvider implements BrainProvider {
 	constructor(options: LlamaBrainOptions = {}) {
 		this.modelPathOverride = options.modelPath;
 		this.idleUnloadMs = options.idleUnloadMs ?? DEFAULT_IDLE_UNLOAD_MS;
-		this.loadRuntime = options.loadRuntime ?? loadLocalRuntime;
+		this.loadRuntime = options.loadRuntime ?? loadVoiceRuntime;
 	}
 
 	async route(input: string, context: VoiceRouteContext): Promise<RouteDecision> {

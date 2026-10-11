@@ -46,9 +46,9 @@ const fixture = vi.hoisted(() => {
 	};
 });
 
-vi.mock('../../../../shared/local-models/model-catalog', async (importOriginal) => {
+vi.mock('../../../shared/local-models/model-catalog', async (importOriginal) => {
 	const actual =
-		await importOriginal<typeof import('../../../../shared/local-models/model-catalog')>();
+		await importOriginal<typeof import('../../../shared/local-models/model-catalog')>();
 	const testEntry = Object.freeze({
 		id: fixture.id,
 		displayName: 'Test Tiny Model',
@@ -93,12 +93,12 @@ import {
 	totalFootprint,
 	verify,
 	writeManifest,
-} from '../../../../main/acappella/models/model-store';
+} from '../../../main/local-models/model-store';
 import {
 	OPENWAKEWORD_BASE_ID,
 	WHISPER_BASE_EN_ID,
 	getLocalModel,
-} from '../../../../shared/local-models/model-catalog';
+} from '../../../shared/local-models/model-catalog';
 
 const whisper = getLocalModel(WHISPER_BASE_EN_ID)!;
 const wakeWord = getLocalModel(OPENWAKEWORD_BASE_ID)!;
@@ -346,7 +346,7 @@ describe('model-store', () => {
 
 	describe('path safety', () => {
 		it('refuses an id that is not in the catalog', () => {
-			expect(() => modelDir('../../etc')).toThrow(/UnknownVoiceModel/);
+			expect(() => modelDir('../../etc')).toThrow(/UnknownLocalModel/);
 		});
 
 		it('refuses a file path that escapes the model directory', () => {

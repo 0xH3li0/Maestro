@@ -50,7 +50,7 @@ import {
 	type RuntimeManifest,
 } from './runtime-store';
 
-const LOG_CONTEXT = 'ACappella';
+const LOG_CONTEXT = 'LocalModels';
 
 /** The tarball's name inside the staging directory. Deleted after extraction. */
 const PAYLOAD_FILENAME = 'payload.tgz';
@@ -214,7 +214,7 @@ export async function installNativeRuntime(
 			bytes: artifact.bytes,
 			totalBytes: artifact.bytes,
 		});
-		logger.info(`Installed the ${id} voice runtime from ${artifact.url}`, LOG_CONTEXT);
+		logger.info(`Installed the ${id} native runtime from ${artifact.url}`, LOG_CONTEXT);
 		return manifest;
 	} catch (error) {
 		// Leave nothing behind. A failed install that leaves a staging directory

@@ -43,7 +43,7 @@ import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 import { VoiceModelRow } from './VoiceModelRow';
 import { useVoiceModels } from './useVoiceModels';
 import { useVoiceRuntimes } from './useVoiceRuntimes';
-import type { RuntimeInstallProgress } from '../../../../main/acappella/runtime/runtime-installer';
+import type { RuntimeInstallProgress } from '../../../../main/local-models/runtime/runtime-installer';
 
 /**
  * The bundle a first run offers: the recogniser and the wake word, which is

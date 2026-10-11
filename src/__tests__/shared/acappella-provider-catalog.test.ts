@@ -28,7 +28,7 @@ import {
 	voiceProviderCredential,
 	voiceProviderRequirement,
 	voiceProvidersForRole,
-	isNativeRuntimeInUse,
+	isNativeRuntimeUsedByVoice,
 } from '../../shared/acappella/provider-catalog';
 
 describe('the provider catalog', () => {
@@ -158,9 +158,9 @@ describe('summariseVoiceEgress', () => {
 
 	it('counts a runtime as in use only when something listed runs on it', () => {
 		// ONNX carries the recognisers and the wake word.
-		expect(isNativeRuntimeInUse('onnx')).toBe(true);
+		expect(isNativeRuntimeUsedByVoice('onnx')).toBe(true);
 		// llama.cpp downloads, but its only provider (Qwen3) is unlisted, so nagging
 		// for it would leave every self-test permanently incomplete.
-		expect(isNativeRuntimeInUse('llama')).toBe(false);
+		expect(isNativeRuntimeUsedByVoice('llama')).toBe(false);
 	});
 });

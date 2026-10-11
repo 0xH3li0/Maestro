@@ -83,7 +83,7 @@ import {
 	installNativeRuntime,
 	RuntimeBinaryMissingError,
 	RuntimeHashMismatchError,
-} from '../../../../main/acappella/runtime/runtime-installer';
+} from '../../../../main/local-models/runtime/runtime-installer';
 import {
 	installedRuntimeEntry,
 	isRuntimeInstalled,
@@ -91,7 +91,7 @@ import {
 	removeRuntime,
 	runtimeDir,
 	runtimeStagingDir,
-} from '../../../../main/acappella/runtime/runtime-store';
+} from '../../../../main/local-models/runtime/runtime-store';
 
 /** Build the archive once per test run; it is deterministic. */
 async function buildTarball(): Promise<void> {
@@ -331,7 +331,7 @@ describe('runtime store, after an install', () => {
 
 	it('refuses an unknown runtime id rather than turning it into a path', async () => {
 		// `runtimeDir` feeds a recursive delete, and ids arrive from IPC.
-		expect(() => runtimeDir('../../etc' as never)).toThrow(/UnknownVoiceRuntime/);
+		expect(() => runtimeDir('../../etc' as never)).toThrow(/UnknownLocalRuntime/);
 	});
 });
 

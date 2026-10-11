@@ -1,5 +1,5 @@
 /**
- * The one place A Cappella's native runtimes are imported.
+ * The one place the Local Models native runtimes are imported.
  *
  * Three rules, and the file exists because all three are easy to break by
  * accident anywhere else:
@@ -7,7 +7,7 @@
  *   1. **Nothing native is imported at module load.** Every import in here is a
  *      dynamic `import()` inside a function. A user with the Encore Feature off
  *      never loads a single native symbol, and a user with it on pays for
- *      llama.cpp only when a session actually needs the Brain. A top-level
+ *      llama.cpp only when something actually needs text generation. A top-level
  *      `import 'node-llama-cpp'` anywhere else in the codebase would undo that
  *      silently, which is why concrete providers must come through here.
  *   2. **A failure is structured, never an opaque dlopen string.**
@@ -32,9 +32,9 @@ import {
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
 } from '../../../shared/local-models/native-runtimes';
-import { isNativeRuntimeInUse } from '../../../shared/acappella/provider-catalog';
 import { isNativeRuntimeDownloadable } from '../../../shared/local-models/runtime-artifacts';
 import { isWindows } from '../../../shared/platformDetection';
+import { nativeRuntimeConsumerFor } from './runtime-consumers';
 
 /**
  * Why a runtime is not usable.
@@ -48,7 +48,7 @@ export type NativeRuntimeFailureKind =
 	// Fetchable for this platform but not fetched yet. Separate from
 	// `not-a-dependency` because the remedy is a Download button, not a newer
 	// build, and a self-test that filed it under "not part of this build" read as
-	// a healthy machine while every local voice slot was dead.
+	// a healthy machine while every local model on it was dead.
 	| 'not-downloaded'
 	| 'unsupported-platform'
 	| 'module-not-found'
@@ -221,7 +221,7 @@ export function allNativeRuntimeFailures(): NativeRuntimeUnavailable[] {
  * A DOWNLOADED runtime is checked before the registry's verdict, exactly as
  * {@link tryLoadNativeRuntime} does: the registry says "not a dependency" about
  * every runtime the app fetches at run time, and a gate that stopped there
- * refused the very bytes Voice Setup had just installed. That is not
+ * refused the very bytes the user had just installed. That is not
  * hypothetical either - it is what made a fresh install with everything
  * downloaded still answer "ONNX Runtime is not part of this build yet" and never
  * open a session. Async for that one disk read; nothing here loads a module.
@@ -338,10 +338,10 @@ function declineBeforeLoading(
 		// one it cannot fetch is genuinely not part of this build.
 		// "Downloadable" also requires that something listed in this build runs on
 		// it; a runtime nothing can use is not part of this build, fetchable or not.
+		// Which features run on it is theirs to say (see `runtime-consumers.ts`).
+		const consumer = nativeRuntimeConsumerFor(descriptor.id);
 		const downloadable =
-			key !== null &&
-			isNativeRuntimeDownloadable(descriptor.id, key) &&
-			isNativeRuntimeInUse(descriptor.id);
+			key !== null && isNativeRuntimeDownloadable(descriptor.id, key) && consumer !== null;
 		return {
 			kind: 'runtime-unavailable',
 			runtimeId: descriptor.id,
@@ -355,9 +355,10 @@ function declineBeforeLoading(
 			// No "for this slot": the detail this rides behind already names the slot,
 			// and `readinessErrorMessage` hoists a shared recovery to the end of a
 			// multi-slot refusal, where a singular "this slot" would be wrong.
-			suggestedAction: downloadable
-				? 'Download it in Settings > Plugins > A Cappella > Voice Setup.'
-				: 'Use a hosted provider or the mock tier until the local runtime ships.',
+			suggestedAction:
+				consumer && downloadable
+					? `Download it in ${consumer.downloadLocation}.`
+					: 'Use a hosted provider until the local runtime ships.',
 		};
 	}
 
@@ -370,7 +371,7 @@ function declineBeforeLoading(
 			arch: process.arch,
 			failure: 'unsupported-platform',
 			message: `${descriptor.label} has no build for ${process.platform}-${process.arch}.`,
-			suggestedAction: `Switch this slot to a hosted provider: there is no local ${descriptor.label} binary for this platform.`,
+			suggestedAction: `Use a hosted provider instead: there is no local ${descriptor.label} binary for this platform.`,
 		};
 	}
 
@@ -383,11 +384,19 @@ function declineBeforeLoading(
 			arch: process.arch,
 			failure: 'unsupported-platform',
 			message: `${descriptor.label} is not shipped for ${key}.`,
-			suggestedAction: `Switch this slot to a hosted provider: there is no local ${descriptor.label} binary for this platform.`,
+			suggestedAction: `Use a hosted provider instead: there is no local ${descriptor.label} binary for this platform.`,
 		};
 	}
 
 	return null;
+}
+
+/**
+ * Where the user runs the self-test for a runtime. The consumer that uses it
+ * says; with none registered the honest answer is just Settings.
+ */
+function selfTestLocation(descriptor: NativeRuntimeDescriptor): string {
+	return nativeRuntimeConsumerFor(descriptor.id)?.selfTestLocation ?? 'Settings';
 }
 
 /** Turn whatever the module system threw into something a person can act on. */
@@ -407,7 +416,7 @@ function classify(descriptor: NativeRuntimeDescriptor, error: unknown): NativeRu
 			message: `${descriptor.label} is missing from this installation (${descriptor.moduleId}).`,
 			// A missing module in a packaged app means the binary never made it into
 			// the bundle, which a user cannot repair from inside the app.
-			suggestedAction: 'Reinstall Maestro, then run the voice self-test again.',
+			suggestedAction: `Reinstall Maestro, then run the runtime self-test again (${selfTestLocation(descriptor)}).`,
 			detail,
 		};
 	}
@@ -427,8 +436,8 @@ function classify(descriptor: NativeRuntimeDescriptor, error: unknown): NativeRu
 			// runtime, and naming it is the difference between a fix and a reinstall
 			// that changes nothing.
 			suggestedAction: isWindows()
-				? 'Install the Microsoft Visual C++ Redistributable (x64), then run the voice self-test again.'
-				: 'A shared library this runtime depends on is missing from the system. Run the voice self-test and include the result in a bug report.',
+				? `Install the Microsoft Visual C++ Redistributable (x64), then run the runtime self-test again (${selfTestLocation(descriptor)}).`
+				: `A shared library this runtime depends on is missing from the system. Run the runtime self-test (${selfTestLocation(descriptor)}) and include the result in a bug report.`,
 			detail,
 		};
 	}
@@ -441,8 +450,7 @@ function classify(descriptor: NativeRuntimeDescriptor, error: unknown): NativeRu
 		arch: process.arch,
 		failure: 'load-failed',
 		message: `${descriptor.label} failed to load on ${process.platform}-${process.arch}.`,
-		suggestedAction:
-			'Run the voice self-test in Settings > Plugins > A Cappella > Models and include the result in a bug report.',
+		suggestedAction: `Run the runtime self-test in ${selfTestLocation(descriptor)} and include the result in a bug report.`,
 		detail,
 	};
 }

@@ -1,20 +1,20 @@
 /**
- * "Run voice self-test" - the answer to a bug report that says voice does not
- * work.
+ * The Local Models runtime self-test - the answer to a bug report that says a
+ * local model does not work.
  *
- * Without this, that report is a guess: the microphone, three native runtimes,
- * four model downloads, and a code-signing story all fail in ways that look
- * identical from the outside ("nothing happens when I press the button"). The
- * self-test loads each runtime the way the real providers will, runs a trivial
- * operation against it, and reports per-runtime pass/fail with timings, plus the
- * microphone permission, in one structure that goes straight into a support
- * report through the debug package.
+ * Without this, that report is a guess: native runtimes, model downloads, and a
+ * code-signing story all fail in ways that look identical from the outside
+ * ("nothing happens when I press the button"). The self-test loads each runtime
+ * the way the real consumers will, runs a trivial operation against it, and
+ * reports per-runtime pass/fail with timings, in one structure that goes
+ * straight into a support report through the debug package. A consumer adds its
+ * own rows on top (A Cappella adds the microphone permission).
  *
  * Three properties it must keep:
  *
  *   - **It proves the load path, not a stub.** Each probe goes through
  *     `native-loader.ts`, so a self-test that passes means the same dlopen the
- *     provider will do actually succeeded in this installation, on this
+ *     consumer will do actually succeeded in this installation, on this
  *     platform, from this code-signed bundle.
  *   - **It loads no model.** A probe touches the module's own surface (its
  *     version, its constructor) and nothing on disk. A self-test that needed
@@ -33,8 +33,6 @@ import {
 	type NativeRuntimeId,
 } from '../../../shared/local-models/native-runtimes';
 import { selfTestVerdict } from '../../../shared/local-models/native-runtimes';
-import type { MicPermission } from '../../../shared/acappella/protocol';
-import { getMicPermission } from '../permissions/mic-permission';
 import {
 	tryLoadNativeRuntime,
 	unloadNativeRuntime,
@@ -49,8 +47,8 @@ import {
  * runtimes when nothing is broken.
  *
  * `missing` is the runtime this build CAN fetch but has not. Nothing is broken,
- * so it does not fail the run either, but it is not "skipped": every local voice
- * slot that rides it is dead until it is downloaded, and the summary says so.
+ * so it does not fail the run either, but it is not "skipped": every local model
+ * that rides it is dead until it is downloaded, and the summary says so.
  */
 export type RuntimeSelfTestStatus = 'pass' | 'fail' | 'skipped' | 'missing';
 
@@ -78,11 +76,6 @@ export interface RuntimeSelfTestReport {
 	entries: RuntimeSelfTestEntry[];
 	/** True when nothing FAILED. A skipped or missing runtime does not fail the run. */
 	passed: boolean;
-	microphone: {
-		permission: MicPermission;
-		/** True when the OS prompt has not been shown yet, so the state is not a refusal. */
-		canPrompt: boolean;
-	};
 }
 
 /**
@@ -129,11 +122,9 @@ const PROBES: Record<NativeRuntimeId, (module: unknown) => Promise<string>> = {
 	},
 };
 
-export interface RunSelfTestOptions {
+export interface RunRuntimeSelfTestOptions {
 	/** Injected in tests. Defaults to the real lazy loader. */
 	loadRuntime?: (id: NativeRuntimeId) => Promise<NativeRuntimeResult<unknown>>;
-	/** Injected in tests. Defaults to the real OS query, which never prompts. */
-	readMicPermission?: () => { state: MicPermission; canPrompt: boolean };
 	/** Per-runtime timeout. Lowered in tests. */
 	timeoutMs?: number;
 	/** Injected in tests so a fake clock can produce deterministic timings. */
@@ -144,16 +135,10 @@ export interface RunSelfTestOptions {
  * Run the whole self-test. Never throws: every failure is a row in the report,
  * because a diagnostic that can itself blow up gives the user nothing.
  */
-export async function runSelfTest(
-	options: RunSelfTestOptions = {}
+export async function runRuntimeSelfTest(
+	options: RunRuntimeSelfTestOptions = {}
 ): Promise<RuntimeSelfTestReport> {
 	const load = options.loadRuntime ?? tryLoadNativeRuntime;
-	const readMic =
-		options.readMicPermission ??
-		(() => {
-			const info = getMicPermission();
-			return { state: info.state, canPrompt: info.canPrompt };
-		});
 	const now = options.now ?? Date.now;
 	const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
 	const platformKey = nativePlatformKey(process.platform, process.arch);
@@ -163,7 +148,6 @@ export async function runSelfTest(
 		entries.push(await testRuntime(descriptor, { load, now, timeoutMs, platformKey }));
 	}
 
-	const mic = readMic();
 	return {
 		ranAt: now(),
 		platform: process.platform,
@@ -171,7 +155,6 @@ export async function runSelfTest(
 		platformKey,
 		entries,
 		passed: entries.every((entry) => entry.status !== 'fail'),
-		microphone: { permission: mic.state, canPrompt: mic.canPrompt },
 	};
 }
 
@@ -273,16 +256,17 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | type
 	}
 }
 
-/** The report as lines, for a log or a pasted bug report. */
-export function formatSelfTestReport(report: RuntimeSelfTestReport): string {
-	const header = `A Cappella voice self-test on ${report.platform}-${report.arch}: ${selfTestVerdict(
-		report
-	)}`;
+/**
+ * The report as lines, for a log or a pasted bug report. `title` names who ran
+ * it (a consumer's diagnostic), and the verdict follows it on the header line.
+ */
+export function formatRuntimeSelfTestLines(report: RuntimeSelfTestReport, title: string): string[] {
+	const header = `${title} on ${report.platform}-${report.arch}: ${selfTestVerdict(report)}`;
 	const rows = report.entries.map(
 		(entry) =>
 			`  ${entry.status.toUpperCase().padEnd(7)} ${entry.label} (${entry.moduleId}) ${entry.durationMs} ms${
 				entry.detail ? ` - ${entry.detail}` : ''
 			}`
 	);
-	return [header, ...rows, `  Microphone: ${report.microphone.permission}`].join('\n');
+	return [header, ...rows];
 }

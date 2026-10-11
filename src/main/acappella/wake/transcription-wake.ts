@@ -23,8 +23,8 @@
 import { VoiceActivityDetector } from '../audio/vad';
 import { TRANSCRIPTION_WAKE_PROVIDER_ID } from '../models/capability-gate';
 import { createParakeetEngine } from '../providers/local/parakeet-stt';
-import { loadLocalRuntime } from '../providers/local/runtime';
-import type { OnnxModule } from '../providers/local/onnx-types';
+import { loadVoiceRuntime } from '../providers/local/runtime';
+import type { OnnxModule } from '../../local-models/runtime/onnx-types';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
 import type { WakeEngine } from '../../../shared/acappella/voice-controls';
@@ -228,7 +228,7 @@ export function createTranscriptionScorer(transcriber: WakeTranscriber): WakePhr
  */
 export async function createTranscriptionWakeScorer(): Promise<WakePhraseScorer | null> {
 	try {
-		const module = await loadLocalRuntime<OnnxModule>('onnx', TRANSCRIPTION_WAKE_PROVIDER_ID);
+		const module = await loadVoiceRuntime<OnnxModule>('onnx', TRANSCRIPTION_WAKE_PROVIDER_ID);
 		const engine = await createParakeetEngine({ providerId: TRANSCRIPTION_WAKE_PROVIDER_ID });
 		await engine.load(module);
 		return createTranscriptionScorer(engine);

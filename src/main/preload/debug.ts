@@ -9,7 +9,7 @@
 import { ipcRenderer } from 'electron';
 import type { DebugPackageOptions } from '../../shared/debugPackage';
 
-import type { RuntimeSelfTestReport } from '../acappella/runtime/runtime-selftest';
+import type { VoiceSelfTestReport } from '../acappella/voice-self-test';
 
 // Re-exported rather than re-declared: rc moved the canonical definition to
 // `shared/debugPackage`, and a second local copy of the same shape is exactly
@@ -26,7 +26,7 @@ export type { DebugPackageOptions };
  */
 export interface VoiceSelfTestResponse {
 	success: boolean;
-	report?: RuntimeSelfTestReport;
+	report?: VoiceSelfTestReport;
 	error?: string;
 }
 

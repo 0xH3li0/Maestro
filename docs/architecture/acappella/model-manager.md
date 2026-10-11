@@ -36,16 +36,16 @@ proves the bytes are what it promised.
 
 ## Files
 
-| File                                            | Responsibility                                                                                                                 |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `src/shared/local-models/model-catalog.ts`      | The core, consumer-neutral bill of materials: id, kind, runtime, revision, per-file URL + SHA-256 + size, license              |
-| `src/shared/acappella/voice-models.ts`          | Voice's layer over the catalog: capability tags, the slot each runtime serves, the Voice Setup bundle, pretrained wake phrases |
-| `src/shared/acappella/readiness.ts`             | Readiness shapes, shared with the renderer                                                                                     |
-| `src/main/acappella/models/model-store.ts`      | Install layout, manifests, `isInstalled`, `verify`, `remove`, `totalFootprint`                                                 |
-| `src/main/acappella/models/model-downloader.ts` | Resumable range downloads, streaming SHA-256, pause/resume/cancel, progress                                                    |
-| `src/main/acappella/models/capability-gate.ts`  | `resolveVoiceReadiness()`: which slots are satisfied, and why not                                                              |
-| `src/main/ipc/handlers/acappella-models.ts`     | The `models:*` channels and the `models:progress` broadcast                                                                    |
-| `src/renderer/components/Settings/ACappella/`   | Voice Setup and the Models page                                                                                                |
+| File                                           | Responsibility                                                                                                                 |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `src/shared/local-models/model-catalog.ts`     | The core, consumer-neutral bill of materials: id, kind, runtime, revision, per-file URL + SHA-256 + size, license              |
+| `src/shared/acappella/voice-models.ts`         | Voice's layer over the catalog: capability tags, the slot each runtime serves, the Voice Setup bundle, pretrained wake phrases |
+| `src/shared/acappella/readiness.ts`            | Readiness shapes, shared with the renderer                                                                                     |
+| `src/main/local-models/model-store.ts`         | Install layout, manifests, `isInstalled`, `verify`, `remove`, `totalFootprint`                                                 |
+| `src/main/local-models/model-downloader.ts`    | Resumable range downloads, streaming SHA-256, pause/resume/cancel, progress                                                    |
+| `src/main/acappella/models/capability-gate.ts` | `resolveVoiceReadiness()`: which slots are satisfied, and why not                                                              |
+| `src/main/ipc/handlers/acappella-models.ts`    | The `models:*` channels and the `models:progress` broadcast                                                                    |
+| `src/renderer/components/Settings/ACappella/`  | Voice Setup and the Models page                                                                                                |
 
 ## The catalog
 

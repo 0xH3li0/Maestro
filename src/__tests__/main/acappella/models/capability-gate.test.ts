@@ -79,7 +79,7 @@ vi.mock('../../../../shared/local-models/native-runtimes', () => {
 // an agent shell sets it), and the gate now consults it for a downloaded
 // runtime before it trusts the registry. Nothing is downloaded in these tests;
 // a machine that happens to have the runtime installed must not decide them.
-vi.mock('../../../../main/acappella/runtime/runtime-store', () => ({
+vi.mock('../../../../main/local-models/runtime/runtime-store', () => ({
 	installedRuntimeEntry: vi.fn(async () => null),
 }));
 
@@ -104,7 +104,7 @@ import {
 	WAKE_WORD_PROVIDER_ID,
 	resolveVoiceReadiness,
 } from '../../../../main/acappella/models/capability-gate';
-import type { ModelStatus } from '../../../../main/acappella/models/model-store';
+import type { ModelStatus } from '../../../../main/local-models/model-store';
 import {
 	VOICE_SLOT_UNSATISFIED_REASONS,
 	readinessErrorMessage,
@@ -113,7 +113,7 @@ import {
 	type VoiceSlotReadiness,
 	type VoiceSlotUnsatisfiedReason,
 } from '../../../../shared/acappella/readiness';
-import type { NativeRuntimeUnavailable } from '../../../../main/acappella/runtime/native-loader';
+import type { NativeRuntimeUnavailable } from '../../../../main/local-models/runtime/native-loader';
 import {
 	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,

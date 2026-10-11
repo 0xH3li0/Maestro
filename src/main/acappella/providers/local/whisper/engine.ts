@@ -40,11 +40,19 @@ import {
 	WhisperTokenizer,
 	type WhisperSpecialTokens,
 } from './tokenizer';
-import type { OnnxModule, OnnxSession, OnnxTensor } from '../onnx-types';
+import type {
+	OnnxModule,
+	OnnxSession,
+	OnnxTensor,
+} from '../../../../local-models/runtime/onnx-types';
 
 // The ONNX Runtime surface is shared with the Parakeet engine. Re-exported so
 // existing importers keep their one import site.
-export type { OnnxModule, OnnxSession, OnnxTensor } from '../onnx-types';
+export type {
+	OnnxModule,
+	OnnxSession,
+	OnnxTensor,
+} from '../../../../local-models/runtime/onnx-types';
 
 /**
  * Model geometry, read from the checkpoint's `config.json`.

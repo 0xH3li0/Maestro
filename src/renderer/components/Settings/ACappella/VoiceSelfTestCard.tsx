@@ -15,7 +15,7 @@
 import { useCallback, useState } from 'react';
 import { Stethoscope } from 'lucide-react';
 
-import type { RuntimeSelfTestReport } from '../../../../main/acappella/runtime/runtime-selftest';
+import type { VoiceSelfTestReport } from '../../../../main/acappella/voice-self-test';
 import { selfTestVerdict } from '../../../../shared/local-models/native-runtimes';
 import type { Theme } from '../../../types';
 import { flashCopiedToClipboard } from '../../../utils/flashCopiedToClipboard';
@@ -37,7 +37,7 @@ const MIC_LABELS: Record<string, string> = {
 
 export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 	const [running, setRunning] = useState(false);
-	const [report, setReport] = useState<RuntimeSelfTestReport | null>(null);
+	const [report, setReport] = useState<VoiceSelfTestReport | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	const run = useCallback(async () => {

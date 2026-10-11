@@ -21,7 +21,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 // The detector reaches the model store only through the ONNX scorer, which no
 // test here builds. Mocked so importing the module does not pull in `electron`.
-vi.mock('../../../../main/acappella/models/model-store', () => ({
+vi.mock('../../../../main/local-models/model-store', () => ({
 	modelFilePath: (id: string, file: string) => `/models/${id}/${file}`,
 }));
 

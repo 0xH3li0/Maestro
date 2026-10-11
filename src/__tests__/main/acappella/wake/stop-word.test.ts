@@ -18,7 +18,7 @@ vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock('../../../../main/acappella/models/model-store', () => ({
+vi.mock('../../../../main/local-models/model-store', () => ({
 	modelFilePath: (id: string, file: string) => `/models/${id}/${file}`,
 }));
 

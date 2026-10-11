@@ -27,7 +27,7 @@ import type {
 	OnnxSession,
 	OnnxTensor,
 	OnnxTensorData,
-} from '../../../../main/acappella/providers/local/onnx-types';
+} from '../../../../main/local-models/runtime/onnx-types';
 
 class FakeTensor implements OnnxTensor {
 	constructor(

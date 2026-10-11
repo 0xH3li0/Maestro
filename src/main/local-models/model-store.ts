@@ -1,5 +1,5 @@
 /**
- * A Cappella model store - what is on disk, and whether it can be trusted.
+ * Local Models store - what is on disk, and whether it can be trusted.
  *
  * Install layout, one directory per model:
  *
@@ -33,9 +33,9 @@ import * as fs from 'fs/promises';
 import { createReadStream, type Dirent } from 'fs';
 import * as path from 'path';
 
-import { getLocalModel, LOCAL_MODEL_CATALOG } from '../../../shared/local-models/model-catalog';
-import type { LocalModelEntry, LocalModelFile } from '../../../shared/local-models/types';
-import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import { getLocalModel, LOCAL_MODEL_CATALOG } from '../../shared/local-models/model-catalog';
+import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
+import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 
 /** Directory name under userData. Also the thing the reclaim-disk flow deletes. */
 export const ACAPPELLA_MODELS_DIRNAME = path.join('models', 'acappella');
@@ -72,7 +72,7 @@ export interface ModelManifest {
 	verifiedAt: number;
 }
 
-/** Why a model is not usable. `ok` is the only state voice mode may start in. */
+/** Why a model is not usable. `installed` is the only state a consumer may run a model in. */
 export type ModelStatusKind = 'installed' | 'not-installed' | 'corrupt';
 
 export interface ModelStatus {
@@ -120,7 +120,7 @@ export function modelsRoot(): string {
  * makes the guard a whitelist rather than a sanitiser.
  */
 export function modelDir(id: string): string {
-	if (!getLocalModel(id)) throw new Error(`UnknownVoiceModel: ${id}`);
+	if (!getLocalModel(id)) throw new Error(`UnknownLocalModel: ${id}`);
 	return path.join(modelsRoot(), id);
 }
 
