@@ -77,6 +77,7 @@ import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
+import { syncTokenProxy } from '../../local-models/proxy/service';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
@@ -253,6 +254,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				logger.error('Could not register new Pianola watches', '[Pianola]', error);
 				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
 			}
+			// An agent's gateway is part of what was just written, and this store
+			// raises no change event. A no-op (no disk, no scan) until the token
+			// proxy has a port; it never rejects.
+			void syncTokenProxy();
 		},
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated

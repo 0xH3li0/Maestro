@@ -1353,8 +1353,9 @@ The rules, and why each is a rule:
    (`gateway-unsupported-provider`), or a stored value that is not a URL (`gateway-invalid-url`).
    `buildAgentLaunchPlan()` returns these as `{ ok: false, reason, error }` beside the SSH
    refusals, before anything with a side effect, and every surface already reports that result.
-   Maestro does not probe the proxy: when it is down, the agent's own connection error to the
-   gateway URL is the failure the user sees.
+   Maestro does not probe a proxy it does not own: when Headroom or LiteLLM is down, the agent's
+   own connection error to the gateway URL is the failure the user sees. The Maestro token proxy is
+   the exception, because Maestro can start it: see the next section.
 4. **The gateway is not the agent's credential.** It is injected at launch and never written into
    `customEnvVars`, so `classifyCredentialKind()`, `resolveAgentBillingCredential()` and the
    account attribution built on them still see the agent's login. A proxy that passes auth headers
@@ -1384,6 +1385,136 @@ describe a launch that will not happen. A provider switch clears the gateway (a 
 provider's API), and a worktree agent inherits its parent's. Provenance is a fourth
 `EnvVarSource`, `gateway` ("Local Models gateway"), in `resolveAgentEnvironment()`; the gateway
 table's **Show environment** draws it with `<EnvVarList>`.
+
+## Token conservation proxy
+
+Maestro's own proxy is an HTTP server on `127.0.0.1` that an agent reaches through its gateway
+URL. In this phase it is an **exact passthrough**: it changes nothing in either direction and logs
+the bytes it carried. Compression is a later phase and sits on top of this path.
+
+```mermaid
+flowchart LR
+	A["agent CLI<br/>base URL = http://127.0.0.1:PORT/anthropic"] -->|"POST /anthropic/v1/messages"| P["proxy/server.ts<br/>resolveTokenProxyTarget()"]
+	P -->|"headers and body bytes as sent<br/>Host rewritten"| U["https://api.anthropic.com/v1/messages"]
+	U -->|"status, headers, stream"| P
+	P -->|"chunk by chunk"| A
+	P --> L["one log line per request<br/>bytes sent, bytes received"]
+```
+
+### Addressing
+
+The first path segment of the request names the upstream, so one port serves every provider and a
+request is never inspected to learn where it goes. The table is `TOKEN_PROXY_ROUTES` in
+`src/shared/local-models/token-proxy.ts`:
+
+| Gateway URL an agent is given     | Upstream                                | For                          |
+| --------------------------------- | --------------------------------------- | ---------------------------- |
+| `http://127.0.0.1:PORT/anthropic` | `https://api.anthropic.com`             | Claude Code                  |
+| `http://127.0.0.1:PORT/openai/v1` | `https://api.openai.com/v1`             | Codex with an OpenAI API key |
+| `http://127.0.0.1:PORT/chatgpt`   | `https://chatgpt.com/backend-api/codex` | Codex with a ChatGPT login   |
+
+The `chatgpt` route has not been confirmed against a real run yet. The proxy forwards to these
+hosts and no others: a request cannot name its own destination.
+
+EVERY path under a route is forwarded (a provider CLI also calls token counting and model lists).
+`classifyTokenProxyPath()` only labels the three that carry a message list (`/v1/messages`,
+`.../chat/completions`, `.../responses`), which are the ones a later phase may compress.
+
+| Function                                          | Answers                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `resolveTokenProxyTarget(method, url, upstreams)` | Route, upstream, path and query of one request, or a named refusal |
+| `classifyTokenProxyPath(method, path)`            | Which API a forwarded request speaks                               |
+| `tokenProxyGatewayUrl(port, route)`               | The base URL to store on an agent                                  |
+| `gatewayPointsAtTokenProxy(gatewayUrl, port)`     | Whether a stored gateway reaches the proxy (any loopback spelling) |
+| `tokenProxyErrorBody(code, message)`              | The body of an error the PROXY raises                              |
+
+### What "exact passthrough" means
+
+`src/main/local-models/proxy/server.ts` is built on Node `http` / `https`, not `fetch` and not
+`fetchWithTimeout`. `fetch` decodes a compressed response and re-frames the body, which is a
+different response, and it wants a total timeout while a model stream runs for minutes.
+
+1. **Headers are forwarded from `rawHeaders`.** Casing, order and duplicates survive.
+   `forwardableHeaders()` drops only hop-by-hop headers (RFC 9110 section 7.6.1, plus anything the
+   `Connection` header names). `Host` is rewritten to the upstream's, which TLS virtual hosting
+   requires. `Authorization`, `x-api-key` and every other credential pass through, and the proxy
+   adds none of its own.
+2. **Bodies are never decoded.** A request with `content-encoding: zstd` (Codex has sent one) is
+   forwarded as the bytes it is. So is a compressed response. The path and query string are carried
+   as text, never re-serialized.
+3. **Responses stream.** The status line is flushed as soon as the upstream sends it and every
+   chunk is written as it lands, with Nagle off, so a server-sent event does not wait for the next.
+4. **An upstream error is a response.** A 429, a 529 or a 401 is forwarded whole and counts as a
+   completed request.
+5. **Only the proxy's own failures are answered by the proxy,** and that body names it: a 404
+   with code `unknown-route` for a path with no route, and a 502 with code `upstream-unreachable`
+   when the upstream cannot be reached. Both use one JSON shape that the Anthropic and OpenAI SDKs
+   each read a message from.
+6. **A truncated stream stays truncated.** When the upstream drops mid-response the client's
+   connection is cut. The proxy never ends such a response cleanly.
+7. **A client that leaves ends the upstream request,** so an abandoned turn stops generating at the
+   provider.
+
+Each request produces one `TokenProxyRequestLog` (route, kind, method, path, status, request
+bytes, response bytes, duration, outcome). It never holds a header or a body. The service writes
+it to the system log under `[TokenProxy]`.
+
+### Lifecycle
+
+`src/main/local-models/proxy/service.ts` decides which port the proxy owns and when it listens.
+
+```mermaid
+flowchart TD
+	ASK["ensureTokenProxyPort()<br/>first time the address is asked for"] --> FILE[("userData/token-proxy.json<br/>port")]
+	BOOT["app startup"] --> SYNC["syncTokenProxy()"]
+	WRITE["sessions:setMany / setAll<br/>(every gateway edit)"] --> SYNC
+	FILE --> SYNC
+	SYNC -->|"a local agent's gateway points at it"| UP["listen on 127.0.0.1:PORT"]
+	SYNC -->|"none do"| DOWN["stop listening<br/>requests in flight finish"]
+	SPAWN["desktop process:spawn<br/>Cue buildSpawnSpec"] --> ENS["ensureTokenProxyForGateway(url)"]
+	ENS -->|"started or already up"| RUN["spawn"]
+	ENS -->|"cannot start"| REFUSE["launch refused<br/>message names the proxy"]
+```
+
+1. **The port is chosen once and kept.** An agent's stored gateway URL names the port, so a port
+   that moved between launches would leave that agent pointing at nothing, or at whatever took the
+   old one. `ensureTokenProxyPort()` asks the OS for a free loopback port, writes it to
+   `userData/token-proxy.json`, and returns the same one from then on. It is the only function that
+   creates the file, and nothing calls it at startup: a user who never asks for the proxy's address
+   has no file and no port, and every other entry point is then a no-op.
+2. **It listens only while a local agent needs it.** `syncTokenProxy()` starts the server when at
+   least one agent's gateway points at the proxy and stops it when none do. An agent on an SSH
+   remote does not count: it cannot reach this machine's loopback, and its launch is refused for
+   that (`gateway-loopback-on-remote`). The sessions store raises no change event (its `set` is
+   patched, see `deferred-writes.ts`), so the sync runs from the persistence handlers'
+   `onSessionsPersisted` hook, which every gateway edit already goes through, and once at startup.
+3. **A taken port is a failure, never a move.** When another program holds the port, the start
+   fails, `getTokenProxyStatus().lastError` says so, and the proxy stays down. Picking a new port
+   would strand every stored gateway URL.
+4. **A launch never trusts that the proxy is up.** Desktop `process:spawn` and Cue's
+   `buildSpawnSpec()` call `ensureTokenProxyForGateway(plan.gateway.url)` after the launch plan. A
+   gateway that is not the Maestro proxy returns `ok` untouched. One that is gets a running proxy,
+   or the launch is refused with a message that names the proxy. Without this, a port held by
+   another program would receive the agent's request, credentials included.
+5. **Stopping is graceful.** The port is released at once and requests in flight finish, so an
+   agent whose gateway was cleared mid-turn keeps the turn it already started. `stopTokenProxy()`
+   cuts them, for tests. Nothing stops the proxy on app quit: agents are killed first and the
+   process exit releases the socket.
+
+All starts, stops and the port choice run on one `createKeyedWriteQueue()` chain, so a stop
+requested while a start is still binding waits for it.
+
+Limits of this phase:
+
+- `maestro-cli send` and playbooks spawn in the CLI's own process, which cannot start the proxy.
+  They rely on rule 2: the proxy is up while the app is. With the app closed, the agent's
+  connection to the gateway URL is refused, and that is the error the user sees.
+- Only the agent's gateway field starts the proxy. An agent that sets the base-URL variable itself
+  to the proxy's address (rule 1 of the gateway) is not counted.
+- No UI or CLI surface shows the proxy's address yet. `getTokenProxyStatus()` returns the port,
+  the per-route gateway URLs, the agents that point at it and the last start error for the surfaces
+  a later phase adds.
+- WebSocket upgrades are not forwarded.
 
 ## Related
 

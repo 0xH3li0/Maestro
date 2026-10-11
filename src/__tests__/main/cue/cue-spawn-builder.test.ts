@@ -79,6 +79,18 @@ vi.mock('../../../main/agents/claude-usage-startup', () => ({
 vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn(async () => true),
 }));
+// The token proxy's launch check reads its port from the data dir and can bind
+// a socket; these tests decide the answer instead.
+const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
+	vi.fn(
+		async (_gatewayUrl: string): Promise<{ ok: true } | { ok: false; error: string }> => ({
+			ok: true,
+		})
+	)
+);
+vi.mock('../../../main/local-models/proxy/service', () => ({
+	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+}));
 vi.mock('../../../main/stores/claudeUsageStore', () => ({
 	getSnapshot: () => null,
 	resolveConfigDirKey: () => 'test-config-key',
@@ -378,6 +390,40 @@ describe('cue-spawn-builder', () => {
 					expect(result.message).toContain('"Remote r1"');
 				}
 				expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			});
+
+			it('asks the token proxy to be up for the gateway in force', async () => {
+				await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(
+					'http://127.0.0.1:8787/anthropic'
+				);
+			});
+
+			it('does not ask the token proxy for a run with no gateway', async () => {
+				await buildSpawnSpec(createConfig(), 'prompt');
+
+				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+			});
+
+			it('fails the run by name when the token proxy cannot start', async () => {
+				mockEnsureTokenProxyForGateway.mockResolvedValueOnce({
+					ok: false,
+					error: 'the Maestro token proxy, which could not start: port in use',
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('Maestro token proxy, which could not start');
+				}
 			});
 		});
 

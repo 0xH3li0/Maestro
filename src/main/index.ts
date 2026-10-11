@@ -144,6 +144,7 @@ import { closeEmbeddingStore } from './local-models/embedding-store';
 import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
 import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
+import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -3297,6 +3298,18 @@ app
 				),
 			processManager: () => processManager,
 		});
+
+		// The token proxy listens only while a local agent's gateway points at
+		// it. Wiring it reads one small file at most, and nothing at all for a
+		// user who has never asked for the proxy's address. After this first
+		// pass it is kept in step by every write of the sessions store.
+		configureTokenProxy({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+		});
+		void syncTokenProxy();
 
 		// Start watching for system timezone changes (laptop crossing zones).
 		timeZoneWatcher.start();

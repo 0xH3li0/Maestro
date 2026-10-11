@@ -54,6 +54,7 @@ import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver'
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
+import { ensureTokenProxyForGateway } from '../../../local-models/proxy/service';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
@@ -305,6 +306,19 @@ export async function handleProcessSpawn(
 				envVar: planResult.plan.gateway.envVar,
 				gatewayUrl: planResult.plan.gateway.url,
 			});
+			// When that gateway is the Maestro token proxy, it has to be up before
+			// the turn is sent to its port. A proxy that cannot start (its port is
+			// held by another program) refuses the spawn by name: the agent's
+			// request, credentials included, must not go to whatever holds the port.
+			const proxy = await ensureTokenProxyForGateway(planResult.plan.gateway.url);
+			if (!proxy.ok) {
+				logger.error('Token proxy unavailable; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					gatewayUrl: planResult.plan.gateway.url,
+				});
+				reportSpawnRefusal(deps, config.sessionId, proxy.error);
+				return { success: false, pid: 0 };
+			}
 		}
 	} else {
 		effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;

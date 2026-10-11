@@ -16,6 +16,7 @@ import {
 	type SshSpawnWrapConfig,
 } from '../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../shared/maestro-lib/launch/launch-plan';
+import { ensureTokenProxyForGateway } from '../local-models/proxy/service';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
@@ -174,6 +175,12 @@ export async function buildSpawnSpec(
 		return { ok: false, message: planResult.error };
 	}
 	const plan = planResult.plan;
+	// A gateway that is the Maestro token proxy must be up before the run is
+	// sent to its port. One that cannot start fails the run by name.
+	if (plan.gateway) {
+		const proxy = await ensureTokenProxyForGateway(plan.gateway.url);
+		if (!proxy.ok) return { ok: false, message: proxy.error };
+	}
 
 	let command = plan.command;
 	let spawnArgs = plan.args;

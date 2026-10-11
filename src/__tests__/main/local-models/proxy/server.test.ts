@@ -1,0 +1,703 @@
+/**
+ * @file server.test.ts
+ *
+ * The token proxy as an exact passthrough, against a fake upstream on loopback:
+ * a streamed response is delivered chunk by chunk, headers and encoded bodies
+ * arrive as they were sent in both directions, an upstream error is forwarded
+ * whole, and only a failure of the proxy itself is answered by the proxy.
+ */
+
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import * as http from 'http';
+import * as zlib from 'zlib';
+import { randomBytes } from 'crypto';
+import type { AddressInfo } from 'net';
+import {
+	createTokenProxyServer,
+	forwardableHeaders,
+	type TokenProxyRequestLog,
+	type TokenProxyServer,
+} from '../../../../main/local-models/proxy/server';
+
+interface SeenRequest {
+	method: string;
+	url: string;
+	rawHeaders: string[];
+	body: Buffer;
+}
+
+interface FakeUpstream {
+	origin: string;
+	host: string;
+	seen: SeenRequest[];
+	close(): Promise<void>;
+}
+
+type UpstreamHandler = (
+	req: http.IncomingMessage,
+	res: http.ServerResponse,
+	body: Buffer
+) => unknown;
+
+const cleanups: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+	while (cleanups.length > 0) await cleanups.pop()!();
+});
+
+/** A real HTTP server standing in for a provider. Records what reached it. */
+async function startUpstream(handler: UpstreamHandler): Promise<FakeUpstream> {
+	const seen: SeenRequest[] = [];
+	const server = http.createServer((req, res) => {
+		const chunks: Buffer[] = [];
+		req.on('data', (chunk: Buffer) => chunks.push(chunk));
+		req.on('error', () => {});
+		req.on('end', () => {
+			const body = Buffer.concat(chunks);
+			seen.push({
+				method: req.method ?? '',
+				url: req.url ?? '',
+				rawHeaders: [...req.rawHeaders],
+				body,
+			});
+			void handler(req, res, body);
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	const port = (server.address() as AddressInfo).port;
+	const close = () =>
+		new Promise<void>((resolve) => {
+			server.close(() => resolve());
+			server.closeAllConnections();
+		});
+	cleanups.push(close);
+	return { origin: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}`, seen, close };
+}
+
+interface RunningProxy {
+	proxy: TokenProxyServer;
+	port: number;
+	logs: TokenProxyRequestLog[];
+}
+
+async function startProxy(upstreams: Record<string, string>): Promise<RunningProxy> {
+	const logs: TokenProxyRequestLog[] = [];
+	const proxy = createTokenProxyServer({ upstreams, onRequest: (entry) => logs.push(entry) });
+	const port = await proxy.listen(0);
+	cleanups.push(() => proxy.close({ force: true }));
+	return { proxy, port, logs };
+}
+
+interface Received {
+	status: number;
+	statusMessage: string;
+	rawHeaders: string[];
+	headers: http.IncomingHttpHeaders;
+	body: Buffer;
+}
+
+/** Send one request with exactly these headers (raw form) and collect the answer. */
+function send(
+	port: number,
+	options: { method?: string; path: string; headers?: string[]; body?: Buffer }
+): Promise<Received> {
+	return new Promise<Received>((resolve, reject) => {
+		const req = http.request(
+			{
+				host: '127.0.0.1',
+				port,
+				method: options.method ?? 'POST',
+				path: options.path,
+				headers: [...(options.headers ?? []), 'Host', `127.0.0.1:${port}`],
+				agent: false,
+			},
+			(res) => {
+				const chunks: Buffer[] = [];
+				res.on('data', (chunk: Buffer) => chunks.push(chunk));
+				res.on('error', reject);
+				res.on('end', () =>
+					resolve({
+						status: res.statusCode ?? 0,
+						statusMessage: res.statusMessage ?? '',
+						rawHeaders: [...res.rawHeaders],
+						headers: res.headers,
+						body: Buffer.concat(chunks),
+					})
+				);
+			}
+		);
+		req.on('error', reject);
+		req.end(options.body);
+	});
+}
+
+/** Every value a raw header list holds for `name`, matched exactly as written. */
+function rawValues(rawHeaders: string[], name: string): string[] {
+	const values: string[] = [];
+	for (let i = 0; i + 1 < rawHeaders.length; i += 2) {
+		if (rawHeaders[i] === name) values.push(rawHeaders[i + 1]);
+	}
+	return values;
+}
+
+function lowerNames(rawHeaders: string[]): string[] {
+	return rawHeaders.filter((_, index) => index % 2 === 0).map((name) => name.toLowerCase());
+}
+
+describe('token proxy server', () => {
+	describe('streaming passthrough', () => {
+		it('delivers each server-sent event as it is written, without waiting for the end', async () => {
+			let releaseSecondEvent: () => void = () => {};
+			const secondEventMayGo = new Promise<void>((resolve) => {
+				releaseSecondEvent = resolve;
+			});
+			const upstream = await startUpstream(async (_req, res) => {
+				res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+				res.write('event: message_start\ndata: {"n":1}\n\n');
+				// The second event is held until the client has the first. A proxy
+				// that buffered the response would never let it go.
+				await secondEventMayGo;
+				res.write('event: message_stop\ndata: {"n":2}\n\n');
+				res.end();
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			const received: string[] = [];
+			const whole = await new Promise<string>((resolve, reject) => {
+				const req = http.request(
+					{ host: '127.0.0.1', port, method: 'POST', path: '/anthropic/v1/messages', agent: false },
+					(res) => {
+						expect(res.statusCode).toBe(200);
+						expect(res.headers['content-type']).toBe('text/event-stream');
+						res.setEncoding('utf-8');
+						res.on('data', (chunk: string) => {
+							received.push(chunk);
+							if (received.length === 1) releaseSecondEvent();
+						});
+						res.on('error', reject);
+						res.on('end', () => resolve(received.join('')));
+					}
+				);
+				req.on('error', reject);
+				req.end('{"stream":true}');
+			});
+
+			expect(received[0]).toBe('event: message_start\ndata: {"n":1}\n\n');
+			expect(whole).toBe(
+				'event: message_start\ndata: {"n":1}\n\nevent: message_stop\ndata: {"n":2}\n\n'
+			);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				method: 'POST',
+				path: '/v1/messages',
+				status: 200,
+				requestBytes: Buffer.byteLength('{"stream":true}'),
+				responseBytes: Buffer.byteLength(whole),
+				outcome: 'completed',
+			});
+		});
+
+		it('streams a chat completion and a response the same way', async () => {
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(200, { 'content-type': 'text/event-stream' });
+				res.write('data: {"delta":"a"}\n\n');
+				res.end('data: [DONE]\n\n');
+			});
+			const { port, logs } = await startProxy({ openai: upstream.origin });
+
+			const chat = await send(port, {
+				path: '/openai/v1/chat/completions',
+				body: Buffer.from('{}'),
+			});
+			const responses = await send(port, { path: '/openai/v1/responses', body: Buffer.from('{}') });
+
+			expect(chat.body.toString()).toBe('data: {"delta":"a"}\n\ndata: [DONE]\n\n');
+			expect(responses.body.toString()).toBe('data: {"delta":"a"}\n\ndata: [DONE]\n\n');
+			expect(upstream.seen.map((request) => request.url)).toEqual([
+				'/v1/chat/completions',
+				'/v1/responses',
+			]);
+			await vi.waitFor(() => expect(logs).toHaveLength(2));
+			expect(logs.map((entry) => entry.kind)).toEqual([
+				'openai-chat-completions',
+				'openai-responses',
+			]);
+		});
+	});
+
+	describe('header passthrough', () => {
+		it('sends credentials and every other request header upstream as written', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port } = await startProxy({ anthropic: upstream.origin });
+
+			await send(port, {
+				path: '/anthropic/v1/messages',
+				headers: [
+					'Authorization',
+					'Bearer sk-ant-oat01-secret',
+					'x-api-key',
+					'sk-ant-api03-secret',
+					'anthropic-version',
+					'2023-06-01',
+					'Anthropic-Beta',
+					'oauth-2025-04-20',
+					'X-Stainless-Retry-Count',
+					'0',
+					'x-dup',
+					'first',
+					'x-dup',
+					'second',
+					'Content-Type',
+					'application/json',
+				],
+				body: Buffer.from('{"model":"m"}'),
+			});
+
+			const { rawHeaders } = upstream.seen[0];
+			// Names keep their casing and values are byte for byte.
+			expect(rawValues(rawHeaders, 'Authorization')).toEqual(['Bearer sk-ant-oat01-secret']);
+			expect(rawValues(rawHeaders, 'x-api-key')).toEqual(['sk-ant-api03-secret']);
+			expect(rawValues(rawHeaders, 'anthropic-version')).toEqual(['2023-06-01']);
+			expect(rawValues(rawHeaders, 'Anthropic-Beta')).toEqual(['oauth-2025-04-20']);
+			expect(rawValues(rawHeaders, 'X-Stainless-Retry-Count')).toEqual(['0']);
+			expect(rawValues(rawHeaders, 'Content-Type')).toEqual(['application/json']);
+			// A repeated header stays repeated, in order.
+			expect(rawValues(rawHeaders, 'x-dup')).toEqual(['first', 'second']);
+		});
+
+		it('rewrites Host to the upstream and drops only hop-by-hop headers', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port } = await startProxy({ anthropic: upstream.origin });
+
+			await send(port, {
+				path: '/anthropic/v1/messages',
+				headers: [
+					'Connection',
+					'close, X-Hop',
+					'X-Hop',
+					'1',
+					'Proxy-Authorization',
+					'Basic abc',
+					'TE',
+					'trailers',
+					'X-Kept',
+					'yes',
+				],
+				body: Buffer.from('{}'),
+			});
+
+			const { rawHeaders } = upstream.seen[0];
+			expect(rawValues(rawHeaders, 'Host')).toEqual([upstream.host]);
+			expect(lowerNames(rawHeaders).filter((name) => name === 'host')).toHaveLength(1);
+			expect(lowerNames(rawHeaders)).not.toContain('x-hop');
+			expect(lowerNames(rawHeaders)).not.toContain('proxy-authorization');
+			expect(lowerNames(rawHeaders)).not.toContain('te');
+			expect(rawValues(rawHeaders, 'X-Kept')).toEqual(['yes']);
+		});
+
+		it('returns the response status line and headers as the upstream sent them', async () => {
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(201, 'Made', [
+					'Request-Id',
+					'req_123',
+					'anthropic-ratelimit-tokens-remaining',
+					'9000',
+					'Set-Cookie',
+					'a=1',
+					'Set-Cookie',
+					'b=2',
+					'Content-Type',
+					'application/json',
+				]);
+				res.end('{"ok":true}');
+			});
+			const { port } = await startProxy({ anthropic: upstream.origin });
+
+			const response = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+
+			expect(response.status).toBe(201);
+			expect(response.statusMessage).toBe('Made');
+			expect(rawValues(response.rawHeaders, 'Request-Id')).toEqual(['req_123']);
+			expect(rawValues(response.rawHeaders, 'anthropic-ratelimit-tokens-remaining')).toEqual([
+				'9000',
+			]);
+			expect(rawValues(response.rawHeaders, 'Set-Cookie')).toEqual(['a=1', 'b=2']);
+			expect(response.body.toString()).toBe('{"ok":true}');
+		});
+
+		it('keeps the query string and the upstream base path on the forwarded request', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port } = await startProxy({
+				anthropic: upstream.origin,
+				chatgpt: `${upstream.origin}/backend-api/codex`,
+			});
+
+			await send(port, {
+				path: '/anthropic/v1/messages?beta=true&q=a%20b',
+				body: Buffer.from('{}'),
+			});
+			await send(port, { path: '/chatgpt/responses', body: Buffer.from('{}') });
+			await send(port, { method: 'GET', path: '/anthropic/v1/models' });
+
+			expect(upstream.seen.map((request) => `${request.method} ${request.url}`)).toEqual([
+				'POST /v1/messages?beta=true&q=a%20b',
+				'POST /backend-api/codex/responses',
+				'GET /v1/models',
+			]);
+		});
+	});
+
+	describe('encoded body passthrough', () => {
+		it('forwards a zstd-labelled request body byte for byte, without decoding it', async () => {
+			// Random bytes are not valid zstd. Anything that tried to decode the
+			// body would fail; a passthrough never looks.
+			const body = randomBytes(256 * 1024);
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port, logs } = await startProxy({ openai: upstream.origin });
+
+			await send(port, {
+				path: '/openai/v1/responses',
+				headers: [
+					'Content-Encoding',
+					'zstd',
+					'Content-Type',
+					'application/json',
+					'Content-Length',
+					String(body.length),
+				],
+				body,
+			});
+
+			const seen = upstream.seen[0];
+			expect(seen.body.equals(body)).toBe(true);
+			expect(rawValues(seen.rawHeaders, 'Content-Encoding')).toEqual(['zstd']);
+			expect(rawValues(seen.rawHeaders, 'Content-Length')).toEqual([String(body.length)]);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0].requestBytes).toBe(body.length);
+		});
+
+		it('forwards a body sent without a length (chunked) whole', async () => {
+			const body = randomBytes(64 * 1024);
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port } = await startProxy({ openai: upstream.origin });
+
+			await send(port, {
+				path: '/openai/v1/responses',
+				headers: ['Content-Encoding', 'zstd'],
+				body,
+			});
+
+			expect(upstream.seen[0].body.equals(body)).toBe(true);
+			expect(rawValues(upstream.seen[0].rawHeaders, 'Content-Encoding')).toEqual(['zstd']);
+		});
+
+		it('returns a compressed response as the bytes the upstream sent', async () => {
+			const compressed = zlib.gzipSync(Buffer.from(JSON.stringify({ text: 'x'.repeat(5000) })));
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(200, {
+					'content-encoding': 'gzip',
+					'content-type': 'application/json',
+					'content-length': compressed.length,
+				});
+				res.end(compressed);
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			const response = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+
+			expect(response.body.equals(compressed)).toBe(true);
+			expect(response.headers['content-encoding']).toBe('gzip');
+			expect(response.headers['content-length']).toBe(String(compressed.length));
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0].responseBytes).toBe(compressed.length);
+		});
+	});
+
+	describe('upstream error passthrough', () => {
+		it('forwards an upstream error status, headers and body untouched', async () => {
+			const errorBody = JSON.stringify({
+				type: 'error',
+				error: { type: 'rate_limit_error', message: 'Slow down.' },
+			});
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(429, {
+					'content-type': 'application/json',
+					'retry-after': '7',
+					'request-id': 'req_err',
+				});
+				res.end(errorBody);
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			const response = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+
+			expect(response.status).toBe(429);
+			expect(response.headers['retry-after']).toBe('7');
+			expect(response.headers['request-id']).toBe('req_err');
+			expect(response.body.toString()).toBe(errorBody);
+			// The upstream answered. To the proxy that is a completed request.
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 429, outcome: 'completed' });
+			expect(logs[0].error).toBeUndefined();
+		});
+
+		it('forwards a 529 and a 401 the same way', async () => {
+			const statuses = [529, 401];
+			const upstream = await startUpstream((_req, res) => {
+				const status = statuses.shift() ?? 500;
+				res.writeHead(status, { 'content-type': 'application/json' });
+				res.end(`{"status":${status}}`);
+			});
+			const { port } = await startProxy({ anthropic: upstream.origin });
+
+			const overloaded = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+			const unauthorized = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+
+			expect([overloaded.status, overloaded.body.toString()]).toEqual([529, '{"status":529}']);
+			expect([unauthorized.status, unauthorized.body.toString()]).toEqual([401, '{"status":401}']);
+		});
+	});
+
+	describe('failures of the proxy itself', () => {
+		it('answers a path with no route by name, and forwards nothing', async () => {
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			const response = await send(port, { path: '/v1/messages', body: Buffer.from('{}') });
+
+			expect(response.status).toBe(404);
+			const body = JSON.parse(response.body.toString());
+			expect(body.error.type).toBe('maestro_token_proxy_error');
+			expect(body.error.code).toBe('unknown-route');
+			expect(body.error.message).toContain('Maestro token proxy');
+			expect(upstream.seen).toHaveLength(0);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ route: null, status: 404, outcome: 'unknown-route' });
+		});
+
+		it('answers 502 by name when the upstream cannot be reached', async () => {
+			const dead = await startUpstream((_req, res) => res.end('ok'));
+			await dead.close();
+			const { port, logs } = await startProxy({ anthropic: dead.origin });
+
+			const response = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+
+			expect(response.status).toBe(502);
+			const body = JSON.parse(response.body.toString());
+			expect(body.error.code).toBe('upstream-unreachable');
+			expect(body.error.message).toContain('Maestro token proxy');
+			expect(body.error.message).toContain(dead.origin);
+			expect(body.error.message).toContain('not sent anywhere else');
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 502, outcome: 'upstream-failed' });
+		});
+
+		it('cuts the client when the upstream drops mid-response, never ending it cleanly', async () => {
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(200, { 'content-type': 'text/event-stream' });
+				res.write('data: {"n":1}\n\n', () => res.socket?.destroy());
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			const outcome = await new Promise<{ ended: boolean; complete: boolean }>((resolve) => {
+				const req = http.request(
+					{ host: '127.0.0.1', port, method: 'POST', path: '/anthropic/v1/messages', agent: false },
+					(res) => {
+						let ended = false;
+						res.on('data', () => {});
+						res.on('end', () => {
+							ended = true;
+						});
+						res.on('error', () => {});
+						res.on('close', () => resolve({ ended, complete: res.complete }));
+					}
+				);
+				req.on('error', () => resolve({ ended: false, complete: false }));
+				req.end('{}');
+			});
+
+			expect(outcome.complete).toBe(false);
+			expect(outcome.ended).toBe(false);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 200, outcome: 'upstream-failed' });
+		});
+
+		it('ends the upstream request when the client goes away', async () => {
+			let upstreamClosed: () => void = () => {};
+			const upstreamSawClose = new Promise<void>((resolve) => {
+				upstreamClosed = resolve;
+			});
+			const upstream = await startUpstream((_req, res) => {
+				res.on('close', () => {
+					if (!res.writableFinished) upstreamClosed();
+				});
+				res.writeHead(200, { 'content-type': 'text/event-stream' });
+				// Never ends: only the client leaving can stop it.
+				res.write('data: {"n":1}\n\n');
+			});
+			const { port, logs } = await startProxy({ anthropic: upstream.origin });
+
+			await new Promise<void>((resolve) => {
+				const req = http.request(
+					{ host: '127.0.0.1', port, method: 'POST', path: '/anthropic/v1/messages', agent: false },
+					(res) => {
+						res.on('error', () => {});
+						res.once('data', () => {
+							req.destroy();
+							resolve();
+						});
+					}
+				);
+				req.on('error', () => {});
+				req.end('{}');
+			});
+
+			await upstreamSawClose;
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ outcome: 'client-aborted' });
+		});
+	});
+
+	describe('listening', () => {
+		it('binds loopback only, reports its port, and releases it on close', async () => {
+			const proxy = createTokenProxyServer({ upstreams: {} });
+			expect(proxy.port()).toBeNull();
+
+			const port = await proxy.listen(0);
+			expect(proxy.port()).toBe(port);
+
+			await proxy.close({ force: true });
+			expect(proxy.port()).toBeNull();
+
+			// The port is free again: a second server takes the same one.
+			const again = createTokenProxyServer({ upstreams: {} });
+			cleanups.push(() => again.close({ force: true }));
+			await expect(again.listen(port)).resolves.toBe(port);
+		});
+
+		it('rejects when the port is already taken', async () => {
+			const first = createTokenProxyServer({ upstreams: {} });
+			cleanups.push(() => first.close({ force: true }));
+			const port = await first.listen(0);
+
+			const second = createTokenProxyServer({ upstreams: {} });
+			await expect(second.listen(port)).rejects.toMatchObject({ code: 'EADDRINUSE' });
+		});
+
+		it('lets a request in flight finish on a graceful close', async () => {
+			let finish: () => void = () => {};
+			const mayFinish = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			const upstream = await startUpstream(async (_req, res) => {
+				res.writeHead(200, { 'content-type': 'text/plain' });
+				res.write('first ');
+				await mayFinish;
+				res.end('second');
+			});
+			const { proxy, port } = await startProxy({ anthropic: upstream.origin });
+
+			const whole = await new Promise<string>((resolve, reject) => {
+				const req = http.request(
+					{ host: '127.0.0.1', port, method: 'POST', path: '/anthropic/v1/messages', agent: false },
+					(res) => {
+						let text = '';
+						res.setEncoding('utf-8');
+						res.once('data', () => {
+							// Stop the proxy while this response is half delivered.
+							void proxy.close();
+							finish();
+						});
+						res.on('data', (chunk: string) => {
+							text += chunk;
+						});
+						res.on('error', reject);
+						res.on('end', () => resolve(text));
+					}
+				);
+				req.on('error', reject);
+				req.end('{}');
+			});
+
+			expect(whole).toBe('first second');
+			expect(proxy.port()).toBeNull();
+		});
+	});
+});
+
+describe('forwardableHeaders', () => {
+	it('keeps order, casing and duplicates', () => {
+		expect(forwardableHeaders(['B', '2', 'a', '1', 'B', '3'])).toEqual([
+			'B',
+			'2',
+			'a',
+			'1',
+			'B',
+			'3',
+		]);
+	});
+
+	it('drops hop-by-hop headers in any casing', () => {
+		expect(
+			forwardableHeaders([
+				'Connection',
+				'keep-alive',
+				'Keep-Alive',
+				'timeout=5',
+				'Transfer-Encoding',
+				'chunked',
+				'Upgrade',
+				'h2c',
+				'Trailer',
+				'x',
+				'Proxy-Connection',
+				'keep-alive',
+				'Proxy-Authenticate',
+				'Basic',
+				'X-Real',
+				'1',
+			])
+		).toEqual(['X-Real', '1']);
+	});
+
+	it('drops what the Connection header names, and what the caller names', () => {
+		expect(
+			forwardableHeaders(['connection', 'X-One, x-two', 'x-one', '1', 'X-Two', '2', 'X-Three', '3'])
+		).toEqual(['X-Three', '3']);
+		expect(forwardableHeaders(['Host', 'a', 'X', '1'], ['host'])).toEqual(['X', '1']);
+	});
+
+	it('keeps end-to-end headers a proxy must not touch', () => {
+		const headers = [
+			'Authorization',
+			'Bearer t',
+			'Content-Encoding',
+			'zstd',
+			'Content-Length',
+			'10',
+			'Accept-Encoding',
+			'gzip',
+		];
+		expect(forwardableHeaders(headers)).toEqual(headers);
+	});
+});

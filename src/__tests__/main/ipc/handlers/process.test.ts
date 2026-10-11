@@ -282,6 +282,19 @@ vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock the token proxy's launch check. The real one reads its port from the
+// data dir and can bind a socket; a spawn test decides the answer instead.
+const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
+	vi.fn(
+		async (_gatewayUrl: string): Promise<{ ok: true } | { ok: false; error: string }> => ({
+			ok: true,
+		})
+	)
+);
+vi.mock('../../../../main/local-models/proxy/service', () => ({
+	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+}));
+
 // Mock the prompt manager so the copilot-preamble injection has deterministic
 // content without bootstrapping the real prompt cache. Per-test overrides use
 // mockReturnValueOnce / mockImplementation.
@@ -631,6 +644,46 @@ describe('process IPC handlers', () => {
 					'process:data',
 					'agent-gw-ai-tab-1',
 					expect.stringContaining(`gateway (${gatewayUrl}) is a loopback address`)
+				);
+			});
+
+			it('asks the token proxy to be up for the gateway before it spawns', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude();
+
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(gatewayUrl);
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			it('does not ask the token proxy for an agent with no gateway in force', async () => {
+				storeAgent({ id: 'agent-gw' });
+				await spawnClaude();
+
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				await spawnClaude({
+					sessionCustomEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				});
+
+				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+			});
+
+			it('refuses to spawn when the token proxy cannot start, and says so in the tab', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				mockEnsureTokenProxyForGateway.mockResolvedValueOnce({
+					ok: false,
+					error: 'the Maestro token proxy, which could not start: port in use',
+				});
+
+				const result = await spawnClaude();
+
+				// The request must not reach whatever holds the proxy's port.
+				expect(result).toEqual({ success: false, pid: 0 });
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+					'process:data',
+					'agent-gw-ai-tab-1',
+					expect.stringContaining('Maestro token proxy, which could not start')
 				);
 			});
 		});

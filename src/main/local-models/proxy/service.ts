@@ -1,0 +1,311 @@
+/**
+ * The Maestro token proxy's lifecycle: which port it owns, and when it listens.
+ *
+ * The server (`server.ts`) is a passthrough with no opinions. This module
+ * decides the three things around it:
+ *
+ * 1. **The port is chosen once and kept.** An agent's stored gateway URL names
+ *    the port, so a port that moved between launches would leave every such
+ *    agent pointing at nothing (or at whatever took the old one). It is picked
+ *    the first time something asks for it (`ensureTokenProxyPort`), written to
+ *    `userData/token-proxy.json`, and reused from then on. When that port is
+ *    taken at start, the proxy does NOT move: it fails by name.
+ * 2. **It listens only while an agent needs it.** `syncTokenProxy()` starts it
+ *    when at least one local agent's gateway points at it and stops it when
+ *    none do. It runs at startup and after every write of the sessions store
+ *    (the store raises no change event of its own; see `deferred-writes.ts`),
+ *    which every gateway edit goes through. Until a port exists it is a no-op,
+ *    so a user who never uses the proxy pays nothing.
+ * 3. **A launch never trusts that it is up.** `ensureTokenProxyForGateway()` is
+ *    called by the spawn paths that live in this process (desktop, Cue) for an
+ *    agent whose gateway points here. It starts the proxy if needed and, when
+ *    it cannot, fails the launch with a message that names the proxy. Without
+ *    it a port held by another program would receive the agent's request,
+ *    credentials included.
+ *
+ * `maestro-cli send` spawns in the CLI's own process and cannot start anything
+ * here. It relies on (2): the proxy is already up while the app is, and with
+ * the app closed the agent's connection to the gateway URL is refused, which is
+ * the error the user sees.
+ */
+
+import * as fs from 'fs/promises';
+import * as net from 'net';
+import * as path from 'path';
+import {
+	gatewayPointsAtTokenProxy,
+	TOKEN_PROXY_HOST,
+	TOKEN_PROXY_NAME,
+	TOKEN_PROXY_ROUTES,
+	tokenProxyGatewayUrl,
+	type TokenProxyRouteId,
+} from '../../../shared/local-models/token-proxy';
+import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
+import { logger } from '../../utils/logger';
+import { localModelsDataDir } from '../paths';
+import {
+	createTokenProxyServer,
+	type TokenProxyRequestLog,
+	type TokenProxyServer,
+	type TokenProxyServerOptions,
+} from './server';
+
+const LOG_CONTEXT = '[TokenProxy]';
+
+/** The file that remembers the port, relative to the data dir. */
+export const TOKEN_PROXY_STATE_FILE = 'token-proxy.json';
+
+export interface TokenProxyDeps {
+	/** The stored agent records (the main-process sessions store). */
+	sessions: () => Array<Record<string, unknown>>;
+	/** Where the state file lives. Defaults to the Maestro data dir. */
+	dataDir?: () => string;
+	/** Builds the server. A seam for tests. */
+	createServer?: (options: TokenProxyServerOptions) => TokenProxyServer;
+}
+
+export interface TokenProxyStatus {
+	/** The proxy's port, or null when none has been chosen yet. */
+	port: number | null;
+	/** Whether it is listening right now. */
+	running: boolean;
+	/** The local agents whose gateway points at it. */
+	agentIds: string[];
+	/** Why the last start failed, or null. Cleared by a start that works. */
+	lastError: string | null;
+	/** The base URL to give an agent, per route. Null until a port exists. */
+	gatewayUrls: Record<TokenProxyRouteId, string> | null;
+}
+
+export type TokenProxyEnsureResult = { ok: true } | { ok: false; error: string };
+
+let deps: TokenProxyDeps | null = null;
+let server: TokenProxyServer | null = null;
+/** `undefined` until the state file has been read once. */
+let knownPort: number | null | undefined;
+let lastError: string | null = null;
+
+// Every start, stop and port choice runs on one chain: a stop requested while
+// a start is still binding must wait for it, not race it.
+const lifecycle = createKeyedWriteQueue();
+const LIFECYCLE_KEY = 'token-proxy';
+
+/** Point the proxy at the app's stores. Starts nothing. */
+export function configureTokenProxy(next: TokenProxyDeps): void {
+	deps = next;
+}
+
+function stateFilePath(): string {
+	return path.join((deps?.dataDir ?? localModelsDataDir)(), TOKEN_PROXY_STATE_FILE);
+}
+
+function isPort(value: unknown): value is number {
+	return typeof value === 'number' && Number.isInteger(value) && value > 0 && value < 65536;
+}
+
+/** The persisted port, or null. Reads the file once per process. */
+async function readPort(): Promise<number | null> {
+	if (knownPort !== undefined) return knownPort;
+	let port: number | null = null;
+	try {
+		const parsed = JSON.parse(await fs.readFile(stateFilePath(), 'utf-8')) as { port?: unknown };
+		if (isPort(parsed?.port)) port = parsed.port;
+		else logger.warn(`Ignoring ${TOKEN_PROXY_STATE_FILE}: it holds no usable port`, LOG_CONTEXT);
+	} catch (error) {
+		// No file is the normal state for a user who has never used the proxy.
+		if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+			logger.warn(`Could not read ${TOKEN_PROXY_STATE_FILE}`, LOG_CONTEXT, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	knownPort = port;
+	return port;
+}
+
+/** Ask the OS for a port nothing is using on loopback. */
+function pickFreePort(): Promise<number> {
+	return new Promise<number>((resolve, reject) => {
+		const probe = net.createServer();
+		probe.once('error', reject);
+		probe.listen(0, TOKEN_PROXY_HOST, () => {
+			const address = probe.address();
+			const port = address && typeof address === 'object' ? address.port : 0;
+			probe.close(() => (isPort(port) ? resolve(port) : reject(new Error('no port assigned'))));
+		});
+	});
+}
+
+function agentsPointingAt(port: number): string[] {
+	if (!deps) return [];
+	const ids: string[] = [];
+	for (const record of deps.sessions()) {
+		if (typeof record?.gatewayUrl !== 'string') continue;
+		if (!gatewayPointsAtTokenProxy(record.gatewayUrl, port)) continue;
+		// An agent on an SSH remote cannot reach this machine's loopback, and
+		// its launch is refused for it (`gateway-loopback-on-remote`).
+		if ((record.sessionSshRemoteConfig as { enabled?: boolean } | undefined)?.enabled === true) {
+			continue;
+		}
+		ids.push(String(record.id));
+	}
+	return ids;
+}
+
+function logRequest(entry: TokenProxyRequestLog): void {
+	const data = {
+		route: entry.route,
+		kind: entry.kind,
+		method: entry.method,
+		path: entry.path,
+		status: entry.status,
+		requestBytes: entry.requestBytes,
+		responseBytes: entry.responseBytes,
+		durationMs: entry.durationMs,
+		outcome: entry.outcome,
+	};
+	if (entry.outcome === 'upstream-failed' || entry.outcome === 'unknown-route') {
+		logger.warn(entry.error ?? `${TOKEN_PROXY_NAME} failed a request`, LOG_CONTEXT, data);
+		return;
+	}
+	logger.info(
+		`${entry.method} /${entry.route}${entry.path} -> ${entry.status}: ${entry.requestBytes} bytes sent, ${entry.responseBytes} bytes received`,
+		LOG_CONTEXT,
+		data
+	);
+}
+
+/** Why a start on `port` failed, as the end of a sentence. */
+function startFailureReason(port: number, error: unknown): string {
+	if ((error as NodeJS.ErrnoException)?.code === 'EADDRINUSE') {
+		return `another program is using ${TOKEN_PROXY_HOST}:${port}. Quit that program, or clear the gateway on the agents that point at this port`;
+	}
+	return error instanceof Error ? error.message : String(error);
+}
+
+/** Listen on `port`. Throws with the reason; records it as `lastError`. */
+async function start(port: number): Promise<void> {
+	if (server) return;
+	let next: TokenProxyServer;
+	try {
+		next = (deps?.createServer ?? createTokenProxyServer)({ onRequest: logRequest });
+		await next.listen(port);
+	} catch (error) {
+		lastError = startFailureReason(port, error);
+		logger.error(`${TOKEN_PROXY_NAME} could not start: ${lastError}`, LOG_CONTEXT);
+		throw new Error(lastError);
+	}
+	server = next;
+	lastError = null;
+	logger.info(`${TOKEN_PROXY_NAME} listening on ${TOKEN_PROXY_HOST}:${port}`, LOG_CONTEXT);
+}
+
+/**
+ * Stop listening. The port is released at once; a request in flight finishes
+ * unless `force` is set (an agent whose gateway was cleared mid-turn keeps the
+ * turn it already started).
+ */
+async function stop(force: boolean): Promise<void> {
+	const closing = server;
+	if (!closing) return;
+	server = null;
+	logger.info(`${TOKEN_PROXY_NAME} stopped`, LOG_CONTEXT);
+	const drained = closing.close({ force });
+	if (force) await drained;
+	else void drained;
+}
+
+/**
+ * The proxy's port, chosen and persisted on the first call. This is the only
+ * function that creates the state file: call it when the user asks for the
+ * proxy's address, not at startup.
+ */
+export function ensureTokenProxyPort(): Promise<number> {
+	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
+		const existing = await readPort();
+		if (existing !== null) return existing;
+		const port = await pickFreePort();
+		await atomicWriteJson(stateFilePath(), { port });
+		knownPort = port;
+		logger.info(`${TOKEN_PROXY_NAME} will use port ${port}`, LOG_CONTEXT);
+		return port;
+	});
+}
+
+/**
+ * Bring the listener in line with the stored agents: up when at least one
+ * local agent's gateway points at the proxy, down when none do. Never throws:
+ * a failed start is logged and reported by `getTokenProxyStatus()`, and the
+ * launch that needs the proxy fails by name in `ensureTokenProxyForGateway()`.
+ */
+export function syncTokenProxy(): Promise<void> {
+	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
+		const port = await readPort();
+		if (port === null) return;
+		if (agentsPointingAt(port).length === 0) {
+			await stop(false);
+			return;
+		}
+		try {
+			await start(port);
+		} catch {
+			// Recorded and logged by start().
+		}
+	});
+}
+
+/**
+ * Called by a launch whose agent has a gateway. A gateway that is not the
+ * Maestro proxy is none of this module's business (`ok`). One that is gets a
+ * running proxy or a failure that names it; the caller must then refuse the
+ * launch rather than send the turn to a port the proxy does not hold.
+ */
+export function ensureTokenProxyForGateway(gatewayUrl: string): Promise<TokenProxyEnsureResult> {
+	return lifecycle.enqueue(LIFECYCLE_KEY, async (): Promise<TokenProxyEnsureResult> => {
+		const port = await readPort();
+		if (port === null || !gatewayPointsAtTokenProxy(gatewayUrl, port)) return { ok: true };
+		try {
+			await start(port);
+			return { ok: true };
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			return {
+				ok: false,
+				error: `This agent's Local Models gateway (${gatewayUrl}) is the ${TOKEN_PROXY_NAME}, which could not start: ${reason}. The turn was not sent.`,
+			};
+		}
+	});
+}
+
+/** What the proxy is doing now. Reads only; never chooses a port. */
+export async function getTokenProxyStatus(): Promise<TokenProxyStatus> {
+	const port = await readPort();
+	let gatewayUrls: TokenProxyStatus['gatewayUrls'] = null;
+	if (port !== null) {
+		const urls = {} as Record<TokenProxyRouteId, string>;
+		for (const route of Object.keys(TOKEN_PROXY_ROUTES) as TokenProxyRouteId[]) {
+			urls[route] = tokenProxyGatewayUrl(port, route);
+		}
+		gatewayUrls = urls;
+	}
+	return {
+		port,
+		running: server !== null,
+		agentIds: port === null ? [] : agentsPointingAt(port),
+		lastError,
+		gatewayUrls,
+	};
+}
+
+/** Stop the proxy and cut what it is carrying. For app shutdown and tests. */
+export function stopTokenProxy(): Promise<void> {
+	return lifecycle.enqueue(LIFECYCLE_KEY, () => stop(true));
+}
+
+/** Forget everything, so each test starts from a process that never ran it. */
+export async function resetTokenProxyForTests(): Promise<void> {
+	await stopTokenProxy();
+	deps = null;
+	knownPort = undefined;
+	lastError = null;
+}
