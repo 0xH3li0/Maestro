@@ -17,8 +17,9 @@
  *    which every gateway edit goes through. Until a port exists it is a no-op,
  *    so a user who never uses the proxy pays nothing.
  * 3. **A launch never trusts that it is up.** `ensureTokenProxyForGateway()` is
- *    called by the spawn paths that live in this process (desktop, Cue) for an
- *    agent whose gateway points here. It starts the proxy if needed and, when
+ *    called by the spawn paths that live in this process (desktop, Cue, and
+ *    through `applyAgentGatewayToSpawn()` Group Chat and cross-agent consults)
+ *    for an agent whose gateway points here. It starts the proxy if needed and, when
  *    it cannot, fails the launch with a message that names the proxy. Without
  *    it a port held by another program would receive the agent's request,
  *    credentials included.
@@ -40,6 +41,7 @@
 import * as fs from 'fs/promises';
 import * as net from 'net';
 import * as path from 'path';
+import { resolveAgentGateway } from '../../../shared/local-models/gateway';
 import {
 	asStoredTokenProxyMode,
 	gatewayPointsAtTokenProxy,
@@ -358,6 +360,70 @@ export async function tokenProxyLaunchGatewayUrl(
 	if (!agentId || !gatewayUrl) return gatewayUrl;
 	const port = await readPort();
 	return port === null ? gatewayUrl : tokenProxyAgentGatewayUrl(gatewayUrl, port, agentId);
+}
+
+export interface SpawnGatewayInput {
+	/** The Maestro agent whose stored gateway applies. */
+	agentId: string;
+	/** That agent's provider, e.g. `claude-code`. */
+	toolType: string;
+	/** The arguments the spawn was about to use. */
+	args: string[];
+	/** The agent's effective custom vars; a base-URL variable set here wins. */
+	customEnvVars?: Record<string, string>;
+	/** The SSH remote the process runs on, when it runs on one. */
+	remote?: { name: string } | null;
+}
+
+export type SpawnGatewayResult =
+	| {
+			ok: true;
+			args: string[];
+			customEnvVars: Record<string, string> | undefined;
+			/** What was applied, or null when the agent has no gateway in effect. */
+			gateway: { envVar: string; url: string } | null;
+	  }
+	| { ok: false; error: string };
+
+/**
+ * Apply an agent's Local Models gateway to a spawn that does not build a launch
+ * plan (a Group Chat participant, a cross-agent consult). The same three steps
+ * the plan-based paths take, in one call so a new spawn site cannot do two of
+ * them: give the proxy the agent's id, resolve the gateway with the same rules
+ * (`resolveAgentGateway`), and make sure the proxy is up before the turn goes
+ * to its port. A gateway that cannot be used comes back as an error the caller
+ * must refuse the spawn with; it never falls back to a direct connection.
+ */
+export async function applyAgentGatewayToSpawn(
+	input: SpawnGatewayInput
+): Promise<SpawnGatewayResult> {
+	const unchanged: SpawnGatewayResult = {
+		ok: true,
+		args: input.args,
+		customEnvVars: input.customEnvVars,
+		gateway: null,
+	};
+	const stored = agentRecord(input.agentId)?.gatewayUrl;
+	if (typeof stored !== 'string' || stored.trim() === '') return unchanged;
+
+	const gateway = resolveAgentGateway({
+		toolType: input.toolType,
+		gatewayUrl: await tokenProxyLaunchGatewayUrl(input.agentId, stored),
+		userEnvVars: input.customEnvVars,
+		remote: input.remote ?? null,
+	});
+	if (gateway.kind === 'refused') return { ok: false, error: gateway.message };
+	if (gateway.kind !== 'inject') return unchanged;
+
+	const proxy = await ensureTokenProxyForGateway(gateway.url);
+	if (!proxy.ok) return { ok: false, error: proxy.error };
+	return {
+		ok: true,
+		// A global option: ahead of the agent's own arguments, subcommand included.
+		args: [...gateway.args, ...input.args],
+		customEnvVars: { ...(input.customEnvVars ?? {}), ...gateway.envVars },
+		gateway: { envVar: gateway.envVar, url: gateway.url },
+	};
 }
 
 /** What the proxy is doing now. Reads only; never chooses a port. */

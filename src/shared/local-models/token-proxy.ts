@@ -269,6 +269,16 @@ export const TOKEN_PROXY_MODE_LABELS: Record<TokenProxyMode, string> = {
 	'compress-early': 'Compress early',
 };
 
+/**
+ * Said wherever a token figure from the proxy is shown. The proxy has no
+ * tokenizer for the provider, so it counts 4 characters to a token. Against a
+ * provider's own count that came out about 1.9 times low on shell output
+ * (paths, digits, punctuation), so a saving shown is a floor, not a
+ * measurement.
+ */
+export const TOKEN_PROXY_ESTIMATE_NOTE =
+	'Token counts are estimates at 4 characters per token. Logs and code usually run denser, so the real saving is higher.';
+
 /** One sentence per mode: what it does and what it costs. Shown under the picker. */
 export const TOKEN_PROXY_MODE_DESCRIPTIONS: Record<TokenProxyMode, string> = {
 	off: "This agent's requests do not go through the Maestro proxy.",

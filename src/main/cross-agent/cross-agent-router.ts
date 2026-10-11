@@ -631,6 +631,8 @@ export async function startCrossAgentRequest(
 				configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType),
 			agentConfigValues,
 			sshRemoteConfig: target.sshRemoteConfig,
+			// The consult runs AS the target agent, so it takes that agent's gateway.
+			maestroAgentId: target.id,
 			sshStore,
 			tokenMode: getClaudeTokenMode(target, {
 				sshEnabled: !!target.sshRemoteConfig?.enabled,

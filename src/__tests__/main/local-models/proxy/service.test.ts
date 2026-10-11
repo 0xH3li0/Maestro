@@ -58,6 +58,7 @@ vi.mock('../../../../main/local-models/proxy/compression-cache', () => ({
 }));
 
 import {
+	applyAgentGatewayToSpawn,
 	configureTokenProxy,
 	ensureTokenProxyForGateway,
 	ensureTokenProxyPort,
@@ -349,6 +350,105 @@ describe('ensureTokenProxyForGateway', () => {
 
 		expect(result.ok).toBe(false);
 		expect((await getTokenProxyStatus()).running).toBe(false);
+	});
+});
+
+describe('applyAgentGatewayToSpawn', () => {
+	const input = { agentId: 'a1', toolType: 'claude-code', args: ['--print'] };
+
+	it('changes nothing for an agent with no gateway, and for an unknown agent', async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'claude-code' }];
+
+		const expected = { ok: true, args: ['--print'], customEnvVars: undefined, gateway: null };
+		expect(await applyAgentGatewayToSpawn(input)).toEqual(expected);
+		expect(await applyAgentGatewayToSpawn({ ...input, agentId: 'gone' })).toEqual(expected);
+	});
+
+	it("sets the provider's base-URL variable to the agent's gateway", async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'claude-code', gatewayUrl: 'https://litellm.example.com' }];
+
+		const result = await applyAgentGatewayToSpawn({ ...input, customEnvVars: { FOO: '1' } });
+
+		expect(result).toEqual({
+			ok: true,
+			args: ['--print'],
+			customEnvVars: { FOO: '1', ANTHROPIC_BASE_URL: 'https://litellm.example.com' },
+			gateway: { envVar: 'ANTHROPIC_BASE_URL', url: 'https://litellm.example.com' },
+		});
+	});
+
+	it('puts a config argument in front for a provider that needs one', async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'codex', gatewayUrl: 'https://litellm.example.com' }];
+
+		const result = await applyAgentGatewayToSpawn({
+			...input,
+			toolType: 'codex',
+			args: ['exec', '--json'],
+		});
+
+		expect(result.ok && result.args).toEqual([
+			'-c',
+			'openai_base_url="https://litellm.example.com"',
+			'exec',
+			'--json',
+		]);
+	});
+
+	it("starts the Maestro proxy and puts the agent's id in the URL", async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+		agents = [
+			{ id: 'a1', toolType: 'claude-code', gatewayUrl: `http://127.0.0.1:${port}/anthropic` },
+		];
+
+		const result = await applyAgentGatewayToSpawn(input);
+
+		expect(result.ok && result.gateway?.url).toBe(
+			await tokenProxyLaunchGatewayUrl('a1', `http://127.0.0.1:${port}/anthropic`)
+		);
+		expect(result.ok && result.gateway?.url).toContain('a1');
+		expect(await isListening(port)).toBe(true);
+	});
+
+	it('leaves the spawn alone when the agent sets the variable itself', async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'claude-code', gatewayUrl: 'https://litellm.example.com' }];
+		const customEnvVars = { ANTHROPIC_BASE_URL: 'https://mine.example.com' };
+
+		expect(await applyAgentGatewayToSpawn({ ...input, customEnvVars })).toEqual({
+			ok: true,
+			args: ['--print'],
+			customEnvVars,
+			gateway: null,
+		});
+	});
+
+	it('refuses a loopback gateway for a process on an SSH remote', async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'claude-code', gatewayUrl: 'http://127.0.0.1:8787' }];
+
+		const result = await applyAgentGatewayToSpawn({ ...input, remote: { name: 'build-box' } });
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toContain('SSH remote "build-box" cannot reach');
+	});
+
+	it('refuses when the Maestro proxy cannot start', async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+		const release = await occupy(port);
+		agents = [
+			{ id: 'a1', toolType: 'claude-code', gatewayUrl: `http://127.0.0.1:${port}/anthropic` },
+		];
+
+		const result = await applyAgentGatewayToSpawn(input);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toContain('The turn was not sent.');
+		await release();
 	});
 });
 

@@ -2019,6 +2019,7 @@ export async function routeModeratorResponse(
 						getCustomEnvVarsCallback?.(participant.agentId),
 					agentConfigValues,
 					sshRemoteConfig: matchingSession?.sshRemoteConfig,
+					maestroAgentId: matchingSession?.id,
 					tokenMode: getClaudeTokenMode(matchingSession, {
 						sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
 					}),
@@ -2640,6 +2641,7 @@ export async function respawnParticipantWithRecovery(
 			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId),
 		agentConfigValues,
 		sshRemoteConfig: matchingSession?.sshRemoteConfig,
+		maestroAgentId: matchingSession?.id,
 		tokenMode: getClaudeTokenMode(matchingSession, {
 			sshEnabled: !!matchingSession?.sshRemoteConfig?.enabled,
 		}),

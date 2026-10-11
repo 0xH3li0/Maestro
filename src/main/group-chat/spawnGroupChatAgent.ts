@@ -24,6 +24,17 @@ import {
 	buildRemoteInteractiveSpawn,
 } from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
+import { applyAgentGatewayToSpawn } from '../local-models/proxy/service';
+
+/** The remote's display name for a refusal message; its id when it cannot be resolved. */
+function sshRemoteName(
+	store: SshRemoteSettingsStore | null | undefined,
+	config: AgentSshRemoteConfig
+): string {
+	const target = resolveSshLaunchTarget(store ?? undefined, config);
+	return target.kind === 'remote' ? target.remote.name : (config.remoteId ?? 'unknown');
+}
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -42,6 +53,14 @@ export interface SpawnGroupChatAgentConfig {
 	prompt?: string;
 	/** Resolved custom env vars to inject */
 	customEnvVars?: Record<string, string>;
+	/**
+	 * The Left Bar agent this process runs AS, when there is one (a participant,
+	 * a cross-agent consult target). Its Local Models gateway is applied to the
+	 * spawn, so the turn takes the same route as that agent's own tab. Omit for
+	 * a process that is nobody's agent (the moderator, synthesis): a gateway is
+	 * a per-agent setting and there is none to read.
+	 */
+	maestroAgentId?: string;
 	/** Agent config values (used for context window resolution) */
 	agentConfigValues?: Record<string, any>;
 	/** SSH remote config (from chat moderator or matching session); null/undefined = local */
@@ -98,10 +117,8 @@ export async function spawnGroupChatAgent(
 		sessionId,
 		agentId,
 		agent,
-		args,
 		cwd,
 		prompt,
-		customEnvVars,
 		agentConfigValues,
 		sshRemoteConfig,
 		sshStore,
@@ -111,6 +128,25 @@ export async function spawnGroupChatAgent(
 	} = config;
 
 	const baseCommand = config.command ?? agent.path ?? agent.command;
+
+	// The agent's Local Models gateway, applied before anything below reads the
+	// arguments or the env, so the local, maestro-p and SSH paths all carry it.
+	// One that cannot be used (a loopback URL for a remote host, a proxy that
+	// will not start) refuses the turn by name rather than connecting direct.
+	let args = config.args;
+	let customEnvVars = config.customEnvVars;
+	if (config.maestroAgentId) {
+		const gateway = await applyAgentGatewayToSpawn({
+			agentId: config.maestroAgentId,
+			toolType: agentId,
+			args,
+			customEnvVars,
+			remote: sshRemoteConfig?.enabled ? { name: sshRemoteName(sshStore, sshRemoteConfig) } : null,
+		});
+		if (!gateway.ok) throw new Error(gateway.error);
+		args = gateway.args;
+		customEnvVars = gateway.customEnvVars;
+	}
 
 	let spawnCommand = baseCommand;
 	let spawnArgs = args;

@@ -438,6 +438,11 @@ describe('the Maestro proxy usage', () => {
 		render(<LocalModelsGatewaySection theme={theme} />);
 
 		const total = await screen.findByTestId('token-proxy-usage-total');
+		// A saving is an estimate, and the card says which way it is off.
+		expect(screen.getByText('Tokens saved (est.)')).toBeInTheDocument();
+		expect(screen.getByTestId('token-proxy-estimate-note')).toHaveTextContent(
+			'Token counts are estimates at 4 characters per token.'
+		);
 		expect(total).toHaveTextContent('All agents');
 		expect(total).toHaveTextContent('12');
 		expect(total).toHaveTextContent('10,000 (25%)');

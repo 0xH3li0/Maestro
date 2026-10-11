@@ -16,6 +16,7 @@ import {
 	type WorkSearchResult,
 } from '../../shared/local-models/work-search';
 import {
+	TOKEN_PROXY_ESTIMATE_NOTE,
 	TOKEN_PROXY_HOST,
 	type TokenProxyBlockDetail,
 	type TokenProxyReport,
@@ -1095,6 +1096,9 @@ export function formatTokenProxyReport(report: TokenProxyReport): string {
 			const label =
 				row.agentId === null ? 'No agent' : (names.get(row.agentId) ?? row.agentId.slice(0, 8));
 			lines.push(proxyUsageLine(label, row));
+		}
+		if (report.usage.totals.compressRequests > 0) {
+			lines.push(dim(`  ${TOKEN_PROXY_ESTIMATE_NOTE}`));
 		}
 	}
 

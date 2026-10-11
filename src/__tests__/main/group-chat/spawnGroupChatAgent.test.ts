@@ -44,6 +44,13 @@ vi.mock('../../../main/utils/ssh-remote-resolver', () => ({
 	getSshRemoteConfig: vi.fn(() => ({ config: null, source: 'session' })),
 }));
 
+// The agent's Local Models gateway: stubbed so these tests say what the helper
+// does with the answer, not how the answer is reached (service.test.ts).
+const mockApplyGateway = vi.fn();
+vi.mock('../../../main/local-models/proxy/service', () => ({
+	applyAgentGatewayToSpawn: (...args: unknown[]) => mockApplyGateway(...args),
+}));
+
 import { spawnGroupChatAgent } from '../../../main/group-chat/spawnGroupChatAgent';
 import type { AgentConfig } from '../../../main/agents/definitions';
 import type { IProcessManager } from '../../../main/group-chat/group-chat-moderator';
@@ -212,6 +219,80 @@ describe('spawnGroupChatAgent', () => {
 			expect(spawnSpy).toHaveBeenCalledTimes(1);
 			const spawned = spawnSpy.mock.calls[0][0] as { command: string };
 			expect(spawned.command).toBe('ssh');
+		});
+	});
+	describe("the agent's Local Models gateway", () => {
+		beforeEach(() => {
+			mockResolve.mockReturnValue({ mode: 'api', reason: 'auto' });
+		});
+
+		it("is not looked up for a process that is nobody's agent", async () => {
+			await spawnGroupChatAgent({
+				sessionId: 'sess-mod',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				processManager,
+				debugLabel: 'moderator',
+			});
+
+			expect(mockApplyGateway).not.toHaveBeenCalled();
+			expect(spawnSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('spawns with the arguments and env the gateway gives back', async () => {
+			mockApplyGateway.mockResolvedValue({
+				ok: true,
+				args: ['-c', 'openai_base_url="https://gw.example.com"', 'exec'],
+				customEnvVars: { FOO: '1', OPENAI_BASE_URL: 'https://gw.example.com' },
+				gateway: { envVar: 'OPENAI_BASE_URL', url: 'https://gw.example.com' },
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-p',
+				agentId: 'codex',
+				agent: { id: 'codex', command: 'codex' } as unknown as AgentConfig,
+				args: ['exec'],
+				cwd: '/tmp/work',
+				customEnvVars: { FOO: '1' },
+				maestroAgentId: 'agent-7',
+				processManager,
+			});
+
+			expect(mockApplyGateway).toHaveBeenCalledWith({
+				agentId: 'agent-7',
+				toolType: 'codex',
+				args: ['exec'],
+				customEnvVars: { FOO: '1' },
+				remote: null,
+			});
+			const spawned = spawnSpy.mock.calls[0][0] as {
+				args: string[];
+				customEnvVars: Record<string, string>;
+			};
+			expect(spawned.args).toEqual(['-c', 'openai_base_url="https://gw.example.com"', 'exec']);
+			expect(spawned.customEnvVars).toEqual({
+				FOO: '1',
+				OPENAI_BASE_URL: 'https://gw.example.com',
+			});
+		});
+
+		it('refuses the turn rather than connect direct when the gateway cannot be used', async () => {
+			mockApplyGateway.mockResolvedValue({ ok: false, error: 'The turn was not sent.' });
+
+			await expect(
+				spawnGroupChatAgent({
+					sessionId: 'sess-p',
+					agentId: 'claude-code',
+					agent: makeAgent(),
+					args: ['--print'],
+					cwd: '/tmp/work',
+					maestroAgentId: 'agent-7',
+					processManager,
+				})
+			).rejects.toThrow('The turn was not sent.');
+			expect(spawnSpy).not.toHaveBeenCalled();
 		});
 	});
 });

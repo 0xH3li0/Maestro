@@ -1484,8 +1484,13 @@ table and the Edit Agent save, and the `update_session_config` handler's own `se
 Do not add a gateway write that only touches the renderer store.
 
 Scope: the launch plan's four callers, which are the agent's own turns (desktop chat and Auto Run,
-Cue, `maestro-cli send` and playbooks). Spawns that do not go through the plan (tab naming, context
-grooming, Group Chat participants, cross-agent consults, Director's Notes) run direct. A terminal
+Cue, `maestro-cli send` and playbooks), plus the two spawns that run AS a Left Bar agent without a
+plan: a Group Chat participant and a cross-agent consult. Both go through `spawnGroupChatAgent()`,
+which takes the agent's id (`maestroAgentId`) and calls `applyAgentGatewayToSpawn()`
+(`src/main/local-models/proxy/service.ts`): the proxy's agent id in the URL, `resolveAgentGateway()`
+with the same rules, the proxy up before the turn, and a refusal instead of a direct connection.
+Spawns that are nobody's agent (the Group Chat moderator and synthesis) or that hold no agent id
+(tab naming, `groomContext()`, Director's Notes) run direct. A terminal
 tab and the ReauthModal login shell never get the variable. `planSessionTurn()` (`maestro-lib-run`)
 has no stored agent and takes none; a caller passes the variable in `envVars`.
 
@@ -2151,6 +2156,11 @@ codex exec -c 'openai_base_url="http://127.0.0.1:PORT/agent/<id>/chatgpt"' '...'
    counted about 12300 tokens for a block the proxy called 6352, and about 1750 for one it called 886. The ratio is about 1.9 on this text (paths, punctuation, digits), so the 1000 token
    threshold is nearer 1900 real tokens there, and the real saving in these runs was about 1.9
    times the reported 64369.
+   The figure is not corrected (the proxy has no tokenizer for the provider, and a constant
+   tuned to one kind of text would be wrong on the next). It is labeled instead: the usage table
+   heads the column `Tokens saved (est.)` and both it and `models proxy status` print
+   `TOKEN_PROXY_ESTIMATE_NOTE`, which says the count is 4 characters per token and that the real
+   saving is higher.
 3. **A file read with the Read tool was not tried, and logs would not fold there.** Read puts a
    line number in front of each line, so no two lines are equal. The `logs` compressor needs
    equal lines. Shell output is where it works.
@@ -2159,12 +2169,15 @@ Not run: the `openai` route, compression of a Responses or Chat Completions body
 tier (`token-proxy` was off), an SSH remote agent, and a session long enough to show the
 crossover in total cost.
 
-**Direct by design:** housekeeping Maestro runs for an agent. A group chat turn, a cross-agent
-consult, tab naming on the Utility Agent path, and `groomContext()` (context grooming, Director's
-Notes, AI command on the agent path) do not go through `process:spawn` or the launch plan, build
-their own environment, and never read the agent's gateway. The user docs say so ("It covers the
-agent's own turns"). Someone who runs a gateway as a REQUIRED route (a company proxy that holds the
-key) should know those calls reach the provider direct.
+**Fixed after this run:** a Group Chat participant turn and a cross-agent consult now take the
+agent's gateway (`applyAgentGatewayToSpawn()`), so an agent in `compress` mode is shortened there
+too and its requests are counted under it.
+
+**Still direct:** jobs that hold no agent id. Tab naming on the Utility Agent path and
+`groomContext()` (context grooming, Director's Notes, AI command on the agent path) build their own
+environment and are not given the id of a Left Bar agent, and the Group Chat moderator is nobody's
+agent. Someone who runs a gateway as a REQUIRED route (a company proxy that holds the key) should
+know those calls reach the provider direct. The user docs say which is which.
 
 ## Verification
 

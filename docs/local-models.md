@@ -207,7 +207,7 @@ Four rules:
 - **Your own variable wins.** If the agent's environment variables already set the base-URL variable, Maestro leaves your value alone and the gateway is not applied. The field says so. The gateway does win over a value set for every agent in Settings -> Environment, because a gateway on one agent is the more specific choice.
 - **A gateway that cannot be used stops the agent.** The agent does not start, and the message names the gateway. Maestro never sends the turn to a different endpoint than the one you chose. If the proxy is not running, the agent's own connection error is what you see.
 - **A loopback gateway does not work for an SSH remote agent.** `http://127.0.0.1:8787` on this machine is a different machine from the remote host's point of view, so the agent is refused at launch. Give it a URL the remote host can reach.
-- **It covers the agent's own turns.** Chat, Auto Run, Cue runs, and `maestro-cli send` go through the gateway. Housekeeping that Maestro runs for an agent (tab naming, context grooming, a Group Chat turn) does not.
+- **It covers the turns the agent runs.** Chat, Auto Run, Cue runs, `maestro-cli send`, the agent's turns as a Group Chat participant, and its answers to another agent's `@mention` or `maestro-cli ask` go through the gateway. Short jobs Maestro runs beside an agent (tab naming, context grooming, Director's Notes) and the Group Chat moderator do not: they reach the provider direct.
 
 Each row with a gateway has **Show environment**, which lists the agent's effective environment variables and where each came from. The base-URL variable is marked **Local Models gateway**, or marked with the layer that beat it.
 
@@ -247,7 +247,7 @@ What both compress modes do, and do not do:
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
 - **A local model is optional.** Rules do most of the work (minified JSON, repeated log lines folded, long lines cut). Assign the **Token proxy** task a model in Assignments to also summarize results that are still very large.
 
-Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
+Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. Tokens saved is an estimate at 4 characters per token. Logs and code usually run denser than that, so the real saving is higher than the figure shown. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
 
 The proxy cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider with no base-URL variable. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
 

@@ -147,6 +147,8 @@ describe('models proxy status command', () => {
 		expect(output).toMatch(/All agents\s+12 requests, 10000 tokens saved \(25%\), 14 ms average/);
 		// A request with no agent was only counted.
 		expect(output).toMatch(/No agent\s+3 requests, -/);
+		// A saving is an estimate, and the report says which way it is off.
+		expect(output).toContain('Token counts are estimates at 4 characters per token.');
 		expect(output).toContain(`${HASH}  2400 -> 300 tokens`);
 		expect(exitSpy).not.toHaveBeenCalled();
 	});

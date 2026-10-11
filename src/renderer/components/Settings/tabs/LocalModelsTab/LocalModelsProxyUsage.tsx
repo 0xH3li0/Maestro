@@ -20,6 +20,7 @@ import { useCallback, useState } from 'react';
 
 import { formatCount, formatRelativeTime } from '../../../../../shared/formatters';
 import {
+	TOKEN_PROXY_ESTIMATE_NOTE,
 	TOKEN_PROXY_HOST,
 	type TokenProxyBlockDetail,
 	type TokenProxyReport,
@@ -140,7 +141,12 @@ export function LocalModelsProxyUsage({
 						<tr>
 							<th className="text-left font-medium opacity-70 pb-2 pr-3">Last 30 days</th>
 							<th className="text-right font-medium opacity-70 pb-2 pr-3">Requests</th>
-							<th className="text-right font-medium opacity-70 pb-2 pr-3">Tokens saved</th>
+							<th
+								className="text-right font-medium opacity-70 pb-2 pr-3"
+								title={TOKEN_PROXY_ESTIMATE_NOTE}
+							>
+								Tokens saved (est.)
+							</th>
 							<th className="text-right font-medium opacity-70 pb-2">Average added latency</th>
 						</tr>
 					</thead>
@@ -167,6 +173,12 @@ export function LocalModelsProxyUsage({
 						))}
 					</tbody>
 				</table>
+			)}
+
+			{usage && usage.totals.compressRequests > 0 && (
+				<p className="text-xs opacity-70" data-testid="token-proxy-estimate-note">
+					{TOKEN_PROXY_ESTIMATE_NOTE}
+				</p>
 			)}
 
 			{report && report.recentCompressions.length > 0 && (
