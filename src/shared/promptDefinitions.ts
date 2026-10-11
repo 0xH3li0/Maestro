@@ -228,6 +228,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'group-chat-participant-summary-local',
+		filename: 'group-chat-participant-summary-local.md',
+		description:
+			'Group chat participant summary for a small local model or endpoint: read from the chat log, short',
+		category: 'system',
+	},
+	{
 		id: 'tab-naming-local',
 		filename: 'tab-naming-local.md',
 		description:
@@ -379,6 +386,7 @@ export const PROMPT_IDS = {
 	// System
 	TAB_NAMING: 'tab-naming',
 	TAB_NAMING_LOCAL: 'tab-naming-local',
+	GROUP_CHAT_PARTICIPANT_SUMMARY_LOCAL: 'group-chat-participant-summary-local',
 	DIRECTOR_NOTES: 'director-notes',
 	ACAPPELLA_ROUTER: 'acappella-router',
 	ACAPPELLA_TRANSLATOR: 'acappella-translator',

@@ -726,6 +726,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
+				// Not routed through the Local Models `tab-summary` assignment on
+				// purpose: the synopsis RESUMES the agent's own provider session,
+				// which a local model cannot open, and it is what history and
+				// hand-offs record as the turn's outcome. It stays on the agent.
 				const cheapSynopsis = cheapTurnSettings(toolType);
 
 				// The cheap tier is a MODEL swap, and a model carries a context

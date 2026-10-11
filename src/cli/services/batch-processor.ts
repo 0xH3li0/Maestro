@@ -96,7 +96,9 @@ export async function* runPlaybook(
 	} = options;
 	const batchStartTime = Date.now();
 	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
-	// it depends only on the provider, which cannot change mid-run.
+	// it depends only on the provider, which cannot change mid-run. Not routed
+	// through the Local Models `tab-summary` assignment on purpose: a synopsis
+	// resumes the agent's own session, which a local model cannot open.
 	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution

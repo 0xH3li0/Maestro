@@ -149,7 +149,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			id: 'tab-summary',
 			label: 'Summaries',
 			description:
-				'Writes the tab hover summary, the group chat participant summary, and context summaries.',
+				'Writes context summaries for Summarize & Continue and the group chat participant summary.',
 			needs: 'text-gen',
 			allowsUtilityAgent: true,
 			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,

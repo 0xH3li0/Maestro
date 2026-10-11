@@ -1114,6 +1114,11 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					// file paths on THIS machine, so no `sessionSshRemoteConfig` is
 					// passed and groomContext spawns locally. See issue #1416 - the
 					// grooming path now honors SSH when a caller does supply a config.
+					//
+					// Not routed through the Local Models `tab-summary` assignment on
+					// purpose: the synopsis agent READS the history files it is given,
+					// which needs tools a local model does not have, and a weak
+					// synopsis here is what the user reads as the record of their work.
 					const result = await groomContext(
 						{
 							projectRoot: process.cwd(),

@@ -4,7 +4,7 @@ description: Run Maestro's housekeeping tasks on models that live on your machin
 icon: hard-drive
 ---
 
-Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes hover summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio.
+Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio.
 
 Open it from **Settings -> Local Models**, or run **Open Local Models Settings** from the command palette. It is a core part of Maestro, not an Encore Feature, and it starts empty.
 
@@ -82,7 +82,7 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 | Task                    | Needs                              | Default       | What it does                                                                                                  |
 | ----------------------- | ---------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
 | Tab naming              | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                         |
-| Summaries               | Text generation                    | Utility Agent | Writes the tab hover summary, the group chat participant summary, and context summaries.                      |
+| Summaries               | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                     |
 | AI command mode         | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command.                                           |
 | Tab cleanup suggestions | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                    |
 | Git drafts              | Text generation                    | Off           | Drafts commit messages and pull request titles and bodies from the diff. Fills the fields, never submits.     |

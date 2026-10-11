@@ -18,7 +18,7 @@ import {
 	extractFirstSentence,
 	getGroupChatDir,
 } from './group-chat-storage';
-import { appendToLog, readLog, saveImage } from './group-chat-log';
+import { appendToLog, formatChatHistoryForPrompt, readLog, saveImage } from './group-chat-log';
 import {
 	finishGroupChatTurn,
 	resolveGroupChatTurnKey,
@@ -1065,10 +1065,7 @@ export async function routeUserMessage(
 			const chatHistory = await readLog(chat.logPath);
 			logger.debug(`[GroupChat:Debug] Chat history entries: ${chatHistory.length}`);
 
-			const historyContext = chatHistory
-				.slice(-20)
-				.map((m) => `[${m.from}]: ${m.content}`)
-				.join('\n');
+			const historyContext = formatChatHistoryForPrompt(chatHistory, { last: 20 });
 
 			// Build image context if user attached images
 			let imageContext = '';
@@ -1905,12 +1902,10 @@ export async function routeModeratorResponse(
 
 		// Get chat history for context
 		const chatHistory = await readLog(updatedChat.logPath);
-		const historyContext = chatHistory
-			.slice(-15)
-			.map(
-				(m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`
-			)
-			.join('\n');
+		const historyContext = formatChatHistoryForPrompt(chatHistory, {
+			last: 15,
+			maxContentChars: 500,
+		});
 
 		// One participant's delegation, from agent resolution through spawn. Lives
 		// as a closure so a delegation held back by a busy agent can be replayed
@@ -2381,10 +2376,7 @@ export async function spawnModeratorSynthesis(
 	const chatHistory = await readLog(chat.logPath);
 	logger.debug(`[GroupChat:Debug] Chat history entries for synthesis: ${chatHistory.length}`);
 
-	const historyContext = chatHistory
-		.slice(-30)
-		.map((m) => `[${m.from}]: ${m.content}`)
-		.join('\n');
+	const historyContext = formatChatHistoryForPrompt(chatHistory, { last: 30 });
 
 	// Build participant context for potential follow-up @mentions
 	// Use normalized names (spaces → hyphens) so moderator can @mention them properly
@@ -2569,10 +2561,10 @@ export async function respawnParticipantWithRecovery(
 
 	// Get chat history for additional context
 	const chatHistory = await readLog(chat.logPath);
-	const historyContext = chatHistory
-		.slice(-15)
-		.map((m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`)
-		.join('\n');
+	const historyContext = formatChatHistoryForPrompt(chatHistory, {
+		last: 15,
+		maxContentChars: 500,
+	});
 
 	// Find matching session for cwd
 	const sessions = getSessionsCallback?.() || [];
