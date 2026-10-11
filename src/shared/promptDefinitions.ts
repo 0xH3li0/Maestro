@@ -126,6 +126,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'AI command mode for a small local model or endpoint: short, and answers as JSON with the command and one sentence on what it does',
 		category: 'commands',
 	},
+	{
+		id: 'git-draft-pr-local',
+		filename: 'git-draft-pr-local.md',
+		description:
+			'Pull request draft for a small local model or endpoint: writes a title and body from the branch commits and diff summary, as JSON',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -371,6 +378,7 @@ export const PROMPT_IDS = {
 	COMMIT_COMMAND: 'commit-command',
 	AI_COMMAND: 'ai-command',
 	AI_COMMAND_LOCAL: 'ai-command-local',
+	GIT_DRAFT_PR_LOCAL: 'git-draft-pr-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

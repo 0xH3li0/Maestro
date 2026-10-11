@@ -103,6 +103,18 @@ vi.mock('../../../../main/local-models/task-readiness', () => ({
 
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
 
+vi.mock('../../../../main/local-models/git-drafts', () => ({
+	draftPullRequestRequest: vi.fn().mockResolvedValue({
+		success: true,
+		title: 'Add retry',
+		body: 'Retries.',
+		baseBranch: 'main',
+		commitCount: 2,
+		truncated: false,
+	}),
+}));
+import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
+
 // The Local Models service reads the model store and runs the downloader; the
 // handler tests only care that `maestro-cli models list|install|verify|remove`
 // reach the same service functions the Settings rows call.
@@ -5017,6 +5029,34 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			});
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_task_result'));
 			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown task "x".' });
+		});
+
+		it('local_models_git_draft passes the repository and target branch through', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_git_draft',
+				requestId: 'g1',
+				cwd: '/repo',
+				baseBranch: 'main',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_git_draft_result'));
+			expect(draftPullRequestRequest).toHaveBeenCalledWith({ cwd: '/repo', baseBranch: 'main' });
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'g1',
+				result: { success: true, title: 'Add retry', body: 'Retries.' },
+			});
+		});
+
+		it('local_models_git_draft reports a refused request as success: false', async () => {
+			vi.mocked(draftPullRequestRequest).mockRejectedValueOnce(
+				new Error('A pull request draft needs a repository path (cwd).')
+			);
+			handler.handleMessage(client, { type: 'local_models_git_draft', requestId: 'g2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_git_draft_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'A pull request draft needs a repository path (cwd).',
+			});
 		});
 
 		it('local_models_task_readiness passes the task id through and returns the verdicts', async () => {

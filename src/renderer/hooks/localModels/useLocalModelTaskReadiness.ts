@@ -1,6 +1,6 @@
 /**
- * useLocalModelTaskReadiness - every Local Models task's readiness, as the main
- * process resolves it (`resolveTaskReadiness`).
+ * useLocalModelTaskReadiness - Local Models task readiness, as the main process
+ * resolves it (`resolveTaskReadiness`): every task, or the one a surface names.
  *
  * The verdict is never re-derived here: the renderer cannot read disk or reach
  * an endpoint, and a second derivation would drift from the one
@@ -15,6 +15,10 @@
  *
  * Network use: readiness lists an endpoint's models only for a task ASSIGNED to
  * that endpoint, which is a server the user already chose to call.
+ *
+ * Pass `taskId` from a surface that offers ONE task (the Create Pull Request
+ * form's draft button): asking for every task there would list the models of
+ * endpoints that only other tasks use, just to decide whether to draw a button.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -31,7 +35,10 @@ export interface LocalModelTaskReadinessState {
 	refresh: () => Promise<void>;
 }
 
-export function useLocalModelTaskReadiness(revision: string): LocalModelTaskReadinessState {
+export function useLocalModelTaskReadiness(
+	revision: string,
+	taskId?: LocalModelTaskId
+): LocalModelTaskReadinessState {
 	const [readiness, setReadiness] = useState<
 		Partial<Record<LocalModelTaskId, LocalModelTaskReadiness>>
 	>({});
@@ -51,7 +58,7 @@ export function useLocalModelTaskReadiness(revision: string): LocalModelTaskRead
 		const request = ++latestRequest.current;
 		setLoading(true);
 		try {
-			const entries = await window.maestro.localModels.taskReadiness();
+			const entries = await window.maestro.localModels.taskReadiness(taskId);
 			if (!mounted.current || request !== latestRequest.current) return;
 			const byTask: Partial<Record<LocalModelTaskId, LocalModelTaskReadiness>> = {};
 			for (const entry of entries) byTask[entry.taskId] = entry;
@@ -63,7 +70,7 @@ export function useLocalModelTaskReadiness(revision: string): LocalModelTaskRead
 		} finally {
 			if (mounted.current && request === latestRequest.current) setLoading(false);
 		}
-	}, []);
+	}, [taskId]);
 
 	useEffect(() => {
 		void refresh();

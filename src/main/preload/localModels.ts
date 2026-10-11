@@ -11,6 +11,7 @@
  * `runtimes.install`, and the `endpoints.*` calls, which talk to model servers
  * the user runs. `list()` is a disk read against a frozen local catalog.
  * `taskReadiness()` lists an endpoint's models only when a task is assigned to
+ * one. `draftPullRequest()` reaches a model only when Git drafts is assigned
  * one.
  */
 
@@ -28,6 +29,7 @@ import type { RuntimeInstallProgress } from '../local-models/runtime/runtime-ins
 import type { LocalTaskInput, LocalTaskResult } from '../local-models/task-router';
 import type { LocalModelTaskId } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
+import type { PullRequestDraftRequest, PullRequestDraftResult } from '../../shared/gitDrafts';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -147,6 +149,14 @@ export function createLocalModelsApi() {
 		 */
 		taskReadiness: (taskId?: LocalModelTaskId): Promise<LocalModelTaskReadiness[]> =>
 			ipcRenderer.invoke('localModels:taskReadiness', taskId),
+
+		/**
+		 * Draft a pull request title and body for a local branch with the Git
+		 * drafts assignment. Returns text only: nothing is pushed or created. A
+		 * task that is off or unavailable answers `success: false` with the reason.
+		 */
+		draftPullRequest: (request: PullRequestDraftRequest): Promise<PullRequestDraftResult> =>
+			ipcRenderer.invoke('localModels:draftPullRequest', request),
 
 		runtimes: createLocalRuntimesApi(),
 

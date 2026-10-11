@@ -112,7 +112,8 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 
 - `src/main/ipc/handlers/local-models.ts` registers `localModels:{list,download,pause,resume,cancel,verify,remove,remove-all,footprint}`
   and `localModels:runtimes:{list,install,footprint,remove-all}`, plus `localModels:runTask` (the
-  task router), `localModels:taskReadiness` (task readiness) and `localModels:endpoints:*`, broadcasting on
+  task router), `localModels:taskReadiness` (task readiness), `localModels:draftPullRequest` (Git
+  drafts) and `localModels:endpoints:*`, broadcasting on
   `localModels:progress` and `localModels:runtimes:progress`. It is **not** gated by the A Cappella
   Encore flag. It is wired in `setupIpcHandlers()`.
 - Preload: `window.maestro.localModels` (with a `.runtimes` sub-namespace), in
@@ -452,6 +453,25 @@ exits 0 only when the task would run; without one it exits non-zero only when an
 unavailable. Known gap: the runtime and model recovery sentences name the first registered runtime
 consumer's download location (A Cappella's Voice Setup today), since no Local Models settings panel
 registers its own yet.
+
+### Task consumers
+
+A consumer calls `runLocalTask()` and decides what each verdict means for its own surface. None
+falls back to another source.
+
+| Task          | Consumer                                                                                      | `off`                       | `unavailable`                                                   |
+| ------------- | --------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------- |
+| `tab-naming`  | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                   | Tab stays unnamed           | Skips; one yellow toast per agent (`task-notices.ts`)           |
+| `tab-summary` | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset | Keeps the agent path        | Compaction fails with the reason; the participant summary skips |
+| `ai-command`  | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                   | Refuses, names the setting  | Fails with the reason in the composer                           |
+| `git-drafts`  | `draftPullRequest()` in `local-models/git-drafts.ts`                                          | Button hidden (the default) | Button disabled with the readiness reason                       |
+
+`git-drafts` is the one consumer with no agent path. It reads `git log --oneline base..HEAD` and
+`git diff --stat base...HEAD` from a LOCAL checkout (Create Pull Request is local-only), caps both
+(`capDraftLines()` in `src/shared/gitDrafts.ts`) so the summary fits a 4,096 token context, and
+returns a title and body the form fills in. Transports: `localModels:draftPullRequest` (the form's
+"Draft with local model" button) and `maestro-cli models run git-drafts --cwd <path>` (WS bridge
+message `local_models_git_draft`), both through `draftPullRequestRequest()`.
 
 ## Related
 

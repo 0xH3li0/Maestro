@@ -277,6 +277,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Local Models endpoints: add, remove, test, detect    | `models endpoints list\|add\|remove\|test\|detect`                                                |
 | Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                   |
 | Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                         |
+| Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)           |
 
 ## Open gaps
 

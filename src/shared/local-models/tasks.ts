@@ -176,7 +176,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			id: 'git-drafts',
 			label: 'Git drafts',
 			description:
-				'Drafts commit messages and pull request titles and bodies from the diff. Fills the fields, never submits.',
+				'Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,

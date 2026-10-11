@@ -2225,7 +2225,12 @@ models
 	.description(
 		'Run a text-generation task through its assignment; prints the text, or why it did not run (requires the desktop app)'
 	)
-	.requiredOption('-i, --input <text>', 'The prompt to send')
+	.option('-i, --input <text>', 'The prompt to send (required, except with --cwd)')
+	.option(
+		'--cwd <path>',
+		'git-drafts only: draft a pull request title and body for the branch checked out in this repository'
+	)
+	.option('--base <branch>', 'git-drafts only: the target branch (default: main, then master)')
 	.option('-s, --system <text>', 'System prompt')
 	.option('--max-tokens <n>', 'Token budget for the reply (default 512)')
 	.option('--json', 'Output as JSON (for scripting)')

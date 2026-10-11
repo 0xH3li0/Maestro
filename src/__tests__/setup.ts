@@ -732,6 +732,11 @@ const mockMaestro = {
 			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
 		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
+		draftPullRequest: vi.fn().mockResolvedValue({
+			success: false,
+			status: 'off',
+			error: 'Git drafts is off.',
+		}),
 	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),

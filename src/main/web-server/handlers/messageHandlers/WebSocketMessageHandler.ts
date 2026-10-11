@@ -91,6 +91,7 @@ import {
 	handleLocalModelsDownload,
 	handleLocalModelsEndpointsDetect,
 	handleLocalModelsEndpointTest,
+	handleLocalModelsGitDraft,
 	handleLocalModelsList,
 	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
@@ -719,6 +720,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_task_readiness':
 				void handleLocalModelsTaskReadiness(this.ctx, client, message);
+				break;
+
+			case 'local_models_git_draft':
+				void handleLocalModelsGitDraft(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

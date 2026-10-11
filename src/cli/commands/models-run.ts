@@ -10,14 +10,23 @@
 // Only `ok` exits 0, with the generated text alone on stdout, so
 // `name=$(maestro-cli models run tab-naming --input "...")` captures text or
 // fails. Every other verdict exits non-zero with the reason on stderr.
+//
+// `maestro-cli models run git-drafts --cwd <path> [--base <branch>]` is the
+// one task that takes a repository instead of a prompt: it is the CLI path to
+// the Create Pull Request form's "Draft with local model" button, through the
+// same main-process function, so an agent gets the same title and body the
+// form would be filled with. It prints the title, a blank line, then the body.
+// Nothing is pushed or created.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { resolveCliPath } from '../utils/parse';
 import {
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
 } from '../../shared/local-models/tasks';
+import type { PullRequestDraftResult } from '../../shared/gitDrafts';
 import type { LocalTaskInput, LocalTaskResult } from '../../main/local-models/task-router';
 
 /**
@@ -27,7 +36,11 @@ import type { LocalTaskInput, LocalTaskResult } from '../../main/local-models/ta
 const RUN_TIMEOUT_MS = 150_000;
 
 interface RunOptions {
-	input: string;
+	input?: string;
+	/** git-drafts only: the repository to draft a pull request for. */
+	cwd?: string;
+	/** git-drafts only: the branch the pull request targets. */
+	base?: string;
 	system?: string;
 	maxTokens?: string;
 	json?: boolean;
@@ -73,8 +86,40 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 			ExitCode.InvalidUsage
 		);
 	}
-	if (options.input.trim() === '') {
-		fail('--input must not be empty', options.json, ExitCode.InvalidUsage);
+
+	if (options.cwd !== undefined || options.base !== undefined) {
+		if (taskId !== 'git-drafts') {
+			fail(
+				'--cwd and --base draft a pull request, which only the git-drafts task does.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		if (options.cwd === undefined || options.cwd.trim() === '') {
+			fail('--base needs --cwd <path> to name the repository', options.json, ExitCode.InvalidUsage);
+		}
+		if (
+			options.input !== undefined ||
+			options.system !== undefined ||
+			options.maxTokens !== undefined
+		) {
+			fail(
+				'--cwd drafts from the repository; it does not combine with --input, --system, or --max-tokens.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		return runPullRequestDraft(options.cwd, options.base, options.json);
+	}
+
+	if (options.input === undefined || options.input.trim() === '') {
+		fail(
+			taskId === 'git-drafts'
+				? 'Pass --cwd <path> to draft a pull request for that repository, or --input <text> to send your own prompt.'
+				: '--input must not be empty',
+			options.json,
+			ExitCode.InvalidUsage
+		);
 	}
 
 	const input: Omit<LocalTaskInput, 'signal'> = { prompt: options.input };
@@ -119,4 +164,48 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 		exitWith(ExitCode.GeneralError);
 	}
 	console.log(result.text);
+}
+
+/**
+ * Draft a pull request title and body for the branch checked out at `cwd`.
+ * Only a draft exits 0. Every refusal (the task is off, the model is
+ * unavailable, the branch has nothing new) exits non-zero with the reason.
+ */
+async function runPullRequestDraft(
+	cwd: string,
+	base: string | undefined,
+	json: boolean | undefined
+): Promise<void> {
+	let reply: { success: boolean; result?: PullRequestDraftResult; error?: string };
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand(
+				{
+					type: 'local_models_git_draft',
+					cwd: resolveCliPath(cwd),
+					...(base !== undefined && base.trim() !== '' ? { baseBranch: base.trim() } : {}),
+				},
+				'local_models_git_draft_result',
+				RUN_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+	}
+
+	if (!reply.success || !reply.result) {
+		fail(reply.error || 'Draft failed', json);
+	}
+	const result = reply.result;
+
+	if (json) {
+		console.log(JSON.stringify({ taskId: 'git-drafts', ...result }));
+		if (!result.success) exitWith(ExitCode.GeneralError);
+		return;
+	}
+	if (!result.success) {
+		console.error(`Error: ${result.error}`);
+		exitWith(ExitCode.GeneralError);
+	}
+	console.log(result.body ? `${result.title}\n\n${result.body}` : result.title);
 }

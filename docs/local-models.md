@@ -79,23 +79,25 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 
 ### The tasks
 
-| Task                    | Needs                              | Default       | What it does                                                                                                  |
-| ----------------------- | ---------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| Tab naming              | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                         |
-| Summaries               | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                     |
-| AI command mode         | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.             |
-| Tab cleanup suggestions | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                    |
-| Git drafts              | Text generation                    | Off           | Drafts commit messages and pull request titles and bodies from the diff. Fills the fields, never submits.     |
-| Semantic search         | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                 |
-| Cue gate                | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                          |
-| Prompt-injection screen | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                  |
-| Secret screen           | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.  |
-| Dictation               | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                        |
-| Spoken notices          | Text generation and text-to-speech | Off           | Writes a one-line summary to speak aloud when an agent finishes a turn.                                       |
-| Voice routing           | Text generation                    | Off           | Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings. |
-| Token proxy             | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                |
+| Task                    | Needs                              | Default       | What it does                                                                                                            |
+| ----------------------- | ---------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Tab naming              | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                                   |
+| Summaries               | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                               |
+| AI command mode         | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.                       |
+| Tab cleanup suggestions | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                              |
+| Git drafts              | Text generation                    | Off           | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits. |
+| Semantic search         | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                           |
+| Cue gate                | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                                    |
+| Prompt-injection screen | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                            |
+| Secret screen           | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.            |
+| Dictation               | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                  |
+| Spoken notices          | Text generation and text-to-speech | Off           | Writes a one-line summary to speak aloud when an agent finishes a turn.                                                 |
+| Voice routing           | Text generation                    | Off           | Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings.           |
+| Token proxy             | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                          |
 
 For AI command mode, **Utility Agent** means the tab's own provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
+
+**Git drafts** adds a **Draft with local model** button to the Create Pull Request form once it is assigned a source. It reads the branch's commit subjects and the list of changed files (not the diff itself), and fills the title and description for you to edit. It never creates the pull request: that is still the Create PR button. While the task is off the button is not shown, and when the assigned model or endpoint is not ready the button is disabled with the reason beside it.
 
 **A task never falls back.** If a task's assignment is not ready, the task does not run on some other source instead. It reports why, and the readiness line shows the same reason. A silent fallback would send your text somewhere you did not choose.
 
@@ -146,6 +148,7 @@ maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
 maestro-cli models status [task-id]              # would it run, and if not, why and what to do
 maestro-cli models run <task-id> --input "..."   # run a text-generation task once
+maestro-cli models run git-drafts --cwd <repo> [--base <branch>]   # draft a pull request title and body
 ```
 
 An endpoint can be named by its id, an id prefix, or its name. Every verb takes `--json`. See the [CLI reference](./cli-reference#maestro-cli-models) for every option.

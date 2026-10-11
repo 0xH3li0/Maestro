@@ -3,8 +3,9 @@
  *
  * Handles: local_models_list, local_models_download, local_models_verify,
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
- * local_models_run_task, local_models_task_readiness. These are the CLI's route
- * to the same service functions the `localModels:*` IPC channels call, so
+ * local_models_run_task, local_models_task_readiness, local_models_git_draft.
+ * These are the CLI's route to the same service functions the `localModels:*`
+ * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
  * files through the same downloader, `maestro-cli models endpoints test` and
  * Settings' Test button use the same record, the same key lookup, and the same
@@ -29,6 +30,7 @@ import {
 	removeLocalModel,
 	verifyLocalModel,
 } from '../../../local-models/service';
+import { draftPullRequestRequest } from '../../../local-models/git-drafts';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -170,5 +172,23 @@ export function handleLocalModelsTaskReadiness(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_task_readiness_result', async () => ({
 		readiness: await resolveTaskReadinessRequest(message.taskId),
+	}));
+}
+
+/**
+ * Handle local_models_git_draft - a pull request title and body for a local
+ * branch (`maestro-cli models run git-drafts --cwd`), through the same service
+ * function as the Create Pull Request form's draft button. A task that is off,
+ * unavailable, or has nothing to draft from is a successful round trip with the
+ * reason in `result`; only a bad request (no path, a bad branch name) comes
+ * back as an error.
+ */
+export function handleLocalModelsGitDraft(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_git_draft_result', async () => ({
+		result: await draftPullRequestRequest({ cwd: message.cwd, baseBranch: message.baseBranch }),
 	}));
 }

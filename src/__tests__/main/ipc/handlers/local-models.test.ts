@@ -20,6 +20,8 @@
  *     router's request entry, which the CLI bridge also calls.
  *   - **So is `taskReadiness`.** It hands the (optional) task id to the
  *     readiness request entry `maestro-cli models status` also reaches.
+ *   - **And `draftPullRequest`.** It hands the request to the Git drafts entry
+ *     `maestro-cli models run git-drafts --cwd` also reaches.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -96,6 +98,14 @@ vi.mock('../../../../main/local-models/task-readiness', () => ({
 	resolveTaskReadinessRequest: vi.fn(async () => [{ taskId: 'semantic-search', state: 'off' }]),
 }));
 
+vi.mock('../../../../main/local-models/git-drafts', () => ({
+	draftPullRequestRequest: vi.fn(async () => ({
+		success: false,
+		status: 'off',
+		error: 'Git drafts is off.',
+	})),
+}));
+
 import {
 	registerLocalModelsHandlers,
 	LOCAL_MODEL_PROGRESS_CHANNEL,
@@ -117,6 +127,7 @@ import {
 } from '../../../../main/local-models/endpoint-service';
 import { runLocalTaskRequest } from '../../../../main/local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../../main/local-models/task-readiness';
+import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -324,5 +335,15 @@ describe('task router channel', () => {
 
 		await handlerFor('localModels:taskReadiness')({});
 		expect(resolveTaskReadinessRequest).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it('hands draftPullRequest its request untouched and returns the verdict', async () => {
+		const request = { cwd: '/repo', baseBranch: 'main' };
+		await expect(handlerFor('localModels:draftPullRequest')({}, request)).resolves.toEqual({
+			success: false,
+			status: 'off',
+			error: 'Git drafts is off.',
+		});
+		expect(draftPullRequestRequest).toHaveBeenCalledWith(request);
 	});
 });

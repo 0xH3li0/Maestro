@@ -14,7 +14,8 @@
  * `endpoints:detect` probes loopback only and saves nothing. `runTask` reaches
  * a model only when the user assigned one to that task. `taskReadiness` reads
  * disk and settings, and reaches the network only to list the models of an
- * endpoint a task is assigned to.
+ * endpoint a task is assigned to. `draftPullRequest` reads a local repository
+ * and reaches a model only when the user assigned one to Git drafts.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`.
@@ -35,9 +36,11 @@ import {
 import type { DownloadProgress, DownloadResult } from '../../local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../local-models/model-store';
 import type { RuntimeInstallProgress } from '../../local-models/runtime/runtime-installer';
+import { draftPullRequestRequest } from '../../local-models/git-drafts';
 import { runLocalTaskRequest, type LocalTaskResult } from '../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../local-models/task-readiness';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
+import type { PullRequestDraftResult } from '../../../shared/gitDrafts';
 import {
 	cancelLocalModel,
 	downloadLocalModel,
@@ -234,6 +237,14 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('taskReadiness'),
 			async (taskId?: unknown): Promise<LocalModelTaskReadiness[]> =>
 				resolveTaskReadinessRequest(taskId)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:draftPullRequest',
+		withIpcErrorLogging(
+			handlerOpts('draftPullRequest'),
+			async (request: unknown): Promise<PullRequestDraftResult> => draftPullRequestRequest(request)
 		)
 	);
 }

@@ -3,9 +3,11 @@
  * @description Tests for `maestro-cli models run`: the task id and flags are
  * checked before the bridge is opened, the request crosses the WS bridge in the
  * shape the desktop handler expects, and only an `ok` verdict prints text and
- * exits 0.
+ * exits 0. `git-drafts --cwd` takes a repository instead of a prompt and goes
+ * to the pull request draft the Create Pull Request form uses.
  */
 
+import path from 'path';
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
@@ -141,5 +143,125 @@ describe('models run command', () => {
 		expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
 		expect(errorSpy.mock.calls[0][0]).toMatch(message);
 		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+
+	describe('git-drafts --cwd', () => {
+		const DRAFT = {
+			success: true,
+			title: 'Add retry with backoff',
+			body: 'Retries failed requests.\n\n- Add backoff',
+			baseBranch: 'main',
+			commitCount: 2,
+			truncated: false,
+			producedBy: 'Qwen3 1.7B',
+		};
+
+		it('sends the resolved repository and target, then prints title, blank line, body', async () => {
+			const captured = mockSend({ success: true, result: DRAFT });
+
+			await modelsRun('git-drafts', { cwd: 'some/repo', base: ' main ' });
+
+			expect(captured.payload).toEqual({
+				type: 'local_models_git_draft',
+				cwd: path.resolve(process.cwd(), 'some/repo'),
+				baseBranch: 'main',
+			});
+			expect(captured.responseType).toBe('local_models_git_draft_result');
+			expect(captured.timeout).toBeGreaterThan(120_000);
+			expect(logSpy).toHaveBeenCalledWith(
+				'Add retry with backoff\n\nRetries failed requests.\n\n- Add backoff'
+			);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('leaves the target to the app when --base is not given', async () => {
+			const captured = mockSend({ success: true, result: { ...DRAFT, body: '' } });
+
+			await modelsRun('git-drafts', { cwd: '/abs/repo' });
+
+			expect(captured.payload).toEqual({
+				type: 'local_models_git_draft',
+				cwd: path.resolve('/abs/repo'),
+			});
+			expect(logSpy).toHaveBeenCalledWith('Add retry with backoff');
+		});
+
+		it('prints the whole result as JSON', async () => {
+			mockSend({ success: true, result: DRAFT });
+
+			await modelsRun('git-drafts', { cwd: '/abs/repo', json: true });
+
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				taskId: 'git-drafts',
+				...DRAFT,
+			});
+		});
+
+		it.each([
+			[{ success: false, status: 'off', error: 'Git drafts is off.' }, /Git drafts is off/],
+			[
+				{ success: false, status: 'unavailable', error: 'Ollama is not reachable.' },
+				/Ollama is not reachable/,
+			],
+			[
+				{ success: false, status: 'no-changes', error: 'feat has no commits that main lacks.' },
+				/no commits/,
+			],
+		])('exits non-zero with the reason for %j', async (result, message) => {
+			mockSend({ success: true, result });
+
+			await expect(modelsRun('git-drafts', { cwd: '/abs/repo' })).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+			expect(errorSpy.mock.calls[0][0]).toMatch(message);
+			expect(logSpy).not.toHaveBeenCalled();
+		});
+
+		it('still prints JSON for a refusal, then exits non-zero', async () => {
+			const refusal = { success: false, status: 'off', error: 'Git drafts is off.' };
+			mockSend({ success: true, result: refusal });
+
+			await expect(modelsRun('git-drafts', { cwd: '/abs/repo', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				taskId: 'git-drafts',
+				...refusal,
+			});
+		});
+
+		it('reports a request the app refused', async () => {
+			mockSend({ success: false, error: 'Not a valid branch name: -x' });
+
+			await expect(modelsRun('git-drafts', { cwd: '/abs/repo', base: '-x' })).rejects.toThrow(
+				'__exit__'
+			);
+
+			expect(errorSpy).toHaveBeenCalledWith('Error: Not a valid branch name: -x');
+		});
+
+		it.each([
+			['tab-naming', { cwd: '/abs/repo' }, /only the git-drafts task/],
+			['tab-naming', { input: 'hi', base: 'main' }, /only the git-drafts task/],
+			['git-drafts', { base: 'main' }, /--base needs --cwd/],
+			['git-drafts', { cwd: '/abs/repo', input: 'hi' }, /does not combine with --input/],
+			['git-drafts', { cwd: '/abs/repo', maxTokens: '64' }, /does not combine with --input/],
+			['git-drafts', {}, /Pass --cwd <path>/],
+		])('refuses %s %j before opening the bridge', async (taskId, options, message) => {
+			await expect(modelsRun(taskId, options)).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+			expect(errorSpy.mock.calls[0][0]).toMatch(message);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('still runs git-drafts as a plain prompt when --input is given', async () => {
+			const captured = mockSend({ success: true, result: OK });
+
+			await modelsRun('git-drafts', { input: 'diff' });
+
+			expect(captured.payload).toMatchObject({ type: 'local_models_run_task' });
+		});
 	});
 });

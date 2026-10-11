@@ -383,6 +383,19 @@ maestro-cli models tasks [--json]
 - `assign` edits the `localModelAssignments` setting on disk (`readLocalModelAssignments()` / `writeLocalModelAssignments()`), so it works with the app closed. It parses with `parseLocalModelAssignmentSpec()`, validates with `localModelAssignmentProblem()`, and stores with `withLocalModelAssignment()` (shared, `src/shared/local-models/tasks.ts`): the same three the Assignments picker uses, so a wrong-kind model or an endpoint for a classifier is refused, and choosing a task's default removes its entry. The endpoint may be named by id, id prefix, or name (`findLocalModelEndpoint()`); the full id is stored. Everything after the endpoint is the model, so `endpoint:ollama:qwen3:latest` keeps the tag.
 - `tasks` lists every task with its stored-or-default assignment, and the readiness verdict from the desktop (`local_models_task_readiness`, the resolver behind `models status`). With the app closed it still lists the assignments and reports `readinessError`. Use `models status` when a script needs an exit code.
 
+### `models run git-drafts --cwd <path>`
+
+The CLI path to the Create Pull Request form's "Draft with local model" button. Implemented in `src/cli/commands/models-run.ts` (`runPullRequestDraft`).
+
+```bash
+maestro-cli models run git-drafts --cwd <path> [--base <branch>] [--json]
+```
+
+- Runs in the desktop (`local_models_git_draft`) through `draftPullRequestRequest()` in `src/main/local-models/git-drafts.ts`, the same function the `localModels:draftPullRequest` IPC channel calls, so the form and the CLI read the same assignment and summarize the same branch. `--cwd` is resolved with `resolveCliPath()` and must be a local checkout.
+- `--base` defaults to `main`, then `master` (the form's own default order); a named branch is tried locally, then as `origin/<branch>`.
+- Prints the title, a blank line, then the body. `--json` prints the whole result (`title`, `body`, `baseBranch`, `commitCount`, `truncated`, `producedBy`). It never pushes or opens a pull request.
+- Exits non-zero with the reason when the task is off, the source is unavailable, the branch has no commits the base lacks, or git fails. `--cwd` and `--base` are refused for every other task, and do not combine with `--input`, `--system`, or `--max-tokens`.
+
 ### `models endpoints list|add|remove|test|detect`
 
 Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.
