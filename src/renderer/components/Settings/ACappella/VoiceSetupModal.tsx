@@ -35,7 +35,7 @@ import {
 	MODEL_SETS,
 	getModelSetEntries,
 	type VoiceModelSetId,
-} from '../../../../shared/acappella/model-catalog';
+} from '../../../../shared/acappella/voice-models';
 import { formatSize } from '../../../../shared/formatters';
 import type { Theme } from '../../../types';
 import { Modal } from '../../ui/Modal';
@@ -118,20 +118,19 @@ export function VoiceSetupModal({ theme, onClose, enabled, onOpenSettings }: Voi
 	);
 
 	/**
-	 * Runtimes the bundle's slots need but that are not installed.
+	 * Runtimes the bundle's models need but that are not installed.
 	 *
-	 * Derived from the SLOTS the chosen models fill rather than from a hard-coded
-	 * id, so a catalog change cannot leave the walkthrough fetching weights with
-	 * no engine to read them. A runtime with no build for this platform is
-	 * excluded: offering a download that cannot exist is worse than saying nothing.
+	 * Derived from the `runtime` each chosen model names rather than from a
+	 * hard-coded id, so a catalog change cannot leave the walkthrough fetching
+	 * weights with no engine to read them. A runtime with no build for this
+	 * platform is excluded: offering a download that cannot exist is worse than
+	 * saying nothing.
 	 */
 	const missingRuntimes = useMemo(() => {
-		const needed = new Set(entries.map((entry) => entry.role));
+		const needed = new Set(entries.map((entry) => entry.runtime));
 		return runtimes.listings.filter(
 			(runtime) =>
-				runtime.downloadable &&
-				(!runtime.installed || runtime.stale) &&
-				runtime.slots.some((slot) => needed.has(slot as (typeof entries)[number]['role']))
+				runtime.downloadable && (!runtime.installed || runtime.stale) && needed.has(runtime.id)
 		);
 	}, [entries, runtimes.listings]);
 

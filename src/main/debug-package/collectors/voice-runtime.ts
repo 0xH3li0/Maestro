@@ -34,7 +34,7 @@ import {
 	NATIVE_RUNTIMES,
 	nativePlatformKey,
 	type NativePrebuildAvailability,
-} from '../../../shared/acappella/native-runtimes';
+} from '../../../shared/local-models/native-runtimes';
 import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import { runSelfTest, type RuntimeSelfTestReport } from '../../acappella/runtime/runtime-selftest';

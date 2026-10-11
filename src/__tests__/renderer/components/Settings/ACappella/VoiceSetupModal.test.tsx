@@ -21,7 +21,7 @@ import {
 	FIRST_RUN_MODEL_SET,
 	VoiceSetupModal,
 } from '../../../../../renderer/components/Settings/ACappella/VoiceSetupModal';
-import { getModelSetEntries } from '../../../../../shared/acappella/model-catalog';
+import { getModelSetEntries } from '../../../../../shared/acappella/voice-models';
 import { formatSize } from '../../../../../shared/formatters';
 import { mockTheme } from '../../../../helpers/mockTheme';
 import { LayerStackProvider } from '../../../../../renderer/contexts/LayerStackContext';
@@ -53,7 +53,7 @@ function listings(status: 'installed' | 'not-installed') {
 function onnxRuntime(overrides: Record<string, unknown> = {}) {
 	return {
 		id: 'onnx',
-		label: 'ONNX Runtime (Speech-to-Text, Text-to-Speech, and wake word)',
+		label: 'ONNX Runtime (speech, wake word, and classifiers)',
 		slots: ['stt', 'tts', 'wake-word'],
 		installed: false,
 		stale: false,

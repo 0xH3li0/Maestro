@@ -1,15 +1,15 @@
 /**
- * The downloadable payloads that carry A Cappella's native runtimes.
+ * The downloadable payloads that carry the Local Models native runtimes.
  *
- * **Why these are downloaded and not bundled.** A Cappella is an Encore Feature
- * that ships off. Bundling llama.cpp and ONNX Runtime would put roughly 300 MB of
- * inference binaries into every installer, on every platform, for every user -
- * including the large majority who never switch voice on. The binaries are also
- * the only part of the feature whose size is not a rounding error, so they are the
- * one part worth fetching on demand.
+ * **Why these are downloaded and not bundled.** Local inference is opt-in.
+ * Bundling llama.cpp and ONNX Runtime would put roughly 300 MB of inference
+ * binaries into every installer, on every platform, for every user - including
+ * the large majority who never run a local model. The binaries are also the only
+ * part of the feature whose size is not a rounding error, so they are the one
+ * part worth fetching on demand.
  *
- * The precedent is already in the product: local voice ALREADY asks the user to
- * download 454 MB to 1.5 GB of models before it can run. A runtime payload rides
+ * The precedent is already in the product: a local model ALREADY asks the user
+ * to download hundreds of megabytes before it can run. A runtime payload rides
  * the same road, with the same rules - pinned source, recorded SHA-256, verified
  * before anything is promoted into place - so "where did this binary come from"
  * has exactly one answer for models and runtimes alike.
@@ -31,7 +31,7 @@
  * arrives incomplete. `onnxruntime-node` requires `onnxruntime-common` on the
  * first line of its entry point, and installing without it produces a runtime
  * that extracts cleanly, verifies cleanly, reports itself installed, and then
- * throws `MODULE_NOT_FOUND` the first time voice tries to transcribe - after the
+ * throws `MODULE_NOT_FOUND` the first time a model is opened - after the
  * user has waited through the whole download. {@link NativeRuntimeDependency} is
  * why that cannot happen: dependencies are pinned, hashed, and installed inside
  * the same transaction as the payload.

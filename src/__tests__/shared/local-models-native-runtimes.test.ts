@@ -1,8 +1,8 @@
 /**
- * @file acappella-native-runtimes.test.ts
+ * @file local-models-native-runtimes.test.ts
  *
  * The registry is read by four consumers that cannot see each other: the lazy
- * loader, the self-test, the capability gate, and a packaging script that runs
+ * loader, the self-test, every consumer's readiness check, and a packaging script that runs
  * after electron-builder on a machine nobody is watching. Every test here exists
  * because a mismatch between the table and reality shows up as a signed release
  * that dies on launch, which is the most expensive failure mode this codebase
@@ -19,8 +19,7 @@ import {
 	getNativeRuntime,
 	nativeAsarUnpackGlobs,
 	nativePlatformKey,
-	runtimesForSlot,
-} from '../../shared/acappella/native-runtimes';
+} from '../../shared/local-models/native-runtimes';
 
 function readPackageJson(): {
 	dependencies?: Record<string, string>;
@@ -94,32 +93,11 @@ describe('native runtime registry', () => {
 		}
 	});
 
-	it('records a microphone usage description that names the feature and the local path', () => {
-		// Apple requires the string; a user deciding whether to grant the microphone
-		// requires it to say something true. "Maestro would like to access the
-		// microphone" answers neither question.
-		const description =
-			readPackageJson().build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? '';
-		expect(description).toContain('A Cappella');
-		expect(description.toLowerCase()).toContain('local');
-	});
-
 	it('resolves platform keys, and rejects platforms with no installer', () => {
 		expect(nativePlatformKey('darwin', 'arm64')).toBe('darwin-arm64');
 		expect(nativePlatformKey('win32', 'x64')).toBe('win32-x64');
 		expect(nativePlatformKey('linux', 'arm64')).toBeNull();
 		expect(nativePlatformKey('sunos', 'sparc')).toBeNull();
-	});
-
-	it('maps every voice slot that has a local tier to a runtime', () => {
-		expect(runtimesForSlot('brain').map((runtime) => runtime.id)).toEqual(['llama']);
-		// One ONNX Runtime serves all three, which is the point of picking it.
-		// Speech-to-text moved here from a whisper.cpp binding that compiled from
-		// source on every platform and so had nothing to download.
-		expect(runtimesForSlot('stt').map((runtime) => runtime.id)).toEqual(['onnx']);
-		expect(runtimesForSlot('tts').map((runtime) => runtime.id)).toEqual(['onnx']);
-		expect(runtimesForSlot('wake-word').map((runtime) => runtime.id)).toEqual(['onnx']);
-		expect(runtimesForSlot('microphone')).toEqual([]);
 	});
 
 	it('is addressable by id and frozen against mutation', () => {

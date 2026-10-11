@@ -17,14 +17,14 @@
  * gate reads to explain the blocked slot afterwards.
  */
 
-import type { NativeRuntimeId } from '../../../../shared/acappella/native-runtimes';
+import type { NativeRuntimeId } from '../../../../shared/local-models/native-runtimes';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import { tryLoadNativeRuntime } from '../../runtime/native-loader';
 
 /**
  * Load a native runtime for a provider, or throw a classified provider failure.
  *
- * @param runtimeId The runtime, as named in `shared/acappella/native-runtimes.ts`.
+ * @param runtimeId The runtime, as named in `shared/local-models/native-runtimes.ts`.
  * @param providerId The provider asking, so the error can name the engine.
  */
 export async function loadLocalRuntime<T>(

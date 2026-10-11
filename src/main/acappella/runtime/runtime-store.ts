@@ -27,11 +27,11 @@ import {
 	getNativeRuntime,
 	nativePlatformKey,
 	type NativeRuntimeId,
-} from '../../../shared/acappella/native-runtimes';
+} from '../../../shared/local-models/native-runtimes';
 import {
 	nativeRuntimeArtifact,
 	type NativeRuntimeArtifact,
-} from '../../../shared/acappella/runtime-artifacts';
+} from '../../../shared/local-models/runtime-artifacts';
 
 /** Directory under userData. Also what the "remove runtimes" flow deletes. */
 export const ACAPPELLA_RUNTIMES_DIRNAME = path.join('runtimes', 'acappella');

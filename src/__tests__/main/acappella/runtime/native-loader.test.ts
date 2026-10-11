@@ -25,7 +25,7 @@ import path from 'path';
  * ever exercise the not-a-dependency branch. This mock keeps the same shape and
  * the same helper behaviour with one declared and one undeclared runtime.
  */
-vi.mock('../../../../shared/acappella/native-runtimes', () => {
+vi.mock('../../../../shared/local-models/native-runtimes', () => {
 	const runtimes = [
 		{
 			id: 'llama',

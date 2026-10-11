@@ -36,7 +36,7 @@
 
 import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/announcements';
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
-import { normalizeWakePhrase } from '../../../shared/acappella/model-catalog';
+import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import {
 	LEGACY_DEFAULT_WAKE_PHRASE,
 	asWakeEngine,

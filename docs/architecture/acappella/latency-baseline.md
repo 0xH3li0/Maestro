@@ -78,7 +78,7 @@ microphone's samples go to their servers.
 **Not yet measured. This table is deliberately empty rather than filled with plausible numbers.**
 
 Recording it requires four things this phase did not have on the build machine: the three native
-runtimes installed (they are declared in `src/shared/acappella/native-runtimes.ts` but not yet in
+runtimes installed (they are declared in `src/shared/local-models/native-runtimes.ts` but not yet in
 `package.json` dependencies, see [[packaging-notes]]), the model set downloaded, API keys for
 OpenAI and ElevenLabs, and a microphone. Inventing a baseline would be worse than having none: the
 whole purpose of this document is to be the thing a regression is measured against.

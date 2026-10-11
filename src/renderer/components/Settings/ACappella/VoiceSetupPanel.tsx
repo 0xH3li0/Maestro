@@ -3,7 +3,7 @@
  *
  * The rule this component exists to honour: **mounting it issues zero network
  * calls.** Every number on screen (size, hash, revision, license, install path)
- * comes from the frozen catalog in `src/shared/acappella/model-catalog.ts` plus
+ * comes from the frozen catalog in `src/shared/local-models/model-catalog.ts` plus
  * one disk stat. The only thing that opens a connection is the Download button,
  * and `VoiceSetupPanel.test.tsx` asserts exactly that.
  *
@@ -21,10 +21,9 @@ import { Mic, ShieldCheck } from 'lucide-react';
 
 import {
 	HEY_JARVIS_WAKE_ID,
-	MODEL_SETS,
 	OPENWAKEWORD_BASE_ID,
-	type VoiceModelSetId,
-} from '../../../../shared/acappella/model-catalog';
+} from '../../../../shared/local-models/model-catalog';
+import { MODEL_SETS, type VoiceModelSetId } from '../../../../shared/acappella/voice-models';
 import { formatSize } from '../../../../shared/formatters';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
 import type { Theme } from '../../../types';

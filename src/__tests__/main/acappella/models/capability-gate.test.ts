@@ -28,7 +28,7 @@ const { declared } = vi.hoisted(() => ({
 	declared: { llama: true, onnx: true } as Record<string, boolean>,
 }));
 
-vi.mock('../../../../shared/acappella/native-runtimes', () => {
+vi.mock('../../../../shared/local-models/native-runtimes', () => {
 	const descriptor = (id: string, moduleId: string, label: string) => ({
 		id,
 		moduleId,
@@ -120,7 +120,7 @@ import {
 	OPENWAKEWORD_BASE_ID,
 	QWEN3_1_7B_ID,
 	PARAKEET_TDT_V2_ID,
-} from '../../../../shared/acappella/model-catalog';
+} from '../../../../shared/local-models/model-catalog';
 
 type StatusKind = ModelStatus['status'];
 

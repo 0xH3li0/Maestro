@@ -42,18 +42,18 @@ const fixture = vi.hoisted(() => {
 	};
 });
 
-vi.mock('../../../../shared/acappella/model-catalog', async (importOriginal) => {
+vi.mock('../../../../shared/local-models/model-catalog', async (importOriginal) => {
 	const actual =
-		await importOriginal<typeof import('../../../../shared/acappella/model-catalog')>();
+		await importOriginal<typeof import('../../../../shared/local-models/model-catalog')>();
 	const testEntry = Object.freeze({
 		id: fixture.id,
 		displayName: 'Test Tiny Model',
-		role: 'stt' as const,
+		kind: 'stt' as const,
+		runtime: 'onnx' as const,
 		repo: 'maestro/test',
 		revision: '0000000000000000000000000000000000000000',
 		license: 'MIT',
 		licenseUrl: 'https://example.invalid/license',
-		requiredFor: 'local-speech-to-text' as const,
 		description: 'Fixture entry, present only under test.',
 		files: Object.freeze([
 			{
@@ -65,13 +65,13 @@ vi.mock('../../../../shared/acappella/model-catalog', async (importOriginal) => 
 		]),
 		bytes: fixture.bytes,
 	});
-	const catalog = Object.freeze([...actual.VOICE_MODEL_CATALOG, testEntry]);
+	const catalog = Object.freeze([...actual.LOCAL_MODEL_CATALOG, testEntry]);
 	const byId = new Map(catalog.map((entry) => [entry.id, entry]));
 	return {
 		...actual,
-		VOICE_MODEL_CATALOG: catalog,
-		getVoiceModel: (id: string) => byId.get(id),
-		isVoiceModelId: (id: string) => byId.has(id),
+		LOCAL_MODEL_CATALOG: catalog,
+		getLocalModel: (id: string) => byId.get(id),
+		isLocalModelId: (id: string) => byId.has(id),
 	};
 });
 

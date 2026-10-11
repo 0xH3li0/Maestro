@@ -44,11 +44,8 @@ import { createReadStream, createWriteStream } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
-import {
-	getVoiceModel,
-	type VoiceModelEntry,
-	type VoiceModelFile,
-} from '../../../shared/acappella/model-catalog';
+import { getLocalModel } from '../../../shared/local-models/model-catalog';
+import type { LocalModelEntry, LocalModelFile } from '../../../shared/local-models/types';
 import { logger } from '../../utils/logger';
 import {
 	ensureModelDir,
@@ -167,7 +164,7 @@ class AbortedError extends Error {
 }
 
 interface Job {
-	entry: VoiceModelEntry;
+	entry: LocalModelEntry;
 	controller: AbortController;
 	/** Set when the abort was deliberate, so a fetch abort is not read as a fault. */
 	intent: 'paused' | 'cancelled' | null;
@@ -236,7 +233,7 @@ export class ModelDownloader {
 		const existing = this.jobs.get(modelId);
 		if (existing) return existing.running;
 
-		const entry = getVoiceModel(modelId);
+		const entry = getLocalModel(modelId);
 		if (!entry) return Promise.resolve({ modelId, status: 'error', error: 'Unknown model' });
 
 		const job: Job = {
@@ -431,7 +428,7 @@ export class ModelDownloader {
 	 * A retry re-enters `transferFile`, which re-reads the partial's length, so a
 	 * connection dropped at 80% resumes at 80% rather than starting over.
 	 */
-	private async downloadFile(job: Job, file: VoiceModelFile): Promise<void> {
+	private async downloadFile(job: Job, file: LocalModelFile): Promise<void> {
 		const finalPath = modelFilePath(job.entry.id, file.path);
 		const partPath = `${finalPath}${PARTIAL_SUFFIX}`;
 
@@ -474,7 +471,7 @@ export class ModelDownloader {
 	 *
 	 * @returns the SHA-256 of the complete file.
 	 */
-	private async transferFile(job: Job, file: VoiceModelFile, partPath: string): Promise<string> {
+	private async transferFile(job: Job, file: LocalModelFile, partPath: string): Promise<string> {
 		let resumeFrom = (await statSize(partPath)) ?? 0;
 		if (resumeFrom > file.bytes) {
 			// Longer than the catalog says the file is. Something else wrote here;
@@ -548,7 +545,7 @@ export class ModelDownloader {
 	}
 
 	/** Bytes of the model's earlier files, so per-model progress stays monotonic. */
-	private completedBytesBefore(job: Job, file: VoiceModelFile): number {
+	private completedBytesBefore(job: Job, file: LocalModelFile): number {
 		let total = 0;
 		for (const candidate of job.entry.files) {
 			if (candidate.path === file.path) break;
@@ -558,7 +555,7 @@ export class ModelDownloader {
 	}
 
 	private async cleanupPartials(modelId: string): Promise<void> {
-		const entry = getVoiceModel(modelId);
+		const entry = getLocalModel(modelId);
 		if (!entry) return;
 		for (const file of entry.files) {
 			await fs

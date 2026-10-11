@@ -1,5 +1,5 @@
 /**
- * @file acappella-runtime-artifacts.test.ts
+ * @file local-models-runtime-artifacts.test.ts
  *
  * The artifact table is a set of promises about bytes that will be downloaded
  * onto a user's machine and then dlopen'd. Every test here guards a failure that
@@ -24,13 +24,13 @@ import {
 	NATIVE_RUNTIMES,
 	getNativeRuntime,
 	type NativePlatformKey,
-} from '../../shared/acappella/native-runtimes';
+} from '../../shared/local-models/native-runtimes';
 import {
 	NATIVE_RUNTIME_ARTIFACTS,
 	isNativeRuntimeDownloadable,
 	nativeRuntimeArtifact,
 	nativeRuntimeDownloadBytes,
-} from '../../shared/acappella/runtime-artifacts';
+} from '../../shared/local-models/runtime-artifacts';
 import { shouldKeepArchiveEntry } from '../../main/acappella/runtime/runtime-installer';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;

@@ -14,7 +14,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { WHISPER_BASE_EN_ID } from '../../../../shared/acappella/model-catalog';
+import { WHISPER_BASE_EN_ID } from '../../../../shared/local-models/model-catalog';
 import { WHISPER_STT_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { modelFilePath } from '../../models/model-store';
 import {

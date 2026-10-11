@@ -33,12 +33,8 @@ import * as fs from 'fs/promises';
 import { createReadStream, type Dirent } from 'fs';
 import * as path from 'path';
 
-import {
-	getVoiceModel,
-	VOICE_MODEL_CATALOG,
-	type VoiceModelEntry,
-	type VoiceModelFile,
-} from '../../../shared/acappella/model-catalog';
+import { getLocalModel, LOCAL_MODEL_CATALOG } from '../../../shared/local-models/model-catalog';
+import type { LocalModelEntry, LocalModelFile } from '../../../shared/local-models/types';
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 
 /** Directory name under userData. Also the thing the reclaim-disk flow deletes. */
@@ -124,7 +120,7 @@ export function modelsRoot(): string {
  * makes the guard a whitelist rather than a sanitiser.
  */
 export function modelDir(id: string): string {
-	if (!getVoiceModel(id)) throw new Error(`UnknownVoiceModel: ${id}`);
+	if (!getLocalModel(id)) throw new Error(`UnknownVoiceModel: ${id}`);
 	return path.join(modelsRoot(), id);
 }
 
@@ -214,7 +210,7 @@ export async function writeManifest(manifest: ModelManifest): Promise<void> {
 }
 
 /** Build the manifest a freshly completed install should record. */
-export function buildManifest(entry: VoiceModelEntry, installedAt: number): ModelManifest {
+export function buildManifest(entry: LocalModelEntry, installedAt: number): ModelManifest {
 	return {
 		id: entry.id,
 		revision: entry.revision,
@@ -277,7 +273,7 @@ async function dirBytes(dir: string): Promise<number> {
  * short, and every one of them reads as installed to an `existsSync`.
  */
 export async function getStatus(id: string): Promise<ModelStatus> {
-	const entry = getVoiceModel(id);
+	const entry = getLocalModel(id);
 	if (!entry) {
 		return { id, status: 'not-installed', manifest: null, detail: 'Unknown model', bytesOnDisk: 0 };
 	}
@@ -346,7 +342,7 @@ export async function isInstalled(id: string): Promise<boolean> {
 /** Status of every catalog model, in catalog order. */
 export async function listStatuses(): Promise<ModelStatus[]> {
 	const statuses: ModelStatus[] = [];
-	for (const entry of VOICE_MODEL_CATALOG) statuses.push(await getStatus(entry.id));
+	for (const entry of LOCAL_MODEL_CATALOG) statuses.push(await getStatus(entry.id));
 	return statuses;
 }
 
@@ -374,7 +370,7 @@ export interface VerifyResult {
  * indistinguishable from a bug in this function.
  */
 export async function verify(id: string): Promise<VerifyResult> {
-	const entry = getVoiceModel(id);
+	const entry = getLocalModel(id);
 	if (!entry) return { id, ok: false, status: 'not-installed', detail: 'Unknown model' };
 
 	const status = await getStatus(id);
@@ -416,7 +412,7 @@ export async function verify(id: string): Promise<VerifyResult> {
  * that the bytes are good, so writing one over an incomplete install would break
  * the one guarantee `isInstalled` rests on.
  */
-export async function markInstalled(entry: VoiceModelEntry): Promise<ModelManifest> {
+export async function markInstalled(entry: LocalModelEntry): Promise<ModelManifest> {
 	const manifest = buildManifest(entry, Date.now());
 	await writeManifest(manifest);
 	return manifest;
@@ -474,7 +470,7 @@ export async function removeAll(): Promise<number> {
 }
 
 /** Ensure a model's install directory (and any nested file directories) exist. */
-export async function ensureModelDir(entry: VoiceModelEntry): Promise<void> {
+export async function ensureModelDir(entry: LocalModelEntry): Promise<void> {
 	await fs.mkdir(modelDir(entry.id), { recursive: true });
 	for (const file of entry.files) {
 		const dir = path.dirname(modelFilePath(entry.id, file.path));
@@ -483,6 +479,6 @@ export async function ensureModelDir(entry: VoiceModelEntry): Promise<void> {
 }
 
 /** Absolute on-disk path of a catalog file. Exported for the bill of materials. */
-export function installPathFor(entry: VoiceModelEntry, file: VoiceModelFile): string {
+export function installPathFor(entry: LocalModelEntry, file: LocalModelFile): string {
 	return modelFilePath(entry.id, file.path);
 }

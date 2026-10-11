@@ -22,7 +22,7 @@
  * Passing `--require-all` turns those skips into failures, which is what a
  * release build should use once the providers land.
  *
- * The runtime facts come from `dist/shared/acappella/native-runtimes.js`, the
+ * The runtime facts come from `dist/shared/local-models/native-runtimes.js`, the
  * compiled copy of the one registry the app itself reads, so this script cannot
  * drift from what the loader expects.
  *
@@ -48,7 +48,7 @@ const appArg = appArgIndex >= 0 ? args[appArgIndex + 1] : null;
 
 /** Load the compiled runtime registry. Built by `npm run build:main`. */
 function loadRegistry() {
-	const compiled = path.join(repoRoot, 'dist', 'shared', 'acappella', 'native-runtimes.js');
+	const compiled = path.join(repoRoot, 'dist', 'shared', 'local-models', 'native-runtimes.js');
 	if (!fs.existsSync(compiled)) {
 		fail(
 			`Runtime registry not found at ${rel(compiled)}. Run "npm run build:main" before this script.`

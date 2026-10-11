@@ -28,7 +28,7 @@ import {
 	finalizeCapture,
 } from '../../profiling';
 import { runSelfTest, type RuntimeSelfTestReport } from '../../acappella/runtime/runtime-selftest';
-import { selfTestVerdict } from '../../../shared/acappella/native-runtimes';
+import { selfTestVerdict } from '../../../shared/local-models/native-runtimes';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';

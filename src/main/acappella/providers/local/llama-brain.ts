@@ -21,7 +21,7 @@
  * difference.
  */
 
-import { QWEN3_1_7B_ID } from '../../../../shared/acappella/model-catalog';
+import { QWEN3_1_7B_ID } from '../../../../shared/local-models/model-catalog';
 import { QWEN3_BRAIN_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type {

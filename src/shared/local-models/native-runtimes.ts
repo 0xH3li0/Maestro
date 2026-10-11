@@ -1,20 +1,25 @@
 /**
- * The native runtimes A Cappella's local tier needs, and everything the build
- * has to know about them.
+ * The native runtimes Local Models needs, and everything the build has to know
+ * about them.
  *
  * This table is the single source of truth for four consumers that would
  * otherwise each keep their own copy and drift:
  *
- *   - `src/main/acappella/runtime/native-loader.ts` - the only module allowed to
- *     import these packages, and the only one that can turn a dlopen failure
- *     into a sentence a user can act on.
- *   - `src/main/acappella/runtime/runtime-selftest.ts` - "Run voice self-test".
+ *   - The native loader - the only module allowed to import these packages, and
+ *     the only one that can turn a dlopen failure into a sentence a user can
+ *     act on.
+ *   - The runtime self-test.
  *   - `scripts/verify-native-packaging.mjs` - reads the compiled copy of this
  *     file out of `dist/` and fails the packaging step when a binary this table
  *     promises is missing from the built app or still trapped inside the asar.
- *   - The capability gate, which reports a runtime that will not load as its own
- *     unsatisfied reason rather than blaming a model that is sitting on disk
- *     perfectly intact.
+ *   - Every consumer's readiness check, which reports a runtime that will not
+ *     load as its own unsatisfied reason rather than blaming a model that is
+ *     sitting on disk perfectly intact.
+ *
+ * **No consumer vocabulary here.** A runtime does not know which features use
+ * it. Which runtime a model needs is recorded on the model (`runtime` in
+ * `model-catalog.ts`), and a consumer that groups runtimes its own way (voice
+ * slots, say) derives that grouping from the catalog in its own module.
  *
  * **Why `declared` exists.** A descriptor here is a decision, not an
  * installation. The packages below are large (onnxruntime-node ships a
@@ -31,9 +36,7 @@
  * not to this file.
  */
 
-import type { VoiceSlot } from './readiness';
-
-/** A runtime is one npm package, however many slots it serves. */
+/** A runtime is one npm package, however many models it serves. */
 export type NativeRuntimeId = 'llama' | 'onnx';
 
 /** The four platform/arch pairs Maestro ships installers for. */
@@ -61,8 +64,6 @@ export interface NativeRuntimeDescriptor {
 	 */
 	readonly versionPin: string;
 	readonly label: string;
-	/** Which voice slots stop working when this runtime cannot load. */
-	readonly slots: readonly VoiceSlot[];
 	/**
 	 * Whether the package is in `package.json` dependencies yet. See the module
 	 * comment: false is a deliberate state, not an oversight.
@@ -111,8 +112,7 @@ export const NATIVE_RUNTIMES: readonly NativeRuntimeDescriptor[] = Object.freeze
 		id: 'llama',
 		moduleId: 'node-llama-cpp',
 		versionPin: '3.20.0',
-		label: 'llama.cpp (Conductor Brain)',
-		slots: Object.freeze(['brain'] as VoiceSlot[]),
+		label: 'llama.cpp (text generation)',
 		declared: false,
 		requiresElectronRebuild: false,
 		prebuilds: Object.freeze({
@@ -148,11 +148,11 @@ export const NATIVE_RUNTIMES: readonly NativeRuntimeDescriptor[] = Object.freeze
 		id: 'onnx',
 		moduleId: 'onnxruntime-node',
 		versionPin: '1.30.0',
-		label: 'ONNX Runtime (Speech-to-Text, Text-to-Speech, and wake word)',
-		// Three slots on one runtime, which is the point: speech-to-text moved here
-		// from a whisper.cpp binding that compiled from source on every platform and
-		// therefore had nothing to download. See `runtime-artifacts.ts`.
-		slots: Object.freeze(['stt', 'tts', 'wake-word'] as VoiceSlot[]),
+		// Speech-to-text, text-to-speech, and the wake word on one runtime, which
+		// is the point: speech-to-text moved here from a whisper.cpp binding that
+		// compiled from source on every platform and therefore had nothing to
+		// download. See `runtime-artifacts.ts`.
+		label: 'ONNX Runtime (speech, wake word, and classifiers)',
 		declared: false,
 		requiresElectronRebuild: false,
 		prebuilds: Object.freeze({
@@ -179,7 +179,7 @@ export const NATIVE_RUNTIMES: readonly NativeRuntimeDescriptor[] = Object.freeze
 			]),
 		}),
 		rationale:
-			'One runtime for two slots: the Kokoro TTS model and the openWakeWord front end in the catalog are both ONNX, so shipping a second inference engine would be pure weight.',
+			'One runtime for every ONNX model in the catalog: the speech recognisers, the Kokoro TTS model, and the openWakeWord front end are all ONNX, so shipping a second inference engine would be pure weight.',
 		notes:
 			'Node-API v6, so no Electron rebuild. Its own install script fetches optional CUDA extras; those are not required and must not become a packaging dependency.',
 	}),
@@ -191,11 +191,6 @@ const RUNTIMES_BY_ID = new Map<NativeRuntimeId, NativeRuntimeDescriptor>(
 
 export function getNativeRuntime(id: NativeRuntimeId): NativeRuntimeDescriptor | undefined {
 	return RUNTIMES_BY_ID.get(id);
-}
-
-/** Every runtime a slot depends on. Empty for slots with no native tier. */
-export function runtimesForSlot(slot: VoiceSlot): NativeRuntimeDescriptor[] {
-	return NATIVE_RUNTIMES.filter((runtime) => runtime.slots.includes(slot));
 }
 
 /** Every asarUnpack glob the build config needs, deduped and in registry order. */
@@ -231,14 +226,14 @@ export function isNativePlatformKey(value: string): value is NativePlatformKey {
 export const NATIVE_PLATFORM_KEYS = PLATFORM_KEYS as readonly NativePlatformKey[];
 
 /**
- * One-word verdict for a voice self-test run. Lives here, not beside the
+ * One-word verdict for a runtime self-test run. Lives here, not beside the
  * self-test, because the Settings card renders it and the renderer cannot import
  * a module that reaches the native loader.
  *
  * `PASS` only when every runtime this build can use actually loaded. A run where
- * the speech runtime was never downloaded is not broken (`passed` stays true),
- * but calling it a pass is what sent a user hunting a bug in a voice mode that
- * had nothing to run on.
+ * a runtime was never downloaded is not broken (`passed` stays true), but
+ * calling it a pass is what sent a user hunting a bug in a feature that had
+ * nothing to run on.
  */
 export function selfTestVerdict(report: {
 	passed: boolean;

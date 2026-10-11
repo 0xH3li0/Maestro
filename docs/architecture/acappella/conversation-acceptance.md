@@ -56,7 +56,7 @@ round trip and belongs with the Phase 09 tab affordances.
 Four things, none of which live in the repo:
 
 1. The three native runtimes installed. They are declared in
-   `src/shared/acappella/native-runtimes.ts` but are not yet `package.json` dependencies. See
+   `src/shared/local-models/native-runtimes.ts` but are not yet `package.json` dependencies. See
    [[packaging-notes]].
 2. The model set downloaded, from **Settings > Plugins > A Cappella > Models**.
 3. API keys for OpenAI and ElevenLabs if you are testing anything other than the fully local

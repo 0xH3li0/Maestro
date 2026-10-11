@@ -27,7 +27,7 @@ import type { NativeRuntimeResult } from '../../../../main/acappella/runtime/nat
 import {
 	selfTestVerdict,
 	type NativeRuntimeId,
-} from '../../../../shared/acappella/native-runtimes';
+} from '../../../../shared/local-models/native-runtimes';
 
 /** Module surfaces the real probes accept. */
 const WORKING_MODULES: Record<NativeRuntimeId, unknown> = {

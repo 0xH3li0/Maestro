@@ -29,7 +29,7 @@
  */
 
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
-import { OPENWAKEWORD_BASE_ID } from '../../../shared/acappella/model-catalog';
+import { OPENWAKEWORD_BASE_ID } from '../../../shared/local-models/model-catalog';
 import type { VoiceScope } from '../../../shared/acappella/protocol';
 import {
 	DEFAULT_WAKE_DEBOUNCE_MS,

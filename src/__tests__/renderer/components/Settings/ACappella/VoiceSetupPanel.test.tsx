@@ -21,15 +21,15 @@ import {
 	OPENWAKEWORD_BASE_ID,
 	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
-	VOICE_MODEL_CATALOG,
+	LOCAL_MODEL_CATALOG,
 	WHISPER_BASE_EN_ID,
-	getVoiceModel,
-} from '../../../../../shared/acappella/model-catalog';
+	getLocalModel,
+} from '../../../../../shared/local-models/model-catalog';
 import { mockTheme } from '../../../../helpers/mockTheme';
 
 /** Every catalog model, reported as not installed. */
 function notInstalledListings() {
-	return VOICE_MODEL_CATALOG.map((entry) => ({
+	return LOCAL_MODEL_CATALOG.map((entry) => ({
 		entry,
 		status: {
 			id: entry.id,
@@ -89,7 +89,7 @@ describe('VoiceSetupPanel', () => {
 	it('renders the bill of materials from the frozen catalog', async () => {
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
-		const parakeet = getVoiceModel(PARAKEET_TDT_V2_ID)!;
+		const parakeet = getLocalModel(PARAKEET_TDT_V2_ID)!;
 		await screen.findByText(parakeet.displayName);
 
 		// Name, license, and install path are all on screen before anything is
@@ -100,16 +100,16 @@ describe('VoiceSetupPanel', () => {
 		).toBeInTheDocument();
 		// Whisper is selectable, but not the default, so it is not offered here.
 		expect(
-			screen.queryByText(getVoiceModel(WHISPER_BASE_EN_ID)!.displayName)
+			screen.queryByText(getLocalModel(WHISPER_BASE_EN_ID)!.displayName)
 		).not.toBeInTheDocument();
-		expect(screen.getByText(getVoiceModel(OPENWAKEWORD_BASE_ID)!.displayName)).toBeInTheDocument();
+		expect(screen.getByText(getLocalModel(OPENWAKEWORD_BASE_ID)!.displayName)).toBeInTheDocument();
 		// The voice and the router download nothing, so their slots say so instead
 		// of showing a model row - and the two models nothing can read are not
 		// offered here at all.
 		expect(screen.getByText(/voice built into this computer/)).toBeInTheDocument();
 		expect(screen.getByText(/reads replies back as written/)).toBeInTheDocument();
-		expect(screen.queryByText(getVoiceModel(KOKORO_82M_ID)!.displayName)).not.toBeInTheDocument();
-		expect(screen.queryByText(getVoiceModel(QWEN3_1_7B_ID)!.displayName)).not.toBeInTheDocument();
+		expect(screen.queryByText(getLocalModel(KOKORO_82M_ID)!.displayName)).not.toBeInTheDocument();
+		expect(screen.queryByText(getLocalModel(QWEN3_1_7B_ID)!.displayName)).not.toBeInTheDocument();
 	});
 
 	it('states why voice mode is not ready', async () => {
@@ -125,7 +125,7 @@ describe('VoiceSetupPanel', () => {
 
 		render(<VoiceSetupPanel theme={mockTheme} enabled />);
 
-		await screen.findByText(getVoiceModel(WHISPER_BASE_EN_ID)!.displayName);
+		await screen.findByText(getLocalModel(WHISPER_BASE_EN_ID)!.displayName);
 	});
 
 	it('starts a download only when the Download button is pressed', async () => {

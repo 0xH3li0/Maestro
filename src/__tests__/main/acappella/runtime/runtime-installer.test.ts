@@ -72,7 +72,7 @@ let tempRoot: string;
 let tarballBytes: Buffer;
 let tarballSha256: string;
 
-vi.mock('../../../../shared/acappella/runtime-artifacts', () => ({
+vi.mock('../../../../shared/local-models/runtime-artifacts', () => ({
 	nativeRuntimeArtifact: () => artifact,
 	isNativeRuntimeDownloadable: () => true,
 	nativeRuntimeDownloadBytes: () => artifact.bytes,

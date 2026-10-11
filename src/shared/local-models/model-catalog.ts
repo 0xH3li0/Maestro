@@ -1,11 +1,11 @@
 /**
- * A Cappella model catalog - the bill of materials for every local model.
+ * Local Models catalog - the bill of materials for every local model.
  *
- * A Cappella is the first Maestro feature that ships a binary payload the user
+ * Local models are the one part of Maestro that ships a binary payload the user
  * has to fetch, so this file is the contract that makes that honest: every byte
  * downloaded is named here, with a PINNED revision, a real SHA-256, a real size,
- * and the license it arrives under. Voice Setup renders this table verbatim -
- * there is no second list of "what we download" anywhere in the app.
+ * and the license it arrives under. Every setup surface renders this table
+ * verbatim - there is no second list of "what we download" anywhere in the app.
  *
  * Three rules this file exists to enforce:
  *
@@ -26,70 +26,16 @@
  * file contents, read from `/api/models/<repo>/paths-info/<revision>` at the
  * pinned revision. Do not hand-edit one without re-reading it from the API.
  *
+ * This table is consumer-neutral. A feature that needs its own words for a model
+ * (a capability tag, a bundle) keys them by model id in its own module rather
+ * than adding a field here.
+ *
  * Sizes are formatted for display with `formatSize()` from
  * `src/shared/formatters.ts`. Do not add another size formatter.
  */
 
-import { formatSize } from '../formatters';
-
-/** Which seam a model plugs into. Mirrors `VoiceProviderRole` plus the wake word. */
-export type VoiceModelRole = 'stt' | 'tts' | 'brain' | 'wake-word';
-
-/**
- * The capability a model unlocks, in the words Voice Setup uses. Distinct from
- * `role` because the reason a user is asked for 1 GB of disk is not the same
- * thing as the interface slot it lands in.
- */
-export type VoiceModelCapability =
-	| 'local-speech-to-text'
-	| 'local-text-to-speech'
-	| 'local-conductor-brain'
-	| 'hands-free-wake-word';
-
-/** One downloadable file. A model is one or more of these. */
-export interface VoiceModelFile {
-	/**
-	 * Path under the model's install directory, and the path within the source
-	 * repo. Always POSIX-separated: it is joined onto the install root, so it must
-	 * never be absolute and must never contain `..`.
-	 */
-	readonly path: string;
-	/** Fully pinned download URL. `/resolve/<40-hex revision>/`, never `/main/`. */
-	readonly sourceUrl: string;
-	/** Lowercase hex SHA-256 of the file contents. */
-	readonly sha256: string;
-	readonly bytes: number;
-}
-
-export interface VoiceModelEntry {
-	/** Stable id. Also the install directory name, so it must be filename-safe. */
-	readonly id: string;
-	readonly displayName: string;
-	readonly role: VoiceModelRole;
-	/** Hugging Face repo id, for the "where did this come from" line. */
-	readonly repo: string;
-	/** The pinned commit. 40 hex characters; `main` is rejected by the guard below. */
-	readonly revision: string;
-	/** SPDX-ish identifier as published on the model card. */
-	readonly license: string;
-	readonly licenseUrl: string;
-	/** What installing this unlocks. Read by the capability gate. */
-	readonly requiredFor: VoiceModelCapability;
-	/** One sentence for the bill of materials. */
-	readonly description: string;
-	readonly files: readonly VoiceModelFile[];
-	/** Sum of every file's `bytes`. Computed, never typed by hand. */
-	readonly bytes: number;
-	/**
-	 * Why nothing in this build can run the model yet, or undefined when it runs.
-	 *
-	 * A pending model stays in the catalog so a download that already happened
-	 * can be seen, verified, and removed, but it is offered for download nowhere:
-	 * not in a bundle and not on its own row. Fetching weights nothing can read
-	 * is the one download this table must never invite.
-	 */
-	readonly pending?: string;
-}
+import type { NativeRuntimeId } from './native-runtimes';
+import type { LocalModelEntry, LocalModelKind } from './types';
 
 /** Build the pinned resolve URL for a repo file. */
 function hfUrl(repo: string, revision: string, path: string): string {
@@ -99,12 +45,12 @@ function hfUrl(repo: string, revision: string, path: string): string {
 interface ModelDraft {
 	id: string;
 	displayName: string;
-	role: VoiceModelRole;
+	kind: LocalModelKind;
+	runtime: NativeRuntimeId;
 	repo: string;
 	revision: string;
 	license: string;
 	licenseUrl: string;
-	requiredFor: VoiceModelCapability;
 	description: string;
 	files: Array<{ path: string; sha256: string; bytes: number }>;
 	pending?: string;
@@ -116,7 +62,7 @@ interface ModelDraft {
  * this table is the thing the user consented to, and a renderer that could edit
  * a hash in place would make that consent meaningless.
  */
-function defineModel(draft: ModelDraft): VoiceModelEntry {
+function defineModel(draft: ModelDraft): LocalModelEntry {
 	const files = draft.files.map((file) =>
 		Object.freeze({
 			path: file.path,
@@ -129,12 +75,12 @@ function defineModel(draft: ModelDraft): VoiceModelEntry {
 	return Object.freeze({
 		id: draft.id,
 		displayName: draft.displayName,
-		role: draft.role,
+		kind: draft.kind,
+		runtime: draft.runtime,
 		repo: draft.repo,
 		revision: draft.revision,
 		license: draft.license,
 		licenseUrl: draft.licenseUrl,
-		requiredFor: draft.requiredFor,
 		description: draft.description,
 		files: Object.freeze(files),
 		bytes: files.reduce((total, file) => total + file.bytes, 0),
@@ -154,16 +100,17 @@ export const HEY_JARVIS_WAKE_ID = 'openwakeword-hey-jarvis';
 export const QWEN3_1_7B_ID = 'qwen3-1.7b-instruct-q4km';
 
 /**
- * Every model A Cappella can install, in the order Voice Setup lists them.
+ * Every model Maestro can install, in the order a setup surface lists them.
  *
- * Ordered smallest-commitment-first within a set so the panel reads as a
+ * Ordered smallest-commitment-first within a kind so a panel reads as a
  * progression rather than as a wall of gigabytes.
  */
-export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
+export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 	defineModel({
 		id: PARAKEET_TDT_V2_ID,
 		displayName: 'Parakeet TDT 0.6B (English)',
-		role: 'stt',
+		kind: 'stt',
+		runtime: 'onnx',
 		// NVIDIA's Parakeet TDT 0.6B v2, exported to ONNX by the onnx-asr project.
 		// The local default: it gets agent names, casing, and punctuation right
 		// where Whisper Base does not, and decodes a few seconds of speech in
@@ -173,7 +120,6 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 		revision: '0bbb45a3365852604aef28b538a8f066f4ccaa85',
 		license: 'CC-BY-4.0',
 		licenseUrl: 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2',
-		requiredFor: 'local-speech-to-text',
 		description:
 			'Fast, accurate English speech recognition that runs on the CPU. Transcribes on this machine, so no audio leaves it.',
 		files: [
@@ -205,7 +151,8 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 	defineModel({
 		id: WHISPER_BASE_EN_ID,
 		displayName: 'Whisper Base (English)',
-		role: 'stt',
+		kind: 'stt',
+		runtime: 'onnx',
 		// The ONNX export, not the ggml one. Local speech-to-text runs on ONNX
 		// Runtime - the same runtime text-to-speech and the wake word already need -
 		// because the whisper.cpp binding publishes no prebuilt binary on any
@@ -215,7 +162,6 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 		revision: '51eefc0af78b103839eda9e7e4f4186acc6517fe',
 		license: 'Apache-2.0',
 		licenseUrl: 'https://huggingface.co/onnx-community/whisper-base.en',
-		requiredFor: 'local-speech-to-text',
 		description:
 			'English-only speech recognition that runs on the CPU. Transcribes on this machine, so no audio leaves it.',
 		// Encoder plus the MERGED q4 decoder. The merged graph carries both the
@@ -243,12 +189,12 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 	defineModel({
 		id: OPENWAKEWORD_BASE_ID,
 		displayName: 'openWakeWord Base',
-		role: 'wake-word',
+		kind: 'wake-word',
+		runtime: 'onnx',
 		repo: 'littlebearlabs/openwakeword-features',
 		revision: '5e032d9ecdb798f9182ca8088284cf934f10d68e',
 		license: 'Apache-2.0',
 		licenseUrl: 'https://huggingface.co/littlebearlabs/openwakeword-features/blob/main/LICENSE',
-		requiredFor: 'hands-free-wake-word',
 		description:
 			'The always-on front end that listens for the wake and stop words. Small, always local, and never optional: hands-free means something is listening, and that something must be on this machine.',
 		files: [
@@ -267,7 +213,8 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 	defineModel({
 		id: HEY_JARVIS_WAKE_ID,
 		displayName: 'Wake phrase: "Hey Jarvis"',
-		role: 'wake-word',
+		kind: 'wake-word',
+		runtime: 'onnx',
 		// openWakeWord's own pretrained "hey jarvis" classifier (release v0.5.1).
 		// Served from a pinned Hugging Face mirror so it rides the same pinned
 		// resolve URL as every other model; the hash is the one published with the
@@ -275,11 +222,10 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 		repo: 'harvestsu/openwakeword-onnx',
 		revision: '93d1bd6f4f48750cb6a76206ce5bd92d846820c8',
 		// The openWakeWord CODE is Apache-2.0, but its pretrained models are not:
-		// they are non-commercial. Stated here so Voice Setup shows it before the
+		// they are non-commercial. Stated here so the setup surface shows it before the
 		// download rather than burying it in a README.
 		license: 'CC-BY-NC-SA-4.0',
 		licenseUrl: 'https://github.com/dscripka/openWakeWord#license',
-		requiredFor: 'hands-free-wake-word',
 		description:
 			'The detector for the default wake phrase, "hey jarvis". Runs on this machine on top of the wake word front end.',
 		files: [
@@ -293,12 +239,12 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 	defineModel({
 		id: KOKORO_82M_ID,
 		displayName: 'Kokoro 82M',
-		role: 'tts',
+		kind: 'tts',
+		runtime: 'onnx',
 		repo: 'onnx-community/Kokoro-82M-v1.0-ONNX',
 		revision: '1939ad2a8e416c0acfeecc08a694d14ef25f2231',
 		license: 'Apache-2.0',
 		licenseUrl: 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX',
-		requiredFor: 'local-text-to-speech',
 		description:
 			'Speech synthesis with one bundled voice. Replies are spoken from this machine rather than streamed from a service.',
 		// The model takes phoneme ids and the grapheme-to-phoneme front end it
@@ -321,12 +267,12 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 	defineModel({
 		id: QWEN3_1_7B_ID,
 		displayName: 'Qwen3 1.7B Instruct (Q4_K_M)',
-		role: 'brain',
+		kind: 'text-gen',
+		runtime: 'llama',
 		repo: 'unsloth/Qwen3-1.7B-GGUF',
 		revision: 'd7f544eead698dbd1f15126ef60b45a1e1933222',
 		license: 'Apache-2.0',
 		licenseUrl: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF',
-		requiredFor: 'local-conductor-brain',
 		description:
 			'The Conductor Brain: decides which agent and tab an utterance is for, and reshapes replies for the ear. The largest download, and the one you can skip if you would rather route with an API model.',
 		// The downloadable llama.cpp payload carries the binary and not the
@@ -343,128 +289,24 @@ export const VOICE_MODEL_CATALOG: readonly VoiceModelEntry[] = Object.freeze([
 	}),
 ]);
 
-const CATALOG_BY_ID = new Map(VOICE_MODEL_CATALOG.map((entry) => [entry.id, entry]));
+const CATALOG_BY_ID = new Map(LOCAL_MODEL_CATALOG.map((entry) => [entry.id, entry]));
 
 /** Look a model up by id. Undefined for an id that is not in the catalog. */
-export function getVoiceModel(id: string): VoiceModelEntry | undefined {
+export function getLocalModel(id: string): LocalModelEntry | undefined {
 	return CATALOG_BY_ID.get(id);
 }
 
 /** True when `id` names a catalog entry. The guard every path boundary uses. */
-export function isVoiceModelId(id: string): boolean {
+export function isLocalModelId(id: string): boolean {
 	return CATALOG_BY_ID.has(id);
 }
 
-// ---------------------------------------------------------------------------
-// Sets
-// ---------------------------------------------------------------------------
-
-export type VoiceModelSetId = 'hands-free-local';
-
-export interface VoiceModelSet {
-	readonly id: VoiceModelSetId;
-	readonly displayName: string;
-	readonly description: string;
-	readonly modelIds: readonly string[];
-	/** Computed sum over `modelIds`. Never a hard-coded number. */
-	readonly bytes: number;
-}
-
-function defineSet(
-	id: VoiceModelSetId,
-	displayName: string,
-	description: string,
-	modelIds: readonly string[]
-): VoiceModelSet {
-	return Object.freeze({
-		id,
-		displayName,
-		description,
-		modelIds: Object.freeze([...modelIds]),
-		bytes: modelIds.reduce((total, modelId) => total + (getVoiceModel(modelId)?.bytes ?? 0), 0),
-	});
-}
-
-/**
- * The bundle Voice Setup offers.
- *
- * One set, and it is exactly the downloads the local trio needs: the recogniser
- * and the wake word. The voice is the operating system's own and the router is
- * built in, so neither costs a download. Kokoro and Qwen3 are deliberately NOT
- * in it - they are in the catalog above so an existing download can be seen and
- * removed, but neither can run in this build (see their `pending` notes), and a
- * bundle that fetched a gigabyte of weights nothing can read would be a lie on
- * the Download button.
- */
-export const MODEL_SETS: Readonly<Record<VoiceModelSetId, VoiceModelSet>> = Object.freeze({
-	'hands-free-local': defineSet(
-		'hands-free-local',
-		'Local speech',
-		"Speech recognition and the wake word run on this machine. Replies use your computer's own voice and routing is built in, so nothing else is needed and nothing leaves this machine.",
-		[PARAKEET_TDT_V2_ID, OPENWAKEWORD_BASE_ID, HEY_JARVIS_WAKE_ID]
-	),
-});
-
-/** The models in a set, in catalog order. */
-export function getModelSetEntries(setId: VoiceModelSetId): VoiceModelEntry[] {
-	const ids = new Set(MODEL_SETS[setId].modelIds);
-	return VOICE_MODEL_CATALOG.filter((entry) => ids.has(entry.id));
-}
-
-/**
- * Total download size of a set, formatted. This is the string on the download
- * button, which is why it is derived here rather than written into copy.
- */
-export function formatModelSetSize(setId: VoiceModelSetId): string {
-	return formatSize(MODEL_SETS[setId].bytes);
+/** Every catalog model a runtime reads, in catalog order. */
+export function localModelsForRuntime(runtimeId: NativeRuntimeId): LocalModelEntry[] {
+	return LOCAL_MODEL_CATALOG.filter((entry) => entry.runtime === runtimeId);
 }
 
 /** Total bytes of an arbitrary selection of models. Unknown ids contribute zero. */
 export function sumModelBytes(ids: readonly string[]): number {
-	return ids.reduce((total, id) => total + (getVoiceModel(id)?.bytes ?? 0), 0);
-}
-
-// ---------------------------------------------------------------------------
-// Pretrained wake phrases
-// ---------------------------------------------------------------------------
-
-/**
- * A wake phrase that has a trained classifier in the catalog.
- *
- * openWakeWord detects only phrases it was trained on: the front end
- * (`openwakeword-base`) is shared, and each phrase needs its own small model.
- * This table is the whole list of phrases a fresh install can wake on with the
- * classifier engine. Any other phrase needs the transcription engine, which
- * matches the phrase in Parakeet's text instead.
- */
-export interface PretrainedWakePhrase {
-	/** What the user says, lower case. */
-	readonly phrase: string;
-	/** Catalog model holding the classifier. */
-	readonly modelId: string;
-	/** The classifier file inside that model's directory. */
-	readonly file: string;
-}
-
-export const PRETRAINED_WAKE_PHRASES: readonly PretrainedWakePhrase[] = Object.freeze([
-	Object.freeze({
-		phrase: 'hey jarvis',
-		modelId: HEY_JARVIS_WAKE_ID,
-		file: 'hey_jarvis_v0.1.onnx',
-	}),
-]);
-
-/** Lower case, punctuation stripped, single spaces: how phrases are compared. */
-export function normalizeWakePhrase(text: string): string {
-	return text
-		.toLowerCase()
-		.replace(/[^\p{L}\p{N}\s]/gu, ' ')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-/** The pretrained classifier for a phrase, or undefined when none was trained for it. */
-export function findPretrainedWakePhrase(text: string): PretrainedWakePhrase | undefined {
-	const wanted = normalizeWakePhrase(text);
-	return PRETRAINED_WAKE_PHRASES.find((entry) => entry.phrase === wanted);
+	return ids.reduce((total, id) => total + (getLocalModel(id)?.bytes ?? 0), 0);
 }

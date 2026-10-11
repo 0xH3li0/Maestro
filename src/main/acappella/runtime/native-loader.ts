@@ -31,9 +31,9 @@ import {
 	nativePlatformKey,
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
-} from '../../../shared/acappella/native-runtimes';
+} from '../../../shared/local-models/native-runtimes';
 import { isNativeRuntimeInUse } from '../../../shared/acappella/provider-catalog';
-import { isNativeRuntimeDownloadable } from '../../../shared/acappella/runtime-artifacts';
+import { isNativeRuntimeDownloadable } from '../../../shared/local-models/runtime-artifacts';
 import { isWindows } from '../../../shared/platformDetection';
 
 /**

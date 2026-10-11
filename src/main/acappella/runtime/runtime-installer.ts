@@ -39,8 +39,8 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import * as tar from 'tar';
 
-import type { NativeRuntimeId } from '../../../shared/acappella/native-runtimes';
-import type { NativeRuntimeArtifact } from '../../../shared/acappella/runtime-artifacts';
+import type { NativeRuntimeId } from '../../../shared/local-models/native-runtimes';
+import type { NativeRuntimeArtifact } from '../../../shared/local-models/runtime-artifacts';
 import { logger } from '../../utils/logger';
 import {
 	artifactForThisPlatform,

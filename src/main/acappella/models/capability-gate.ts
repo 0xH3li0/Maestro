@@ -26,9 +26,9 @@
 import {
 	OPENWAKEWORD_BASE_ID,
 	PARAKEET_TDT_V2_ID,
-	findPretrainedWakePhrase,
-	getVoiceModel,
-} from '../../../shared/acappella/model-catalog';
+	getLocalModel,
+} from '../../../shared/local-models/model-catalog';
+import { findPretrainedWakePhrase } from '../../../shared/acappella/voice-models';
 import { DEFAULT_WAKE_PHRASE } from '../../../shared/acappella/voice-controls';
 import {
 	credentialLabel,
@@ -36,7 +36,7 @@ import {
 	type VoiceCredentialService,
 	type VoiceProviderRequirement,
 } from '../../../shared/acappella/provider-catalog';
-import type { NativeRuntimeId } from '../../../shared/acappella/native-runtimes';
+import type { NativeRuntimeId } from '../../../shared/local-models/native-runtimes';
 import { hasCredential } from '../providers/credentials';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import type {
@@ -358,7 +358,7 @@ async function resolveSlot(
 			if (runtimeVerdict) return runtimeVerdict;
 		}
 
-		const model = getVoiceModel(requirement.modelId);
+		const model = getLocalModel(requirement.modelId);
 		const modelName = model?.displayName ?? requirement.modelId;
 		const status = await readModelStatus(requirement.modelId);
 
@@ -458,7 +458,7 @@ async function resolveWakeClassifier(
 		};
 	}
 
-	const model = getVoiceModel(pretrained.modelId);
+	const model = getLocalModel(pretrained.modelId);
 	const modelName = model?.displayName ?? pretrained.modelId;
 	const status = await readModelStatus(pretrained.modelId);
 	if (status.status === 'installed') return null;

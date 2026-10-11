@@ -25,7 +25,7 @@
  * aloud is a worse failure than a voice that says nothing and explains why.
  */
 
-import { KOKORO_82M_ID } from '../../../../shared/acappella/model-catalog';
+import { KOKORO_82M_ID } from '../../../../shared/local-models/model-catalog';
 import { KOKORO_TTS_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type {

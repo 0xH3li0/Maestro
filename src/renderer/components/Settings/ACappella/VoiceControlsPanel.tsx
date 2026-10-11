@@ -46,7 +46,7 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { KeyCaptureButton } from '../../ui/KeyCaptureButton';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
-import { findPretrainedWakePhrase } from '../../../../shared/acappella/model-catalog';
+import { findPretrainedWakePhrase } from '../../../../shared/acappella/voice-models';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { useVoiceControls } from './useVoiceControls';

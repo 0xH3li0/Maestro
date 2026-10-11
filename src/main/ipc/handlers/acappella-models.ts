@@ -25,11 +25,8 @@
 
 import { ipcMain } from 'electron';
 
-import {
-	VOICE_MODEL_CATALOG,
-	getVoiceModel,
-	type VoiceModelEntry,
-} from '../../../shared/acappella/model-catalog';
+import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../shared/local-models/model-catalog';
+import type { LocalModelEntry } from '../../../shared/local-models/types';
 import type { VoiceReadiness } from '../../../shared/acappella/readiness';
 import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import { resolveVoiceReadiness } from '../../acappella/models/capability-gate';
@@ -62,7 +59,11 @@ import {
 	runtimesFootprint,
 } from '../../acappella/runtime/runtime-store';
 import { resetNativeRuntimes } from '../../acappella/runtime/native-loader';
-import { NATIVE_RUNTIMES, type NativeRuntimeId } from '../../../shared/acappella/native-runtimes';
+import {
+	NATIVE_RUNTIMES,
+	type NativeRuntimeId,
+} from '../../../shared/local-models/native-runtimes';
+import { voiceSlotsForRuntime } from '../../../shared/acappella/voice-models';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 
@@ -80,7 +81,7 @@ export const ACAPPELLA_RUNTIME_PROGRESS_CHANNEL = 'runtimes:progress';
  * never has to correlate two lists.
  */
 export interface VoiceModelListing {
-	entry: VoiceModelEntry;
+	entry: LocalModelEntry;
 	status: ModelStatus;
 	/** Absolute install paths, one per catalog file, for the "where does this go" line. */
 	installPaths: string[];
@@ -104,7 +105,7 @@ const requireEnabled = requireACappellaEnabled;
 
 /** Reject anything that is not a catalog id before it can reach a path join. */
 function requireModelId(raw: unknown): string {
-	if (typeof raw !== 'string' || !getVoiceModel(raw)) throw new Error('UnknownVoiceModel');
+	if (typeof raw !== 'string' || !getLocalModel(raw)) throw new Error('UnknownVoiceModel');
 	return raw;
 }
 
@@ -190,7 +191,7 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 		// the whole reason it is pinned.
 		async (): Promise<VoiceModelListing[]> => {
 			const statuses = await listStatuses();
-			return VOICE_MODEL_CATALOG.map((entry, index) => ({
+			return LOCAL_MODEL_CATALOG.map((entry, index) => ({
 				entry,
 				status: statuses[index],
 				installPaths: entry.files.map((file) => installPathFor(entry, file)),
@@ -315,7 +316,7 @@ export function registerACappellaModelsHandlers(deps: ACappellaModelsHandlerDepe
 					return {
 						id: runtime.id,
 						label: runtime.label,
-						slots: [...runtime.slots],
+						slots: voiceSlotsForRuntime(runtime.id),
 						installed: await isRuntimeInstalled(runtime.id),
 						stale: await isRuntimeStale(runtime.id),
 						downloadable: artifact !== null,

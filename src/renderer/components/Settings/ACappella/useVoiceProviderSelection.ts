@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Brain, MessageSquare, Volume2, type LucideIcon } from 'lucide-react';
 
-import { PARAKEET_TDT_V2_ID } from '../../../../shared/acappella/model-catalog';
+import { PARAKEET_TDT_V2_ID } from '../../../../shared/local-models/model-catalog';
 import {
 	HOSTED_PROVIDER_IDS,
 	LOCAL_PROVIDER_IDS,

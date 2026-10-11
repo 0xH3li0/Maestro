@@ -16,7 +16,7 @@ import { useCallback, useState } from 'react';
 import { Stethoscope } from 'lucide-react';
 
 import type { RuntimeSelfTestReport } from '../../../../main/acappella/runtime/runtime-selftest';
-import { selfTestVerdict } from '../../../../shared/acappella/native-runtimes';
+import { selfTestVerdict } from '../../../../shared/local-models/native-runtimes';
 import type { Theme } from '../../../types';
 import { flashCopiedToClipboard } from '../../../utils/flashCopiedToClipboard';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';

@@ -31,8 +31,8 @@ import {
 	type NativePrebuildAvailability,
 	type NativeRuntimeDescriptor,
 	type NativeRuntimeId,
-} from '../../../shared/acappella/native-runtimes';
-import { selfTestVerdict } from '../../../shared/acappella/native-runtimes';
+} from '../../../shared/local-models/native-runtimes';
+import { selfTestVerdict } from '../../../shared/local-models/native-runtimes';
 import type { MicPermission } from '../../../shared/acappella/protocol';
 import { getMicPermission } from '../permissions/mic-permission';
 import {

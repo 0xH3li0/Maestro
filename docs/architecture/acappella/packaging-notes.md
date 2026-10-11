@@ -21,7 +21,7 @@ The load-bearing fact: every failure in this area is invisible in development. A
 
 ## The runtime registry is the single source of truth
 
-`src/shared/acappella/native-runtimes.ts` holds one descriptor per native runtime: the npm package, an exact version pin, the per-platform prebuild story, the `asarUnpack` globs, and the binaries a packaged app must contain. Four consumers read it and none of them keep their own copy:
+`src/shared/local-models/native-runtimes.ts` holds one descriptor per native runtime: the npm package, an exact version pin, the per-platform prebuild story, the `asarUnpack` globs, and the binaries a packaged app must contain. Four consumers read it and none of them keep their own copy:
 
 | Consumer                                         | What it uses the registry for                                   |
 | ------------------------------------------------ | --------------------------------------------------------------- |
@@ -30,7 +30,7 @@ The load-bearing fact: every failure in this area is invisible in development. A
 | `scripts/verify-native-packaging.mjs`            | Post-packaging assertion, reads the compiled copy from `dist/`  |
 | `src/main/acappella/models/capability-gate.ts`   | Reports a runtime that will not load as its own blocking reason |
 
-`src/__tests__/shared/acappella-native-runtimes.test.ts` asserts the registry against `package.json`: version pins are exact, every `asarUnpack` glob is present in the electron-builder config, and `declared` matches the actual dependency list.
+`src/__tests__/shared/local-models-native-runtimes.test.ts` asserts the registry against `package.json`: version pins are exact, every `asarUnpack` glob is present in the electron-builder config, and `declared` matches the actual dependency list.
 
 ## The two runtimes
 

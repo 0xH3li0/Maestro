@@ -10,7 +10,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { PARAKEET_TDT_V2_ID } from '../../../../shared/acappella/model-catalog';
+import { PARAKEET_TDT_V2_ID } from '../../../../shared/local-models/model-catalog';
 import { LOCAL_STT_PROVIDER_ID } from '../../../../shared/acappella/provider-catalog';
 import { modelFilePath } from '../../models/model-store';
 import {

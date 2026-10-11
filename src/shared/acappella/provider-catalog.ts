@@ -20,8 +20,8 @@
  * than written into copy that can drift.** See {@link summariseVoiceEgress}.
  */
 
-import { PARAKEET_TDT_V2_ID, WHISPER_BASE_EN_ID } from './model-catalog';
-import type { NativeRuntimeId } from './native-runtimes';
+import { PARAKEET_TDT_V2_ID, WHISPER_BASE_EN_ID } from '../local-models/model-catalog';
+import type { NativeRuntimeId } from '../local-models/native-runtimes';
 import type { VoiceProviderRole, VoiceProviderTier } from './providers';
 
 // ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ import { TRANSCRIPTION_WAKE_PROVIDER_ID } from '../models/capability-gate';
 import { createParakeetEngine } from '../providers/local/parakeet-stt';
 import { loadLocalRuntime } from '../providers/local/runtime';
 import type { OnnxModule } from '../providers/local/onnx-types';
-import { normalizeWakePhrase } from '../../../shared/acappella/model-catalog';
+import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
 import { ACAPPELLA_AUDIO_FRAME_SAMPLES } from '../../../shared/acappella/audio-host';
 import type { WakeEngine } from '../../../shared/acappella/voice-controls';
 import { logger } from '../../utils/logger';
