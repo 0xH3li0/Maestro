@@ -265,6 +265,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A system-wide (OS-level) hotkey:** `setNamedGlobalHotkey(id, keys, onPress)`, `keysToAccelerator(keys)` in `src/main/global-hotkey-manager.ts`
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)` in `src/shared/shortcutKeys.ts`
 - **Whether a keystroke belongs to a text field (guard before `preventDefault`):** `isTextInputTarget()`, `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts`; `isEditingTextTarget()`, `isEditingTextFocused()` in `src/renderer/utils/editableTarget.ts`
+- **Hiding a switched-off Encore Feature's shortcut, menu item, or setting:** `availableShortcuts()`, `isShortcutAvailable()`, `SHORTCUT_ENCORE_FLAGS` in `src/renderer/utils/encoreShortcuts.ts`; `requiresEncore` on `SearchableSetting`; `encoreFlag` on a `MenuCommand` in `src/main/app-menu.ts`
 - **How much of the keyboard the user has mastered:** `collectBoundShortcuts()`, `countUsedBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`
 - **Arrow-key navigation over a list or grid:** `useListNavigation()` in `src/renderer/hooks/keyboard/useListNavigation.ts`; a grid feeds it `useGridColumnCount()` from `src/renderer/hooks/ui/useGridColumnCount.ts`
 - **Bare `+` / `-` / `0` zoom on a surface:** `useScaleShortcuts(control, { enabled })` in `src/renderer/hooks/ui/useScaleShortcuts.ts`
@@ -332,6 +333,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Event listeners:** `useEventListener()` in `src/renderer/hooks/utils/useEventListener.ts` (do NOT pair raw `addEventListener`/`removeEventListener` inside useEffect)
 - **Debounce/throttle:** `useDebouncedValue()`, `useDebouncedCallback()`, `useThrottledCallback()` in `src/renderer/hooks/utils/useThrottle.ts` (filename is misleading - all three live here)
 - **Identity-stable callback:** `useStableCallback()` in `src/renderer/hooks/utils/useStableCallback.ts`
+- **Steering a turn that is ALREADY RUNNING:** `getSteerEligibility()` in `src/renderer/utils/executionQueue.ts`, `steerQueuedItem()` in `src/renderer/services/chatSteering.ts`, wire protocol in `src/shared/chatSteering.ts`, `steerCodexAppServerTurn()` in `src/main/codex-app-server/steering.ts`
 - **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
 
 #### Phone and touch (web-desktop)

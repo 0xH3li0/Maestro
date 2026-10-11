@@ -1,6 +1,7 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 import type {
 	ProcessConfig,
 	ManagedProcess,
@@ -12,12 +13,19 @@ import type {
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
+import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
+import { codexAppServerConfigBlocker } from '../codex-app-server/invocation';
+import { resolveCodexTransport } from '../../shared/codexTransport';
+import { DEFAULT_QUERY_SOURCE } from '../../shared/querySource';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
+import { STEERING_TURN_FINISHED_DETAIL, type SteeringResultFrame } from '../../shared/chatSteering';
+import { sendSteeringRequest } from './steering-client';
+import { steerCodexAppServerTurn } from '../codex-app-server/steering';
 import { isPidAlive } from './utils/childProcessInfo';
 import { expandTilde } from '../../shared/pathUtils';
 import { agentAlreadyRunningMessage } from '../../shared/processErrors';
@@ -36,6 +44,11 @@ import {
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
 
+export interface ProcessManagerOptions {
+	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
+	appVersion?: string;
+}
+
 /**
  * ProcessManager orchestrates spawning and managing processes for sessions.
  *
@@ -51,6 +64,7 @@ export class ProcessManager extends EventEmitter {
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
 	private opencodeServerSpawner: OpencodeServerSpawner;
+	private codexAppServerSpawner: CodexAppServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
@@ -61,7 +75,8 @@ export class ProcessManager extends EventEmitter {
 		 * route to the SDK-serve path. Read on every spawn so toggling the plugin
 		 * takes effect without an app restart.
 		 */
-		private readonly isOpencodeServerEnabled: () => boolean = () => false
+		private readonly isOpencodeServerEnabled: () => boolean = () => false,
+		options: ProcessManagerOptions = {}
 	) {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
@@ -74,6 +89,15 @@ export class ProcessManager extends EventEmitter {
 			this,
 			this.bufferManager,
 			(config) => this.childProcessSpawner.spawn(config)
+		);
+		// Same contract for Codex: a turn the app-server transport cannot carry,
+		// or whose server will not start, runs on `codex exec` instead.
+		this.codexAppServerSpawner = new CodexAppServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.childProcessSpawner.spawn(config),
+			{ clientVersion: options.appVersion }
 		);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
@@ -258,10 +282,17 @@ export class ProcessManager extends EventEmitter {
 						},
 					};
 
-		const usePty = this.shouldUsePty(configWithCoworkingSession);
-		const result = usePty
-			? this.ptySpawner.spawn(configWithCoworkingSession)
-			: this.childProcessSpawner.spawn(configWithCoworkingSession);
+		// The Codex app-server child is spawned per turn (no shared server to
+		// fingerprint, unlike OpenCode serve), so it takes the coworking env like
+		// any CLI spawn and is routed after the injection.
+		let result: SpawnResult;
+		if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
+		} else if (this.shouldUsePty(configWithCoworkingSession)) {
+			result = this.ptySpawner.spawn(configWithCoworkingSession);
+		} else {
+			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
+		}
 
 		this.emitSpawn(config);
 
@@ -308,6 +339,71 @@ export class ProcessManager extends EventEmitter {
 			!config.sshRemoteId &&
 			!(config.images && config.images.length > 0)
 		);
+	}
+
+	/**
+	 * Route a Codex turn through `codex app-server` (steerable mid-turn) instead
+	 * of `codex exec --json`. Opt-in per agent (`codexTransport`), and only for an
+	 * INTERACTIVE turn: an Auto Run or Cue turn has nobody to steer it, so it
+	 * stays on the default transport rather than paying for an experimental one.
+	 * Origin is read from `querySource`, which every dispatcher claims at the
+	 * spawn site (absent means a human sent it, see `shared/querySource.ts`).
+	 *
+	 * The config-level exclusions (no prompt, images, SSH, a prompt already in
+	 * the args) are the spawner's own `codexAppServerConfigBlocker`, so routing
+	 * and the spawner cannot disagree about which turns app-server can carry.
+	 * The spawner still re-checks the args and falls back to exec for anything
+	 * it does not recognize.
+	 */
+	private shouldUseCodexAppServer(config: ProcessConfig): boolean {
+		return (
+			resolveCodexTransport(config) === 'app-server' &&
+			(config.querySource ?? DEFAULT_QUERY_SOURCE) === 'user' &&
+			codexAppServerConfigBlocker(config) === null
+		);
+	}
+
+	/**
+	 * Ask a running turn to take `text` into the turn in flight (chat steering):
+	 * a Claude turn on maestro-p, or a Codex turn on the app-server transport.
+	 * Resolves with a verdict for the UI; never rejects. The later verdict for a
+	 * delivered steer is emitted as `steering-verdict` with the same id: for
+	 * maestro-p it arrives on stdout (StdoutHandler), for Codex it comes from
+	 * `steerCodexAppServerTurn`.
+	 *
+	 * Requires the process to still be REGISTERED, checked here rather than left to
+	 * the socket, because a finished turn and an un-steerable one need different
+	 * words: "the turn has already finished" is actionable (send it normally) where
+	 * "not steerable" invites the user to go looking for a setting.
+	 *
+	 * Everything else is deliberately NOT decided here. Whether the turn is on
+	 * maestro-p at all is answered by whether a channel exists (the spawn opens one
+	 * only for a local interactive turn), and whether the TUI can accept keystroke
+	 * right now is answered by maestro-p, which is the only party holding the
+	 * screen. Re-deriving either would mean two places believing different things
+	 * about the same turn. A Codex process carries its own channel
+	 * (`codexAppServer`, present only on the app-server path), so an exec turn has
+	 * none and is refused by the socket client exactly like an unsteerable Claude
+	 * turn.
+	 */
+	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
+		const id = randomUUID();
+		const process = this.processes.get(sessionId);
+		if (!process) {
+			return {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: 'not-running',
+				detail: STEERING_TURN_FINISHED_DETAIL,
+			};
+		}
+		if (process.codexAppServer) {
+			return steerCodexAppServerTurn(process.codexAppServer, { id, text }, (verdict) =>
+				this.emit('steering-verdict', sessionId, verdict)
+			);
+		}
+		return sendSteeringRequest({ processKey: sessionId, text, id });
 	}
 
 	/**
@@ -391,7 +487,8 @@ export class ProcessManager extends EventEmitter {
 
 		try {
 			if (process.sdkController) {
-				// Server-backed (OpenCode SDK) process: abort the in-flight turn.
+				// Server-backed process (OpenCode SDK, Codex app-server): interrupt the
+				// in-flight turn over its protocol; the controller escalates if needed.
 				process.sdkController.interrupt();
 				return true;
 			} else if (process.isTerminal && process.ptyProcess) {
@@ -470,10 +567,11 @@ export class ProcessManager extends EventEmitter {
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (proc.sdkController) {
-				// Server-backed (OpenCode SDK) process: no OS child to signal. Abort
-				// the turn and tear down the SSE subscription; the stream ending emits
-				// the exit event. Fall through to the map deletion below.
-				proc.sdkController.kill();
+				// Server-backed process (OpenCode SDK, Codex app-server): the stop
+				// starts with a protocol call. The controller tears its transport down
+				// (and runs the stop ladder on any child it owns); the exit event
+				// follows from there. Fall through to the map deletion below.
+				proc.sdkController.kill({ sync, shutdown });
 			} else if (proc.isTerminal && proc.ptyProcess) {
 				stopProcess(
 					{ pty: proc.ptyProcess, pid: proc.pid },

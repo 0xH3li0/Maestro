@@ -4,6 +4,7 @@
 import { getSessionById, readHistory, readGroups } from '../services/storage';
 import { formatAgentDetail, formatError } from '../output/formatter';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { resolveCodexTransport } from '../../shared/codexTransport';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -93,6 +94,10 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			enableMaestroP: agent.enableMaestroP ?? null,
 			maestroPMode: agent.maestroPMode ?? null,
 			maestroPPath: agent.maestroPPath ?? null,
+			// Codex transport: the resolved value (exec | app-server) the spawner
+			// reads, plus the raw stored field. Null for non-Codex agents.
+			codexTransport: agent.toolType === 'codex' ? resolveCodexTransport(agent) : null,
+			codexTransportStored: agent.codexTransport ?? null,
 			// Full SSH execution config so onboarding/verification can confirm the
 			// agent's remote, working-dir override, and history-sync state without
 			// reading raw store files.

@@ -17,6 +17,7 @@ import { resolveAgentId, resolveGroupId, getSessionById } from '../services/stor
 import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
+import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport';
 import { parseCliBool } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
@@ -44,6 +45,7 @@ interface UpdateAgentOptions {
 	contextWindow?: string;
 	tokenSource?: string;
 	maestroPPath?: string;
+	codexTransport?: string;
 	bookmark?: string;
 	json?: boolean;
 }
@@ -137,6 +139,18 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		patch.maestroPMode = encoded.maestroPMode;
 	}
 
+	if (options.codexTransport !== undefined) {
+		const transport = options.codexTransport.trim().toLowerCase();
+		if (!isCodexTransport(transport)) {
+			throw new Error(
+				`--codex-transport expects ${CODEX_TRANSPORTS.join(' or ')}, got "${options.codexTransport}"`
+			);
+		}
+		// Only the opt-in is stored; `exec` clears the field, matching the Edit
+		// Agent modal, where Standard leaves `codexTransport` unset.
+		patch.codexTransport = transport === 'app-server' ? transport : null;
+	}
+
 	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
@@ -163,7 +177,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -190,6 +204,18 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	) {
 		emitError(
 			`--token-source only applies to Claude Code agents; "${sessionId}" is a ${currentToolType} agent.`,
+			options
+		);
+	}
+
+	// Guard: --codex-transport only carries meaning for Codex, for the same reason.
+	if (
+		options.codexTransport !== undefined &&
+		currentToolType !== undefined &&
+		currentToolType !== 'codex'
+	) {
+		emitError(
+			`--codex-transport only applies to Codex agents; "${sessionId}" is a ${currentToolType} agent.`,
 			options
 		);
 	}
@@ -434,13 +460,17 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			enableMaestroP: 'Claude token source',
 			maestroPMode: 'Token mode',
 			maestroPPath: 'maestro-p path',
+			codexTransport: 'Codex transport',
 		};
 		for (const [key, value] of Object.entries(applied.config)) {
 			// Derived marker, not something the caller typed - it is implied by
 			// `--context-window` and printing it just adds noise (finding AD1).
 			if (key === 'contextWindowSource') continue;
 			const label = labels[key] ?? key;
-			if (value === null) {
+			// A cleared transport is not "unset", it is the default transport.
+			if (key === 'codexTransport') {
+				console.log(`  ${label}: ${value ?? 'exec'}`);
+			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);
 			} else if (key === 'customEnvVars' && value && typeof value === 'object') {
 				const pairs = Object.keys(value as Record<string, string>);

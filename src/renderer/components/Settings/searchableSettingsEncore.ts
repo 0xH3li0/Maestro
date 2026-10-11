@@ -81,6 +81,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'cue-history-retention',
+		requiresEncore: 'maestroCue',
 		tab: 'encore',
 		tabLabel: 'Encore Features',
 		jumpToId: 'encore-cue',
@@ -167,6 +168,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'coworking-background-browsers',
+		requiresEncore: 'coworking',
 		tab: 'encore',
 		tabLabel: 'Encore Features',
 		label: 'Coworking background browsing',
@@ -206,6 +208,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-director-notes-provider',
+		requiresEncore: 'directorNotes',
 		tab: 'encore',
 		tabLabel: 'Encore Features',
 		label: "Synopsis Provider (Director's Notes)",
@@ -227,6 +230,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-director-notes-default-mode',
+		requiresEncore: 'directorNotes',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: "Director's Notes Default Reading Mode",
@@ -247,6 +251,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-director-notes-ideal-end-state',
+		requiresEncore: 'directorNotes',
 		tab: 'encore',
 		tabLabel: 'Encore Features',
 		label: "Ideal End State (Director's Notes)",
@@ -409,6 +414,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-quick-chat-hotkey',
+		requiresEncore: 'quickChat',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Quick Chat Hotkey',
@@ -417,6 +423,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-quick-chat-agent',
+		requiresEncore: 'quickChat',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Quick Chat Agent',
@@ -425,6 +432,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-quick-chat-persistent',
+		requiresEncore: 'quickChat',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Keep Quick Chats as Tabs',
@@ -434,6 +442,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 	},
 	{
 		id: 'encore-quick-chat-ephemeral-history',
+		requiresEncore: 'quickChat',
 		tab: 'encore',
 		tabLabel: 'Plugins',
 		label: 'Record Ephemeral Quick Chats in History',

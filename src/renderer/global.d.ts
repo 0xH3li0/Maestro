@@ -186,6 +186,7 @@ import type {
 	CotSetResult,
 } from '../shared/cotExport/types';
 import type { DebugPackageOptions } from '../shared/debugPackage';
+import type { QueueSteerResult, SteeringResultFrame } from '../shared/chatSteering';
 import type {
 	ParquetFetchProgress,
 	ParquetFileInfo,
@@ -331,6 +332,15 @@ interface MaestroAPI {
 			};
 		}) => Promise<{ pid: number; success: boolean }>;
 		write: (sessionId: string, data: string) => Promise<boolean>;
+		/**
+		 * Steer a Claude turn that is already running (chat steering). The verdict is
+		 * the point: only `absorbed` means the turn in flight changed course, and
+		 * `refused` means the message was NOT delivered and is still the caller's to
+		 * send. Aliases the canonical shared type rather than restating the shape - a
+		 * declaration that spells its own union compiles fine and then hands the UI a
+		 * verdict nothing branches on.
+		 */
+		steer: (sessionId: string, text: string) => Promise<SteeringResultFrame>;
 		broadcastUserInput: (payload: {
 			originId: string;
 			sessionId: string;
@@ -428,6 +438,10 @@ interface MaestroAPI {
 		) => Promise<boolean>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
+		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
+		onSteeringVerdict: (
+			callback: (sessionId: string, verdict: SteeringResultFrame) => void
+		) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
 		onToolExecution: (
 			callback: (
@@ -824,6 +838,13 @@ interface MaestroAPI {
 		sendRemoteRemoveQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; removed: boolean; error?: string }
+		) => void;
+		onRemoteSteerQueueItem: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSteerQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; result?: QueueSteerResult; error?: string }
 		) => void;
 		onRemoteRefreshAutoRunDocs: (
 			callback: (sessionId: string, background?: boolean) => void

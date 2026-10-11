@@ -390,6 +390,12 @@ describe('QuickActions command builders', () => {
 			...featureArgs,
 			activeTabType: 'terminal',
 		}).map((a) => a.id);
+		// The AgentRun Dashboard is offered only when App hands the opener down,
+		// which it does only while the Pianola Encore Feature is on.
+		expect(aiFeatureIds).not.toContain('agent-run-dashboard');
+		expect(
+			buildFeatureCommands({ ...featureArgs, setAgentRunDashboardOpen: vi.fn() }).map((a) => a.id)
+		).toContain('agent-run-dashboard');
 		expect(terminalFeatureIds).not.toContain('summarizeAndContinue');
 		expect(terminalFeatureIds).not.toContain('mergeSession');
 		expect(terminalFeatureIds).not.toContain('sendToAgent');

@@ -53,6 +53,7 @@ import {
 	countUsedBoundShortcuts,
 	getLevelIndex,
 } from '../constants/keyboardMastery';
+import { availableShortcuts } from '../utils/encoreShortcuts';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
@@ -1918,7 +1919,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// unbound one can never be fired, so counting it would make the top
 			// level unreachable. Read from the live maps so a binding the user
 			// cleared in Settings leaves the denominator too.
-			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const bound = collectBoundShortcuts(
+				availableShortcuts(get().shortcuts, get().encoreFeatures),
+				get().tabShortcuts,
+				availableShortcuts(FIXED_SHORTCUTS, get().encoreFeatures)
+			);
 			const percentage =
 				bound.length > 0
 					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100

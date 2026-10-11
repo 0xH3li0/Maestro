@@ -24,6 +24,7 @@ import {
 } from './searchableSettingsMisc';
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
+import type { EncoreFeatureFlags } from '../../types';
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
@@ -59,6 +60,13 @@ export interface SearchableSetting {
 	 * does render so the result still lands somewhere meaningful.
 	 */
 	jumpToId?: string;
+	/**
+	 * Encore Feature this setting configures. The entry is left out of search
+	 * while that feature is off, so a disabled feature's options cannot be
+	 * found. Do NOT set it on the feature's own tile entry: the tile is how the
+	 * user turns the feature on, so it has to stay findable.
+	 */
+	requiresEncore?: keyof EncoreFeatureFlags;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,13 +92,20 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
  */
 export function searchSettings(
 	query: string,
-	additional: SearchableSetting[] = []
+	additional: SearchableSetting[] = [],
+	encoreFeatures?: Partial<EncoreFeatureFlags>
 ): SearchableSetting[] {
 	if (!query.trim()) return [];
 	const q = query.toLowerCase().trim();
 	const terms = q.split(/\s+/);
 
 	return [...ALL_SEARCHABLE_SETTINGS, ...additional]
+		.filter(
+			(setting) =>
+				!encoreFeatures ||
+				!setting.requiresEncore ||
+				encoreFeatures[setting.requiresEncore] === true
+		)
 		.map((setting) => {
 			const label = setting.label.toLowerCase();
 			const desc = (setting.description || '').toLowerCase();

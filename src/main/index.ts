@@ -11,7 +11,7 @@ import {
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { DURATION_MS } from '../shared/duration';
-import { installApplicationMenu } from './app-menu';
+import { installApplicationMenu, setMenuEncoreFeatures } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -984,7 +984,8 @@ app
 		// `encoreFeatures.opencodeServer` plugin. Read live on every spawn so the
 		// Extensions toggle takes effect without an app restart.
 		processManager = new ProcessManager(
-			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true
+			() => (store.get('encoreFeatures', {}) as Record<string, boolean>).opencodeServer === true,
+			{ appVersion: app.getVersion() }
 		);
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
@@ -3274,7 +3275,11 @@ app
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
 		// menu is display-only and how clicks are routed back to the renderer.
+		// The Encore flags go in first: an item for a switched-off feature is
+		// left out, and the menu follows the flags live from then on.
+		setMenuEncoreFeatures(store.get('encoreFeatures'));
 		installApplicationMenu();
+		store.onDidChange('encoreFeatures', (value) => setMenuEncoreFeatures(value));
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).

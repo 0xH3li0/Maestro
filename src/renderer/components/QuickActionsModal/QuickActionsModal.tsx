@@ -518,7 +518,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	);
 
 	const sessionActions = buildSessionJumpCommands({
-		sessions,
+		sessions: switchableSessions,
 		setActiveSessionId,
 		revealJumpTarget,
 		getSessionWindow,

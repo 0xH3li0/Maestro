@@ -4,6 +4,7 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type { UsageStats } from '../../shared/types';
@@ -578,6 +579,12 @@ export type RemoveQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<RemoveQueueItemResult>;
+/** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
+export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
+export type SteerQueueItemCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SteerQueueItemResult>;
 /**
  * Opens a URL as a browser tab in the desktop app.
  *
@@ -1228,8 +1235,8 @@ export type UpdateSessionSshCallback = (
  * Update an agent's editable per-session config from the CLI/web. `configPatch`
  * is a partial bag of the fields the Edit Agent modal exposes (nudge / new
  * session message, custom binary path / args / env vars, model, effort, context
- * window, and the Claude token-source tri-state `enableMaestroP` /
- * `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
+ * window, the Codex transport `codexTransport`, and the Claude token-source
+ * tri-state `enableMaestroP` / `maestroPMode` / `maestroPPath`). Only the provided keys are applied; a key
  * present with value `null` clears that field to undefined. Typed as a plain
  * record because the payload crosses the IPC bridge to the renderer.
  */

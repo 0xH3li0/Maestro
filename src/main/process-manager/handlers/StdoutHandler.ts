@@ -15,6 +15,7 @@ import { UsageAccumulator } from '../../../shared/maestro-lib/streaming/usage-ac
 import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
+import { parseSteeringResult } from '../../../shared/chatSteering';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -413,6 +414,20 @@ export class StdoutHandler {
 			parsed = JSON.parse(line);
 		} catch {
 			// Not valid JSON - handled in the else branch below
+		}
+
+		// Chat steering: maestro-p reports what became of a steer on stdout, long
+		// after the socket answered `delivered` (see SteeringVerdict). It is
+		// bookkeeping, never transcript content, so it is forwarded and goes no
+		// further down the parse chain.
+		if (
+			parsed !== null &&
+			toolType === 'claude-code' &&
+			(parsed as { type?: unknown }).type === 'steering'
+		) {
+			const verdict = parseSteeringResult(line);
+			if (verdict) this.emitter.emit('steering-verdict', sessionId, verdict);
+			return;
 		}
 
 		if (parsed !== null && toolType === 'copilot-cli') {

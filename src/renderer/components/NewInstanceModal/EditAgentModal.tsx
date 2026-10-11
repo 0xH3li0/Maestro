@@ -35,6 +35,7 @@ import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -89,6 +90,8 @@ export function EditAgentModal({
 	// on Session for why this one does NOT follow the resilience flags' default-on
 	// rule: reset credits are finite and irreversible.
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
+	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
+	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -323,6 +326,10 @@ export function EditAgentModal({
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
+			// Read the stored value, not `resolveCodexTransport`: that answers `exec`
+			// for a non-Codex agent, and saving it back would erase the preference
+			// of an agent that was moved off Codex and may move back.
+			setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
 		}
 
 		return () => {
@@ -553,7 +560,8 @@ export function EditAgentModal({
 			contextWindowSource,
 			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
 			workingDirChanged ? trimmedWorkingDir : undefined,
-			codexAutoReset
+			codexAutoReset,
+			codexTransport
 		);
 		onClose();
 	}, [
@@ -577,6 +585,7 @@ export function EditAgentModal({
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
 		codexAutoReset,
+		codexTransport,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -970,6 +979,8 @@ export function EditAgentModal({
 							detectedMaestroPPath={detectedMaestroPPath}
 							codexAutoResetOnExhaustion={codexAutoReset}
 							onCodexAutoResetChange={setCodexAutoReset}
+							codexTransport={codexTransport}
+							onCodexTransportChange={setCodexTransport}
 						/>
 					</div>
 				)}

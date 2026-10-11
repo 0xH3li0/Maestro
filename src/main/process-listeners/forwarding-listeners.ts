@@ -5,6 +5,7 @@
 
 import type { ProcessManager } from '../process-manager';
 import type { ProcessListenerDependencies, ToolExecution } from './types';
+import type { SteeringResultFrame } from '../../shared/chatSteering';
 
 /** Coalesce thinking chunks for this long before flushing to the renderer. */
 const THINKING_CHUNK_FLUSH_INTERVAL_MS = 50;
@@ -143,6 +144,13 @@ export function setupForwardingListeners(
 				},
 			});
 		}
+	});
+
+	// Chat steering: the transcript-observed outcome of a steer (absorbed, queued,
+	// dropped), which only arrives on maestro-p's stdout. The renderer holds the
+	// message it took out of the queue until this settles it.
+	processManager.on('steering-verdict', (sessionId: string, verdict: SteeringResultFrame) => {
+		safeSend('process:steering-verdict', sessionId, verdict);
 	});
 
 	// Handle stderr separately from runCommand (for clean command execution)
