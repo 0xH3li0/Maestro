@@ -110,6 +110,7 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'notifications', label: 'Notifications' },
 			{ id: 'aicommands', label: 'AI Commands' },
 			{ id: 'prompts', label: 'Maestro Prompts' },
+			{ id: 'local-models', label: 'Local Models' },
 		],
 		shortcutId: 'settings',
 		commandPalette: 'Settings',

@@ -1,0 +1,83 @@
+/**
+ * Local Models tab searchable-settings entries.
+ *
+ * One entry per section of `LocalModelsTab`; each `id` matches the
+ * `data-setting-id` on that section's root.
+ */
+
+import type { SearchableSetting } from './searchableSettings';
+
+const TAB = 'local-models' as const;
+const TAB_LABEL = 'Local Models';
+
+export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
+	{
+		id: 'local-models-models',
+		tab: TAB,
+		tabLabel: TAB_LABEL,
+		label: 'Models',
+		description: 'Download, verify, and remove models that run on this machine',
+		keywords: [
+			'local',
+			'model',
+			'models',
+			'download',
+			'install',
+			'remove',
+			'delete',
+			'verify',
+			'disk',
+			'size',
+			'footprint',
+			'catalog',
+			'offline',
+			'embedding',
+			'embeddings',
+			'classifier',
+			'text generation',
+			'speech',
+			'onnx',
+			'gguf',
+		],
+	},
+	{
+		id: 'local-models-endpoints',
+		tab: TAB,
+		tabLabel: TAB_LABEL,
+		label: 'Endpoints',
+		description: 'Model servers Maestro can call, such as Ollama or LM Studio',
+		keywords: [
+			'endpoint',
+			'endpoints',
+			'server',
+			'servers',
+			'ollama',
+			'lm studio',
+			'llama.cpp',
+			'openai compatible',
+			'detect local servers',
+			'url',
+			'api key',
+		],
+	},
+	{
+		id: 'local-models-assignments',
+		tab: TAB,
+		tabLabel: TAB_LABEL,
+		label: 'Assignments',
+		description: 'Choose which model runs each housekeeping task',
+		keywords: [
+			'assignment',
+			'assignments',
+			'task',
+			'tasks',
+			'source',
+			'readiness',
+			'ready',
+			'utility agent',
+			'tab naming',
+			'semantic search',
+			'prompt injection',
+		],
+	},
+];

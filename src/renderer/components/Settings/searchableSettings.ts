@@ -12,6 +12,7 @@
  * that test for any new visible string you want guaranteed-findable.
  */
 
+import type { SettingsTab } from '../../types';
 import { GENERAL_SETTINGS } from './searchableSettingsGeneral';
 import { DISPLAY_SETTINGS } from './searchableSettingsDisplay';
 import {
@@ -24,23 +25,13 @@ import {
 } from './searchableSettingsMisc';
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
+import { LOCAL_MODELS_SETTINGS } from './searchableSettingsLocalModels';
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
 	id: string;
 	/** Which tab this setting lives in */
-	tab:
-		| 'about'
-		| 'general'
-		| 'display'
-		| 'shortcuts'
-		| 'theme'
-		| 'notifications'
-		| 'aicommands'
-		| 'ssh'
-		| 'environment'
-		| 'encore'
-		| 'prompts';
+	tab: SettingsTab;
 	/** Human-readable tab label */
 	tabLabel: string;
 	/** The setting's visible title */
@@ -75,6 +66,7 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...ENVIRONMENT_SETTINGS,
 	...ENCORE_SETTINGS,
 	...PROMPTS_SETTINGS,
+	...LOCAL_MODELS_SETTINGS,
 ];
 
 /**

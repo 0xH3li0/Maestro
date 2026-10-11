@@ -89,6 +89,16 @@ export function buildSupportCommands({
 			},
 		},
 		{
+			id: 'openLocalModelsSettings',
+			label: 'Open Local Models Settings',
+			subtext: 'Models, endpoints, and which model runs each task',
+			action: () => {
+				setSettingsModalOpen(true);
+				setSettingsTab('local-models');
+				setQuickActionOpen(false);
+			},
+		},
+		{
 			id: 'shortcuts',
 			label: 'View Shortcuts',
 			shortcut: shortcuts.help,

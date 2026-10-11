@@ -66,6 +66,12 @@ describe('resolveUiSurfaceTab', () => {
 		expect(resolveUiSurfaceTab(cue, 'Scheduled Tasks')?.id).toBe('scheduled');
 	});
 
+	it('deep-links Settings to the Local Models tab (`open settings --tab local-models`)', () => {
+		const settings = resolveUiSurface('settings')!;
+		expect(resolveUiSurfaceTab(settings, 'local-models')?.id).toBe('local-models');
+		expect(resolveUiSurfaceTab(settings, 'Local Models')?.id).toBe('local-models');
+	});
+
 	it('returns null for a tab the surface does not have', () => {
 		expect(resolveUiSurfaceTab(cue, 'nope')).toBeNull();
 		const about = resolveUiSurface('about')!;

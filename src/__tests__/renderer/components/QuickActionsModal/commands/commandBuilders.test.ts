@@ -913,3 +913,37 @@ describe('agent-switch window scoping', () => {
 		expect(ids).not.toContain('changeModelEffort');
 	});
 });
+
+describe('buildSupportCommands: Local Models settings', () => {
+	it('opens Settings on the Local Models tab and closes the palette', () => {
+		const setQuickActionOpen = vi.fn();
+		const setSettingsModalOpen = vi.fn();
+		const setSettingsTab = vi.fn();
+		const commands = buildSupportCommands({
+			setQuickActionOpen,
+			setSettingsModalOpen,
+			setSettingsTab,
+			setShortcutsHelpOpen: vi.fn(),
+			setAboutModalOpen: vi.fn(),
+			onOpenLeaderboardRegistration: vi.fn(),
+			isLeaderboardRegistered: false,
+			setFeedbackModalOpen: vi.fn(),
+			setLogViewerOpen: vi.fn(),
+			setProcessMonitorOpen: vi.fn(),
+			getFeedbackDraft: () => ({ isMinimized: false, setMinimized: vi.fn() }),
+			createDebugPackage: vi.fn(),
+			notifyToast: vi.fn(),
+			openUrl: vi.fn(),
+			toggleDevtools: vi.fn(),
+			shortcuts: {},
+		});
+
+		const entry = commands.find((c) => c.id === 'openLocalModelsSettings');
+		expect(entry?.label).toBe('Open Local Models Settings');
+		entry!.action();
+
+		expect(setSettingsModalOpen).toHaveBeenCalledWith(true);
+		expect(setSettingsTab).toHaveBeenCalledWith('local-models');
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+});

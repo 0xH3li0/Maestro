@@ -51,6 +51,7 @@ describe('searchableSettings', () => {
 			expect(tabs).toContain('ssh');
 			expect(tabs).toContain('environment');
 			expect(tabs).toContain('encore');
+			expect(tabs).toContain('local-models');
 		});
 
 		it('should have unique ids', () => {
@@ -237,6 +238,14 @@ describe('searchableSettings', () => {
 			// About tab
 			['about maestro', 'about-maestro'],
 			['version', 'about-maestro'],
+
+			// Local Models tab
+			['local models', 'local-models-models'],
+			['download model', 'local-models-models'],
+			['ollama', 'local-models-endpoints'],
+			['detect local servers', 'local-models-endpoints'],
+			['assignments', 'local-models-assignments'],
+			['utility agent', 'local-models-assignments'],
 		])('should find "%s" and return id %s', (query, expectedId) => {
 			const results = searchSettings(query);
 			expect(

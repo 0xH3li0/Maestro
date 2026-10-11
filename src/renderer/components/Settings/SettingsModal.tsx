@@ -12,6 +12,7 @@ import {
 	Globe,
 	Wand2,
 	Info,
+	HardDrive,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, SettingsTab } from '../../types';
@@ -36,6 +37,7 @@ import { ShortcutsTab } from './tabs/ShortcutsTab';
 import { ThemeTab } from './tabs/ThemeTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { AboutTab } from './tabs/AboutTab';
+import { LocalModelsTab } from './tabs/LocalModelsTab';
 import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from './SettingsSearch';
 import type { SearchableSetting } from './searchableSettings';
 
@@ -58,6 +60,7 @@ const TAB_ITEMS: Array<{
 	{ id: 'display', label: 'Display', icon: Monitor },
 	{ id: 'environment', label: 'Environment', icon: Globe },
 	{ id: 'general', label: 'General', icon: Settings },
+	{ id: 'local-models', label: 'Local Models', icon: HardDrive },
 	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 	{ id: 'notifications', label: 'Notifications', icon: Bell },
 	// Internal id stays 'encore' (deep links, persisted last-tab, searchable
@@ -593,6 +596,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						)}
 
 						{activeTab === 'environment' && <EnvironmentTab theme={theme} />}
+
+						{activeTab === 'local-models' && <LocalModelsTab theme={theme} />}
 
 						{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
 
