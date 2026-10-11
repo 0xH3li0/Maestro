@@ -155,23 +155,44 @@ export async function listTurnFiles(
 }
 
 /**
- * How many turns are filed under the date of `day`, on the LOCAL clock: the
- * turn files in that day's hour folders. A day with no folder has none.
+ * The turn files filed under the date of `day`, on the LOCAL clock: those in
+ * that day's hour folders. A day with no folder has none.
  *
  * It throws when a folder exists and cannot be read.
  */
-export async function countTurnFilesOnDay(agentFolder: string, day: Date): Promise<number> {
+export async function listTurnFilesOnDay(agentFolder: string, day: Date): Promise<string[]> {
 	const dayDir = path.join(
 		agentFolder,
 		pad(day.getFullYear(), 4),
 		pad(day.getMonth() + 1, 2),
 		pad(day.getDate(), 2)
 	);
-	let count = 0;
+	const files: string[] = [];
 	for (const hour of await namesNewestFirst(dayDir, TWO_DIGIT_FOLDER, 'folder')) {
-		count += (await namesNewestFirst(path.join(dayDir, hour), TURN_FILE, 'file')).length;
+		const hourDir = path.join(dayDir, hour);
+		for (const name of await namesNewestFirst(hourDir, TURN_FILE, 'file')) {
+			files.push(path.join(hourDir, name));
+		}
 	}
-	return count;
+	return files;
+}
+
+/**
+ * How many turns are filed under the date of `day`, on the LOCAL clock. A day
+ * with no folder has none. It throws when a folder exists and cannot be read.
+ */
+export async function countTurnFilesOnDay(agentFolder: string, day: Date): Promise<number> {
+	return (await listTurnFilesOnDay(agentFolder, day)).length;
+}
+
+/**
+ * Whether a file carries the name `turnFilePath` gives the turn `turnId`,
+ * whatever time it is filed under. A name holds only the first characters of
+ * a turn id, so this can be true for another turn: a caller that must be sure
+ * reads the file.
+ */
+export function isTurnFileNameOf(filePath: string, turnId: string): boolean {
+	return path.basename(filePath).endsWith(`-${idPrefix(turnId, 'noturn')}.jsonl`);
 }
 
 /** What `validateAgentFolder` needs to know about the machine. */

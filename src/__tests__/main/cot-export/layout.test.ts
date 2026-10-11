@@ -12,6 +12,8 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	countTurnFilesOnDay,
+	isTurnFileNameOf,
+	listTurnFilesOnDay,
 	isSameFolder,
 	listTurnFiles,
 	turnFileFolder,
@@ -210,6 +212,62 @@ describe('isSameFolder', () => {
 		expect(isSameFolder(base, shouted)).toBe(true);
 		setPlatform('linux');
 		expect(isSameFolder(base, shouted)).toBe(false);
+	});
+});
+
+describe('listTurnFilesOnDay and isTurnFileNameOf', () => {
+	let folder: string;
+
+	beforeEach(() => {
+		folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cot-layout-day-')));
+	});
+
+	afterEach(() => {
+		fs.rmSync(folder, { recursive: true, force: true });
+	});
+
+	const touch = (file: string): string => {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, '');
+		return file;
+	};
+
+	it('lists the turn files of every hour of one local date, and no other', async () => {
+		const day = new Date(2026, 9, 10, 12, 0, 0);
+		const morning = touch(turnFilePath(folder, new Date(2026, 9, 10, 9, 5, 0), 'tab-1', 'turn-a'));
+		const night = touch(
+			turnFilePath(folder, new Date(2026, 9, 10, 23, 59, 59), undefined, 'turn-b')
+		);
+		touch(turnFilePath(folder, new Date(2026, 9, 11, 0, 0, 0), undefined, 'turn-c'));
+		touch(turnFilePath(folder, new Date(2026, 9, 9, 23, 0, 0), undefined, 'turn-d'));
+		// Not turn files: a dotfile, and a file of another kind.
+		touch(path.join(path.dirname(morning), '.probe.jsonl'));
+		touch(path.join(path.dirname(morning), 'notes.txt'));
+
+		expect((await listTurnFilesOnDay(folder, day)).sort()).toEqual([morning, night].sort());
+		expect(await countTurnFilesOnDay(folder, day)).toBe(2);
+	});
+
+	it('lists nothing for a date with no folder', async () => {
+		expect(await listTurnFilesOnDay(folder, new Date(2026, 0, 1))).toEqual([]);
+	});
+
+	it('knows the file of a turn by its name, whatever time it is filed under', () => {
+		const turnId = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+		const here = turnFilePath(folder, new Date(2026, 9, 10, 9, 5, 0), undefined, turnId);
+		const there = turnFilePath(folder, new Date(2026, 9, 11, 3, 44, 12), 'tab-9', turnId);
+		expect(isTurnFileNameOf(here, turnId)).toBe(true);
+		expect(isTurnFileNameOf(there, turnId)).toBe(true);
+
+		const other = turnFilePath(
+			folder,
+			new Date(2026, 9, 10, 9, 5, 0),
+			undefined,
+			'ffffffff00000000'
+		);
+		expect(isTurnFileNameOf(other, turnId)).toBe(false);
+		// Only the start of a turn id is in a name, so this alone is not proof.
+		expect(isTurnFileNameOf(here, 'a1b2c3d4-another-turn')).toBe(true);
 	});
 });
 

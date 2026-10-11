@@ -48,6 +48,14 @@
  * runs of the command line can reach the ledger in the other order than they
  * ended in, and the one that ended first would then lie behind the mark.
  *
+ * The file is looked for where it would be written today, and then under the
+ * days around the run's start. A turn is filed by the LOCAL clock, so after a
+ * change of time zone the same run maps to another hour folder and another
+ * name, and looking in one place would write every run the ledger still
+ * holds a second time. Two zones are never more than 26 hours apart, so the
+ * file is at most two dates away. A name carries only the start of the turn
+ * id, so a file found that way is read, and counts only if it names the run.
+ *
  * A file that is there is taken as the whole turn. If the app stopped while
  * the turn was being written, the file stays as it is: a turn with no
  * `turn-end`, which is what the format says a turn cut short looks like.
@@ -65,8 +73,9 @@
 import * as fs from 'fs';
 import { isTerminalAgentRunStatus } from '../../shared/agent-run';
 import type { AgentRun } from '../../shared/agent-run';
+import { DURATION_MS } from '../../shared/duration';
 import { sha256Hex } from './hash-chain';
-import { turnFilePath } from './layout';
+import { isTurnFileNameOf, listTurnFilesOnDay, turnFilePath } from './layout';
 import { recordCompletedRun } from './turn-assembler';
 import type { CotCueRecorderDeps } from './turn-assembler';
 
@@ -75,6 +84,13 @@ const CLI_SOURCE_PREFIX = 'cli:';
 
 /** The end of a `source` that names a synopsis turn: Maestro's own prompt. */
 const SYNOPSIS_SOURCE_SUFFIX = '-synopsis';
+
+/**
+ * The dates around a run's start a turn file can be filed under, as days from
+ * that start: the same date first, then one and two dates either way. See
+ * "One run, one file" above for why two.
+ */
+const FILED_DAY_OFFSETS = [0, -1, 1, -2, 2];
 
 /** Everything the recorder needs from outside. It reads no store itself. */
 export interface CotLedgerRecorderDeps extends Pick<CotCueRecorderDeps, 'writer' | 'onError'> {
@@ -153,6 +169,29 @@ async function fileExists(filePath: string): Promise<boolean> {
 	}
 }
 
+/**
+ * Whether a turn file names the run `runId` in one of its records. A file
+ * that cannot be read is taken to: its name already matched, and a second
+ * turn for a run that is there is the worse mistake.
+ */
+async function namesRun(filePath: string, runId: string): Promise<boolean> {
+	let text: string;
+	try {
+		text = await fs.promises.readFile(filePath, 'utf8');
+	} catch {
+		return true;
+	}
+	for (const line of text.split('\n')) {
+		if (line.trim() === '') continue;
+		try {
+			if ((JSON.parse(line) as { cliRunId?: unknown }).cliRunId === runId) return true;
+		} catch {
+			// A line that was cut short. The record that names the run is another.
+		}
+	}
+	return false;
+}
+
 export function createCotLedgerRecorder(deps: CotLedgerRecorderDeps): CotLedgerRecorder {
 	/**
 	 * The runs known to be in the log, by agent, so that a run costs one look
@@ -196,17 +235,41 @@ export function createCotLedgerRecorder(deps: CotLedgerRecorderDeps): CotLedgerR
 			// By when they started, so that the files and the chain read in order.
 			.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 
-		for (const run of due) {
-			const turnId = cliTurnId(run.id);
+		// The turn files of a day, read once for all the runs of this pass.
+		const dayFiles = new Map<string, Promise<string[]>>();
+		const filesOnDay = (dir: string, day: Date): Promise<string[]> => {
+			const key = `${dir}\n${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
+			let files = dayFiles.get(key);
+			if (!files) {
+				// A day that cannot be listed holds nothing this pass can find.
+				files = listTurnFilesOnDay(dir, day).catch(() => []);
+				dayFiles.set(key, files);
+			}
+			return files;
+		};
+
+		/** Whether the run's turn is in one of the agent's folders already. */
+		const isOnDisk = async (run: AgentRun, turnId: string): Promise<boolean> => {
 			const startedAt = new Date(run.createdAt);
-			let onDisk = false;
-			for (const candidate of folders) {
-				if (await fileExists(turnFilePath(candidate, startedAt, undefined, turnId))) {
-					onDisk = true;
-					break;
+			// Where it is written today: one look, and the usual answer.
+			for (const dir of folders) {
+				if (await fileExists(turnFilePath(dir, startedAt, undefined, turnId))) return true;
+			}
+			// Where another time zone would have filed it.
+			for (const dir of folders) {
+				for (const offset of FILED_DAY_OFFSETS) {
+					const day = new Date(run.createdAt + offset * DURATION_MS.day);
+					for (const file of await filesOnDay(dir, day)) {
+						if (isTurnFileNameOf(file, turnId) && (await namesRun(file, run.id))) return true;
+					}
 				}
 			}
-			if (!onDisk) {
+			return false;
+		};
+
+		for (const run of due) {
+			const turnId = cliTurnId(run.id);
+			if (!(await isOnDisk(run, turnId))) {
 				await recordCompletedRun(
 					{ agentId, folder },
 					{

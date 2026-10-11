@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { listTurnFiles, turnFilePath } from '../../../main/cot-export/layout';
 import { cliTurnId, createCotLedgerRecorder } from '../../../main/cot-export/ledger-runs';
 import type {
 	CotLedgerRecorder,
@@ -339,6 +340,54 @@ describe('cot-export ledger runs', () => {
 
 			expect(await readTurns(newFolder)).toEqual([]);
 			expect(await readTurns(folder)).toHaveLength(1);
+		});
+
+		it.each([
+			['a few hours away, as after a flight', 7 * 60 * MINUTE],
+			['on the date before', -24 * 60 * MINUTE],
+			['two dates away, the furthest two zones can be apart', 2 * 24 * 60 * MINUTE],
+		])('does not take a run again that is filed %s', async (_name, shiftMs) => {
+			const ledger = [run()];
+			await makeRecorder().recordPending(() => ledger);
+			// The file as another time zone would have filed it: under another
+			// hour, or another date, and under another time in its name.
+			const [written] = await listTurnFiles(folder);
+			const filedAs = turnFilePath(
+				folder,
+				new Date(ledger[0].createdAt + shiftMs),
+				undefined,
+				cliTurnId(ledger[0].id)
+			);
+			expect(filedAs).not.toBe(written);
+			fs.mkdirSync(path.dirname(filedAs), { recursive: true });
+			fs.renameSync(written, filedAs);
+
+			// The app starts again in the new zone.
+			await makeRecorder().recordPending(() => ledger);
+
+			expect(await listTurnFiles(folder)).toEqual([filedAs]);
+		});
+
+		it('still takes a run when a file of another run only carries a name like its own', async () => {
+			const reported = run();
+			// A turn file of some other run, on the date before, whose name ends in
+			// the same characters. A name holds only the start of a turn id.
+			const lookalike = turnFilePath(
+				folder,
+				new Date(reported.createdAt - 24 * 60 * MINUTE),
+				undefined,
+				cliTurnId(reported.id)
+			);
+			fs.mkdirSync(path.dirname(lookalike), { recursive: true });
+			fs.writeFileSync(
+				lookalike,
+				`${JSON.stringify({ kind: 'turn-start', cliRunId: 'some-other-run' })}\nnot a record\n`
+			);
+
+			await makeRecorder().recordPending(() => [reported]);
+
+			expect(await listTurnFiles(folder)).toHaveLength(2);
+			expect(errors).toEqual([]);
 		});
 
 		it('writes a new run into the folder the agent uses now', async () => {
