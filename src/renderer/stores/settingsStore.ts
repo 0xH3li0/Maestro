@@ -43,6 +43,10 @@ import {
 	type LocalModelEndpoint,
 } from '../../shared/local-models/endpoints';
 import {
+	parseLocalModelAssignments,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -360,6 +364,12 @@ export interface SettingsStoreState
 	 * at call time; see shared/local-models/endpoints.ts.
 	 */
 	localModelEndpoints: LocalModelEndpoint[];
+	/**
+	 * Which source each Local Models task runs on. Sparse: a task with no entry
+	 * uses its registry default; read through `resolveLocalModelAssignment()`.
+	 * See shared/local-models/tasks.ts.
+	 */
+	localModelAssignments: LocalModelAssignments;
 	ghPath: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
@@ -508,6 +518,7 @@ export interface SettingsStoreActions
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
+	setLocalModelAssignments: (value: LocalModelAssignments) => void;
 	setGhPath: (value: string) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
@@ -760,6 +771,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		localModelEndpoints: [],
+		localModelAssignments: {},
 		ghPath: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
@@ -916,6 +928,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setLocalModelEndpoints: (value) => {
 			set({ localModelEndpoints: value });
 			window.maestro.settings.set('localModelEndpoints', value);
+		},
+
+		setLocalModelAssignments: (value) => {
+			set({ localModelAssignments: value });
+			window.maestro.settings.set('localModelAssignments', value);
 		},
 
 		setGhPath: (value) => {
@@ -2020,6 +2037,11 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['localModelEndpoints'] !== undefined)
 			patch.localModelEndpoints = parseLocalModelEndpoints(allSettings['localModelEndpoints']);
+
+		if (allSettings['localModelAssignments'] !== undefined)
+			patch.localModelAssignments = parseLocalModelAssignments(
+				allSettings['localModelAssignments']
+			);
 
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 

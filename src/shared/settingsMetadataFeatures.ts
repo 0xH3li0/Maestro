@@ -89,6 +89,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: [],
 		category: 'integrations',
 	},
+	localModelAssignments: {
+		description:
+			"Local Models task assignments: which source each housekeeping task (tab naming, summaries, AI command mode, git drafts, semantic search, Cue gate, screens, dictation, spoken notices, voice routing, token proxy) runs on. Keyed by task id; each value is { type: 'off' }, { type: 'utility-agent' } (the existing agent path, honoring utilityAgentId / utilityModelId), { type: 'local', modelId }, or { type: 'endpoint', endpointId, model }. A task with no entry uses its default.",
+		type: 'object',
+		default: {},
+		category: 'integrations',
+	},
 	directorNotesSettings: {
 		description:
 			"Director's Notes settings: provider (or auto-select), lookback window, default reading mode, optional ideal end state.",

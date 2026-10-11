@@ -76,6 +76,7 @@ flowchart TD
 | `native-runtimes.ts`    | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                     |
 | `runtime-artifacts.ts`  | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                          |
 | `llama-dependencies.ts` | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload          |
+| `tasks.ts`              | `LOCAL_MODEL_TASKS` (the housekeeping jobs), `LocalModelAssignment`, and the `localModelAssignments` reader and validator      |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
@@ -242,6 +243,30 @@ the reply parsed), `source`, sleep-aware `durationMs`, and token counts when kno
 | Endpoints by exact id, enabled only     | An assignment stores the full id; a prefix that later matches two servers must not pick one.                                                          |
 | Temperature defaults to 0               | Housekeeping output should be reproducible.                                                                                                           |
 | Failures are classified, never swapped  | `LocalModelError` (`model-unsupported`, `model-not-installed`, `runtime-unavailable`, `generation-failed`, `cancelled`) or `LocalModelEndpointError`. |
+
+## Tasks and assignments
+
+A **task** is a named job (`tab-naming`, `git-drafts`, `semantic-search`, ...), never a model.
+`LOCAL_MODEL_TASKS` in `src/shared/local-models/tasks.ts` lists each one with the kind of model it
+`needs`, whether it has an existing agent path (`allowsUtilityAgent`), and its `defaultAssignment`.
+The user's choice per task is a `LocalModelAssignment`:
+
+| Assignment                                | Meaning                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `{ type: 'off' }`                         | The task does not run.                                                                               |
+| `{ type: 'utility-agent' }`               | The task's existing agent path, unchanged (`utilityAgentId` / `utilityModelId`, or the tab's agent). |
+| `{ type: 'local', modelId }`              | A catalog model of the needed kind, run on this machine.                                             |
+| `{ type: 'endpoint', endpointId, model }` | A model on one of the user's `localModelEndpoints`.                                                  |
+
+The `localModelAssignments` setting is SPARSE: only tasks the user changed are stored, and
+`resolveLocalModelAssignment()` falls back to the registry default. Tab naming, summaries, and AI
+command mode default to `utility-agent`, so an existing install (including one with `utilityAgentId`
+set) behaves exactly as before; every task new with Local Models defaults to `off`. The migration is
+`parseLocalModelAssignments()`, run on every load: unknown tasks, malformed entries, and
+`utility-agent` on a task without an agent path are dropped back to the default. A model id the
+catalog no longer knows is KEPT, so the router can name it as unavailable instead of the task
+quietly changing source. Save-time checks (catalog membership, matching kind) are
+`localModelAssignmentProblem()`.
 
 ## Related
 

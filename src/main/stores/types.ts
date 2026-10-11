@@ -9,6 +9,7 @@ import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type { LocalModelAssignments } from '../../shared/local-models/tasks';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -146,6 +147,9 @@ export interface MaestroSettings {
 	// Local Models endpoints (Ollama, LM Studio, OpenAI-compatible servers the
 	// user runs). API keys are referenced by env-var name, never stored here.
 	localModelEndpoints: LocalModelEndpoint[];
+	// Which source each Local Models task runs on. Sparse: a task with no entry
+	// uses its registry default. See shared/local-models/tasks.ts.
+	localModelAssignments: LocalModelAssignments;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

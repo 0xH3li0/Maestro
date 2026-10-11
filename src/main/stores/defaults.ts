@@ -163,6 +163,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
 	// See shared/local-models/endpoints.ts.
 	localModelEndpoints: [],
+	// Local Models task assignments, sparse (empty = every task on its default).
+	// See shared/local-models/tasks.ts.
+	localModelAssignments: {},
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

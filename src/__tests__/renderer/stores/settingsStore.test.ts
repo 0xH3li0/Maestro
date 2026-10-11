@@ -351,6 +351,18 @@ describe('settingsStore', () => {
 				expect(useSettingsStore.getState().shellEnvVars).toEqual({ KEEP: 'yes' });
 			});
 
+			it('setLocalModelAssignments updates state and persists', () => {
+				const assignments = {
+					'git-drafts': { type: 'local' as const, modelId: 'qwen3-1.7b-instruct-q4km' },
+				};
+				useSettingsStore.getState().setLocalModelAssignments(assignments);
+				expect(useSettingsStore.getState().localModelAssignments).toEqual(assignments);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'localModelAssignments',
+					assignments
+				);
+			});
+
 			it('setGhPath updates state and persists', () => {
 				useSettingsStore.getState().setGhPath('/usr/local/bin/gh');
 				expect(useSettingsStore.getState().ghPath).toBe('/usr/local/bin/gh');
@@ -1900,6 +1912,27 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('loadAllSettings', () => {
+		describe('localModelAssignments', () => {
+			it('drops unusable entries and keeps the Utility Agent default for an existing install', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					utilityAgentId: 'agent-1',
+					localModelAssignments: {
+						'tab-naming': { type: 'utility-agent' },
+						'git-drafts': { type: 'utility-agent' },
+						'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
+						'not-a-task': { type: 'off' },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().localModelAssignments).toEqual({
+					'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
+				});
+				expect(useSettingsStore.getState().utilityAgentId).toBe('agent-1');
+			});
+		});
+
 		describe('shortcut migration write-back', () => {
 			// Regression: a default remap whose target chord the reserved guard
 			// strips back on the same pass reported needsMigration on every load
