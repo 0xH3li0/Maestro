@@ -185,6 +185,17 @@ export async function steerQueuedItem(
 	sessionId: string,
 	itemId: string
 ): Promise<QueueSteerResult> {
+	// Checked first: while a steer waits, its item is parked off the queue, so the
+	// lookup below would call it not-found.
+	const flightKey = `${sessionId}:${itemId}`;
+	if (steersInFlight.has(flightKey)) {
+		return {
+			outcome: 'not-steerable',
+			blockedReason: 'steer-in-flight',
+			detail: 'a steer for this message is already waiting for an answer',
+		};
+	}
+
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const item = session?.executionQueue?.find((i) => i.id === itemId);
 	if (!session || !item) {
@@ -201,15 +212,6 @@ export async function steerQueuedItem(
 			message: 'This client cannot steer a running turn.',
 		});
 		return { outcome: 'unavailable', detail: 'this client cannot steer a running turn' };
-	}
-
-	const flightKey = `${sessionId}:${itemId}`;
-	if (steersInFlight.has(flightKey)) {
-		return {
-			outcome: 'not-steerable',
-			blockedReason: 'steer-in-flight',
-			detail: 'a steer for this message is already waiting for an answer',
-		};
 	}
 
 	// Guarded by getSteerEligibility before the button renders; re-checked against
