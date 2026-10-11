@@ -31,16 +31,16 @@ or usage. Session/turn initialization, unstructured stdout, and stderr cannot
 release the startup deadline. Once model activity arrives, the original long
 run budget remains intact.
 
-Timeout and cancellation reuse `killProcessTreeNow`, the existing host Stop
-utility. It snapshots descendants before killing a launcher, then force-kills
-the tree and process groups on POSIX, or uses Windows `taskkill /t /f`. A
+Timeout and cancellation reuse `stopProcess`, the shared ownership-aware Stop
+ladder. It snapshots descendants before killing a launcher, then force-kills
+the verified descendant tree on POSIX, or uses Windows `taskkill /t /f`. A
 five-second completion ceiling and pipe disposal release a failed result even
 without `close`. Late output cannot become progress or a successful answer.
 A startup failure carries static auth/keyring guidance and a retry instruction
 through the existing failed Relay result. The host does not change the credential
 store, log in, read credentials, or retry potentially delivered tool work.
 Remote cleanup over SSH still depends on the remote transport; only the local
-SSH process group is supervised here.
+SSH process tree is supervised here.
 
 [Official Codex authentication documentation](https://developers.openai.com/codex/auth/)
 confirms the agent-specific credential-store setting. The existing file-store
@@ -48,8 +48,12 @@ mitigation remains a separate operational choice.
 
 ## Activation
 
-This change is based on PR #1652's head `9fe58c7ea` and lives on
-`fix/relay-auth-startup-timeout`, independently of the original Cue checkout.
+The fix is integrated in upstream PR #1652 on the existing fork branch
+`feat/relay-host-contract`, now updated to rc merge `62d4f246e8` (#1742).
+The current CLI retains rc's canonical `maestro-lib` launch, stream, accounting,
+and process ownership; the supervisor adds startup and completion deadlines.
+This bounds headless hangs and failure output. It does not establish or repair
+the cause of the reported `gnome-keyring-daemon` crash.
 No installed files, production settings, Discord messages, or running app
 processes were modified.
 

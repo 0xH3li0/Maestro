@@ -85,6 +85,8 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/** Admitted by the CLI secret (see the root WebClient in ../../types). */
+	cli?: boolean;
 }
 
 /**
@@ -165,7 +167,13 @@ export interface MessageHandlerCallbacks {
 	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		config: {
+			cwd?: string;
+			shell?: string;
+			name?: string | null;
+			command?: string;
+			inputRequired?: boolean;
+		},
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (

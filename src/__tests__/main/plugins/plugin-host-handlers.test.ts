@@ -23,7 +23,8 @@ import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from '../../../main/plugins/plugin-grouping-registry';
-import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { isPermitted, type PermissionGrant } from '../../../shared/plugins/permissions';
+import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
 let kvBase: string;
@@ -80,13 +81,117 @@ function grant(capability: PermissionGrant['capability']): PermissionGrant {
 	return { capability, grantedAt: 1 };
 }
 
+describe('media authorization backstop', () => {
+	it.each(['grant', 'trust'])(
+		'quiet polling still closes jobs after %s revocation',
+		async (revoked) => {
+			vi.useFakeTimers();
+			let grants: PermissionGrant[] = [
+				{ capability: 'media:tools', scope: 'discord-voice', grantedAt: 1 },
+			];
+			let trusted = true;
+			const onDecision = vi.fn();
+			const handlers = buildHostCallHandlers(
+				makeDeps({
+					broker: new PermissionBroker({ getGrants: () => grants, onDecision }),
+					isPluginTrusted: () => trusted,
+				})
+			);
+			let jobId: string | undefined;
+			try {
+				({ jobId } = (await handlers['media.open']!('p', {})) as { jobId: string });
+				expect(onDecision).toHaveBeenCalledTimes(1);
+				await vi.advanceTimersByTimeAsync(1000);
+				expect(onDecision).toHaveBeenCalledTimes(1);
+				expect(handlers['media.close']!.ownsReleaseResource!('p', { jobId })).toBe(true);
+				if (revoked === 'grant') grants = [];
+				else trusted = false;
+				await vi.advanceTimersByTimeAsync(250);
+				expect(handlers['media.close']!.ownsReleaseResource!('p', { jobId })).toBe(false);
+				expect(onDecision).toHaveBeenCalledTimes(1);
+				await expect(handlers['media.open']!('p', {})).rejects.toMatchObject({
+					code: 'MediaDenied',
+				});
+				expect(onDecision).toHaveBeenCalledTimes(2); // Real calls still audit allow/deny.
+			} finally {
+				if (jobId) await handlers['media.close']!('p', { jobId });
+				vi.useRealTimers();
+			}
+		}
+	);
+});
+
+describe('service RPC boundary', () => {
+	it.each([
+		['services.register', { serviceId: 'transcription', pluginId: 'victim' }],
+		['services.start', { requirementId: 'voice', request: {}, provider: 'victim' }],
+		['services.media.run', { callId: 'call', audioId: 'alias', path: '/secret' }],
+		['services.cancel', { callId: 'call', owner: 'victim' }],
+	] as const)('rejects caller-supplied routing/paths in %s', async (method, params) => {
+		const handlers = buildHostCallHandlers(makeDeps());
+		await expect(handlers[method]!('p', params)).rejects.toMatchObject({ code: 'ServiceInvalid' });
+	});
+	it('resolves only own requirements and requires both scoped provider grants even with a permissive outer broker', async () => {
+		const manifests: Record<string, PluginManifest> = {
+			consumer: {
+				id: 'consumer',
+				name: 'Consumer',
+				version: '1.0.0',
+				tier: 1,
+				entry: 'main.js',
+				maestro: { minHostApi: '1.24.0' },
+				requires: [
+					{
+						id: 'voice',
+						provider: 'provider',
+						service: 'transcription',
+						contract: 'maestro.audio.transcribe',
+						version: '^1.0.0',
+						optional: true,
+					},
+				],
+			},
+			provider: {
+				id: 'provider',
+				name: 'Provider',
+				version: '1.0.0',
+				tier: 1,
+				entry: 'main.js',
+				maestro: { minHostApi: '1.24.0' },
+				provides: [{ id: 'transcription', contract: 'maestro.audio.transcribe', version: '1.0.0' }],
+			},
+		};
+		const grants: PermissionGrant[] = [
+			{ capability: 'services:provide', scope: 'transcription', grantedAt: 1 },
+		];
+		const handlers = buildHostCallHandlers(
+			makeDeps({
+				serviceManifest: (id) => manifests[id],
+				serviceRunning: () => true,
+				serviceAllowed: (id, cap, target) => id === 'provider' && isPermitted(grants, cap, target),
+			})
+		);
+		await expect(
+			handlers['services.register']!('provider', { serviceId: 'transcription' })
+		).rejects.toMatchObject({ code: 'ServiceDenied' });
+		grants.push({ capability: 'media:tools', scope: 'service-transcription', grantedAt: 1 });
+		await handlers['services.register']!('provider', { serviceId: 'transcription' });
+		await expect(
+			handlers['services.status']!('consumer', { requirementId: 'voice' })
+		).resolves.toMatchObject({ state: 'denied' });
+		await expect(
+			handlers['services.status']!('intruder', { requirementId: 'voice' })
+		).rejects.toMatchObject({ code: 'ServiceInvalid' });
+	});
+});
+
 describe('settings.set', () => {
 	it('rejects keys outside the plugin namespace', async () => {
 		const settingsSet = vi.fn();
 		const h = buildHostCallHandlers(makeDeps({ settingsSet }));
-		await expect(h['settings.set']!('p', { key: 'theme', value: 'dark' })).rejects.toThrow(
-			/plugins\.p\./
-		);
+		await expect(
+			h['settings.set']!('p', { key: 'mediaModelDirectory', value: '/models' })
+		).rejects.toThrow(/plugins\.p\./);
 		await expect(h['settings.set']!('p', { key: 'plugins.other.x', value: 1 })).rejects.toThrow(
 			/plugins\.p\./
 		);
@@ -414,6 +519,16 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 				size: 'full' as const,
 			};
 		}
+		if (localId === 'config')
+			return {
+				id: 'p/config',
+				localId,
+				pluginId,
+				title: 'Config',
+				entry: 'panel.html',
+				placement: 'settings' as const,
+				size: 'default' as const,
+			};
 		if (localId === 'side') {
 			return {
 				id: 'p/side',
@@ -427,6 +542,17 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 		}
 		return null;
 	};
+
+	it('opens own settings destinations but never closes/toggles host settings', async () => {
+		const sink = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelVisibility: sink, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		await h['ui.openPanel']!('p', { panelId: 'config' });
+		expect(sink).toHaveBeenCalledWith('p', 'p/config', 'open');
+		await expect(h['ui.closePanel']!('p', { panelId: 'config' })).rejects.toThrow();
+		await expect(h['ui.togglePanel']!('p', { panelId: 'config' })).rejects.toThrow();
+	});
 
 	const granted = (panelVisibility: ReturnType<typeof vi.fn>) =>
 		buildHostCallHandlers(
@@ -617,6 +743,17 @@ describe('net.fetch fail-closed (connection pinning)', () => {
 });
 
 describe('settings.get scoping', () => {
+	it('denies host media paths even for trusted plugins with settings:read', async () => {
+		const get = vi.fn(() => '/private/models');
+		const h = buildHostCallHandlers(
+			makeDeps({ settingsGet: get, broker: brokerFor(() => [grant('settings:read')]) })
+		);
+		await expect(h['settings.get']!('p', { key: 'mediaModelDirectory' })).rejects.toThrow(
+			'host-only'
+		);
+		expect(get).not.toHaveBeenCalled();
+	});
+
 	it('denies the feature gate and peer namespaces, allows own + general keys', async () => {
 		const settingsGet = vi.fn((key: string) => `V:${key}`);
 		const h = buildHostCallHandlers(makeDeps({ settingsGet }));
@@ -2394,5 +2531,45 @@ describe('ui.groupingPublish / ui.groupingClear', () => {
 				assignments: {},
 			})
 		).rejects.toThrow(/permission denied/);
+	});
+});
+
+describe('host media configuration', () => {
+	it('re-reads the host setting for brokered status and preserves plugin authorization', async () => {
+		const pathProber = await import('../../../main/agents/path-prober');
+		const discovery = vi.spyOn(pathProber, 'findAllBinaryPaths').mockResolvedValue([]);
+		// Runtime discovery is read-only; these model fixtures need no native tools.
+		const first = path.join(kvBase, 'first');
+		const second = path.join(kvBase, 'second');
+		fs.mkdirSync(first);
+		fs.mkdirSync(second);
+		fs.writeFileSync(path.join(first, 'ggml-base.bin'), 'model');
+		fs.writeFileSync(path.join(second, 'ggml-small.bin'), 'model');
+		let directory = first;
+		let trusted = true;
+		let grants: PermissionGrant[] = [
+			{ capability: 'media:tools', scope: 'discord-voice', grantedAt: 1 },
+		];
+		const settingsGet = vi.fn(() => directory);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				settingsGet,
+				broker: brokerFor(() => grants),
+				isPluginTrusted: () => trusted,
+			})
+		);
+		try {
+			expect(await h['media.status']!('p', {})).toMatchObject({ models: ['base'] });
+			directory = second;
+			expect(await h['media.status']!('p', {})).toMatchObject({ models: ['small'] });
+			expect(settingsGet).toHaveBeenCalledWith('mediaModelDirectory');
+			trusted = false;
+			await expect(h['media.status']!('p', {})).rejects.toMatchObject({ code: 'MediaDenied' });
+			trusted = true;
+			grants = [];
+			await expect(h['media.status']!('p', {})).rejects.toMatchObject({ code: 'MediaDenied' });
+		} finally {
+			discovery.mockRestore();
+		}
 	});
 });

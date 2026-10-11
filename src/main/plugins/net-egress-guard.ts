@@ -224,8 +224,9 @@ function defaultResolve(hostname: string): Promise<string[]> {
 
 function defaultMakeDispatcher(lookup: GuardedLookup): unknown {
 	try {
-		// undici is an explicit runtime dependency. If packaging omits it, the
-		// host handler must fail closed rather than fetch without connection pinning.
+		// undici is an explicit production dependency; Node's built-in fetch does
+		// not make it requireable. Build lazily for tests; callers fail closed
+		// when a connection-pinning dispatcher cannot be created.
 		const undici = require('undici') as { Agent: new (opts: unknown) => unknown };
 		return new undici.Agent({ connect: { lookup } });
 	} catch {

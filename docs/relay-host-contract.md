@@ -1,4 +1,4 @@
-# Relay host contract (Host API 1.21.0)
+# Relay host contract (Host API 1.25.0)
 
 This is the Maestro host half of the Relay Discord integration. The Discord gateway, token UI, channel ownership, per-thread session mapping, and Pianola exceptions belong to the Relay plugin, not the host. The host never receives the bot token as a setting or agent environment variable.
 
@@ -47,7 +47,7 @@ commentary phase emits `commentary`; Claude and JSON-line providers emit tool
 lifecycle events when their stream exposes them. Providers with no usable stream
 still complete normally and may emit only the initial `activity` event.
 
-With no `sessionId`, the host starts a fresh headless provider session. With one, it passes that opaque provider session ID to the provider's resume path. `sessionId` in the result is a **provider session ID**, not a desktop tab ID or Maestro agent ID. The plugin stores one ID per Discord thread and only saves a new ID after `success: true`. A failed run has `response: null`, may carry a provider ID for diagnostics, and must not be posted as a successful answer. The host runs different threads independently. The `agents:dispatch` ActionGuard limits one plugin to two concurrent high-risk actions; additional calls fail clearly and may be queued by the plugin. The provider process has a 60-minute timeout. Run-token and MCP proof-file lifetimes, and the desktop-backed CLI send reply wait, are 61 minutes (the run budget plus one minute for completion). Codex must emit structured model activity (text/reasoning, a tool event, or usage) within 120 seconds of spawn; init/turn-start messages and unstructured stdout/stderr do not disable this startup deadline. A startup failure returns `success: false`, `response: null`, and an error describing a possible auth/keyring block and how to retry after repairing login. The host does not inspect credentials or change the configured credential store. Timeout/cancellation force-kills the local process tree through the existing host Stop utility and releases the caller after at most a five-second wait even if `close` never arrives. After model activity the full 60-minute run budget remains in effect. SSH teardown terminates the local SSH process group; remote process cleanup still depends on the remote transport. Do not automatically retry a run that may have performed tool work. These deadlines share the constants in `src/shared/plugins/headless-agent-timeouts.ts`; completed or cancelled runs revoke their proof immediately. Disabling, crashing, or uninstalling the plugin aborts its outstanding `agents.send` processes.
+With no `sessionId`, the host starts a fresh headless provider session. With one, it passes that opaque provider session ID to the provider's resume path. `sessionId` in the result is a **provider session ID**, not a desktop tab ID or Maestro agent ID. The plugin stores one ID per Discord thread and only saves a new ID after `success: true`. A failed run has `response: null`, may carry a provider ID for diagnostics, and must not be posted as a successful answer. The host runs different threads independently. Host API 1.25.0 / SDK 0.19.0 extend rc's 1.24.0 / 0.18.0 contracts; the media job API, independent Settings cards, and service broker remain available. The `agents:dispatch` ActionGuard limits one plugin to two concurrent high-risk actions; additional calls fail clearly and may be queued by the plugin. The provider process has a 60-minute timeout. Run-token and MCP proof-file lifetimes, and the desktop-backed CLI send reply wait, are 61 minutes (the run budget plus one minute for completion). Codex must emit structured model activity (text/reasoning, a tool event, or usage) within 120 seconds of spawn; init/turn-start messages and unstructured stdout/stderr do not disable this startup deadline. A startup failure returns `success: false`, `response: null`, and an error describing a possible auth/keyring block and how to retry after repairing login. The host does not inspect credentials or change the configured credential store. Timeout/cancellation force-kills the local process tree through the shared ownership-aware Stop ladder and releases the caller after at most a five-second wait even if `close` never arrives. After model activity the full 60-minute run budget remains in effect. SSH teardown terminates the local SSH process tree; remote process cleanup still depends on the remote transport. Do not automatically retry a run that may have performed tool work. These deadlines share the constants in `src/shared/plugins/headless-agent-timeouts.ts`; completed or cancelled runs revoke their proof immediately. Disabling, crashing, or uninstalling the plugin aborts its outstanding `agents.send` processes.
 
 The host also records successful provider session IDs in a private persistent binding store under `<userData>/plugin-agent-sessions/`. A resume is allowed only for the same plugin and Maestro agent that received the ID; knowing another agent's provider ID is insufficient. The 10,000 most recently used bindings per plugin survive a desktop restart. Older bindings are evicted as new sessions arrive and then fail closed on resume; bindings are deleted when the plugin is uninstalled. Refreshing an already-owned binding is best effort: a storage error does not hide a completed provider answer, but the binding keeps its previous recency.
 
@@ -72,13 +72,13 @@ Relay and that exact Maestro agent; ordinary CLI sessions remain unattributed.
 This backfill adds origin metadata, not historical turn entries. Existing History
 filter selections gain `RELAY` on upgrade; a later explicit deselection persists.
 
-## First-message thread title (Host API 1.21.0)
+## First-message thread title (Host API 1.25.0)
 
 ```ts
 maestro.agents.generateTitle(agentId, firstMessage): Promise<string | null>
 ```
 
-This optional call runs Maestro's tab naming prompt, cheap turn settings, and title parser once on a bounded first message (maximum 4,096 characters). It uses a fresh ephemeral provider process without resuming or recording a conversation, and returns `null` if generation fails. The host resolves the provider, working directory, and active authentication configuration from the permitted Maestro agent ID. It applies the same `agents:dispatch` allowlist, unattended consent, trust, risk, and ActionGuard checks as `agents.send`. Plugin shutdown cancels the naming process. Relay can feature-detect this method while retaining `minHostApi: "1.20.0"` for its base progress integration.
+This optional call runs Maestro's tab naming prompt, cheap turn settings, and title parser once on a bounded first message (maximum 4,096 characters). It uses a fresh ephemeral provider process without resuming or recording a conversation, and returns `null` if generation fails. The host resolves the provider, working directory, and active authentication configuration from the permitted Maestro agent ID. It applies the same `agents:dispatch` allowlist, unattended consent, trust, risk, and ActionGuard checks as `agents.send`. Plugin shutdown cancels the naming process. Relay can feature-detect this method while retaining `minHostApi: "1.25.0"` for its base progress integration.
 
 ## Outgoing plugin tools
 
@@ -113,11 +113,11 @@ The proof is scoped to the local same-user process boundary. A model with full s
 
 `maestro.storage.set` writes the plugin's private KV data to `<userData>/plugin-data/<pluginId>/store.json`. On POSIX, the base/plugin directories are owner-only (`0700`), new temporary and replacement files are owner-only (`0600`), and old stores are hardened before reading. Unsafe symlinks are rejected. Windows applies the platform's file ACL behavior; POSIX mode bits are not an access-control mechanism there. The token remains plaintext for the local user and should never be copied into global `shellEnvVars`, prompts, logs, or the plugin panel response.
 
-The Relay plugin must set `minHostApi: "1.20.0"` to rely on `onProgress` and declare `agents:dispatch` plus its existing network, storage, and tool contributions. This host change does not enable plugins, grant permission, install Relay, or configure a Discord bot.
+The Relay plugin must set `minHostApi: "1.25.0"` to rely on `onProgress` and declare `agents:dispatch` plus its existing network, storage, and tool contributions. This host change does not enable plugins, grant permission, install Relay, or configure a Discord bot.
 
 ## Backstage setup and update surfaces
 
-This host package includes the Backstage prerequisites: settings panels inside each
+This host package includes the Backstage prerequisites: independent plugin Settings cards linked from each
 extension's Settings tab, the isolated theme bridge, and the packaged `undici`
 runtime used by pinned network requests. Relay's plugin implementation and Discord
 credentials remain in Backstage and the user's private plugin store.

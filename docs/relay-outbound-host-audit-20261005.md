@@ -1,5 +1,11 @@
 # Relay outbound host audit (2026-10-05)
 
+Historical audit: installed versions, pending permissions and service state
+below describe the dated observations, not the current PR acceptance state.
+For the rc integration and bounded startup contract, see
+[Relay host contract](relay-host-contract.md) and
+[startup incident follow-up](relay-auth-startup-incident-20261009.md).
+
 This audit covers the host source in this checkout and a read-only check of the
 installed Relay. It does not activate a plugin, send a Discord message, change
 the Obsidian vault or user service, or package/install a host build.

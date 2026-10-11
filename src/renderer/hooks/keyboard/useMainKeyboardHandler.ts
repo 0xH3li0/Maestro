@@ -12,6 +12,7 @@ import {
 } from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -35,6 +36,7 @@ import { isMacOSPlatform } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 /**
@@ -1043,6 +1045,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
+			} else if (
+				// A Ctrl+Cmd chord: isShortcut folds the two modifiers into one and
+				// would fire this on plain Cmd+H (macOS Hide) and Ctrl+H.
+				ctx.isPaneShortcut(e, 'computerHistory') &&
+				canOpenComputerHistory(ctx.encoreFeatures)
+			) {
+				e.preventDefault();
+				getModalActions().setComputerHistoryOpen(true);
+				trackShortcut('computerHistory');
 			} else if (ctx.isShortcut(e, 'openCue') && ctx.encoreFeatures?.maestroCue) {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
@@ -1434,12 +1445,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
 					e.preventDefault();
-					const result = ctx.reopenUnifiedClosedTab(activeSession);
-					if (result) {
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === activeSession!.id ? result.session : s))
-						);
+					if (reopenDesktopTabIfNeeded(activeSession)) {
 						trackShortcut('reopenClosedTab');
+					} else {
+						const result = ctx.reopenUnifiedClosedTab(activeSession);
+						if (result) {
+							ctx.setSessions((prev: Session[]) =>
+								prev.map((s: Session) => (s.id === activeSession!.id ? result.session : s))
+							);
+							trackShortcut('reopenClosedTab');
+						}
 					}
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {

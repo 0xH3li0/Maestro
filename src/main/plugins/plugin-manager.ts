@@ -43,6 +43,7 @@ import {
 	isSafePluginFolderName,
 	readGrants,
 } from './plugin-store-main';
+import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { verifyPluginSignature } from './plugin-signature';
 import {
 	extractPluginArchive,
@@ -61,8 +62,8 @@ const HOT_RELOAD_DEBOUNCE_MS = 150;
  */
 export interface PluginSandboxLifecycle {
 	start: (pluginId: string, pluginDir: string, entryRelPath: string) => void;
-	stop: (pluginId: string) => void;
-	stopAll: () => void;
+	stop: (pluginId: string) => void | Promise<void>;
+	stopAll: () => void | Promise<void>;
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
 	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
@@ -75,6 +76,7 @@ export interface PluginSandboxLifecycle {
 }
 
 export interface PluginManagerDeps {
+	serviceAvailable?: (pluginId: string, requirementId: string) => boolean;
 	/** Whether the `plugins` Encore flag is currently on. Re-read on every call. */
 	isEnabled: () => boolean;
 	/** Optional change hook (e.g. to broadcast to the renderer) after mutations. */
@@ -122,6 +124,8 @@ export interface InstallResult {
  */
 export class PluginManager {
 	private registry: PluginRegistry = emptyRegistry();
+	private readonly mutationQueue = createKeyedWriteQueue();
+	private readonly pendingMutations = new Map<string, number>();
 	private pluginFingerprints = new Map<string, string>();
 	private watchRoot: fs.FSWatcher | null = null;
 	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
@@ -160,9 +164,20 @@ export class PluginManager {
 		// ledger, so this reads sealed, anti-rollback grants rather than the
 		// forgeable plain-JSON store the default falls back to.
 		const getGrants = this.deps.getGrants ?? readGrants;
-		return aggregateContributions(manifests, (pluginId, cap) =>
+		const contributions = aggregateContributions(manifests, (pluginId, cap) =>
 			isPermitted(getGrants(pluginId), cap)
 		);
+		// Settings destinations are executable plugin UI. Fail closed unless the
+		// active record has a verified trusted publisher and a live ui:panel grant.
+		const trusted = new Set(
+			this.getActiveRecords()
+				.filter((r) => r.signature?.status === 'trusted')
+				.map((r) => r.id)
+		);
+		contributions.panels = contributions.panels.filter(
+			(p) => p.placement !== 'settings' || trusted.has(p.pluginId)
+		);
+		return contributions;
 	}
 
 	/**
@@ -313,13 +328,46 @@ export class PluginManager {
 	 */
 	private isRunnable(record: PluginRecord): boolean {
 		return (
+			this.deps.isEnabled() &&
+			!this.pendingMutations.has(record.id) &&
 			record.enabled &&
 			record.loadStatus === 'ok' &&
 			!!record.manifest &&
 			record.manifest.tier >= 1 &&
 			!!record.manifest.entry &&
-			record.signature?.status === 'trusted'
+			record.signature?.status === 'trusted' &&
+			(record.manifest.requires ?? []).every(
+				(r) => r.optional === true || this.deps.serviceAvailable?.(record.id, r.id) === true
+			)
 		);
+	}
+
+	/** Reconcile only consumers with mandatory dependencies; never restart a crashed provider here. */
+	reconcileServiceDependencies(): void {
+		if (!this.deps.isEnabled()) return;
+		const sandbox = this.deps.sandbox;
+		if (!sandbox) return;
+		for (const record of this.registry.records) {
+			if (!record.manifest?.requires?.some((r) => !r.optional)) continue;
+			if (!this.isRunnable(record)) {
+				if (sandbox.isRunning(record.id)) {
+					// Provider registration can race both child exit and resource cleanup.
+					// Re-read the current registry and availability only after a successful drain.
+					void Promise.resolve(sandbox.stop(record.id)).then(
+						() => this.reconcileServiceDependencies(),
+						() => {
+							/* retain failed cleanup barriers */
+						}
+					);
+				}
+			} else if (!sandbox.isRunning(record.id) && record.manifest.entry) {
+				try {
+					sandbox.start(record.id, record.source, record.manifest.entry);
+				} catch {
+					/* isolated start failure */
+				}
+			}
+		}
 	}
 
 	/**
@@ -331,12 +379,14 @@ export class PluginManager {
 	 */
 	private reconcileSandboxes(
 		previousFingerprints = this.pluginFingerprints,
-		nextFingerprints = this.pluginFingerprints
+		nextFingerprints = this.pluginFingerprints,
+		onlyPluginId?: string
 	): void {
 		const sandbox = this.deps.sandbox;
 		if (!sandbox) return;
 		const shouldRun = new Set<string>();
 		for (const record of this.registry.records) {
+			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
 			if (!this.isRunnable(record) || !record.manifest?.entry) continue;
 			shouldRun.add(record.id);
 			const fingerprintChanged =
@@ -355,7 +405,8 @@ export class PluginManager {
 		// Stop anything running that should no longer run (disabled, uninstalled,
 		// or now-invalid), using the sandbox's own view of what is alive.
 		for (const id of sandbox.runningIds()) {
-			if (!shouldRun.has(id)) sandbox.stop(id);
+			if (!shouldRun.has(id) && (onlyPluginId === undefined || onlyPluginId === id))
+				sandbox.stop(id);
 		}
 	}
 
@@ -577,89 +628,112 @@ export class PluginManager {
 		if (!isSafePluginFolderName(id)) {
 			throw new Error(`plugin id "${id}" is not a safe folder name`);
 		}
-		const dir = pluginsDir();
-		const dest = path.join(dir, id);
-		// Update is not install: the id must already be installed on disk.
-		if (!fs.existsSync(dest)) {
-			throw new Error(`plugin "${id}" is not installed; install it before updating`);
-		}
-		const installed = validatePluginManifest(this.readManifest(dest)).manifest;
-		if (!installed) {
-			throw new Error(`installed plugin "${id}" has an unreadable manifest; cannot update`);
-		}
-		// Require a strictly newer version. Refuse a downgrade or an equal version.
-		if (!semver.valid(manifest.version) || !semver.valid(installed.version)) {
-			throw new Error(
-				`cannot compare versions "${installed.version}" -> "${manifest.version}" (not valid semver)`
-			);
-		}
-		if (!semver.gt(manifest.version, installed.version)) {
-			throw new Error(
-				`update version ${manifest.version} is not newer than installed ${installed.version}`
-			);
-		}
-		// Reject a source tree containing symlinks (same escape guard as install()).
-		if (containsSymlink(sourceDir)) {
-			throw new Error('plugin source contains symlinks, which are not allowed');
-		}
-		// Stage the new tree on the SAME filesystem (inside the plugins dir) so the
-		// rename into place is a real atomic move everywhere.
-		fs.mkdirSync(dir, { recursive: true });
-		const staging = fs.mkdtempSync(path.join(dir, `.update-${id}-`));
-		const staged = path.join(staging, id);
-		const backup = path.join(staging, `${id}.old`);
-		try {
-			// dereference:false keeps the copy faithful; we already rejected symlinks.
-			fs.cpSync(sourceDir, staged, { recursive: true });
-			// Stop the running sandbox before swapping files (mirrors uninstall's stop
-			// path); refresh() below restarts it if the new version is still runnable.
-			this.deps.sandbox?.stop(id);
-			// Move the old dir aside, then move the new one into place. If the second
-			// rename fails, restore the old dir so we never leave a partial state.
-			fs.renameSync(dest, backup);
-			try {
-				fs.renameSync(staged, dest);
-			} catch (swapError) {
-				fs.renameSync(backup, dest);
-				throw swapError;
+		return this.mutatePlugin(id, async () => {
+			const dir = pluginsDir();
+			const dest = path.join(dir, id);
+			// Update is not install: the id must already be installed on disk.
+			if (!fs.existsSync(dest)) {
+				throw new Error(`plugin "${id}" is not installed; install it before updating`);
 			}
-		} finally {
-			fs.rmSync(staging, { recursive: true, force: true });
-		}
-		// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
-		// signature trust from scratch. The enable toggle survives because we never
-		// touched the persisted state, so an enabled plugin stays enabled.
-		return this.refresh();
+			const installed = validatePluginManifest(this.readManifest(dest)).manifest;
+			if (!installed) {
+				throw new Error(`installed plugin "${id}" has an unreadable manifest; cannot update`);
+			}
+			// Require a strictly newer version. Refuse a downgrade or an equal version.
+			if (!semver.valid(manifest.version) || !semver.valid(installed.version)) {
+				throw new Error(
+					`cannot compare versions "${installed.version}" -> "${manifest.version}" (not valid semver)`
+				);
+			}
+			if (!semver.gt(manifest.version, installed.version)) {
+				throw new Error(
+					`update version ${manifest.version} is not newer than installed ${installed.version}`
+				);
+			}
+			// Reject a source tree containing symlinks (same escape guard as install()).
+			if (containsSymlink(sourceDir)) {
+				throw new Error('plugin source contains symlinks, which are not allowed');
+			}
+			// Stage the new tree on the SAME filesystem (inside the plugins dir) so the
+			// rename into place is a real atomic move everywhere.
+			fs.mkdirSync(dir, { recursive: true });
+			const staging = fs.mkdtempSync(path.join(dir, `.update-${id}-`));
+			const staged = path.join(staging, id);
+			const backup = path.join(staging, `${id}.old`);
+			try {
+				// dereference:false keeps the copy faithful; we already rejected symlinks.
+				fs.cpSync(sourceDir, staged, { recursive: true });
+				// Stop the running sandbox before swapping files (mirrors uninstall's stop
+				// path); refresh() below restarts it if the new version is still runnable.
+				await this.stopAndDrain(id);
+				// Move the old dir aside, then move the new one into place. If the second
+				// rename fails, restore the old dir so we never leave a partial state.
+				fs.renameSync(dest, backup);
+				try {
+					fs.renameSync(staged, dest);
+				} catch (swapError) {
+					fs.renameSync(backup, dest);
+					throw swapError;
+				}
+			} finally {
+				fs.rmSync(staging, { recursive: true, force: true });
+			}
+			// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
+			// signature trust from scratch. The enable toggle survives because we never
+			// touched the persisted state, so an enabled plugin stays enabled.
+			return this.refresh();
+		});
 	}
 
 	/**
 	 * Uninstall a plugin: remove its directory and forget its persisted toggle.
 	 * No-op (success:false) when the id is unknown.
 	 */
-	uninstall(id: string): { success: boolean; error?: string } {
-		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
-		const record = this.registry.records.find((r) => r.id === id);
-		if (!record) return { success: false, error: `plugin "${id}" is not installed` };
-		// Defense in depth: only delete inside the plugins dir.
-		const dir = pluginsDir();
-		const resolved = path.resolve(record.source);
-		if (resolved !== path.resolve(dir, path.basename(resolved)) || !resolved.startsWith(dir)) {
-			return { success: false, error: 'refusing to remove a path outside the plugins directory' };
+	uninstall(id: string): Promise<{ success: boolean; error?: string }> {
+		return this.mutatePlugin(id, async () => {
+			if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
+			const record = this.registry.records.find((r) => r.id === id);
+			if (!record) return { success: false, error: `plugin "${id}" is not installed` };
+			// Defense in depth: only delete inside the plugins dir.
+			const dir = pluginsDir();
+			const resolved = path.resolve(record.source);
+			if (resolved !== path.resolve(dir, path.basename(resolved)) || !resolved.startsWith(dir)) {
+				return { success: false, error: 'refusing to remove a path outside the plugins directory' };
+			}
+			// Stop any running sandbox for this plugin before removing its files, then
+			// purge everything it owns: enable toggle, permission grants, and (via the
+			// injected host-data purge) its KV store, plugins.<id>.* settings, and live
+			// event subscriptions - so uninstall leaves nothing behind (invariant #8).
+			await this.stopAndDrain(id);
+			fs.rmSync(resolved, { recursive: true, force: true });
+			forgetPlugin(id);
+			forgetGrants(id);
+			this.deps.purgePluginData?.(id);
+			this.pluginFingerprints.delete(id);
+			this.registry = removeRecord(this.registry, id);
+			this.syncPluginWatchers();
+			this.deps.onChange?.(this.registry);
+			return { success: true };
+		});
+	}
+
+	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */
+	private async mutatePlugin<T>(id: string, operation: () => Promise<T>): Promise<T> {
+		this.pendingMutations.set(id, (this.pendingMutations.get(id) ?? 0) + 1);
+		try {
+			return await this.mutationQueue.enqueue(id, operation);
+		} finally {
+			const remaining = (this.pendingMutations.get(id) ?? 1) - 1;
+			if (remaining > 0) this.pendingMutations.set(id, remaining);
+			else this.pendingMutations.delete(id);
+			this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints, id);
+			this.reconcileServiceDependencies();
 		}
-		// Stop any running sandbox for this plugin before removing its files, then
-		// purge everything it owns: enable toggle, permission grants, and (via the
-		// injected host-data purge) its KV store, plugins.<id>.* settings, and live
-		// event subscriptions - so uninstall leaves nothing behind (invariant #8).
-		this.deps.sandbox?.stop(id);
-		fs.rmSync(resolved, { recursive: true, force: true });
-		forgetPlugin(id);
-		forgetGrants(id);
-		this.deps.purgePluginData?.(id);
-		this.pluginFingerprints.delete(id);
-		this.registry = removeRecord(this.registry, id);
-		this.syncPluginWatchers();
-		this.deps.onChange?.(this.registry);
-		return { success: true };
+	}
+
+	/** Host mutation barrier: stop invalidates immediately; await confirms exit and media cleanup. */
+	async stopAndDrain(id: string): Promise<void> {
+		await this.deps.sandbox?.stop(id);
 	}
 
 	/** Stop all sandboxes (app shutdown / feature disable). */
@@ -692,7 +766,8 @@ export class PluginManager {
 	 * the sandbox via a brokered request/response round-trip and the plugin
 	 * handler's awaited return value is returned. Rejects if the id is malformed,
 	 * no sandbox is wired, or the sandbox rejects (plugin not running, timeout,
-	 * early child exit, handler error).
+	 * early child exit, handler error). Reserved service: handlers reject with ServiceDenied
+	 * before sandbox dispatch; only the host service broker may invoke them.
 	 */
 	invokeTool(
 		toolId: string,
@@ -705,6 +780,7 @@ export class PluginManager {
 		}
 		const pluginId = toolId.slice(0, sep);
 		const localId = toolId.slice(sep + 1);
+		if (localId.startsWith('service:')) return Promise.reject(new Error('ServiceDenied'));
 		if (!this.deps.sandbox) return Promise.reject(new Error('sandbox not available'));
 		return this.deps.sandbox.invokeTool(pluginId, localId, args, context);
 	}

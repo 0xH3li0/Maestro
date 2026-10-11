@@ -35,12 +35,7 @@ import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
 import { registerOpenSpecHandlers } from './openspec';
 import { registerBmadHandlers } from './bmad';
-import {
-	registerContextHandlers,
-	ContextHandlerDependencies,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
-} from './context';
+import { registerContextHandlers, ContextHandlerDependencies } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
 import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
@@ -64,6 +59,7 @@ import {
 	WebHandlerDependencies,
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
+import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
@@ -122,7 +118,7 @@ export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
 export { registerBmadHandlers };
-export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingSessionCount };
+export { registerContextHandlers };
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
@@ -142,6 +138,7 @@ export {
 };
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
+export { registerComputerHistoryHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers };

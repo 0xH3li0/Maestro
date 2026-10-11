@@ -42,6 +42,24 @@ export type AgentSendProgressEvent =
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'services.register': { capability: 'services:provide' },
+	'services.unregister': { capability: 'services:provide' },
+	'services.readiness': { capability: 'services:provide' },
+	'services.status': { capability: 'services:call' },
+	'services.openSettings': { capability: 'services:call' },
+	'services.start': { capability: 'services:call' },
+	'services.result': { capability: 'services:call' },
+	'services.cancel': { capability: 'services:call' },
+	'services.media.probe': { capability: 'media:tools' },
+	'services.media.decode': { capability: 'media:tools' },
+	'services.media.run': { capability: 'media:tools' },
+	'media.status': { capability: 'media:tools' },
+	'media.open': { capability: 'media:tools' },
+	'media.download': { capability: 'media:tools' },
+	'media.probe': { capability: 'media:tools' },
+	'media.decode': { capability: 'media:tools' },
+	'media.run': { capability: 'media:tools' },
+	'media.close': { capability: 'media:tools' },
 	'net.fetch': { capability: 'net:fetch' },
 	'net.connect': { capability: 'net:connect' },
 	'net.send': { capability: 'net:connect' },
@@ -121,6 +139,10 @@ export function isHostMethod(value: unknown): value is HostMethod {
  * special-casing.
  */
 export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>([
+	'services.status',
+	'services.openSettings',
+	'services.start',
+	'services.result',
 	'net.send',
 	'net.close',
 ]);
@@ -139,6 +161,8 @@ export interface HostResponse {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+	/** Stable machine-readable failure code when provided by the host. */
+	errorCode?: string;
 }
 
 /** Control messages the host sends to the sandbox (not request/response). */
@@ -168,6 +192,8 @@ export interface ToolResult {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+	/** Only host-known codes survive a service invocation. */
+	errorCode?: string;
 }
 
 /** Host-verified call metadata. Never read this identity from tool arguments. */
@@ -187,10 +213,26 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		unknown
 	>;
 	switch (method) {
+		case 'services.register':
+		case 'services.unregister':
+		case 'services.readiness':
+			return typeof p.serviceId === 'string' ? p.serviceId : undefined;
+		case 'services.media.probe':
+		case 'services.media.decode':
+		case 'services.media.run':
+			return 'service-transcription';
 		case 'fs.read':
 		case 'fs.write':
 		case 'fs.watch':
 			return typeof p.path === 'string' ? p.path : undefined;
+		case 'media.status':
+		case 'media.open':
+		case 'media.download':
+		case 'media.probe':
+		case 'media.decode':
+		case 'media.run':
+		case 'media.close':
+			return 'discord-voice';
 		case 'net.fetch': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;

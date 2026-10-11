@@ -24,6 +24,7 @@
  * - set_setting: Modify a single setting (allowlisted keys only)
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
+ * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -69,9 +70,12 @@ import {
 	handleInteractMovementDesigner,
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
+import { handleQuickChat } from './quickChat';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
+	handleFeedbackGhLoginCommand,
+	handleFeedbackAccounts,
 	handleFeedbackSearch,
 	handleFeedbackSubmit,
 	handleFeedbackSubscribe,
@@ -99,6 +103,7 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleComputerHistoryCommand } from './computerHistory';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -301,6 +306,10 @@ export class WebSocketMessageHandler {
 
 			case 'snooze_command':
 				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
+			case 'computer_history_command':
+				void handleComputerHistoryCommand(this.ctx, client, message);
 				break;
 
 			case 'reorder_tab':
@@ -647,6 +656,10 @@ export class WebSocketMessageHandler {
 				handleProfilingStatus(this.ctx, client, message);
 				break;
 
+			case 'quick_chat':
+				handleQuickChat(this.ctx, client, message);
+				break;
+
 			case 'support_package_create':
 				void handleSupportPackageCreate(this.ctx, client, message);
 				break;
@@ -659,12 +672,20 @@ export class WebSocketMessageHandler {
 				void handleFeedbackSearch(this.ctx, client, message);
 				break;
 
+			case 'feedback_gh_login_command':
+				void handleFeedbackGhLoginCommand(this.ctx, client, message);
+				break;
+
 			case 'feedback_submit':
 				void handleFeedbackSubmit(this.ctx, client, message);
 				break;
 
 			case 'feedback_subscribe':
 				void handleFeedbackSubscribe(this.ctx, client, message);
+				break;
+
+			case 'feedback_accounts':
+				void handleFeedbackAccounts(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

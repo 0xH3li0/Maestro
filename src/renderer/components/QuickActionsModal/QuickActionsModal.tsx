@@ -1,4 +1,5 @@
 import React, { memo, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
 import { useShallow } from 'zustand/react/shallow';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
@@ -28,6 +29,7 @@ import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
@@ -48,6 +50,8 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
@@ -76,6 +80,9 @@ import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { buildWindowMoveTargets } from '../../utils/windowTargets';
+
+/** Stable fallback so the selector never hands React a fresh array. */
+const NO_QUICK_CHAT_HOTKEY: string[] = [];
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
@@ -250,11 +257,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	// Quick Chat is on by default, and only the Electron app has its window.
+	const quickChatAvailable =
+		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
+	const quickChatHotkey =
+		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
 	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
 	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const computerHistoryAvailable = useSettingsStore((s) =>
+		canOpenComputerHistory(s.encoreFeatures)
+	);
+	const openComputerHistory = useCallback(() => getModalActions().setComputerHistoryOpen(true), []);
 	const toggleConcertoStageFloating = useCallback(
 		() => setConcertoStageFloating(!concertoStageFloating),
 		[concertoStageFloating, setConcertoStageFloating]
@@ -524,6 +540,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
 			setQuickActionOpen,
 		}),
+		...buildQuickChatCommands({
+			quickChatAvailable,
+			hotkey: quickChatHotkey,
+			openQuickChat: () => void window.maestro.quickChat.window('show'),
+			setQuickActionOpen,
+		}),
 		...buildConcertoCommands({
 			concertoEnabled,
 			stageOpen: concertoStageOpen,
@@ -730,6 +752,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onOpenDirectorNotes,
 			onOpenMaestroCue,
 			onOpenPianola,
+			onOpenComputerHistory: computerHistoryAvailable ? openComputerHistory : undefined,
 			onConfigureCue,
 			onOpenLastDocumentGraph,
 			onOpenCurrentFileInGraph,
@@ -751,6 +774,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
+				computerHistory: shortcuts.computerHistory,
 				fuzzyFileSearch: shortcuts.fuzzyFileSearch,
 				editClipboardImage: shortcuts.editClipboardImage,
 			},
@@ -923,6 +947,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		resetSelectionToFirst,
 	});
 
+	// The RAW hidden set, not the Left Bar's resolved one: the switcher always
+	// lists a hidden agent (that is how you reach one), so what it needs to know
+	// is whether the group is hidden at all - never whether "Show Hidden"
+	// happens to be revealing it in the sidebar right now.
+	const hiddenGroupIds = useMemo(() => collectHiddenGroupIds(groups), [groups]);
+
 	const agentActions = [
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
@@ -931,6 +961,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			revealJumpTarget,
 			getSessionWindow,
 			jumpSlots,
+			hiddenGroupIds,
 		}),
 		...buildGroupChatSwitcherCommands({
 			groupChats,
@@ -948,8 +979,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const filteredRef = useRef(filtered);
 	filteredRef.current = filtered;
 
-	// LIVE/IDLE bucket headers only earn their pixels in agents mode when both
-	// buckets are present - a single-bucket list doesn't need a label above it.
+	// LIVE/IDLE/HIDDEN bucket headers only earn their pixels in agents mode when
+	// more than one bucket is present - a single-bucket list needs no label.
 	const showBucketHeaders = shouldShowAgentBucketHeaders(filtered, mode);
 
 	// Callback for when an item is selected (by Enter key or number hotkey)

@@ -1015,6 +1015,29 @@ describe('SessionList', () => {
 			expect(screen.getByText('Session in Group')).toBeInTheDocument();
 		});
 
+		// The first settings load lands as one write and would put a toggle made
+		// before it back on screen, so the control waits for the load.
+		it('holds the Show Hidden toggle until settings have loaded', () => {
+			const hidden = createMockGroup({ id: 'g-hidden', name: 'Parked', hidden: true });
+			const sessions = [createMockSession({ id: 's1', name: 'Parked Agent', groupId: 'g-hidden' })];
+			useSessionStore.setState({ sessions, groups: [hidden] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ settingsLoaded: false, showHiddenGroups: false });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			const toggle = screen.getByTestId('show-hidden-groups-toggle');
+			expect(toggle).toBeDisabled();
+			fireEvent.click(toggle);
+			expect(useSettingsStore.getState().showHiddenGroups).toBe(false);
+
+			act(() => useSettingsStore.setState({ settingsLoaded: true }));
+			expect(toggle).not.toBeDisabled();
+			fireEvent.click(toggle);
+			expect(useSettingsStore.getState().showHiddenGroups).toBe(true);
+
+			useSettingsStore.setState({ showHiddenGroups: false });
+		});
+
 		it('renders a selected standard icon and label color', () => {
 			enableGroupsPlus();
 			const group = createMockGroup({

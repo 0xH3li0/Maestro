@@ -18,6 +18,9 @@ import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { PluginServiceHost, ServiceError } from './plugin-service-host';
+import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
+import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -125,6 +128,27 @@ export interface PluginSessionMetadata {
 }
 
 export interface HostHandlerDeps {
+	serviceManifest?: (pluginId: string) => PluginManifest | undefined;
+	serviceRunning?: (pluginId: string) => boolean;
+	serviceAllowed?: (
+		pluginId: string,
+		capability: 'services:call' | 'services:provide' | 'media:tools',
+		target: string
+	) => boolean;
+	serviceInvoke?: (
+		provider: string,
+		command: string,
+		request: unknown,
+		signal: AbortSignal,
+		timeoutMs: number
+	) => Promise<unknown>;
+	registerServiceReconcile?: (reconcile: () => void) => void;
+	registerServiceAvailability?: (
+		available: (pluginId: string, requirementId: string) => boolean
+	) => void;
+	serviceChanged?: () => void;
+	serviceCancelProvider?: (pluginId: string, callId: string) => void;
+
 	/** The broker, so fs handlers can RE-authorize the real (symlink-resolved)
 	 * path after the initial string-based authorization (TOCTOU/symlink defense
 	 * AND the userData-tree exclusion, which runs on the resolved path). */
@@ -273,7 +297,7 @@ export interface HostHandlerDeps {
 	/** Registers a per-plugin resource-cleanup callback with the host lifecycle
 	 * so the sandbox can release wake locks and close fs watchers when a plugin
 	 * stops, crashes, or is uninstalled. Invoked once during handler construction. */
-	registerResourceCleanup?: (cleanup: (pluginId: string) => void) => void;
+	registerResourceCleanup?: (cleanup: (pluginId: string) => Promise<void>) => void;
 	backgroundRegister?: (
 		pluginId: string,
 		service: PluginBackgroundService
@@ -610,9 +634,10 @@ function assertBrokerAllowed(
 	deps: Pick<HostHandlerDeps, 'broker'>,
 	pluginId: string,
 	method: HostMethod,
-	params: unknown
+	params: unknown,
+	options?: { audit?: boolean }
 ): void {
-	const decision = deps.broker.authorize(pluginId, method, params);
+	const decision = deps.broker.authorize(pluginId, method, params, options);
 	if (!decision.allowed) {
 		throw new Error(decision.reason ?? 'permission denied');
 	}
@@ -701,7 +726,38 @@ function resolveRealPath(target: string): string {
 	return missing.length > 0 ? path.join(realBase, ...missing) : realBase;
 }
 
+/**
+ * Build brokered handlers and their shared media/service registries using host-owned dependencies.
+ * Missing service wiring fails closed; cleanupPluginResources returns the media/service teardown barrier.
+ */
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
+	const mediaTools = new PluginMediaTools({
+		resolveRuntime: () => resolveMediaRuntime(deps.settingsGet('mediaModelDirectory')),
+		egressGuard: deps.egressGuard,
+		authorize: (pluginId, options) => {
+			assertBrokerAllowed(deps, pluginId, 'media.open', {}, options);
+			assertTrustedActVerb(deps, pluginId);
+		},
+	});
+	const services = new PluginServiceHost({
+		manifest: (id) => deps.serviceManifest?.(id),
+		running: (id) => deps.serviceRunning?.(id) === true,
+		allowed: (id, capability, target) => deps.serviceAllowed?.(id, capability, target) === true,
+		invoke: (provider, command, request, signal, timeoutMs) =>
+			deps.serviceInvoke
+				? deps.serviceInvoke(provider, command, request, signal, timeoutMs)
+				: Promise.reject(new ServiceError('ServiceUnavailable')),
+		media: mediaTools,
+		guard: deps.actionGuard,
+		changed: deps.serviceChanged,
+		cancelProvider: deps.serviceCancelProvider,
+		settingsPanel: (id, panel) => deps.getPanel?.(id, panel)?.placement === 'settings',
+		openSettings: deps.panelVisibility
+			? (id, panel) => deps.panelVisibility!(id, `${id}/${panel}`, 'open')
+			: undefined,
+	});
+	deps.registerServiceAvailability?.((id, requirement) => services.available(id, requirement));
+	deps.registerServiceReconcile?.(() => services.reconcile());
 	const fsWatchers = new Map<string, { pluginId: string; watcher: fs.FSWatcher }>();
 	const sleepHandles = new Map<string, { pluginId: string; reason: string }>();
 	const backgroundServices = new Map<string, Map<string, PluginBackgroundService>>();
@@ -841,6 +897,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'settings.get', p);
 			if (SECRET_KEY_PATTERN.test(p.key)) throw new Error('access to secret settings is denied');
 			if (/encorefeatures/i.test(p.key)) throw new Error('access to the feature gate is denied');
+			if (p.key === 'mediaModelDirectory') throw new Error('host media configuration is host-only');
 			const ownNamespace = `plugins.${pluginId}.`;
 			if (p.key.startsWith('plugins.') && !p.key.startsWith(ownNamespace)) {
 				throw new Error("access to another plugin's settings is denied");
@@ -1402,7 +1459,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	}
 
 	// ui.openPanel / ui.closePanel / ui.togglePanel: let a plugin summon or dismiss
-	// its OWN modal panel (the hotkey-summoned overlay path). Same own-panels-only
+	// its OWN modal panel, or open its own Settings card. Same own-panels-only
 	// resolution as ui.panelPost, so a plugin can never open, close, or flicker
 	// another plugin's surface, and no new consent is needed: anything that can
 	// contribute a panel at all already holds `ui:panel`. The verbs carry no data -
@@ -1426,10 +1483,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!panel) {
 					throw new Error(`panel "${panelId}" is not declared by this plugin`);
 				}
-				// Only `modal` panels have a summonable host; docked ones are always
-				// mounted and have their own hide control, so this would be a no-op the
-				// plugin could not distinguish from success.
-				if (panel.placement !== 'modal') {
+				// Modal panels support all visibility actions. Settings cards can only
+				// be opened; plugins cannot close or toggle the host Settings modal.
+				// Other docked panels are always mounted, so visibility would be a no-op.
+				if (panel.placement !== 'modal' && !(panel.placement === 'settings' && action === 'open')) {
 					throw new Error(`panel "${panelId}" is not a modal panel`);
 				}
 				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);
@@ -1859,12 +1916,125 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		};
 	}
 
+	for (const method of [
+		'media.status',
+		'media.open',
+		'media.download',
+		'media.probe',
+		'media.decode',
+		'media.run',
+		'media.close',
+	] as const) {
+		handlers[method] = (pluginId, params) => {
+			// Per-job serialization bounds download/probe/decode; close uses reserved
+			// cancellation slots. Only status/open/run need the ActionGuard as well.
+			if (!['media.status', 'media.open', 'media.run'].includes(method))
+				return mediaTools.call(pluginId, method, params);
+			return underGuard(deps.actionGuard, pluginId, 'media:tools', 'discord-voice', () =>
+				mediaTools.call(pluginId, method, params)
+			);
+		};
+	}
+
+	for (const [method, keys, execute] of [
+		[
+			'services.register',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.register(id, p.serviceId as string),
+		],
+		[
+			'services.unregister',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.unregister(id, p.serviceId as string),
+		],
+		[
+			'services.readiness',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.readiness(id, p.serviceId as string),
+		],
+		[
+			'services.status',
+			['requirementId'],
+			(id: string, p: Record<string, unknown>) => services.status(id, p.requirementId as string),
+		],
+		[
+			'services.openSettings',
+			['requirementId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.openSettings(id, p.requirementId as string),
+		],
+		[
+			'services.start',
+			['requirementId', 'request'],
+			(id: string, p: Record<string, unknown>) =>
+				services.start(id, p.requirementId as string, p.request),
+		],
+		[
+			'services.result',
+			['callId'],
+			(id: string, p: Record<string, unknown>) => services.result(id, p.callId as string),
+		],
+		[
+			'services.cancel',
+			['callId'],
+			(id: string, p: Record<string, unknown>) => services.cancel(id, p.callId as string),
+		],
+		[
+			'services.media.probe',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'probe', p.callId as string, p.audioId as string),
+		],
+		[
+			'services.media.decode',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'decode', p.callId as string, p.audioId as string),
+		],
+		[
+			'services.media.run',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'run', p.callId as string, p.audioId as string),
+		],
+	] as const) {
+		handlers[method] = async (id, raw) => {
+			const p = asObject(raw);
+			if (
+				Object.keys(p).some((key) => !(keys as readonly string[]).includes(key)) ||
+				keys.some(
+					(key) =>
+						key !== 'request' &&
+						(typeof p[key] !== 'string' ||
+							(p[key] as string).length > 128 ||
+							!(p[key] as string).length)
+				)
+			)
+				throw new ServiceError('ServiceInvalid');
+			assertBrokerAllowed(deps, id, method, p);
+			return execute(id, p);
+		};
+	}
+	handlers['services.cancel']!.ownsReleaseResource = (id, raw) => services.ownsCancel(id, raw);
+
+	handlers['media.close']!.ownsReleaseResource = (pluginId, params) =>
+		mediaTools.ownsCloseRequest(pluginId, params);
+
 	// Release a plugin's still-open host resources (wake locks + fs watchers) when
 	// it stops, crashes, or is uninstalled. Absent an explicit release/unwatch
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
-	const cleanupPluginResources = (pluginId: string): void => {
+	/**
+	 * Release watchers/wake locks and initiate best-effort socket closure for a stopped plugin.
+	 * Return the rejecting media/service drain barrier; mutation acknowledgments must await it.
+	 */
+	const cleanupPluginResources = (pluginId: string): Promise<void> => {
+		const drain = Promise.all([
+			services.cleanupPlugin(pluginId),
+			mediaTools.cleanupPlugin(pluginId),
+		]).then(() => {});
+		void drain.catch(() => {});
 		for (const controller of pluginRunControllers.get(pluginId) ?? []) controller.abort();
 		pluginRunControllers.delete(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
@@ -1898,6 +2068,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			});
 			netSockets.delete(socketId);
 		}
+		return drain;
 	};
 	deps.registerResourceCleanup?.(cleanupPluginResources);
 

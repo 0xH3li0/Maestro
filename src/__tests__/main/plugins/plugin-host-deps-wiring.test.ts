@@ -23,10 +23,13 @@
  * comments, or unrelated identifiers elsewhere can't affect it.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
+
+vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
+import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 
 const indexPath = path.join(__dirname, '../../../main/index.ts');
 const source = fs.readFileSync(indexPath, 'utf-8');
@@ -114,6 +117,87 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		expect(keys).toContain('listAgents');
 		expect(keys).toContain('broker');
 	});
+	it('wires service lifecycle, live grants, trusted manifests and the existing bounded invocation channel together', () => {
+		for (const key of [
+			'serviceManifest',
+			'serviceRunning',
+			'serviceAllowed',
+			'serviceInvoke',
+			'serviceCancelProvider',
+			'registerServiceAvailability',
+			'registerServiceReconcile',
+			'serviceChanged',
+		])
+			expect(keys).toContain(key);
+	});
+
+	it.each(['success', 'failure', 'disabled'] as const)(
+		'production crash hook waits for resource drain before supervised restart (%s)',
+		async (mode) => {
+			vi.useFakeTimers();
+			try {
+				let callback: ts.ArrowFunction | undefined;
+				const visit = (node: ts.Node): void => {
+					if (
+						ts.isPropertyAssignment(node) &&
+						node.name.getText(sf) === 'onCrash' &&
+						ts.isArrowFunction(node.initializer)
+					)
+						callback = node.initializer;
+					ts.forEachChild(node, visit);
+				};
+				visit(sf);
+				expect(callback).toBeDefined();
+				const gate = Promise.withResolvers<void>();
+				let drained = false;
+				let enabled = true;
+				const restart = vi.fn(() => {
+					if (!drained) throw new Error('PluginDrainPending');
+				});
+				const supervisor = new PluginBackgroundSupervisor({
+					restartPlugin: restart,
+					isPluginEnabled: () => enabled,
+				});
+				supervisor.register('p', { id: 'worker' });
+				const js = ts.transpileModule(`const onCrash = ${callback!.getText(sf)}`, {
+					compilerOptions: { target: ts.ScriptTarget.ES2024 },
+				}).outputText;
+				const onCrash = new Function(
+					'pluginResourceCleanup',
+					'pluginHostViews',
+					'groupingRegistry',
+					'logger',
+					'backgroundSupervisor',
+					`${js}\nreturn onCrash;`
+				)(
+					() => gate.promise,
+					{ purge: vi.fn() },
+					{ removePlugin: vi.fn() },
+					{ warn: vi.fn() },
+					supervisor
+				);
+				const cleanup = onCrash('p', 1);
+				expect(supervisor.health('p')).toMatchObject({ state: 'restarting', services: [] });
+				await vi.advanceTimersByTimeAsync(1500);
+				expect(restart).not.toHaveBeenCalled();
+				if (mode === 'failure') {
+					const failed = expect(cleanup).rejects.toThrow('MediaProcessFailed');
+					gate.reject(new Error('MediaProcessFailed'));
+					await failed;
+				} else {
+					if (mode === 'disabled') enabled = false;
+					drained = true;
+					gate.resolve();
+					await cleanup;
+				}
+				await vi.advanceTimersByTimeAsync(1001);
+				expect(restart).toHaveBeenCalledTimes(mode === 'success' ? 1 : 0);
+				supervisor.stopAll();
+			} finally {
+				vi.useRealTimers();
+			}
+		}
+	);
 
 	it('wires declared host-view lookup and the Concerto forwarding seam together', () => {
 		expect(keys).toContain('isHostViewsEnabled');

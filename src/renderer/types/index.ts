@@ -86,6 +86,7 @@ export type UsageDashboardViewMode =
 	| 'cue'
 	| 'shortcuts';
 export type SettingsTab =
+	| 'environment'
 	| 'general'
 	// SettingsModal has always rendered a Display tab and accepted it as an
 	// `initialTab`; it was simply missing from this union, so nothing could
@@ -441,6 +442,39 @@ export interface QueuedItemEditPatch {
 	turnSettings: QueuedTurnSettings;
 }
 
+/** One agent a held turn is waiting to hear from. */
+export interface ConsultHoldTarget {
+	targetSessionId: string;
+	targetAgentName: string;
+}
+
+/** A settled consult: what the target said, or why it could not answer. */
+export interface ConsultHoldReply extends ConsultHoldTarget {
+	text: string;
+	error?: string;
+}
+
+/** The consults a {@link QueuedItem} is waiting on (see `awaitingConsult`). */
+export interface ConsultHold {
+	pending: ConsultHoldTarget[];
+	replies: ConsultHoldReply[];
+	/**
+	 * Set when the message asked for the consult to run FIRST ("check with
+	 * @Backend first"): the source agent has not seen the message at all, so the
+	 * released hold carries it (and its images) into the turn that answers it.
+	 * Absent for a parallel consult, whose local turn is already running.
+	 */
+	deferred?: { message: string; images?: string[] };
+}
+
+/** A hand-off waiting for its turn to end (see `AITab.pendingMentionHandoff`). */
+export interface MentionHandoff {
+	/** The agents the turn's final answer goes to. */
+	targets: ConsultHoldTarget[];
+	/** The user's message, verbatim, relayed alongside the answer. */
+	message: string;
+}
+
 export interface QueuedItem {
 	id: string; // Unique item ID
 	timestamp: number; // When it was queued (for ordering)
@@ -480,6 +514,18 @@ export interface QueuedItem {
 	// queue slot, because its POSITION is what the user is expressing ("finish
 	// that, then ask them"). Always paired with `crossAgentMention`.
 	crossAgentOnly?: boolean;
+	// Maestro-generated continuation of a turn that @mentioned other agents
+	// mid-message. The local agent answers in parallel with the consult but must
+	// not FINISH before the reply arrives, so this item sits at the head of the
+	// queue as a barrier for its tab: while set, it is not runnable and no later
+	// item for the same tab may overtake it. Cleared (and `agentContext` filled
+	// with the replies) once every consult settles. See
+	// services/crossAgentConsultHold.ts.
+	awaitingConsult?: ConsultHold;
+	// Agent-only text prepended to the prompt at spawn and never rendered in the
+	// transcript. Carries a consult's replies verbatim without repeating them in
+	// the user bubble, where they are already shown as the consult's own reply.
+	agentContext?: string;
 	// Model/effort captured when the user queued this item. Both the spawn and
 	// the transcript pills read it, so a queued turn runs under - and is labeled
 	// with - the configuration it was queued with, not whatever is selected by
@@ -828,6 +874,23 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/**
+	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
+	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
+	 * and is deleted when the next chat starts; a kept one is an ordinary tab.
+	 * Replies on these tabs never raise a completion toast: the user is reading
+	 * them in the Quick Chat window.
+	 */
+	quickChat?: boolean;
+	/**
+	 * A hand-off armed by a message that asked for this turn's result to go to
+	 * other agents ("then send what you find to @Backend"). When the turn ends
+	 * cleanly, its final answer is forwarded to `targets` and this is cleared;
+	 * Stop or a failed turn clears it without sending. Persisted with the tab so
+	 * a renderer reload mid-turn does not lose it. See
+	 * services/crossAgentHandoff.ts.
+	 */
+	pendingMentionHandoff?: MentionHandoff;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
 	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
@@ -1774,6 +1837,13 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Computer History - local accessibility-based record of what the user reads
+	// and types, exposed to every agent. Off by default. Optional so older
+	// fixtures and persisted settings remain valid.
+	computerHistory?: boolean;
+	// Quick Chat - a floating chat window summoned by a system-wide hotkey. ON by
+	// default. Optional so older fixtures and persisted settings remain valid.
+	quickChat?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

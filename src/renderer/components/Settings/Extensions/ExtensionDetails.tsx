@@ -5,7 +5,7 @@
  * the requested permissions (risk-colored, via getGrants), a contributions
  * summary (filtered by pluginId), and the lifecycle actions: Enable/Disable,
  * Configure (consent + a live editor for the plugin's contributed settings,
- * written to `plugins.<id>.*`), Update, Revoke, and Uninstall. For a built-in feature
+ * written to `plugins.<id>.*`), Revoke, and Uninstall. For a built-in feature
  * it shows the description and an enable toggle.
  */
 
@@ -25,7 +25,6 @@ import type {
 } from '../../../../shared/plugins/contributions';
 import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
-import type { PluginRegistry } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
 	STATE_LABELS,
@@ -34,9 +33,9 @@ import {
 	type UnifiedExtension,
 } from './extensionModel';
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
-import { getModalActions } from '../../../stores/modalStore';
+import { pluginSettingsId } from '../../../../shared/plugins/panel-host';
+import { getModalActions, useModalStore } from '../../../stores/modalStore';
 import { launchFromSettings } from '../../../utils/launchFromSettings';
-import { PluginPanelFrame } from '../../plugins/PluginPanelFrame';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
@@ -45,8 +44,8 @@ interface ExtensionDetailsProps {
 	busy: boolean;
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
-	onUninstall: (record: PluginRecord) => void;
 	onUpdate?: (record: PluginRecord) => void;
+	onUninstall: (record: PluginRecord) => void;
 	onRevoke: (id: string) => void;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 	/** First-party feature config body rendered in the Settings sub-tab (from
@@ -80,8 +79,8 @@ export function ExtensionDetails({
 	busy,
 	onTogglePlugin,
 	onToggleBuiltin,
-	onUninstall,
 	onUpdate,
+	onUninstall,
 	onRevoke,
 	getGrants,
 	settingsBody,
@@ -96,64 +95,33 @@ export function ExtensionDetails({
 		snapshot: PluginGrantsSnapshot;
 	} | null>(null);
 	const grants = grantsState?.pluginId === ext.id ? grantsState.snapshot : null;
-	const grantsLoadGeneration = useRef(0);
 	const [configureOpen, setConfigureOpen] = useState(false);
 	const [settingValues, setSettingValues] = useState<Record<string, boolean | string | number>>({});
 	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
 
 	const isPlugin = ext.kind === 'plugin';
 	const record = ext.record;
-	const recordEnabled = record?.enabled;
-	const recordLoadStatus = record?.loadStatus;
-	const recordVersion = record?.manifest?.version;
-	const recordSource = record?.source;
-	const recordSignatureStatus = record?.signature?.status;
-	const recordSignerKey = record?.signature?.signerKey;
+	const grantsLoadGeneration = useRef(0);
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
-	// Load the plugin's requested/granted permissions whenever the selection
-	// changes. First-party features disclose statically from their definition
-	// (grants are minted host-side on enable), so no ledger round-trip.
+	// Refresh grants without mounting any executable panel inside management.
 	useEffect(() => {
-		if (!isPlugin) {
-			setGrantsState(null);
-			return;
-		}
 		let cancelled = false;
-		const load = (initial = false) => {
+		setGrantsState(null);
+		if (!isPlugin) return;
+		const load = () => {
 			const generation = ++grantsLoadGeneration.current;
-			if (initial) setGrantsState(null);
 			void getGrants(ext.id)
-				.then((snap) => {
+				.then((snapshot) => {
 					if (!cancelled && generation === grantsLoadGeneration.current)
-						setGrantsState({ pluginId: ext.id, snapshot: snap });
+						setGrantsState({ pluginId: ext.id, snapshot });
 				})
 				.catch(() => {
 					if (!cancelled && generation === grantsLoadGeneration.current) setGrantsState(null);
 				});
 		};
-		load(true);
-		// Keep the frame across unrelated registry changes. Detach it immediately
-		// when this plugin is disabled, removed, or replaced. The parent will
-		// refresh its record before grants are read for the changed identity.
-		const unsubscribe = window.maestro.plugins.onChanged((registry?: PluginRegistry) => {
-			const current = registry?.records.find((item) => item.id === ext.id);
-			const selectedChanged =
-				!current ||
-				recordEnabled === undefined ||
-				current.enabled !== recordEnabled ||
-				current.loadStatus !== recordLoadStatus ||
-				current.manifest?.version !== recordVersion ||
-				current.source !== recordSource ||
-				current.signature?.status !== recordSignatureStatus ||
-				current.signature?.signerKey !== recordSignerKey;
-			if (selectedChanged) {
-				++grantsLoadGeneration.current;
-				setGrantsState(null);
-			} else {
-				load();
-			}
-		});
+		load();
+		const unsubscribe = window.maestro.plugins.onChanged(() => load());
 		return () => {
 			cancelled = true;
 			unsubscribe?.();
@@ -162,12 +130,10 @@ export function ExtensionDetails({
 		isPlugin,
 		ext.id,
 		getGrants,
-		recordEnabled,
-		recordLoadStatus,
-		recordVersion,
-		recordSource,
-		recordSignatureStatus,
-		recordSignerKey,
+		record?.enabled,
+		record?.manifest?.version,
+		record?.loadStatus,
+		record?.signature?.status,
 	]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
@@ -175,9 +141,9 @@ export function ExtensionDetails({
 	// pane are desktop-only, so there is nowhere else they could be offered.
 	const isWebLogin = !isPlugin && ext.flag === 'webLogin';
 
-	// A validated installed manifest describes what the Settings tab offers even
-	// while the plugin is disabled. This is discovery data only: active, verified
-	// contributions below remain the sole source of panel webviews and controls.
+	const pluginSettings: SettingContribution[] = contributions
+		? contributions.settings.filter((s) => s.pluginId === ext.id)
+		: [];
 	const declared =
 		isPlugin &&
 		record?.manifest &&
@@ -185,30 +151,9 @@ export function ExtensionDetails({
 		record.signature?.status !== 'invalid'
 			? collectContributions(record.manifest)
 			: null;
-	const declaredSettingsPanels =
-		declared?.panels.filter((panel) => panel.placement === 'settings') ?? [];
-	const pluginSettings: SettingContribution[] = contributions
-		? contributions.settings.filter((s) => s.pluginId === ext.id)
-		: [];
+	const settingsPanels = declared?.panels.filter((panel) => panel.placement === 'settings') ?? [];
+
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
-	// The contributed list is already capability-gated by the host. Match the
-	// selected plugin exactly, and require its freshly loaded grant as well before
-	// attaching any webview (including during a plugin switch or grant revoke).
-	const settingsPanels =
-		isPlugin && ext.state === 'enabled' && record?.enabled && ext.loadStatus === 'ok'
-			? (contributions?.panels ?? []).filter(
-					(panel) =>
-						panel.pluginId === ext.id &&
-						panel.placement === 'settings' &&
-						declaredSettingsPanels.some(
-							(declaredPanel) =>
-								declaredPanel.id === panel.id && declaredPanel.entry === panel.entry
-						)
-				)
-			: [];
-	const canMountSettingsPanels =
-		settingsPanels.length > 0 &&
-		Boolean(grants?.granted.some((grant) => grant.capability === 'ui:panel'));
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
@@ -216,9 +161,9 @@ export function ExtensionDetails({
 		Boolean(settingsBody) ||
 		canConfigurePlugin ||
 		Boolean(declared?.settings.length) ||
-		declaredSettingsPanels.length > 0 ||
 		isPianola ||
-		isWebLogin;
+		isWebLogin ||
+		settingsPanels.length > 0;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -357,7 +302,7 @@ export function ExtensionDetails({
 					style={{ color: theme.colors.error }}
 				>
 					This plugin&apos;s files no longer match their signature (tampered). It is fully disabled:
-					no code runs and no contributions apply. Update it from a trusted source.
+					no code runs and no contributions apply. Reinstall it from a trusted source.
 				</p>
 			)}
 			{isPlugin && isCodeTier && ext.trust !== 'trusted' && ext.trust !== 'invalid' && (
@@ -393,12 +338,7 @@ export function ExtensionDetails({
 						type="button"
 						data-testid="extension-revoke"
 						disabled={busy}
-						onClick={() => {
-							// Detach the guest synchronously; the host revokes the grant next.
-							grantsLoadGeneration.current++;
-							setGrantsState(null);
-							onRevoke(ext.id);
-						}}
+						onClick={() => onRevoke(ext.id)}
 						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
 						style={{ borderColor: theme.colors.border, color: theme.colors.warning }}
 					>
@@ -407,31 +347,29 @@ export function ExtensionDetails({
 				)}
 
 				{isPlugin && record && (
-					<>
-						{onUpdate && (
-							<button
-								type="button"
-								data-testid="extension-update"
-								disabled={busy}
-								onClick={() => onUpdate(record)}
-								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title="Choose a folder with a newer version of this plugin"
-							>
-								<RefreshCw className="w-4 h-4" /> Update from folder…
-							</button>
-						)}
-						<button
-							type="button"
-							data-testid="extension-uninstall"
-							disabled={busy}
-							onClick={() => onUninstall(record)}
-							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
-							style={{ borderColor: theme.colors.border, color: theme.colors.error }}
-						>
-							<Trash2 className="w-4 h-4" /> Uninstall
-						</button>
-					</>
+					<button
+						type="button"
+						data-testid="extension-uninstall"
+						disabled={busy}
+						onClick={() => onUninstall(record)}
+						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+						style={{ borderColor: theme.colors.border, color: theme.colors.error }}
+					>
+						<Trash2 className="w-4 h-4" /> Uninstall
+					</button>
+				)}
+				{isPlugin && record && onUpdate && (
+					<button
+						type="button"
+						data-testid="extension-update"
+						disabled={busy}
+						onClick={() => onUpdate(record)}
+						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						title="Choose a folder with a newer version of this plugin"
+					>
+						<RefreshCw className="w-4 h-4" /> Update from folder…
+					</button>
 				)}
 			</div>
 
@@ -651,54 +589,6 @@ export function ExtensionDetails({
 			    Pianola's modal entry - whichever applies to this extension. */}
 			{activeSubTab === 'settings' && (
 				<div className="mt-5" data-testid="extension-settings-panel">
-					{isPlugin && declared && ext.state !== 'enabled' && (
-						<div
-							data-testid="extension-plugin-settings-status"
-							className="text-xs rounded-lg border p-3 mb-4"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-						>
-							This plugin is installed but disabled. Select Enable to review permissions for this
-							version. Its settings will be available after approval.
-						</div>
-					)}
-					{isPlugin &&
-						declaredSettingsPanels.length > 0 &&
-						ext.state === 'enabled' &&
-						grants &&
-						!canMountSettingsPanels && (
-							<div
-								data-testid="extension-plugin-settings-status"
-								className="text-xs rounded-lg border p-3 mb-4"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-							>
-								The settings panel is unavailable without current ui:panel permission. Disable and
-								then Enable this plugin to review its permissions.
-							</div>
-						)}
-					{canMountSettingsPanels && (
-						<div className="space-y-4 mb-5" data-testid="extension-plugin-settings-panels">
-							{settingsPanels.map((panel) => (
-								<div
-									key={panel.id}
-									className="overflow-hidden rounded-lg border"
-									style={{ borderColor: theme.colors.border }}
-								>
-									<div
-										className="px-3 py-2 text-sm font-medium"
-										style={{
-											color: theme.colors.textMain,
-											borderBottom: `1px solid ${theme.colors.border}`,
-										}}
-									>
-										{panel.title}
-									</div>
-									<div className="h-[440px]">
-										<PluginPanelFrame key={`${ext.id}:${panel.id}`} theme={theme} panel={panel} />
-									</div>
-								</div>
-							))}
-						</div>
-					)}
 					{/* First-party feature with an inline config body */}
 					{!isPlugin && settingsBody ? (
 						ext.state === 'enabled' ? (
@@ -754,6 +644,35 @@ export function ExtensionDetails({
 								Enable Pianola to open its manager and rules.
 							</div>
 						))}
+
+					{isPlugin &&
+						ext.state !== 'enabled' &&
+						declared &&
+						(settingsPanels.length > 0 || declared.settings.length > 0) && (
+							<div
+								data-testid="extension-plugin-settings-status"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Select Enable to review permissions for this version. Plugin content stays disabled.
+							</div>
+						)}
+					{settingsPanels.map((panel) => (
+						<button
+							key={panel.id}
+							disabled={ext.state !== 'enabled'}
+							type="button"
+							className="w-full px-3 py-2 rounded border text-sm"
+							style={{ borderColor: theme.colors.border }}
+							onClick={() =>
+								useModalStore
+									.getState()
+									.openModal('settings', { tab: 'encore', settingId: pluginSettingsId(panel.id) })
+							}
+						>
+							Open {panel.title}
+						</button>
+					))}
 
 					{/* Plugin: consent-gated live editor for contributed settings */}
 					{isPlugin && canConfigurePlugin && (

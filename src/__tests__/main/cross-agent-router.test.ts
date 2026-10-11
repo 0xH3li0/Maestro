@@ -13,6 +13,7 @@ import type {
 	CrossAgentTranscriptEntry,
 } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
+import { buildMaestroSystemPromptForSession } from '../../main/utils/maestro-system-prompt';
 
 // The router's spawn + output-parse collaborators are mocked so these tests
 // exercise the dispatch lifecycle (timers, settlement, spawn-failure) rather
@@ -26,6 +27,11 @@ vi.mock('../../main/group-chat/output-parser', () => ({
 vi.mock('../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+// The consulted agent's Maestro system prompt is built from the persisted
+// stores; stub the builder so the dispatch tests can assert it is threaded.
+vi.mock('../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: vi.fn(async (id: string) => `SYSTEM PROMPT FOR ${id}`),
 }));
 
 /**
@@ -98,6 +104,41 @@ describe('buildCrossAgentPrompt', () => {
 		expect(prompt.indexOf('**Assistant:** Yo')).toBeLessThan(
 			prompt.indexOf('Question from the user')
 		);
+	});
+
+	it('frames a hand-off as a result to act on, not a question to answer', () => {
+		// A target told "you are being consulted" redoes the work it was handed.
+		const prompt = buildCrossAgentPrompt(
+			request({
+				sourceAgentName: 'Last 30 Days',
+				transcript: [entry('user', 'Hi'), entry('ai', 'Yo')],
+				userPrompt: 'feed whatever we learn over to @Kensho',
+				handoffAnswer: 'MNQ liquidity peaks at the open.',
+			})
+		);
+
+		expect(prompt).toMatch(/^You are receiving a hand-off in Maestro\./);
+		expect(prompt).toContain('the agent "Last 30 Days"');
+		expect(prompt).not.toContain('You are being consulted');
+		expect(prompt).not.toContain('Question from the user');
+		const instruction = prompt.indexOf(
+			"**The user's instruction (relayed via the source agent):**\nfeed whatever we learn over to @Kensho"
+		);
+		const result = prompt.indexOf(
+			'**Result from Last 30 Days:**\nMNQ liquidity peaks at the open.'
+		);
+		// Transcript, then the instruction, then the result.
+		expect(prompt.indexOf('**User:** Hi')).toBeLessThan(instruction);
+		expect(instruction).toBeLessThan(result);
+	});
+
+	it('does not announce a transcript for a hand-off that forwards none', () => {
+		const prompt = buildCrossAgentPrompt(
+			request({ transcript: [], userPrompt: 'let @X know', handoffAnswer: 'done' })
+		);
+
+		expect(prompt).toContain("Below is the user's instruction, then the result.");
+		expect(prompt).toContain('**Result from the source agent:**\ndone');
 	});
 
 	it('omits the transcript block entirely when there is nothing to forward', () => {
@@ -197,12 +238,14 @@ function harness(
 	overrides: {
 		getTargetSession?: () => CrossAgentTargetSession | null;
 		writable?: boolean;
+		request?: Partial<CrossAgentRequest>;
+		agent?: Record<string, unknown>;
 	} = {}
 ) {
 	const processManager = new FakeProcessManager();
 	const chunks: CrossAgentResponseChunk[] = [];
 	const dispatch = () =>
-		startCrossAgentRequest(request(), {
+		startCrossAgentRequest(request(overrides.request), {
 			processManager: processManager as never,
 			agentDetector: {
 				getAgent: async () => ({
@@ -218,6 +261,7 @@ function harness(
 					fullAccessArgs: ['--dangerously-skip-permissions'],
 					readOnlyArgs: ['--permission-mode', 'plan'],
 					readOnlyCliEnforced: true,
+					...overrides.agent,
 				}),
 			} as never,
 			sshStore: null,
@@ -280,6 +324,36 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		// already told the agent it may apply changes directly.
 		expect(config.args).toContain('--dangerously-skip-permissions');
 		expect(config.args).not.toContain('plan');
+	});
+
+	it('hands the consulted agent its own Maestro system prompt (fresh session)', async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt');
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
+		expect(config.isResume).toBe(false);
+	});
+
+	it('marks a consult that resumes the pairing session as a resume', async () => {
+		const { dispatch } = harness({
+			request: { resumeAgentSessionId: 'prov-1' },
+			agent: { resumeArgs: (id: string) => ['--resume', id] },
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.isResume).toBe(true);
+		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
+	});
+
+	it('does not treat a resume id as a resume when the agent cannot resume', async () => {
+		const { dispatch } = harness({ request: { resumeAgentSessionId: 'prov-1' } });
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.isResume).toBe(false);
 	});
 
 	it('spawns the binary the agent is configured with, not the auto-detected one', async () => {

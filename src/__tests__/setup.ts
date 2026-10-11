@@ -301,6 +301,8 @@ const mockMaestro = {
 			delete: vi.fn().mockResolvedValue({}),
 			refreshStates: vi.fn().mockResolvedValue({ issues: [] }),
 		},
+		listAccounts: vi.fn().mockResolvedValue({ accounts: [], lastWorkingKey: null }),
+		rememberAccount: vi.fn().mockResolvedValue(undefined),
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),
@@ -585,6 +587,8 @@ const mockMaestro = {
 	web: {
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
+		takeOrphanedAutoRuns: vi.fn().mockResolvedValue([]),
+		abandonAutoRunReclaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -816,6 +820,9 @@ const mockMaestro = {
 		save: vi.fn().mockResolvedValue({ success: true }),
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		getSystemPromptPaths: vi
+			.fn()
+			.mockResolvedValue({ success: true, computerHistoryDir: '/mock/userData/computer-history' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Multi-window API (window<->session ownership). Defaults model a single
@@ -837,6 +844,19 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+	},
+	// Quick Chat (floating window + its engine). Subscriptions return a no-op
+	// unsubscribe so App's engine hook mounts and cleans up in every render test.
+	quickChat: {
+		command: vi.fn().mockResolvedValue({ ok: true, snapshot: null }),
+		window: vi.fn().mockResolvedValue(null),
+		getSnapshot: vi.fn().mockResolvedValue(null),
+		setLayout: vi.fn(),
+		onSnapshot: vi.fn(() => () => {}),
+		onFocusInput: vi.fn(() => () => {}),
+		onCommand: vi.fn(() => () => {}),
+		pushSnapshot: vi.fn(),
+		onHotkeyFailed: vi.fn(() => () => {}),
 	},
 	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
 	// test that sends a message doesn't accidentally rename tabs; tests that care

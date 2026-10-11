@@ -27,7 +27,6 @@ import {
 } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { EncoreFeatureFlags, Theme } from '../../../../../renderer/types';
 import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry';
-import type { PluginRegistry } from '../../../../../shared/plugins/plugin-registry';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import type {
 	AggregatedContributions,
@@ -319,7 +318,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 	});
 	const granted = { requested: [], granted: [{ capability: 'ui:panel' as const, grantedAt: 1 }] };
 
-	it('shows Settings for a panel-only plugin and mounts only its own isolated panel', async () => {
+	it('shows only the owning plugin settings link and keeps management free of executable content', async () => {
 		const { container } = renderDetails({
 			ext: pluginTile('plugin-a', true),
 			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
@@ -329,12 +328,14 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			'aria-selected',
 			'true'
 		);
-		await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
-		expect(container.querySelectorAll('webview')).toHaveLength(1);
-		expect(container.querySelector('webview')?.getAttribute('partition')).toBe('plugin:plugin-a');
-		expect(container.querySelector('webview')?.getAttribute('src')).toBe(
-			'plugin-panel://panel/plugin-a%2Fconfig'
-		);
+		expect(container.querySelector('webview')).toBeNull();
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Open plugin-a config' }));
+		});
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			tab: 'encore',
+			settingId: 'plugin-settings:plugin-a/config',
+		});
 		expect(screen.queryByText('plugin-b config')).not.toBeInTheDocument();
 		expect(screen.getByTestId('extension-revoke')).toBeInTheDocument();
 		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
@@ -374,7 +375,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		expect(onTogglePlugin).toHaveBeenCalledExactlyOnceWith(plugin.record);
 	});
 
-	it('mounts the declared panel only after consent enables it and active contributions arrive', async () => {
+	it('keeps the settings link disabled until the owning plugin is enabled', async () => {
 		const disabled = pluginTile('plugin-a', true);
 		disabled.state = 'installed';
 		disabled.record = { ...disabled.record!, enabled: false };
@@ -405,7 +406,8 @@ describe('ExtensionDetails - plugin settings panels', () => {
 				getGrants={vi.fn(async () => granted)}
 			/>
 		);
-		await waitFor(() => expect(view.container.querySelectorAll('webview')).toHaveLength(1));
+		expect(view.container.querySelector('webview')).toBeNull();
+		expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeEnabled();
 	});
 
 	it('discovers a disabled declarative setting, but not an unrelated settings-less plugin', () => {
@@ -484,150 +486,8 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			},
 			getGrants: vi.fn(async () => granted),
 		});
-		await waitFor(() =>
-			expect(screen.getByTestId('extension-plugin-settings-panels')).toBeInTheDocument()
-		);
+		expect(screen.getByRole('button', { name: 'Open plugin-a config' })).toBeInTheDocument();
 		expect(screen.getByTestId('extension-configure')).toBeInTheDocument();
-	});
-
-	it('detaches the panel when disabled or revoked', async () => {
-		const props = {
-			ext: pluginTile('plugin-a', true),
-			contributions: contributions([panel('plugin-a')]),
-			getGrants: vi.fn(async () => granted),
-			onRevoke: vi.fn(),
-		};
-		const view = renderDetails(props);
-		await waitFor(() => expect(view.container.querySelector('webview')).not.toBeNull());
-		fireEvent.click(screen.getByTestId('extension-revoke'));
-		expect(view.container.querySelector('webview')).toBeNull();
-		expect(props.onRevoke).toHaveBeenCalledWith('plugin-a');
-
-		const disabled = { ...pluginTile('plugin-a', true), state: 'installed' as const };
-		view.rerender(
-			<ExtensionDetails
-				{...{
-					theme,
-					ext: disabled,
-					contributions: props.contributions,
-					busy: false,
-					onTogglePlugin: vi.fn(),
-					onToggleBuiltin: vi.fn(),
-					onUninstall: vi.fn(),
-					onRevoke: vi.fn(),
-					getGrants: props.getGrants,
-				}}
-			/>
-		);
-		expect(view.container.querySelector('webview')).toBeNull();
-	});
-
-	it('does not mount a panel when ui:panel was never granted', async () => {
-		const { container } = renderDetails({
-			ext: pluginTile('plugin-a', true),
-			contributions: contributions([panel('plugin-a')]),
-			getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
-		});
-		await waitFor(() =>
-			expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument()
-		);
-		expect(container.querySelector('webview')).toBeNull();
-		expect(screen.getByTestId('extension-plugin-settings-status')).toHaveTextContent(
-			'without current ui:panel permission'
-		);
-	});
-
-	it('keeps a disabled plugin panel detached when a stale grants request resolves', async () => {
-		let changed: ((registry?: PluginRegistry) => void) | undefined;
-		const subscription = vi.spyOn(window.maestro.plugins, 'onChanged').mockImplementation((cb) => {
-			changed = cb;
-			return () => {};
-		});
-		let resolveRefresh!: (value: typeof granted) => void;
-		const refresh = new Promise<typeof granted>((resolve) => {
-			resolveRefresh = resolve;
-		});
-		const getGrants = vi.fn().mockResolvedValueOnce(granted).mockReturnValueOnce(refresh);
-		try {
-			const { container } = renderDetails({
-				ext: pluginTile('plugin-a', true),
-				contributions: contributions([panel('plugin-a')]),
-				getGrants,
-			});
-			await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
-			act(() => changed?.({ records: [pluginRecord('plugin-a', true)] }));
-			expect(getGrants).toHaveBeenCalledTimes(2);
-			act(() => {
-				changed?.({ records: [{ ...pluginRecord('plugin-a', true), enabled: false }] });
-			});
-			expect(container.querySelector('webview')).toBeNull();
-			await act(async () => resolveRefresh(granted));
-			expect(container.querySelector('webview')).toBeNull();
-		} finally {
-			subscription.mockRestore();
-		}
-	});
-
-	it('keeps an authorized panel mounted during an unrelated registry refresh', async () => {
-		let changed: ((registry?: PluginRegistry) => void) | undefined;
-		const subscription = vi.spyOn(window.maestro.plugins, 'onChanged').mockImplementation((cb) => {
-			changed = cb;
-			return () => {};
-		});
-		let resolveRefresh!: (value: typeof granted) => void;
-		const refresh = new Promise<typeof granted>((resolve) => {
-			resolveRefresh = resolve;
-		});
-		const getGrants = vi.fn().mockResolvedValueOnce(granted).mockReturnValueOnce(refresh);
-		try {
-			const { container } = renderDetails({
-				ext: pluginTile('plugin-a', true),
-				contributions: contributions([panel('plugin-a')]),
-				getGrants,
-			});
-			await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
-			const mountedPanel = container.querySelector('webview');
-			act(() => changed?.({ records: [pluginRecord('plugin-a', true), pluginRecord('plugin-b')] }));
-			expect(getGrants).toHaveBeenCalledTimes(2);
-			expect(container.querySelector('webview')).toBe(mountedPanel);
-			await act(async () => resolveRefresh(granted));
-			expect(container.querySelector('webview')).toBe(mountedPanel);
-		} finally {
-			subscription.mockRestore();
-		}
-	});
-
-	it('never shows the previous plugin panel while switching selections', async () => {
-		let resolveB: (value: typeof granted) => void = () => {};
-		const pendingB = new Promise<typeof granted>((resolve) => {
-			resolveB = resolve;
-		});
-		const getGrants = vi.fn((id: string) =>
-			id === 'plugin-a' ? Promise.resolve(granted) : pendingB
-		);
-		const props = {
-			theme,
-			ext: pluginTile('plugin-a', true),
-			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
-			busy: false,
-			onTogglePlugin: vi.fn(),
-			onToggleBuiltin: vi.fn(),
-			onUninstall: vi.fn(),
-			onRevoke: vi.fn(),
-			getGrants,
-		};
-		const view = render(<ExtensionDetails {...props} />);
-		await waitFor(() => expect(view.container.querySelector('webview')).not.toBeNull());
-		view.rerender(<ExtensionDetails {...props} ext={pluginTile('plugin-b', true)} />);
-		expect(view.container.querySelector('webview')).toBeNull();
-		await act(async () => {
-			resolveB(granted);
-		});
-		await waitFor(() =>
-			expect(view.container.querySelector('webview')?.getAttribute('partition')).toBe(
-				'plugin:plugin-b'
-			)
-		);
 	});
 });
 

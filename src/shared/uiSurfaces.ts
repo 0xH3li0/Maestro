@@ -27,7 +27,9 @@ export type UiSurfaceEncoreFlag =
 	| 'usageStats'
 	| 'symphony'
 	| 'maestroCue'
-	| 'concerto';
+	| 'concerto'
+	| 'computerHistory'
+	| 'quickChat';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -134,6 +136,18 @@ export const UI_SURFACES: UiSurface[] = [
 		encore: 'directorNotes',
 	},
 	{
+		id: 'computer-history',
+		label: 'Computer History',
+		aliases: ['history-viewer', 'screen-history'],
+		modal: 'computerHistory',
+		description:
+			'Browse and search what Computer History recorded: app timeline, typed text, selections, digests, and which apps are recorded.',
+		shortcutId: 'computerHistory',
+		commandPalette: 'Computer History',
+		click: 'the hamburger menu > Computer History',
+		encore: 'computerHistory',
+	},
+	{
 		id: 'symphony',
 		label: 'Maestro Symphony',
 		modal: 'symphony',
@@ -238,6 +252,20 @@ export const UI_SURFACES: UiSurface[] = [
 		modal: 'quickAction',
 		description: 'The command palette itself.',
 		shortcutId: 'quickAction',
+	},
+	{
+		// Not a modal: Quick Chat is its own floating window, opened through the
+		// main process (see openUiSurface). Its hotkey is system-wide and lives in
+		// the Quick Chat settings rather than DEFAULT_SHORTCUTS, so no shortcutId.
+		id: 'quick-chat',
+		label: 'Quick Chat',
+		aliases: ['quickchat'],
+		modal: 'quickChat',
+		description:
+			'The floating chat window with one agent, also summoned from any app by its system-wide hotkey.',
+		commandPalette: 'Open Quick Chat',
+		click: 'Quick Chat in the Left Bar hamburger menu',
+		encore: 'quickChat',
 	},
 	{
 		id: 'feedback',

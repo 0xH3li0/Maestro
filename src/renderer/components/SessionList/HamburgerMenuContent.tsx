@@ -3,6 +3,7 @@ import {
 	Plus,
 	Settings,
 	Keyboard,
+	ScanEye,
 	ScrollText,
 	Cpu,
 	ExternalLink,
@@ -17,6 +18,7 @@ import {
 	Zap,
 	Music2,
 	LogOut,
+	MessageCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -25,8 +27,12 @@ import { getModalActions } from '../../stores/modalStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+
+/** Stable fallback so the selector never hands React a fresh array. */
+const NO_QUICK_CHAT_HOTKEY: string[] = [];
 
 interface HamburgerMenuContentProps {
 	theme: Theme;
@@ -45,6 +51,8 @@ export function HamburgerMenuContent({
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	const quickChatHotkey =
+		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	// A phone has no keyboard and no room for a guided tour's anchored
 	// callouts, so the two entries that exist only for those are not offered.
 	// (The chord badges beside every other row are hidden by CSS via
@@ -64,6 +72,7 @@ export function HamburgerMenuContent({
 		setDirectorNotesOpen,
 		setCueModalOpen,
 		setPianolaModalOpen,
+		setComputerHistoryOpen,
 		setConcertoStageOpen,
 		setUpdateCheckModalOpen,
 		setAboutModalOpen,
@@ -320,6 +329,34 @@ export function HamburgerMenuContent({
 					)}
 				</button>
 			)}
+			{canOpenComputerHistory(encoreFeatures) && (
+				<button
+					onClick={() => {
+						setComputerHistoryOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<ScanEye className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Computer History
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							What you saw and typed across apps
+						</div>
+					</div>
+					{shortcuts.computerHistory && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							data-shortcut-hint=""
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(shortcuts.computerHistory.keys)}
+						</span>
+					)}
+				</button>
+			)}
 			{encoreFeatures.symphony && (
 				<button
 					onClick={() => {
@@ -398,6 +435,35 @@ export function HamburgerMenuContent({
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{formatShortcutKeys(shortcuts.toggleConcerto.keys)}
+						</span>
+					)}
+				</button>
+			)}
+			{/* Quick Chat is its own window, which only the Electron app has. */}
+			{encoreFeatures.quickChat !== false && !isWebDesktop() && (
+				<button
+					onClick={() => {
+						void window.maestro.quickChat.window('show');
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<MessageCircle className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Quick Chat
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Floating chat with one agent
+						</div>
+					</div>
+					{quickChatHotkey.length > 0 && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							data-shortcut-hint=""
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(quickChatHotkey)}
 						</span>
 					)}
 				</button>

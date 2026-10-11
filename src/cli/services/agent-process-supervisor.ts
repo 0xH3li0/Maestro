@@ -1,7 +1,7 @@
 /** Bound headless process startup and teardown without relying on child close. */
 import type { ChildProcess } from 'child_process';
 import { createIdleWatchdog, type IdleWatchdog } from '../../main/utils/idle-watchdog';
-import { killProcessTreeNow } from '../../main/utils/processTree';
+import { stopProcess, type StopHandle } from '../../shared/maestro-lib/control/termination';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 
 export function superviseAgentProcess(
@@ -16,6 +16,7 @@ export function superviseAgentProcess(
 ): { modelActivity: () => void; dispose: () => void } {
 	let disposed = false;
 	let stopping = false;
+	let termination: StopHandle | undefined;
 	let startup: IdleWatchdog | undefined;
 	let lifetime: IdleWatchdog | undefined;
 	let closeDeadline: ReturnType<typeof setTimeout> | undefined;
@@ -37,8 +38,10 @@ export function superviseAgentProcess(
 		}, HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 		// Snapshot and terminate descendants before their launcher can exit and
 		// reparent them. Reuse the same tree kill as the host's Stop action.
-		if (child.pid) killProcessTreeNow(child.pid, { label: 'headless agent' });
-		else child.kill('SIGKILL');
+		termination = stopProcess(
+			{ child },
+			{ from: 'terminate', graceMs: 0, immediate: true, label: 'headless agent' }
+		);
 	};
 	const abort = (): void => stop('Agent run timed out or was cancelled');
 	if (options.startupMs) {
@@ -67,6 +70,7 @@ export function superviseAgentProcess(
 			lifetime?.disarm();
 			if (closeDeadline) clearTimeout(closeDeadline);
 			options.signal?.removeEventListener('abort', abort);
+			termination?.dispose();
 		},
 	};
 }

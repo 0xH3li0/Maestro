@@ -12,6 +12,7 @@
  * tightened per contribution point as each lands in Phase 1+.
  */
 
+import { parseServiceDeclarations, type ProvidedService, type RequiredService } from './services';
 import { isHostApiCompatible } from './host-api';
 import { parsePermissions, type PermissionRequest } from './permissions';
 
@@ -111,6 +112,8 @@ export interface PluginManifest {
 	 * and the broker enforces them at runtime.
 	 */
 	permissions?: PermissionRequest[];
+	provides?: ProvidedService[];
+	requires?: RequiredService[];
 }
 
 /** Outcome of validating one manifest. */
@@ -246,18 +249,11 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 			errors.push('releaseDate, when present, must be a string');
 		} else if (!RELEASE_DATE_PATTERN.test(releaseDate.trim())) {
 			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
-		} else {
-			const date = releaseDate.trim();
-			const [year, month, day] = date.split('-').map(Number);
-			const parsed = new Date(`${date}T00:00:00Z`);
-			if (
-				Number.isNaN(parsed.getTime()) ||
-				parsed.getUTCFullYear() !== year ||
-				parsed.getUTCMonth() !== month - 1 ||
-				parsed.getUTCDate() !== day
-			) {
-				errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
-			}
+		} else if (
+			Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`)) ||
+			new Date(`${releaseDate.trim()}T00:00:00Z`).toISOString().slice(0, 10) !== releaseDate.trim()
+		) {
+			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
 		}
 	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
@@ -294,6 +290,12 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		errors.push('tier 0 plugins are data-only and must not request permissions');
 	}
 
+	const services = parseServiceDeclarations(
+		(input as Record<string, unknown>).provides,
+		(input as Record<string, unknown>).requires,
+		normalizedTier
+	);
+	errors.push(...services.errors);
 	if (errors.length > 0) {
 		return { manifest: null, errors };
 	}
@@ -313,6 +315,8 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
+		...(services.provides.length ? { provides: services.provides } : {}),
+		...(services.requires.length ? { requires: services.requires } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
 	};
 	return { manifest, errors: [] };

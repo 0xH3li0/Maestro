@@ -22,7 +22,6 @@ import type { InstallResult } from '../plugins/plugin-manager';
 import type { AggregatedContributions } from '../../shared/plugins/contributions';
 import type { FirstPartyBridgeState } from '../plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../../shared/plugins/first-party';
-import type { PluginRegistry } from '../../shared/plugins/plugin-registry';
 
 /** Creates the plugins API object for contextBridge exposure. */
 export function createPluginsApi() {
@@ -126,13 +125,13 @@ export function createPluginsApi() {
 
 		/**
 		 * Subscribe to plugin-registry changes (install/uninstall/enable/disable/
-		 * refresh). The current registry accompanies the signal so a selected
-		 * plugin can detach revoked panels before an asynchronous grants refresh.
-		 * Returns an unsubscribe function.
+		 * refresh). Optional live panel IDs let consumers remove revoked guests
+		 * immediately while re-reading `list()` / `contributions()`. Returns an
+		 * unsubscribe function. Callbacks that ignore the payload remain supported.
 		 */
-		onChanged: (callback: (registry?: PluginRegistry) => void): (() => void) => {
-			const handler = (_event: Electron.IpcRendererEvent, registry?: PluginRegistry): void =>
-				callback(registry);
+		onChanged: (callback: (activePanelIds?: string[]) => void): (() => void) => {
+			const handler = (_event: unknown, _registry: unknown, activePanelIds?: string[]): void =>
+				callback(activePanelIds);
 			ipcRenderer.on('plugins:changed', handler);
 			return () => {
 				ipcRenderer.removeListener('plugins:changed', handler);

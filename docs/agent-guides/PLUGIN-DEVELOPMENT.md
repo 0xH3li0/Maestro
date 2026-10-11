@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.21.0`)                                                                                                                                                                        |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.25.0`)                                                                                                                                                                        |
 | `description` | string                   | no        |                                                                                                                                                                                                                    |
 | `author`      | string                   | no        |                                                                                                                                                                                                                    |
 | `license`     | string                   | no        |                                                                                                                                                                                                                    |
@@ -289,7 +289,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). On host API 1.18.0+, `settings` renders inside the owning plugin's Settings sub-tab in Settings → Encore → Plugins, next to Permissions. The host mounts only panels whose `pluginId` exactly matches the selected enabled plugin and whose verified grants include `ui:panel`. Consent, permissions, grant/revoke, and uninstall controls remain host-owned outside the isolated panel frame. Earlier hosts mount the same placement in the global Display tab; set `maestro.minHostApi` to `1.18.0` when your plugin relies on the detail-page location. No new manifest field or capability is needed.
+`{ id, title, entry, placement, size?, hostSettings? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders in its own searchable Settings card, never inside plugin management, consent, uninstall, or grant/revoke UI. From Host API 1.23.0, `hostSettings: ["media"]` adds a host-owned navigation link without granting access to host settings. See [the settings-card contract](../plugin-settings-cards.md).
 
 `size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`). As an explicit exception to the general contribution policy above (where a bad item is dropped), an unknown `size` reports a manifest error but keeps the panel, falling back to `default` rather than dropping the contribution. `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 
@@ -491,9 +491,9 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                                      | `ui:hostView`                |
 | `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                                              | `ui:hostView`                |
 | `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)                     | `ui:panel`                   |
-| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)                          | `ui:panel`                   |
-| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)                         | `ui:panel`                   |
-| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)                        | `ui:panel`                   |
+| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own panels, see below)                            | `ui:panel`                   |
+| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own panels, see below)                           | `ui:panel`                   |
+| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own panels, see below)                          | `ui:panel`                   |
 | `maestro.events.on(topic, handler(payload, meta))`                                                    | - (delivery needs subscribe) |
 | `maestro.events.subscribe(topics[])`                                                                  | `events:subscribe`           |
 | `maestro.events.unsubscribe(topics?)`                                                                 | `events:subscribe`           |
@@ -565,7 +565,7 @@ async function activate(maestro) {
 
 A panel renders in an isolated Electron `<webview>` guest with a per-plugin in-memory session (partition `plugin:<pluginId>`): no Node, contextIsolation, OS sandbox, opaque origin, and a restrictive CSP served by the host (`connect-src 'none'`, etc.). Navigation and network egress are denied in the main process - the panel lives on its initial document.
 
-On host API 1.19.0+, the host automatically sets these CSS custom properties on the panel document's root from the active theme: `--maestro-bg-main`, `--maestro-bg-sidebar`, `--maestro-bg-activity`, `--maestro-border`, `--maestro-text-main`, `--maestro-text-dim`, `--maestro-accent`, `--maestro-accent-dim`, `--maestro-accent-foreground`, `--maestro-success`, `--maestro-warning`, and `--maestro-error`. It also sets `color-scheme` to `light` or `dark` (`vibe` themes use `dark`) and updates open panels when the theme changes. Use CSS fallbacks for hosts before 1.19.0, for example `background: var(--maestro-bg-main, #fafafa)`. These visual tokens require no additional capability. A plugin that works with fallbacks can keep `minHostApi: '1.18.0'`.
+On host API 1.25.0+, the host automatically sets these CSS custom properties on the panel document's root from the active theme: `--maestro-bg-main`, `--maestro-bg-sidebar`, `--maestro-bg-activity`, `--maestro-border`, `--maestro-text-main`, `--maestro-text-dim`, `--maestro-accent`, `--maestro-accent-dim`, `--maestro-accent-foreground`, `--maestro-success`, `--maestro-warning`, and `--maestro-error`. It also sets `color-scheme` to `light` or `dark` (`vibe` themes use `dark`) and updates open panels when the theme changes. Use CSS fallbacks for hosts before 1.25.0, for example `background: var(--maestro-bg-main, #fafafa)`. These visual tokens require no additional capability. A plugin that works with fallbacks can keep `minHostApi: '1.23.0'`.
 
 **A panel CANNOT make network requests directly.** No `fetch`/XHR/WebSocket. To cause any effect, post a command to the parent; the plugin's registered command handler runs in the sandbox and uses the brokered SDK from there.
 
@@ -629,7 +629,7 @@ await maestro.ui.panelPost('my-panel', { nodes });
 
 ### Summoning your own panel
 
-A `modal` panel normally opens from Settings -> Encore -> Plugins. To open it yourself - e.g. bind a `keybindings` chord to a command that pops a full-window overlay - call `maestro.ui.openPanel(panelId)`, `maestro.ui.closePanel(panelId)`, or `maestro.ui.togglePanel(panelId)`. All three take the LOCAL panel id, require `ui:panel` (no extra consent), and act ONLY on your own `modal` panels: a docked (`left`/`right`/`main`/`settings`) panel is rejected, since it is always mounted and has its own hide control, and `closePanel` is a no-op unless that exact panel is the one currently open, so you can never dismiss another plugin's surface. Escape, the backdrop, and the close button dismiss the panel too. Requires `minHostApi: '1.16.0'`.
+A `modal` panel normally opens from Settings -> Encore -> Plugins. To open it yourself - e.g. bind a `keybindings` chord to a command that pops a full-window overlay - call `maestro.ui.openPanel(panelId)`, `maestro.ui.closePanel(panelId)`, or `maestro.ui.togglePanel(panelId)`. All three take the LOCAL panel id and require `ui:panel` (no extra consent). `ui.openPanel` also opens your own `settings` card from Host API 1.23.0. Close and toggle stay modal-only. Other docked (`left`/`right`/`main`) panels are rejected, since they are always mounted and have their own hide control. `closePanel` is a no-op unless that exact panel is the one currently open, so you can never dismiss another plugin's surface. Escape, the backdrop, and the close button dismiss the panel too. Requires `minHostApi: '1.16.0'`.
 
 ```js
 maestro.commands.register('overlay', () => maestro.ui.togglePanel('flow'));
@@ -781,3 +781,28 @@ await maestro.ui.grouping.publish({
 
 Published group ids are local to the declared grouping, may nest only one level,
 and use session metadata only. The host silently drops unknown session ids.
+
+## Bounded local media primitives
+
+Use `maestro.media` (API 1.17.0), `media:tools` scope `discord-voice`, for host-confined
+Discord voice downloads and fixed ffprobe/ffmpeg/whisper-cli profiles. Keep STT
+orchestration and result interpretation in the plugin. General network/file/process
+grants are unnecessary. Read [the media contract](PLUGIN-MEDIA-TOOLS.md) before
+adding an adapter; it defines opaque jobs, ceilings, cancellation, errors and prerequisites.
+
+## Independent plugin settings
+
+Host API 1.23.0 promotes existing `placement: "settings"` panels into independent
+Settings destinations. Use stable local IDs; request `ui:panel` and obtain trust
+and consent. See [plugin-settings-cards.md](../plugin-settings-cards.md) for search,
+deep links, own-panel navigation and the closed `hostSettings: ["media"]` link.
+
+## Host-mediated plugin services
+
+Host API 1.25.0 adds code-tier `provides`/`requires`, `services:provide` and
+`services:call` with exact scopes, and `maestro.services`. Read the concrete
+[service SDK/manifest contract](../plugin-services.md) before implementing a
+provider/consumer. The first example is
+[Local transcription](../../examples/plugins/transcription-service/README.md),
+using only opaque, call-bound delegated media handles. Reuse the host broker;
+do not add a peer IPC bridge, raw media transfer or generic settings writer.

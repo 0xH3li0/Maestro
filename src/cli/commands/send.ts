@@ -2,16 +2,19 @@
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
-import { captureCliRun } from '../services/agent-run-capture';
+import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
-import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
-import { getAgentDefinition } from '../../main/agents/definitions';
+import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import {
 	MaestroClient,
 	UnsupportedCommandError,
 	withMaestroClient,
 } from '../services/maestro-client';
+import { installInterruptHandler } from '../utils/interrupt';
+import { interruptedResult } from '../services/turn-result';
 import type { ToolType } from '../../shared/types';
 import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 import type { PluginToolReceipt } from '../../main/plugins/plugin-tool-run-identity';
@@ -39,6 +42,8 @@ interface SendResponse {
 	success: boolean;
 	error?: string;
 	toolReceipts?: PluginToolReceipt[];
+	/** How the turn ended: `completed`, `completed-with-warning`, `interrupted` or `crashed`. */
+	outcome?: TurnOutcome;
 	usage: {
 		inputTokens: number;
 		outputTokens: number;
@@ -97,6 +102,7 @@ function buildResponse(
 		success: result.success,
 		...(result.success ? {} : { error: result.error }),
 		...(result.toolReceipts !== undefined ? { toolReceipts: result.toolReceipts } : {}),
+		...(result.outcome ? { outcome: result.outcome } : {}),
 		usage,
 	};
 }
@@ -183,6 +189,9 @@ export async function send(
 
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
+	// Ctrl+C stops the agent and reports `outcome: 'interrupted'`
+	// instead of orphaning it; a second Ctrl+C exits immediately.
+	const interrupt = installInterruptHandler({ onFirst: () => desktop?.disconnect() });
 	let result: SendAgentResult;
 	try {
 		result = await captureCliRun(
@@ -215,6 +224,7 @@ export async function send(
 							HEADLESS_RUN_COMPLETION_TIMEOUT_MS
 						);
 					} catch (error) {
+						if (interrupt.signal.aborted) return interruptedResult();
 						// An older desktop echoes an unsupported verb before starting any
 						// provider run. Ordinary sends may fall back; required plugin
 						// runs must fail without starting a standalone provider.
@@ -267,6 +277,7 @@ export async function send(
 				const appendSystemPrompt =
 					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
 				return spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
 					customModel: agent.customModel,
 					customEffort: agent.customEffort,
@@ -281,17 +292,22 @@ export async function send(
 					maestroPPath: agent.maestroPPath,
 				});
 			},
-			(r) => (r.success ? 0 : 1)
+			settlementFromAgentResult
 		);
 	} finally {
 		desktop?.disconnect();
+		interrupt.dispose();
 	}
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));
 
 	if (!result.success) {
-		process.exit(1);
+		// The JSON on stdout is the contract, but a caller that only reads stderr
+		// would otherwise see a silent non-zero exit.
+		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
+		// 130 is the shell convention for an interrupt; 1 stays for real failures.
+		process.exit(result.outcome === 'interrupted' ? 130 : 1);
 	}
 
 	// If --tab flag is set, focus the session tab in Maestro desktop

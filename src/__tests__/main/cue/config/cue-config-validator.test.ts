@@ -242,7 +242,163 @@ describe('validateSubscription - action: notify', () => {
 	it('rejects unknown action values', () => {
 		const found = errs({ ...base, action: 'explode' });
 		expect(
-			found.some((e) => /"action" must be "prompt", "command", or "notify" when provided/.test(e))
+			found.some((e) =>
+				/"action" must be "prompt", "command", "notify", or "autorun" when provided/.test(e)
+			)
+		).toBe(true);
+	});
+});
+
+describe('validateSubscription - action: autorun', () => {
+	const base = {
+		name: 'autorun-1',
+		event: 'time.once',
+		action: 'autorun' as const,
+		agent_id: 'agent-xyz',
+		fire_at: '2026-05-22T14:30:00-05:00',
+		auto_run: { documents: ['/proj/Auto Run Docs/ship.md'] },
+	};
+
+	it('accepts action: autorun without a prompt field', () => {
+		// An autorun subscription's work is its document list; `prompt` is
+		// deliberately absent.
+		expect(errs(base)).toEqual([]);
+	});
+
+	it('requires auto_run', () => {
+		const { auto_run: _omitted, ...withoutAutoRun } = base;
+		expect(
+			errs(withoutAutoRun).some((e) =>
+				/"auto_run" is required and must be an object when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects an empty document list', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: [] } }).some((e) =>
+				/"auto_run\.documents" is required and must be a non-empty array/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects a reset_on_completion array that does not align with documents', () => {
+		// Misaligned flags would reset the wrong document.
+		expect(
+			errs({
+				...base,
+				auto_run: { documents: ['/a.md', '/b.md'], reset_on_completion: [true] },
+			}).some((e) => /must have one entry per "auto_run\.documents" entry/.test(e))
+		).toBe(true);
+	});
+
+	it('requires agent_id', () => {
+		const { agent_id: _omitted, ...withoutAgent } = base;
+		expect(
+			errs(withoutAgent).some((e) =>
+				/"agent_id" is required and must be a non-empty string when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects fan_out - one Auto Run belongs to one agent', () => {
+		expect(
+			errs({ ...base, fan_out: ['other-agent'] }).some((e) =>
+				/"fan_out" is not supported when action is "autorun"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects a non-positive max_loops', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], max_loops: 0 } }).some((e) =>
+				/"auto_run\.max_loops" must be a positive integer when provided/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('accepts both task selection modes and the model-hint opt-out', () => {
+		for (const mode of ['task', 'document']) {
+			expect(
+				errs({
+					...base,
+					auto_run: { documents: ['/a.md'], task_selection_mode: mode, ignore_model_hints: true },
+				})
+			).toEqual([]);
+		}
+	});
+
+	// A typo must not fall back to the default: a per-document schedule would
+	// then run one task at a time with nobody watching.
+	it('rejects an unknown task_selection_mode', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], task_selection_mode: 'file' } }).some((e) =>
+				/"auto_run\.task_selection_mode" must be "task" or "document"/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('accepts the auto-resume settings and a worktree in every mode', () => {
+		const worktrees = [
+			{ mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+			{ mode: 'existing-open', agent_id: 'agent-9' },
+			{ mode: 'existing-closed', path: '/wt/nightly' },
+		];
+		for (const worktree of worktrees) {
+			expect(
+				errs({
+					...base,
+					auto_run: {
+						documents: ['/a.md'],
+						auto_resume_on_error: false,
+						auto_resume_after_min: 10,
+						max_auto_resumes: 3,
+						worktree,
+					},
+				})
+			).toEqual([]);
+		}
+	});
+
+	// A worktree block that cannot be resolved must be an error, never "no
+	// worktree": the run would otherwise land in the agent's own checkout.
+	it('rejects a worktree block that cannot be resolved', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], worktree: { mode: 'create-new' } } }).some(
+				(e) => /"auto_run\.worktree" "branch" is required/.test(e)
+			)
+		).toBe(true);
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], worktree: 'nightly' } }).some((e) =>
+				/"auto_run\.worktree" must be an object/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects wrongly typed auto-resume settings', () => {
+		const bad = errs({
+			...base,
+			auto_run: {
+				documents: ['/a.md'],
+				auto_resume_on_error: 'no',
+				auto_resume_after_min: '10',
+				max_auto_resumes: null,
+			},
+		});
+		expect(bad.some((e) => /"auto_run\.auto_resume_on_error" must be a boolean/.test(e))).toBe(
+			true
+		);
+		expect(bad.some((e) => /"auto_run\.auto_resume_after_min" must be a number/.test(e))).toBe(
+			true
+		);
+		expect(bad.some((e) => /"auto_run\.max_auto_resumes" must be a number/.test(e))).toBe(true);
+	});
+
+	it('rejects a non-boolean ignore_model_hints', () => {
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], ignore_model_hints: 'yes' } }).some((e) =>
+				/"auto_run\.ignore_model_hints" must be a boolean when provided/.test(e)
+			)
 		).toBe(true);
 	});
 });

@@ -4,8 +4,10 @@ import type { EncoreFeatureFlags } from '../../../../types';
 import { ExtensionsView } from '../../Extensions/ExtensionsView';
 import { CoworkingSetup } from '../../CoworkingSetup';
 import {
+	ComputerHistorySection,
 	CueSettingsSection,
 	DirectorNotesSection,
+	QuickChatSection,
 	SymphonyRegistrySection,
 	UsageStatsSection,
 } from './components';
@@ -88,6 +90,14 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			<div data-setting-id="encore-coworking">
 				<CoworkingSetup theme={theme} />
 			</div>
+		),
+		computerHistory: <ComputerHistorySection theme={theme} />,
+		quickChat: (
+			<QuickChatSection
+				theme={theme}
+				quickChatSettings={settings.quickChatSettings}
+				setQuickChatSettings={settings.setQuickChatSettings}
+			/>
 		),
 	};
 

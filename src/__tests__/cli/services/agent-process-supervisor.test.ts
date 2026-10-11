@@ -2,7 +2,7 @@
 import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import * as processTree from '../../../main/utils/processTree';
+import * as termination from '../../../shared/maestro-lib/control/termination';
 import { superviseAgentProcess } from '../../../cli/services/agent-process-supervisor';
 import { HEADLESS_PROCESS_CLOSE_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 
@@ -18,6 +18,8 @@ describe('headless process supervision', () => {
 			vi.useFakeTimers();
 			const child = Object.assign(new EventEmitter(), {
 				kill: vi.fn(),
+				exitCode: null,
+				signalCode: null,
 				stdout: { destroy: vi.fn() },
 				stderr: { destroy: vi.fn() },
 			}) as unknown as ChildProcess;
@@ -44,10 +46,14 @@ describe('headless process supervision', () => {
 		}
 	);
 
-	it('uses the existing host tree kill for cancellation before waiting for close', () => {
+	it('uses the shared ownership-aware stop ladder before waiting for close', () => {
 		vi.useFakeTimers();
-		const killTree = vi.spyOn(processTree, 'killProcessTreeNow').mockImplementation(() => {});
-		const child = { pid: 42, kill: vi.fn() } as unknown as ChildProcess;
+		const stop = vi.spyOn(termination, 'stopProcess');
+		const child = Object.assign(new EventEmitter(), {
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+		}) as unknown as ChildProcess;
 		const controller = new AbortController();
 		const onStop = vi.fn();
 		const supervision = superviseAgentProcess(child, {
@@ -56,16 +62,23 @@ describe('headless process supervision', () => {
 			onForcedStop: vi.fn(),
 		});
 		controller.abort();
-		expect(killTree).toHaveBeenCalledWith(42, { label: 'headless agent' });
+		expect(stop).toHaveBeenCalledWith(
+			{ child },
+			{ from: 'terminate', graceMs: 0, immediate: true, label: 'headless agent' }
+		);
 		expect(onStop).toHaveBeenCalledWith('Agent run timed out or was cancelled');
-		expect(child.kill).not.toHaveBeenCalled();
+		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
 		supervision.dispose();
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('disposes teardown idempotently when the launcher closes', async () => {
 		vi.useFakeTimers();
-		const child = { kill: vi.fn() } as unknown as ChildProcess;
+		const child = Object.assign(new EventEmitter(), {
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+		}) as unknown as ChildProcess;
 		const supervision = superviseAgentProcess(child, {
 			startupMs: 100,
 			onStop: vi.fn(),
@@ -76,7 +89,7 @@ describe('headless process supervision', () => {
 		// The caller disposes on close, including a repeated cleanup.
 		supervision.dispose();
 		supervision.dispose();
-		expect(child.kill).toHaveBeenCalledOnce();
+		expect(child.kill).toHaveBeenCalledTimes(2);
 		expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
 		expect(vi.getTimerCount()).toBe(0);
 	});
@@ -98,9 +111,9 @@ describe('headless process supervision', () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
-	it.skipIf(process.platform === 'win32')(
-		'kills a real process group that ignores SIGTERM',
-		async () => {
+	it.skipIf(process.platform === 'win32').each(['startup', 'lifetime', 'abort'] as const)(
+		'ends a real SIGTERM-ignoring fixture on %s without credentials or a user profile',
+		async (cause) => {
 			const child = spawn(
 				process.execPath,
 				[
@@ -116,12 +129,16 @@ describe('headless process supervision', () => {
 					child.once('close', (code, signal) => resolve({ code, signal }))
 				);
 				vi.useFakeTimers();
+				const controller = new AbortController();
 				supervision = superviseAgentProcess(child, {
-					startupMs: 100,
+					startupMs: cause === 'startup' ? 100 : undefined,
+					timeoutMs: cause === 'lifetime' ? 100 : undefined,
+					signal: controller.signal,
 					onStop: vi.fn(),
 					onForcedStop: () => supervision?.dispose(),
 				});
-				await vi.advanceTimersByTimeAsync(100);
+				if (cause === 'abort') controller.abort();
+				else await vi.advanceTimersByTimeAsync(100);
 				expect(child.exitCode).toBeNull();
 				await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
 				vi.useRealTimers();

@@ -202,6 +202,30 @@ describe('createCueRunManager', () => {
 			);
 		});
 
+		it('carries the executor usage onto the completed run', async () => {
+			const usage = {
+				inputTokens: 120,
+				outputTokens: 34,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+			};
+			const deps = createDeps({ onCueRun: vi.fn(async () => makeResult({ usage })) });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(deps.onRunCompleted).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({ usage }),
+				'test-sub',
+				undefined,
+				expect.any(String)
+			);
+		});
+
 		it('calls onRunCompleted with failed status on failure', async () => {
 			const deps = createDeps({
 				onCueRun: vi.fn(async () => makeResult({ status: 'failed', exitCode: 1 })),
@@ -504,6 +528,7 @@ describe('createCueRunManager', () => {
 				exitCode: 0,
 				outputExcerpt: 'output',
 				fullOutput: 'output',
+				streamUsageJson: null,
 			});
 		});
 
@@ -640,7 +665,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0, outputExcerpt: 'hi', fullOutput: 'hi' }
+				{
+					errorMessage: null,
+					exitCode: 0,
+					outputExcerpt: 'hi',
+					fullOutput: 'hi',
+					streamUsageJson: null,
+				}
 			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
@@ -678,7 +709,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'failed',
 				undefined,
-				{ errorMessage: 'boom', exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
+				{
+					errorMessage: 'boom',
+					exitCode: 0,
+					outputExcerpt: 'output',
+					fullOutput: 'output',
+					streamUsageJson: null,
+				}
 			);
 		});
 
@@ -797,7 +834,13 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
+				{
+					errorMessage: null,
+					exitCode: 0,
+					outputExcerpt: 'output',
+					fullOutput: 'output',
+					streamUsageJson: null,
+				}
 			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.
@@ -1422,6 +1465,7 @@ describe('createCueRunManager', () => {
 				remove: vi.fn(),
 				clearSession: vi.fn(),
 				clearAll: vi.fn(),
+				persistedIds: vi.fn(() => new Set<string>()),
 				restoreAll: vi.fn(() => new Map()),
 			};
 		}
@@ -1445,6 +1489,84 @@ describe('createCueRunManager', () => {
 				'session-1',
 				expect.any(String),
 				expect.objectContaining({ subscriptionName: 'sub-2' })
+			);
+		});
+
+		// A scheduled Auto Run that fires behind a busy slot waits in the queue.
+		// Its documents ride the run rather than being re-read from the
+		// subscription, so they have to be written with the row.
+		it('persists the Auto Run payload of a queued autorun run', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			const autoRun = { documents: ['/repo/.maestro/playbooks/ship-it.md'] };
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute(
+				'session-1',
+				'',
+				createEvent(),
+				'scheduled',
+				undefined,
+				undefined,
+				undefined,
+				'autorun',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				autoRun
+			); // queued
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ action: 'autorun', autoRun })
+			);
+		});
+
+		it('persists the notify config of a queued notify run', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			const notify = { message: 'Deploy finished', sticky: true };
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute(
+				'session-1',
+				'Deploy finished',
+				createEvent(),
+				'reminder',
+				undefined,
+				undefined,
+				undefined,
+				'notify',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				notify
+			); // queued
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ action: 'notify', notify })
 			);
 		});
 

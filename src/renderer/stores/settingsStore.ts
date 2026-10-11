@@ -39,6 +39,11 @@ import {
 } from '../../shared/typography';
 import { parseTypographySnapshot } from '../../shared/typographySnapshot';
 import {
+	QUICK_CHAT_SETTINGS_KEY,
+	resolveQuickChatSettings,
+	type QuickChatSettings,
+} from '../../shared/quickChat';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -350,6 +355,7 @@ export interface SettingsStoreState
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
 	 * True when the main process found an installation id already on disk (i.e.
@@ -412,6 +418,7 @@ export interface SettingsStoreState
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
+	showHiddenGroups: boolean;
 	groupChatsExpanded: boolean;
 	groupChatSortAlphabetical: boolean;
 	starredSessionsCollapsed: boolean;
@@ -452,10 +459,15 @@ export interface SettingsStoreState
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
+	quickChatSettings: QuickChatSettings;
 	cueHistoryRetentionDays: number;
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
+	/** Show the agent's current checklist docked above the composer. */
+	showAgentTaskListBar: boolean;
+	/** Open that docked checklist in full whenever the agent writes a new one. */
+	autoExpandAgentTaskListBar: boolean;
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
 	fileEditShowLineNumbers: boolean;
@@ -470,6 +482,7 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	pianolaAutoWatchNewAgents: boolean;
 }
 
 export interface SettingsStoreActions
@@ -491,6 +504,7 @@ export interface SettingsStoreActions
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
@@ -529,6 +543,7 @@ export interface SettingsStoreActions
 	setLogViewerSelectedLevels: (value: string[]) => void;
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
+	setShowHiddenGroups: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
 	setGroupChatSortAlphabetical: (value: boolean) => void;
 	setStarredSessionsCollapsed: (value: boolean) => void;
@@ -564,10 +579,13 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+	setQuickChatSettings: (value: QuickChatSettings) => void;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
+	setShowAgentTaskListBar: (value: boolean) => void;
+	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
 	setFileEditShowLineNumbers: (value: boolean) => void;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
@@ -581,6 +599,7 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -711,6 +730,10 @@ export function resolveForceParallel(optionForce?: boolean): boolean {
 	return optionForce === true || s.forcedParallelAlways;
 }
 
+// Order confirmed auto-watch saves and hydration without exposing unsaved values.
+let pianolaAutoWatchRevision = 0;
+let pianolaAutoWatchAppliedRevision = 0;
+
 export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
@@ -729,6 +752,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
+		mediaModelDirectory: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -770,6 +794,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
+		showHiddenGroups: false,
 		groupChatsExpanded: true,
 		groupChatSortAlphabetical: false,
 		starredSessionsCollapsed: false,
@@ -810,10 +835,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		quickChatSettings: resolveQuickChatSettings(undefined),
 		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
+		showAgentTaskListBar: false,
+		autoExpandAgentTaskListBar: false,
 		fileEditWordWrap: true,
 		fileEditShowLineNumbers: true,
 		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
@@ -827,6 +855,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		pianolaAutoWatchNewAgents: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -880,6 +909,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setGhPath: (value) => {
 			set({ ghPath: value });
 			window.maestro.settings.set('ghPath', value);
+		},
+
+		setMediaModelDirectory: async (value) => {
+			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
+			const persisted = await window.maestro.settings.get('mediaModelDirectory');
+			set({ mediaModelDirectory: typeof persisted === 'string' ? persisted : '' });
+			return true;
 		},
 
 		setMediaPlaybackRate: (value) => {
@@ -1094,6 +1130,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUngroupedCollapsed: (value) => {
 			set({ ungroupedCollapsed: value });
 			window.maestro.settings.set('ungroupedCollapsed', value);
+		},
+
+		setShowHiddenGroups: (value) => {
+			set({ showHiddenGroups: value });
+			window.maestro.settings.set('showHiddenGroups', value);
 		},
 
 		setGroupChatsExpanded: (value) => {
@@ -1346,6 +1387,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('directorNotesSettings', value);
 		},
 
+		setQuickChatSettings: (value) => {
+			set({ quickChatSettings: value });
+			window.maestro.settings.set(QUICK_CHAT_SETTINGS_KEY, value);
+		},
+
 		setCueHistoryRetentionDays: (value) => {
 			set({ cueHistoryRetentionDays: value });
 			window.maestro.settings.set('cueHistoryRetentionDays', value);
@@ -1364,6 +1410,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
+		},
+
+		setShowAgentTaskListBar: (value) => {
+			set({ showAgentTaskListBar: value });
+			window.maestro.settings.set('showAgentTaskListBar', value);
+		},
+
+		setAutoExpandAgentTaskListBar: (value) => {
+			set({ autoExpandAgentTaskListBar: value });
+			window.maestro.settings.set('autoExpandAgentTaskListBar', value);
 		},
 
 		setFileEditWordWrap: (value) => {
@@ -1439,6 +1495,25 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
+		},
+
+		setPianolaAutoWatchNewAgents: async (value) => {
+			const revision = ++pianolaAutoWatchRevision;
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoWatchNewAgents', value);
+				if (saved === false) throw new Error('Setting was not saved');
+				// Only confirmed values reach the checkbox. A newer confirmed save
+				// or external hydration must survive a delayed acknowledgement.
+				if (revision > pianolaAutoWatchAppliedRevision) {
+					pianolaAutoWatchAppliedRevision = revision;
+					set({ pianolaAutoWatchNewAgents: value });
+				}
+			} catch (error) {
+				// Re-read the persisted value. If that also fails, the store still
+				// holds its last confirmed value, even with overlapping failed saves.
+				await loadAllSettings();
+				throw error;
+			}
 		},
 
 		// ============================================================================
@@ -1907,6 +1982,7 @@ export async function loadAllSettings(): Promise<void> {
 	// Snapshot before the awaited reads below. Anything the user changes while
 	// they are in flight must survive this load - see the filter before setState.
 	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
+	const pianolaRevisionAtRead = ++pianolaAutoWatchRevision;
 
 	try {
 		// Batch load all settings in a single IPC call
@@ -1930,6 +2006,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		patch.mediaModelDirectory =
+			typeof allSettings['mediaModelDirectory'] === 'string'
+				? allSettings['mediaModelDirectory']
+				: '';
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
@@ -2228,6 +2308,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['ungroupedCollapsed'] !== undefined)
 			patch.ungroupedCollapsed = allSettings['ungroupedCollapsed'] as boolean;
 
+		if (allSettings['showHiddenGroups'] !== undefined)
+			patch.showHiddenGroups = allSettings['showHiddenGroups'] as boolean;
+
 		if (allSettings['groupChatsExpanded'] !== undefined)
 			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
 
@@ -2517,6 +2600,11 @@ export async function loadAllSettings(): Promise<void> {
 			};
 		}
 
+		// Quick Chat settings (field-by-field merge so a partial object keeps defaults)
+		if (allSettings[QUICK_CHAT_SETTINGS_KEY] !== undefined) {
+			patch.quickChatSettings = resolveQuickChatSettings(allSettings[QUICK_CHAT_SETTINGS_KEY]);
+		}
+
 		hydrateWakatimeSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
 		// falls back to the default rather than being shown as-is: the number in
@@ -2539,6 +2627,12 @@ export async function loadAllSettings(): Promise<void> {
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
 		hydrateLeftPanelDisplaySettings(allSettings, patch);
+
+		if (allSettings['showAgentTaskListBar'] !== undefined)
+			patch.showAgentTaskListBar = allSettings['showAgentTaskListBar'] as boolean;
+
+		if (allSettings['autoExpandAgentTaskListBar'] !== undefined)
+			patch.autoExpandAgentTaskListBar = allSettings['autoExpandAgentTaskListBar'] as boolean;
 
 		if (allSettings['fileEditWordWrap'] !== undefined)
 			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
@@ -2603,6 +2697,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
+		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
+
 		hydrateAnnotatorSettings(allSettings, patch);
 
 		// On a RELOAD (system resume, another window's write), drop any key the user
@@ -2619,6 +2715,15 @@ export async function loadAllSettings(): Promise<void> {
 				if (live[key] !== beforeRead[key]) {
 					delete patchKeys[key];
 				}
+			}
+		}
+
+		// Even an identical persisted value supersedes older save acknowledgements.
+		if (patch.pianolaAutoWatchNewAgents !== undefined) {
+			if (pianolaRevisionAtRead > pianolaAutoWatchAppliedRevision) {
+				pianolaAutoWatchAppliedRevision = pianolaRevisionAtRead;
+			} else {
+				delete patch.pianolaAutoWatchNewAgents;
 			}
 		}
 
@@ -2741,6 +2846,7 @@ export function getSettingsActions() {
 		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
+		setFileTreeBranchConnectors: state.setFileTreeBranchConnectors,
 		setToastWidth: state.setToastWidth,
 		setToastPosition: state.setToastPosition,
 		setTerminalWidth: state.setTerminalWidth,
@@ -2772,6 +2878,7 @@ export function getSettingsActions() {
 		setUsageStats: state.setUsageStats,
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
+		setShowHiddenGroups: state.setShowHiddenGroups,
 		setGroupChatsExpanded: state.setGroupChatsExpanded,
 		setGroupChatSortAlphabetical: state.setGroupChatSortAlphabetical,
 		setStarredSessionsCollapsed: state.setStarredSessionsCollapsed,
@@ -2825,6 +2932,7 @@ export function getSettingsActions() {
 		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
+		setQuickChatSettings: state.setQuickChatSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
@@ -2844,11 +2952,14 @@ export function getSettingsActions() {
 		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
 		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
 		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setShowAgentTaskListBar: state.setShowAgentTaskListBar,
+		setAutoExpandAgentTaskListBar: state.setAutoExpandAgentTaskListBar,
 		setFileEditWordWrap: state.setFileEditWordWrap,
 		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,

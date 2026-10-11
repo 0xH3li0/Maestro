@@ -188,6 +188,7 @@ import { usePianolaAgent } from './hooks/session/usePianolaAgent';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { useQuitWhenIdle } from './hooks/useQuitWhenIdle';
+import { useQuickChatEngine } from './hooks/useQuickChatEngine';
 import { usePluginCommandBridge } from './hooks/usePluginCommandBridge';
 import { usePluginKeybindings } from './hooks/usePluginKeybindings';
 import { PluginModalPanelMount } from './components/plugins/PluginModalPanelMount';
@@ -2034,6 +2035,12 @@ function MaestroConsoleInner() {
 
 	// "Quit when idle" watcher - quits the app once all operations finish once armed
 	useQuitWhenIdle();
+	// Quick Chat: run the floating window's conversation in this window's store.
+	// Not on web-desktop, which has no Quick Chat window of its own.
+	useQuickChatEngine(
+		!isWebDesktop() && encoreFeatures.quickChat !== false,
+		windowCtx?.isMainWindow ?? true
+	);
 
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
@@ -2458,6 +2465,7 @@ function MaestroConsoleInner() {
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
 	const {
 		toggleGroup,
+		toggleGroupHidden,
 		startRenamingGroup,
 		finishRenamingGroup,
 		createNewGroup,
@@ -3057,6 +3065,7 @@ function MaestroConsoleInner() {
 		toggleGlobalLive,
 		restartWebServer,
 		toggleGroup,
+		toggleGroupHidden,
 		handleDragStart,
 		handleDragOver,
 		handleDropOnGroup,

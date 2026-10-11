@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.21.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.25.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -109,7 +109,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `agents.dispatch` and `process.spawn`: LIVE but fully gated. Each registers only when `deps.dispatch` / `deps.spawn` are injected (both are wired in `index.ts`). Every call runs the gate stack: allowlist-scope grant (`assertBrokerAllowed`), trusted signature (`assertTrustedActVerb`), Pianola risk ceiling (`assertLowOrMediumRisk`), a closed input schema, and the `ActionGuard` rate/concurrency cap. `agents.dispatch` ADDITIONALLY requires the separate unattended consent (see below) because plugin-initiated dispatch is never user-present.
   - `net.connect` / `net.send` / `net.close`: LIVE, trusted-only persistent outbound WebSocket. Registers only when `deps.netConnect` is injected. `wss:` only; the connect is pinned through the same `EgressGuard` lookup as `net.fetch` (loopback / RFC1918 / link-local / metadata blocked); caps at `MAX_SOCKETS_PER_PLUGIN = 4` per plugin and `MAX_FRAME_BYTES = 64 KB` per frame in both directions; `send`/`close` re-authorize the still-held host grant on every call so a mid-stream revoke denies the next call. The host owns the real socket; the plugin gets a `socketId` handle and receives frames as `net.connect:<socketId>` topic events (via `pushEvent`, not the `PLUGIN_EVENT_TOPICS` catalog). Sockets are force-closed on disable / crash / uninstall.
   - `ui.panelPost`: requires `ui:panel` and targets ONLY one of the plugin's own declared panels (own-panels-only); JSON-only payload capped at `MAX_PANEL_POST_BYTES = 64 KB`; delivered to the panel page as a `maestro:panelData` window message. One-way push - there is no reply channel back to the sandbox.
-  - `ui.openPanel` / `ui.closePanel` / `ui.togglePanel`: requires `ui:panel` (no new consent); built by one shared factory and resolved through the SAME `deps.getPanel` lookup `ui.panelPost` uses, so a plugin can only summon its OWN panels. Non-`modal` placements are REJECTED (docked panels are always mounted, so open/close would be an untellable no-op). Registered only when `deps.panelVisibility` is wired (fail closed). Main broadcasts `plugins:panel-visibility` `{ pluginId, panelId, action }`; the renderer's App-level `PluginModalPanelMount` drives the `uiStore.openPluginPanelId` field (transient, namespaced `<pluginId>/<panelId>`), and `close` only closes when that exact panel is the open one.
+  - `ui.openPanel` / `ui.closePanel` / `ui.togglePanel`: requires `ui:panel` (no new consent); built by one shared factory and resolved through the SAME `deps.getPanel` lookup `ui.panelPost` uses, so a plugin can only summon its OWN panels. `ui.openPanel` also opens own `settings` cards (Host API 1.23.0); close/toggle stay modal-only. Other docked placements are rejected. Registered only when `deps.panelVisibility` is wired (fail closed). Main broadcasts `plugins:panel-visibility` `{ pluginId, panelId, action }`; the renderer's App-level `PluginModalPanelMount` drives the `uiStore.openPluginPanelId` field (transient, namespaced `<pluginId>/<panelId>`), and `close` only closes when that exact panel is the open one.
 
   **Direct dispatch requires unattended consent.** The `agents.dispatch` handler additionally calls the injected `dispatchUnattendedAllowed(pluginId, agentId)` predicate (wired in `index.ts` to `isPermittedUnattended(grantsOf(pluginId), 'agents:dispatch', agentId)`) and denies the call unless the plugin holds the separate, revocable UNATTENDED grant on top of the interactive `agents:dispatch` allowlist grant. The time-based scheduler (`PluginSchedulerHost`) enforces the same unattended check independently and calls the dispatch SINK directly, so it is unaffected by this handler.
 
@@ -179,7 +179,7 @@ Channels (all gated on `encoreFeatures.plugins`):
 - **Per-plugin session.** Partition `plugin:<pluginId>` (in-memory, never `persist:`), so a panel can never see the app's storage nor another plugin's, and everything dies on relaunch. Document URL `plugin-panel://panel/<encoded panelId>` - served by a per-session protocol handler in `plugin-panel-host.ts` (main), which re-checks the Encore flag + grant-gated contributions (`getPanelHtml`) on EVERY load and serves with a restrictive CSP **header + meta** (`connect-src 'none'`, `child-src/frame-src 'none'`, `form-action 'none'`, `base-uri 'none'`; inline script/style allowed, `img/font` `data:` only). Naming contract: `src/shared/plugins/panel-host.ts`.
 - **Main-process enforcement.** `will-attach-webview` (window-manager) verifies partition and document name the SAME plugin, then forces web prefs: no Node, `contextIsolation`, OS `sandbox`, and the broker-only preload `plugin-panel-preload.js` (the ONLY preload; anything renderer-supplied is stripped). The session cancels ALL non-panel-document requests at the `webRequest` layer (egress denial beneath CSP) and denies every permission. `did-attach-webview` branches on `isPluginPanelSession`: panel guests get `window.open` denied and ALL navigations/redirects prevented - and NONE of the browser-tab conveniences (shortcut forwarding, JS injection, privileged paste) ever run inside plugin content. The old self-navigation exfil residual is CLOSED in the main process (the `will-frame-navigate` backstop in window-manager stays for the remaining srcdoc subframes, e.g. file preview).
 - **Bridge (contract unchanged).** Panel HTML still calls `parent.postMessage({ type: 'maestro:invokeCommand', commandId, args }, '*')`. In a top-level guest `parent === window`; the guest preload (source-gated to the panel's own window) forwards that one shape via `ipcRenderer.sendToHost` -> `ipc-message` on the `<webview>` -> `PluginPanelFrame` namespaces it to `<pluginId>/<commandId>` and forwards over the broker-gated `plugins:invoke-command` RPC. One-way; no reply channel. A non-suppressible "from <plugin>" provenance line sits above every panel.
-- **Theme (host API 1.19.0).** `PluginPanelFrame` sends a data-only snapshot of the active palette on guest `dom-ready` and on later theme changes over `maestro:panelTheme`. The isolated preload accepts only the fixed `--maestro-*` color list from `src/shared/plugins/panel-theme.ts`, checks each color, then writes root inline CSS properties, root background, and `color-scheme`. Plugin `:root` stylesheet declarations cannot override those inline values. No theme setting or plugin KV entry crosses the boundary; no new capability is granted. Panels targeting host API 1.18.0 can use CSS fallbacks and gain these tokens automatically on newer hosts.
+- **Theme (host API 1.25.0).** `PluginPanelFrame` sends a data-only snapshot of the active palette on guest `dom-ready` and on later theme changes over `maestro:panelTheme`. The isolated preload accepts only the fixed `--maestro-*` color list from `src/shared/plugins/panel-theme.ts`, checks each color, then writes root inline CSS properties, root background, and `color-scheme`. Plugin `:root` stylesheet declarations cannot override those inline values. No theme setting or plugin KV entry crosses the boundary; no new capability is granted. Older panels can use CSS fallbacks and gain these tokens automatically on newer hosts.
 
 ## Signing / trust
 
@@ -192,16 +192,36 @@ Channels (all gated on `encoreFeatures.plugins`):
 
 Integrity ("files match what was signed") and trust ("key is recognized") are layered; a plugin can be integral-but-untrusted and still run once the user has enabled = consented.
 
+### Bundled-plugin signing (release vs. dev)
+
+Bundled plugins (e.g. `agent-flow`) ship trusted via a build-time signature, not a committed one. The private key is a CI secret (`MAESTRO_PLUGIN_SIGNING_KEY`); release CI writes it to a temp file, runs `maestro-cli plugin sign` over every dir in `examples/plugins/*/`, and packages the resulting `signature.json` into `<resources>/plugins/` via `extraResources`. The matching base64 SPKI public key is baked into `MAESTRO_PUBLISHER_KEYS` in `src/shared/plugins/publisher-keys.ts`, so those signatures resolve `trusted` and `seedBundledPlugins()` keeps the seeded copy. A drift guard in `.github/workflows/release.yml` re-validates the signed plugin against the baked anchor and fails the release if the CI secret and `publisher-keys.ts` ever diverge. The `signature.json` is a release artifact only - it is gitignored (`examples/plugins/*/signature.json`) and must never be committed.
+
+**Testing Agent Flow (or any bundled code plugin) locally.** Dev builds have no CI secret and fall back to the unsigned repo `examples/plugins`, so `seedBundledPlugins()` finds the plugin `unsigned` and `continue`s before copying it into `pluginsDir()`. The plugin is never installed, so there is no panel and no `main.js` to run. (The distinct "panel renders but `main.js` never runs" symptom belongs to a plugin manually installed unsigned into `pluginsDir()` and then enabled - a different path from bundled seeding.) To exercise the real (signed, trusted) path in a dev build:
+
+1. Generate a throwaway keypair and sign the dir: `maestro-cli plugin sign examples/plugins/agent-flow --gen-key --key-out ~/maestro-dev-publisher.pem`. This writes `signature.json` (gitignored) and prints the base64 SPKI public key.
+2. Add that public key to `pluginTrustedKeys` in Settings. `resolveTrustedKeys()` merges your key with the baked anchor, so the local signature resolves `trusted` and the seeder keeps it.
+3. Enable the plugin and grant consent; the panel now populates with live events.
+
+**Trust model (v1): single key, no revocation.** `MAESTRO_PUBLISHER_KEYS` is an allow-list of accepted keys with no CRL. Rotation is additive-then-prune: add the new public key alongside the old, resign, ship a release, then drop the old entry in a later release once no shipped build still relies on it. A leaked private key can only be revoked by shipping a new release that rotates the anchor - there is no runtime revocation.
+
 ## Host-API semver contract
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.21.0`; it adds isolated `agents.generateTitle(agentId, firstMessage): Promise<string | null>`. This uses the tab naming prompt, parser, and cheap turn settings without creating or resuming a conversation. The plugin needs an allowlisted `agents:dispatch` grant, unattended consent, and a trusted signature; the host applies risk and action guards and cancels naming when the plugin stops. 1.20.0 added an invocation-scoped public progress callback to `agents.send` (see `docs/relay-host-contract.md`). 1.18.0 placed settings panels in plugin details; 1.19.0 added the isolated panel theme bridge. 1.17.0 added resumable `agents.send` and verified plugin-tool caller context. 1.16.0 added the metadata-only `session.activated`
-event topic, the `sessions.focus` method plus its narrow `sessions:focus`
-capability, and the `ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods
-plus the optional panel manifest field `size?: 'default' | 'full'`. (`1.15.0` is
-taken by the Board + Profiles work on this fork, so it is skipped here.)
-Earlier: `1.14.0` added the `tool.executed` event topic and the
+The current host is `1.25.0`; it adds resumable `agents.send`, invocation-scoped
+public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
+All sends and title generation require exact-agent Dispatch, unattended consent,
+trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).
+`1.24.0` added host-mediated plugin services.
+`1.23.0` added independent plugin settings cards.
+`1.17.0` added `media:tools` with the exact
+`discord-voice` scope, opaque media jobs and fixed native profiles. STT remains
+in the plugin; tools and models are not bundled. (`1.15.0` is taken by the
+Board + Profiles work on this fork, so it is skipped here.)
+Earlier: `1.16.0` added the metadata-only `session.activated` event topic, the
+`sessions.focus` method plus its narrow `sessions:focus` capability, and the
+`ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods plus the optional
+panel manifest field `size?: 'default' | 'full'`. `1.14.0` added the `tool.executed` event topic and the
 `ui.panelPost` host-to-panel push method; `1.13.0` added the
 host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
 added the `net:connect` capability and the `net.connect` / `net.send` /
@@ -262,3 +282,29 @@ grouping id; group ids are local, depth is at most two, unknown session ids are
 dropped, and snapshots are process-local and purged when the sandbox stops,
 the plugin is disabled/uninstalled, or the feature flag is off. `ui:grouping`
 is low-risk and unscoped because its only output is virtual presentation.
+
+## Bounded media tools
+
+Host API 1.17.0 adds `media:tools` (exact `discord-voice` scope), opaque media jobs
+and fixed native profiles. STT remains in the plugin; no tools/models are bundled.
+See [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) for the contract and runtime prerequisites.
+
+## Plugin settings cards (1.23.0)
+
+Settings-placement panels are independent searchable Settings destinations, not
+Display-tab docks. See [the authoring contract](docs/plugin-settings-cards.md).
+The manager admits them only for active trusted records with live `ui:panel`
+grants. `hostSettings: ["media"]` draws a host-owned link to Host media tools;
+it grants no host setting access. Own `ui.openPanel` can navigate to a settings
+card; close/toggle remain modal-only. Identity is the existing namespaced panel ID.
+
+## Host-mediated services (1.25.0)
+
+`provides` / pinned `requires` declarations, exact consent scopes and the closed
+transcription contract are documented in [plugin-services.md](docs/plugin-services.md).
+`PluginServiceHost` routes through the existing sandbox result bridge; only
+`PluginMediaTools.delegate` mints call-bound aliases. Owner jobs become exclusive,
+keep their original deadline/limits and close before result delivery.
+Registration and mandatory consumer startup are reconciled through main; optional
+dependencies never gate text plugins. Revocation removes registrations and
+in-flight work; cancellation remains usable after revoke. No direct peer IPC.
