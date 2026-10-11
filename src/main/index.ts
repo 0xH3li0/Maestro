@@ -157,7 +157,7 @@ import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
-import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
+import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
@@ -265,8 +265,9 @@ const IMAGE_SCHEME = 'maestro-image';
 }
 
 // Capture the production data path before any modification
-// Used for stores that should be shared between dev and prod (e.g., agent configs)
-const productionDataPath = app.getPath('userData');
+// Used for stores that should be shared between dev and prod (e.g., agent configs).
+// A demo profile shares nothing: see resolveSharedDataPath.
+const productionDataPath = resolveSharedDataPath(app.getPath('userData'));
 
 // Demo mode: use a separate data directory for fresh demos
 if (DEMO_MODE) {
