@@ -73,7 +73,7 @@ import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginAgentSessionBindings } from './plugins/plugin-agent-session-bindings';
 import { setClaudeSessionOrigin } from './storage/claude-session-origins';
-import { CodexSessionStorage } from './storage/codex-session-storage';
+import { getProviderProfileConfig } from '../shared/providerProfiles';
 import { getSessionStorage } from './agents';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
@@ -3299,12 +3299,14 @@ app
 							? agent.sessionSshRemoteConfig.remoteId
 							: null;
 						const ssh = remoteId ? getSshRemoteById(remoteId) : undefined;
-						if (agent.sessionSshRemoteConfig?.enabled && !ssh) continue;
+						if (agent.sessionSshRemoteConfig?.enabled && (!ssh || !ssh.enabled)) continue;
 						const projectPath = relayProjectPath(agent);
-						const sessions =
-							storage instanceof CodexSessionStorage
-								? await storage.listSessions(projectPath, ssh, agent.customEnvVars?.CODEX_HOME)
-								: await storage.listSessions(projectPath, ssh);
+						const profileEnvVar = getProviderProfileConfig(agent.toolType)?.envVar;
+						const sessions = await storage.listSessions(
+							projectPath,
+							ssh,
+							profileEnvVar ? agent.customEnvVars?.[profileEnvVar] : undefined
+						);
 						for (const session of sessions) {
 							if (
 								!pluginProviderSessions.isOwned('sh.maestro.relay', agent.id, session.sessionId)
