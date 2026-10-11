@@ -297,6 +297,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **What the Thinking pill lists:** `buildThinkingItems(sessions, ownsSession?)` in `src/renderer/utils/thinkingItems.ts` (read through `useThinkingItems()`); `useBackgroundAutoRuns(activeSessionId)` in `src/renderer/hooks/batch/useBackgroundAutoRuns.ts`
 - **Folding a disk change into an Auto Run draft:** `reconcileDiskContent()`, `isAutoRunDocumentLocked()` in `src/renderer/utils/autoRunDraft.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()`, `MAX_PENDING_STEERING_NOTES` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `takeSteeringNotesForDispatch()` in `src/renderer/services/autoRunSteering.ts`. The ONLY surface that sends one is the Thought Stream panel's compass button - do NOT route a steering note through the AI composer or write one into a tab's transcript.
+- **The message of a rejected IPC call:** `ipcErrorMessage(error)` in `src/renderer/utils/ipcErrorMessage.ts` (never show `error.message` raw: Electron wraps it in the channel name)
 
 If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add the full entry to [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md) and a one-line index entry above so the next person can find it.
 
