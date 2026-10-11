@@ -15,11 +15,7 @@ import {
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
-import { cheapTurnSettings } from '../../../shared/modelTiers';
-import {
-	FALLBACK_CONTEXT_WINDOW,
-	getModelContextWindowOverride,
-} from '../../../shared/agentConstants';
+import { cheapResumeTurnSettings } from '../../../shared/modelTiers';
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -39,6 +35,18 @@ export interface AgentSpawnResult {
 	error?: string;
 	/** Structured error category for downstream handling */
 	errorKind?: AgentSpawnErrorKind;
+}
+
+/**
+ * Options for a background turn that is NOT a synopsis but runs through
+ * `spawnBackgroundSynopsis` for what that gives it: a resumed session under a
+ * hidden process id, so nothing it prints reaches the transcript.
+ */
+export interface BackgroundTurnOptions {
+	/** Run on the caller's model and effort instead of the cheap synopsis tier. */
+	keepTurnSettings?: boolean;
+	/** The turn prints nothing on success, so an empty response is not a failure. */
+	allowEmptyResponse?: boolean;
 }
 
 /**
@@ -117,6 +125,7 @@ export interface UseAgentExecutionReturn {
 			customArgs?: string;
 			customEnvVars?: Record<string, string>;
 			customModel?: string;
+			customEffort?: string;
 			customContextWindow?: number;
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
@@ -126,33 +135,12 @@ export interface UseAgentExecutionReturn {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			};
-		}
+		},
+		options?: BackgroundTurnOptions
 	) => Promise<AgentSpawnResult>;
 	/** Ref to spawnBackgroundSynopsis for use in callbacks that need latest version */
 	spawnBackgroundSynopsisRef: React.MutableRefObject<
-		| ((
-				sessionId: string,
-				cwd: string,
-				resumeAgentSessionId: string,
-				prompt: string,
-				toolType?: ToolType,
-				sessionConfig?: {
-					customPath?: string;
-					customArgs?: string;
-					customEnvVars?: Record<string, string>;
-					customModel?: string;
-					customContextWindow?: number;
-					enableMaestroP?: boolean;
-					maestroPMode?: 'interactive' | 'dynamic';
-					maestroPPath?: string;
-					sessionSshRemoteConfig?: {
-						enabled: boolean;
-						remoteId: string | null;
-						workingDirOverride?: string;
-					};
-				}
-		  ) => Promise<AgentSpawnResult>)
-		| null
+		UseAgentExecutionReturn['spawnBackgroundSynopsis'] | null
 	>;
 	/** Ref to spawnAgentWithPrompt for use in callbacks that need latest version */
 	spawnAgentWithPromptRef: React.MutableRefObject<
@@ -711,7 +699,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
-			}
+			},
+			options?: BackgroundTurnOptions
 		): Promise<AgentSpawnResult> => {
 			try {
 				const agent = await window.maestro.agents.get(toolType);
@@ -726,24 +715,15 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
-				const cheapSynopsis = cheapTurnSettings(toolType);
-
-				// The cheap tier is a MODEL swap, and a model carries a context
-				// window with it. Resuming replays the whole transcript, so
-				// downgrading an agent running Anthropic's 1M beta (`opus[1m]`)
-				// onto a 200k model makes every synopsis of a long conversation
-				// fail with "Prompt is too long" - the transcript fit the tab's
-				// model and cannot fit the cheap one. Keep the tab's model
-				// whenever the downgrade would shrink the window; effort still
-				// drops to the bottom rung, since that costs nothing to read.
-				const tabContextWindow = getModelContextWindowOverride(sessionConfig?.customModel);
-				const cheapContextWindow = getModelContextWindowOverride(cheapSynopsis.model);
-				const downgradeShrinksWindow =
-					(tabContextWindow ?? FALLBACK_CONTEXT_WINDOW) >
-					(cheapContextWindow ?? FALLBACK_CONTEXT_WINDOW);
-				const synopsisModel = downgradeShrinksWindow
-					? sessionConfig?.customModel
-					: (cheapSynopsis.model ?? sessionConfig?.customModel);
+				// Bottom of both ladders, except that the tab's model is kept when
+				// the cheap one has a smaller context window: resuming replays the
+				// whole transcript, which fit the tab's model and may not fit the
+				// cheap one. The rule lives in `cheapResumeTurnSettings` so the CLI's
+				// synopsis turn (`src/cli/services/synopsis.ts`) resolves the same way.
+				const synopsisTurn = cheapResumeTurnSettings(toolType, {
+					model: sessionConfig?.customModel,
+					effort: sessionConfig?.customEffort,
+				});
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -811,9 +791,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// lastSynopsisTime - so the next synopsis skips everything the
 								// agent did before the failure. Report the failure instead and
 								// let the caller write nothing.
+								// A turn that prints nothing by design (a `/compact`) is judged
+								// by its exit code; text it does print is still checked.
+								const emptyByDesign =
+									options?.allowEmptyResponse === true && !stripAnsiCodes(responseText).trim();
 								const failed =
 									(typeof code === 'number' && code !== 0) ||
-									isFailedSynopsisResponse(responseText, toolType);
+									(!emptyByDesign && isFailedSynopsisResponse(responseText, toolType));
 								resolve({
 									success: !failed,
 									response: responseText,
@@ -867,14 +851,21 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// that just did the engineering is pure waste - one premium turn per
 							// completed turn, forever. Falls back to the tab's own model where
 							// the provider has no tier mapping, or where the cheap model's
-							// context window is smaller than the tab's (see synopsisModel).
+							// context window is smaller than the tab's (see synopsisTurn).
 							//
 							// Safe only because the synopsis is a LEAF: every caller discards the
 							// agentSessionId it returns rather than adopting it, so the cheap
 							// model cannot follow the conversation into the next real turn. A
 							// future caller that adopts that id must revisit this.
-							sessionCustomModel: synopsisModel,
-							sessionCustomEffort: cheapSynopsis.effort ?? sessionConfig?.customEffort,
+							//
+							// `keepTurnSettings` opts out: a compaction is not a leaf, its
+							// summary becomes the conversation every later turn reads.
+							sessionCustomModel: options?.keepTurnSettings
+								? sessionConfig?.customModel
+								: synopsisTurn.model,
+							sessionCustomEffort: options?.keepTurnSettings
+								? sessionConfig?.customEffort
+								: synopsisTurn.effort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the

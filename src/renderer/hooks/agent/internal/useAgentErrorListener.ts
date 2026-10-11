@@ -43,6 +43,7 @@ import {
 	getRetryEntry,
 	failInFlightRetry,
 	persistDispatchSnapshotForAuth,
+	registerAgentErrorSurfacer,
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
@@ -66,7 +67,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
-		const unsubscribe = window.maestro.process.onAgentError((sessionId: string, error) => {
+		const handleAgentError: Parameters<typeof window.maestro.process.onAgentError>[0] = (
+			sessionId,
+			error
+		) => {
 			// Window scoping: only the owning window handles the error (and pauses
 			// its batch). Events are broadcast to all windows.
 			if (!ownedGate.current?.(sessionId)) return;
@@ -227,8 +231,13 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				willAutoRetry && tabIdFromSession
 					? getRetryEntry(actualSessionId, tabIdFromSession)
 					: undefined;
-			const isFirstOutageFailure = activeRetry?.attempt === 0;
-			const retryOutageId = activeRetry?.outageId;
+			// A full context window is being compacted and the prompt resent. That
+			// recovery owns its own transcript pill, and the failure it masks is
+			// shown nowhere unless the compaction cannot land (the retry store then
+			// hands this same error back through `registerAgentErrorSurfacer`).
+			const isContextCompaction = !!activeRetry?.compaction;
+			const isFirstOutageFailure = activeRetry?.attempt === 0 && !isContextCompaction;
+			const retryOutageId = isContextCompaction ? undefined : activeRetry?.outageId;
 
 			if (tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
@@ -329,7 +338,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 											logs: isRetryContinuation
 												? removeHiddenProgressLog(tab.logs, tab.id)
 												: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
-											agentError: isSessionNotFound ? undefined : agentError,
+											agentError: isSessionNotFound || isContextCompaction ? undefined : agentError,
 											...(isSessionNotFound ? { agentSessionId: null } : {}),
 										}
 									: tab
@@ -529,10 +538,14 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					openModal('agentError', { sessionId: actualSessionId });
 				}
 			}
-		});
+		};
+
+		const unsubscribe = window.maestro.process.onAgentError(handleAgentError);
+		registerAgentErrorSurfacer(handleAgentError);
 
 		return () => {
 			unsubscribe();
+			registerAgentErrorSurfacer(null);
 		};
 	}, [
 		deps.activeHiddenToolRef,

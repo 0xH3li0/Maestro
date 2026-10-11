@@ -21,7 +21,11 @@
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
-import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
+import {
+	clearRetryIfSettled,
+	hasPendingRetry,
+	noteFailedTurnExited,
+} from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
@@ -824,6 +828,15 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 			if (isFromAi && ownsSideEffects && tabIdFromSession && !isRetryPending(tabIdFromSession)) {
 				deps.batchedUpdater.flushNow();
 				releaseMentionHandoff(actualSessionId, tabIdFromSession, { failed: code !== 0 });
+			}
+
+			// A turn refused on the context limit is recovered by compacting its
+			// session and resending, and that waits for exactly this: the failed
+			// process is gone and the tab is settled. After the state update above
+			// on purpose - the compaction marks the tab busy again, and the update
+			// would have idled it.
+			if (isFromAi && tabIdFromSession) {
+				noteFailedTurnExited(actualSessionId, tabIdFromSession);
 			}
 
 			if (queuedItemToProcess && ownsSideEffects) {
