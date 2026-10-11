@@ -1210,6 +1210,8 @@ export interface CreateSessionConfig {
 		workingDirOverride?: string;
 	};
 	autoRunFolderPath?: string;
+	/** Local Models gateway URL. The CLI validated it; the renderer checks it again. */
+	gatewayUrl?: string;
 }
 
 export type CreateSessionCallback = (

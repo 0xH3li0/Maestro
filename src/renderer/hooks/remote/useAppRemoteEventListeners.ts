@@ -1471,6 +1471,24 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// The CLI already checked the gateway; checked again here, the way the
+			// config patch is, so a direct WebSocket caller cannot store one the
+			// launch would refuse. A refused gateway refuses the create: dropping it
+			// would make an agent the caller did not ask for.
+			let gatewayUrl: string | undefined;
+			if (config?.gatewayUrl !== undefined) {
+				const edit =
+					typeof config.gatewayUrl === 'string'
+						? parseGatewayUrlEdit(toolType, config.gatewayUrl)
+						: ({ ok: false, error: 'gatewayUrl must be a URL.' } as const);
+				if (!edit.ok) {
+					logger.error(`[Remote] Refused create-agent gateway: ${edit.error}`);
+					window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, null);
+					return;
+				}
+				gatewayUrl = edit.gatewayUrl ?? undefined;
+			}
+
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
 			const initialTabId = generateId();
@@ -1590,6 +1608,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.autoRunFolderPath && {
 					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
+				...(gatewayUrl && { gatewayUrl }),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);

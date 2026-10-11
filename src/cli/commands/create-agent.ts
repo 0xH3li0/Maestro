@@ -9,6 +9,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -29,6 +30,7 @@ interface CreateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
+	gatewayUrl?: string;
 	background?: boolean;
 	focus?: boolean;
 	json?: boolean;
@@ -126,6 +128,24 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		process.exit(1);
 	}
 
+	// `--gateway-url <url|none>`: the New Agent Models tab's gateway. Checked
+	// against the provider with the function the desktop field and
+	// `update-agent` use, so a create never stores what the launch would refuse.
+	let gatewayUrl: string | undefined;
+	if (options.gatewayUrl !== undefined) {
+		const edit = parseGatewayUrlEdit(options.type, options.gatewayUrl);
+		if (!edit.ok) {
+			const msg = `--gateway-url: ${edit.error}`;
+			if (options.json) {
+				console.log(JSON.stringify({ success: false, error: msg }));
+			} else {
+				console.error(formatError(msg));
+			}
+			process.exit(1);
+		}
+		gatewayUrl = edit.gatewayUrl ?? undefined;
+	}
+
 	// Build the WebSocket message payload
 	const background = resolveBackgroundFlag(options, 'create-agent');
 	const payload: Record<string, unknown> = {
@@ -157,6 +177,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (options.providerPath) payload.customProviderPath = options.providerPath;
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);
+	if (gatewayUrl) payload.gatewayUrl = gatewayUrl;
 
 	try {
 		const result = await withMaestroClient(async (client) => {

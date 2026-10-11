@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Folder, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Folder, AlertTriangle, Terminal } from 'lucide-react';
 import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -8,17 +8,31 @@ import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agen
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
-import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
-import { AgentResilienceSection } from './AgentResilienceSection';
 import { Modal, ModalFooter } from '../ui/Modal';
-import { SshRemoteSelector } from '../shared/SshRemoteSelector';
+import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
+import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
 import { ThemedSelect } from '../shared/ThemedSelect';
+import { GatewayUrlField } from '../shared/GatewayUrlField';
+import {
+	AGENT_FORM_TAB_IDS,
+	AgentSettingsPanel,
+	buildAgentSettingsTabs,
+	EnvironmentTab,
+	firstTabWithError,
+	GeneralTab,
+	ModelsTab,
+	PeersTab,
+	ProviderTab,
+	SshTab,
+} from '../AgentSettings';
+import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import { TOKEN_PROXY_NAME } from '../../../shared/local-models/token-proxy';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSessionStore } from '../../stores/sessionStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import type { AgentDebugInfo, NewInstanceModalProps } from './types';
-import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
+import { SUPPORTED_AGENTS } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
-import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
 import {
@@ -31,6 +45,14 @@ import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffor
 import { gitService } from '../../services/git';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 
+/**
+ * NewInstanceModal - the New Agent form.
+ *
+ * The form is tabbed (General, Provider, Models, Environment, Peers, SSH; see
+ * `AgentSettings/`). Every piece of state stays here: the panels only draw it.
+ * Only the active panel is rendered, so Tab never walks into a hidden one. It
+ * always opens on General, where the name is the first thing to type.
+ */
 export function NewInstanceModal({
 	isOpen,
 	onClose,
@@ -98,6 +120,14 @@ export function NewInstanceModal({
 	>({});
 	// SSH connection error state - shown when we can't connect to the selected remote
 	const [sshConnectionError, setSshConnectionError] = useState<string | null>(null);
+	// Local Models gateway, per provider like the rest of the provider settings:
+	// a URL typed for one provider is not carried onto another, whose base-URL
+	// variable and route differ. Validated against the provider on create.
+	const [gatewayUrlByAgent, setGatewayUrlByAgent] = useState<Record<string, string>>({});
+	const [gatewayUrlError, setGatewayUrlError] = useState<string | undefined>(undefined);
+	// Set by a create attempt the form refused. From then on a required field
+	// left empty shows its error, and its tab shows the dot.
+	const [createAttempted, setCreateAttempted] = useState(false);
 
 	// Group placement: '' means "No Group (Ungrouped)". Initialized when the modal
 	// opens from the source session (when duplicating) or the caller's preset.
@@ -105,6 +135,14 @@ export function NewInstanceModal({
 	const groups = useSessionStore((s) => s.groups);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
+
+	// The one piece of form state the tabs own. No `rememberKey`: create always
+	// starts on General.
+	const { activeTab, setActiveTab } = useModalTabs({
+		tabs: AGENT_FORM_TAB_IDS,
+		initialTab: 'general',
+		enabled: isOpen,
+	});
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
@@ -227,6 +265,7 @@ export function NewInstanceModal({
 				setRetryAvailabilityByAgent({});
 				setRetryTokenByAgent({});
 				setAgentSshRemoteConfigs({});
+				setGatewayUrlByAgent({});
 			}
 
 			// Load configurations for all agents (model, contextWindow - these are provider-level)
@@ -367,6 +406,12 @@ export function NewInstanceModal({
 				setCodexTransportByAgent((prev) => ({
 					...prev,
 					[source.toolType]: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
+				}));
+				// And through the same gateway. Its token proxy mode is not copied:
+				// absent reads as passthrough, so a copy never starts compressing.
+				setGatewayUrlByAgent((prev) => ({
+					...prev,
+					[source.toolType]: source.gatewayUrl ?? '',
 				}));
 
 				// Pre-fill SSH remote configuration if source session has it
@@ -554,6 +599,16 @@ export function NewInstanceModal({
 		);
 		if (!result.valid) return;
 
+		// The gateway is checked against the provider that will use it, with the
+		// function the launch and the CLI use, so nothing is stored that the
+		// launch would then refuse. A refusal shows on the Models tab.
+		const gatewayEdit = parseGatewayUrlEdit(selectedAgent, gatewayUrlByAgent[selectedAgent] ?? '');
+		if (!gatewayEdit.ok) {
+			setGatewayUrlError(gatewayEdit.error);
+			setActiveTab('models');
+			return;
+		}
+
 		// Get per-agent config values
 		const agentCustomPath = customAgentPaths[selectedAgent]?.trim() || undefined;
 		const agentCustomArgs = customAgentArgs[selectedAgent]?.trim() || undefined;
@@ -644,7 +699,8 @@ export function NewInstanceModal({
 			retryTokenByAgent[selectedAgent] ?? true,
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
 			codexAutoResetByAgent[selectedAgent] ?? false,
-			codexTransportByAgent[selectedAgent] ?? 'exec'
+			codexTransportByAgent[selectedAgent] ?? 'exec',
+			gatewayEdit.gatewayUrl ?? undefined
 		);
 		onClose();
 
@@ -688,6 +744,11 @@ export function NewInstanceModal({
 			delete newConfigs[selectedAgent];
 			return newConfigs;
 		});
+		setGatewayUrlByAgent((prev) => {
+			const next = { ...prev };
+			delete next[selectedAgent];
+			return next;
+		});
 	}, [
 		instanceName,
 		selectedAgent,
@@ -714,17 +775,21 @@ export function NewInstanceModal({
 		retryTokenByAgent,
 		codexAutoResetByAgent,
 		codexTransportByAgent,
+		gatewayUrlByAgent,
+		setActiveTab,
 	]);
+
+	// Agent is considered available if:
+	// 1. It was auto-detected (agent.available), OR
+	// 2. User specified a custom path for it
+	const isAgentUsable = useMemo(() => {
+		const agent = agents.find((a) => a.id === selectedAgent);
+		return !!agent?.available || !!customAgentPaths[selectedAgent]?.trim();
+	}, [agents, selectedAgent, customAgentPaths]);
+	const directoryWarningNeedsAck = !!validation.warning && !directoryWarningAcknowledged;
 
 	// Check if form is valid for submission
 	const isFormValid = useMemo(() => {
-		const hasWarningThatNeedsAck = validation.warning && !directoryWarningAcknowledged;
-		const agent = agents.find((a) => a.id === selectedAgent);
-		// Agent is considered available if:
-		// 1. It was auto-detected (agent.available), OR
-		// 2. User specified a custom path for it
-		const hasCustomPath = customAgentPaths[selectedAgent]?.trim();
-		const isAgentUsable = agent?.available || !!hasCustomPath;
 		// Remote path validation is informational only - don't block creation
 		// Users may want to set up agent for a remote before the path exists
 		return (
@@ -733,17 +798,72 @@ export function NewInstanceModal({
 			workingDir.trim() &&
 			instanceName.trim() &&
 			validation.valid &&
-			!hasWarningThatNeedsAck
+			!directoryWarningNeedsAck
 		);
 	}, [
 		selectedAgent,
-		agents,
+		isAgentUsable,
 		workingDir,
 		instanceName,
 		validation.valid,
-		validation.warning,
-		directoryWarningAcknowledged,
-		customAgentPaths,
+		directoryWarningNeedsAck,
+	]);
+
+	// The message under each field. An empty required field only says so once a
+	// create attempt was refused, so a fresh form is not drawn in red.
+	const nameError =
+		validation.errorField === 'name'
+			? validation.error
+			: createAttempted && !instanceName.trim()
+				? 'Enter a name for the agent'
+				: undefined;
+	const directoryError =
+		validation.errorField === 'directory'
+			? validation.error
+			: createAttempted && !workingDir.trim()
+				? 'Choose a working directory'
+				: undefined;
+
+	// Fields showing an error message: each puts a dot on its tab.
+	const errorFields = useMemo(() => {
+		const fields: string[] = [];
+		if (nameError) fields.push('name');
+		if (directoryError) fields.push('directory');
+		if (gatewayUrlError) fields.push('gatewayUrl');
+		return fields;
+	}, [nameError, directoryError, gatewayUrlError]);
+	const tabs = useMemo(
+		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
+		[errorFields]
+	);
+
+	// Create from the footer button or the keyboard. A refused attempt goes to
+	// the first field that blocks it, so a user on another tab is not left
+	// facing a dead Create button. A provider that cannot run and an
+	// unacknowledged shared directory block without a message, so they count
+	// here too.
+	const attemptCreate = useCallback(() => {
+		if (isFormValid) {
+			handleCreate();
+			return;
+		}
+		setCreateAttempted(true);
+		const blocking: string[] = [...errorFields];
+		if (!instanceName.trim()) blocking.push('name');
+		if (!workingDir.trim() || directoryWarningNeedsAck) blocking.push('directory');
+		if (!selectedAgent || !isAgentUsable) blocking.push('provider');
+		const tab = firstTabWithError(blocking, AGENT_FORM_TAB_IDS);
+		if (tab) setActiveTab(tab);
+	}, [
+		isFormValid,
+		handleCreate,
+		errorFields,
+		instanceName,
+		workingDir,
+		directoryWarningNeedsAck,
+		selectedAgent,
+		isAgentUsable,
+		setActiveTab,
 	]);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
@@ -761,14 +881,12 @@ export function NewInstanceModal({
 			// Handle Cmd+Enter or Cmd+S for creating agent
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				e.preventDefault();
-				if (isFormValid) {
-					handleCreate();
-				}
+				attemptCreate();
 			}
 		};
 		window.addEventListener('keydown', handler, true);
 		return () => window.removeEventListener('keydown', handler, true);
-	}, [isOpen, handleSelectFolder, handleCreate, isFormValid, isSshEnabled]);
+	}, [isOpen, handleSelectFolder, attemptCreate, isSshEnabled]);
 
 	// Sort agents: supported first, then coming soon at the bottom. Each bucket is
 	// alphabetical by the name the row renders, matching the wizard's tile strip
@@ -808,6 +926,54 @@ export function NewInstanceModal({
 	// rather than claiming "locally" while an SSH remote is selected.
 	const providerLocation = useMemo(() => providerLocationLabel(sshRemoteHost), [sshRemoteHost]);
 
+	// The remote's name, for the gateway field and the "Runs on" chip. The id
+	// stands in until the remotes load: both must know the agent is remote.
+	const sshRemoteName = useMemo(() => {
+		if (!effectiveSshRemoteId) return undefined;
+		return sshRemotes.find((r) => r.id === effectiveSshRemoteId)?.name ?? effectiveSshRemoteId;
+	}, [effectiveSshRemoteId, sshRemotes]);
+
+	// One set of env var handlers, keyed by provider. The picker's config panels
+	// (which hide the rows) and the Environment tab (which draws them) share it.
+	const envVarHandlers = {
+		onEnvVarKeyChange: (agentId: string, oldKey: string, newKey: string, value: string) => {
+			setCustomAgentEnvVars((prev) => {
+				const currentVars = { ...prev[agentId] };
+				delete currentVars[oldKey];
+				currentVars[newKey] = value;
+				return { ...prev, [agentId]: currentVars };
+			});
+		},
+		onEnvVarValueChange: (agentId: string, key: string, value: string) => {
+			setCustomAgentEnvVars((prev) => ({
+				...prev,
+				[agentId]: {
+					...prev[agentId],
+					[key]: value,
+				},
+			}));
+		},
+		onEnvVarRemove: (agentId: string, key: string) => {
+			setCustomAgentEnvVars((prev) => {
+				const currentVars = { ...prev[agentId] };
+				delete currentVars[key];
+				const next = { ...prev };
+				if (Object.keys(currentVars).length > 0) {
+					next[agentId] = currentVars;
+				} else {
+					delete next[agentId];
+				}
+				return next;
+			});
+		},
+		onEnvVarAdd: (agentId: string) => {
+			setCustomAgentEnvVars((prev) => ({
+				...prev,
+				[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
+			}));
+		},
+	};
+
 	// Effects - load agents and optionally pre-fill from source session
 	// Dependency uses sourceSession?.id (not the full object) so unrelated
 	// `sessions` store updates don't re-fire pre-fill and clobber what the
@@ -825,6 +991,10 @@ export function NewInstanceModal({
 			}
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
+			// A fresh form: General first, no refused attempt, no gateway error.
+			setActiveTab('general');
+			setCreateAttempted(false);
+			setGatewayUrlError(undefined);
 			// Seed group selection: duplicate inherits source's group; otherwise
 			// honor any presetGroupId from the caller.
 			setSelectedGroupId(sourceSession?.groupId ?? presetGroupId ?? '');
@@ -837,7 +1007,14 @@ export function NewInstanceModal({
 				setInstanceName(getBasename(presetWorkingDir));
 			}
 		}
-	}, [isOpen, sourceSession?.id, presetGroupId, presetWorkingDir, handleWorkingDirChange]);
+	}, [
+		isOpen,
+		sourceSession?.id,
+		presetGroupId,
+		presetWorkingDir,
+		handleWorkingDirChange,
+		setActiveTab,
+	]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails
@@ -919,374 +1096,420 @@ export function NewInstanceModal({
 			title="Create New Agent"
 			priority={MODAL_PRIORITIES.NEW_INSTANCE}
 			onClose={onClose}
-			width={600}
+			resizable
+			resizeKey="new-agent"
+			defaultSize={{ width: 720, height: 640 }}
+			minSize={{ width: 560, height: 420 }}
+			contentClassName="flex flex-col flex-1 min-h-0"
 			initialFocusRef={nameInputRef}
 			footer={
 				<ModalFooter
 					theme={theme}
 					onCancel={onClose}
-					onConfirm={handleCreate}
+					onConfirm={attemptCreate}
 					confirmLabel="Create Agent"
 					confirmDisabled={!isFormValid}
 				/>
 			}
 		>
-			<div className="space-y-5">
-				{/* Agent Name */}
-				<FormInput
-					ref={nameInputRef}
-					id="agent-name-input"
-					theme={theme}
-					label="Agent Name"
-					value={instanceName}
-					onChange={setInstanceName}
-					placeholder=""
-					error={validation.errorField === 'name' ? validation.error : undefined}
-					heightClass="p-2"
-				/>
-
-				{/* Agent Group - only shown when at least one group exists */}
-				{groups.length > 0 && (
-					<div className="w-full">
-						<label
-							htmlFor="agent-group-select"
-							className="block text-xs font-bold opacity-70 uppercase mb-2"
-							style={{ color: theme.colors.textMain }}
-						>
-							Agent Group
-						</label>
-						<ThemedSelect
-							id="agent-group-select"
-							theme={theme}
-							value={selectedGroupId}
-							onChange={setSelectedGroupId}
-							aria-label="Agent Group"
-							options={[
-								{ value: '', label: 'No Group (Ungrouped)' },
-								...groups.map((g) => ({
-									value: g.id,
-									label: `${g.emoji} ${g.name}`.trim(),
-								})),
-							]}
-						/>
-					</div>
-				)}
-
-				{/* Agent Selection */}
-				<AgentPickerGrid
-					theme={theme}
-					loading={loading}
-					sshConnectionError={sshConnectionError}
-					visibleAgents={visibleAgents}
-					availableProviderCount={providerCounts.available}
-					totalProviderCount={providerCounts.total}
-					providerLocationLabel={providerLocation}
-					showAllProviders={showAllProviders}
-					onShowAllProvidersChange={setShowAllProviders}
-					selectedAgent={selectedAgent}
-					expandedAgent={expandedAgent}
-					refreshingAgent={refreshingAgent}
-					debugInfo={debugInfo}
-					customAgentPaths={customAgentPaths}
-					customAgentArgs={customAgentArgs}
-					customAgentEnvVars={customAgentEnvVars}
-					enableMaestroPByAgent={enableMaestroPByAgent}
-					maestroPModeByAgent={maestroPModeByAgent}
-					maestroPPathByAgent={maestroPPathByAgent}
-					detectedMaestroPPath={detectedMaestroPPath}
-					agentConfigs={agentConfigs}
-					availableModels={availableModels}
-					loadingModels={loadingModels}
-					onAgentSelect={(agentId) => setSelectedAgent(agentId)}
-					onAgentExpand={(agentId) => setExpandedAgent(agentId)}
-					onRefreshAgent={handleRefreshAgent}
-					onDismissDebug={() => setDebugInfo(null)}
-					onCustomPathChange={(agentId, value) => {
-						setCustomAgentPaths((prev) => ({ ...prev, [agentId]: value }));
-					}}
-					onCustomArgsChange={(agentId, value) => {
-						setCustomAgentArgs((prev) => ({ ...prev, [agentId]: value }));
-					}}
-					onEnableMaestroPChange={(agentId, value) => {
-						setEnableMaestroPByAgent((prev) => ({ ...prev, [agentId]: value }));
-					}}
-					onMaestroPModeChange={(agentId, value) => {
-						setMaestroPModeByAgent((prev) => ({ ...prev, [agentId]: value }));
-					}}
-					onMaestroPPathChange={(agentId, value) => {
-						setMaestroPPathByAgent((prev) => ({ ...prev, [agentId]: value }));
-					}}
-					onEnvVarKeyChange={(agentId, oldKey, newKey, value) => {
-						const currentVars = { ...customAgentEnvVars[agentId] };
-						delete currentVars[oldKey];
-						currentVars[newKey] = value;
-						setCustomAgentEnvVars((prev) => ({
-							...prev,
-							[agentId]: currentVars,
-						}));
-					}}
-					onEnvVarValueChange={(agentId, key, value) => {
-						setCustomAgentEnvVars((prev) => ({
-							...prev,
-							[agentId]: {
-								...prev[agentId],
-								[key]: value,
-							},
-						}));
-					}}
-					onEnvVarRemove={(agentId, key) => {
-						const currentVars = { ...customAgentEnvVars[agentId] };
-						delete currentVars[key];
-						if (Object.keys(currentVars).length > 0) {
-							setCustomAgentEnvVars((prev) => ({
-								...prev,
-								[agentId]: currentVars,
-							}));
-						} else {
-							setCustomAgentEnvVars((prev) => {
-								const newVars = { ...prev };
-								delete newVars[agentId];
-								return newVars;
-							});
-						}
-					}}
-					onEnvVarAdd={(agentId) => {
-						setCustomAgentEnvVars((prev) => ({
-							...prev,
-							[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
-						}));
-					}}
-					onConfigChange={(agentId, key, value) => {
-						setAgentConfigs((prev) => ({
-							...prev,
-							[agentId]: {
-								...prev[agentId],
-								[key]: value,
-							},
-						}));
-					}}
-					onConfigBlur={(agentId, key, value) => {
-						const updatedConfig = {
-							...(agentConfigs[agentId] || {}),
-							[key]: value,
-						};
-						void window.maestro.agents.setConfig(agentId, updatedConfig).catch((error) => {
-							logger.error(`Failed to persist config for ${agentId}:`, undefined, error);
-						});
-					}}
-					onRefreshModels={(agentId) => loadModelsForAgent(agentId, true)}
-					onTransferPendingSshConfig={(agentId) => {
-						setAgentSshRemoteConfigs((prev) => {
-							const pendingConfig = prev['_pending_'];
-							if (pendingConfig && !prev[agentId]) {
-								return {
-									...prev,
-									[agentId]: pendingConfig,
-								};
-							}
-							return prev;
-						});
-					}}
-					onLoadModelsForAgent={(agentId) => loadModelsForAgent(agentId)}
-					dynamicOptions={dynamicOptions}
-					loadingDynamicOptions={loadingDynamicOptions}
-					onLoadDynamicOptionsForAgent={loadDynamicOptionsForAgent}
-					codexAutoResetByAgent={codexAutoResetByAgent}
-					onCodexAutoResetChange={(agentId, value) =>
-						setCodexAutoResetByAgent((prev) => ({ ...prev, [agentId]: value }))
-					}
-					codexTransportByAgent={codexTransportByAgent}
-					onCodexTransportChange={(agentId, value) =>
-						setCodexTransportByAgent((prev) => ({ ...prev, [agentId]: value }))
-					}
-				/>
-
-				{/* Agent Resilience: auto-retry toggles (default ON). Sits directly
-				    under the agent provider per design. */}
-				{selectedAgent && (
-					<AgentResilienceSection
+			<ModalTabStrip
+				theme={theme}
+				tabs={tabs}
+				activeTab={activeTab}
+				onChange={setActiveTab}
+				label="Agent settings"
+				idPrefix="new-agent"
+				className="px-6 pt-4"
+			/>
+			<div className="flex-1 min-h-0 overflow-y-auto p-6" data-testid="new-agent-tab-body">
+				{activeTab === 'general' && (
+					<GeneralTab
 						theme={theme}
-						retryOnAvailabilityErrors={retryAvailabilityByAgent[selectedAgent] ?? true}
-						retryOnTokenExhaustion={retryTokenByAgent[selectedAgent] ?? true}
-						onChangeAvailability={(value) =>
-							setRetryAvailabilityByAgent((prev) => ({ ...prev, [selectedAgent]: value }))
-						}
-						onChangeTokenExhaustion={(value) =>
-							setRetryTokenByAgent((prev) => ({ ...prev, [selectedAgent]: value }))
-						}
-					/>
-				)}
-
-				{/* Working Directory */}
-				<FormInput
-					theme={theme}
-					label="Working Directory"
-					value={workingDir}
-					onChange={handleWorkingDirChange}
-					placeholder={
-						isSshEnabled
-							? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-							: 'Select directory...'
-					}
-					error={validation.errorField === 'directory' ? validation.error : undefined}
-					monospace
-					heightClass="p-2"
-					addon={
-						<button
-							onClick={isSshEnabled ? undefined : handleSelectFolder}
-							disabled={isSshEnabled}
-							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							title={
-								isSshEnabled
-									? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-									: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
-							}
-						>
-							<Folder className="w-5 h-5" />
-						</button>
-					}
-				/>
-
-				{/* Remote path validation status (only shown when SSH is enabled) */}
-				{isSshEnabled && workingDir.trim() && (
-					<RemotePathStatus
-						theme={theme}
-						validation={remotePathValidation}
-						remoteHost={sshRemoteHost}
-					/>
-				)}
-
-				{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
-				{workingDir.trim() && gitRepoStatus === 'not-repo' && (
-					<div
-						className="flex items-center gap-3 p-3 rounded border"
-						style={{
-							backgroundColor: theme.colors.bgSidebar,
-							borderColor: theme.colors.border,
-						}}
-					>
-						<div className="flex-1">
-							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								Not a Git repository
-							</p>
-							{initRepoError && (
-								<p className="text-xs mt-1" style={{ color: theme.colors.error }}>
-									{initRepoError}
-								</p>
-							)}
-						</div>
-						<button
-							type="button"
-							onClick={handleInitRepo}
-							disabled={isInitializingRepo}
-							className="text-xs px-3 py-1.5 rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
-							style={{
-								backgroundColor: 'transparent',
-								borderColor: theme.colors.accent,
-								color: theme.colors.accent,
-								opacity: isInitializingRepo ? 0.6 : 1,
-								cursor: isInitializingRepo ? 'wait' : 'pointer',
-								['--tw-ring-color' as any]: theme.colors.accent,
-								['--tw-ring-offset-color' as any]: theme.colors.bgMain,
-							}}
-						>
-							{isInitializingRepo ? 'Initializing…' : 'Initialize as Git Repository'}
-						</button>
-					</div>
-				)}
-
-				{/* Directory Warning with Acknowledgment */}
-				{validation.warning && validation.warningField === 'directory' && (
-					<div
-						className="p-3 rounded border"
-						style={{
-							backgroundColor: theme.colors.warning + '15',
-							borderColor: theme.colors.warning + '50',
-						}}
-					>
-						<div className="flex items-start gap-2">
-							<AlertTriangle
-								className="w-4 h-4 flex-shrink-0 mt-0.5"
-								style={{ color: theme.colors.warning }}
-							/>
-							<div className="flex-1">
-								<p className="text-sm" style={{ color: theme.colors.textMain }}>
-									{validation.warning}
-								</p>
-								<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-									We recommend using a unique directory for each managed agent.
-								</p>
-								<label className="flex items-center gap-2 mt-3 cursor-pointer">
-									<input
-										type="checkbox"
-										checked={directoryWarningAcknowledged}
-										onChange={(e) => setDirectoryWarningAcknowledged(e.target.checked)}
-										className="w-4 h-4 rounded"
-										style={{ accentColor: theme.colors.warning }}
+						idPrefix="new-agent"
+						name={instanceName}
+						onNameChange={setInstanceName}
+						nameError={nameError}
+						nameInputRef={nameInputRef}
+						nameInputId="agent-name-input"
+						groupPicker={
+							// Agent Group - only shown when at least one group exists
+							groups.length > 0 ? (
+								<div className="w-full">
+									<label
+										htmlFor="agent-group-select"
+										className="block text-xs font-bold opacity-70 uppercase mb-2"
+										style={{ color: theme.colors.textMain }}
+									>
+										Agent Group
+									</label>
+									<ThemedSelect
+										id="agent-group-select"
+										theme={theme}
+										value={selectedGroupId}
+										onChange={setSelectedGroupId}
+										aria-label="Agent Group"
+										options={[
+											{ value: '', label: 'No Group (Ungrouped)' },
+											...groups.map((g) => ({
+												value: g.id,
+												label: `${g.emoji} ${g.name}`.trim(),
+											})),
+										]}
 									/>
-									<span className="text-sm" style={{ color: theme.colors.textMain }}>
-										I understand the risk and want to proceed
-									</span>
-								</label>
+								</div>
+							) : undefined
+						}
+						workingDirectory={
+							// The input, then what it learned about the directory: remote
+							// path status, the git-repo hint, and the shared-directory warning.
+							<div className="space-y-5">
+								<FormInput
+									theme={theme}
+									label="Working Directory"
+									value={workingDir}
+									onChange={handleWorkingDirChange}
+									placeholder={
+										isSshEnabled
+											? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
+											: 'Select directory...'
+									}
+									error={directoryError}
+									monospace
+									heightClass="p-2"
+									addon={
+										<button
+											onClick={isSshEnabled ? undefined : handleSelectFolder}
+											disabled={isSshEnabled}
+											className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
+											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											title={
+												isSshEnabled
+													? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
+													: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+											}
+										>
+											<Folder className="w-5 h-5" />
+										</button>
+									}
+								/>
+
+								{isSshEnabled && workingDir.trim() && (
+									<RemotePathStatus
+										theme={theme}
+										validation={remotePathValidation}
+										remoteHost={sshRemoteHost}
+									/>
+								)}
+
+								{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
+								{workingDir.trim() && gitRepoStatus === 'not-repo' && (
+									<div
+										className="flex items-center gap-3 p-3 rounded border"
+										style={{
+											backgroundColor: theme.colors.bgSidebar,
+											borderColor: theme.colors.border,
+										}}
+									>
+										<div className="flex-1">
+											<p className="text-sm" style={{ color: theme.colors.textMain }}>
+												Not a Git repository
+											</p>
+											{initRepoError && (
+												<p className="text-xs mt-1" style={{ color: theme.colors.error }}>
+													{initRepoError}
+												</p>
+											)}
+										</div>
+										<button
+											type="button"
+											onClick={handleInitRepo}
+											disabled={isInitializingRepo}
+											className="text-xs px-3 py-1.5 rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+											style={{
+												backgroundColor: 'transparent',
+												borderColor: theme.colors.accent,
+												color: theme.colors.accent,
+												opacity: isInitializingRepo ? 0.6 : 1,
+												cursor: isInitializingRepo ? 'wait' : 'pointer',
+												['--tw-ring-color' as any]: theme.colors.accent,
+												['--tw-ring-offset-color' as any]: theme.colors.bgMain,
+											}}
+										>
+											{isInitializingRepo ? 'Initializing…' : 'Initialize as Git Repository'}
+										</button>
+									</div>
+								)}
+
+								{/* Directory Warning with Acknowledgment */}
+								{validation.warning && validation.warningField === 'directory' && (
+									<div
+										className="p-3 rounded border"
+										style={{
+											backgroundColor: theme.colors.warning + '15',
+											borderColor: theme.colors.warning + '50',
+										}}
+									>
+										<div className="flex items-start gap-2">
+											<AlertTriangle
+												className="w-4 h-4 flex-shrink-0 mt-0.5"
+												style={{ color: theme.colors.warning }}
+											/>
+											<div className="flex-1">
+												<p className="text-sm" style={{ color: theme.colors.textMain }}>
+													{validation.warning}
+												</p>
+												<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+													We recommend using a unique directory for each managed agent.
+												</p>
+												<label className="flex items-center gap-2 mt-3 cursor-pointer">
+													<input
+														type="checkbox"
+														checked={directoryWarningAcknowledged}
+														onChange={(e) => setDirectoryWarningAcknowledged(e.target.checked)}
+														className="w-4 h-4 rounded"
+														style={{ accentColor: theme.colors.warning }}
+													/>
+													<span className="text-sm" style={{ color: theme.colors.textMain }}>
+														I understand the risk and want to proceed
+													</span>
+												</label>
+											</div>
+										</div>
+									</div>
+								)}
 							</div>
-						</div>
-					</div>
+						}
+						additionalDirectories={{
+							directories: additionalDirectories,
+							onChange: setAdditionalDirectories,
+							disableBrowse: !!isSshEnabled,
+							nativelyEnforced: !!agents.find((a) => a.id === selectedAgent)?.capabilities
+								?.supportsAdditionalDirectories,
+						}}
+						newSessionMessage={newSessionMessage}
+						onNewSessionMessageChange={setNewSessionMessage}
+						nudgeMessage={nudgeMessage}
+						onNudgeMessageChange={setNudgeMessage}
+						sshRemoteHost={sshRemoteName}
+					/>
 				)}
 
-				{/* Additional Directories: extra read/write grants beyond the working dir */}
-				<AdditionalDirectoriesSection
-					theme={theme}
-					directories={additionalDirectories}
-					onChange={setAdditionalDirectories}
-					disableBrowse={isSshEnabled}
-					nativelyEnforced={
-						!!agents.find((a) => a.id === selectedAgent)?.capabilities
-							?.supportsAdditionalDirectories
-					}
-				/>
+				{activeTab === 'provider' && (
+					<ProviderTab
+						theme={theme}
+						idPrefix="new-agent"
+						picker={
+							// Each provider's settings (path, args, model, ...) expand in its
+							// card. Their env vars live on the Environment tab.
+							<AgentPickerGrid
+								theme={theme}
+								hideEnvVars
+								loading={loading}
+								sshConnectionError={sshConnectionError}
+								visibleAgents={visibleAgents}
+								availableProviderCount={providerCounts.available}
+								totalProviderCount={providerCounts.total}
+								providerLocationLabel={providerLocation}
+								showAllProviders={showAllProviders}
+								onShowAllProvidersChange={setShowAllProviders}
+								selectedAgent={selectedAgent}
+								expandedAgent={expandedAgent}
+								refreshingAgent={refreshingAgent}
+								debugInfo={debugInfo}
+								customAgentPaths={customAgentPaths}
+								customAgentArgs={customAgentArgs}
+								customAgentEnvVars={customAgentEnvVars}
+								enableMaestroPByAgent={enableMaestroPByAgent}
+								maestroPModeByAgent={maestroPModeByAgent}
+								maestroPPathByAgent={maestroPPathByAgent}
+								detectedMaestroPPath={detectedMaestroPPath}
+								agentConfigs={agentConfigs}
+								availableModels={availableModels}
+								loadingModels={loadingModels}
+								onAgentSelect={(agentId) => {
+									setSelectedAgent(agentId);
+									// A refusal was about the previous provider's gateway.
+									setGatewayUrlError(undefined);
+								}}
+								onAgentExpand={(agentId) => setExpandedAgent(agentId)}
+								onRefreshAgent={handleRefreshAgent}
+								onDismissDebug={() => setDebugInfo(null)}
+								onCustomPathChange={(agentId, value) => {
+									setCustomAgentPaths((prev) => ({ ...prev, [agentId]: value }));
+								}}
+								onCustomArgsChange={(agentId, value) => {
+									setCustomAgentArgs((prev) => ({ ...prev, [agentId]: value }));
+								}}
+								onEnableMaestroPChange={(agentId, value) => {
+									setEnableMaestroPByAgent((prev) => ({ ...prev, [agentId]: value }));
+								}}
+								onMaestroPModeChange={(agentId, value) => {
+									setMaestroPModeByAgent((prev) => ({ ...prev, [agentId]: value }));
+								}}
+								onMaestroPPathChange={(agentId, value) => {
+									setMaestroPPathByAgent((prev) => ({ ...prev, [agentId]: value }));
+								}}
+								onEnvVarKeyChange={envVarHandlers.onEnvVarKeyChange}
+								onEnvVarValueChange={envVarHandlers.onEnvVarValueChange}
+								onEnvVarRemove={envVarHandlers.onEnvVarRemove}
+								onEnvVarAdd={envVarHandlers.onEnvVarAdd}
+								onConfigChange={(agentId, key, value) => {
+									setAgentConfigs((prev) => ({
+										...prev,
+										[agentId]: {
+											...prev[agentId],
+											[key]: value,
+										},
+									}));
+								}}
+								onConfigBlur={(agentId, key, value) => {
+									const updatedConfig = {
+										...(agentConfigs[agentId] || {}),
+										[key]: value,
+									};
+									void window.maestro.agents.setConfig(agentId, updatedConfig).catch((error) => {
+										logger.error(`Failed to persist config for ${agentId}:`, undefined, error);
+									});
+								}}
+								onRefreshModels={(agentId) => loadModelsForAgent(agentId, true)}
+								onTransferPendingSshConfig={(agentId) => {
+									setAgentSshRemoteConfigs((prev) => {
+										const pendingConfig = prev['_pending_'];
+										if (pendingConfig && !prev[agentId]) {
+											return {
+												...prev,
+												[agentId]: pendingConfig,
+											};
+										}
+										return prev;
+									});
+								}}
+								onLoadModelsForAgent={(agentId) => loadModelsForAgent(agentId)}
+								dynamicOptions={dynamicOptions}
+								loadingDynamicOptions={loadingDynamicOptions}
+								onLoadDynamicOptionsForAgent={loadDynamicOptionsForAgent}
+								codexAutoResetByAgent={codexAutoResetByAgent}
+								onCodexAutoResetChange={(agentId, value) =>
+									setCodexAutoResetByAgent((prev) => ({ ...prev, [agentId]: value }))
+								}
+								codexTransportByAgent={codexTransportByAgent}
+								onCodexTransportChange={(agentId, value) =>
+									setCodexTransportByAgent((prev) => ({ ...prev, [agentId]: value }))
+								}
+							/>
+						}
+						// Agent Resilience: auto-retry toggles (default ON).
+						resilience={
+							selectedAgent
+								? {
+										retryOnAvailabilityErrors: retryAvailabilityByAgent[selectedAgent] ?? true,
+										retryOnTokenExhaustion: retryTokenByAgent[selectedAgent] ?? true,
+										onChangeAvailability: (value) =>
+											setRetryAvailabilityByAgent((prev) => ({ ...prev, [selectedAgent]: value })),
+										onChangeTokenExhaustion: (value) =>
+											setRetryTokenByAgent((prev) => ({ ...prev, [selectedAgent]: value })),
+									}
+								: undefined
+						}
+					/>
+				)}
 
-				{/* SSH Remote Execution - Top Level.
-				    Always rendered, even when no remotes are configured, so the
-				    "remote-controlled" toggle is reachable - it mirrors history
-				    to the local project dir for a Maestro SSH'd into this
-				    machine, independent of local SSH remote setup.
-				    Uses '_pending_' key when no agent selected, transfers to
-				    agent when selected. */}
-				<SshRemoteSelector
-					theme={theme}
-					sshRemotes={sshRemotes}
-					sshRemoteConfig={
-						agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
-					}
-					onSshRemoteConfigChange={(config) => {
-						setAgentSshRemoteConfigs((prev) => {
-							const newConfigs: Record<string, AgentSshRemoteConfig> = {
-								...prev,
-								_pending_: config,
-							};
-							if (selectedAgent) {
-								newConfigs[selectedAgent] = config;
+				{activeTab === 'models' && (
+					<ModelsTab
+						theme={theme}
+						idPrefix="new-agent"
+						gateway={
+							selectedAgent ? (
+								// Local Models gateway, for the selected provider. Rendered for
+								// every provider: one that cannot use a gateway shows the field
+								// disabled with the reason.
+								<div data-testid="new-agent-gateway" className="space-y-2">
+									<GatewayUrlField
+										theme={theme}
+										label="Local Models Gateway"
+										toolType={selectedAgent}
+										value={gatewayUrlByAgent[selectedAgent] ?? ''}
+										onChange={(value) => {
+											setGatewayUrlByAgent((prev) => ({ ...prev, [selectedAgent]: value }));
+											setGatewayUrlError(undefined);
+										}}
+										// Seeded from the provider-level set, and saved as the agent's own.
+										userEnvVars={customAgentEnvVars[selectedAgent]}
+										sshRemoteName={sshRemoteName}
+										error={gatewayUrlError}
+										testId="new-agent-gateway-url"
+									/>
+									<p className="text-xs" style={{ color: theme.colors.textDim }}>
+										The {TOKEN_PROXY_NAME} mode is chosen in Edit Agent once the agent exists.
+									</p>
+								</div>
+							) : undefined
+						}
+					/>
+				)}
+
+				{activeTab === 'environment' &&
+					(selectedAgent ? (
+						<EnvironmentTab
+							theme={theme}
+							idPrefix="new-agent"
+							providerName={getAgentDisplayName(selectedAgent)}
+							toolType={selectedAgent}
+							isSshEnabled={!!isSshEnabled}
+							customEnvVars={customAgentEnvVars[selectedAgent] ?? {}}
+							onEnvVarKeyChange={(oldKey, newKey, value) =>
+								envVarHandlers.onEnvVarKeyChange(selectedAgent, oldKey, newKey, value)
 							}
-							return newConfigs;
-						});
-					}}
-				/>
+							onEnvVarValueChange={(key, value) =>
+								envVarHandlers.onEnvVarValueChange(selectedAgent, key, value)
+							}
+							onEnvVarRemove={(key) => envVarHandlers.onEnvVarRemove(selectedAgent, key)}
+							onEnvVarAdd={() => envVarHandlers.onEnvVarAdd(selectedAgent)}
+							onEnvVarsBlur={() => {
+								/* Saved on agent create */
+							}}
+						/>
+					) : (
+						// The environment is kept per provider, so there is none to edit yet.
+						<AgentSettingsPanel theme={theme} idPrefix="new-agent" tab="environment">
+							<EmptyStatePlaceholder
+								theme={theme}
+								icon={<Terminal className="w-10 h-10" />}
+								title="Choose a provider on the Provider tab first."
+							/>
+						</AgentSettingsPanel>
+					))}
 
-				{/* New Session Message */}
-				<NudgeMessageField
-					theme={theme}
-					value={newSessionMessage}
-					onChange={setNewSessionMessage}
-					maxLength={NEW_SESSION_MESSAGE_MAX_LENGTH}
-					label="New Session Message"
-					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
-					placeholder="Instructions sent with the first message of every new session..."
-					sizeKey="new-session-message"
-				/>
+				{activeTab === 'peers' && <PeersTab theme={theme} idPrefix="new-agent" />}
 
-				{/* Nudge Message */}
-				<NudgeMessageField theme={theme} value={nudgeMessage} onChange={setNudgeMessage} />
+				{activeTab === 'ssh' && (
+					// Always rendered, even when no remotes are configured, so the
+					// "remote-controlled" toggle is reachable - it mirrors history
+					// to the local project dir for a Maestro SSH'd into this
+					// machine, independent of local SSH remote setup.
+					// Uses '_pending_' key when no agent selected, transfers to
+					// agent when selected.
+					<SshTab
+						theme={theme}
+						idPrefix="new-agent"
+						sshRemotes={sshRemotes}
+						sshRemoteConfig={
+							agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
+						}
+						onSshRemoteConfigChange={(config) => {
+							setAgentSshRemoteConfigs((prev) => {
+								const newConfigs: Record<string, AgentSshRemoteConfig> = {
+									...prev,
+									_pending_: config,
+								};
+								if (selectedAgent) {
+									newConfigs[selectedAgent] = config;
+								}
+								return newConfigs;
+							});
+						}}
+					/>
+				)}
 			</div>
 		</Modal>
 	);

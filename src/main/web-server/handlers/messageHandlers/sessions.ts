@@ -100,6 +100,9 @@ export function handleCreateSession(
 	}
 	// autoRunFolderPath can be set outside of the agent's cwd (no confinement needed)
 	if (message.autoRunFolderPath) config.autoRunFolderPath = message.autoRunFolderPath as string;
+	if (typeof message.gatewayUrl === 'string' && message.gatewayUrl) {
+		config.gatewayUrl = message.gatewayUrl;
+	}
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks

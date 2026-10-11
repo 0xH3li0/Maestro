@@ -84,7 +84,9 @@ export interface UseSessionCrudReturn {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -181,7 +183,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-			codexTransport?: CodexTransport
+			codexTransport?: CodexTransport,
+			/** Local Models gateway URL, already validated; `undefined` sets none. */
+			gatewayUrl?: string
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -324,6 +328,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
 					// Same rule: `exec` is the default, so only the opt-in is stored.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					// Set from the New Agent Models tab. The token proxy mode is not set
+					// here: absent reads as `passthrough` when this URL is the proxy's.
+					gatewayUrl: gatewayUrl || undefined,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};

@@ -263,6 +263,68 @@ describe('create-agent command', () => {
 			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Invalid --env format'));
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
+
+		it('refuses a --gateway-url that is not a URL, by name', async () => {
+			await createAgent('Bad', { cwd: '/tmp', type: 'claude-code', gatewayUrl: 'not a url' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringMatching(/^--gateway-url: .*not a URL/)
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a --gateway-url for a provider that cannot use one', async () => {
+			await createAgent('Bad', {
+				cwd: '/tmp',
+				type: 'copilot-cli',
+				gatewayUrl: 'http://127.0.0.1:8787',
+				json: true,
+			});
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Copilot CLI ignores base-URL variables');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('--gateway-url', () => {
+		let sentPayload: Record<string, unknown>;
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'gw-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		it('sends the normalized gateway, as the New Agent Models tab stores it', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				gatewayUrl: ' http://127.0.0.1:8787/ ',
+			});
+
+			expect(sentPayload.gatewayUrl).toBe('http://127.0.0.1:8787');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('sends no gateway for "none"', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', gatewayUrl: 'none' });
+
+			expect(sentPayload).not.toHaveProperty('gatewayUrl');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('error handling', () => {

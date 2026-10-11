@@ -4,6 +4,7 @@
  * tilde expansion, layer stack integration, keyboard shortcuts, custom agent paths
  */
 
+import type React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
@@ -12,6 +13,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -73,6 +75,13 @@ const showAllProviders = async (): Promise<void> => {
 	const toggle = await screen.findByRole('switch', { name: 'Show all supported providers' });
 	fireEvent.click(toggle);
 };
+
+/**
+ * Show one tab of the agent settings form. Only the active panel is rendered,
+ * so a field on another tab is not in the document until its tab is opened.
+ */
+const openTab = (name: string) =>
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
 
 describe('NewInstanceModal', () => {
 	let theme: Theme;
@@ -174,6 +183,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			expect(screen.getByText('Loading agents...')).toBeInTheDocument();
 		});
@@ -199,6 +209,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -228,6 +239,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Gemini CLI is unavailable, so the default filter hides it. This test is
 			// about ORDER across both buckets, so ask for every row.
@@ -266,6 +278,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load, then click to expand
 			await waitFor(() => {
@@ -293,6 +306,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Not Found')).toBeInTheDocument();
@@ -314,6 +328,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// A coming-soon provider cannot be run, so it is filtered out by default.
 			await showAllProviders();
@@ -338,6 +353,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -395,6 +411,7 @@ describe('NewInstanceModal', () => {
 					}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Codex')).toBeInTheDocument();
@@ -421,6 +438,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -443,6 +461,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const option = screen.getByRole('option', { name: /Claude Code/i });
@@ -465,6 +484,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const options = screen.getAllByRole('option');
@@ -489,6 +509,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -513,6 +534,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -539,6 +561,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// `openai-codex` is not a pickable id, so the default filter hides it.
 			await showAllProviders();
@@ -574,6 +597,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -615,6 +639,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -660,6 +685,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -880,7 +906,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 
@@ -937,7 +964,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 
@@ -994,7 +1022,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 	});
@@ -1052,7 +1081,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1098,6 +1128,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -1121,11 +1152,13 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 
+			openTab('General');
 			const dirInput = screen.getByPlaceholderText('Select directory...');
 			fireEvent.change(dirInput, { target: { value: '/my/project' } });
 
@@ -1503,6 +1536,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Codex')).toBeInTheDocument();
@@ -1529,6 +1563,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load, then click to expand
 			await waitFor(() => {
@@ -1557,19 +1592,13 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load, then click to expand
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 			fireEvent.click(screen.getByText('Claude Code'));
-
-			// Fill in required fields
-			const nameInput = screen.getByLabelText('Agent Name');
-			fireEvent.change(nameInput, { target: { value: 'My Session' } });
-
-			const dirInput = screen.getByPlaceholderText('Select directory...');
-			fireEvent.change(dirInput, { target: { value: '/my/project' } });
 
 			await waitFor(() => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
@@ -1578,6 +1607,14 @@ describe('NewInstanceModal', () => {
 			// Set custom path
 			const customPathInput = screen.getByPlaceholderText('/path/to/claude');
 			fireEvent.change(customPathInput, { target: { value: '/custom/path/to/claude' } });
+
+			// Fill in required fields
+			openTab('General');
+			const nameInput = screen.getByLabelText('Agent Name');
+			fireEvent.change(nameInput, { target: { value: 'My Session' } });
+
+			const dirInput = screen.getByPlaceholderText('Select directory...');
+			fireEvent.change(dirInput, { target: { value: '/my/project' } });
 
 			// Create agent
 			const createButton = screen.getByText('Create Agent');
@@ -1608,7 +1645,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 
@@ -1626,6 +1664,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load
 			await waitFor(() => {
@@ -1641,6 +1680,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Fill in required fields
+			openTab('General');
 			const nameInput = screen.getByLabelText('Agent Name');
 			fireEvent.change(nameInput, { target: { value: 'My Session' } });
 
@@ -1652,6 +1692,7 @@ describe('NewInstanceModal', () => {
 			expect(createButton).toBeDisabled();
 
 			// Set custom path
+			openTab('Provider');
 			const customPathInput = screen.getByPlaceholderText('/path/to/claude');
 			fireEvent.change(customPathInput, { target: { value: '/custom/path/to/claude' } });
 
@@ -1675,6 +1716,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load
 			await waitFor(() => {
@@ -1712,6 +1754,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load
 			await waitFor(() => {
@@ -1730,6 +1773,7 @@ describe('NewInstanceModal', () => {
 			fireEvent.change(customPathInput, { target: { value: '/custom/bin/claude' } });
 
 			// Fill in required fields
+			openTab('General');
 			const nameInput = screen.getByLabelText('Agent Name');
 			fireEvent.change(nameInput, { target: { value: 'Custom Path Agent' } });
 
@@ -1765,7 +1809,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 	});
@@ -1812,6 +1857,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh detection')).toBeInTheDocument();
@@ -1870,6 +1916,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const badge = screen.getByText('Available');
@@ -1891,6 +1938,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const badge = screen.getByText('Not Found');
@@ -1934,6 +1982,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const options = screen.getAllByRole('option');
@@ -1974,6 +2023,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const option = screen.getByRole('option', { name: /Claude Code/i });
@@ -1997,6 +2047,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const option = screen.getByRole('option', { name: /Gemini CLI/i });
@@ -2022,6 +2073,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Two of the three are unavailable, so ask past the default filter.
 			await showAllProviders();
@@ -2048,6 +2100,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// The Coming Soon row only exists past the default filter.
 			await showAllProviders();
@@ -2088,6 +2141,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh detection')).toBeInTheDocument();
@@ -2155,6 +2209,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -2219,6 +2274,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -2273,6 +2329,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -2335,6 +2392,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -2792,6 +2850,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for the SSH selector to appear even though no agent is available
 			await waitFor(() => {
@@ -2843,6 +2902,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for SSH selector (should appear immediately since we have SSH configs)
 			await waitFor(() => {
@@ -2864,6 +2924,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Now select the available agent (opencode)
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('OpenCode')).toBeInTheDocument();
 			});
@@ -2881,6 +2942,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// After selecting an agent, fill in required fields
+			openTab('General');
 			const nameInput = screen.getByLabelText('Agent Name');
 			fireEvent.change(nameInput, { target: { value: 'SSH Test' } });
 
@@ -2935,7 +2997,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 
@@ -3031,6 +3094,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for initial detection
 			await waitFor(() => {
@@ -3102,6 +3166,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for agents and SSH selector to load
 			await waitFor(() => {
@@ -3113,6 +3178,7 @@ describe('NewInstanceModal', () => {
 			fireEvent.change(dropdown, { target: { value: 'remote-1' } });
 
 			// Select agent
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
@@ -3122,6 +3188,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Fill in name and remote working directory
+			openTab('General');
 			fireEvent.change(screen.getByLabelText('Agent Name'), {
 				target: { value: 'Remote Agent' },
 			});
@@ -3169,7 +3236,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 
@@ -3213,11 +3281,13 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			await waitFor(() => {
 				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
 			});
 			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
@@ -3225,6 +3295,7 @@ describe('NewInstanceModal', () => {
 				fireEvent.click(screen.getByRole('option', { name: /Claude Code/i }));
 			});
 
+			openTab('General');
 			fireEvent.change(screen.getByLabelText('Agent Name'), {
 				target: { value: 'Remote Agent' },
 			});
@@ -3482,7 +3553,8 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined // gatewayUrl: none unless set on the Models tab
 			);
 		});
 
@@ -3531,6 +3603,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for initial load - agents should be detected and shown
 			await waitFor(() => {
@@ -3538,6 +3611,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Wait for SSH selector
+			openTab('SSH');
 			await waitFor(() => {
 				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
 			});
@@ -3547,6 +3621,7 @@ describe('NewInstanceModal', () => {
 			fireEvent.change(dropdown, { target: { value: 'unreachable-remote' } });
 
 			// Wait for connection error to appear
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('Unable to Connect')).toBeInTheDocument();
 				expect(screen.getByText('Connection refused')).toBeInTheDocument();
@@ -3733,6 +3808,215 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
 			});
 			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
+		});
+	});
+
+	describe('Tabbed form', () => {
+		const renderModal = (props: Partial<React.ComponentProps<typeof NewInstanceModal>> = {}) =>
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					{...props}
+				/>
+			);
+
+		const selectedTab = () =>
+			screen.getAllByRole('tab').find((tab) => tab.getAttribute('aria-selected') === 'true');
+
+		/** Fill the two required General fields and wait until the provider has loaded. */
+		const fillRequired = async (name = 'Tabbed Agent', dir = '/my/project') => {
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: name } });
+			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+				target: { value: dir },
+			});
+			await waitFor(() => expect(screen.getByText('Create Agent')).not.toBeDisabled());
+		};
+
+		/** The Models tab's gateway input, once the selected provider is known. */
+		const gatewayInput = async () =>
+			(await screen.findByTestId('new-agent-gateway')).querySelector('input') as HTMLInputElement;
+
+		it('renders the six tabs in order, opens on General, and is a resizable frame', () => {
+			const { container } = renderModal();
+
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Environment',
+				'Peers',
+				'SSH',
+			]);
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(container.ownerDocument.querySelector('[data-modal-resize-key="new-agent"]')).not.toBe(
+				null
+			);
+		});
+
+		it('renders only the active panel', () => {
+			renderModal();
+
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-general');
+			expect(screen.queryByText('Agent Provider')).not.toBeInTheDocument();
+			openTab('Provider');
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-provider');
+			expect(screen.queryByLabelText('Agent Name')).not.toBeInTheDocument();
+		});
+
+		it('opens on General again after a close, with no remembered tab', () => {
+			const { rerender } = renderModal();
+			openTab('SSH');
+
+			const props = { onClose, onCreate, theme, existingSessions: [] };
+			rerender(<NewInstanceModal isOpen={false} {...props} />);
+			rerender(<NewInstanceModal isOpen={true} {...props} />);
+
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[', () => {
+			renderModal();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('Provider');
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('sends Cmd+Enter from SSH to General with the empty name shown as an error', async () => {
+			renderModal();
+			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+				target: { value: '/my/project' },
+			});
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Enter a name for the agent')).toBeInTheDocument();
+			expect(screen.getByTestId('new-agent-tab-general-error')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter to General when the working directory is empty', async () => {
+			renderModal();
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'No Dir' } });
+			openTab('Models');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Choose a working directory')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter to Provider when the provider cannot run', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: false }),
+			]);
+			renderModal();
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Missing' } });
+			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+				target: { value: '/my/project' },
+			});
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Provider');
+		});
+
+		it('saves the gateway set on the Models tab onto the created agent', async () => {
+			renderModal();
+			await fillRequired();
+			openTab('Models');
+
+			fireEvent.change(await gatewayInput(), { target: { value: 'http://127.0.0.1:8787/' } });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			// gatewayUrl is the 23rd argument, stored in its normalized form.
+			expect(onCreate.mock.calls[0][22]).toBe('http://127.0.0.1:8787');
+		});
+
+		it('refuses a gateway that is not a URL, on the Models tab, without creating', async () => {
+			renderModal();
+			await fillRequired();
+			openTab('Models');
+			fireEvent.change(await gatewayInput(), { target: { value: 'not a url' } });
+			openTab('General');
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Models');
+			expect(screen.getByTestId('new-agent-tab-models-error')).toBeInTheDocument();
+			expect(screen.getByTestId('new-agent-gateway-url-status')).toHaveTextContent('not a URL');
+
+			// Editing the field clears the refusal and its dot.
+			fireEvent.change(await gatewayInput(), { target: { value: '' } });
+			expect(screen.queryByTestId('new-agent-tab-models-error')).not.toBeInTheDocument();
+		});
+
+		it('carries the gateway of the agent being duplicated', async () => {
+			renderModal({
+				sourceSession: createMockSession({
+					id: 'source-1',
+					name: 'Source',
+					toolType: 'claude-code',
+					cwd: '/source/project',
+					gatewayUrl: 'http://127.0.0.1:9000',
+				}),
+			});
+			openTab('Models');
+
+			await waitFor(async () => expect((await gatewayInput()).value).toBe('http://127.0.0.1:9000'));
+		});
+
+		it('edits env vars on the Environment tab only, for the selected provider', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				customEnvVars: { API_KEY: 'test-key' },
+			});
+			renderModal();
+			await fillRequired();
+
+			openTab('Provider');
+			fireEvent.click(screen.getByText('Claude Code'));
+			await waitFor(() =>
+				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument()
+			);
+			expect(screen.queryByDisplayValue('API_KEY')).not.toBeInTheDocument();
+
+			openTab('Environment');
+			expect(screen.getByText(/Editing the Claude Code environment\./)).toBeInTheDocument();
+			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
+			openTab('General');
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate.mock.calls[0][7]).toEqual({ API_KEY: 'new-key' });
+		});
+
+		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+			renderModal();
+			expect(screen.getByTestId('new-agent-runs-on')).toHaveTextContent('Local');
+			expect(screen.queryByText('Agent Resilience')).not.toBeInTheDocument();
+
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Agent Resilience')).toBeInTheDocument());
 		});
 	});
 });

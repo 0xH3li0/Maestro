@@ -576,6 +576,29 @@ describe('useSessionCrud', () => {
 
 			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(stored);
 		});
+
+		// The New Agent Models tab's gateway. The token proxy mode is not set at
+		// create, so a gateway that is the proxy's reads as passthrough.
+		it.each([
+			['http://127.0.0.1:8787', 'http://127.0.0.1:8787'],
+			['', undefined],
+			[undefined, undefined],
+		] as const)('stores gatewayUrl %s as %s', async (chosen, stored) => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// gatewayUrl is the 23rd positional argument.
+			const args: unknown[] = ['claude-code', '/test/project', 'Gateway Session'];
+			args[22] = chosen;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.gatewayUrl).toBe(stored);
+			expect(session.tokenProxyMode).toBeUndefined();
+		});
 	});
 
 	// ========================================================================

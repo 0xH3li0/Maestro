@@ -91,3 +91,19 @@ describe('handleCreateSession - context window provenance (finding AD1)', () => 
 		expect(config?.contextWindowSource).toBeUndefined();
 	});
 });
+
+describe('handleCreateSession - Local Models gateway', () => {
+	it('passes gatewayUrl through the config allowlist', () => {
+		// `create-agent --gateway-url` sends it; without the allowlist entry the
+		// agent would be created with no gateway and the CLI would report success.
+		const config = created({ gatewayUrl: 'http://127.0.0.1:8787' });
+
+		expect(config?.gatewayUrl).toBe('http://127.0.0.1:8787');
+	});
+
+	it('leaves the gateway unset when none was sent, or when it is not a string', () => {
+		expect(created({})).toBeUndefined();
+		createSession.mockClear();
+		expect(created({ gatewayUrl: 42 as unknown as string })).toBeUndefined();
+	});
+});

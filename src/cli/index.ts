@@ -1451,6 +1451,10 @@ program
 		'--auto-run-folder <path>',
 		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
 	)
+	.option(
+		'--gateway-url <url|none>',
+		"Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode"
+	)
 	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
 	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')

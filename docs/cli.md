@@ -590,26 +590,27 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 
 The flag table below covers `create-agent`:
 
-| Flag                              | Description                                              | Default                    |
-| --------------------------------- | -------------------------------------------------------- | -------------------------- |
-| `-d, --cwd <path>`                | Working directory for the agent (required)               | -                          |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid) | `claude-code`              |
-| `-g, --group <id>`                | Group ID to assign the agent to                          | -                          |
-| `--nudge <message>`               | Nudge message appended to every user message             | -                          |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions        | -                          |
-| `--custom-path <path>`            | Custom binary path for the agent CLI                     | -                          |
-| `--custom-args <args>`            | Custom CLI arguments                                     | -                          |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                        | -                          |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                      | -                          |
-| `--effort <level>`                | Effort/reasoning level override                          | -                          |
-| `--context-window <size>`         | Context window size in tokens                            | -                          |
-| `--provider-path <path>`          | Custom provider path                                     | -                          |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                       | -                          |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote             | -                          |
-| `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent               | `<cwd>/.maestro/playbooks` |
-| `--background`                    | Create the agent without selecting it in the Left Bar    | -                          |
-| `--focus`                         | Select the new agent after creating it (default)         | -                          |
-| `--json`                          | Machine-readable JSON output                             | -                          |
+| Flag                              | Description                                                                                                                                                                                                    | Default                    |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `-d, --cwd <path>`                | Working directory for the agent (required)                                                                                                                                                                     | -                          |
+| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid)                                                                                                                                                       | `claude-code`              |
+| `-g, --group <id>`                | Group ID to assign the agent to                                                                                                                                                                                | -                          |
+| `--nudge <message>`               | Nudge message appended to every user message                                                                                                                                                                   | -                          |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                                                                                                                              | -                          |
+| `--custom-path <path>`            | Custom binary path for the agent CLI                                                                                                                                                                           | -                          |
+| `--custom-args <args>`            | Custom CLI arguments                                                                                                                                                                                           | -                          |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                                                                                                              | -                          |
+| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                                                                                                                            | -                          |
+| `--effort <level>`                | Effort/reasoning level override                                                                                                                                                                                | -                          |
+| `--context-window <size>`         | Context window size in tokens                                                                                                                                                                                  | -                          |
+| `--provider-path <path>`          | Custom provider path                                                                                                                                                                                           | -                          |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                                                                                             | -                          |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                                                                                                                   | -                          |
+| `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent                                                                                                                                                                     | `<cwd>/.maestro/playbooks` |
+| `--gateway-url <url\|none>`       | [Local Models gateway](/local-models#gateway), as on the New Agent Models tab. Checked against the provider like `update-agent --gateway-url`. Choose a proxy mode afterwards with `update-agent --proxy-mode` | -                          |
+| `--background`                    | Create the agent without selecting it in the Left Bar                                                                                                                                                          | -                          |
+| `--focus`                         | Select the new agent after creating it (default)                                                                                                                                                               | -                          |
+| `--json`                          | Machine-readable JSON output                                                                                                                                                                                   | -                          |
 
 ### Creating, Updating, and Removing Groups
 

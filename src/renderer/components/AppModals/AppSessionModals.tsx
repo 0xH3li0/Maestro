@@ -54,7 +54,9 @@ export interface AppSessionModalsProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication

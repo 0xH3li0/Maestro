@@ -63,7 +63,9 @@ export interface NewInstanceModalProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -193,4 +195,9 @@ export interface AgentPickerGridProps {
 	/** Codex transport, per agent id. Defaults to `exec` when absent. */
 	codexTransportByAgent?: Record<string, CodexTransport>;
 	onCodexTransportChange?: (agentId: string, value: CodexTransport) => void;
+	/**
+	 * Leave env vars out of each provider's settings panel. The tabbed New Agent
+	 * form edits them on its Environment tab instead.
+	 */
+	hideEnvVars?: boolean;
 }
