@@ -616,6 +616,17 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 		pluginSandboxHost?.stopAll();
 		pluginGroupingRegistry?.clearAll();
 	}
+	// Feature changes also invalidate cached settings guests, including changes
+	// made outside this renderer. Reads remain pure; do not refresh discovery.
+	try {
+		mainWindow?.webContents.send(
+			'plugins:changed',
+			undefined,
+			pluginManager?.getContributions().panels.map((panel) => panel.id) ?? []
+		);
+	} catch {
+		// Renderer may be gone during shutdown.
+	}
 	if (!arePluginHostViewsEnabled()) {
 		pluginHostViews.purgeAll();
 		return;
@@ -2665,7 +2676,11 @@ app
 			onChange: (registry) => {
 				pluginHostViews.sync();
 				try {
-					mainWindow?.webContents.send('plugins:changed', registry);
+					mainWindow?.webContents.send(
+						'plugins:changed',
+						registry,
+						pluginManager?.getContributions().panels.map((panel) => panel.id) ?? []
+					);
 				} catch {
 					// Renderer may be gone during shutdown; ignore.
 				}

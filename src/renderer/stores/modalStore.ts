@@ -1375,6 +1375,7 @@ export function useModalActions() {
 		settingsTab: settingsData?.tab,
 		settingsPromptId: settingsData?.promptId,
 		settingsSettingId: settingsData?.settingId,
+		settingsNavigationRequest: settingsData,
 		...actions,
 
 		// New Instance Modal
