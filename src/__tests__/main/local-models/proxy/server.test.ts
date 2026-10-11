@@ -630,6 +630,70 @@ describe('token proxy server', () => {
 			expect(logs[0]).toMatchObject({ status: 200, outcome: 'completed' });
 		});
 
+		it('reads the end of a turn from a stream sent with no content type', async () => {
+			// The ChatGPT backend answers a Codex turn with an event stream and no
+			// `Content-Type` header. Read only when typed, every finished Codex turn
+			// was still logged `client-aborted`.
+			const upstream = await startUpstream((_req, res) => {
+				res.writeHead(200);
+				res.write('event: response.completed\ndata: {"type":"response.completed"}\n\n');
+			});
+			const { port, logs } = await startProxy({ chatgpt: upstream.origin });
+
+			const leaveAfterFirstChunk = (path: string) =>
+				new Promise<void>((resolve) => {
+					const req = http.request(
+						{ host: '127.0.0.1', port, method: 'POST', path, agent: false },
+						(res) => {
+							res.on('error', () => {});
+							res.once('data', () => {
+								req.destroy();
+								resolve();
+							});
+						}
+					);
+					req.on('error', () => {});
+					req.end('{}');
+				});
+
+			await leaveAfterFirstChunk('/chatgpt/responses');
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 200, outcome: 'completed' });
+
+			// Only a message request is read that way. Anything else with no type
+			// that the client leaves early is what it looks like.
+			await leaveAfterFirstChunk('/chatgpt/models');
+			await vi.waitFor(() => expect(logs).toHaveLength(2));
+			expect(logs[1]).toMatchObject({ status: 200, outcome: 'client-aborted' });
+		});
+
+		it('refuses a WebSocket handshake by name, and forwards nothing', async () => {
+			// Forwarded, the handshake reaches the upstream as a plain GET (the
+			// `Upgrade` header is hop-by-hop) and comes back 405, which Codex retried
+			// nine times before sending the turn over HTTP. 426 makes it switch at once.
+			const upstream = await startUpstream((_req, res) => res.end('ok'));
+			const { port, logs } = await startProxy({ chatgpt: upstream.origin });
+
+			const response = await send(port, {
+				method: 'GET',
+				path: '/chatgpt/responses',
+				headers: ['Connection', 'Upgrade', 'Upgrade', 'websocket'],
+			});
+
+			expect(response.status).toBe(426);
+			const body = JSON.parse(response.body.toString());
+			expect(body.error.type).toBe('maestro_token_proxy_error');
+			expect(body.error.code).toBe('upgrade-not-supported');
+			expect(body.error.message).toContain('carries HTTP requests only, not a websocket');
+			expect(upstream.seen).toHaveLength(0);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({
+				route: 'chatgpt',
+				status: 426,
+				outcome: 'upgrade-refused',
+			});
+		});
+
 		it('reads the end of a turn from each provider, and from nothing else', () => {
 			expect(streamAnnouncedItsEnd('event: response.completed\ndata: {}')).toBe(true);
 			expect(streamAnnouncedItsEnd('event: response.failed\ndata: {}')).toBe(true);

@@ -111,7 +111,13 @@ export type TokenProxyRequestOutcome =
 	/** The upstream could not be reached, or dropped mid-response. */
 	| 'upstream-failed'
 	/** The request named no route; nothing was forwarded. */
-	| 'unknown-route';
+	| 'unknown-route'
+	/**
+	 * The client asked to switch protocols (a WebSocket). The proxy carries HTTP
+	 * only, said so with a 426, and forwarded nothing. Not a failure: the client
+	 * is expected to send the same turn over HTTP.
+	 */
+	| 'upgrade-refused';
 
 /** What the proxy carried for one request. Never a header or a body. */
 export interface TokenProxyRequestLog {
@@ -395,6 +401,24 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			return;
 		}
 
+		// A WebSocket handshake. The proxy reads and counts HTTP bodies and has no
+		// business inside a socket it would only tunnel, so it answers for itself.
+		// Forwarding the request instead (the `Upgrade` header is hop-by-hop and
+		// is dropped) reaches the upstream as a plain GET, which it answers 405:
+		// Codex took that for a transient failure and retried the handshake nine
+		// times, 9.3 of the 12.3 seconds of a measured turn, before it sent the
+		// turn over HTTP. 426 is the status that says "not this protocol, here".
+		if (req.headers.upgrade) {
+			req.resume();
+			answerAsProxy(
+				426,
+				'upgrade-not-supported',
+				'upgrade-refused',
+				`The ${TOKEN_PROXY_NAME} carries HTTP requests only, not a ${String(req.headers.upgrade)} connection. Send the request over HTTP.`
+			);
+			return;
+		}
+
 		let upstream: URL;
 		try {
 			upstream = new URL(target.upstream);
@@ -463,9 +487,15 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 				// event must not wait for the next one to fill a packet.
 				res.flushHeaders();
 				res.socket?.setNoDelay(true);
-				const eventStream = /^text\/event-stream\b/i.test(
-					String(upstreamResponse.headers['content-type'] ?? '')
-				);
+				// An event stream says so in its content type, except where it does
+				// not: the ChatGPT backend answers a Codex turn with a stream and no
+				// `Content-Type` at all. A message request answered with no type is
+				// read for the terminal event too, or every finished Codex turn is
+				// recorded as abandoned.
+				const contentType = String(upstreamResponse.headers['content-type'] ?? '');
+				const eventStream =
+					/^text\/event-stream\b/i.test(contentType) ||
+					(contentType === '' && target.kind !== 'other');
 				upstreamResponse.on('data', (chunk: Buffer) => {
 					entry.responseBytes += chunk.length;
 					if (eventStream && !streamEnded) {

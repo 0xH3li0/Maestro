@@ -272,21 +272,21 @@ export const TOKEN_PROXY_MODE_LABELS: Record<TokenProxyMode, string> = {
 /**
  * Said wherever a token figure from the proxy is shown. The proxy has no
  * tokenizer for the provider, so it counts 4 characters to a token. Against a
- * provider's own count that came out about 1.9 times low on shell output
- * (paths, digits, punctuation), so a saving shown is a floor, not a
- * measurement.
+ * provider's own count that matched on a log of ordinary words and came out
+ * about 1.9 times low on shell output full of paths and digits, so a saving
+ * shown is an estimate that errs low, not a measurement.
  */
 export const TOKEN_PROXY_ESTIMATE_NOTE =
-	'Token counts are estimates at 4 characters per token. Logs and code usually run denser, so the real saving is higher.';
+	'Token counts are estimates at 4 characters per token. On paths, digits and stack traces the real saving can be about twice the figure shown.';
 
 /** One sentence per mode: what it does and what it costs. Shown under the picker. */
 export const TOKEN_PROXY_MODE_DESCRIPTIONS: Record<TokenProxyMode, string> = {
 	off: "This agent's requests do not go through the Maestro proxy.",
 	passthrough: 'Requests are forwarded unchanged and counted. Nothing is shortened.',
 	compress:
-		'A large tool result is shortened after the model has read it once in full. The model sees everything; the result is cached twice, so this costs slightly more in a short session and less in a long one.',
+		'A large tool result is shortened after the model has read it once in full. The model sees everything; the result is cached twice, so this costs more than Passthrough in a short session and less only in a long one.',
 	'compress-early':
-		'A large tool result is shortened before the model first reads it. Cheapest in every session, because nothing is cached in full. The model works from the shortened output.',
+		'A large tool result is shortened before the model first reads it. The cheapest mode, because nothing is cached in full. The model works from the shortened output.',
 };
 
 /** Whether a mode reads and shortens request bodies. */
@@ -394,7 +394,9 @@ export type TokenProxyErrorCode =
 	/** The request named no route the proxy knows. */
 	| 'unknown-route'
 	/** The upstream could not be reached, or dropped before answering. */
-	| 'upstream-unreachable';
+	| 'upstream-unreachable'
+	/** The client asked to switch protocols (a WebSocket), which the proxy does not carry. */
+	| 'upgrade-not-supported';
 
 /**
  * The body of an error the PROXY raises (an upstream's own error is forwarded

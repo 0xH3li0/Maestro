@@ -2100,8 +2100,41 @@ mode is read from its record.
 Why `compress` was not simply retimed instead: shortening a block later costs more, not less.
 Changing bytes early in a cached prefix makes the provider re-write everything after them, so the
 request right after a result is fresh (when only a short tail follows it) is already the cheapest
-moment `compress` has. Not measured on real traffic yet: `compress-early` has unit tests for the
-byte-level rule and no provider run.
+moment `compress` has.
+
+**Measured afterwards** (`token-proxy-real-e2e.test.ts`, opt-in, Claude Code 2.1.296 on `haiku`,
+the real server and compressor on a loopback port, no app). One session per mode, the same four
+turns (turns 1 and 2 each run `cat build.log`, a 24 KB log; turns 3 and 4 are one word), after a
+throwaway turn so the shared prompt prefix is cached for all three. Every mode made the same six
+requests and ran the same commands. Each cell is cache write / cache read, in the provider's tokens.
+
+| Request             | Passthrough   | Compress      | Compress early |
+| ------------------- | ------------- | ------------- | -------------- |
+| 1: turn 1 prompt    | 8459 / 10080  | 6762 / 10080  | 8459 / 10080   |
+| 2: result 1, fresh  | 8835 / 18539  | 10613 / 16842 | 7376 / 18539   |
+| 3: turn 2 prompt    | 518 / 27374   | 12731 / 13371 | 167 / 25915    |
+| 4: result 2, fresh  | 10495 / 27892 | 8837 / 26102  | 7378 / 26082   |
+| 5: turn 3           | 142 / 38387   | 7341 / 26185  | 63 / 33460     |
+| 6: turn 4           | 17 / 38529    | 15 / 33526    | 430 / 33523    |
+| Total write         | 28466         | 46299         | 23873          |
+| Total read          | 160801        | 126106        | 147599         |
+| Prompt cost units   | 51679         | 70502         | 44617          |
+| Against passthrough |               | +36%          | -14%           |
+
+Prompt cost units are write x 1.25 + read x 0.1 + uncached input, Anthropic's published cache
+multipliers, in units of one uncached input token. Output is left out.
+
+- `compress-early` was the cheapest of the three in a four-turn session, and its context ended
+  about 5000 tokens smaller than passthrough's. Nothing was written twice.
+- `compress` cost 36% more than passthrough here (2% to 8% in the earlier run, whose log folded
+  further). Requests 3 and 5 show why: each rewrites about 12700 and 7300 tokens of cache when a
+  result is shortened for the first time.
+- A result of 8835 tokens went out as 7376 in early mode, 17% shorter. The proxy's own estimate
+  for that block (1458 tokens saved, at 4 characters per token) matched the provider's count
+  (1459). On this log the removed text is ordinary words; on the earlier log (paths, digits) the
+  estimate was 1.9 times low. The direction of the error depends on the text.
+- One sample per mode. The numbers move between runs with the provider's cache state; the test
+  records them and asserts only that every mode carried the session.
 
 #### Finding 2: a Codex agent's gateway is not applied
 
@@ -2120,8 +2153,9 @@ is the silent case rule 3 of the gateway forbids. Not tested: a Codex API key lo
 let a user's own value win). The argument goes at the ROOT of the command line, ahead of the
 subcommand, checked against the real binary: `codex -c 'openai_base_url="http://127.0.0.1:1"' exec
 ...` refuses on every attempt (`failed to connect to websocket ... ws://127.0.0.1:1/responses`),
-where the variable alone answered normally. Not re-run through the proxy from the app after the
-fix; the route itself was already shown working below.
+where the variable alone answered normally. Re-run through the real proxy server with the argument
+in that position (`token-proxy-real-e2e.test.ts`): the turn is carried on the `chatgpt` route and
+answers 200. Not re-run from the app's own spawn path.
 
 With the config key, the `chatgpt` route works:
 
@@ -2129,15 +2163,22 @@ With the config key, the `chatgpt` route works:
 codex exec -c 'openai_base_url="http://127.0.0.1:PORT/agent/<id>/chatgpt"' '...'
 ```
 
-- Codex first tries a WebSocket to `/responses` five times. The proxy does not forward upgrades,
-  the upstream answers 405, and Codex falls back to HTTPS after several seconds.
+- Codex first tries a WebSocket to `/responses`. Forwarded, the handshake lost its `Upgrade`
+  header (hop-by-hop), reached the upstream as a plain GET, and came back 405. Codex took that for
+  a transient failure and retried: nine handshakes and 9.3 of the 12.3 seconds of a measured turn
+  went by before it sent the turn over HTTP. **Fixed:** the proxy now answers a handshake itself
+  with `426 Upgrade Required` (`upgrade-not-supported`, outcome `upgrade-refused`, nothing
+  forwarded). Codex switches to HTTP at once: 1.7 seconds before the turn was sent, 5.4 in all.
+  A handshake is a GET, so it is not a message request and is not counted in `proxy_requests`.
 - `POST /responses` then returns 200 through the proxy (kind `openai-responses`, 51150 bytes
   sent, 139499 received) and the answer is correct. The upstream
   `https://chatgpt.com/backend-api/codex` is right.
 - That request was recorded with outcome `client-aborted` although the turn completed: Codex hangs
   up once it has `response.completed`, without waiting for the upstream to close. Fixed: a stream
   the client leaves after its terminal event (`streamAnnouncedItsEnd` in `proxy/server.ts`) is
-  `completed`.
+  `completed`. The real run then showed the first fix missed its own case: the ChatGPT backend
+  sends that stream with no `Content-Type` header, and only a typed event stream was read. A
+  message request answered with no type is now read for the terminal event as well.
 
 #### Other things the run showed
 
@@ -2157,10 +2198,10 @@ codex exec -c 'openai_base_url="http://127.0.0.1:PORT/agent/<id>/chatgpt"' '...'
    threshold is nearer 1900 real tokens there, and the real saving in these runs was about 1.9
    times the reported 64369.
    The figure is not corrected (the proxy has no tokenizer for the provider, and a constant
-   tuned to one kind of text would be wrong on the next). It is labeled instead: the usage table
-   heads the column `Tokens saved (est.)` and both it and `models proxy status` print
-   `TOKEN_PROXY_ESTIMATE_NOTE`, which says the count is 4 characters per token and that the real
-   saving is higher.
+   tuned to one kind of text is wrong on the next: a later run on a log of ordinary words matched
+   the provider's count to the token). It is labeled instead: the usage table heads the column
+   `Tokens saved (est.)` and both it and `models proxy status` print `TOKEN_PROXY_ESTIMATE_NOTE`,
+   which says the count is 4 characters per token and where it runs low.
 3. **A file read with the Read tool was not tried, and logs would not fold there.** Read puts a
    line number in front of each line, so no two lines are equal. The `logs` compressor needs
    equal lines. Shell output is where it works.
