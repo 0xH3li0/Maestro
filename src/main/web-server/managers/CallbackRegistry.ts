@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../../utils/logger';
+import type { CreateGistResult } from '../../../shared/gitUtils';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
@@ -938,12 +939,19 @@ export class CallbackRegistry {
 		sessionId: string,
 		description: string,
 		isPublic: boolean,
-		agentSessionId?: string
-	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
+		agentSessionId?: string,
+		allowSecrets?: boolean
+	): Promise<CreateGistResult> {
 		if (!this.callbacks.createGist) {
 			return { success: false, error: 'Gist creation not configured' };
 		}
-		return this.callbacks.createGist(sessionId, description, isPublic, agentSessionId);
+		return this.callbacks.createGist(
+			sessionId,
+			description,
+			isPublic,
+			agentSessionId,
+			allowSecrets
+		);
 	}
 
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {

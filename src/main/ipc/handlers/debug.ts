@@ -87,28 +87,6 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				throw new Error('No main window available');
 			}
 
-			// Generate a default filename with timestamp
-			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-			const defaultFilename = `maestro-debug-${timestamp}.zip`;
-
-			// Show save dialog
-			const result = await dialog.showSaveDialog(mainWindow, {
-				title: 'Save Debug Package',
-				defaultPath: path.join(app.getPath('desktop'), defaultFilename),
-				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
-			});
-
-			if (result.canceled || !result.filePath) {
-				return {
-					path: null,
-					filesIncluded: [],
-					totalSizeBytes: 0,
-					cancelled: true,
-				};
-			}
-
-			const outputDir = path.dirname(result.filePath);
-
 			// Create dependencies object for the debug package generator
 			const debugDeps: DebugPackageDependencies = {
 				getAgentDetector,
@@ -120,7 +98,46 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				bootstrapStore,
 			};
 
-			const packageResult = await generateDebugPackage(outputDir, debugDeps, options);
+			// The save dialog is handed over as the destination, so it is raised
+			// only after the secret screen passes: a package that is about to be
+			// refused never asks where to save it.
+			const chooseOutputDir = async (): Promise<string | null> => {
+				const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+				const defaultFilename = `maestro-debug-${timestamp}.zip`;
+				const result = await dialog.showSaveDialog(mainWindow, {
+					title: 'Save Debug Package',
+					defaultPath: path.join(app.getPath('desktop'), defaultFilename),
+					filters: [{ name: 'Zip Files', extensions: ['zip'] }],
+				});
+				return result.canceled || !result.filePath ? null : path.dirname(result.filePath);
+			};
+
+			const packageResult = await generateDebugPackage(chooseOutputDir, debugDeps, options);
+
+			if (packageResult.cancelled) {
+				return {
+					path: null,
+					filesIncluded: [],
+					totalSizeBytes: 0,
+					cancelled: true,
+				};
+			}
+
+			// Refused by the secret screen: not an error. The renderer shows the
+			// masked findings and asks again with `allowSecrets` if the user agrees.
+			if (packageResult.secretFindings?.length) {
+				return {
+					success: false,
+					path: null,
+					filesIncluded: [],
+					totalSizeBytes: 0,
+					cancelled: false,
+					error: packageResult.error,
+					code: packageResult.code,
+					secretFindings: packageResult.secretFindings,
+					secretScreenNote: packageResult.secretScreenNote,
+				};
+			}
 
 			if (!packageResult.success) {
 				throw new Error(packageResult.error || 'Failed to generate debug package');

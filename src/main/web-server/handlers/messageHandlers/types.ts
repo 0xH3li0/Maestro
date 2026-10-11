@@ -44,6 +44,7 @@ import type {
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
+import type { CreateGistResult } from '../../../../shared/gitUtils';
 import type { CueGateSetting, CueGateWriteResult } from '../../../../shared/cue/gate';
 import type {
 	CueInjectionScreenSetting,
@@ -366,8 +367,9 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		description: string,
 		isPublic: boolean,
-		agentSessionId?: string
-	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
+		agentSessionId?: string,
+		allowSecrets?: boolean
+	) => Promise<CreateGistResult>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	setCueSubscriptionGate: (

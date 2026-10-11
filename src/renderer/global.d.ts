@@ -1046,12 +1046,13 @@ interface MaestroAPI {
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 			) => void
 		) => () => void;
 		sendRemoteCreateGistResponse: (
 			responseChannel: string,
-			result: { success: boolean; gistUrl?: string; error?: string }
+			result: import('../shared/gitUtils').CreateGistResult
 		) => void;
 		onRemoteTriggerCueSubscription: (
 			callback: (
@@ -1128,6 +1129,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
+			allowSecrets?: boolean;
 		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
@@ -1143,7 +1145,8 @@ interface MaestroAPI {
 		}>;
 		subscribeIssue: (
 			issueNumber: number,
-			comment?: string
+			comment?: string,
+			options?: { allowSecrets?: boolean }
 		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
 		rememberAccount: (key: string | null) => Promise<void>;
@@ -1490,12 +1493,9 @@ interface MaestroAPI {
 			content: string,
 			description: string,
 			isPublic: boolean,
-			ghPath?: string
-		) => Promise<{
-			success: boolean;
-			gistUrl?: string;
-			error?: string;
-		}>;
+			ghPath?: string,
+			options?: { allowSecrets?: boolean }
+		) => Promise<import('../shared/gitUtils').CreateGistResult>;
 		// Git worktree operations for Auto Run parallelization
 		// All worktree operations support SSH remote execution via optional sshRemoteId parameter
 		worktreeInfo: (
@@ -3004,14 +3004,16 @@ interface MaestroAPI {
 	};
 	// Debug Package API
 	debug: {
-		createPackage: (options?: DebugPackageOptions) => Promise<{
-			success: boolean;
-			path?: string;
-			filesIncluded: string[];
-			totalSizeBytes: number;
-			cancelled?: boolean;
-			error?: string;
-		}>;
+		createPackage: (options?: DebugPackageOptions) => Promise<
+			import('../shared/secretScan').SecretScreenFields & {
+				success: boolean;
+				path?: string;
+				filesIncluded: string[];
+				totalSizeBytes: number;
+				cancelled?: boolean;
+				error?: string;
+			}
+		>;
 		previewPackage: () => Promise<{
 			success: boolean;
 			categories: Array<{

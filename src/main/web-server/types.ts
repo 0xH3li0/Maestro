@@ -23,6 +23,7 @@ import type {
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
 import type { MediaOpenMode } from '../../shared/mediaTypes';
+import type { CreateGistResult } from '../../shared/gitUtils';
 import type {
 	CueGateOnUnavailable,
 	CueGateSetting,
@@ -1380,8 +1381,13 @@ export type CreateGistCallback = (
 	 * rather than a desktop tab, and publishing the agent's tabs for them
 	 * leaks an unrelated conversation.
 	 */
-	agentSessionId?: string
-) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
+	agentSessionId?: string,
+	/**
+	 * Publish even when the secret screen found something. Set only by
+	 * `maestro-cli gist create --allow-secrets`.
+	 */
+	allowSecrets?: boolean
+) => Promise<CreateGistResult>;
 
 // =============================================================================
 // Cue Automation Types

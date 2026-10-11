@@ -2397,6 +2397,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 			) => {
 				try {
@@ -2453,11 +2454,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						? `${safeName}_${safeSessionId}_context.md`
 						: `${safeName}_context.md`;
 
+					// No dialog on this path: a refusal from the secret screen goes
+					// back to the caller with its masked findings, and only an
+					// explicit `--allow-secrets` publishes past it.
 					const result = await window.maestro.git.createGist(
 						filename,
 						content,
 						description,
-						isPublic
+						isPublic,
+						undefined,
+						{ allowSecrets }
 					);
 					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, result);
 				} catch (error) {

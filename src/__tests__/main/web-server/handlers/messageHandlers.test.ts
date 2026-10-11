@@ -4145,7 +4145,13 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', 'My gist', false, undefined);
+				expect(callbacks.createGist).toHaveBeenCalledWith(
+					'session-1',
+					'My gist',
+					false,
+					undefined,
+					false
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -4161,7 +4167,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined);
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined, false);
 			});
 		});
 
@@ -4219,9 +4225,56 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'',
 					false,
-					'provider-session-9'
+					'provider-session-9',
+					false
 				);
 			});
+		});
+
+		// The secret screen refuses in the main process; the bridge must hand the
+		// masked findings back to the CLI rather than flattening them to an error.
+		it('returns a secret-screen refusal with its masked findings', async () => {
+			const refusal = {
+				success: false,
+				error: 'Found 1 possible secret in the gist. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings: [{ kind: 'github-token', line: 4, preview: '••••••••abcd' }],
+			};
+			(callbacks.createGist as any).mockResolvedValue(refusal);
+
+			handler.handleMessage(client, { type: 'create_gist', sessionId: 'session-1' });
+
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({ type: 'create_gist_result', ...refusal });
+		});
+
+		it('forwards allowSecrets only when it is a literal true', async () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				allowSecrets: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createGist).toHaveBeenCalledWith('session-1', '', false, undefined, true);
+			});
+		});
+
+		it('rejects a non-boolean allowSecrets instead of reading it as consent', () => {
+			handler.handleMessage(client, {
+				type: 'create_gist',
+				sessionId: 'session-1',
+				allowSecrets: 'true',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('create_gist_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('allowSecrets');
+			expect(callbacks.createGist).not.toHaveBeenCalled();
 		});
 
 		it('rejects a blank agentSessionId instead of publishing the open tabs', () => {
@@ -5494,6 +5547,54 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			});
 		});
 
+		it('support_package_create returns a secret-screen refusal and writes nothing', async () => {
+			const secretFindings = [
+				{ kind: 'slack-token', line: 12, preview: '••••••••wxyz', source: 'logs.json' },
+			];
+			vi.mocked(generateDebugPackage).mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the support package. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+				filesIncluded: [],
+				totalSizeBytes: 0,
+			} as any);
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-secret',
+				outputDir: '/tmp/out',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('support_package_create_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				code: 'SECRETS_FOUND',
+				secretFindings,
+				requestId: 'sp-secret',
+			});
+			expect(lastResponse().path).toBeUndefined();
+		});
+
+		it('support_package_create passes allowSecrets only for a literal true', async () => {
+			vi.mocked(generateDebugPackage).mockClear();
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-allow',
+				outputDir: '/tmp/out',
+				options: { allowSecrets: true },
+			});
+			await vi.waitFor(() => expect(generateDebugPackage).toHaveBeenCalledTimes(1));
+			expect(vi.mocked(generateDebugPackage).mock.calls[0][2]).toEqual({ allowSecrets: true });
+
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-allow-2',
+				outputDir: '/tmp/out',
+				options: { allowSecrets: 'yes' },
+			});
+			await vi.waitFor(() => expect(generateDebugPackage).toHaveBeenCalledTimes(2));
+			expect(vi.mocked(generateDebugPackage).mock.calls[1][2]).toEqual({});
+		});
+
 		it('support_package_create refuses a relative outputDir', async () => {
 			handler.handleMessage(client, {
 				type: 'support_package_create',
@@ -5545,6 +5646,54 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(subscribeFeedbackIssue).toHaveBeenCalledWith({
 				issueNumber: 42,
 				comment: 'same here',
+				allowSecrets: false,
+			});
+		});
+
+		it('feedback_subscribe forwards allowSecrets and returns a secret-screen refusal', async () => {
+			const secretFindings = [{ kind: 'openai-key', line: 1, preview: '••••••••9xYz' }];
+			vi.mocked(subscribeFeedbackIssue).mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the comment. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+			} as any);
+			handler.handleMessage(client, {
+				type: 'feedback_subscribe',
+				requestId: 'fsub-secret',
+				issueNumber: 42,
+				comment: 'my key is sk-...',
+				allowSecrets: true,
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_subscribe_result'));
+			expect(subscribeFeedbackIssue).toHaveBeenLastCalledWith({
+				issueNumber: 42,
+				comment: 'my key is sk-...',
+				allowSecrets: true,
+			});
+			expect(lastResponse()).toMatchObject({ success: false, secretFindings });
+		});
+
+		it('feedback_submit returns a secret-screen refusal with its findings', async () => {
+			const secretFindings = [
+				{ kind: 'anthropic-key', line: 1, preview: '••••••••AbCd', source: 'Actual' },
+			];
+			vi.mocked(submitFeedbackConversation).mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the feedback. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+			} as any);
+			handler.handleMessage(client, {
+				type: 'feedback_submit',
+				requestId: 'sub-secret',
+				payload: { category: 'bug_report' },
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_submit_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				code: 'SECRETS_FOUND',
+				secretFindings,
 			});
 		});
 	});

@@ -18,6 +18,7 @@ import { PluginPanelSlot } from './plugins/PluginPanelSlot';
 import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
+import { SecretScreenConfirmHost } from './SecretScreenConfirmHost';
 import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
@@ -301,6 +302,11 @@ export function AppShell({
 			    right-click Copy / Save. Surfaces wire up nothing. See
 			    ImageContextMenuHost. */}
 			<ImageContextMenuHost theme={theme} />
+			{/* --- SECRET SCREEN CONFIRM (single, app-wide) ---
+			    "Publish anyway?" for a gist, feedback, or support package the
+			    main-process secret screen refused. Opened only through
+			    withSecretScreenConfirm(). */}
+			<SecretScreenConfirmHost theme={theme} />
 			{/* --- ZOOM VIEWER (single, app-wide) ---
 			    Full-screen pan/zoom for any diagram or image. Opened by expand
 			    buttons and the image right-click menu via openZoomViewer(). */}

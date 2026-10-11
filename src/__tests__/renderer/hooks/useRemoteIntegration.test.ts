@@ -157,6 +157,7 @@ describe('useRemoteIntegration', () => {
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 		  ) => void)
 		| undefined;
@@ -2571,6 +2572,7 @@ describe('useRemoteIntegration', () => {
 					'desc',
 					false,
 					'provider-session-9',
+					false,
 					'response-channel'
 				);
 			});
@@ -2623,6 +2625,7 @@ describe('useRemoteIntegration', () => {
 					'',
 					false,
 					'headless-session-4',
+					false,
 					'response-channel'
 				);
 			});
@@ -2659,6 +2662,7 @@ describe('useRemoteIntegration', () => {
 					'',
 					false,
 					'missing-session',
+					false,
 					'response-channel'
 				);
 			});
@@ -2670,6 +2674,53 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
+		// The CLI path raises no dialog. The secret screen's refusal goes back to
+		// the caller as it is, and only `--allow-secrets` publishes past it.
+		it('passes allowSecrets through and returns a secret-screen refusal untouched', async () => {
+			const refusal = {
+				success: false,
+				error: 'Found 1 possible secret in the gist. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings: [{ kind: 'github-token', line: 3, preview: '••••••••abcd' }],
+			};
+			mockGit.createGist.mockResolvedValueOnce(refusal);
+			const tab = createMockTab({ id: 'tab-a', logs: [gistLog('user', 'topic A')] });
+			const session = createMockSession({ id: 'session-1', aiTabs: [tab] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteCreateGistHandler?.(
+					'session-1',
+					'',
+					false,
+					undefined,
+					false,
+					'response-channel'
+				);
+			});
+
+			expect(mockGit.createGist.mock.calls[0][5]).toEqual({ allowSecrets: false });
+			expect(mockProcess.sendRemoteCreateGistResponse).toHaveBeenCalledWith(
+				'response-channel',
+				refusal
+			);
+
+			await act(async () => {
+				await onRemoteCreateGistHandler?.(
+					'session-1',
+					'',
+					false,
+					undefined,
+					true,
+					'response-channel'
+				);
+			});
+
+			expect(mockGit.createGist.mock.calls[1][5]).toEqual({ allowSecrets: true });
+		});
+
 		it('still publishes every open tab when no session is requested', async () => {
 			const tabA = createMockTab({ id: 'tab-a', logs: [gistLog('user', 'topic A')] });
 			const tabB = createMockTab({ id: 'tab-b', logs: [gistLog('user', 'topic B')] });
@@ -2679,7 +2730,14 @@ describe('useRemoteIntegration', () => {
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteCreateGistHandler?.('session-1', '', false, undefined, 'response-channel');
+				await onRemoteCreateGistHandler?.(
+					'session-1',
+					'',
+					false,
+					undefined,
+					false,
+					'response-channel'
+				);
 			});
 
 			const [, content] = mockGit.createGist.mock.calls[0];

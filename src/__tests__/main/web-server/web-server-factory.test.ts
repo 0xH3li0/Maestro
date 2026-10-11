@@ -2138,6 +2138,27 @@ describe('web-server/web-server-factory', () => {
 				'a description',
 				true,
 				undefined,
+				false,
+				expect.any(String)
+			);
+		});
+
+		// `--allow-secrets` is the only thing that publishes past the secret
+		// screen, so it has to survive the hop to the renderer as a boolean.
+		it('carries allowSecrets to the renderer ahead of the response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setCreateGistCallback.mock.calls[0][0];
+
+			void callback('session-1', '', false, 'provider-session-9', true);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:createGist',
+				'session-1',
+				'',
+				false,
+				'provider-session-9',
+				true,
 				expect.any(String)
 			);
 		});

@@ -96,6 +96,14 @@ URLs, usernames, and hostnames, and truncated.
 }
 
 /**
+ * One package entry as the text that goes into the zip. The secret screen reads
+ * this same text, so the line it reports is the line in the file.
+ */
+export function serializePackageEntry(data: unknown): string {
+	return JSON.stringify(data, null, 2);
+}
+
+/**
  * Create a zip package containing all debug data.
  */
 export async function createZipPackage(
@@ -136,8 +144,7 @@ export async function createZipPackage(
 		// Add each JSON file to the archive
 		for (const [filename, data] of Object.entries(contents)) {
 			if (data !== undefined) {
-				const jsonContent = JSON.stringify(data, null, 2);
-				archive.append(jsonContent, { name: filename });
+				archive.append(serializePackageEntry(data), { name: filename });
 			}
 		}
 

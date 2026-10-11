@@ -1793,6 +1793,7 @@ Publish an agent's session transcript as a GitHub gist (requires running Maestro
 | `-d, --description <text>` | Gist description                                                                                         | -       |
 | `-p, --public`             | Create a public gist (default: private)                                                                  | -       |
 | `-s, --session <id>`       | Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs | -       |
+| `--allow-secrets`          | Publish even when the secret screen finds a possible credential (default: refuse and list them, masked)  | -       |
 
 ## `maestro-cli notify`
 
@@ -2168,15 +2169,16 @@ Interact with a live HTML Movement by CSS selector
 
 Write a sanitized support (debug) package zip, as Create Debug Package does, without a save dialog
 
-| Option               | Description                                                                               | Default |
-| -------------------- | ----------------------------------------------------------------------------------------- | ------- |
-| `-o, --output <dir>` | Directory to write maestro-debug-&lt;timestamp>.zip into (created if missing; ~ expanded) | -       |
-| `--no-logs`          | Leave out application logs                                                                | -       |
-| `--no-errors`        | Leave out recent errors                                                                   | -       |
-| `--no-sessions`      | Leave out agent/session metadata                                                          | -       |
-| `--no-group-chats`   | Leave out group chat metadata                                                             | -       |
-| `--no-batch-state`   | Leave out Auto Run state                                                                  | -       |
-| `--json`             | Output as JSON (for scripting)                                                            | -       |
+| Option               | Description                                                                                                       | Default |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- | ------- |
+| `-o, --output <dir>` | Directory to write maestro-debug-&lt;timestamp>.zip into (created if missing; ~ expanded)                         | -       |
+| `--no-logs`          | Leave out application logs                                                                                        | -       |
+| `--no-errors`        | Leave out recent errors                                                                                           | -       |
+| `--no-sessions`      | Leave out agent/session metadata                                                                                  | -       |
+| `--no-group-chats`   | Leave out group chat metadata                                                                                     | -       |
+| `--no-batch-state`   | Leave out Auto Run state                                                                                          | -       |
+| `--allow-secrets`    | Write the package even when the secret screen finds a possible credential (default: refuse and list them, masked) | -       |
+| `--json`             | Output as JSON (for scripting)                                                                                    | -       |
 
 ## `maestro-cli feedback`
 
@@ -2221,27 +2223,29 @@ Search RunMaestro/Maestro for issues matching a description
 
 File a GitHub issue exactly as the Feedback modal does. Stops on likely duplicates unless --force
 
-| Option                      | Description                                                                          | Default |
-| --------------------------- | ------------------------------------------------------------------------------------ | ------- |
-| `-c, --category <category>` | bug \| feature \| improvement \| general                                             | -       |
-| `-s, --summary <text>`      | One-line summary (max 120 chars; becomes the title)                                  | -       |
-| `-e, --expected <text>`     | Expected behavior (bug) or desired outcome (other categories)                        | -       |
-| `-a, --actual <text>`       | Actual behavior (bug) or details (other categories)                                  | -       |
-| `--steps <text>`            | Steps to reproduce                                                                   | -       |
-| `--context <text>`          | Additional context                                                                   | -       |
-| `--attach <image...>`       | Screenshots to attach: PNG, JPG, GIF, or WebP, up to 5 files, 10 MB each             | -       |
-| `--support-package`         | Generate a sanitized support package and link it from the issue (the modal checkbox) | -       |
-| `--force`                   | File even when possible duplicates exist                                             | -       |
-| `--json`                    | Output as JSON (for scripting)                                                       | -       |
+| Option                      | Description                                                                                          | Default |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- | ------- |
+| `-c, --category <category>` | bug \| feature \| improvement \| general                                                             | -       |
+| `-s, --summary <text>`      | One-line summary (max 120 chars; becomes the title)                                                  | -       |
+| `-e, --expected <text>`     | Expected behavior (bug) or desired outcome (other categories)                                        | -       |
+| `-a, --actual <text>`       | Actual behavior (bug) or details (other categories)                                                  | -       |
+| `--steps <text>`            | Steps to reproduce                                                                                   | -       |
+| `--context <text>`          | Additional context                                                                                   | -       |
+| `--attach <image...>`       | Screenshots to attach: PNG, JPG, GIF, or WebP, up to 5 files, 10 MB each                             | -       |
+| `--support-package`         | Generate a sanitized support package and link it from the issue (the modal checkbox)                 | -       |
+| `--force`                   | File even when possible duplicates exist                                                             | -       |
+| `--allow-secrets`           | File even when the secret screen finds a possible credential (default: refuse and list them, masked) | -       |
+| `--json`                    | Output as JSON (for scripting)                                                                       | -       |
 
 ## `maestro-cli feedback subscribe <issue>`
 
 Add a +1 to an existing issue instead of filing a duplicate
 
-| Option             | Description                         | Default |
-| ------------------ | ----------------------------------- | ------- |
-| `--comment <text>` | Also post this comment on the issue | -       |
-| `--json`           | Output as JSON (for scripting)      | -       |
+| Option             | Description                                                                    | Default |
+| ------------------ | ------------------------------------------------------------------------------ | ------- |
+| `--comment <text>` | Also post this comment on the issue                                            | -       |
+| `--allow-secrets`  | Post the comment even when the secret screen finds a possible credential in it | -       |
+| `--json`           | Output as JSON (for scripting)                                                 | -       |
 
 ## `maestro-cli stats`
 

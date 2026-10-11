@@ -266,6 +266,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Feedback: Running as (account picker)                | `feedback accounts [--use <key> \| --clear]`                                                      |
 | Feedback: Log in to GitHub / Check Again             | `feedback login`, `feedback auth --fresh`                                                         |
 | Create Debug Package (support package)               | `support-package -o <dir> [--no-logs ...]`                                                        |
+| Secret screen: "Publish anyway" / "Create anyway"    | `--allow-secrets` on `gist create`, `feedback submit`, `feedback subscribe`, `support-package`    |
 | Start / End Performance Profiling                    | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                  |
 | Cue dashboard: subscription on/off switch            | `cue enable <sub>`, `cue disable <sub>` (any event type)                                          |
 | Cue dashboard: activity log                          | `cue activity [-a <agent>] [-n <limit>]`                                                          |

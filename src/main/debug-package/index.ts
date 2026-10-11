@@ -9,6 +9,11 @@
  * - NO conversation content (user messages, AI responses)
  * - NO personal file contents
  * - All file paths sanitized (usernames replaced with ~)
+ *
+ * The collectors redact as they go. The secret screen then reads the finished
+ * contents as a second check before anything is written: a credential a
+ * collector missed stops the package (no zip) unless the caller passed
+ * `allowSecrets`.
  */
 
 import { collectSystemInfo, SystemInfo } from './collectors/system';
@@ -29,7 +34,9 @@ import {
 	WindowsDiagnosticsInfo,
 } from './collectors/windows-diagnostics';
 import { collectVoiceRuntime } from './collectors/voice-runtime';
-import { createZipPackage, PackageContents } from './packager';
+import { createZipPackage, PackageContents, serializePackageEntry } from './packager';
+import { screenForSecrets } from '../local-models/secret-screen';
+import { secretScreenRefusal, type SecretScreenFields } from '../../shared/secretScan';
 import { logger } from '../utils/logger';
 import { AgentDetector } from '../agents';
 import { ProcessManager } from '../process-manager';
@@ -39,13 +46,22 @@ import type { DebugPackageOptions } from '../../shared/debugPackage';
 
 export type { DebugPackageOptions };
 
-export interface DebugPackageResult {
+export interface DebugPackageResult extends SecretScreenFields {
 	success: boolean;
 	path?: string; // Path to the generated zip file
 	error?: string;
 	filesIncluded: string[]; // List of files in the package
 	totalSizeBytes: number;
+	/** The caller's destination picker returned nothing (a cancelled save dialog). */
+	cancelled?: boolean;
 }
+
+/**
+ * Where the zip goes: a directory, or a function that picks one. The function
+ * form is called only AFTER the secret screen passes, so a save dialog is never
+ * raised for a package that is about to be refused. It returns null to cancel.
+ */
+export type DebugPackageDestination = string | (() => Promise<string | null>);
 
 export interface DebugPackageDependencies {
 	getAgentDetector: () => AgentDetector | null;
@@ -62,7 +78,7 @@ export interface DebugPackageDependencies {
  * The package is saved as a zip file to the specified output directory.
  */
 export async function generateDebugPackage(
-	outputDir: string,
+	destination: DebugPackageDestination,
 	deps: DebugPackageDependencies,
 	options?: DebugPackageOptions
 ): Promise<DebugPackageResult> {
@@ -269,6 +285,32 @@ export async function generateDebugPackage(
 			errors,
 		};
 		filesIncluded.push('collection-errors.json');
+	}
+
+	// Secret screen. Always the pattern scan; the model pass only when the
+	// `secret-screen` task has a model. A finding writes nothing.
+	if (opts.allowSecrets !== true) {
+		const screen = await screenForSecrets(
+			Object.entries(contents)
+				.filter(([, data]) => data !== undefined)
+				.map(([filename, data]) => ({ source: filename, text: serializePackageEntry(data) }))
+		);
+		if (screen.findings.length > 0) {
+			logger.warn(
+				`Debug package not written: ${screen.findings.length} possible secret(s) found`,
+				'DebugPackage'
+			);
+			return {
+				...secretScreenRefusal(screen.findings, 'the support package', screen.note),
+				filesIncluded: [],
+				totalSizeBytes: 0,
+			};
+		}
+	}
+
+	const outputDir = typeof destination === 'string' ? destination : await destination();
+	if (!outputDir) {
+		return { success: false, cancelled: true, filesIncluded: [], totalSizeBytes: 0 };
 	}
 
 	// Create the zip package

@@ -24,7 +24,12 @@ interface BuildSupportCommandsArgs {
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	startTour?: () => void;
 	getFeedbackDraft: () => FeedbackDraftActions;
-	createDebugPackage: () => Promise<{ success?: boolean; path?: string; error?: string }>;
+	createDebugPackage: () => Promise<{
+		success?: boolean;
+		path?: string;
+		error?: string;
+		cancelled?: boolean;
+	}>;
 	notifyToast: (args: NotifyToastInput) => void;
 	openUrl: (url: string) => void;
 	toggleDevtools: () => void;
@@ -217,7 +222,7 @@ export function buildSupportCommands({
 								title: 'Debug Package Created',
 								message: `Saved to ${result.path}`,
 							});
-						} else if (result.error !== 'Cancelled by user') {
+						} else if (!result.cancelled && result.error !== 'Cancelled by user') {
 							notifyToast({
 								type: 'error',
 								title: 'Debug Package Failed',

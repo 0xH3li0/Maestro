@@ -629,15 +629,16 @@ registers its own yet.
 A consumer calls `runLocalTask()` and decides what each verdict means for its own surface. None
 falls back to another source.
 
-| Task               | Consumer                                                                                                                                                   | `off`                                                                                                                                                                        | `unavailable`                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `tab-naming`       | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                                                                                | Tab stays unnamed                                                                                                                                                            | Skips; one yellow toast per agent (`task-notices.ts`)                                            |
-| `tab-summary`      | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset                                                              | Keeps the agent path                                                                                                                                                         | Compaction fails with the reason; the participant summary skips                                  |
-| `ai-command`       | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                                                                                | Refuses, names the setting                                                                                                                                                   | Fails with the reason in the composer                                                            |
-| `git-drafts`       | `draftPullRequest()` in `local-models/git-drafts.ts`                                                                                                       | Button hidden (the default)                                                                                                                                                  | Button disabled with the readiness reason                                                        |
-| `tab-cleanup`      | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                                                                                     | Modal says so (the default)                                                                                                                                                  | Modal shows the reason in place of the list                                                      |
-| `cue-gate`         | `evaluateCueGate()` in `local-models/cue-gate.ts`, called by the Cue dispatch service                                                                      | Gate unavailable (the default): the run starts and the user is warned                                                                                                        | The same: fail open with a warning, unless the subscription set `gate_on_unavailable: skip`      |
-| `injection-screen` | `scoreCueInjectionText()` in `local-models/cue-injection-screen.ts`, called by the Cue dispatch service (a classifier task, through `runClassifierTask()`) | Reported as `off`: a command that set `screen_injection: true` is blocked, a prompt that set it starts with a warning, a command that only got the default starts unscreened | A screened command is blocked (fail closed); a screened prompt starts with a warning (fail open) |
+| Task               | Consumer                                                                                                                                                                 | `off`                                                                                                                                                                        | `unavailable`                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `tab-naming`       | `nameTabWithAssignedModel()` in `ipc/handlers/tabNaming.ts`                                                                                                              | Tab stays unnamed                                                                                                                                                            | Skips; one yellow toast per agent (`task-notices.ts`)                                            |
+| `tab-summary`      | `summarizeWithAssignedModel()` in `ipc/handlers/context.ts`; the group chat participant reset                                                                            | Keeps the agent path                                                                                                                                                         | Compaction fails with the reason; the participant summary skips                                  |
+| `ai-command`       | `suggestWithAssignedModel()` in `ipc/handlers/aiCommand.ts`                                                                                                              | Refuses, names the setting                                                                                                                                                   | Fails with the reason in the composer                                                            |
+| `git-drafts`       | `draftPullRequest()` in `local-models/git-drafts.ts`                                                                                                                     | Button hidden (the default)                                                                                                                                                  | Button disabled with the readiness reason                                                        |
+| `tab-cleanup`      | `suggestTabCleanup()` in `local-models/tab-cleanup.ts`                                                                                                                   | Modal says so (the default)                                                                                                                                                  | Modal shows the reason in place of the list                                                      |
+| `cue-gate`         | `evaluateCueGate()` in `local-models/cue-gate.ts`, called by the Cue dispatch service                                                                                    | Gate unavailable (the default): the run starts and the user is warned                                                                                                        | The same: fail open with a warning, unless the subscription set `gate_on_unavailable: skip`      |
+| `secret-screen`    | `screenForSecrets()` in `local-models/secret-screen.ts`, called by gist publishing, feedback, and the support package (a classifier task, through `runClassifierTask()`) | Pattern scan only (the default)                                                                                                                                              | Pattern scan only, with a note; publishing is never blocked by the model                         |
+| `injection-screen` | `scoreCueInjectionText()` in `local-models/cue-injection-screen.ts`, called by the Cue dispatch service (a classifier task, through `runClassifierTask()`)               | Reported as `off`: a command that set `screen_injection: true` is blocked, a prompt that set it starts with a warning, a command that only got the default starts unscreened | A screened command is blocked (fail closed); a screened prompt starts with a warning (fail open) |
 
 `git-drafts` is the one consumer with no agent path. It reads `git log --oneline base..HEAD` and
 `git diff --stat base...HEAD` from a LOCAL checkout (Create Pull Request is local-only), caps both
@@ -871,6 +872,92 @@ command line, and the user docs say so.
 (`set_cue_subscription_injection_screen` -> `CueEngine.setSubscriptionInjectionScreen()`, which
 writes every subscription of the trigger). Every patch goes through
 `writeCueInjectionScreenFields()`.
+
+### The secret screen: `screenForSecrets()`
+
+Three paths send content off the machine for the user: a GitHub gist, a feedback issue, and a
+support package. Each one screens the content first and refuses on a finding.
+
+```mermaid
+flowchart LR
+	subgraph callers["Publishing paths (main process)"]
+		gist["git:createGist"]
+		feedback["submitFeedbackConversation / submitFeedback / subscribeFeedbackIssue"]
+		pkg["generateDebugPackage"]
+	end
+	gist --> screen["screenForSecrets(parts)"]
+	feedback --> screen
+	pkg --> screen
+	screen --> scan["scanForSecrets: patterns and configured env values, ALWAYS runs"]
+	screen --> model["runClassifierTask('secret-screen'), only when assigned"]
+	scan --> result["findings (masked)"]
+	model --> result
+	result -->|none| publish["publish"]
+	result -->|some, allowSecrets not set| refuse["refuse: secretFindings, nothing sent"]
+	result -->|some, allowSecrets true| publish
+```
+
+| Piece                                       | Where                                    | What it does                                                                                                                                                                 |
+| ------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scanForSecrets(content, { env, source })`  | `src/shared/secretScan.ts`               | The detectors. Pure, no model, usable in every process. Returns `{ kind, line, preview }` (plus `name`, `source`, `occurrences`), with the value masked by `maskEnvValue()`. |
+| `screenForSecrets(parts, { env })`          | `src/main/local-models/secret-screen.ts` | The one entry point for a publishing path. Runs the scan on each named part, then the optional model pass. Never throws.                                                     |
+| `knownSecretEnv()`                          | same                                     | The configured variables whose values are searched for: the process environment, Settings -> Environment, each provider's variables, each agent's own.                       |
+| `secretScreenRefusal(findings, what, note)` | `src/shared/secretScan.ts`               | The refusal every path returns: `{ success: false, error, code: 'SECRETS_FOUND', secretFindings, secretScreenNote? }`.                                                       |
+| `withSecretScreenConfirm(attempt, prompt)`  | `src/renderer/services/secretScreen.ts`  | The renderer's one confirmation flow: try, ask on a refusal, repeat with `allowSecrets` on a yes. Drawn by `<SecretScreenConfirmHost>` (mounted once in `AppShell`).         |
+
+**Detectors.** AWS access key ids (`AKIA`, `ASIA`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`,
+`ghr_`, `github_pat_`), Anthropic (`sk-ant-`), OpenAI (`sk-proj-`, `sk-svcacct-`, `sk-admin-`, and
+the legacy `sk-` plus 32 or more alphanumerics), Slack (`xox?-`), PEM private key blocks, a
+`name = value` assignment whose name says credential and whose value is random enough
+(`MIN_GENERIC_SECRET_ENTROPY`, mixed letters and digits, not a placeholder, path, or dotted code
+reference), and the value of every configured variable `isSecretEnvKey()` flags (eight characters or
+more, not a path, not a number). A span one detector claims is not reported again by a later one,
+and a value that repeats is one finding with `occurrences`.
+
+**Where the screen sits.** At the point each route to a publish meets, in the main process, so the
+UI and the CLI cannot differ:
+
+- **Gist.** The `git:createGist` handler. The Publish Gist modal calls it directly and
+  `maestro-cli gist create` reaches it through the renderer (`remote:createGist`).
+- **Feedback.** Inside the three service functions in `src/main/feedback/index.ts`, before any
+  upload. `submitFeedbackConversation` screens the five text fields and generates the support
+  package (which screens itself) BEFORE it uploads a screenshot, so a refusal lists every finding at
+  once and leaves nothing on GitHub. `subscribeFeedbackIssue` screens the comment before it adds
+  the +1.
+- **Support package.** Inside `generateDebugPackage`, after collection and before the zip. Each
+  file is screened as the text `serializePackageEntry()` writes, so a finding's line is the line in
+  the file. The destination may be a function (`DebugPackageDestination`); it is called only after
+  the screen passes, which is how `debug:createPackage` avoids raising a save dialog for a package
+  it is about to refuse. The collectors already redact (`redactSecrets()` in
+  `acappella/providers/credentials.ts`); this is the second check, for what they miss.
+
+**Consent.** A refusal is passed only by `allowSecrets: true` on the same request. Every transport
+checks for the literal `true`: a string, or an absent field, is a refusal. The UI sets it from
+"Publish anyway" ("Create anyway" for the package); the CLI sets it from `--allow-secrets` on
+`gist create`, `feedback submit`, `feedback subscribe`, and `support-package`. The CLI path raises
+no dialog: it prints the masked findings (`secretScreenReportLines()`) and exits non-zero.
+
+**Failure policy.**
+
+| State of the `secret-screen` task                       | Pattern scan | Model pass                                                       | Publish                         |
+| ------------------------------------------------------- | ------------ | ---------------------------------------------------------------- | ------------------------------- |
+| `off` (the default)                                     | Runs         | Not run                                                          | Decided by the pattern findings |
+| Assigned, model ran, not flagged                        | Runs         | Clean                                                            | Decided by the pattern findings |
+| Assigned, model ran, flagged                            | Runs         | Adds one `model-flagged` finding (model name and score, no line) | Refused until allowed           |
+| Assigned, model unavailable, timed out (30 s), or threw | Runs         | Skipped; the reason is logged and returned as `secretScreenNote` | Decided by the pattern findings |
+
+The model is extra coverage only. It cannot turn the scan off, and its failure cannot block a
+publish or hide a pattern finding. This is the reverse of the injection screen's fail-closed rule
+on purpose: there the model is the only check, here it is the second one.
+
+**Limit.** The catalog's two classifiers (Prompt Guard 2, DeBERTa v3 Prompt Injection) are trained
+on prompt injection, not credentials. Assigned to this task they score what they were trained on,
+which is why a model finding names the model and its label instead of claiming a secret. The
+pattern scan is the part that finds credentials today. A purpose-built secret classifier added to
+the catalog later needs no code change.
+
+**Logging.** A finding is logged by kind and count only. A preview is masked, but a log is not the
+place for even the tail of a credential.
 
 ## Related
 

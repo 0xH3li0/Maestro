@@ -14,6 +14,11 @@ interface ConfirmModalProps {
 	icon?: React.ReactNode;
 	destructive?: boolean;
 	confirmLabel?: string;
+	/** Detail drawn under the message: a list of what the confirmation covers. */
+	children?: React.ReactNode;
+	width?: number;
+	/** Raise the dialog over a modal that sits above the default layer. */
+	zIndex?: number;
 }
 
 export const ConfirmModal = memo(function ConfirmModal({
@@ -26,6 +31,9 @@ export const ConfirmModal = memo(function ConfirmModal({
 	icon,
 	destructive = true,
 	confirmLabel,
+	children,
+	width = 450,
+	zIndex = 10000,
 }: ConfirmModalProps) {
 	const confirmButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -45,8 +53,8 @@ export const ConfirmModal = memo(function ConfirmModal({
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
 			headerIcon={headerIcon ?? <Trash2 className="w-4 h-4" style={{ color: iconColor }} />}
-			width={450}
-			zIndex={10000}
+			width={width}
+			zIndex={zIndex}
 			initialFocusRef={confirmButtonRef}
 			footer={
 				<ModalFooter
@@ -66,9 +74,18 @@ export const ConfirmModal = memo(function ConfirmModal({
 				>
 					{icon ?? <AlertTriangle className="w-5 h-5" style={{ color: iconColor }} />}
 				</div>
-				<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-					{message}
-				</p>
+				{children ? (
+					<div className="min-w-0 flex-1 space-y-3">
+						<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
+							{message}
+						</p>
+						{children}
+					</div>
+				) : (
+					<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
+						{message}
+					</p>
+				)}
 			</div>
 		</Modal>
 	);

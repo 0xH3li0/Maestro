@@ -2159,6 +2159,10 @@ gist
 		'-s, --session <id>',
 		"Publish one provider session's transcript (from `send -s <id>`) instead of the agent's open desktop tabs"
 	)
+	.option(
+		'--allow-secrets',
+		'Publish even when the secret screen finds a possible credential (default: refuse and list them, masked)'
+	)
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app
@@ -2587,6 +2591,10 @@ program
 	.option('--no-sessions', 'Leave out agent/session metadata')
 	.option('--no-group-chats', 'Leave out group chat metadata')
 	.option('--no-batch-state', 'Leave out Auto Run state')
+	.option(
+		'--allow-secrets',
+		'Write the package even when the secret screen finds a possible credential (default: refuse and list them, masked)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(supportPackage);
 
@@ -2655,6 +2663,10 @@ feedback
 		'Generate a sanitized support package and link it from the issue (the modal checkbox)'
 	)
 	.option('--force', 'File even when possible duplicates exist')
+	.option(
+		'--allow-secrets',
+		'File even when the secret screen finds a possible credential (default: refuse and list them, masked)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackSubmit);
 
@@ -2662,6 +2674,10 @@ feedback
 	.command('subscribe <issue>')
 	.description('Add a +1 to an existing issue instead of filing a duplicate')
 	.option('--comment <text>', 'Also post this comment on the issue')
+	.option(
+		'--allow-secrets',
+		'Post the comment even when the secret screen finds a possible credential in it'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackSubscribe);
 
