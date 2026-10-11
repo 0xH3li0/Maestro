@@ -13,6 +13,10 @@ import type {
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
+import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
+import { codexAppServerConfigBlocker } from '../codex-app-server/invocation';
+import { resolveCodexTransport } from '../../shared/codexTransport';
+import { DEFAULT_QUERY_SOURCE } from '../../shared/querySource';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
@@ -39,6 +43,11 @@ import {
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
 
+export interface ProcessManagerOptions {
+	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
+	appVersion?: string;
+}
+
 /**
  * ProcessManager orchestrates spawning and managing processes for sessions.
  *
@@ -54,6 +63,7 @@ export class ProcessManager extends EventEmitter {
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
 	private opencodeServerSpawner: OpencodeServerSpawner;
+	private codexAppServerSpawner: CodexAppServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
@@ -64,7 +74,8 @@ export class ProcessManager extends EventEmitter {
 		 * route to the SDK-serve path. Read on every spawn so toggling the plugin
 		 * takes effect without an app restart.
 		 */
-		private readonly isOpencodeServerEnabled: () => boolean = () => false
+		private readonly isOpencodeServerEnabled: () => boolean = () => false,
+		options: ProcessManagerOptions = {}
 	) {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
@@ -77,6 +88,15 @@ export class ProcessManager extends EventEmitter {
 			this,
 			this.bufferManager,
 			(config) => this.childProcessSpawner.spawn(config)
+		);
+		// Same contract for Codex: a turn the app-server transport cannot carry,
+		// or whose server will not start, runs on `codex exec` instead.
+		this.codexAppServerSpawner = new CodexAppServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.childProcessSpawner.spawn(config),
+			{ clientVersion: options.appVersion }
 		);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
@@ -256,10 +276,17 @@ export class ProcessManager extends EventEmitter {
 						},
 					};
 
-		const usePty = this.shouldUsePty(configWithCoworkingSession);
-		const result = usePty
-			? this.ptySpawner.spawn(configWithCoworkingSession)
-			: this.childProcessSpawner.spawn(configWithCoworkingSession);
+		// The Codex app-server child is spawned per turn (no shared server to
+		// fingerprint, unlike OpenCode serve), so it takes the coworking env like
+		// any CLI spawn and is routed after the injection.
+		let result: SpawnResult;
+		if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
+		} else if (this.shouldUsePty(configWithCoworkingSession)) {
+			result = this.ptySpawner.spawn(configWithCoworkingSession);
+		} else {
+			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
+		}
 
 		// Emit a spawn event AFTER the spawner returns so the agent-run capture
 		// service only records a running run for a process that actually started
@@ -299,6 +326,28 @@ export class ProcessManager extends EventEmitter {
 			!!config.prompt &&
 			!config.sshRemoteId &&
 			!(config.images && config.images.length > 0)
+		);
+	}
+
+	/**
+	 * Route a Codex turn through `codex app-server` (steerable mid-turn) instead
+	 * of `codex exec --json`. Opt-in per agent (`codexTransport`), and only for an
+	 * INTERACTIVE turn: an Auto Run or Cue turn has nobody to steer it, so it
+	 * stays on the default transport rather than paying for an experimental one.
+	 * Origin is read from `querySource`, which every dispatcher claims at the
+	 * spawn site (absent means a human sent it, see `shared/querySource.ts`).
+	 *
+	 * The config-level exclusions (no prompt, images, SSH, a prompt already in
+	 * the args) are the spawner's own `codexAppServerConfigBlocker`, so routing
+	 * and the spawner cannot disagree about which turns app-server can carry.
+	 * The spawner still re-checks the args and falls back to exec for anything
+	 * it does not recognize.
+	 */
+	private shouldUseCodexAppServer(config: ProcessConfig): boolean {
+		return (
+			resolveCodexTransport(config) === 'app-server' &&
+			(config.querySource ?? DEFAULT_QUERY_SOURCE) === 'user' &&
+			codexAppServerConfigBlocker(config) === null
 		);
 	}
 
