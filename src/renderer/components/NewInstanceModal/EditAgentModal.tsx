@@ -93,6 +93,8 @@ export function EditAgentModal({
 	// Local Models gateway URL, and the reason the last save refused it.
 	const [gatewayUrl, setGatewayUrl] = useState('');
 	const [gatewayUrlError, setGatewayUrlError] = useState<string | undefined>(undefined);
+	// A save was refused: an empty name now says so instead of blocking silently.
+	const [saveAttempted, setSaveAttempted] = useState(false);
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
 	// SSH default - TUI - applies), false = explicit API, true = explicit
 	// maestro-p. Coercing undefined->false here (or false->undefined on save)
@@ -376,6 +378,7 @@ export function EditAgentModal({
 	useEffect(() => {
 		if (isOpen && session) {
 			setInstanceName(session.name);
+			setSaveAttempted(false);
 			setWorkingDir(session.projectRoot);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
@@ -689,23 +692,36 @@ export function EditAgentModal({
 		);
 	}, [instanceName, validation.valid, workingDirError, newWorkingDirUnverified]);
 
+	// The message under the name. An empty name only says so once a save was
+	// refused, so clearing the field to retype it is not drawn in red.
+	const nameError =
+		validation.errorField === 'name'
+			? validation.error
+			: saveAttempted && !instanceName.trim()
+				? 'Enter a name for the agent'
+				: undefined;
+
 	// Fields showing an error message: each puts a dot on its tab.
 	const errorFields = useMemo(() => {
 		const fields: string[] = [];
-		if (!validation.valid && validation.errorField) fields.push(validation.errorField);
+		if (nameError) fields.push('name');
+		if (!validation.valid && validation.errorField && validation.errorField !== 'name') {
+			fields.push(validation.errorField);
+		}
 		if (workingDirError) fields.push('workingDir');
 		if (gatewayUrlError) fields.push('gatewayUrl');
 		return fields;
-	}, [validation.valid, validation.errorField, workingDirError, gatewayUrlError]);
+	}, [nameError, validation.valid, validation.errorField, workingDirError, gatewayUrlError]);
 	const tabs = useMemo(
 		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
 		[errorFields]
 	);
 
 	// A save attempt that cannot save goes to the field that blocks it, so a
-	// user on another tab is not left facing a dead Save. An empty name and an
-	// unverified new directory block without a message, so they count here too.
+	// user on another tab is not left facing a dead Save. An unverified new
+	// directory blocks without a message, so it counts here too.
 	const showFirstBlockingField = useCallback(() => {
+		setSaveAttempted(true);
 		const blocking = [...errorFields];
 		if (!instanceName.trim()) blocking.push('name');
 		if (newWorkingDirUnverified) blocking.push('workingDir');
@@ -825,7 +841,7 @@ export function EditAgentModal({
 						idPrefix="edit-agent"
 						name={instanceName}
 						onNameChange={setInstanceName}
-						nameError={validation.errorField === 'name' ? validation.error : undefined}
+						nameError={nameError}
 						nameInputRef={nameInputRef}
 						nameInputId="edit-agent-name-input"
 						workingDirectory={

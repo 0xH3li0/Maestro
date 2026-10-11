@@ -1990,7 +1990,30 @@ describe('EditAgentModal', () => {
 			expect(screen.getByText('An agent named "My Agent" already exists')).toBeInTheDocument();
 		});
 
-		it('sends Cmd+Enter to General when the name is empty', async () => {
+		it('sends Cmd+Enter from SSH to General with the empty name shown as an error', async () => {
+			renderModal();
+			const name = await screen.findByDisplayValue('My Agent');
+			fireEvent.change(name, { target: { value: '' } });
+			// Clearing the name to retype it is not an error yet.
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Enter a name for the agent')).toBeInTheDocument();
+			expect(screen.getByTestId('edit-agent-tab-general-error')).toBeInTheDocument();
+
+			fireEvent.change(document.getElementById('edit-agent-name-input') as HTMLInputElement, {
+				target: { value: 'Renamed' },
+			});
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter from Peers to General when the name is empty', async () => {
 			renderModal();
 			const name = await screen.findByDisplayValue('My Agent');
 			fireEvent.change(name, { target: { value: '' } });
