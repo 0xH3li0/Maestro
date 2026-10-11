@@ -11,6 +11,7 @@ related:
   - '[[adr-001-webrtc-transport]]'
   - '[[adr-002-main-process-session]]'
   - '[[transport-and-pairing]]'
+  - '[[local-models]]'
 ---
 
 # A Cappella System Overview
@@ -60,6 +61,40 @@ flowchart LR
 	S --> X
 	X -->|remote:* to the renderer| R
 ```
+
+## A Cappella is a consumer of Local Models
+
+A Cappella owns no model stack. Everything that is about a MODEL belongs to the core Local Models
+service ([[local-models]]), which is not an Encore Feature and serves other features too (tab
+naming, AI command mode, semantic search, the Cue gate, dictation). Everything that is about VOICE
+stays here.
+
+| Concern                                             | Owner                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------- |
+| Which models exist, their pinned files and hashes   | Core: `src/shared/local-models/model-catalog.ts`                          |
+| Download, verification, install layout, disk totals | Core: `src/main/local-models/` (`model-store`, `model-downloader`)        |
+| Native runtimes (ONNX Runtime, llama.cpp)           | Core: `src/main/local-models/runtime/`, loaded through `loadLocalRuntime` |
+| Speech-to-text engines (Parakeet, Whisper)          | Core: `src/main/local-models/stt/`, leased from `SpeechToTextPool`        |
+| Text generation for a local or endpoint Brain       | Core: the `voice-routing` task through `runLocalTask()`                   |
+| Voice slots, capability tags, setup bundles         | Voice: `src/shared/acappella/voice-models.ts`, keyed by core model id     |
+| Voice readiness (can this session start?)           | Voice: `src/main/acappella/models/capability-gate.ts`                     |
+| Live streaming policy, wake word, session, HUD      | Voice: `src/main/acappella/`                                              |
+
+Three consequences follow, and each one is a rule for code in this folder:
+
+1. **Voice never opens a model for itself.** A local provider leases its engine or loads its
+   runtime from the core (`loadVoiceRuntime()` is a thin adapter over `loadLocalRuntime()` that
+   maps `LocalModelError` to `VoiceProviderError`). One loaded copy of a speech-to-text model
+   serves a voice session, the wake word, and a dictated clip.
+2. **The core never learns a voice word.** A slot, a wake phrase, or the `hands-free-local` bundle
+   is a table in `voice-models.ts` keyed by model id. Do not add a voice field to the catalog.
+3. **The Encore gate is on the voice channels only.** `models:*` and `runtimes:*` (Voice Setup)
+   delegate to the same service functions as the ungated `localModels:*` channels, so a model
+   downloaded from Voice Setup and one downloaded from Settings -> Local Models are one install in
+   one store. Reclaiming voice's disk passes `isVoiceReclaimableModelDir`, so it spares the models
+   another consumer runs.
+
+Voice Setup and Settings -> Local Models draw the same model rows over that one store.
 
 ## Surveyed precedent
 
@@ -328,6 +363,8 @@ holding a floor nothing will ever hand back, which reads to the user as a frozen
 
 - [[voice-session-protocol]] - every event, payload, and direction.
 - [[model-manager]] - the local model catalog, downloads, verification, and the capability gate.
+- [[local-models]] - the core service A Cappella consumes for models, runtimes, speech-to-text
+  engines, and the assigned Brain.
 - [[packaging-notes]] - native runtimes, asar unpacking, entitlements, notarization, and the
   microphone permission.
 - [[latency-baseline]] - the per-hop latency budget for each provider configuration, and how it is
