@@ -178,6 +178,13 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type {
+	CotAgentConfig,
+	CotAgentStatus,
+	CotChainVerifyResult,
+	CotFolderValidation,
+	CotSetResult,
+} from '../shared/cotExport/types';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type { QueueSteerResult, SteeringResultFrame } from '../shared/chatSteering';
 import type {
@@ -4991,6 +4998,21 @@ interface MaestroAPI {
 	 */
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
+	};
+	/**
+	 * Chain of thought export, operated only from the Edit Agent dialog. The
+	 * handlers refuse every sender that is not the desktop window. Mirrors
+	 * `src/main/preload/cotExport.ts`.
+	 */
+	cotExport: {
+		get: (agentId: string) => Promise<CotAgentConfig>;
+		set: (
+			agentId: string,
+			choice: { enabled: boolean; folder: string | null }
+		) => Promise<CotSetResult>;
+		status: (agentId: string) => Promise<CotAgentStatus>;
+		validateFolder: (agentId: string, folder: string) => Promise<CotFolderValidation>;
+		verify: (agentId: string) => Promise<CotChainVerifyResult[]>;
 	};
 	/** Quick Chat: the floating chat window and the engine that runs it. */
 	quickChat: QuickChatApi;

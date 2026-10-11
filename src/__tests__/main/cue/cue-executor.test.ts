@@ -329,12 +329,18 @@ describe('cue-executor', () => {
 	describe('executeCuePrompt', () => {
 		it('preserves a completed run when proof cleanup fails', async () => {
 			injectInvalidProof.current = true;
-			const resultPromise = executeCuePrompt(createExecutionConfig());
+			const onRunTranscript = vi.fn();
+			const resultPromise = executeCuePrompt(createExecutionConfig({ onRunTranscript }));
 			await vi.advanceTimersByTimeAsync(0);
+			mockChild.stdout.emit('data', 'Completed output');
 			mockChild.emit('close', 0);
 			const result = await resultPromise;
 			expect(result.status).toBe('completed');
 			expect(result.exitCode).toBe(0);
+			expect(onRunTranscript).toHaveBeenCalledTimes(1);
+			expect(onRunTranscript).toHaveBeenCalledWith(
+				expect.objectContaining({ rawStdout: 'Completed output', status: 'completed', exitCode: 0 })
+			);
 		});
 
 		// As of the Phase 2 cleanup, the executor no longer resolves prompt files -
@@ -629,6 +635,90 @@ describe('cue-executor', () => {
 
 			expect(result.stdout).toBe('Hello world');
 			expect(result.stderr).toBe('Warning: something');
+		});
+
+		// `onRunTranscript` is how the chain of thought export reads a Cue run. It
+		// is an observer: it sees the finished run and cannot change it.
+		describe('onRunTranscript', () => {
+			it('hands over the raw transcript once, after the run', async () => {
+				const onRunTranscript = vi.fn();
+				const config = createExecutionConfig({
+					promptPath: 'Summarize the change',
+					onRunTranscript,
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.stdout.emit('data', 'Hello ');
+				mockChild.stdout.emit('data', 'world');
+				expect(onRunTranscript).not.toHaveBeenCalled();
+				mockChild.emit('close', 0);
+				const result = await resultPromise;
+
+				expect(onRunTranscript).toHaveBeenCalledTimes(1);
+				const run = onRunTranscript.mock.calls[0][0];
+				expect(run).toMatchObject({
+					agentId: 'session-1',
+					toolType: 'claude-code',
+					prompt: 'substituted: Summarize the change',
+					rawStdout: 'Hello world',
+					cwd: '/projects/test',
+					exitCode: 0,
+					status: 'completed',
+					durationMs: result.durationMs,
+				});
+				expect(run.startTime).toBe(Date.parse(result.startedAt));
+			});
+
+			it('reports a failed run with its exit code', async () => {
+				const onRunTranscript = vi.fn();
+				const resultPromise = executeCuePrompt(createExecutionConfig({ onRunTranscript }));
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.emit('close', 1);
+				await resultPromise;
+
+				expect(onRunTranscript.mock.calls[0][0]).toMatchObject({ exitCode: 1, status: 'failed' });
+			});
+
+			it('does not change the result, and a throwing callback does not fail the run', async () => {
+				const runOnce = async (overrides: Partial<CueExecutionConfig>) => {
+					const resultPromise = executeCuePrompt(createExecutionConfig(overrides));
+					await vi.advanceTimersByTimeAsync(0);
+					mockChild.stdout.emit('data', 'Hello world');
+					mockChild.stderr.emit('data', 'Warning');
+					mockChild.emit('close', 0);
+					return resultPromise;
+				};
+
+				const plain = await runOnce({});
+				const observed = await runOnce({
+					onRunTranscript: () => {
+						throw new Error('observer failed');
+					},
+				});
+
+				const comparable = (r: typeof plain) => ({
+					status: r.status,
+					stdout: r.stdout,
+					stderr: r.stderr,
+					exitCode: r.exitCode,
+					durationMs: r.durationMs,
+				});
+				expect(comparable(observed)).toEqual(comparable(plain));
+				expect(observed.status).toBe('completed');
+			});
+
+			it('is not called when no process was started', async () => {
+				const onRunTranscript = vi.fn();
+
+				const result = await executeCuePrompt(
+					createExecutionConfig({ promptPath: '   ', onRunTranscript })
+				);
+
+				expect(result.status).toBe('failed');
+				expect(onRunTranscript).not.toHaveBeenCalled();
+			});
 		});
 
 		it('should return completed status on exit code 0', async () => {

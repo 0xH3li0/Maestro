@@ -242,7 +242,12 @@ export class ProcessManager extends EventEmitter {
 		// resulting env-less MCP subprocess (its parent is the shared serve PID, not a
 		// tracked agent CLI), so the tools are cleanly unavailable, never mis-scoped.
 		if (this.shouldUseOpencodeServer(config)) {
-			return this.opencodeServerSpawner.spawn(config);
+			const serveResult = this.opencodeServerSpawner.spawn(config);
+			// The same `spawn` seam the CLI path emits below. This transport
+			// reports `exit` through the shared handlers, so a listener that pairs
+			// the two would otherwise see every turn here end without a start.
+			this.emitSpawn(config);
+			return serveResult;
 		}
 
 		// Inject the *owning Maestro session id* into the agent CLI's env so the
@@ -289,17 +294,23 @@ export class ProcessManager extends EventEmitter {
 			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 
-		// Emit a spawn event AFTER the spawner returns so the agent-run capture
-		// service only records a running run for a process that actually started
-		// (symmetric with the 'exit' seam; no orphan on spawn failure). Guarded:
-		// a capture listener throwing must never break spawning.
+		this.emitSpawn(config);
+
+		return result;
+	}
+
+	/**
+	 * Emit a spawn event AFTER the spawner returns so the agent-run capture
+	 * service only records a running run for a process that actually started
+	 * (symmetric with the 'exit' seam; no orphan on spawn failure). Guarded: a
+	 * capture listener throwing must never break spawning.
+	 */
+	private emitSpawn(config: ProcessConfig): void {
 		try {
 			this.emit('spawn', config);
 		} catch {
 			// Capture is best-effort; never let it break process spawning.
 		}
-
-		return result;
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {

@@ -193,6 +193,65 @@ describe('ExitHandler', () => {
 			expect(dataEvents).toContain('Auth Bug Fix');
 		});
 
+		it('hands the flushed line on as a parsed event when something is subscribed', async () => {
+			// The last line of a stream that ended without a newline never passes
+			// through StdoutHandler, so this is the only place it can be handed on.
+			const resultJson = '{"type":"result","result":"Auth Bug Fix","session_id":"abc"}';
+			const event = { type: 'result', text: 'Auth Bug Fix', sessionId: 'abc' };
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => event) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					jsonBuffer: resultJson,
+					outputParser: mockParser,
+				})
+			);
+
+			const order: string[] = [];
+			const parsedEvents: unknown[][] = [];
+			emitter.on('parsed-event', (...args: unknown[]) => {
+				order.push('parsed-event');
+				parsedEvents.push(args);
+			});
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(parsedEvents).toEqual([['test-session', event]]);
+			// Ahead of the exit, so the line belongs to the turn that printed it.
+			expect(order).toEqual(['parsed-event', 'exit']);
+		});
+
+		it('does not emit a parsed event for the flushed line while nobody is subscribed', async () => {
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'result',
+					text: 'Auth Bug Fix',
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					jsonBuffer: '{"type":"result","result":"Auth Bug Fix"}',
+					outputParser: mockParser,
+				})
+			);
+			const emitSpy = vi.spyOn(emitter, 'emit');
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(emitSpy.mock.calls.filter((call) => call[0] === 'parsed-event')).toEqual([]);
+			expect(emitSpy.mock.calls.some((call) => call[0] === 'exit')).toBe(true);
+		});
+
 		it('emits an error, not data, when the trailing envelope reports a failure', async () => {
 			// A CLI that reports its failure in-band and then exits 0 used to settle
 			// the turn with nothing at all: isResultMessage rejects the error event,
