@@ -55,6 +55,14 @@ export type { GhostIconButtonProps } from './GhostIconButton';
 export { EmptyStatePlaceholder } from './EmptyStatePlaceholder';
 export type { EmptyStatePlaceholderProps } from './EmptyStatePlaceholder';
 
+export { ModalTabStrip, tabPanelProps, useModalTabs, useModalTabCycling } from './ModalTabStrip';
+export type {
+	ModalTab,
+	ModalTabStripProps,
+	UseModalTabsOptions,
+	UseModalTabCyclingOptions,
+} from './ModalTabStrip';
+
 export { ShortcutFilterButton } from './ShortcutFilterButton';
 export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
 

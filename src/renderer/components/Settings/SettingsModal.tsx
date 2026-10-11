@@ -21,6 +21,7 @@ import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { useModalTabCycling } from '../ui/ModalTabStrip';
 import { jumpToElement } from '../../utils/jumpHighlight';
 import { AICommandsPanel } from '../AICommandsPanel';
 import { MaestroPromptsTab } from './tabs/MaestroPromptsTab';
@@ -429,27 +430,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	);
 
 	// Tab navigation with Cmd+Shift+[ and ]
-	useEffect(() => {
-		if (!isOpen) return;
-
-		const handleTabNavigation = (e: KeyboardEvent) => {
-			const tabs = tabItems.map((t) => t.id);
-			const currentIndex = tabs.indexOf(activeTab);
-
-			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
-				e.preventDefault();
-				const prevIndex = currentIndex === 0 ? tabs.length - 1 : currentIndex - 1;
-				selectTab(tabs[prevIndex]);
-			} else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']') {
-				e.preventDefault();
-				const nextIndex = (currentIndex + 1) % tabs.length;
-				selectTab(tabs[nextIndex]);
-			}
-		};
-
-		window.addEventListener('keydown', handleTabNavigation);
-		return () => window.removeEventListener('keydown', handleTabNavigation);
-	}, [isOpen, activeTab, tabItems, selectTab]);
+	const tabIds = useMemo(() => tabItems.map((t) => t.id), [tabItems]);
+	useModalTabCycling({ tabs: tabIds, activeTab, onSelect: selectTab, enabled: isOpen });
 
 	useEffect(() => {
 		if (
