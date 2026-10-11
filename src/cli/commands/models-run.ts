@@ -17,6 +17,12 @@
 // same main-process function, so an agent gets the same title and body the
 // form would be filled with. It prints the title, a blank line, then the body.
 // Nothing is pushed or created.
+//
+// `maestro-cli models run dictation --audio <file.wav>` is the one task that
+// takes audio: it is the CLI path to dictation, through the same main-process
+// `transcribeClip()` a clip recorded in a text box ends in. An agent has no
+// microphone, so it brings the speech as a 16-bit PCM WAV file and gets the
+// transcript the Dictation assignment produces for it.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
@@ -27,7 +33,11 @@ import {
 	LOCAL_MODEL_TASKS,
 } from '../../shared/local-models/tasks';
 import type { PullRequestDraftResult } from '../../shared/gitDrafts';
-import type { LocalTaskInput, LocalTaskResult } from '../../main/local-models/task-router';
+import type {
+	LocalTaskInput,
+	LocalTaskResult,
+	SpeechToTextTaskResult,
+} from '../../main/local-models/task-router';
 
 /**
  * Above the app's endpoint chat budget (120s), so a slow server comes back as
@@ -35,12 +45,21 @@ import type { LocalTaskInput, LocalTaskResult } from '../../main/local-models/ta
  */
 const RUN_TIMEOUT_MS = 150_000;
 
+/**
+ * A long recording is cut into windows and each is decoded in turn, and the
+ * first call also loads the model, so a transcription gets a wider budget than
+ * one generation.
+ */
+const TRANSCRIBE_TIMEOUT_MS = 600_000;
+
 interface RunOptions {
 	input?: string;
 	/** git-drafts only: the repository to draft a pull request for. */
 	cwd?: string;
 	/** git-drafts only: the branch the pull request targets. */
 	base?: string;
+	/** dictation only: the WAV file to transcribe. */
+	audio?: string;
 	system?: string;
 	maxTokens?: string;
 	json?: boolean;
@@ -79,9 +98,41 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 		);
 	}
 	const task = LOCAL_MODEL_TASKS[taskId];
+
+	if (options.audio !== undefined || taskId === 'dictation') {
+		if (taskId !== 'dictation') {
+			fail(
+				'--audio transcribes speech, which only the dictation task does.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		if (options.audio === undefined || options.audio.trim() === '') {
+			fail(
+				'Pass --audio <file.wav> to transcribe a 16-bit PCM WAV file.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		if (
+			options.input !== undefined ||
+			options.system !== undefined ||
+			options.maxTokens !== undefined ||
+			options.cwd !== undefined ||
+			options.base !== undefined
+		) {
+			fail(
+				'--audio transcribes the file; it does not combine with --input, --system, --max-tokens, --cwd, or --base.',
+				options.json,
+				ExitCode.InvalidUsage
+			);
+		}
+		return runTranscription(options.audio, options.json);
+	}
+
 	if (task.needs !== 'text-gen') {
 		fail(
-			`${task.label} is a ${task.needs} task; models run runs text-generation tasks only.`,
+			`${task.label} is a ${task.needs} task; models run runs text-generation tasks, and dictation with --audio.`,
 			options.json,
 			ExitCode.InvalidUsage
 		);
@@ -208,4 +259,43 @@ async function runPullRequestDraft(
 		exitWith(ExitCode.GeneralError);
 	}
 	console.log(result.body ? `${result.title}\n\n${result.body}` : result.title);
+}
+
+/**
+ * Transcribe a WAV file with the Dictation assignment. Only a transcript exits
+ * 0, with the text alone on stdout (empty when the clip held no speech). Every
+ * refusal (the task is off, the model is unavailable, the file is not a WAV)
+ * exits non-zero with the reason.
+ */
+async function runTranscription(audio: string, json: boolean | undefined): Promise<void> {
+	let reply: { success: boolean; result?: SpeechToTextTaskResult; error?: string };
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand(
+				{ type: 'local_models_transcribe', path: resolveCliPath(audio) },
+				'local_models_transcribe_result',
+				TRANSCRIBE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+	}
+
+	if (!reply.success || !reply.result) {
+		fail(reply.error || 'Transcription failed', json);
+	}
+	const result = reply.result;
+
+	if (json) {
+		console.log(
+			JSON.stringify({ success: result.status === 'ok', taskId: 'dictation', ...result })
+		);
+		if (result.status !== 'ok') exitWith(ExitCode.GeneralError);
+		return;
+	}
+	if (result.status !== 'ok') {
+		console.error(`Error: ${describeVerdict('dictation', result)}`);
+		exitWith(ExitCode.GeneralError);
+	}
+	console.log(result.text);
 }

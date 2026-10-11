@@ -1899,13 +1899,14 @@ List every task with its assignment, plus readiness when the desktop app is runn
 
 ## `maestro-cli models run <task-id>`
 
-Run a text-generation task through its assignment; prints the text, or why it did not run (requires the desktop app)
+Run a text-generation task (or dictation, with --audio) through its assignment; prints the text, or why it did not run (requires the desktop app)
 
 | Option                | Description                                                                                        | Default |
 | --------------------- | -------------------------------------------------------------------------------------------------- | ------- |
-| `-i, --input <text>`  | The prompt to send (required, except with --cwd)                                                   | -       |
+| `-i, --input <text>`  | The prompt to send (required, except with --cwd or --audio)                                        | -       |
 | `--cwd <path>`        | git-drafts only: draft a pull request title and body for the branch checked out in this repository | -       |
 | `--base <branch>`     | git-drafts only: the target branch (default: main, then master)                                    | -       |
+| `--audio <file>`      | dictation only: transcribe this 16-bit PCM WAV file and print the transcript                       | -       |
 | `-s, --system <text>` | System prompt                                                                                      | -       |
 | `--max-tokens <n>`    | Token budget for the reply (default 512)                                                           | -       |
 | `--json`              | Output as JSON (for scripting)                                                                     | -       |

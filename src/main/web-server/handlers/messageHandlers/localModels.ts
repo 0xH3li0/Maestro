@@ -5,7 +5,7 @@
  * local_models_remove, local_models_endpoints_detect, local_models_endpoint_test,
  * local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
- * local_models_tab_cleanup.
+ * local_models_tab_cleanup, local_models_transcribe.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -32,6 +32,7 @@ import {
 	removeLocalModel,
 	verifyLocalModel,
 } from '../../../local-models/service';
+import { transcribeAudioFileRequest } from '../../../local-models/dictation';
 import { draftPullRequestRequest } from '../../../local-models/git-drafts';
 import { runLocalTaskRequest } from '../../../local-models/task-router';
 import { resolveTaskReadinessRequest } from '../../../local-models/task-readiness';
@@ -245,5 +246,22 @@ export function handleLocalModelsTabCleanup(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_tab_cleanup_result', async () => ({
 		result: await suggestTabCleanup(),
+	}));
+}
+
+/**
+ * Handle local_models_transcribe - transcribe a WAV file with the Dictation
+ * assignment (`maestro-cli models run dictation --audio <file>`), through the
+ * same `transcribeClip()` a dictation recorded in a text box ends in. A task
+ * that is off or unavailable is a successful round trip with the verdict in
+ * `result`; only a bad request (no path, not a WAV) comes back as an error.
+ */
+export function handleLocalModelsTranscribe(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_transcribe_result', async () => ({
+		result: await transcribeAudioFileRequest(message.path),
 	}));
 }

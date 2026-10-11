@@ -369,6 +369,7 @@ describe('every registered action has a handler', () => {
 		'openLeaderboard',
 		'clearAllNotifications',
 		'openThemeSettings',
+		'dictate',
 	];
 
 	it('registers each unbound id with empty keys', () => {

@@ -21,6 +21,8 @@ import {
 } from '../../../../shared/agentMetadata';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { shortcutSuffix } from '../../ui/ShortcutHint';
+import { DictationButton } from '../../ui/DictationButton';
+import type { DictationTarget } from '../../../utils/dictationTargets';
 import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
@@ -61,6 +63,12 @@ interface ToolbarControlsProps {
 	 * the Encore Feature on would show two microphones wired to the same toggle.
 	 */
 	voiceHandledElsewhere?: boolean;
+	/**
+	 * Where a dictated transcript lands in this composer. Dictation is not a
+	 * voice session: it types into the draft and nothing is sent or routed. The
+	 * button draws itself only when the `dictation` Local Models task is on.
+	 */
+	dictationTarget?: DictationTarget;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
@@ -103,6 +111,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 	isVoiceListening,
 	onToggleVoiceInput,
 	voiceHandledElsewhere,
+	dictationTarget,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
@@ -427,6 +436,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 					>
 						<Mic className="w-4 h-4" />
 					</button>
+				)}
+				{isAiMode && dictationTarget && (
+					<DictationButton
+						theme={theme}
+						target={dictationTarget}
+						testId="composer-dictation-button"
+					/>
 				)}
 				{imageFileInput}
 				<ModelEffortPills

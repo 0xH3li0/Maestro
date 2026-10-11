@@ -107,6 +107,23 @@ Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle i
 
 **A task never falls back.** If a task's assignment is not ready, the task does not run on some other source instead. It reports why, and the readiness line shows the same reason. A silent fallback would send your text somewhere you did not choose.
 
+### Dictation
+
+Dictation types what you say into a text box. It is off until you assign the **Dictation** task a speech-to-text model (a local model such as Parakeet, or an endpoint that offers `/v1/audio/transcriptions`).
+
+Once the task is ready, a small microphone appears in the AI composer, the group chat composer, the file editor, and the Auto Run editor. There are two ways to use it:
+
+- **Tap** the microphone to start, speak, and tap it again to stop.
+- **Hold** the microphone down while you speak, and release it when you are done.
+
+The words land where the caret is, replacing any selected text. A pill at the bottom of the window shows that a microphone is recording, with **Stop** and a button that discards the recording.
+
+You can also dictate from the keyboard. Open **Settings**, then **Shortcuts**, and give **Dictate into Text Box** a chord (it ships with none). The chord works the same way, tap or hold, and it dictates into whichever text box holds the caret, including text boxes that have no microphone button of their own.
+
+Dictation is not a voice session. Nothing is sent to an agent, nothing is spoken back, and the text is not submitted for you: it is typed into the box and you send it when you are ready. In the AI composer, dictated text never changes the command mode, so a sentence cannot become a shell command by accident.
+
+If the microphone is dimmed, its tooltip says why (the model is not downloaded, the endpoint is not reachable) and what to do. Dictation does not run on a different source instead. The first time you dictate, your operating system asks for microphone access; if access is denied, Maestro says so and offers to open the system setting. A recording stops by itself after 5 minutes and keeps what it captured. Dictation is not available from the web interface, because the microphone is on the computer that runs Maestro. It also cannot start while an A Cappella voice session is open, since speech is already going to that session.
+
 ### The secret screen
 
 Maestro checks content for credentials before it publishes that content for you. Three actions are checked: **Publish as GitHub Gist**, **Send Feedback** (the issue text, a comment on an existing issue, and the support package if you attach one), and **Create Debug Package**.
@@ -169,6 +186,7 @@ maestro-cli models index                         # the semantic index: state, an
 maestro-cli search "<query>" --semantic          # find past work by meaning (drop --semantic for exact text)
 maestro-cli models run <task-id> --input "..."   # run a text-generation task once
 maestro-cli models run git-drafts --cwd <repo> [--base <branch>]   # draft a pull request title and body
+maestro-cli models run dictation --audio <file.wav>   # transcribe a 16-bit PCM WAV file with the Dictation model
 maestro-cli tab suggest-cleanup                  # tabs to close, snooze, or wake; prints them, changes nothing
 ```
 

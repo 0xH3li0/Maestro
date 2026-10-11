@@ -446,6 +446,12 @@ export const DEFAULT_SHORTCUTS = {
 		keys: [],
 	},
 	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
+
+	// Dictation into the focused text box: tap to toggle, hold to record while
+	// held. Unbound on purpose. It has to work inside every text box in the app,
+	// so any default chord would take a key away from typing somewhere; the user
+	// picks one that suits their keyboard.
+	dictate: { id: 'dictate', label: 'Dictate into Text Box', keys: [] },
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)

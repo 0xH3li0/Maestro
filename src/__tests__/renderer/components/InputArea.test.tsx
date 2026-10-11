@@ -6,6 +6,7 @@ import { useComposerInputStore } from '../../../renderer/stores/composerInputSto
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { resolveDictationTarget } from '../../../renderer/services/dictation';
 import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
@@ -1256,6 +1257,20 @@ describe('InputArea', () => {
 	});
 
 	describe('Command Mode', () => {
+		it('never changes the mode for dictated text, even text that starts with a bang', () => {
+			const props = createDefaultProps();
+			render(<InputArea {...props} />);
+
+			// The composer registers its own dictation target, written through the
+			// draft setter. The textarea's onChange is where the `!` gesture lives,
+			// and a transcript must never reach it.
+			const target = resolveDictationTarget(screen.getByRole('textbox'));
+			expect(target?.insert('!ls')).toBe(true);
+
+			expect(props.setInputValue).toHaveBeenCalledWith('!ls');
+			expect(useComposerInputStore.getState().aiCommandMode).toBe('off');
+		});
+
 		// Command mode is composer state; the `!` gesture is consumed on entry, so
 		it('shows the command mode bar when the composer is in command mode', () => {
 			const props = createDefaultProps({

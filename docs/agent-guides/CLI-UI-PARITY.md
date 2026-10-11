@@ -282,6 +282,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Local Models task router (`localModels:runTask`)     | `models run <task-id> --input <text> [--system] [--max-tokens]`                                   |
 | Local Models task readiness (`taskReadiness`)        | `models status [task-id]`                                                                         |
 | Create Pull Request: Draft with local model          | `models run git-drafts --cwd <path> [--base <branch>]` (prints title, blank line, body)           |
+| Dictation: microphone in a text box, `dictate` chord | `models run dictation --audio <file.wav>` (same `transcribeClip()`; prints the transcript)        |
 | Tab Cleanup Suggestions: the list                    | `tab suggest-cleanup [--json]` (read-only; same `suggestTabCleanup()` as the modal)               |
 | Tab Cleanup Suggestions: Apply a ticked row          | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`          |
 | Open Tab Cleanup Suggestions                         | `open tab-cleanup`                                                                                |

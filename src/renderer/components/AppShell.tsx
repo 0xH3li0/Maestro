@@ -19,6 +19,7 @@ import { ToastContainer } from './Toast';
 import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
 import { SecretScreenConfirmHost } from './SecretScreenConfirmHost';
+import { DictationHost } from './DictationHost';
 import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
@@ -307,6 +308,11 @@ export function AppShell({
 			    main-process secret screen refused. Opened only through
 			    withSecretScreenConfirm(). */}
 			<SecretScreenConfirmHost theme={theme} />
+			{/* --- DICTATION (single, app-wide) ---
+			    Mirrors the dictation task's readiness for every DictationButton,
+			    classifies the `dictate` shortcut's press, and draws the pill that
+			    says a microphone is recording. See DictationHost. */}
+			<DictationHost theme={theme} />
 			{/* --- ZOOM VIEWER (single, app-wide) ---
 			    Full-screen pan/zoom for any diagram or image. Opened by expand
 			    buttons and the image right-click menu via openZoomViewer(). */}

@@ -92,6 +92,7 @@ import {
 	handleLocalModelsEndpointsDetect,
 	handleLocalModelsEndpointTest,
 	handleLocalModelsGitDraft,
+	handleLocalModelsTranscribe,
 	handleLocalModelsList,
 	handleLocalModelsRemove,
 	handleLocalModelsRunTask,
@@ -737,6 +738,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_git_draft':
 				void handleLocalModelsGitDraft(this.ctx, client, message);
+				break;
+
+			case 'local_models_transcribe':
+				void handleLocalModelsTranscribe(this.ctx, client, message);
 				break;
 
 			case 'local_models_semantic_index_status':

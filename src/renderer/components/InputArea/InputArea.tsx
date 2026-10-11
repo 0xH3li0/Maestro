@@ -23,6 +23,7 @@ import { useComposerVoice } from '../../hooks/voice/useComposerVoice';
 import { useThinkingItems } from '../../hooks/session/useThinkingItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
+import { controlledTextDictationTarget } from '../../utils/dictationTargets';
 import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
 import { PhoneComposerHandle } from './components/PhoneComposerHandle';
@@ -421,6 +422,22 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	voiceToggleRef.current = voice.toggle;
 	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
 
+	// Dictation types into the draft through `setInputValue`, the same setter a
+	// restored draft and the Web Speech path use, and never through the
+	// textarea's onChange: that handler is where the `!` gesture, the slash
+	// popover and the mention picker live, and none of them may fire for words
+	// nobody typed. Dictated text therefore never changes the command mode.
+	const setInputValueRef = useRef(setInputValue);
+	setInputValueRef.current = setInputValue;
+	const dictationTarget = useMemo(
+		() =>
+			controlledTextDictationTarget({
+				getElement: () => inputRef.current,
+				setValue: (value) => setInputValueRef.current(value),
+			}),
+		[inputRef]
+	);
+
 	// Phone: the whole composer folds away behind a slim handle so the transcript
 	// gets the screen; the user pulls it up to type. Remembered across reloads,
 	// and it starts folded - on a handheld the composer is in the way far more
@@ -741,6 +758,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							isVoiceListening={voice.isListening}
 							onToggleVoiceInput={handleToggleVoiceInput}
 							voiceHandledElsewhere={voice.usesACappella}
+							dictationTarget={dictationTarget}
 							onOpenPromptComposer={onOpenPromptComposer}
 							shortcuts={shortcuts}
 							showFlashNotification={showFlashNotification}

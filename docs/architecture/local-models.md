@@ -1085,8 +1085,61 @@ stop it, its interruption is sent to that window alone on `localModels:dictation
 reaches handlers with no sender; it is refused as `no-microphone`, because the microphone is on the
 computer running Maestro and not where that person is speaking.
 
-Known gaps: there is no text box affordance yet (the next phase adds it), and no `maestro-cli` verb
-transcribes an audio file through `transcribeClip()`.
+### Dictation in the renderer
+
+```mermaid
+flowchart LR
+	btn["DictationButton<br/>(composer, group chat, MarkdownEditor)"]
+	key["dictate shortcut<br/>useMainKeyboardHandler"]
+	host["DictationHost<br/>readiness mirror, shortcut press, indicator pill"]
+	press["useDictationPress<br/>usePressAndHold: tap toggles, hold records"]
+	svc["services/dictation.ts<br/>start / stop / cancel, target registry"]
+	store["dictationStore<br/>phase, target, availability"]
+	tgt["utils/dictationTargets.ts<br/>controlled / native / CodeMirror"]
+	ipc["window.maestro.localModels.dictation"]
+	btn --> press
+	key -- requestDictationShortcutPress --> host --> press
+	press --> svc --> ipc
+	svc --> store
+	svc -- transcript --> tgt
+```
+
+| File                                                | Role                                                                                                                                                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/renderer/services/dictation.ts`                | The state machine (`startDictation`, `stopDictation`, `cancelDictation`, `toggleDictation`), the target registry, and every refusal notice.                             |
+| `src/renderer/stores/dictationStore.ts`             | `phase` (`idle`, `starting`, `recording`, `transcribing`), the `target` being dictated into, and the mirrored `availability`. Written only by the service and the host. |
+| `src/renderer/utils/dictationTargets.ts`            | `DictationTarget` and its three write paths, plus `padDictatedText()` and `dictationTargetForElement()`.                                                                |
+| `src/renderer/hooks/dictation/useDictationPress.ts` | One press classified as a tap or a hold, shared by the button and the shortcut.                                                                                         |
+| `src/renderer/components/ui/DictationButton.tsx`    | The microphone beside a text box. Registers its target while mounted.                                                                                                   |
+| `src/renderer/components/DictationHost.tsx`         | Mounted once in `AppShell`: readiness, the shortcut's press, and the recording pill.                                                                                    |
+
+Rules:
+
+- **A transcript is written by the surface's own path.** A `DictationTarget` hides three different
+  writes. A store-backed composer (the AI composer, the group chat composer) is written through its
+  own setter and never through the textarea's `onChange`, because that handler holds the composer's
+  typing rules: the `!` command mode gesture, the slash popover, the mention picker. A CodeMirror
+  editor is written by one transaction. Any other textarea or text input is written the way a
+  keystroke writes it (the browser's insert command while it holds focus, so undo still works).
+- **The target is fixed at start.** The transcript goes to the text box the dictation began in, even
+  when focus moved while the clip decoded. If that box is gone the words are shown in a toast.
+- **The shortcut resolves the focused element.** A registered target that contains it wins; any other
+  editable textarea, text input, or CodeMirror editor gets the generic target. A password field, a
+  read-only control, and a terminal get none.
+- **Readiness is asked once.** `DictationHost` calls `localModels:taskReadiness` for `dictation` and
+  mirrors the verdict: `off` (the default) hides every button, `unavailable` draws them dimmed with
+  the reason, `ready` draws them. A web-desktop client is always hidden. The main process checks
+  readiness again at every start, so a stale mirror cannot record into a model that is not there.
+- **The pill is the guarantee that a recording is visible.** A dictation started by the shortcut in a
+  text box with no button would otherwise show nothing. It sits above modals
+  (`Z_LAYERS.DICTATION_INDICATOR`) and carries Stop and Discard.
+- **Microphone permission** is asked by the main process at the first start (`ClipCapture`). A denial
+  arrives as `permission-denied`; the toast opens the OS privacy pane through the same
+  `acappella:open-mic-settings` channel the voice HUD uses.
+
+CLI: `maestro-cli models run dictation --audio <file.wav>` reaches `transcribeAudioFileRequest()`
+(`local_models_transcribe` on the bridge), which decodes a 16-bit PCM WAV and calls
+`transcribeClip()`. An agent has no microphone, so it brings the audio as a file.
 
 ## Related
 

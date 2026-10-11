@@ -33,6 +33,10 @@
  *     reaches for a hosted recogniser.
  */
 
+import fs from 'fs/promises';
+import path from 'path';
+
+import { decodeWavPcm16, int16ToFloat32 } from '../../shared/audio/pcm';
 import type {
 	DictationInterruption,
 	DictationRefusalCode,
@@ -67,6 +71,59 @@ export function transcribeClip(
 		sampleRate,
 		...(options.signal ? { signal: options.signal } : {}),
 	});
+}
+
+/**
+ * The largest audio file {@link transcribeAudioFileRequest} reads. An hour of
+ * 16 kHz mono speech is about 115 MB, so this refuses a wrong file (a video, a
+ * disk image) without getting in the way of a long recording.
+ */
+const MAX_AUDIO_FILE_BYTES = 512 * 1024 * 1024;
+
+/**
+ * Transcribe a WAV file on disk with the Dictation assignment: the CLI's route
+ * to {@link transcribeClip} (`maestro-cli models run dictation --audio <file>`).
+ *
+ * A dictation in the app records its clip from the microphone; an agent has no
+ * microphone, so it brings the audio as a file and gets the same transcript
+ * from the same model. `filePath` arrives untrusted from the bridge, so it is
+ * validated here. Only 16-bit PCM WAV is read: decoding compressed audio would
+ * need a codec this process does not ship.
+ *
+ * @throws When the request is malformed or the file is not a readable WAV. A
+ *         task that is off or unavailable is an answer, not a throw.
+ */
+export async function transcribeAudioFileRequest(
+	filePath: unknown
+): Promise<SpeechToTextTaskResult> {
+	if (typeof filePath !== 'string' || filePath.trim() === '' || !path.isAbsolute(filePath)) {
+		throw new Error('An absolute path to a WAV file is required.');
+	}
+	let size: number;
+	try {
+		const stat = await fs.stat(filePath);
+		if (!stat.isFile()) throw new Error(`Not a file: ${filePath}`);
+		size = stat.size;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			throw new Error(`No such file: ${filePath}`);
+		}
+		throw error;
+	}
+	if (size > MAX_AUDIO_FILE_BYTES) {
+		throw new Error(
+			`${filePath} is larger than the ${MAX_AUDIO_FILE_BYTES / (1024 * 1024)} MB a transcription reads.`
+		);
+	}
+
+	let clip: { sampleRate: number; pcm: Int16Array };
+	try {
+		clip = decodeWavPcm16(await fs.readFile(filePath));
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new Error(`${reason}. Dictation reads 16-bit PCM WAV files.`);
+	}
+	return transcribeClip(int16ToFloat32(clip.pcm), clip.sampleRate);
 }
 
 // ---------------------------------------------------------------------------

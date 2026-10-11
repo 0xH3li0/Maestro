@@ -14,7 +14,10 @@
  *   - **A stop before the microphone opened cancels**; nothing was recorded.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const router = vi.hoisted(() => ({ runSpeechToTextTask: vi.fn() }));
 const readiness = vi.hoisted(() => ({ resolveTaskReadiness: vi.fn() }));
@@ -34,6 +37,7 @@ import {
 	registerDictationMicrophone,
 	startDictation,
 	stopDictation,
+	transcribeAudioFileRequest,
 	transcribeClip,
 	type DictationClip,
 	type DictationMicrophone,
@@ -42,6 +46,7 @@ import type {
 	DictationInterruption,
 	DictationStartResult,
 } from '../../../shared/local-models/dictation';
+import { encodeWav } from '../../../shared/audio/pcm';
 
 const SOURCE = { type: 'local', modelId: 'parakeet-tdt-0.6b-v2' } as const;
 const CLIP: DictationClip = { audio: new Float32Array(16000), sampleRate: 16000 };
@@ -370,5 +375,71 @@ describe('interruptions and the microphone registration', () => {
 		expect(microphone.cancel).toHaveBeenCalledTimes(1);
 		expect(isDictationRecording()).toBe(false);
 		await expect(startDictation('window:1')).resolves.toMatchObject({ code: 'no-microphone' });
+	});
+});
+
+describe('transcribeAudioFileRequest', () => {
+	let dir: string;
+
+	beforeEach(async () => {
+		dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-dictation-'));
+		router.runSpeechToTextTask.mockResolvedValue({
+			status: 'ok',
+			text: 'from a file',
+			audioMs: 500,
+			source: SOURCE,
+			durationMs: 40,
+		});
+	});
+	afterEach(async () => {
+		await fs.rm(dir, { recursive: true, force: true });
+	});
+
+	it('decodes a WAV file and runs it on the Dictation task', async () => {
+		const file = path.join(dir, 'clip.wav');
+		await fs.writeFile(file, encodeWav(new Int16Array([0, 16384, -16384, 32767]), 22050));
+
+		const result = await transcribeAudioFileRequest(file);
+
+		expect(result).toMatchObject({ status: 'ok', text: 'from a file' });
+		const [taskId, input] = router.runSpeechToTextTask.mock.calls[0];
+		expect(taskId).toBe('dictation');
+		expect(input.sampleRate).toBe(22050);
+		expect(input.audio).toBeInstanceOf(Float32Array);
+		expect(input.audio).toHaveLength(4);
+		expect(input.audio[1]).toBeCloseTo(0.5, 2);
+	});
+
+	it('passes a task that is off through as an answer, not a throw', async () => {
+		router.runSpeechToTextTask.mockResolvedValue({ status: 'off' });
+		const file = path.join(dir, 'clip.wav');
+		await fs.writeFile(file, encodeWav(new Int16Array(8)));
+		await expect(transcribeAudioFileRequest(file)).resolves.toEqual({ status: 'off' });
+	});
+
+	it.each([[undefined], [''], [42], ['relative/clip.wav']])(
+		'refuses a request without an absolute path (%j)',
+		async (bad) => {
+			await expect(transcribeAudioFileRequest(bad)).rejects.toThrow(/absolute path to a WAV file/);
+			expect(router.runSpeechToTextTask).not.toHaveBeenCalled();
+		}
+	);
+
+	it('names a file that does not exist', async () => {
+		const missing = path.join(dir, 'nope.wav');
+		await expect(transcribeAudioFileRequest(missing)).rejects.toThrow(`No such file: ${missing}`);
+	});
+
+	it('refuses a directory', async () => {
+		await expect(transcribeAudioFileRequest(dir)).rejects.toThrow(/Not a file/);
+	});
+
+	it('refuses a file that is not a WAV and says what is read', async () => {
+		const file = path.join(dir, 'clip.mp3');
+		await fs.writeFile(file, Buffer.from('ID3 not a wav at all'));
+		await expect(transcribeAudioFileRequest(file)).rejects.toThrow(
+			/Not a WAV file\. Dictation reads 16-bit PCM WAV files\./
+		);
+		expect(router.runSpeechToTextTask).not.toHaveBeenCalled();
 	});
 });

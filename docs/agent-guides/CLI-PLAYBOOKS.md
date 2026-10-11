@@ -426,6 +426,20 @@ maestro-cli models run git-drafts --cwd <path> [--base <branch>] [--json]
 - Prints the title, a blank line, then the body. `--json` prints the whole result (`title`, `body`, `baseBranch`, `commitCount`, `truncated`, `producedBy`). It never pushes or opens a pull request.
 - Exits non-zero with the reason when the task is off, the source is unavailable, the branch has no commits the base lacks, or git fails. `--cwd` and `--base` are refused for every other task, and do not combine with `--input`, `--system`, or `--max-tokens`.
 
+### `models run dictation --audio <file>`
+
+The CLI path to dictation (the microphone in a text box, and the `dictate` shortcut). Implemented in `src/cli/commands/models-run.ts` (`runTranscription`).
+
+```bash
+maestro-cli models run dictation --audio <file.wav> [--json]
+```
+
+- Runs in the desktop (`local_models_transcribe`) through `transcribeAudioFileRequest()` in `src/main/local-models/dictation.ts`, which decodes the file and calls `transcribeClip()`: the same function a clip recorded in a text box ends in, so both run on the same Dictation assignment and record the same `local_model_runs` row. `--audio` is resolved with `resolveCliPath()`.
+- **It takes a file, not the microphone.** The UI records from the computer's microphone; an agent has none, so it brings the speech as audio. The verb transcribes and stops: where the text goes is the caller's business, the same way the UI only types it into a box and never sends it.
+- Only 16-bit PCM WAV is read (mono, or the first channel of a stereo file; any sample rate, resampled to 16 kHz). Convert anything else first, for example `ffmpeg -i in.m4a -ac 1 -c:a pcm_s16le out.wav`.
+- Prints the transcript alone on stdout, which is empty when the clip held no speech. `--json` prints the whole result (`text`, `audioMs`, `source`, `durationMs`).
+- Exits non-zero with the reason when the task is off (the default), the source is unavailable, or the file is missing or not a readable WAV. It never falls back to another recogniser. `--audio` is refused for every other task and does not combine with `--input`, `--system`, `--max-tokens`, `--cwd`, or `--base`.
+
 ### `models endpoints list|add|remove|test|detect`
 
 Model servers the user runs for Local Models (Ollama, LM Studio, any OpenAI-compatible base URL). Implemented in `src/cli/commands/models-endpoints.ts`.

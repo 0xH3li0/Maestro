@@ -4,6 +4,11 @@ import { ToolbarControls } from '../../../../../renderer/components/InputArea/co
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
+import {
+	resetDictationStore,
+	useDictationStore,
+} from '../../../../../renderer/stores/dictationStore';
+import type { DictationTarget } from '../../../../../renderer/utils/dictationTargets';
 
 const mockUpdateSessionWith = vi.fn();
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
@@ -59,6 +64,33 @@ describe('ToolbarControls', () => {
 			/>
 		);
 	}
+
+	describe('dictation', () => {
+		const dictationTarget: DictationTarget = { getElement: () => null, insert: () => true };
+
+		afterEach(() => resetDictationStore());
+
+		it('draws no dictation microphone while the dictation task is off', () => {
+			renderToolbar({ dictationTarget });
+			expect(screen.queryByTestId('composer-dictation-button')).toBeNull();
+		});
+
+		it('draws the dictation microphone once the task is ready', () => {
+			useDictationStore.setState({ availability: { state: 'ready', source: 'Parakeet' } });
+			renderToolbar({ dictationTarget });
+			expect(screen.getByTestId('composer-dictation-button')).toBeInTheDocument();
+		});
+
+		it('draws none in terminal mode, where the composer is a shell line', () => {
+			useDictationStore.setState({ availability: { state: 'ready', source: 'Parakeet' } });
+			renderToolbar({
+				dictationTarget,
+				isTerminalMode: true,
+				session: createInputAreaSession({ inputMode: 'terminal' }),
+			});
+			expect(screen.queryByTestId('composer-dictation-button')).toBeNull();
+		});
+	});
 
 	it('renders terminal cwd in terminal mode', () => {
 		renderToolbar({

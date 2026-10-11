@@ -115,6 +115,17 @@ vi.mock('../../../../main/local-models/git-drafts', () => ({
 }));
 import { draftPullRequestRequest } from '../../../../main/local-models/git-drafts';
 
+vi.mock('../../../../main/local-models/dictation', () => ({
+	transcribeAudioFileRequest: vi.fn().mockResolvedValue({
+		status: 'ok',
+		text: 'ship the fix today',
+		audioMs: 2100,
+		source: { type: 'local', modelId: 'parakeet-tdt-0.6b-v2' },
+		durationMs: 310,
+	}),
+}));
+import { transcribeAudioFileRequest } from '../../../../main/local-models/dictation';
+
 vi.mock('../../../../main/local-models/semantic-indexer', () => ({
 	semanticIndexProgress: vi.fn(() => ({
 		state: 'indexing',
@@ -5340,6 +5351,33 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(lastResponse()).toMatchObject({
 				success: false,
 				error: 'A pull request draft needs a repository path (cwd).',
+			});
+		});
+
+		it('local_models_transcribe passes the file path through and returns the transcript', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_transcribe',
+				requestId: 't1',
+				path: '/clips/note.wav',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_transcribe_result'));
+			expect(transcribeAudioFileRequest).toHaveBeenCalledWith('/clips/note.wav');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 't1',
+				result: { status: 'ok', text: 'ship the fix today' },
+			});
+		});
+
+		it('local_models_transcribe reports a refused request as success: false', async () => {
+			vi.mocked(transcribeAudioFileRequest).mockRejectedValueOnce(
+				new Error('An absolute path to a WAV file is required.')
+			);
+			handler.handleMessage(client, { type: 'local_models_transcribe', requestId: 't2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_transcribe_result'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'An absolute path to a WAV file is required.',
 			});
 		});
 

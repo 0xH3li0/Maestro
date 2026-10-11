@@ -54,6 +54,8 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import { controlledTextDictationTarget } from '../utils/dictationTargets';
+import { DictationButton } from './ui/DictationButton';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -284,6 +286,20 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			persistDraft(value, groupChatId);
 		},
 		[persistDraft, groupChatId]
+	);
+
+	// Dictation writes through that same draft-persisting setter, so a dictated
+	// message survives a chat switch exactly like a typed one, and the mention
+	// picker (which lives in onChange) never opens for words nobody typed.
+	const setDictatedValueRef = useRef(setAtMentionInputValue);
+	setDictatedValueRef.current = setAtMentionInputValue;
+	const dictationTarget = useMemo(
+		() =>
+			controlledTextDictationTarget({
+				getElement: () => inputRef.current,
+				setValue: (value) => setDictatedValueRef.current(value),
+			}),
+		[inputRef]
 	);
 
 	const handleKeyDown = useCallback(
@@ -700,6 +716,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							>
 								<ImageIcon className="w-4 h-4" />
 							</button>
+							<DictationButton
+								theme={theme}
+								target={dictationTarget}
+								testId="group-chat-dictation-button"
+							/>
 							<input
 								id="group-chat-image-input"
 								type="file"

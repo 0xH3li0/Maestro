@@ -264,4 +264,65 @@ describe('models run command', () => {
 			expect(captured.payload).toMatchObject({ type: 'local_models_run_task' });
 		});
 	});
+
+	describe('dictation --audio', () => {
+		const TRANSCRIPT = {
+			status: 'ok',
+			text: 'ship the fix today',
+			audioMs: 2100,
+			source: { type: 'local', modelId: 'parakeet-tdt-0.6b-v2' },
+			durationMs: 310,
+		};
+
+		it('sends the resolved file path over the bridge and prints only the transcript', async () => {
+			const captured = mockSend({ success: true, result: TRANSCRIPT });
+
+			await modelsRun('dictation', { audio: 'clips/note.wav' });
+
+			expect(captured.payload).toEqual({
+				type: 'local_models_transcribe',
+				path: path.resolve('clips/note.wav'),
+			});
+			expect(captured.responseType).toBe('local_models_transcribe_result');
+			expect(logSpy).toHaveBeenCalledWith('ship the fix today');
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('prints the whole result with --json', async () => {
+			mockSend({ success: true, result: TRANSCRIPT });
+			await modelsRun('dictation', { audio: '/abs/note.wav', json: true });
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				taskId: 'dictation',
+				text: 'ship the fix today',
+				audioMs: 2100,
+			});
+		});
+
+		it('exits non-zero with the reason when the task is off', async () => {
+			mockSend({ success: true, result: { status: 'off' } });
+			await expect(modelsRun('dictation', { audio: '/abs/note.wav' })).rejects.toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(/Dictation is off/);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		});
+
+		it('reports a file the app could not read', async () => {
+			mockSend({ success: false, error: 'No such file: /abs/note.wav' });
+			await expect(modelsRun('dictation', { audio: '/abs/note.wav' })).rejects.toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(/No such file/);
+		});
+
+		it.each([
+			['tab-naming', { audio: '/abs/note.wav' }, /only the dictation task/],
+			['dictation', {}, /Pass --audio <file.wav>/],
+			['dictation', { input: 'hi' }, /Pass --audio <file.wav>/],
+			['dictation', { audio: '/abs/note.wav', input: 'hi' }, /does not combine with --input/],
+			['dictation', { audio: '/abs/note.wav', cwd: '/repo' }, /does not combine with --input/],
+		] as const)('refuses %s %j before opening the bridge', async (taskId, options, message) => {
+			await expect(modelsRun(taskId, { ...options })).rejects.toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(message);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
 });
