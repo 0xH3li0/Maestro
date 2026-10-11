@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
+import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -650,6 +652,13 @@ export function EditAgentModal({
 	if (!isOpen || !session) return null;
 
 	const agentName = getAgentDisplayName(selectedToolType);
+	// Whether a turn of this agent can run through the claude TUI, as the form
+	// stands now. Dynamic counts: it starts on the TUI and leaves it only near a
+	// limit. Read through the one resolver every spawn uses, so an SSH agent
+	// that was never configured (TUI by default) is answered the same way here.
+	const usesInteractiveTokenSource =
+		selectedToolType === 'claude-code' &&
+		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
 
 	return (
 		<Modal
@@ -764,6 +773,18 @@ export function EditAgentModal({
 					retryOnTokenExhaustion={retryOnTokenExhaustion}
 					onChangeAvailability={setRetryOnAvailabilityErrors}
 					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
+				/>
+
+				{/* Chain of thought export. The section saves its own changes the
+				    moment they are made, into the feature's own store. It hands this
+				    dialog no state on purpose: nothing of it may reach `onSave`, and
+				    through that the Session object. */}
+				<AgentCotExportSection
+					theme={theme}
+					agentId={session.id}
+					agentName={session.name}
+					supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+					usesInteractiveTokenSource={usesInteractiveTokenSource}
 				/>
 
 				{/* Working Directory */}

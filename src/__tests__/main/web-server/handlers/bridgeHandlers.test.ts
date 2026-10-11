@@ -48,6 +48,10 @@ import {
 	uninstallWebContentsBridgeHook,
 } from '../../../../main/web-server/handlers/bridgeHandlers';
 import { getActingUser } from '../../../../main/web-server/auth/acting-user';
+import {
+	__resetDesktopOnlyChannelsForTests,
+	markDesktopOnlyChannel,
+} from '../../../../main/ipc/desktop-only-channels';
 import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
@@ -69,6 +73,7 @@ function lastSend(client: ReturnType<typeof makeClient>): Record<string, unknown
 beforeEach(() => {
 	invokeHandlers.clear();
 	sendListeners.clear();
+	__resetDesktopOnlyChannelsForTests();
 });
 
 describe('handleBridgeInvoke', () => {
@@ -559,5 +564,94 @@ describe('handleBridgeInvoke argument guard', () => {
 		);
 		expect(handler).toHaveBeenCalledTimes(2);
 		setBridgeGuardContextProvider(null);
+	});
+});
+
+/**
+ * A desktop-only channel is one whose handler must never be reached from the
+ * bridge. The bridge does not refuse it with an error of its own: it answers
+ * exactly as it does for a channel nobody registered, so a caller cannot tell
+ * that the channel exists.
+ */
+describe('handleBridgeInvoke desktop-only channels', () => {
+	/** The whole answer the bridge gives for `channel`. */
+	async function answerFor(
+		channel: string,
+		client = makeClient()
+	): Promise<Record<string, unknown>> {
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			client,
+			{ type: 'bridge.invoke', requestId: 'd1', channel, args: ['agent-1'] },
+			send
+		);
+		expect(send).toHaveBeenCalledTimes(1);
+		return send.mock.calls[0][1] as Record<string, unknown>;
+	}
+
+	it('answers for a marked channel word for word as for one nobody registered', async () => {
+		const handler = vi.fn().mockResolvedValue('secret');
+		invokeHandlers.set('desk:read', handler);
+		markDesktopOnlyChannel('desk:read');
+
+		expect(await answerFor('desk:read')).toEqual({
+			type: 'bridge.response',
+			requestId: 'd1',
+			ok: false,
+			error: 'No ipcMain handler registered for channel "desk:read"',
+		});
+		expect(await answerFor('desk:missing')).toEqual({
+			type: 'bridge.response',
+			requestId: 'd1',
+			ok: false,
+			error: 'No ipcMain handler registered for channel "desk:missing"',
+		});
+		expect(handler).not.toHaveBeenCalled();
+	});
+
+	it('does not run a send-style listener of a marked channel either', async () => {
+		const listener = vi.fn();
+		sendListeners.set('desk:notify', listener);
+		markDesktopOnlyChannel('desk:notify');
+
+		expect(await answerFor('desk:notify')).toMatchObject({
+			ok: false,
+			error: 'No ipcMain handler registered for channel "desk:notify"',
+		});
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	it('keeps a marked channel from maestro-cli as well', async () => {
+		const handler = vi.fn().mockResolvedValue('secret');
+		invokeHandlers.set('desk:read', handler);
+		markDesktopOnlyChannel('desk:read');
+
+		const cli = { ...makeClient(), cli: true };
+		expect(await answerFor('desk:read', cli)).toMatchObject({ ok: false });
+		expect(handler).not.toHaveBeenCalled();
+	});
+
+	it('still dispatches a channel that is not marked', async () => {
+		const handler = vi.fn().mockResolvedValue('value');
+		invokeHandlers.set('desk:open', handler);
+		markDesktopOnlyChannel('desk:read');
+
+		expect(await answerFor('desk:open')).toMatchObject({ ok: true, result: 'value' });
+		expect(handler).toHaveBeenCalledTimes(1);
+	});
+
+	it('never fans out an event pushed on a marked channel', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+		markDesktopOnlyChannel('desk:changed');
+
+		broadcastBridgeEvent('desk:changed', [{ on: true }]);
+		expect(broadcastToAll).not.toHaveBeenCalled();
+		broadcastBridgeEvent('desk:other', [{ on: true }]);
+		expect(broadcastToAll).toHaveBeenCalledTimes(1);
+
+		uninstallWebContentsBridgeHook();
 	});
 });

@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { stripAllAnsiCodes } from '../../utils/terminalFilter';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
+import { emitParsedEvent } from '../utils/parsedEvent';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
@@ -90,7 +91,10 @@ function normalizeUsageToDelta(
 }
 
 /** Split a buffer of concatenated JSON objects (no newline separators) into individual complete objects and a partial remainder. */
-function extractConcatenatedJsonObjects(buffer: string): { messages: string[]; remainder: string } {
+export function extractConcatenatedJsonObjects(buffer: string): {
+	messages: string[];
+	remainder: string;
+} {
 	const messages: string[] = [];
 	let start = -1;
 	let depth = 0;
@@ -186,7 +190,7 @@ function extractCopilotSessionId(parsed: unknown): string | null {
 }
 
 /** Extract the status string from a tool execution state object. */
-function getToolStatus(toolState: unknown): string | null {
+export function getToolStatus(toolState: unknown): string | null {
 	if (!toolState || typeof toolState !== 'object') {
 		return null;
 	}
@@ -479,6 +483,11 @@ export class StdoutHandler {
 				if (parsed !== null) {
 					errorLineEvent = outputParser.parseJsonObject(parsed);
 					if (errorLineEvent) {
+						// This branch returns without reaching `handleParsedEvent`, so
+						// it is the line's one chance to be seen as a parsed event. It
+						// is not only an error: a failed result carries the turn's
+						// usage, and a held notice is an assistant line with content.
+						emitParsedEvent(this.emitter, sessionId, errorLineEvent);
 						this.emitSessionIdIfNeeded(
 							sessionId,
 							managedProcess,
@@ -654,6 +663,9 @@ export class StdoutHandler {
 		const event = outputParser.parseJsonObject(parsed);
 
 		if (!event) return;
+
+		// Ahead of every early return below, so a subscriber sees each line once.
+		emitParsedEvent(this.emitter, sessionId, event);
 
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.

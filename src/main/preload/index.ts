@@ -72,6 +72,7 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
@@ -290,6 +291,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
 
+	// Chain of thought export (desktop-only; the handlers refuse every other sender)
+	cotExport: createCotExportApi(),
 	// Quick Chat API (hotkey-summoned floating chat window + its engine)
 	quickChat: createQuickChatApi(),
 });
@@ -402,6 +405,8 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// Chain of thought export
+	createCotExportApi,
 	// Quick Chat
 	createQuickChatApi,
 };
@@ -692,3 +697,7 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From cotExport
+	CotExportApi,
+} from './cotExport';

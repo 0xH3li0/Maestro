@@ -301,7 +301,7 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
  * and StdoutHandler's once-only `errorEmitted` latch then swallowed the real
  * terminal error if the retries ran out (#1694).
  */
-function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
+export function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
 	return (
 		obj.type === 'error' &&
 		typeof obj.message === 'string' &&
@@ -319,7 +319,7 @@ function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
  * If `summary` is absent, empty, or only contains blank strings, returns '' so the
  * caller can fall back to a non-displayable `system` event (encrypted_content only).
  */
-function extractReasoningSummaryText(summary: unknown): string {
+export function extractReasoningSummaryText(summary: unknown): string {
 	if (!Array.isArray(summary) || summary.length === 0) {
 		return '';
 	}

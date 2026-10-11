@@ -20,6 +20,13 @@ import type { WakaTimeManager } from '../wakatime-manager';
 import type { getSettingsStore } from '../stores';
 import { setupProcessListeners } from '../process-listeners';
 import { setupWakaTimeListener } from '../process-listeners/wakatime-listener';
+import { setupCotExportListener } from '../process-listeners/cot-export-listener';
+import { getCotConfigStore } from '../cot-export/config-store';
+import { peekCotAgentId, resolveCotTarget } from '../cot-export/resolve-agent';
+import type { CotResolverDeps } from '../cot-export/resolve-agent';
+import { getCotWriter } from '../cot-export/runtime';
+import { getCrossAgentConsultParties } from '../cross-agent/cross-agent-router';
+import { getSessionsStore } from '../stores/getters';
 import { powerManager } from '../power-manager';
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
 import {
@@ -37,6 +44,7 @@ import {
 	updateParticipant,
 	loadGroupChat,
 	updateGroupChat,
+	getParticipant,
 } from '../group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from '../group-chat/session-recovery';
 import {
@@ -154,4 +162,35 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 
 	// WakaTime heartbeat listener (query-complete -> heartbeat, exit -> cleanup)
 	setupWakaTimeListener(processManager, deps.wakatimeManager, deps.settingsStore);
+
+	wireCotExportListener(processManager);
+}
+
+/**
+ * Hooks the per-agent turn log up to the process manager, with the app's own
+ * store, writer, and agent list. See `process-listeners/cot-export-listener.ts`.
+ *
+ * A fault here must not keep Maestro from starting, so it is caught. The log
+ * line is plain on purpose: agents can read Maestro's logs.
+ */
+function wireCotExportListener(processManager: ProcessManager): void {
+	try {
+		const resolverDeps: CotResolverDeps = {
+			getSessions: () => getSessionsStore().get('sessions', []),
+			getGroupChatParticipant: getParticipant,
+			getConsultParties: getCrossAgentConsultParties,
+		};
+		setupCotExportListener(processManager, {
+			store: getCotConfigStore(),
+			writer: getCotWriter(),
+			resolver: {
+				peekAgentId: (processSessionId) => peekCotAgentId(processSessionId, resolverDeps),
+				resolveTarget: (processSessionId) => resolveCotTarget(processSessionId, resolverDeps),
+			},
+		});
+	} catch (error) {
+		logger.warn('A process turn listener could not be set up', 'ProcessListeners', {
+			error: error instanceof Error ? error.name : typeof error,
+		});
+	}
 }

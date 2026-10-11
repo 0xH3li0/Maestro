@@ -105,6 +105,7 @@ import {
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
+import { beginCueRunCapture, recordCommandLineRuns } from './cot-export/runtime';
 import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
@@ -1570,6 +1571,9 @@ app
 					},
 					sshStore: createSshRemoteStoreAdapter(store),
 					agentConfigValues,
+					// Decided here, at dispatch, and never throws: a run is not affected
+					// by what happens to its record.
+					onRunTranscript: beginCueRunCapture(storedSession.id),
 					appendSystemPrompt,
 				});
 
@@ -3179,7 +3183,10 @@ app
 				});
 				// F3: also watch the store files so CLI-origin writes (pianola/send/batch)
 				// reach the renderer when the app is running (ISC-3.1).
-				startAgentRunStoreWatcher();
+				// The same change also tells the per-agent turn log which runs the
+				// command line finished, including those that ended while the app
+				// was closed (the watcher reports once when it starts).
+				startAgentRunStoreWatcher({ onRunsChanged: recordCommandLineRuns });
 				// F1/ISC-1.10 crash recovery: settle runs left non-terminal by a previous
 				// crash. Runs once, before any new agent spawns; error-tolerant inside.
 				setupAgentRunRecovery(processManager);
