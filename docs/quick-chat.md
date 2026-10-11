@@ -18,6 +18,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Open it from inside Maestro      | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat` |
 | Close it                         | `Esc`, or the **X** in the window                                                                                           |
 | Start a new chat                 | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                             |
+| Switch agent                     | Click the agent name at the bottom left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                |
 | Send                             | `Enter` (`Shift+Enter` for a new line)                                                                                      |
 | Open the chat in Maestro         | The arrow in the window. The chat becomes a visible tab and Maestro comes forward                                           |
 
@@ -45,7 +46,7 @@ A reply never raises a completion toast in the main window: you are reading it i
 Open **Settings -> Plugins**, select **Quick Chat**, and open its **Settings** tab.
 
 - **Hotkey.** Click the button and press a new combo. Leave it blank to turn the hotkey off. If another app or Maestro hotkey already holds the combo, Maestro shows a warning and the hotkey stays off until you pick another one.
-- **Agent.** The agent every new chat talks to. "The agent active in the main window" follows whatever agent you last selected. You can also switch agents from the dropdown in the window, which starts a new chat on that agent and saves the choice. A chat in progress stays on its agent even if you change this setting.
+- **Agent.** The agent every new chat talks to. "The agent active in the main window" follows whatever agent you last selected. You can also switch agents from the window itself: click the agent name at the bottom left (or press `Cmd+K` / `Ctrl+K`), type a few letters of the agent's name, group, or provider, and press `Enter`. Switching starts a new chat on that agent and saves the choice; picking the agent you are already on keeps the chat. A chat in progress stays on its agent even if you change this setting.
 - **Keep new chats as tabs.** The default mode for a new chat.
 - **Record ephemeral chats in History.** On by default, so an ephemeral chat still leaves a History entry after its tab is gone. Kept chats follow your normal history setting.
 
