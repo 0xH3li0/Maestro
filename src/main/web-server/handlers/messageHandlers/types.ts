@@ -7,6 +7,7 @@
 import { WebSocket } from 'ws';
 import type {
 	AutoRunDocument,
+	AutoRunState,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -113,6 +114,12 @@ export interface LiveSessionInfo {
  */
 export interface MessageHandlerCallbacks {
 	getSessionDetail: (sessionId: string) => SessionDetailForHandler | null;
+	/**
+	 * The live Auto Run state the desktop last broadcast for an agent (what the
+	 * Auto Run panel shows), or undefined when none is running. The session detail
+	 * does not carry it.
+	 */
+	getAutoRunState?: (sessionId: string) => AutoRunState | undefined;
 	executeCommand: (
 		sessionId: string,
 		command: string,

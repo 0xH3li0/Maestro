@@ -1140,6 +1140,7 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
+			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
 			executeCommand: async (
 				sessionId: string,
 				command: string,
