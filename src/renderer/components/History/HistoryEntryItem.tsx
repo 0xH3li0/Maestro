@@ -237,7 +237,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						}}
 					>
 						<Icon className="w-2.5 h-2.5" />
-						{entry.type === 'RELAY' ? 'Relay' : entry.type}
+						{entry.type}
 					</span>
 				</div>
 

@@ -20,7 +20,7 @@ const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
 });
 
 describe('HistoryEntryItem', () => {
-	it('renders the English Relay label for a Relay turn', () => {
+	it('renders the uppercase RELAY label for a Relay turn', () => {
 		render(
 			<HistoryEntryItem
 				entry={createMockEntry({ type: 'RELAY' })}
@@ -30,8 +30,7 @@ describe('HistoryEntryItem', () => {
 				onOpenDetailModal={vi.fn()}
 			/>
 		);
-		expect(screen.getByText('Relay')).toBeInTheDocument();
-		expect(screen.queryByText('RELAY')).not.toBeInTheDocument();
+		expect(screen.getByText('RELAY')).toBeInTheDocument();
 	});
 	beforeEach(() => {
 		vi.useFakeTimers();
