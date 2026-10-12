@@ -33,6 +33,7 @@ import {
 	hideQuickChatWindow,
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
+	setQuickChatFullView,
 	setQuickChatLayout,
 	setQuickChatWindowPinned,
 	setQuickChatWindowBounds,
@@ -186,6 +187,10 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		ipcMain.on('quickChat:setLayout', (event, next: QuickChatLayout) => {
 			if (event.sender !== getQuickChatWindow()?.webContents) return;
 			setQuickChatLayout(next === 'expanded' ? 'expanded' : 'compact');
+		});
+		ipcMain.on('quickChat:setFullView', (event, on: boolean) => {
+			if (event.sender !== getQuickChatWindow()?.webContents) return;
+			setQuickChatFullView(on === true);
 		});
 		// The engine reports state as the conversation streams.
 		ipcMain.on('quickChat:snapshot', (_event, next: QuickChatSnapshot) => {

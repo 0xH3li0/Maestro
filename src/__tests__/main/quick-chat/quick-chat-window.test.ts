@@ -498,3 +498,72 @@ describe('Quick Chat window pin', () => {
 		expect(win.listenerCount('blur')).toBe(0);
 	});
 });
+
+describe('Quick Chat window full view (diagram viewer)', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('fills the display for a diagram and puts the window back after, saving nothing', async () => {
+		const { deps: d, store } = makeDeps({ x: 100, y: 120, width: 700, expandedHeight: 500 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		mod.setQuickChatLayout('expanded');
+		const win = lastWindow();
+		vi.advanceTimersByTime(1000);
+		const before = win.getBounds();
+		const savedBefore = { ...store.value };
+
+		mod.setQuickChatFullView(true);
+		expect(win.getBounds()).toEqual(WORK_AREA);
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toEqual(savedBefore);
+
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual(before);
+	});
+
+	it('keeps the full-screen size when the chat changes shape underneath', async () => {
+		const { deps: d } = makeDeps({ x: 100, y: 120, width: 700, expandedHeight: 500 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+
+		mod.setQuickChatFullView(true);
+		mod.setQuickChatLayout('expanded');
+		expect(win.getBounds()).toEqual(WORK_AREA);
+
+		// Given back in the shape the chat is in now.
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 500 });
+	});
+
+	it('stays full screen when summoned again with the viewer still open', async () => {
+		const { deps: d } = makeDeps();
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFullView(true);
+		mod.hideQuickChatWindow();
+		mod.showQuickChatWindow(d);
+		expect(win.getBounds()).toEqual(WORK_AREA);
+	});
+
+	it('ignores a repeated request', async () => {
+		const { deps: d } = makeDeps({ x: 100, y: 120, width: 700 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		mod.setQuickChatFullView(true);
+		mod.setQuickChatFullView(true);
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+		mod.setQuickChatFullView(false);
+		expect(win.getBounds()).toEqual({ x: 100, y: 120, width: 700, height: 148 });
+	});
+});
