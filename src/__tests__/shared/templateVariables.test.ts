@@ -6,6 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
 	TEMPLATE_VARIABLES,
 	TEMPLATE_VARIABLES_GENERAL,
@@ -478,6 +480,43 @@ describe('substituteTemplateVariables', () => {
 			expect(result.split('\n')[0]).toBe(cli);
 			expect(result).toContain(`\`${cli} ask <agent-id> "<question>"\``);
 			expect(result).toContain(`\`${cli} dispatch <agent-id> "<task>" --new-tab`);
+		});
+
+		describe('in the Maestro system prompt', () => {
+			// The file as shipped. A checkout on Windows may hold CRLF line endings.
+			const systemPrompt = readFileSync(
+				join(__dirname, '..', '..', 'prompts', 'maestro-system-prompt.md'),
+				'utf8'
+			).replace(/\r\n/g, '\n');
+
+			it('should sit once, on its own line, between Additional Directories and Operating Rules', () => {
+				// Both blocks are access the Conductor granted beyond the default, so
+				// they are adjacent. No heading wraps the variable: the formatter emits
+				// its own, and a bare heading would read as a section that failed to load.
+				expect(systemPrompt).toContain(
+					'\n{{ADDITIONAL_DIRECTORIES}}\n\n{{PEER_AGENTS}}\n\n## Operating Rules\n'
+				);
+				expect(systemPrompt.match(/\{\{PEER_AGENTS\}\}/gi)).toHaveLength(1);
+			});
+
+			it('should leave no Peer Agents section when the agent has no roster', () => {
+				const result = substituteTemplateVariables(systemPrompt, createTestContext());
+				expect(result).not.toContain('{{PEER_AGENTS}}');
+				expect(result).not.toContain('## Peer Agents');
+			});
+
+			it('should render the roster ahead of Operating Rules', () => {
+				const result = substituteTemplateVariables(
+					systemPrompt,
+					createTestContext({ peerRoster: roster })
+				);
+				const block = result.indexOf('## Peer Agents');
+				expect(block).toBeGreaterThan(
+					result.indexOf('## Critical Directive: Directory Restrictions')
+				);
+				expect(block).toBeLessThan(result.indexOf('## Operating Rules'));
+				expect(result).toContain('| Docs | `peer-1` | Consult + Delegate |');
+			});
 		});
 	});
 
