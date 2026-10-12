@@ -483,11 +483,25 @@ A queued item carries a **Force Send** button that dispatches that message immed
 
 `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
 
+A message that Force Send ran beside another working tab, or that the chord sent from the input, carries a small hammer icon in the transcript, so you can tell later which messages jumped the queue.
+
 ### Steer
 
 While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images or an `@mention` is not steerable and sends normally when the turn ends. The same holds on Claude Code for a message that starts with `/` or `!`, which its editor would read as a command.
 
 `Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
+
+A steered message carries the Steer button's arrow icon in the transcript, the same way a force-sent one carries the hammer. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the mark.
+
+Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
+
+|                     | Force Send                                                                                              | Steer                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Use it when         | The message's tab is idle and the queue is holding it                                                   | The message's tab is working                                                  |
+| What it does        | Starts the message as its own turn now                                                                  | Hands the message to the turn in progress                                     |
+| Keyboard            | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`                                                                  | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`                                            |
+| Needs               | Forced Parallel Execution: always for the chord, and for the button only to run beside another busy tab | Claude Code on the interactive token source, or Codex on app-server transport |
+| Mark on the message | Hammer                                                                                                  | Arrow                                                                         |
 
 ### Execution Queue view
 

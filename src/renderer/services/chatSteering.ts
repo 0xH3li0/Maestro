@@ -127,6 +127,10 @@ function steeredLogEntry(item: QueuedItem): LogEntry {
 		source: 'user',
 		text: item.text ?? '',
 		queuedItemId: item.id,
+		// Badges the bubble with the Steer button's icon, the way forceParallel
+		// badges a force-sent one. It leaves with the bubble if the item returns to
+		// the queue, so only a message the agent actually has keeps the mark.
+		steered: true,
 		...(item.readOnlyMode && { readOnly: true }),
 	};
 }

@@ -158,6 +158,8 @@ describe('steerQueuedItem', () => {
 			source: 'user',
 			text: 'go left instead',
 			queuedItemId: 'item-a',
+			// Badged like a force-sent message, so the transcript shows how it went.
+			steered: true,
 		});
 		// The record lives on the session so it is persisted with it.
 		expect(useSessionStore.getState().sessions[0].pendingSteers).toEqual([
