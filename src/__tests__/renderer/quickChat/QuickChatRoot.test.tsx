@@ -168,6 +168,22 @@ describe('header', () => {
 describe('diagram viewer', () => {
 	afterEach(() => act(() => useZoomViewerStore.getState().close()));
 
+	it('gives the keyboard back to the viewer, not the hidden composer, when summoned again', async () => {
+		let focusInput: (() => void) | undefined;
+		vi.mocked(window.maestro.quickChat.onFocusInput).mockImplementationOnce((cb) => {
+			focusInput = cb;
+			return () => {};
+		});
+		await renderWith(snapshot());
+		act(() =>
+			openZoomViewer(document.createElementNS('http://www.w3.org/2000/svg', 'svg'), 'Flow')
+		);
+		screen.getByPlaceholderText(/anything/).focus();
+
+		act(() => focusInput?.());
+		expect(document.activeElement).toBe(screen.getByTestId('zoom-viewer'));
+	});
+
 	it('opens full screen over the window, and Escape closes it without hiding the window', async () => {
 		vi.mocked(window.maestro.quickChat.setFullView).mockClear();
 		vi.mocked(window.maestro.quickChat.window).mockClear();

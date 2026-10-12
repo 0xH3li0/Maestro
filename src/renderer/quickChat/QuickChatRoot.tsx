@@ -40,7 +40,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
-import { ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
+import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
@@ -233,7 +233,15 @@ function QuickChatWindow() {
 
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
-		const offFocus = window.maestro.quickChat.onFocusInput(() => textareaRef.current?.focus());
+		const offFocus = window.maestro.quickChat.onFocusInput(() => {
+			// Summoned with a diagram still open: the keyboard goes back to the
+			// viewer, or arrows and Enter would land in the draft hidden behind it.
+			if (useZoomViewerStore.getState().request) {
+				document.querySelector<HTMLElement>(`[${ZOOM_VIEWER_ATTR}]`)?.focus();
+				return;
+			}
+			textareaRef.current?.focus();
+		});
 		const offPinned = window.maestro.quickChat.onPinned(setPinned);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
 		void window.maestro.quickChat.getPinned().then(setPinned);
