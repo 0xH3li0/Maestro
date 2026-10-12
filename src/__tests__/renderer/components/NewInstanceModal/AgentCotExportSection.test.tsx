@@ -30,7 +30,7 @@ vi.mock('../../../../renderer/utils/runtimeContext', async (importOriginal) => (
 
 const AGENT = 'agent-1';
 const FOLDER = path.join(path.sep, 'audit', 'backend');
-const TOGGLE_LABEL = 'Export chain of thought for this agent';
+const TOGGLE_LABEL = 'Keep an audit log for this agent';
 
 const statusOf = (overrides: Partial<CotAgentStatus> = {}): CotAgentStatus => ({
 	enabled: false,
@@ -123,7 +123,7 @@ describe('AgentCotExportSection', () => {
 			const api = createApi();
 			await renderLoaded(api);
 
-			expect(screen.getByText('Chain of Thought Export')).toBeInTheDocument();
+			expect(screen.getByText('Audit Log')).toBeInTheDocument();
 			expect(api.status).toHaveBeenCalledWith(AGENT);
 		});
 
@@ -135,7 +135,7 @@ describe('AgentCotExportSection', () => {
 			(window.maestro as any).cotExport = api;
 			renderSection();
 
-			expect(await screen.findByText(/could not read the export settings/i)).toHaveTextContent(
+			expect(await screen.findByText(/could not read the audit log settings/i)).toHaveTextContent(
 				'store is locked'
 			);
 			expect(screen.getByRole('alert')).not.toHaveTextContent('cotExport:status');

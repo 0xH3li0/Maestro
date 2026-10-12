@@ -1540,7 +1540,7 @@ describe('EditAgentModal', () => {
 	describe('chain of thought export section', () => {
 		/** A name unlike anything else in the dialog, so a leak of the folder is found by it. */
 		const LOG_FOLDER = '/audit/turn-log-7f3c91d2';
-		const TOGGLE_LABEL = 'Export chain of thought for this agent';
+		const TOGGLE_LABEL = 'Keep an audit log for this agent';
 		const UNSUPPORTED_NOTE = /This provider does not expose its reasoning\./;
 		const INTERACTIVE_NOTE =
 			/Reasoning may be missing while this agent runs through the interactive/;
@@ -1606,7 +1606,7 @@ describe('EditAgentModal', () => {
 			renderModal();
 
 			await formReady();
-			expect(screen.queryByText('Chain of Thought Export')).not.toBeInTheDocument();
+			expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
 		});
 
 		it('mounts directly after Agent Resilience, for the agent being edited', async () => {

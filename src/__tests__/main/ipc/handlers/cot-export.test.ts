@@ -620,7 +620,7 @@ describe('cot-export IPC handlers', () => {
 					enabled: true,
 					folder: null,
 				})
-			).toEqual({ ok: false, reason: 'Choose a folder before you turn export on.' });
+			).toEqual({ ok: false, reason: 'Choose a folder before you turn the audit log on.' });
 		});
 
 		it('turns export off and keeps the folder', async () => {
@@ -864,7 +864,7 @@ describe('cot-export IPC handlers', () => {
 			expect(electronMock.state.notices).toEqual([
 				{
 					title: 'Maestro',
-					body: 'Chain of thought export for Backend is failing: ENOSPC: no space left on device',
+					body: 'The audit log of Backend is failing: ENOSPC: no space left on device',
 					shown: true,
 				},
 			]);
@@ -885,8 +885,8 @@ describe('cot-export IPC handlers', () => {
 			store.recordError(AGENT, DISK_FULL, T0 + 2 * MINUTE_MS);
 
 			expect(electronMock.state.notices.map((notice) => notice.body)).toEqual([
-				'Chain of thought export for Backend is failing: ENOSPC: no space left on device',
-				'Chain of thought export for Frontend is failing: ENOSPC: no space left on device',
+				'The audit log of Backend is failing: ENOSPC: no space left on device',
+				'The audit log of Frontend is failing: ENOSPC: no space left on device',
 			]);
 		});
 
@@ -902,7 +902,7 @@ describe('cot-export IPC handlers', () => {
 			expect(electronMock.state.notices).toEqual([
 				{
 					title: 'Maestro',
-					body: 'Chain of thought export for Backend is failing: The record belongs to a folder that holds no chain for its agent.',
+					body: 'The audit log of Backend is failing: The record belongs to a folder that holds no chain for its agent.',
 					shown: true,
 				},
 			]);
@@ -917,7 +917,7 @@ describe('cot-export IPC handlers', () => {
 			getCotConfigStore().recordError(GONE_AGENT, DISK_FULL, T0);
 
 			expect(electronMock.state.notices.map((notice) => notice.body)).toEqual([
-				'Chain of thought export for an agent is failing: ENOSPC: no space left on device',
+				'The audit log of an agent is failing: ENOSPC: no space left on device',
 			]);
 		});
 
@@ -953,7 +953,7 @@ describe('cot-export IPC handlers', () => {
 			expect(electronMock.state.notices).toEqual([
 				{
 					title: 'Maestro',
-					body: 'Chain of thought export is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
+					body: 'The audit log is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
 					shown: true,
 				},
 			]);
@@ -994,7 +994,7 @@ describe('cot-export IPC handlers', () => {
 			expect(electronMock.state.notices).toEqual([
 				{
 					title: 'Maestro',
-					body: 'Chain of thought export is off for every agent: its saved settings are missing. Open Edit Agent to turn it on again.',
+					body: 'The audit log is off for every agent: its saved settings are missing. Open Edit Agent to turn it on again.',
 					shown: true,
 				},
 			]);
@@ -1017,7 +1017,7 @@ describe('cot-export IPC handlers', () => {
 			expect(electronMock.state.notices).toEqual([
 				{
 					title: 'Maestro',
-					body: 'The saved settings of chain of thought export were replaced with an older copy. Open Edit Agent to check which agents are recorded.',
+					body: 'The saved settings of the audit log were replaced with an older copy. Open Edit Agent to check which agents are recorded.',
 					shown: true,
 				},
 			]);
