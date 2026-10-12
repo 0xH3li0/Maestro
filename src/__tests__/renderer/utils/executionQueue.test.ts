@@ -10,6 +10,7 @@ import {
 	applyQueuedItemRelease,
 	getForceSendEligibility,
 	shouldOfferForceSend,
+	describeSteerBlocked,
 	getSteerEligibility,
 	shouldOfferSteer,
 	applyQueuedItemEdit,
@@ -971,5 +972,51 @@ describe('shouldOfferSteer', () => {
 	it('handles a missing eligibility', () => {
 		expect(shouldOfferSteer(null)).toBe(false);
 		expect(shouldOfferSteer(undefined)).toBe(false);
+	});
+});
+
+describe('describeSteerBlocked', () => {
+	it('words every blocked reason as its own sentence', () => {
+		// A keyboard steer has no button to hide, so each reason has to say
+		// something the user can act on rather than fall through to the generic line.
+		const fallback = describeSteerBlocked(undefined);
+		const reasons = [
+			'no-target-tab',
+			'tab-not-working',
+			'not-claude',
+			'codex-exec',
+			'api-token-source',
+			'nothing-to-type',
+			'has-images',
+			'awaiting-consult',
+			'cross-agent-mention',
+			'has-agent-context',
+			'too-long',
+			'paused',
+			'waiting-for-connection',
+			'ssh-remote',
+			'steer-in-flight',
+			'tui-command-prefix',
+			'read-only',
+		];
+		const sentences = reasons.map((reason) => describeSteerBlocked(reason));
+		for (const sentence of sentences) {
+			expect(sentence).not.toBe(fallback);
+			expect(sentence).toMatch(/^[A-Z].*\.$/);
+		}
+		expect(new Set(sentences).size).toBe(reasons.length);
+	});
+
+	it('names the remedy where there is one', () => {
+		expect(describeSteerBlocked('codex-exec')).toContain('app server');
+		expect(describeSteerBlocked('too-long')).toContain('8 KB');
+	});
+
+	it('falls back for a reason this build does not know', () => {
+		// The reason crosses a process boundary as a plain string, so an unknown
+		// one (or an Object.prototype key) must not leak through as the sentence.
+		const fallback = describeSteerBlocked(undefined);
+		expect(describeSteerBlocked('some-future-reason')).toBe(fallback);
+		expect(describeSteerBlocked('toString')).toBe(fallback);
 	});
 });

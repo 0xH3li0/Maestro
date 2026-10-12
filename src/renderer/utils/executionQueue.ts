@@ -21,7 +21,7 @@ import type {
 	SessionState,
 } from '../types';
 import { generateId } from './ids';
-import { steeringTextTooLong } from '../../shared/chatSteering';
+import { STEERING_TOO_LONG_DETAIL, steeringTextTooLong } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import { isSessionRemote } from './sessionHelpers';
 import {
@@ -718,6 +718,49 @@ export function getSteerEligibility(
  */
 export function shouldOfferSteer(eligibility: SteerEligibility | null | undefined): boolean {
 	return !!eligibility?.canSteer;
+}
+
+/**
+ * Why a steer was declined, as a sentence for the user. A Record rather than a
+ * switch so a new {@link SteerBlockedReason} fails to compile until it is worded.
+ *
+ * The Steer button never needs this: it is hidden for every blocked reason (see
+ * {@link shouldOfferSteer}). A keyboard steer has no control to hide, so it has
+ * to say why nothing happened.
+ */
+const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
+	'no-target-tab': 'The tab this message was queued on is gone.',
+	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
+	'not-claude': 'This provider cannot take a message while a turn is running.',
+	'codex-exec':
+		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
+	'api-token-source':
+		'This turn is running on the API token source, which takes no input until it ends.',
+	'nothing-to-type': 'The message has no text to steer with.',
+	'has-images': 'Images cannot be attached to a turn that is already running.',
+	'awaiting-consult': 'The message is waiting on a consult reply.',
+	'cross-agent-mention': 'An @mention only reaches the other agent on a normal send.',
+	'has-agent-context': 'The message carries consult replies that only a normal send delivers.',
+	'too-long': `${STEERING_TOO_LONG_DETAIL[0].toUpperCase()}${STEERING_TOO_LONG_DETAIL.slice(1)}.`,
+	paused: 'The message is paused. Resume it from its queued card.',
+	'waiting-for-connection': 'The message is waiting for the agent to reconnect.',
+	'ssh-remote': 'A turn on an SSH remote cannot be steered.',
+	'steer-in-flight': 'A steer for this message is already waiting for an answer.',
+	'tui-command-prefix':
+		'A message that starts with / or ! would run as a command in the running turn.',
+	'read-only': 'The message is read-only and the running turn is not.',
+};
+
+const STEER_BLOCKED_FALLBACK = 'The running turn cannot take this message right now.';
+
+/**
+ * The sentence for one blocked reason. Takes a string because the reason crosses
+ * a process boundary as one (`QueueSteerResult.blockedReason`).
+ */
+export function describeSteerBlocked(reason: string | undefined): string {
+	return reason && Object.prototype.hasOwnProperty.call(STEER_BLOCKED_DETAILS, reason)
+		? STEER_BLOCKED_DETAILS[reason as SteerBlockedReason]
+		: STEER_BLOCKED_FALLBACK;
 }
 
 /**

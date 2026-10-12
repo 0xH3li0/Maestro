@@ -49,6 +49,7 @@ import {
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
+import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -217,6 +218,12 @@ export type BatchState = BatchRunState;
 /** Optional pins for deferred sends (replay / recovery) so a late timeout cannot retarget. */
 export type ProcessInputOptions = {
 	forceParallel?: boolean;
+	/**
+	 * Steer Running Turn: when this send lands in the queue, hand it straight to
+	 * the turn already running on its tab. A send that dispatches immediately has
+	 * no turn to steer and is an ordinary send.
+	 */
+	steer?: boolean;
 	images?: string[];
 	/** Prefer this agent over the live activeSessionId when the callback runs. */
 	sessionId?: string;
@@ -844,6 +851,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								executionQueue: [...s.executionQueue, mentionQueuedItem],
 							};
 						});
+						// An @mention cannot be steered; asking anyway reports why.
+						if (options?.steer) {
+							void steerQueuedItemOrExplain(resolvedSessionId, mentionQueuedItem.id);
+						}
 
 						clearComposerUnlessTaken();
 						if (mentionProbe.probeFailed) {
@@ -1117,6 +1128,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// Steer Running Turn: the draft is a queued item now, which is what a
+					// steer starts from. One that cannot be steered stays queued and the
+					// service says why.
+					if (options?.steer) {
+						void steerQueuedItemOrExplain(resolvedSessionId, queuedItem.id);
+					}
 
 					clearComposerUnlessTaken();
 					if (processState.probeFailed) {
