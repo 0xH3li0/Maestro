@@ -115,7 +115,10 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 		tabId: tab?.id ?? null,
 		persistent: isPersistent(),
 		busy: tab?.state === 'busy',
-		busySince: tab?.state === 'busy' ? (tab.thinkingStartTime ?? null) : null,
+		// The tab's own start; the agent's is the fallback for a turn something
+		// else marked busy without stamping the tab.
+		busySince:
+			tab?.state === 'busy' ? (tab.thinkingStartTime ?? session?.thinkingStartTime ?? null) : null,
 		messages: tab ? logsToQuickChatMessages(tab.logs) : [],
 		agents: agents.map((s) => ({
 			id: s.id,
