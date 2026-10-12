@@ -8,8 +8,14 @@
  * arguments. This layer is where the persisted state comes in: the configured
  * list (`localModelEndpoints`) and Settings -> Environment (`shellEnvVars`),
  * the only place an endpoint's API key is resolved from.
+ *
+ * One endpoint is not in that list: the Maestro model server
+ * (`MODEL_SERVER_ENDPOINT_ID`), built in, keyed by Maestro, and started by the
+ * call that needs it. Every function here hands a reference to it to
+ * `server/server-endpoint.ts`, so the callers need no branch of their own.
  */
 
+import { MODEL_SERVER_ENDPOINT_ID } from '../../shared/local-models/model-server';
 import {
 	findLocalModelEndpoint,
 	parseLocalModelEndpoints,
@@ -36,6 +42,13 @@ import {
 	type EndpointTranscribeResult,
 } from './endpoint-client';
 import { LocalModelEndpointError } from './errors';
+import {
+	listModelServerModels,
+	modelServerCallTarget,
+	modelServerUnsupported,
+	refersToModelServer,
+	testModelServer,
+} from './server/server-endpoint';
 
 /** The saved endpoints, read through the same validator that saves them. */
 export function getConfiguredLocalModelEndpoints(): LocalModelEndpoint[] {
@@ -77,6 +90,7 @@ export async function detectNewLocalModelEndpoints(): Promise<DetectedEndpoint[]
 
 /** The models one endpoint serves, by saved id or by record. */
 export async function listLocalModelEndpointModels(ref: unknown): Promise<EndpointModelsResult> {
+	if (refersToModelServer(ref)) return listModelServerModels();
 	const resolved = resolveEndpointRef(ref);
 	if (!resolved.ok) return resolved;
 	return listEndpointModelsResult(resolved.endpoint, { shellEnvVars: shellEnvVars() });
@@ -87,6 +101,9 @@ export async function testLocalModelEndpoint(
 	ref: unknown,
 	model?: unknown
 ): Promise<EndpointTestResult> {
+	if (refersToModelServer(ref)) {
+		return testModelServer(typeof model === 'string' ? model : undefined);
+	}
 	const resolved = resolveEndpointRef(ref);
 	if (!resolved.ok) return resolved;
 	return testEndpoint(resolved.endpoint, {
@@ -147,6 +164,10 @@ export async function chatWithLocalModelEndpoint(
 	endpointId: string,
 	request: Omit<EndpointChatRequest, 'shellEnvVars'>
 ): Promise<EndpointChatResult> {
+	if (endpointId === MODEL_SERVER_ENDPOINT_ID) {
+		const target = await modelServerCallTarget(request.model);
+		return endpointChat(target.endpoint, { ...request, apiKey: target.apiKey });
+	}
 	return endpointChat(requireUsableEndpoint(endpointId), {
 		...request,
 		shellEnvVars: shellEnvVars(),
@@ -158,6 +179,7 @@ export async function embedWithLocalModelEndpoint(
 	endpointId: string,
 	request: Omit<EndpointEmbedRequest, 'shellEnvVars'>
 ): Promise<EndpointEmbedResult> {
+	if (endpointId === MODEL_SERVER_ENDPOINT_ID) throw modelServerUnsupported('embeddings');
 	return endpointEmbed(requireUsableEndpoint(endpointId), {
 		...request,
 		shellEnvVars: shellEnvVars(),
@@ -169,6 +191,7 @@ export async function transcribeWithLocalModelEndpoint(
 	endpointId: string,
 	request: Omit<EndpointTranscribeRequest, 'shellEnvVars'>
 ): Promise<EndpointTranscribeResult> {
+	if (endpointId === MODEL_SERVER_ENDPOINT_ID) throw modelServerUnsupported('speech-to-text');
 	return endpointTranscribe(requireUsableEndpoint(endpointId), {
 		...request,
 		shellEnvVars: shellEnvVars(),

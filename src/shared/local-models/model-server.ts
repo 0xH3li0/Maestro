@@ -10,6 +10,8 @@
  * The supervisor is `src/main/local-models/server/supervisor.ts`.
  */
 
+import type { LocalModelEndpoint } from './endpoints';
+
 export const MODEL_SERVER_NAME = 'Maestro model server';
 
 /**
@@ -161,4 +163,43 @@ export function isModelServerMaxModels(value: unknown): value is number {
 /** `http://127.0.0.1:<port>`: the root a harness on this machine is pointed at. */
 export function modelServerBaseUrl(port: number): string {
 	return `http://${MODEL_SERVER_LOOPBACK_HOST}:${port}`;
+}
+
+// ---------------------------------------------------------------------------
+// The server as a Local Models source
+// ---------------------------------------------------------------------------
+
+/**
+ * The server's id as a Local Models endpoint. It is built in: it is never saved
+ * in `localModelEndpoints`, the endpoint list refuses to add, edit or remove a
+ * record with this id, and only the Model server card (and `maestro-cli models
+ * server`) controls it. An assignment names it like any endpoint
+ * (`endpoint:maestro-server:<catalog id>`), and the call starts the server and
+ * loads the model when it is not up yet.
+ */
+export const MODEL_SERVER_ENDPOINT_ID = 'maestro-server';
+
+/** Whether a person's reference (an id or a name, as `findLocalModelEndpoint` reads one) means the server. */
+export function isModelServerEndpointRef(ref: unknown): boolean {
+	if (typeof ref !== 'string') return false;
+	const needle = ref.trim();
+	return (
+		needle === MODEL_SERVER_ENDPOINT_ID || needle.toLowerCase() === MODEL_SERVER_NAME.toLowerCase()
+	);
+}
+
+/**
+ * The server as an endpoint record, for the endpoint client. `openai-compatible`
+ * because llama-server lists on `/v1/models` and chats on
+ * `/v1/chat/completions`. It carries no `apiKeyEnvVar`: Maestro holds the key
+ * itself and hands it to each call.
+ */
+export function modelServerEndpoint(baseUrl: string): LocalModelEndpoint {
+	return {
+		id: MODEL_SERVER_ENDPOINT_ID,
+		name: MODEL_SERVER_NAME,
+		kind: 'openai-compatible',
+		baseUrl,
+		enabled: true,
+	};
 }

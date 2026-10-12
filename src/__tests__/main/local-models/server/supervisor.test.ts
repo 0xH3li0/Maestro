@@ -53,6 +53,7 @@ import {
 	MODEL_SERVER_DIRNAME,
 	MODEL_SERVER_KEY_FILE,
 	MODEL_SERVER_PRESETS_FILE,
+	modelServerServingLoaded,
 	resetModelServerForTests,
 	startModelServer,
 	stopModelServer,
@@ -516,6 +517,29 @@ describe('ensureModelServerFor', () => {
 		expect(status.models).toEqual(['another-model', QWEN3_1_7B_ID]);
 		expect(status.pid).toBe(pid);
 		expect(spawnServer).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('modelServerServingLoaded', () => {
+	it('answers only for a model the running server has loaded, and never starts or loads', async () => {
+		expect(await modelServerServingLoaded(QWEN3_1_7B_ID)).toBeNull();
+		expect(spawnServer).not.toHaveBeenCalled();
+
+		await startModelServer();
+		// Served, but not loaded yet: still null, and asking does not load it.
+		expect(await modelServerServingLoaded(QWEN3_1_7B_ID)).toBeNull();
+		expect((await getModelServerStatus()).loadedModels).toEqual([]);
+
+		await ensureModelServerFor(QWEN3_1_7B_ID);
+		const status = await getModelServerStatus();
+		expect(await modelServerServingLoaded(QWEN3_1_7B_ID)).toEqual({
+			baseUrl: status.baseUrl,
+			key: await getModelServerKey(),
+		});
+		expect(await modelServerServingLoaded('another-model')).toBeNull();
+
+		await stopModelServer();
+		expect(await modelServerServingLoaded(QWEN3_1_7B_ID)).toBeNull();
 	});
 });
 

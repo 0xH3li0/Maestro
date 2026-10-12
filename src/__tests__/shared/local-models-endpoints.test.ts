@@ -22,6 +22,12 @@ import {
 	validateLocalModelEndpoint,
 	type LocalModelEndpoint,
 } from '../../shared/local-models/endpoints';
+import {
+	isModelServerEndpointRef,
+	MODEL_SERVER_ENDPOINT_ID,
+	MODEL_SERVER_NAME,
+	modelServerEndpoint,
+} from '../../shared/local-models/model-server';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
 
 const valid: LocalModelEndpoint = {
@@ -328,5 +334,46 @@ describe('endpoint list editing (add / remove / find)', () => {
 		const change = removeLocalModelEndpoint(list, 'gateway');
 		expect(change).toEqual({ ok: true, endpoints: [ollama], endpoint: gateway });
 		expect(removeLocalModelEndpoint(list, 'nope').ok).toBe(false);
+	});
+});
+
+describe('the built-in Maestro model server endpoint', () => {
+	const builtIn = { ...valid, id: MODEL_SERVER_ENDPOINT_ID, name: MODEL_SERVER_NAME };
+
+	it('describes the server as an openai-compatible endpoint with no key variable', () => {
+		expect(modelServerEndpoint('http://127.0.0.1:41234')).toEqual({
+			id: MODEL_SERVER_ENDPOINT_ID,
+			name: MODEL_SERVER_NAME,
+			kind: 'openai-compatible',
+			baseUrl: 'http://127.0.0.1:41234',
+			enabled: true,
+		});
+	});
+
+	it('is named by its id or its name, and nothing else', () => {
+		expect(isModelServerEndpointRef(MODEL_SERVER_ENDPOINT_ID)).toBe(true);
+		expect(isModelServerEndpointRef(' maestro model server ')).toBe(true);
+		expect(isModelServerEndpointRef('maestro')).toBe(false);
+		expect(isModelServerEndpointRef(undefined)).toBe(false);
+	});
+
+	it('is never read from the saved list', () => {
+		expect(parseLocalModelEndpoints([builtIn, valid])).toEqual([valid]);
+	});
+
+	it('cannot be added, edited or removed through the endpoint list', () => {
+		const add = addLocalModelEndpoint([valid], builtIn);
+		expect(add).toMatchObject({ ok: false, message: expect.stringContaining('belongs to') });
+
+		const edit = updateLocalModelEndpoint([valid], MODEL_SERVER_ENDPOINT_ID, builtIn);
+		expect(edit).toMatchObject({ ok: false, message: expect.stringContaining('cannot be edited') });
+
+		for (const ref of [MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME]) {
+			const removed = removeLocalModelEndpoint([valid], ref);
+			expect(removed).toMatchObject({
+				ok: false,
+				message: expect.stringContaining('maestro-cli models server'),
+			});
+		}
 	});
 });

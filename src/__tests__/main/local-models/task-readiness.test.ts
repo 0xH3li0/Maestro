@@ -41,6 +41,7 @@ import {
 	BGE_SMALL_EN_ID,
 	KOKORO_82M_ID,
 	PROMPT_GUARD_2_22M_ID,
+	QWEN3_1_7B_ID,
 } from '../../../shared/local-models/model-catalog';
 import {
 	isTaskRunnable,
@@ -404,6 +405,62 @@ describe('resolveTaskReadiness', () => {
 			})
 		);
 		expect(verdict.suggestedAction).toMatch(/^Load it on LM Studio/);
+	});
+});
+
+describe('an assignment to the built-in Maestro model server', () => {
+	const onServer = (model: string = QWEN3_1_7B_ID) => ({
+		type: 'endpoint' as const,
+		endpointId: 'maestro-server',
+		model,
+	});
+	const serverReady = (overrides: ResolveTaskReadinessOptions = {}) =>
+		healthy({
+			assignments: { 'tab-naming': onServer(), 'semantic-search': onServer() },
+			isServerEngineInstalled: vi.fn(async () => true),
+			...overrides,
+		});
+
+	it('is ready when the engine and the model are downloaded, without listing or starting anything', async () => {
+		const options = serverReady();
+		const verdict = await resolveTaskReadiness('tab-naming', options);
+
+		expect(verdict.state).toBe('ready');
+		expect(verdict.detail).toMatch(
+			/on the Maestro model server, which starts when a task needs it/
+		);
+		expect(options.findEndpoint).not.toHaveBeenCalled();
+		expect(options.listEndpointModels).not.toHaveBeenCalled();
+		expect(options.readModelStatus).toHaveBeenCalledWith(QWEN3_1_7B_ID);
+	});
+
+	it('refuses a need other than text generation', async () => {
+		const verdict = await resolveTaskReadiness('semantic-search', serverReady());
+		expect(verdict).toMatchObject({ state: 'unavailable', reason: 'endpoint-unsupported' });
+		expect(verdict.detail).toMatch(/serves text generation only/);
+	});
+
+	it('names a missing engine, then a model it does not serve, then one not downloaded', async () => {
+		const noEngine = await resolveTaskReadiness(
+			'tab-naming',
+			serverReady({ isServerEngineInstalled: vi.fn(async () => false) })
+		);
+		expect(noEngine).toMatchObject({ state: 'unavailable', reason: 'endpoint-unreachable' });
+		expect(noEngine.detail).toMatch(/llama-server\) is not downloaded/);
+		expect(noEngine.suggestedAction).toMatch(/Library/);
+
+		const notServed = await resolveTaskReadiness(
+			'tab-naming',
+			serverReady({ assignments: { 'tab-naming': onServer(BGE_SMALL_EN_ID) } })
+		);
+		expect(notServed).toMatchObject({ state: 'unavailable', reason: 'endpoint-model-missing' });
+
+		const notDownloaded = await resolveTaskReadiness(
+			'tab-naming',
+			serverReady({ readModelStatus: vi.fn(async () => status('not-installed')) })
+		);
+		expect(notDownloaded).toMatchObject({ state: 'unavailable', reason: 'model-not-installed' });
+		expect(notDownloaded.suggestedAction).toMatch(/Download it in/);
 	});
 });
 

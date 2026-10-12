@@ -87,6 +87,12 @@ export interface EndpointCallOptions {
 	 * `LocalModelEndpoint.apiKeyEnvVar` for why.
 	 */
 	shellEnvVars?: Record<string, string>;
+	/**
+	 * A key handed in directly, for the one endpoint whose key Maestro holds
+	 * itself: the Maestro model server, sealed in its own config file. Never
+	 * persisted with a record. Takes the place of `apiKeyEnvVar`.
+	 */
+	apiKey?: string;
 	/** Request budget. Each call has its own default. */
 	timeoutMs?: number;
 	/** Caller cancellation, composed with the timeout. */
@@ -117,6 +123,13 @@ export interface EndpointChatRequest extends EndpointCallOptions {
 	jsonSchema?: Record<string, unknown>;
 	/** Schema name for the OpenAI response format. Defaults to `response`. */
 	jsonSchemaName?: string;
+	/**
+	 * Ask the chat template to skip the reasoning segment
+	 * (`chat_template_kwargs.enable_thinking: false`, which llama-server reads).
+	 * A thinking model otherwise spends `maxTokens` on a thought and can return
+	 * an empty answer. Sent only when set, since not every server knows the field.
+	 */
+	disableThinking?: boolean;
 }
 
 export interface EndpointChatResult {
@@ -203,6 +216,7 @@ export async function endpointChat(
 		stream: false,
 		...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
 		...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+		...(request.disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
 		...(request.jsonSchema
 			? {
 					response_format: {
@@ -667,7 +681,7 @@ async function requestJson(
 	options: EndpointCallOptions
 ): Promise<unknown> {
 	const url = `${endpoint.baseUrl}${path}`;
-	const apiKey = resolveEndpointApiKey(endpoint, options.shellEnvVars);
+	const apiKey = options.apiKey ?? resolveEndpointApiKey(endpoint, options.shellEnvVars);
 	if (endpoint.apiKeyEnvVar && !apiKey) {
 		throw endpointError(
 			endpoint,

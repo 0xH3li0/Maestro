@@ -278,6 +278,15 @@ describe('localModelAssignmentSourceLabel', () => {
 		).toBe(getLocalModel(QWEN3_1_7B_ID)!.displayName);
 	});
 
+	it('names a model on the built-in Maestro model server, which no saved list carries', () => {
+		expect(
+			localModelAssignmentSourceLabel(
+				{ type: 'endpoint', endpointId: 'maestro-server', model: QWEN3_1_7B_ID },
+				endpoints
+			)
+		).toBe(`${getLocalModel(QWEN3_1_7B_ID)!.displayName} on Maestro model server`);
+	});
+
 	it('names an endpoint model with the endpoint it is served by', () => {
 		expect(
 			localModelAssignmentSourceLabel(

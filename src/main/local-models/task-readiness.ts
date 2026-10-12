@@ -32,7 +32,14 @@ import {
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
-import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
+import {
+	modelsSettingsLocation,
+	taskAssignmentLocation,
+} from '../../shared/local-models/settings-location';
+import {
+	MODEL_SERVER_ENDPOINT_ID,
+	MODEL_SERVER_NAME,
+} from '../../shared/local-models/model-server';
 import type {
 	LocalModelTaskReadiness,
 	LocalModelTaskUnreadyReason,
@@ -51,6 +58,8 @@ import {
 	type NativeRuntimeUnavailable,
 } from './runtime/native-loader';
 import { runtimeSetupLocation } from './runtime/runtime-consumers';
+import { isServerEngineInstalled } from './server/engine-store';
+import { isServerModel } from './server/presets';
 import { readLocalModelAssignments } from './sources';
 
 const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
@@ -78,6 +87,8 @@ export interface ResolveTaskReadinessOptions {
 	findEndpoint?: (endpointId: string) => UsableLocalModelEndpoint;
 	/** The models an endpoint serves. Defaults to the endpoint service's listing. */
 	listEndpointModels?: (endpoint: LocalModelEndpoint) => Promise<EndpointModelsResult>;
+	/** Whether the Maestro model server's engine is downloaded. Defaults to the engine store. */
+	isServerEngineInstalled?: () => Promise<boolean>;
 }
 
 /** One task's readiness against its effective assignment. */
@@ -257,6 +268,8 @@ async function resolveEndpoint(
 		);
 	}
 
+	if (endpointId === MODEL_SERVER_ENDPOINT_ID) return resolveModelServer(task, model, options);
+
 	const found = (options.findEndpoint ?? findUsableLocalModelEndpoint)(endpointId);
 	if (!found.ok) {
 		return found.problem === 'disabled'
@@ -307,6 +320,52 @@ async function resolveEndpoint(
 		);
 	}
 	return { state: 'ready', detail: `Runs ${model} on ${endpoint.name}.` };
+}
+
+/**
+ * The Maestro model server is never saved and starts when a task needs it, so
+ * its verdict is about what a start needs, read from disk without starting it:
+ * the engine, and the model as an installed catalog text model.
+ */
+async function resolveModelServer(
+	task: LocalModelTaskDefinition,
+	model: string,
+	options: ResolveTaskReadinessOptions
+): Promise<Verdict> {
+	if (task.needs !== 'text-gen') {
+		return unavailable(
+			'endpoint-unsupported',
+			`${task.label} needs ${aNeed(task.needs)} model, and the ${MODEL_SERVER_NAME} serves text generation only.`,
+			`Assign a local model or another endpoint in ${taskAssignmentLocation(task.id)}.`
+		);
+	}
+	if (!(await (options.isServerEngineInstalled ?? isServerEngineInstalled)())) {
+		return unavailable(
+			'endpoint-unreachable',
+			`The ${MODEL_SERVER_NAME} engine (llama-server) is not downloaded.`,
+			`Install it in ${modelsSettingsLocation('library')}.`
+		);
+	}
+	const entry = getLocalModel(model);
+	if (!entry || !isServerModel(entry)) {
+		return unavailable(
+			'endpoint-model-missing',
+			`The ${MODEL_SERVER_NAME} does not serve "${model}": it serves the Library's text models.`,
+			`Assign a downloaded text model in ${taskAssignmentLocation(task.id)}.`
+		);
+	}
+	const status = await (options.readModelStatus ?? getStatus)(model);
+	if (status.status !== 'installed') {
+		return unavailable(
+			'model-not-installed',
+			`${entry.displayName} is not downloaded, so the ${MODEL_SERVER_NAME} cannot serve it.`,
+			`Download it in ${modelsSettingsLocation('library')}.`
+		);
+	}
+	return {
+		state: 'ready',
+		detail: `Runs ${entry.displayName} on the ${MODEL_SERVER_NAME}, which starts when a task needs it.`,
+	};
 }
 
 /**

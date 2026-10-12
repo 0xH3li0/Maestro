@@ -28,6 +28,33 @@ const client = vi.hoisted(() => ({
 
 vi.mock('../../../main/local-models/endpoint-client', () => client);
 
+const serverTarget = vi.hoisted(() => ({
+	endpoint: {
+		id: 'maestro-server',
+		name: 'Maestro model server',
+		kind: 'openai-compatible',
+		baseUrl: 'http://127.0.0.1:41234',
+		enabled: true,
+	},
+	apiKey: 'sk-maestro-test',
+}));
+const server = vi.hoisted(() => ({
+	refersToModelServer: vi.fn(
+		(ref: unknown) =>
+			ref === 'maestro-server' ||
+			ref === 'Maestro model server' ||
+			(typeof ref === 'object' && (ref as { id?: unknown })?.id === 'maestro-server')
+	),
+	listModelServerModels: vi.fn(async () => ({ ok: true, models: [{ id: 'qwen3-1.7b' }] })),
+	testModelServer: vi.fn(async () => ({ ok: true, model: 'qwen3-1.7b', latencyMs: 9 })),
+	modelServerCallTarget: vi.fn(async () => serverTarget),
+	modelServerUnsupported: vi.fn((what: string) =>
+		Object.assign(new Error(`text generation only, not ${what}`), { kind: 'invalid' })
+	),
+}));
+
+vi.mock('../../../main/local-models/server/server-endpoint', () => server);
+
 import {
 	chatWithLocalModelEndpoint,
 	detectNewLocalModelEndpoints,
@@ -191,5 +218,57 @@ describe('endpoint-service', () => {
 			kind: 'invalid',
 		});
 		expect(client.endpointEmbed).not.toHaveBeenCalled();
+	});
+
+	describe('the built-in Maestro model server', () => {
+		it('lists and tests it through the server, by id, by name, or by record', async () => {
+			await expect(listLocalModelEndpointModels('maestro-server')).resolves.toEqual({
+				ok: true,
+				models: [{ id: 'qwen3-1.7b' }],
+			});
+			await listLocalModelEndpointModels({ id: 'maestro-server' });
+			await testLocalModelEndpoint('Maestro model server', 'qwen3-1.7b');
+
+			expect(server.listModelServerModels).toHaveBeenCalledTimes(2);
+			expect(server.testModelServer).toHaveBeenCalledWith('qwen3-1.7b');
+			expect(client.listEndpointModelsResult).not.toHaveBeenCalled();
+			expect(client.testEndpoint).not.toHaveBeenCalled();
+		});
+
+		it('chats on it with the key Maestro holds, after making it ready for the model', async () => {
+			const messages = [{ role: 'user' as const, content: 'hi' }];
+
+			await chatWithLocalModelEndpoint('maestro-server', { model: 'qwen3-1.7b', messages });
+
+			expect(server.modelServerCallTarget).toHaveBeenCalledWith('qwen3-1.7b');
+			expect(client.endpointChat).toHaveBeenCalledWith(serverTarget.endpoint, {
+				model: 'qwen3-1.7b',
+				messages,
+				apiKey: 'sk-maestro-test',
+			});
+		});
+
+		it('does not chat when the server cannot be made ready', async () => {
+			server.modelServerCallTarget.mockRejectedValueOnce(
+				Object.assign(new Error('engine not downloaded'), { kind: 'invalid' })
+			);
+
+			await expect(
+				chatWithLocalModelEndpoint('maestro-server', { model: 'qwen3-1.7b', messages: [] })
+			).rejects.toMatchObject({ kind: 'invalid' });
+			expect(client.endpointChat).not.toHaveBeenCalled();
+		});
+
+		it('refuses embeddings and speech-to-text on it, before any request', async () => {
+			await expect(
+				embedWithLocalModelEndpoint('maestro-server', { model: 'm', input: ['a'] })
+			).rejects.toMatchObject({ kind: 'invalid' });
+			await expect(
+				transcribeWithLocalModelEndpoint('maestro-server', { model: 'm', wav: new Uint8Array(1) })
+			).rejects.toMatchObject({ kind: 'invalid' });
+			expect(client.endpointEmbed).not.toHaveBeenCalled();
+			expect(client.endpointTranscribe).not.toHaveBeenCalled();
+			expect(server.modelServerCallTarget).not.toHaveBeenCalled();
+		});
 	});
 });

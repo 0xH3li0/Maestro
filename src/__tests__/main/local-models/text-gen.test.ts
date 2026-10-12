@@ -28,6 +28,26 @@ vi.mock('../../../main/local-models/model-store', () => ({
 	modelFilePath: (id: string, file: string) => `/models/${id}/${file}`,
 }));
 
+const server = vi.hoisted(() => ({
+	loadedModelServerTarget: vi.fn(
+		async (
+			_modelId: string
+		): Promise<{
+			endpoint: Record<string, unknown>;
+			apiKey: string;
+		} | null> => null
+	),
+}));
+
+vi.mock('../../../main/local-models/server/server-endpoint', () => ({
+	loadedModelServerTarget: server.loadedModelServerTarget,
+	refersToModelServer: () => false,
+	modelServerCallTarget: vi.fn(),
+	modelServerUnsupported: vi.fn(),
+	listModelServerModels: vi.fn(),
+	testModelServer: vi.fn(),
+}));
+
 import {
 	__setLocalTextEngine,
 	generateText,
@@ -142,6 +162,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	settings.clear();
 	store.isInstalled.mockResolvedValue(true);
+	server.loadedModelServerTarget.mockResolvedValue(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -468,6 +489,112 @@ describe('generateText', () => {
 
 			expect(result.text).toBe('not json at all');
 			expect(result).not.toHaveProperty('json');
+		});
+	});
+
+	describe('local source the Maestro model server already holds', () => {
+		const realFetch = globalThis.fetch;
+
+		afterEach(() => {
+			globalThis.fetch = realFetch;
+			__setLocalTextEngine(null);
+		});
+
+		function serveLoaded() {
+			server.loadedModelServerTarget.mockImplementation(async (modelId: string) =>
+				modelId === 'm1'
+					? {
+							endpoint: {
+								id: 'maestro-server',
+								name: 'Maestro model server',
+								kind: 'openai-compatible',
+								baseUrl: 'http://127.0.0.1:41234',
+								enabled: true,
+							},
+							apiKey: 'sk-maestro-key',
+						}
+					: null
+			);
+			const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
+				const text = JSON.stringify({
+					model: 'm1',
+					choices: [{ message: { content: 'Auth refactor' }, finish_reason: 'stop' }],
+					usage: { prompt_tokens: 21, completion_tokens: 3 },
+				});
+				return {
+					ok: true,
+					status: 200,
+					json: async () => JSON.parse(text),
+					text: async () => text,
+				} as unknown as Response;
+			});
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+			return fetchMock;
+		}
+
+		it('sends the call to the server with its key instead of loading a second copy', async () => {
+			const llama = mockLlama();
+			__setLocalTextEngine(engineFor(llama));
+			const fetchMock = serveLoaded();
+
+			const result = await generateText({
+				source: { type: 'local', modelId: 'm1' },
+				prompt: 'name this tab',
+				system: 'reply with a short title',
+				maxTokens: 16,
+			});
+
+			expect(result).toMatchObject({
+				text: 'Auth refactor',
+				source: { type: 'local', modelId: 'm1' },
+				tokensIn: 21,
+				tokensOut: 3,
+			});
+			expect(llama.getLlama).not.toHaveBeenCalled();
+			const [url, init] = fetchMock.mock.calls[0];
+			expect(url).toBe('http://127.0.0.1:41234/v1/chat/completions');
+			expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer sk-maestro-key');
+			expect(JSON.parse(init?.body as string)).toMatchObject({
+				model: 'm1',
+				max_tokens: 16,
+				temperature: 0,
+				// The in-process engine answers with no reasoning segment; so does the server.
+				chat_template_kwargs: { enable_thinking: false },
+				messages: [
+					{ role: 'system', content: 'reply with a short title' },
+					{ role: 'user', content: 'name this tab' },
+				],
+			});
+		});
+
+		it('frees an in-process copy of the model once the server holds it', async () => {
+			const engine = engineFor(mockLlama());
+			__setLocalTextEngine(engine);
+			await generateText({ source: { type: 'local', modelId: 'm1' }, prompt: 'p', maxTokens: 8 });
+			expect(engine.loadedModelId).toBe('m1');
+
+			serveLoaded();
+			await generateText({ source: { type: 'local', modelId: 'm1' }, prompt: 'p', maxTokens: 8 });
+			// Queued behind the unload generateText started, so that one has run by now.
+			await engine.unload('none-pending');
+
+			expect(engine.loadedModelId).toBeNull();
+		});
+
+		it('runs in-process when the server does not have the model loaded', async () => {
+			const llama = mockLlama({ reply: 'local reply' });
+			__setLocalTextEngine(engineFor(llama));
+			const fetchMock = serveLoaded();
+
+			const result = await generateText({
+				source: { type: 'local', modelId: 'm2' },
+				prompt: 'p',
+				maxTokens: 8,
+			});
+
+			expect(result.text).toBe('local reply');
+			expect(server.loadedModelServerTarget).toHaveBeenCalledWith('m2');
+			expect(fetchMock).not.toHaveBeenCalled();
 		});
 	});
 

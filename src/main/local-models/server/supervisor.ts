@@ -1038,6 +1038,33 @@ export async function getModelServerStatus(): Promise<ModelServerStatus> {
 	};
 }
 
+/**
+ * Where the running server serves `modelId` right now, when it already has it
+ * loaded: its base URL and key. Null when the server is not running, does not
+ * serve that model, has it unloaded, or does not answer. Reads only: it never
+ * starts the server or loads a model. Text generation asks it so a task on a
+ * model the server already holds reaches that copy instead of loading a second
+ * one in-process.
+ */
+export async function modelServerServingLoaded(
+	modelId: string
+): Promise<{ baseUrl: string; key: string } | null> {
+	const current = run;
+	if (!current || current.readyAt === null || current.exit !== null) return null;
+	if (!current.models.includes(modelId)) return null;
+	let loaded: boolean;
+	try {
+		loaded = (await listRouterModels(current)).some(
+			(model) => model.id === modelId && model.status === 'loaded'
+		);
+	} catch {
+		// Not answering: the health check owns that. Nothing is served from here.
+		return null;
+	}
+	if (!loaded || run !== current) return null;
+	return { baseUrl: modelServerBaseUrl(current.port), key: current.key };
+}
+
 /** Stop the server and forget everything, so each test starts from a process that never ran it. */
 export async function resetModelServerForTests(): Promise<void> {
 	cancelRestart();

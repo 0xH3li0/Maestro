@@ -14,6 +14,11 @@
  */
 
 import { isBlankEnvValue, isValidEnvVarName } from '../agentEnvironment';
+import {
+	isModelServerEndpointRef,
+	MODEL_SERVER_ENDPOINT_ID,
+	MODEL_SERVER_NAME,
+} from './model-server';
 
 /**
  * Which wire dialect the server speaks. All three serve `/v1/chat/completions`;
@@ -197,7 +202,8 @@ export function validateLocalModelEndpoint(value: unknown): LocalModelEndpointVa
  * Read the persisted `localModelEndpoints` setting. Anything that is not a list
  * reads as empty, invalid records are dropped, and a repeated id keeps its first
  * record, so a hand-edited settings file cannot hand a caller an endpoint it
- * would refuse to save.
+ * would refuse to save. That includes a record claiming the Maestro model
+ * server's id, which is built in and never saved.
  */
 export function parseLocalModelEndpoints(value: unknown): LocalModelEndpoint[] {
 	if (!Array.isArray(value)) return [];
@@ -206,6 +212,7 @@ export function parseLocalModelEndpoints(value: unknown): LocalModelEndpoint[] {
 	for (const entry of value) {
 		const result = validateLocalModelEndpoint(entry);
 		if (!result.ok || seen.has(result.endpoint.id)) continue;
+		if (result.endpoint.id === MODEL_SERVER_ENDPOINT_ID) continue;
 		seen.add(result.endpoint.id);
 		endpoints.push(result.endpoint);
 	}
@@ -311,6 +318,22 @@ export type LocalModelEndpointListChange =
 	| { ok: false; message: string };
 
 /**
+ * The refusal for any edit of the Maestro model server through the endpoint
+ * list: it is built in, and only its own card and `maestro-cli models server`
+ * control it.
+ */
+function builtInServerRefusal(action: 'add' | 'edit' | 'remove'): LocalModelEndpointListChange {
+	const what =
+		action === 'add'
+			? `The id "${MODEL_SERVER_ENDPOINT_ID}" belongs to the ${MODEL_SERVER_NAME}`
+			: `The ${MODEL_SERVER_NAME} is built in and cannot be ${action === 'edit' ? 'edited' : 'removed'} here`;
+	return {
+		ok: false,
+		message: `${what}. Control it from the Model server card, or with maestro-cli models server.`,
+	};
+}
+
+/**
  * Append an endpoint to the configured list. The candidate goes through the
  * same validator the setting is read with, and it is refused when its id is
  * taken or when the same server is already configured under another name
@@ -326,6 +349,7 @@ export function addLocalModelEndpoint(
 		return { ok: false, message: validation.issues.map((issue) => issue.message).join(' ') };
 	}
 	const endpoint = validation.endpoint;
+	if (endpoint.id === MODEL_SERVER_ENDPOINT_ID) return builtInServerRefusal('add');
 	if (endpoints.some((existing) => existing.id === endpoint.id)) {
 		return { ok: false, message: `An endpoint with id "${endpoint.id}" already exists.` };
 	}
@@ -353,6 +377,7 @@ export function updateLocalModelEndpoint(
 	id: string,
 	candidate: unknown
 ): LocalModelEndpointListChange {
+	if (id === MODEL_SERVER_ENDPOINT_ID) return builtInServerRefusal('edit');
 	const index = endpoints.findIndex((endpoint) => endpoint.id === id);
 	if (index === -1) return { ok: false, message: `No endpoint has id "${id}".` };
 	const validation = validateLocalModelEndpoint({
@@ -377,11 +402,16 @@ export function updateLocalModelEndpoint(
 	return { ok: true, endpoints: next, endpoint };
 }
 
-/** Drop one endpoint, named by id, id prefix, or name ({@link findLocalModelEndpoint}). */
+/**
+ * Drop one endpoint, named by id, id prefix, or name ({@link findLocalModelEndpoint}).
+ * The Maestro model server, named by its id or its name, is refused: it is not
+ * in this list to remove.
+ */
 export function removeLocalModelEndpoint(
 	endpoints: readonly LocalModelEndpoint[],
 	ref: string
 ): LocalModelEndpointListChange {
+	if (isModelServerEndpointRef(ref)) return builtInServerRefusal('remove');
 	const found = findLocalModelEndpoint(endpoints, ref);
 	if (!found.ok) return found;
 	return {

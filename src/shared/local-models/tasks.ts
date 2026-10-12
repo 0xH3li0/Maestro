@@ -19,6 +19,7 @@
 
 import type { LocalModelEndpoint } from './endpoints';
 import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
+import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
 import type { LocalModelKind } from './types';
 
 /** What a task asks its assigned source to do. A subset of {@link LocalModelKind}. */
@@ -574,6 +575,10 @@ export function localModelAssignmentSourceLabel(
 		return getLocalModel(assignment.modelId)?.displayName ?? assignment.modelId;
 	}
 	if (assignment.type === 'endpoint') {
+		// The Maestro model server is built in, so no saved list carries it.
+		if (assignment.endpointId === MODEL_SERVER_ENDPOINT_ID) {
+			return `${getLocalModel(assignment.model)?.displayName ?? assignment.model} on ${MODEL_SERVER_NAME}`;
+		}
 		const endpoint = endpoints.find((candidate) => candidate.id === assignment.endpointId);
 		return endpoint ? `${assignment.model} on ${endpoint.name}` : assignment.model;
 	}

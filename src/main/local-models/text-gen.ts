@@ -20,6 +20,14 @@
  * started while the first holds it fails with "No sequences left". A queue in
  * front of the engine turns that crash into a short wait.
  *
+ * **A model the Maestro model server already holds is used there.** When the
+ * server is running with a local model loaded, a call for that model goes to
+ * the server instead of opening a second copy in-process (and drops an
+ * in-process copy left from before), because two copies of the same weights in
+ * memory is the failure the one-resident-model rule exists to prevent. The
+ * server is only used when it is ALREADY up with the model loaded: a local
+ * assignment never starts it.
+ *
  * **A source that cannot run fails as itself.** A missing model, a runtime that
  * will not load, or an endpoint that is down throws a classified error naming
  * it. Nothing in here reaches for a different model or a cloud agent: that
@@ -32,7 +40,7 @@ import { extractJsonObject } from '../../shared/jsonUtils';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
 import { chatWithLocalModelEndpoint } from './endpoint-service';
-import type { EndpointChatMessage } from './endpoint-client';
+import { endpointChat, type EndpointChatMessage, type EndpointChatResult } from './endpoint-client';
 import {
 	isLocalModelCancelled,
 	LocalModelError,
@@ -43,6 +51,7 @@ import { isInstalled, modelFilePath } from './model-store';
 import { LLAMA_GET_OPTIONS } from './runtime/llama-options';
 import { loadLocalRuntime } from './runtime/load-runtime';
 import { runtimeSetupLocation } from './runtime/runtime-consumers';
+import { loadedModelServerTarget } from './server/server-endpoint';
 import type { LocalModelSource } from './sources';
 
 // ---------------------------------------------------------------------------
@@ -98,34 +107,46 @@ export async function generateText(request: GenerateTextRequest): Promise<Genera
 	const temperature = request.temperature ?? 0;
 	const { source } = request;
 
+	const chatRequest = {
+		messages: [
+			...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
+			{ role: 'user' as const, content: request.prompt },
+		] satisfies EndpointChatMessage[],
+		maxTokens: request.maxTokens,
+		temperature,
+		...(request.jsonSchema ? { jsonSchema: request.jsonSchema } : {}),
+		...(request.signal ? { signal: request.signal } : {}),
+	};
+
 	let reply: LocalTextReply;
 	if (source.type === 'local') {
-		reply = await getLocalTextEngine().generate(source.modelId, {
-			prompt: request.prompt,
-			system: request.system,
-			maxTokens: request.maxTokens,
-			temperature,
-			jsonSchema: request.jsonSchema,
-			signal: request.signal,
-		});
+		const served = await loadedModelServerTarget(source.modelId);
+		if (served) {
+			// The server's copy is the one to use; an in-process copy is the second.
+			void getLocalTextEngine().unload(source.modelId);
+			reply = chatReply(
+				await endpointChat(served.endpoint, {
+					...chatRequest,
+					apiKey: served.apiKey,
+					model: source.modelId,
+					// The in-process engine answers with no reasoning segment; so does this.
+					disableThinking: true,
+				})
+			);
+		} else {
+			reply = await getLocalTextEngine().generate(source.modelId, {
+				prompt: request.prompt,
+				system: request.system,
+				maxTokens: request.maxTokens,
+				temperature,
+				jsonSchema: request.jsonSchema,
+				signal: request.signal,
+			});
+		}
 	} else {
-		const messages: EndpointChatMessage[] = [
-			...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
-			{ role: 'user', content: request.prompt },
-		];
-		const result = await chatWithLocalModelEndpoint(source.endpointId, {
-			model: source.model,
-			messages,
-			maxTokens: request.maxTokens,
-			temperature,
-			...(request.jsonSchema ? { jsonSchema: request.jsonSchema } : {}),
-			...(request.signal ? { signal: request.signal } : {}),
-		});
-		reply = {
-			text: result.content,
-			tokensIn: result.usage?.promptTokens,
-			tokensOut: result.usage?.completionTokens,
-		};
+		reply = chatReply(
+			await chatWithLocalModelEndpoint(source.endpointId, { ...chatRequest, model: source.model })
+		);
 	}
 
 	const json = request.jsonSchema ? parseJsonReply(reply.text) : undefined;
@@ -136,6 +157,14 @@ export async function generateText(request: GenerateTextRequest): Promise<Genera
 		durationMs: sleepAwareElapsedMs(span),
 		...(reply.tokensIn !== undefined ? { tokensIn: reply.tokensIn } : {}),
 		...(reply.tokensOut !== undefined ? { tokensOut: reply.tokensOut } : {}),
+	};
+}
+
+function chatReply(result: EndpointChatResult): LocalTextReply {
+	return {
+		text: result.content,
+		tokensIn: result.usage?.promptTokens,
+		tokensOut: result.usage?.completionTokens,
 	};
 }
 
