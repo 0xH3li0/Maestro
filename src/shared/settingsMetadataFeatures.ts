@@ -105,6 +105,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: {},
 		category: 'integrations',
 	},
+	harnessTierDefaults: {
+		description:
+			"Tier defaults: where each harness launches a model tier for an agent that does not set the tier itself. Keyed by harness id (claude-code, codex, opencode, ...), then by tier (low, medium, high); each value is { type: 'provider-model', model } (a model on the harness's own provider), { type: 'provider' } (the provider, on the agent's own model), or { type: 'source', endpointId, model, contextTokens? } (a Run on target). A tier with no entry uses the built-in table. An agent's own tier target wins over this.",
+		type: 'object',
+		default: {},
+		category: 'integrations',
+	},
 	semanticIndexCue: {
 		description:
 			'Include Cue runs in the semantic index. Off by default: Cue runs are most of History by volume and mostly repeat. Only has an effect while the Semantic search task (localModelAssignments) is assigned a source. Turning it off drops Cue runs from the index at the next pass.',

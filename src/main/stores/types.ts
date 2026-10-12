@@ -10,6 +10,7 @@ import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilitie
 import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { LocalModelAssignments } from '../../shared/local-models/tasks';
+import type { HarnessTierDefaults } from '../../shared/modelTiers';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 
@@ -158,6 +159,10 @@ export interface MaestroSettings {
 	// Which source each Local Models task runs on. Sparse: a task with no entry
 	// uses its registry default. See shared/local-models/tasks.ts.
 	localModelAssignments: LocalModelAssignments;
+	// Where each harness launches a model tier (low, medium, high) for an agent
+	// that does not set the tier itself. Sparse: an absent tier uses the
+	// built-in table. See resolveTierTarget in shared/modelTiers.ts.
+	harnessTierDefaults: HarnessTierDefaults;
 	// Include Cue runs in the semantic index. Declared explicitly because the
 	// main process reads it (local-models/semantic-index-startup.ts).
 	semanticIndexCue: boolean;

@@ -22,6 +22,8 @@ import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import type { TierRouting } from '../../../shared/modelTiers';
+import { useSettingsStore } from '../../stores/settingsStore';
 import {
 	formatSteeringNotesBlock,
 	type AutoRunSteeringNote,
@@ -422,11 +424,20 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
 			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
 			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
+			// Where a tier launches for this agent: its own tier targets, then the
+			// harness defaults. Read from the store per dispatch, not captured, so a
+			// change made while the run is going applies to the next task.
+			const tierRouting: TierRouting = {
+				tierTargets: session.tierTargets,
+				runOn: session.runOn,
+				harnessDefaults: useSettingsStore.getState().harnessTierDefaults,
+			};
 			const turnSettings = resolveTurnSettings(
 				session.toolType,
 				ignoreModelHints ? null : findActiveModelHint(documentContent),
 				baselineModel,
-				baselineEffort
+				baselineEffort,
+				tierRouting
 			);
 			for (const warning of turnSettings.warnings) {
 				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
@@ -451,7 +462,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						documentContent,
 						session.toolType,
 						baselineModel,
-						baselineEffort
+						baselineEffort,
+						tierRouting
 					);
 			const promptWithSelectionBlock = customPrompt.replace(
 				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
@@ -490,13 +502,18 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// spans a lid close must not report the sleep as agent work time.
 			const taskSpan = beginSleepAwareSpan();
 
-			// Spawn agent with the prompt, using effective cwd (may be worktree path)
-			const result = await callbacks.onSpawnAgent(
-				session.id,
-				finalPrompt,
-				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-				{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
-			);
+			// Spawn agent with the prompt, using effective cwd (may be worktree path).
+			// A tier target that cannot be used fails the task by name. It is never
+			// launched on the agent's own model in its place.
+			const tierRefusal = turnSettings.refusal;
+			const result: Awaited<ReturnType<AutoRunSpawnAgentFn>> = tierRefusal
+				? { success: false, error: tierRefusal.message }
+				: await callbacks.onSpawnAgent(
+						session.id,
+						finalPrompt,
+						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+						{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
+					);
 
 			// Capture elapsed time (machine sleep excluded)
 			const elapsedTimeMs = sleepAwareElapsedMs(taskSpan);

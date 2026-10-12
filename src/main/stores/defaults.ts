@@ -178,6 +178,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// Local Models task assignments, sparse (empty = every task on its default).
 	// See shared/local-models/tasks.ts.
 	localModelAssignments: {},
+	// Harness tier defaults, sparse (empty = the built-in table for every
+	// harness). See shared/modelTiers.ts.
+	harnessTierDefaults: {},
 	// Whether the semantic index includes Cue runs. Off: they are most of History
 	// by volume and mostly noise. Read by main (local-models/semantic-indexer.ts).
 	semanticIndexCue: false,

@@ -6,6 +6,7 @@ export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 import type { CodexTransport } from './codexTransport';
 import type { RunOnTarget } from './local-models/run-on';
+import type { TierTargets } from './modelTiers';
 
 /**
  * Union type of all valid agent IDs.
@@ -314,6 +315,14 @@ export interface SessionInfo {
 	 * above does not apply.
 	 */
 	runOn?: RunOnTarget;
+	/**
+	 * Tier targets: where a turn that asks for a model tier (`low`, `medium`,
+	 * `high`) launches for this agent. Each is a provider model or a Run on
+	 * target. An absent tier means "Harness default": it follows the
+	 * `harnessTierDefaults` setting, then the built-in table. Resolved at launch
+	 * by `resolveTierTarget` (see `shared/modelTiers.ts`).
+	 */
+	tierTargets?: TierTargets;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

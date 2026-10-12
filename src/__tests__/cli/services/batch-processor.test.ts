@@ -63,6 +63,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
+	readHarnessTierDefaults: vi.fn(),
 	readHistory: vi.fn(),
 }));
 
@@ -94,7 +95,12 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from '../../../cli/services/agent-spawner';
-import { addHistoryEntry, readGroups, readHistory } from '../../../cli/services/storage';
+import {
+	addHistoryEntry,
+	readGroups,
+	readHarnessTierDefaults,
+	readHistory,
+} from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { getCliTaskSelectionBlock } from '../../../cli/services/prompt-loader';
@@ -143,6 +149,8 @@ describe('batch-processor', () => {
 		]);
 		// By default, no persisted history so reconciliation is a no-op.
 		vi.mocked(readHistory).mockReturnValue([]);
+		// By default, no harness tier defaults: a tier resolves to the built-in table.
+		vi.mocked(readHarnessTierDefaults).mockReturnValue({});
 		// By default, return 0 tasks to prevent infinite loops
 		vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '', taskCount: 0 });
 		vi.mocked(readDocAndGetTasks).mockReturnValue({ content: '', tasks: [] });
@@ -2179,6 +2187,60 @@ describe('batch-processor', () => {
 			expect(resolution?.model).toBe('opus');
 			expect(resolution?.effort).toBe('max');
 			expect(resolution?.warnings).toEqual([]);
+		});
+
+		it('resolves a tier through the harness default, then the agent, before the built-in table', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				'claude-code': { high: { type: 'provider-model', model: 'opus[1m]' } },
+			});
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus[1m]');
+			expect(events.find((e) => e.type === 'model_resolution')?.notes).toEqual([
+				'tier="high" (document) -> model opus[1m] on the provider (Harness default)',
+			]);
+
+			// The agent's own target wins over the harness default.
+			vi.mocked(spawnAgent).mockClear();
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+			await collectEvents(
+				runPlaybook(
+					mockSession({
+						toolType: 'claude-code',
+						customModel: 'sonnet',
+						tierTargets: { high: { type: 'provider-model', model: 'opus' } },
+					}),
+					mockPlaybook(),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus');
+		});
+
+		it('fails the task by name, without a spawn, when the tier target cannot be used', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="low" -->\n- [ ] Task one');
+
+			// A malformed target must never run on the agent's own model instead.
+			const session = mockSession({
+				toolType: 'claude-code',
+				customModel: 'sonnet',
+				tierTargets: { low: { type: 'source' } as never },
+			});
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			const task = events.find((e) => e.type === 'task_complete');
+			expect(task?.success).toBe(false);
+			expect(task?.fullResponse).toContain('This agent\'s "low" tier target cannot be used');
+			const warnings = events.find((e) => e.type === 'model_resolution')?.warnings as string[];
+			expect(warnings).toHaveLength(1);
 		});
 
 		it('falls back to the agent model AND warns when the provider has no tier mapping', async () => {

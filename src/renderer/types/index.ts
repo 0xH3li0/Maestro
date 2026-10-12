@@ -65,6 +65,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { RunOnTarget } from '../../shared/local-models/run-on';
+import type { TierTargets } from '../../shared/modelTiers';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1638,6 +1639,11 @@ export interface Session {
 	// provider's own model; a source target points the same harness at a model on
 	// a Local Models source at launch. See shared/local-models/run-on.ts.
 	runOn?: RunOnTarget;
+	// Tier targets: where a turn that asks for a model tier launches for this
+	// agent (a provider model or a Run on target). An absent tier follows the
+	// harness default, then the built-in table. See resolveTierTarget in
+	// shared/modelTiers.ts.
+	tierTargets?: TierTargets;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

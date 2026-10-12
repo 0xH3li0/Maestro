@@ -132,6 +132,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// model while its parent runs on a local one would spend money the user
 		// chose not to spend.
 		runOn: params.parentSession.runOn,
+		// And the same tier targets, for the same reason: a `low` task the parent
+		// sends to a local model must not reach the cloud from its worktree.
+		tierTargets: params.parentSession.tierTargets,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,

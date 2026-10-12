@@ -33,6 +33,15 @@
 
 import type { ToolType } from './types';
 import { FALLBACK_CONTEXT_WINDOW, getModelContextWindowOverride } from './agentConstants';
+import { isValidAgentId, type AgentId } from './agentIds';
+import { getAgentDisplayName } from './agentMetadata';
+import {
+	agentRunOnSupport,
+	parseRunOnTarget,
+	runOnTargetLabel,
+	storedRunOnNamesSource,
+	type RunOnTarget,
+} from './local-models/run-on';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -161,13 +170,320 @@ export function staleCodexTierModels(
 }
 
 /**
- * The model for a tier on this provider, or `undefined` when Maestro has no
- * opinion. `undefined` means "fall back to the agent's configured model" - the
- * caller is expected to report that it did, so the author learns their hint had
- * no effect rather than silently getting the wrong model.
+ * The BUILT-IN model for a tier on this provider, or `undefined` when Maestro
+ * has no opinion. `undefined` means "fall back to the agent's configured
+ * model" - the caller is expected to report that it did, so the author learns
+ * their hint had no effect rather than silently getting the wrong model.
+ *
+ * This is the table alone. A launch that acts on a tier goes through
+ * {@link resolveTierTarget}, which reads the agent's own targets and the
+ * harness defaults first. Call this only where the provider's own model for a
+ * tier is the question (the cheap synopsis turn, a label, the Suggest rules).
  */
 export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | undefined {
 	return TIER_MODELS[toolType]?.[tier];
+}
+
+/**
+ * Where one tier launches: a model on the harness's own provider, or a Run on
+ * target (`shared/local-models/run-on.ts`).
+ *
+ *   - `provider-model` with a `model`: the provider, on that model.
+ *   - `provider-model` with no `model`, or `provider`: the provider, on the
+ *     agent's own configured model. The tier names where, not which.
+ *   - `source`: the same harness pointed at a model on a Local Models source.
+ */
+export type TierTarget = { type: 'provider-model'; model?: string } | RunOnTarget;
+
+/** One layer's targets. Sparse: an absent tier falls through to the next layer. */
+export type TierTargets = Partial<Record<ModelTier, TierTarget>>;
+
+/** The persisted `harnessTierDefaults` setting: only what the user changed. */
+export type HarnessTierDefaults = Partial<Record<AgentId, TierTargets>>;
+
+/** The layer a tier's target came from. Shown wherever a tier is shown. */
+export type TierTargetSource = 'agent' | 'harness-default' | 'built-in';
+
+/** A layer's name for a person: beside a picker, in a note, in a refusal. */
+export const TIER_TARGET_SOURCE_LABELS: Readonly<Record<TierTargetSource, string>> = Object.freeze({
+	agent: 'Agent',
+	'harness-default': 'Harness default',
+	'built-in': 'Built-in',
+});
+
+export type TierTargetParse = { ok: true; target: TierTarget } | { ok: false; error: string };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read one stored target and put it in the form that is stored: trimmed, with
+ * no unknown keys. A source goes through `parseRunOnTarget`, so a tier cannot
+ * hold a source a Run on launch would refuse as malformed.
+ */
+export function parseTierTarget(value: unknown): TierTargetParse {
+	if (!isPlainObject(value)) {
+		return { ok: false, error: 'A tier target is an object with a type.' };
+	}
+	if (value.type === 'provider-model') {
+		if (value.model === undefined || value.model === null) {
+			return { ok: true, target: { type: 'provider-model' } };
+		}
+		if (typeof value.model !== 'string') {
+			return { ok: false, error: "A tier target's model is text." };
+		}
+		const model = value.model.trim();
+		return {
+			ok: true,
+			target: model === '' ? { type: 'provider-model' } : { type: 'provider-model', model },
+		};
+	}
+	if (value.type !== 'provider' && value.type !== 'source') {
+		return {
+			ok: false,
+			error: 'A tier target is a provider model, "provider", or a source and a model.',
+		};
+	}
+	return parseRunOnTarget(value);
+}
+
+/**
+ * One layer's entries as stored, with the keys that are not tiers dropped. An
+ * entry is NOT checked here: {@link resolveTierTarget} reads it at launch and
+ * refuses a malformed one by name. Dropping it instead would let that tier fall
+ * through to the next layer, which is a silent substitution.
+ */
+function readTierTargets(value: unknown): TierTargets {
+	if (!isPlainObject(value)) return {};
+	const targets: TierTargets = {};
+	for (const tier of TIER_LEVELS) {
+		const entry = value[tier];
+		if (entry !== undefined && entry !== null) targets[tier] = entry as TierTarget;
+	}
+	return targets;
+}
+
+/**
+ * Read the persisted `harnessTierDefaults` setting. Every reader (the settings
+ * store, the main process, the CLI) goes through it, so the desktop and CLI
+ * Auto Run engines see the same table. Anything that is not a plain object
+ * reads as empty (the built-in table), a key that is not a harness is dropped,
+ * and a harness with no tier set is dropped so the record stays sparse. The
+ * targets themselves are kept as stored (see {@link readTierTargets}).
+ */
+export function parseHarnessTierDefaults(value: unknown): HarnessTierDefaults {
+	if (!isPlainObject(value)) return {};
+	const defaults: HarnessTierDefaults = {};
+	for (const [harness, row] of Object.entries(value)) {
+		if (!isValidAgentId(harness)) continue;
+		const targets = readTierTargets(row);
+		if (Object.keys(targets).length > 0) defaults[harness] = targets;
+	}
+	return defaults;
+}
+
+/**
+ * The layers a tier is resolved against, beside the harness: what a caller
+ * that resolves a tier before a launch hands over. Absent means the built-in
+ * table alone.
+ */
+export interface TierRouting {
+	/** The agent's own targets (`tierTargets` on its record). */
+	tierTargets?: TierTargets | null;
+	/** The agent's own Run on target (`runOn` on its record), as stored. */
+	runOn?: unknown;
+	/** The `harnessTierDefaults` setting. */
+	harnessDefaults?: HarnessTierDefaults | null;
+}
+
+/** The parts of an agent a tier is resolved against. Read as data, not trusted. */
+export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runOn'> {
+	/** The agent's harness, e.g. `claude-code`. */
+	toolType: ToolType;
+}
+
+/**
+ * Why a tier named no usable target.
+ *
+ *   - `tier-unmapped`: no layer names a target for this tier.
+ *   - `tier-agent-runs-on-source`: only the built-in table names one, and the
+ *     agent runs on a Local Models source. The table names the provider's cloud
+ *     models; applying it would send the turn where the user chose not to.
+ *   - `tier-invalid-target`: the layer's stored target is malformed.
+ *   - `tier-unsupported-source`: the target is a source, and this harness has
+ *     no Run on recipe.
+ */
+export type TierTargetRefusalCode =
+	| 'tier-unmapped'
+	| 'tier-agent-runs-on-source'
+	| 'tier-invalid-target'
+	| 'tier-unsupported-source';
+
+export interface TierTargetRefusal {
+	kind: 'refused';
+	code: TierTargetRefusalCode;
+	message: string;
+	/**
+	 * `false`: the tier simply does not apply, so the turn runs on the agent's
+	 * own model and target and `message` is the warning to show. `true`: a layer
+	 * named a target that cannot be used, so the turn must not launch at all.
+	 */
+	blocksLaunch: boolean;
+}
+
+export interface ResolvedTierTarget {
+	kind: 'resolved';
+	target: TierTarget;
+	source: TierTargetSource;
+}
+
+export type TierTargetResolution = ResolvedTierTarget | TierTargetRefusal;
+
+/**
+ * The target a tier launches on for this agent, and the layer it came from.
+ *
+ * Layer order, first one that sets the tier wins: the agent's own
+ * `tierTargets`, the `harnessTierDefaults` setting for its harness, then the
+ * built-in table ({@link resolveTierModel}). A group is not a layer: its
+ * targets are stamped into the agent's own when the agent is created.
+ *
+ * A layer that sets the tier to something unusable REFUSES. It does not fall
+ * through: the next layer's target is a different model than the one the user
+ * picked. The built-in table is the one layer the user did not write, so it is
+ * the one layer that does not apply to an agent whose Run on target is a
+ * source.
+ *
+ * Only the target's shape and the harness's Run on recipe are checked here.
+ * Whether the source exists, is enabled and serves the model needs the saved
+ * sources and the network, which `resolveRunOnLaunch` and the main process
+ * decide at launch.
+ */
+export function resolveTierTarget(
+	agent: TierTargetAgent,
+	tier: ModelTier,
+	harnessDefaults?: HarnessTierDefaults | null
+): TierTargetResolution {
+	const { toolType } = agent;
+	const layers: Array<[TierTargetSource, unknown]> = [
+		['agent', readTierTargets(agent.tierTargets)[tier]],
+		[
+			'harness-default',
+			readTierTargets(
+				isPlainObject(harnessDefaults)
+					? (harnessDefaults as Record<string, unknown>)[toolType]
+					: undefined
+			)[tier],
+		],
+	];
+
+	for (const [source, stored] of layers) {
+		if (stored === undefined) continue;
+		const where =
+			source === 'agent'
+				? `This agent's "${tier}" tier target`
+				: `The ${getAgentDisplayName(toolType)} harness default for the "${tier}" tier`;
+		const parsed = parseTierTarget(stored);
+		if (!parsed.ok) {
+			return {
+				kind: 'refused',
+				code: 'tier-invalid-target',
+				message: `${where} cannot be used: ${parsed.error} Pick a target again, or clear it.`,
+				blocksLaunch: true,
+			};
+		}
+		if (parsed.target.type === 'source') {
+			const support = agentRunOnSupport(toolType);
+			if (!support.supported) {
+				return {
+					kind: 'refused',
+					code: 'tier-unsupported-source',
+					message: `${where} is ${runOnTargetLabel(parsed.target, [])}, which this harness cannot run on. ${support.reason} Set the tier to a provider model, or clear it.`,
+					blocksLaunch: true,
+				};
+			}
+		}
+		return { kind: 'resolved', target: parsed.target, source };
+	}
+
+	const builtIn = resolveTierModel(toolType, tier);
+	if (!builtIn) {
+		return {
+			kind: 'refused',
+			code: 'tier-unmapped',
+			message: supportsTierSelection(toolType)
+				? `No "${tier}" tier model is mapped for ${toolType}; using the agent's configured model.`
+				: `${toolType} has no model tier mapping, so tier="${tier}" was ignored; using the agent's configured model.`,
+			blocksLaunch: false,
+		};
+	}
+	if (storedRunOnNamesSource(agent.runOn)) {
+		return {
+			kind: 'refused',
+			code: 'tier-agent-runs-on-source',
+			message: `tier="${tier}" is ${builtIn} on ${getAgentDisplayName(toolType)}'s own models (${TIER_TARGET_SOURCE_LABELS['built-in']}), and this agent runs on a Local Models source, so the tier was ignored; using the agent's Run on target. Set the tier on the agent or in the harness default to send it elsewhere.`,
+			blocksLaunch: false,
+		};
+	}
+	return {
+		kind: 'resolved',
+		target: { type: 'provider-model', model: builtIn },
+		source: 'built-in',
+	};
+}
+
+/**
+ * What a resolved target does to one launch: the model it runs, and where,
+ * when the target decides where. `runOn` absent means the agent's own Run on
+ * target stands, which is the built-in table's case (it only applies to an
+ * agent that is on its provider already). Shared by the join that launches a
+ * task (`resolveTurnSettings`) and the one that splits a document where the
+ * settings change (`countTasksUnderActiveHint`), so the two cannot disagree.
+ */
+export function tierTargetLaunch(
+	resolved: ResolvedTierTarget,
+	agentModel?: string
+): { model: string | undefined; runOn?: RunOnTarget } {
+	const { target, source } = resolved;
+	if (target.type === 'source') return { model: target.model, runOn: target };
+	const model = target.type === 'provider-model' ? (target.model ?? agentModel) : agentModel;
+	return source === 'built-in' ? { model } : { model, runOn: { type: 'provider' } };
+}
+
+/**
+ * One launch's model and place as a comparable string: two tasks with the same
+ * key run under the same settings. `tier` is the tier the task asked for, or
+ * `undefined` for none (the agent's own model and target). A tier that does not
+ * apply reads as none, which is what its launch does; a tier that is refused
+ * gets a key of its own, so its tasks are not folded into a dispatch that runs.
+ */
+export function tierLaunchKey(
+	toolType: ToolType,
+	tier: ModelTier | undefined,
+	agentModel?: string,
+	routing?: TierRouting
+): string {
+	let launch: { model: string | undefined; runOn?: RunOnTarget } = { model: agentModel };
+	if (tier) {
+		const resolved = resolveTierTarget(
+			{ toolType, tierTargets: routing?.tierTargets, runOn: routing?.runOn },
+			tier,
+			routing?.harnessDefaults
+		);
+		if (resolved.kind === 'resolved') launch = tierTargetLaunch(resolved, agentModel);
+		else if (resolved.blocksLaunch) return `refused:${tier}:${resolved.code}`;
+	}
+	// The place a launch runs is the tier's, else the agent's own, so a tier
+	// that names the place the agent is already on does not read as a change.
+	const own = parseRunOnTarget(routing?.runOn);
+	const place = launch.runOn ?? (own.ok ? own.target : undefined);
+	const where =
+		place === undefined
+			? 'invalid'
+			: place.type === 'source'
+				? `${place.endpointId}\u0000${place.model}\u0000${place.contextTokens ?? ''}`
+				: '';
+	return `${launch.model ?? ''}\u0000${where}`;
 }
 
 /**

@@ -9,10 +9,11 @@ import {
 	readDocAndGetTasks,
 	uncheckAllTasks,
 	writeDoc,
+	type AgentResult,
 } from './agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
 import { requestCliSynopsis } from './synopsis';
-import { addHistoryEntry, readGroups, readHistory } from './storage';
+import { addHistoryEntry, readGroups, readHarnessTierDefaults, readHistory } from './storage';
 import {
 	aggregateAutoRunHistoryTotals,
 	mergeFinalSummaryTotals,
@@ -30,6 +31,7 @@ import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/autorunModelHints';
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
+import type { TierRouting } from '../../shared/modelTiers';
 
 // Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
 // both share it and draw a pill for a marker that would block the next run.
@@ -560,16 +562,25 @@ export async function* runPlaybook(
 					// as a literal placeholder in step 2 of the default prompt. The
 					// agent was being handed a template, not an instruction.
 					const rawBasePrompt = playbook.prompt || (await getCliPrompt(PROMPT_IDS.AUTORUN_DEFAULT));
-					// Same content and baseline the model hint is resolved from below, so
-					// the boundary the prompt names and the settings the run uses cannot
-					// disagree.
+					// Where a tier launches for this agent: its own tier targets, then the
+					// harness defaults. Read per dispatch, like the hint, so a change made
+					// while the run is going applies to the next task.
+					const tierRouting: TierRouting = {
+						tierTargets: session.tierTargets,
+						runOn: session.runOn,
+						harnessDefaults: readHarnessTierDefaults(),
+					};
+					// Same content, baseline and routing the model hint is resolved from
+					// below, so the boundary the prompt names and the settings the run
+					// uses cannot disagree.
 					const hintSegment = ignoreModelHints
 						? undefined
 						: countTasksUnderActiveHint(
 								expandedDocContent,
 								session.toolType,
 								runModel ?? session.customModel,
-								runEffort ?? session.customEffort
+								runEffort ?? session.customEffort,
+								tierRouting
 							);
 					const selectionBlock = await getCliTaskSelectionBlock(
 						playbook.taskSelectionMode,
@@ -618,7 +629,8 @@ export async function* runPlaybook(
 						session.toolType,
 						ignoreModelHints ? null : findActiveModelHint(expandedDocContent),
 						runModel ?? session.customModel,
-						runEffort ?? session.customEffort
+						runEffort ?? session.customEffort,
+						tierRouting
 					);
 					// Its own event type rather than `verbose`: a hint that could not be
 					// honored has to reach the operator whether or not they passed
@@ -638,37 +650,42 @@ export async function* runPlaybook(
 						};
 					}
 
-					const result = await captureCliRun(
-						{
-							agentId: session.id,
-							sessionId: session.id,
-							toolType: session.toolType,
-							cwd: session.cwd,
-							prompt: finalPrompt,
-							source: 'cli:autorun',
-						},
-						() =>
-							spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-								customModel: turnSettings.model,
-								customEffort: turnSettings.effort,
-								customArgs: session.customArgs,
-								additionalDirectories: session.additionalDirectories,
-								customEnvVars: session.customEnvVars,
-								gatewayUrl: session.gatewayUrl,
-								runOn: session.runOn,
-								sshRemoteConfig: session.sessionSshRemoteConfig,
-								appendSystemPrompt: playbookSystemPrompt,
-								// This is Auto Run, not someone typing. Marks the turn so delegation
-								// reporting downstream of the spawn does not count it as hands-on work.
-								querySource: 'auto',
-								// Honor the agent's Claude token source for Auto Run task turns.
-								enableMaestroP: session.enableMaestroP,
-								maestroPMode: session.maestroPMode,
-								maestroPPath: session.maestroPPath,
-								signal,
-							}),
-						settlementFromAgentResult
-					);
+					// A tier target that cannot be used fails the task by name. It is
+					// never launched on the agent's own model in its place.
+					const tierRefusal = turnSettings.refusal;
+					const result: AgentResult = tierRefusal
+						? { success: false, error: tierRefusal.message }
+						: await captureCliRun(
+								{
+									agentId: session.id,
+									sessionId: session.id,
+									toolType: session.toolType,
+									cwd: session.cwd,
+									prompt: finalPrompt,
+									source: 'cli:autorun',
+								},
+								() =>
+									spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+										customModel: turnSettings.model,
+										customEffort: turnSettings.effort,
+										customArgs: session.customArgs,
+										additionalDirectories: session.additionalDirectories,
+										customEnvVars: session.customEnvVars,
+										gatewayUrl: session.gatewayUrl,
+										runOn: session.runOn,
+										sshRemoteConfig: session.sessionSshRemoteConfig,
+										appendSystemPrompt: playbookSystemPrompt,
+										// This is Auto Run, not someone typing. Marks the turn so delegation
+										// reporting downstream of the spawn does not count it as hands-on work.
+										querySource: 'auto',
+										// Honor the agent's Claude token source for Auto Run task turns.
+										enableMaestroP: session.enableMaestroP,
+										maestroPMode: session.maestroPMode,
+										maestroPPath: session.maestroPPath,
+										signal,
+									}),
+								settlementFromAgentResult
+							);
 
 					const elapsedMs = Date.now() - taskStartTime;
 

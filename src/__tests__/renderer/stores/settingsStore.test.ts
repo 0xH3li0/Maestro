@@ -96,6 +96,7 @@ function resetStore() {
 		mediaModelDirectory: '',
 		shellArgs: '',
 		shellEnvVars: {},
+		harnessTierDefaults: {},
 		ghPath: '',
 		fontFamily: MAESTRO_FONT_STACK,
 		fontSize: 14,
@@ -366,6 +367,22 @@ describe('settingsStore', () => {
 					'localModelAssignments',
 					assignments
 				);
+			});
+
+			it('setHarnessTierDefaults stores the sparse form and persists it', () => {
+				const local = {
+					type: 'source' as const,
+					endpointId: 'maestro-server',
+					model: 'qwen3.5-4b',
+				};
+				useSettingsStore.getState().setHarnessTierDefaults({
+					'claude-code': { low: local },
+					// A harness left with no tier set is not kept.
+					codex: {},
+				});
+				const stored = { 'claude-code': { low: local } };
+				expect(useSettingsStore.getState().harnessTierDefaults).toEqual(stored);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('harnessTierDefaults', stored);
 			});
 
 			it('setLocalModelsDownloadBase normalizes, persists, and reads default back to Hugging Face', () => {
@@ -1986,6 +2003,34 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		describe('harnessTierDefaults', () => {
+			it('starts on the built-in table', () => {
+				expect(useSettingsStore.getState().harnessTierDefaults).toEqual({});
+			});
+
+			it('hydrates known harnesses and tiers, and keeps a malformed target for the launch to refuse', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					harnessTierDefaults: {
+						'claude-code': {
+							low: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+							high: { type: 'source' },
+							ultra: { type: 'provider-model', model: 'opus' },
+						},
+						'not-a-harness': { low: { type: 'provider-model', model: 'x' } },
+					},
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().harnessTierDefaults).toEqual({
+					'claude-code': {
+						low: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+						high: { type: 'source' },
+					},
+				});
+			});
+		});
+
 		describe('localModelAssignments', () => {
 			it('drops unusable entries and keeps the Utility Agent default for an existing install', async () => {
 				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({

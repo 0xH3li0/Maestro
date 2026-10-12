@@ -50,6 +50,7 @@ import {
 	parseLocalModelAssignments,
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
+import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
 import {
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
@@ -382,6 +383,12 @@ export interface SettingsStoreState
 	 */
 	localModelAssignments: LocalModelAssignments;
 	/**
+	 * Where each harness launches a model tier for an agent that does not set
+	 * the tier itself. Sparse: an absent tier uses the built-in table. Read
+	 * through `resolveTierTarget()`; see shared/modelTiers.ts.
+	 */
+	harnessTierDefaults: HarnessTierDefaults;
+	/**
 	 * Where model files are downloaded from: Hugging Face, or a mirror of it for
 	 * networks that block it. Always a valid base (the default when unset); see
 	 * shared/local-models/download-base.ts.
@@ -543,6 +550,7 @@ export interface SettingsStoreActions
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
 	setLocalModelAssignments: (value: LocalModelAssignments) => void;
+	setHarnessTierDefaults: (value: HarnessTierDefaults) => void;
 	setLocalModelsDownloadBase: (value: string) => void;
 	setSemanticIndexCue: (value: boolean) => void;
 	setGhPath: (value: string) => void;
@@ -800,6 +808,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVarsDisabled: {},
 		localModelEndpoints: [],
 		localModelAssignments: {},
+		harnessTierDefaults: {},
 		localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
 		semanticIndexCue: false,
 		ghPath: '',
@@ -965,6 +974,14 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setLocalModelAssignments: (value) => {
 			set({ localModelAssignments: value });
 			window.maestro.settings.set('localModelAssignments', value);
+		},
+
+		setHarnessTierDefaults: (value) => {
+			// Stored in the one form every reader parses, so a harness left with no
+			// tier set is dropped and the record stays sparse.
+			const defaults = parseHarnessTierDefaults(value);
+			set({ harnessTierDefaults: defaults });
+			window.maestro.settings.set('harnessTierDefaults', defaults);
 		},
 
 		setLocalModelsDownloadBase: (value) => {
@@ -2105,6 +2122,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.localModelAssignments = parseLocalModelAssignments(
 				allSettings['localModelAssignments']
 			);
+
+		if (allSettings['harnessTierDefaults'] !== undefined)
+			patch.harnessTierDefaults = parseHarnessTierDefaults(allSettings['harnessTierDefaults']);
 
 		if (allSettings['localModelsDownloadBase'] !== undefined)
 			patch.localModelsDownloadBase = resolveDownloadBase(allSettings['localModelsDownloadBase']);

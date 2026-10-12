@@ -380,6 +380,87 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.warnings.join(' ')).toContain('hihg');
 		expect(resolved.effort).toBeUndefined();
 	});
+
+	describe('tier targets', () => {
+		const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+		const hintFor = (tier: string) =>
+			findActiveModelHint(`<!-- MAESTRO:MODEL tier="${tier}" -->\n- [ ] x`);
+
+		it('says which layer a built-in tier came from and leaves the place alone', () => {
+			const resolved = resolveTurnSettings('claude-code', hintFor('high'), 'sonnet', 'medium');
+			expect(resolved.model).toBe('opus');
+			expect(resolved.tierSource).toBe('built-in');
+			expect(resolved.runOn).toBeUndefined();
+			expect(resolved.refusal).toBeUndefined();
+			expect(resolved.notes).toEqual(['tier="high" (document) -> model opus (Built-in)']);
+		});
+
+		it('launches a low task on a local source and a high task on the provider', () => {
+			const routing = {
+				tierTargets: { low: LOCAL },
+				harnessDefaults: {
+					'claude-code': { high: { type: 'provider-model' as const, model: 'opus[1m]' } },
+				},
+			};
+			const low = resolveTurnSettings('claude-code', hintFor('low'), 'sonnet', 'medium', routing);
+			expect(low).toMatchObject({ model: 'qwen3.5-4b', runOn: LOCAL, tierSource: 'agent' });
+			expect(low.notes).toEqual([
+				'tier="low" (document) -> model qwen3.5-4b on source maestro-server (Agent)',
+			]);
+
+			const high = resolveTurnSettings('claude-code', hintFor('high'), 'sonnet', 'medium', routing);
+			expect(high).toMatchObject({
+				model: 'opus[1m]',
+				runOn: { type: 'provider' },
+				tierSource: 'harness-default',
+			});
+			expect(high.notes).toEqual([
+				'tier="high" (document) -> model opus[1m] on the provider (Harness default)',
+			]);
+			// Effort is a separate axis and is untouched by where the tier launches.
+			expect(low.effort).toBe('medium');
+		});
+
+		it('resolves a tier on a provider with no built-in table through its harness default', () => {
+			const resolved = resolveTurnSettings('opencode', hintFor('low'), 'big', undefined, {
+				harnessDefaults: {
+					opencode: { low: { type: 'provider-model', model: 'ollama/qwen3:8b' } },
+				},
+			});
+			expect(resolved.model).toBe('ollama/qwen3:8b');
+			expect(resolved.warnings).toEqual([]);
+		});
+
+		it('refuses a target that cannot be used instead of running on the agent model', () => {
+			const resolved = resolveTurnSettings('claude-code', hintFor('low'), 'sonnet', 'medium', {
+				tierTargets: { low: { type: 'source' } as never },
+			});
+			expect(resolved.refusal).toMatchObject({ code: 'tier-invalid-target' });
+			expect(resolved.warnings).toEqual([resolved.refusal?.message]);
+			expect(resolved.runOn).toBeUndefined();
+			expect(resolved.tierSource).toBeUndefined();
+		});
+
+		it('warns, without a refusal, when the built-in tier meets an agent on a source', () => {
+			const resolved = resolveTurnSettings('claude-code', hintFor('high'), 'sonnet', 'medium', {
+				runOn: LOCAL,
+			});
+			expect(resolved.model).toBe('sonnet');
+			expect(resolved.runOn).toBeUndefined();
+			expect(resolved.refusal).toBeUndefined();
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain('Run on target');
+		});
+
+		it('does not consult the layers for tier="default" or no tier', () => {
+			const routing = { tierTargets: { low: { type: 'source' } as never } };
+			for (const hint of [null, hintFor('default')]) {
+				const resolved = resolveTurnSettings('claude-code', hint, 'sonnet', 'medium', routing);
+				expect(resolved).toMatchObject({ model: 'sonnet', warnings: [] });
+				expect(resolved.refusal).toBeUndefined();
+			}
+		});
+	});
 });
 
 describe('countTasksUnderActiveHint', () => {
@@ -455,6 +536,43 @@ describe('countTasksUnderActiveHint', () => {
 
 	it('reports nothing for a document with no unchecked tasks', () => {
 		expect(countTasksUnderActiveHint('- [x] done', 'claude-code')).toEqual({ count: 0, total: 0 });
+	});
+});
+
+describe('countTasksUnderActiveHint with tier targets', () => {
+	const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+	const content = [
+		'- [ ] one <!-- MAESTRO:MODEL tier="low" -->',
+		'- [ ] two <!-- MAESTRO:MODEL tier="low" -->',
+		'- [ ] three <!-- MAESTRO:MODEL tier="high" -->',
+	].join('\n');
+
+	it('splits where the target changes on a provider with no built-in table', () => {
+		// Without routing both tiers run on the agent's own model: one segment.
+		expect(countTasksUnderActiveHint(content, 'opencode', 'big')).toEqual({ count: 3, total: 3 });
+		expect(
+			countTasksUnderActiveHint(content, 'opencode', 'big', undefined, {
+				harnessDefaults: { opencode: { low: LOCAL } },
+			})
+		).toEqual({ count: 2, total: 3 });
+	});
+
+	it('does not split when a tier names the model and place the agent already has', () => {
+		const sameAsAgent = ['- [ ] one <!-- MAESTRO:MODEL tier="medium" -->', '- [ ] two'].join('\n');
+		expect(
+			countTasksUnderActiveHint(sameAsAgent, 'claude-code', 'sonnet', undefined, {
+				tierTargets: { medium: { type: 'provider-model', model: 'sonnet' } },
+			})
+		).toEqual({ count: 2, total: 2 });
+	});
+
+	it('keeps a refused tier out of a dispatch that runs', () => {
+		const mixed = ['- [ ] one', '- [ ] two <!-- MAESTRO:MODEL tier="low" -->'].join('\n');
+		expect(
+			countTasksUnderActiveHint(mixed, 'claude-code', 'sonnet', undefined, {
+				tierTargets: { low: { type: 'source' } as never },
+			})
+		).toEqual({ count: 1, total: 2 });
 	});
 });
 

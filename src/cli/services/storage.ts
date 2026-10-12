@@ -27,6 +27,7 @@ import {
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
 import { setUserLocalModels } from '../../shared/local-models/model-catalog';
+import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
 import {
 	USER_LOCAL_MODELS_FILE,
 	parseUserLocalModels,
@@ -765,6 +766,15 @@ export function readLocalModelAssignments(): LocalModelAssignments {
 /** Write the assignments back; the settings watcher reloads every window. */
 export function writeLocalModelAssignments(assignments: LocalModelAssignments): void {
 	writeSettingValue('localModelAssignments', assignments);
+}
+
+/**
+ * Read the harness tier defaults (Settings -> Models -> Tier defaults), through
+ * the parser the desktop reads them with, so a CLI Auto Run resolves a tier to
+ * the same target the desktop does.
+ */
+export function readHarnessTierDefaults(): HarnessTierDefaults {
+	return parseHarnessTierDefaults(readSettings().harnessTierDefaults);
 }
 
 /**
