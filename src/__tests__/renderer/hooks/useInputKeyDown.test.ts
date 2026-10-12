@@ -63,6 +63,7 @@ import {
 	STEER_SEND_EVENT,
 	steerNewestQueuedMessage,
 } from '../../../renderer/services/chatSteering';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 
 // The empty-draft steer is a service; assert the routing, not the steer.
 vi.mock('../../../renderer/services/chatSteering', async (importOriginal) => ({
@@ -1235,6 +1236,63 @@ describe('Steer Running Turn shortcut', () => {
 		expect(e.preventDefault).toHaveBeenCalled();
 		expect(steerNewestQueuedMessage).toHaveBeenCalledWith('session-1', 'tab-7');
 		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	it('treats staged images as a draft, never steering an older message instead', () => {
+		// A steer does not ask first and cannot be taken back, so an image-only
+		// draft must go down the send path (which then says images cannot steer).
+		setActiveSession({
+			inputMode: 'ai',
+			activeTabId: 'tab-7',
+			aiTabs: [{ id: 'tab-7', stagedImages: ['data:image/png;base64,AA'] }],
+		});
+		const deps = createMockDeps({ inputValue: '' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any)
+			);
+		});
+
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { steer: true });
+		expect(steerNewestQueuedMessage).not.toHaveBeenCalled();
+	});
+
+	it('does nothing while a group chat covers the agent', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useGroupChatStore.setState({ activeGroupChatId: 'room-1' } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+
+		try {
+			act(() => {
+				window.dispatchEvent(new CustomEvent(STEER_SEND_EVENT));
+			});
+			expect(deps.processInput).not.toHaveBeenCalled();
+			expect(steerNewestQueuedMessage).not.toHaveBeenCalled();
+		} finally {
+			useGroupChatStore.setState({ activeGroupChatId: null } as any);
+		}
+	});
+
+	it('ignores the chord while an IME is composing', () => {
+		setActiveSession({ inputMode: 'ai' });
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', {
+					metaKey: true,
+					altKey: true,
+					code: 'Enter',
+					nativeEvent: { isComposing: true },
+				} as any)
+			);
+		});
+
+		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { steer: true });
 	});
 
 	it('needs no feature flag, unlike Forced Parallel Send', () => {

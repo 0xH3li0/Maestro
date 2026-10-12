@@ -485,7 +485,7 @@ A queued item carries a **Force Send** button that dispatches that message immed
 
 ### Steer
 
-While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images, an `@mention`, or a leading `/` or `!` is not steerable and sends normally when the turn ends.
+While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images or an `@mention` is not steerable and sends normally when the turn ends. The same holds on Claude Code for a message that starts with `/` or `!`, which its editor would read as a command.
 
 `Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
 

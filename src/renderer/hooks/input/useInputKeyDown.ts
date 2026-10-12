@@ -33,6 +33,7 @@ import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../utils/useEventListener';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 
 /**
  * Window event that runs Forced Parallel Send from outside the composer.
@@ -183,13 +184,24 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	 * running turn as usual and then steers that item, so a message that cannot be
 	 * steered is still queued rather than lost. With an empty draft, steer the
 	 * newest queued message on this tab. No confirmation, matching the Steer button.
+	 *
+	 * Staged images count as a draft even with no text. Force Send can treat an
+	 * image-only draft as empty because it asks before sending the queued item; a
+	 * steer does not ask and cannot be taken back, so it must never pick an older
+	 * message while the user is looking at one they have not sent.
 	 */
 	const runSteerSend = useCallback(() => {
+		// A group chat covers the agent without changing which agent is active, so
+		// this would act on a draft and a queue the user cannot see.
+		if (useGroupChatStore.getState().activeGroupChatId) return;
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode !== 'ai') return;
 
 		trackShortcutUsage('steerSend');
-		if (getInputValue().trim().length === 0) {
+		const stagedImageCount =
+			activeSession.aiTabs?.find((tab) => tab.id === activeSession.activeTabId)?.stagedImages
+				?.length ?? 0;
+		if (getInputValue().trim().length === 0 && stagedImageCount === 0) {
 			void steerNewestQueuedMessage(activeSession.id, activeSession.activeTabId);
 			return;
 		}
@@ -496,8 +508,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Steer Running Turn. Checked ahead of the Enter rules because its default
 			// chord contains Enter, and they would read it as a plain send. Not inside
 			// the Enter guard, so a rebind to any other key still works here.
+			// Skipped mid-composition: an IME confirms a candidate with Enter, and a
+			// steer of the half-composed text cannot be taken back.
 			if (
 				activeSession?.inputMode === 'ai' &&
+				!e.nativeEvent?.isComposing &&
 				eventMatchesShortcutKeys(e, settings.shortcuts.steerSend?.keys)
 			) {
 				e.preventDefault();

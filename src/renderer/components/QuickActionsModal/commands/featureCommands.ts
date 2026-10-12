@@ -3,6 +3,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
 import { requestSteerSend } from '../../../services/chatSteering';
+import { useGroupChatStore } from '../../../stores/groupChatStore';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -228,7 +229,8 @@ export function buildFeatureCommands({
 		// Listed for every AI-mode agent rather than only a steerable one, for the
 		// same reason as the entry above: the service says why a steer cannot run
 		// (wrong transport, nothing queued), which a hidden entry never could.
-		if (activeSession.inputMode === 'ai') {
+		// Not offered over a group chat, which covers the agent this would act on.
+		if (activeSession.inputMode === 'ai' && !useGroupChatStore.getState().activeGroupChatId) {
 			commands.push({
 				id: 'steerSend',
 				label: 'Steer Running Turn',
