@@ -370,6 +370,7 @@ export interface SettingsStoreState
 	forcedParallelAlways: boolean;
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
+	crossAgentHandoffsWritable: boolean;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -499,6 +500,7 @@ export interface SettingsStoreActions
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setForcedParallelAlways: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -738,6 +740,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		forcedParallelAcknowledged: false,
 		forcedParallelAlways: false,
 		crossAgentMentionsWritable: false,
+		crossAgentHandoffsWritable: true,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -917,6 +920,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCrossAgentMentionsWritable: (value) => {
 			set({ crossAgentMentionsWritable: value });
 			window.maestro.settings.set('crossAgentMentionsWritable', value);
+		},
+
+		setCrossAgentHandoffsWritable: (value) => {
+			set({ crossAgentHandoffsWritable: value });
+			window.maestro.settings.set('crossAgentHandoffsWritable', value);
 		},
 
 		setDefaultSaveToHistory: (value) => {
@@ -1994,6 +2002,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['crossAgentMentionsWritable'] !== undefined)
 			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
+		if (allSettings['crossAgentHandoffsWritable'] !== undefined)
+			patch.crossAgentHandoffsWritable = allSettings['crossAgentHandoffsWritable'] as boolean;
 
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
