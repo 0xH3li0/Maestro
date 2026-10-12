@@ -200,3 +200,24 @@ describe('diagram viewer', () => {
 		expect(window.maestro.quickChat.window).not.toHaveBeenCalledWith('hide');
 	});
 });
+
+describe('working indicator', () => {
+	it('counts up from the turn start', async () => {
+		await renderWith(
+			snapshot({
+				busy: true,
+				busySince: Date.now() - 5000,
+				messages: [{ id: 'm', role: 'user', text: 'hi' }],
+			})
+		);
+		expect(screen.getByText(/^Working for 5s$/)).toBeTruthy();
+	});
+
+	it('says Working without a frozen 0s when the start is unknown', async () => {
+		await renderWith(
+			snapshot({ busy: true, busySince: null, messages: [{ id: 'm', role: 'user', text: 'hi' }] })
+		);
+		expect(screen.getByText('Working…')).toBeTruthy();
+		expect(screen.queryByText(/Working for/)).toBeNull();
+	});
+});

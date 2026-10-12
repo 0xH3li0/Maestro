@@ -578,7 +578,10 @@ function QuickChatWindow() {
 					))}
 					{snapshot.busy && (
 						<div className="text-sm" style={{ color: c.textDim }}>
-							Working for {formatDurationHuman(elapsed * 1000)}
+							{/* No known start: say so rather than freeze a "0s" that never moves. */}
+							{snapshot.busySince === null
+								? 'Working…'
+								: `Working for ${formatDurationHuman(elapsed * 1000)}`}
 						</div>
 					)}
 				</div>
