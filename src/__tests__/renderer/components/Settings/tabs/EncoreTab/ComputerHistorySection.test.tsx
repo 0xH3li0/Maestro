@@ -9,13 +9,15 @@ import { mockTheme } from '../../../../../helpers/mockTheme';
 
 function makeApi(
 	platform: 'macos' | 'linux' | 'windows',
-	helperStatus: Record<string, unknown> | null
+	helperStatus: Record<string, unknown> | null,
+	appAccessibility: 'granted' | 'denied' | null = platform === 'macos' ? 'denied' : null
 ) {
 	const config = defaultComputerHistoryConfig();
 	return {
 		status: vi.fn(async () => ({
 			enabled: true,
 			running: true,
+			appAccessibility,
 			state: 'blocked',
 			storeDir: '/data/computer-history',
 			platform,
@@ -88,6 +90,20 @@ describe('ComputerHistorySection', () => {
 		render(<ComputerHistorySection theme={mockTheme} />);
 		fireEvent.click(await screen.findByText('Request Accessibility access'));
 		await waitFor(() => expect(api.requestAccessibility).toHaveBeenCalled());
+	});
+
+	it("macOS without a helper: the button reflects Maestro's own grant", async () => {
+		const denied = makeApi('macos', null, 'denied');
+		install(denied);
+		const { unmount } = render(<ComputerHistorySection theme={mockTheme} />);
+		expect(await screen.findByText('Request Accessibility access')).toBeTruthy();
+		unmount();
+
+		const granted = makeApi('macos', null, 'granted');
+		install(granted);
+		render(<ComputerHistorySection theme={mockTheme} />);
+		expect(await screen.findByText('Accessibility access is granted.')).toBeTruthy();
+		expect(screen.queryByText('Request Accessibility access')).toBeNull();
 	});
 
 	it('Linux: turning on accessibility asks for consent first', async () => {

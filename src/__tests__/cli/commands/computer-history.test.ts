@@ -174,6 +174,21 @@ describe('reads (from disk)', () => {
 		expect(output()).toMatch(/Recorder:\s+recording/);
 	});
 
+	it("status falls back to Maestro's own Accessibility grant when no helper reported", async () => {
+		vi.mocked(isCliServerRunning).mockReturnValue(true);
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			status: {
+				state: 'binary-missing',
+				helper: { state: 'binary-missing' },
+				helperStatus: null,
+				appAccessibility: 'granted',
+			},
+		});
+		await computerHistoryStatus({});
+		expect(output()).toMatch(/Permission:\s+granted/);
+	});
+
 	it('config with no flags prints defaults from disk', async () => {
 		await computerHistoryConfig({ json: true });
 		expect(lastJson()).toMatchObject({ config: { retentionDays: 90, snapshots: true } });

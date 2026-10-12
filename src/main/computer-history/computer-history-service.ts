@@ -111,6 +111,8 @@ export interface ComputerHistoryServiceDeps {
 	now?: () => number;
 	/** macOS: `systemPreferences.isTrustedAccessibilityClient(prompt)`. */
 	isMacAccessibilityTrusted?: (prompt: boolean) => boolean;
+	/** macOS: open System Settings > Privacy & Security > Accessibility. */
+	openMacAccessibilitySettings?: () => Promise<void>;
 	/** Maestro's own process ids (main + renderers); never recorded. */
 	getBlockPids?: () => number[];
 	onStatusChange?: (status: ComputerHistoryStatus) => void;
@@ -397,12 +399,19 @@ export class ComputerHistoryService {
 			pausedUntil: config.pausedUntil,
 			helper: this.supervisor.status(),
 			helperStatus: this.helperStatus,
+			appAccessibility: this.appAccessibility(),
 			eventsStored: this.eventsStored,
 			eventsDropped: this.eventsDropped,
 			lastEventAt: this.lastEventAt,
 			currentSegment: this.writer.currentInfo(),
 			digests: this.digests.status(),
 		};
+	}
+
+	private appAccessibility(): ComputerHistoryStatus['appAccessibility'] {
+		const check = this.deps.isMacAccessibilityTrusted;
+		if (this.platform !== 'macos' || !check) return null;
+		return check(false) ? 'granted' : 'denied';
 	}
 
 	digestStatus(): DigestStatus {
@@ -704,13 +713,23 @@ export class ComputerHistoryService {
 		}
 		if (this.platform === 'macos') {
 			const check = this.deps.isMacAccessibilityTrusted;
-			if (check?.(false)) return { platform: 'macos', outcome: 'granted' };
+			if (check?.(false)) {
+				return {
+					platform: 'macos',
+					outcome: 'granted',
+					detail: 'Maestro already has Accessibility access; the recorder uses it.',
+				};
+			}
+			// macOS shows its own dialog only the first time an app asks; after the
+			// user dismisses it, or when a stale entry exists, asking again does
+			// nothing. Opening the pane gives a visible next step either way.
 			check?.(true);
+			await this.deps.openMacAccessibilitySettings?.();
 			return {
 				platform: 'macos',
 				outcome: 'prompted',
 				detail:
-					'macOS opened System Settings > Privacy & Security > Accessibility. Turn Maestro on there; recording starts on its own within a few seconds.',
+					'Turn Maestro on in System Settings > Privacy & Security > Accessibility. If Maestro is listed but already on, remove it with the minus button and add it again. Recording starts on its own within a few seconds.',
 			};
 		}
 		if (!this.supervisor.send({ cmd: 'enable-accessibility' })) {
