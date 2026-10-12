@@ -29,9 +29,9 @@ The tab has five inner tabs. Maestro remembers the one you used last.
 
 One rule sorts every task. If its output is a **judgment** (a decision, label, score, vector, or transcript), it is **System One**: fast, small, and cheap to run often. If its output is **text written for someone to read or run**, it is **System Two**.
 
-| System One                                                                                                           | System Two                                                                      |
-| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Cue gate, Prompt-injection screen, Secret screen, Voice routing, Tab cleanup suggestions, Semantic search, Dictation | Tab naming, Summaries, AI command mode, Git drafts, Spoken notices, Token proxy |
+| System One                                                                                                                          | System Two                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Cue gate, Prompt-injection screen, Secret screen, Voice routing, Model routing, Tab cleanup suggestions, Semantic search, Dictation | Tab naming, Summaries, AI command mode, Git drafts, Spoken notices, Token proxy |
 
 A task's assignment row sits on the inner tab of its system. Every message in Maestro that says where to pick a model for a task names that inner tab, for example "Settings > Models > System One".
 
@@ -205,6 +205,7 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 | Dictation               | One    | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                          |
 | Spoken notices          | Two    | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).             |
 | Voice routing           | One    | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                                       |
+| Model routing           | One    | Embeddings or text generation      | Off           | Decides how much model and effort a turn needs, for an agent on Auto. See [Model routing and Auto](#model-routing-and-auto).    |
 | Token proxy             | Two    | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                                  |
 | Local judge             | One    | Text generation                    | Off           | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated. |
 
@@ -297,7 +298,7 @@ A task uses it for a decision it must make fast and often. The Cue gate is the f
 
 Do not confuse this with [System One and System Two](#system-one-and-system-two), the rule that sorts tasks onto two tabs. That rule says which tab a task's row sits on. This section is about the **engine** that can answer for the rows on the System One tab.
 
-System One is **off** until you choose an engine. Only a task that asks typed questions is offered System One, which today means the Cue gate. Every other task keeps the sources in [Assignments](#assignments).
+System One is **off** until you choose an engine. Only a task that asks typed questions is offered System One: the six in [The tasks System One answers](#the-tasks-system-one-answers). Every other task keeps the sources in [Assignments](#assignments).
 
 ### System One engines
 
@@ -346,6 +347,26 @@ A key is write-only. Maestro stores it sealed with your operating system's key s
 
 The last two are read-only fallbacks for Jev. An OpenJev server is only ever sent a key stored for it, so your TypeSafe key never goes to somebody else's machine. If a stored key cannot be opened (a reset key store, a file from another computer), Maestro says so and sends nothing. It does not fall through to another source. **Replace** or **Clear** is your call.
 
+### The tasks System One answers
+
+Six tasks can run on System One. Each asks its question in a fixed shape and keeps the thresholds and the output it had when a model answered, so nothing downstream can tell which engine decided except the [ledger](#the-decision-ledger) and the engine's name in the reason.
+
+| Task                        | What it asks                                                                                              | When there is no answer                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Cue gate**                | Yes or no: should this run proceed? About the gate's condition and the event                              | The [fail policy](#when-there-is-no-answer), `open` by default |
+| **Prompt-injection screen** | Yes or no: does this text hold instructions aimed at an AI agent? It reads the whole text, uncut          | The fail policy, `closed` by default                           |
+| **Secret screen**           | Yes or no: is there a credential here a pattern would miss? Extra coverage only                           | A note. It never blocks: the pattern scan already ran          |
+| **Tab cleanup**             | One pick per tab: close, snooze or keep. Each tab's facts are in its own question                         | The run fails with the reason. Nothing is suggested            |
+| **Voice routing**           | Which agent, which tab, and is it clear. Picked by id, never by position in a list                        | Refused by name. The Brain is not asked to route instead       |
+| **Model routing**           | How much model and how much effort, as two ratings. See [Model routing and Auto](#model-routing-and-auto) | The turn runs at the agent's default. Not an error             |
+
+Four things hold for all of them:
+
+- **A secret never reaches an engine.** Every request is redacted on its way out. The secret screen's question says a `[REDACTED_...]` marker is not a finding, so an engine only adds coverage for what no pattern has a shape for.
+- **The injection screen's fail policy only tightens Cue's rule.** `closed` blocks every action when the engine gives no answer. `open` leaves Cue's own rule in place, and under that rule a command is still blocked. One consequence: with System One on the default policy, a prompt subscription is blocked while Jev is down, where the classifier path lets it through with a warning.
+- **Voice routing on System One is for command mode.** An engine writes no sentence, so a turn in which the Conductor may talk back stays with the Brain. The Brain also still writes everything spoken, and a new tab gets no suggested name. The assignment fills no Brain slot: the Voice Providers panel says who routes, beside the Brain picker.
+- **Tab cleanup shows an engine's reason as a composed line**, for example "Jev (TypeSafe cloud) chose close, 87% likely." An engine does not write a sentence.
+
 ### Giving a task to System One
 
 A task's source picker offers **System One (Jev)**, **System One (OpenJev)** or **System One (local judge)** when the task asks typed questions and an engine is chosen. The assignment names no engine. The engine in force answers for every task, and the label says which one that is. If you switch the engine off, a task left on System One shows **System One (no engine chosen)**.
@@ -365,7 +386,7 @@ An engine can fail: no key, a timeout, a server that is down, a request that is 
 | **Open**   | The work goes ahead, unchecked | Cue gate                |
 | **Closed** | The work stops                 | Prompt-injection screen |
 
-A task with no default policy has none to apply: it reports "unavailable", and its caller decides what no answer means. The injection screen's default is recorded now, ahead of the day it takes typed questions. Change a policy in the column, or with `maestro-cli s1 set fail-policy`.
+A task with no default policy has none to apply: it reports "unavailable", and its caller decides what no answer means. Model routing is one: a turn with no decision runs at the agent's default. Change a policy in the column, or with `maestro-cli s1 set fail-policy`.
 
 Two rules hold for every task:
 
@@ -524,6 +545,7 @@ maestro-cli s1 key clear [--engine jev-cloud|openjev]
 maestro-cli s1 test [--json]                     # one fixed question: answer, latency, engine
 maestro-cli s1 ledger [--task <task-id>] [--outcome <outcome>] [--since 2h] [--limit <n>] [--json]
 maestro-cli s1 usage [--agent <id>] [--since 7d] [--json]      # what agents spent
+maestro-cli s1 route "<prompt>" [--agent <id>] [--correct <tier>] [--json]   # a dry run of the model router (see Model routing and Auto)
 ```
 
 `s1 status` exits non-zero when the engine in force cannot answer as set up (no key, no URL, no judge model). Off is not a failure. `s1 test` exits non-zero when no answer came back. For the local judge, `--model` takes a source (`local:<model-id>` or `endpoint:<endpoint>:<model>`) and assigns it to the **Local judge** task, the same as `maestro-cli models assign local-judge <source>`. `--since` accepts `30m`, `2h`, `1d`, `1w`, an ISO-8601 time, or an epoch.
@@ -765,7 +787,7 @@ A value the harness no longer lists is flagged on its row, with the model **Sugg
 
 ### What it covers
 
-Tiers apply to Auto Run (in the app and from `maestro-cli`) and to Cue subscriptions. Tab naming, summaries and context grooming are not tiered: they ask for the provider's own cheap model and run on the agent's own target. `maestro-cli send` takes no `--tier`.
+Tiers apply to Auto Run (in the app and from `maestro-cli`) and to Cue subscriptions, and to a turn on [Auto](#model-routing-and-auto), where a router picks the tier for you. Tab naming, summaries and context grooming are not tiered: they ask for the provider's own cheap model and run on the agent's own target. `maestro-cli send` takes no `--tier`; `--model auto` asks the router for one.
 
 ### From the command line
 
@@ -783,6 +805,133 @@ maestro-cli show agent <agent-id> --json                  # tiers: value, spelli
 ```
 
 A target is written `default`, `provider`, `provider:<model>` or `<source id>:<model>`. The source id ends at the first colon. `--tier` is repeatable and changes only the tiers it names. `models tiers set` and `reset` write at once; the table in Settings writes on **Save**.
+
+## Model routing and Auto
+
+**Auto** is a model choice that lets Maestro decide how much model a turn needs. Set an agent's model to Auto. When you send, a fast **router** rates the request and the turn launches on the [tier](#tiers) it chose, at the effort it chose. A lookup runs on a small model. A hard design problem runs on the largest.
+
+Auto does two jobs, and each needs a setting:
+
+| Job                                | Where it is set                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Which router rates the request** | One global choice: **Settings -> Models -> System One -> Model routing**. Off by default         |
+| **What each tier runs on**         | The agent's [tier map](#per-agent), the [harness default](#tier-defaults), or the built-in table |
+
+Model routing works fully offline. Jev is one router among several, never a requirement.
+
+### The routers
+
+The **Model routing** row takes one source, and the source names the router:
+
+| Router               | Source you pick                                          | How it decides                                                                                               | Calibrated           |
+| -------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------- |
+| **Embedding router** | An installed embedding model                             | Embeds the request, and its 5 nearest labeled requests vote on the tier and the effort. No text is generated | No                   |
+| **Local judge**      | A text model, or any model on an endpoint                | Answers two rating questions, one for the tier and one for the effort                                        | No                   |
+| **System One**       | **System One (Jev)**, **(OpenJev)** or **(local judge)** | The engine in force answers the same two questions                                                           | Jev and OpenJev only |
+
+The picker lists the local routers first and says beside each one which router it is and whether it is calibrated. System One appears only while an [engine](#system-one-engines) is chosen. A model on an endpoint is always used as a local judge, because an endpoint does not say what kind of model it serves.
+
+The embedding router also learns from you. `maestro-cli s1 route "<prompt>" --correct <tier>` records the tier you say that request needs, and a request like it votes that way from then on. The corrections are kept on this computer.
+
+#### How well they decide
+
+Measured on 2026-10-12 (Apple M5 Max) over 40 hand-labeled coding requests: 13 `low`, 13 `medium` and 14 `high`. A router that answers one level for everything is right on 14 of 40.
+
+| Router                                | Right on the tier | Typical time (p50)                      | Inside the 400 ms a typed send waits | Cost per 1,000 decisions |
+| ------------------------------------- | ----------------- | --------------------------------------- | ------------------------------------ | ------------------------ |
+| Jev                                   | 39 of 40          | 123 ms                                  | 40 of 40                             | $0.02                    |
+| Embedding router, EmbeddingGemma 300M | 26 of 40          | 21 ms, on the CPU                       | 40 of 40                             | $0                       |
+| Embedding router, BGE Small           | 24 of 40          | 4 ms, on the CPU                        | 40 of 40                             | $0                       |
+| Local judge, Qwen3.5 4B               | 22 to 25 of 40    | 0.5 to 1 s with a GPU, 3.8 s on the CPU | 0 to 3 of 40                         | $0                       |
+
+What that means:
+
+- **Jev is the only router that agrees with careful labels**, and it answers inside a typed send's wait every time. It sends the request text to TypeSafe.
+- **The embedding router is fast on any computer and right about six times in ten.** It misses in both directions, so it sometimes gives a hard request a small model. Corrections improve it for the requests you make.
+- **The Qwen3.5 4B judge leans towards more model**, which is safe but costs more. On this Mac it answers in about a second, too slow for a typed send, so typed turns read **Auto (no decision)** and run at the agent's default. It suits turns nobody is typing at (Auto Run, Cue, `maestro-cli send`), which wait 5 seconds.
+- **Qwen3 1.7B is not offered for model routing.** It rated every one of the 40 requests as needing the most model. An assignment you make anyway is honored, and `maestro-cli models assign` says why it is not recommended.
+
+A vote margin of 0.5 or more was right 79 to 100% of the time, but only 15 to 30% of requests reached it, so Maestro applies no confidence floor. The labels are one person's, and 40 requests cannot tell the two embedding models apart.
+
+### Where Auto is offered
+
+Maestro offers **Auto** only where it would change something. Its tooltip names the axes it acts on and which router decides, for example "Auto: picks effort; map tiers in the Models tab to also pick the model."
+
+| Harness             | Picks the model                                             | Picks the effort |
+| ------------------- | ----------------------------------------------------------- | ---------------- |
+| Claude Code         | Yes (haiku, sonnet, opus)                                   | Yes              |
+| Codex               | Yes (Luna, Sol, Astra)                                      | Yes              |
+| Factory Droid       | Yes                                                         | Yes              |
+| Copilot CLI         | Only through a tier map: the agent's or the harness default | Yes              |
+| OpenCode and others | Only through a tier map: the agent's or the harness default | No               |
+
+If neither axis is true, Auto is not in the list. It is in these places, and nowhere else:
+
+- The **Provider** tab of **New Agent** and **Edit Agent**. Mapping a tier on the **Models** tab makes Auto appear before you save.
+- The composer's model pill, and its phone sheet.
+- The **Model and Effort** console.
+- The queued-message editor.
+
+The Group Chat moderator, the wizard and the agent creation dialog do not offer it, because their turns are never routed.
+
+If the router is off and an agent is on Auto, the agent runs at its default and its pill says **Auto (router off)**. That is not an error.
+
+### The three rules
+
+1. **The model is kept while the provider's cache is warm.** Inside a live session, Auto may change the effort on every turn but changes the model only at a session start, or after the session has been idle for more than 5 minutes (the provider's prompt-cache lifetime). Switching models mid-session throws the cache away and costs more than it saves. The router's tier is still recorded, and the pill says **(kept)**.
+2. **A send never waits and never fails on the router.** The router has 400 ms for a typed message and 5 seconds for a turn nobody is typing at. With no decision (router off, too slow, not ready, down), the turn runs on the agent's default: no model is named, so your provider setting and then the harness default apply, and the agent's own effort stays. A model kept by rule 1 is still kept.
+3. **The choice is locked at send.** What the router said is stored with the turn and shown on its pill. A message queued behind a busy agent is routed when it is queued, not when it starts. Editing its text asks the router again. Resending a failed turn keeps the answer.
+
+A tier that names a target that cannot run fails the turn by name. It does not fall through to another model.
+
+### What Auto routes
+
+| Surface                                  | What happens                                                                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A message you type                       | Routed in the moment before the turn starts. Your message appears at once                                                                                            |
+| A message queued behind a busy agent     | Routed when queued                                                                                                                                                   |
+| An [Auto Run](./autorun-playbooks) task  | Each dispatch is routed on the text of the tasks it will work, not on the playbook's instructions. A `MAESTRO:MODEL` marker always wins on the axis it sets          |
+| A [Cue](./maestro-cue-configuration) run | Only when the subscription says `model: auto`. An agent on Auto whose subscription does not opt in runs its Cue turns at its default. A subscription's `effort` wins |
+| `maestro-cli send --model auto`          | Routed through the desktop. With no desktop running, there is no decision                                                                                            |
+
+A group chat turn, an `@mention` answer, a History synopsis and tab naming are never routed. They run the agent on its default.
+
+### What the pills mean
+
+A finished turn shows one pill in the model pill's place. Hover it for one sentence on who decided and what was done with the answer.
+
+| Pill                                  | Meaning                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Auto → medium · sonnet**            | The router chose `medium`, and the turn ran on `sonnet`                              |
+| **Auto → low · qwen3.5-4b · Maestro** | The tier is mapped to a model on a source, and the pill names where it ran           |
+| **Auto → haiku (kept)**               | Rule 1: the session was warm, so the turn kept `haiku`. The effort was still applied |
+| **Auto (router off)**                 | The Model routing task is off. The turn ran at the agent's default                   |
+| **Auto (no decision)**                | A router was asked and gave none in time, or could not run. The tooltip says why     |
+| **Auto**                              | A queued message the router has not answered yet                                     |
+
+A routed queued message shows no effort pill until it starts, because the effort it will run at is the router's.
+
+### From the command line
+
+```bash
+maestro-cli models assign model-routing local:<embedding-model-id>      # the embedding router
+maestro-cli models assign model-routing local:<text-model-id>           # a local judge
+maestro-cli models assign model-routing endpoint:<endpoint>:<model>     # a judge on an endpoint
+maestro-cli models assign model-routing system-one                      # the System One engine in force
+maestro-cli models assign model-routing off
+
+maestro-cli update-agent <agent-id> --model auto       # as the Provider tab's picker; refused where Auto would change nothing
+maestro-cli tab model <tab-id> auto                    # the composer's choice, for one tab
+maestro-cli send <agent> "<message>" --model auto      # route this one turn
+maestro-cli s1 route "<prompt>" [--agent <id>] [--json]  # a dry run: tier, effort, router, latency. Sends nothing
+maestro-cli s1 route "<prompt>" --correct <tier>         # teach the embedding router
+```
+
+`send --model` takes any model name, and `auto` routes. The JSON a `send` on Auto prints carries an `auto` field with the same label and sentence as the pill. `s1 route` exits 0 on a decision, 6 when the router is off and 7 when a router was asked and gave none. A dry run waits up to 5 seconds, flags an answer slower than 400 ms (`withinSendTimeout: false`), and is kept in the [decision ledger](#the-decision-ledger).
+
+### Privacy
+
+The router reads the request you are sending and the last user message and last assistant message, each cut to 600 characters after secrets are replaced. It never reads the whole transcript. The embedding router reads the request alone. A local router keeps all of it on this computer. With Jev it goes to TypeSafe, and with OpenJev to the server you named. Every routing is one row in the [decision ledger](#the-decision-ledger) under the task `model-routing`.
 
 ## Gateway
 
@@ -917,6 +1066,8 @@ An agent set to [Run on](#run-on) a source sends it the whole conversation: your
 
 [System One](#system-one) on Jev sends the text of each request (a Cue event, for the Cue gate) to TypeSafe, and on OpenJev to the server you named. Secrets are removed first. The local judge sends it to the model assigned to the Local judge task, which is on this machine unless that task is on a remote endpoint. System One is off until you choose an engine.
 
+[Model routing](#model-routing-and-auto) reads each request an Auto agent sends, and the last message each way, cut short, to the router you chose. A local router keeps it on this computer.
+
 An agent with [tiers](#tiers) set to a source sends that source each task that asks for the tier, with the same conversation. An agent with [background requests](#background-requests) sends its target the page a web fetch read, or the text a session title is made from. Both go where you picked, and neither goes to the provider as well.
 
 ## Disk and memory
@@ -974,6 +1125,7 @@ maestro-cli models assign <task-id> utility-agent
 maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
 maestro-cli models assign cue-gate system-one    # ask the System One engine in force (a task with typed questions only)
+maestro-cli models assign model-routing local:<model-id>   # the router Auto uses (see Model routing and Auto)
 maestro-cli models status [task-id]              # would it run, and if not, why and what to do
 maestro-cli models index                         # the semantic index: state, and how much is indexed
 maestro-cli models proxy status                  # the Maestro token proxy: agents, tokens saved, added latency
