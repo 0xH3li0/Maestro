@@ -1292,7 +1292,8 @@ describe('Steer Running Turn shortcut', () => {
 			);
 		});
 
-		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { steer: true });
+		// Not steered, and not passed on to the Enter rules as a plain send either.
+		expect(deps.processInput).not.toHaveBeenCalled();
 	});
 
 	it('needs no feature flag, unlike Forced Parallel Send', () => {

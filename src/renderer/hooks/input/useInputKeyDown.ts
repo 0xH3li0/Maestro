@@ -508,13 +508,15 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Steer Running Turn. Checked ahead of the Enter rules because its default
 			// chord contains Enter, and they would read it as a plain send. Not inside
 			// the Enter guard, so a rebind to any other key still works here.
-			// Skipped mid-composition: an IME confirms a candidate with Enter, and a
-			// steer of the half-composed text cannot be taken back.
 			if (
 				activeSession?.inputMode === 'ai' &&
-				!e.nativeEvent?.isComposing &&
 				eventMatchesShortcutKeys(e, settings.shortcuts.steerSend?.keys)
 			) {
+				// Mid-composition the keystroke belongs to the IME, which confirms a
+				// candidate with Enter. Return without acting: steering the
+				// half-composed text cannot be taken back, and falling through would
+				// let the Enter rules below send it as a plain message instead.
+				if (e.nativeEvent?.isComposing) return;
 				e.preventDefault();
 				runSteerSend();
 				return;
