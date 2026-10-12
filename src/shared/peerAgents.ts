@@ -21,15 +21,19 @@
  *   3. `resolvePeerRoster` - who an agent's peers are right now. The one place
  *      the precedence between explicit rows, the group grant, and the worktree
  *      grant lives.
+ *   4. `formatPeerAgentsForPrompt` - the markdown block substituted into
+ *      `{{PEER_AGENTS}}` in the Maestro system prompt: the roster plus the
+ *      shell commands that reach it. A roster with no instructions is inert.
  *
  * Unlike an Additional Directory, an explicit row with NEITHER bit set is not
  * inert. It is an exclusion: it overrides a group or worktree grant that would
  * otherwise cover that peer. Nothing here may drop such a row.
  *
- * This module is bundled into the renderer, so it imports types only: no
- * `fs`, no `os`, nothing from Electron.
+ * This module is bundled into the renderer, so it imports nothing that reaches
+ * `fs`, `os`, or Electron.
  */
 
+import { sanitizeDescriptionCell } from './additionalDirectories';
 import type { PeerAccess, PeerAgent } from './types';
 
 /**
@@ -204,4 +208,98 @@ export function resolvePeerRoster(
 	return [...roster.values()]
 		.filter(hasAnyPeerAccess)
 		.sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
+}
+
+/** What the prompt block needs to know about the agent it is rendered for. */
+export interface PeerPromptOptions {
+	/**
+	 * The agent's own id: the `--notify-on-complete` target of a delegation.
+	 * Without it the command shows a placeholder the agent has to fill in.
+	 */
+	agentId?: string;
+	/**
+	 * How this agent invokes the CLI (the resolved `{{MAESTRO_CLI_PATH}}`).
+	 * Defaults to the bare `maestro-cli`, which is only runnable where the CLI
+	 * is on the PATH.
+	 */
+	cliCommand?: string;
+}
+
+/**
+ * Render the `{{PEER_AGENTS}}` block for the system prompt.
+ *
+ * Emits the section heading along with the table so the whole block collapses
+ * to an empty string when the agent has no peers - a bare heading with nothing
+ * under it reads to the agent like a section it failed to load.
+ *
+ * The block carries the commands as well as the roster, because the mechanism
+ * is a shell command and not a tool: a table of names alone tells the agent
+ * who it may reach and nothing about how. For the same reason the Agent ID is
+ * a column. The name is not addressable.
+ *
+ * Each how-to line renders only when at least one peer grants that access, so
+ * an agent whose peers are all consult-only is never taught the delegate
+ * command.
+ */
+export function formatPeerAgentsForPrompt(
+	peers: readonly ResolvedPeer[],
+	options: PeerPromptOptions = {}
+): string {
+	const reachable = peers.filter(hasAnyPeerAccess);
+	if (reachable.length === 0) return '';
+
+	// Only widen the table with a Notes column when at least one peer carries a
+	// description - otherwise the block stays the lean three-column table.
+	const hasNotes = reachable.some((p) => p.description?.trim());
+	const canConsult = reachable.some((p) => p.read);
+	const canDelegate = reachable.some((p) => p.write);
+
+	const rows = reachable
+		.map((p) => {
+			const cells = [sanitizeDescriptionCell(p.name), `\`${p.sessionId}\``, peerAccessLabel(p)];
+			if (hasNotes) cells.push(sanitizeDescriptionCell(p.description ?? ''));
+			return `| ${cells.join(' | ')} |`;
+		})
+		.join('\n');
+
+	const header = hasNotes
+		? '| Agent | Agent ID | Access | Notes |\n| ----- | -------- | ------ | ----- |'
+		: '| Agent | Agent ID | Access |\n| ----- | -------- | ------ |';
+
+	const cli = options.cliCommand?.trim() || 'maestro-cli';
+	const self = options.agentId?.trim() || '<your-agent-id>';
+
+	const howTo = [
+		// `--from` is left off on purpose: `ask` defaults it to the agent the
+		// shell runs under.
+		...(canConsult
+			? [
+					`- **Consult** (access includes \`Consult\`): \`${cli} ask <agent-id> "<question>"\` blocks and prints the peer's answer (add \`--json\` for JSON). It runs in the background and never touches the conversation the user has open with that peer. Use it when you need an answer to continue.`,
+				]
+			: []),
+		// `--new-tab` is required: a completion callback is correlated to one
+		// tab, so `dispatch` refuses `--notify-on-complete` without a tab.
+		...(canDelegate
+			? [
+					`- **Delegate** (access includes \`Delegate\`): \`${cli} dispatch <agent-id> "<task>" --new-tab --notify-on-complete ${self}\` hands the work to a new tab of the peer and wakes you with a turn when it finishes. Use it when you are handing off work rather than asking a question.`,
+				]
+			: []),
+		`- Decide for yourself, from ${hasNotes ? 'the Notes column and ' : ''}what you know of a peer's scope, whether it is the right one to reach. Reaching an agent that is not in the table, or exceeding the access listed for one that is, is out of bounds. Say so instead.`,
+		'- Tell the user which peer you reached and why, so a consult or a delegation never happens invisibly.',
+	].join('\n');
+
+	return `## Peer Agents
+
+The Conductor has authorized you to reach these agents on your own, without being told to in a message. The Access column is a hard rule, exactly like a directory permission:
+
+- **Consult + Delegate** - ask the peer questions and hand it work.
+- **Consult only** - ask the peer questions; never put work into it.
+- **Delegate only** - hand the peer work; never ask it a question.
+${hasNotes ? '\nThe Notes column is a hint from the Conductor on what a peer is for or when to use it; treat it as guidance, not as a change to the access rule.\n' : ''}
+${header}
+${rows}
+
+A peer is reached with a shell command, not a tool, and is addressed by its Agent ID. The name alone is not addressable.
+
+${howTo}`;
 }
