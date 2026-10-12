@@ -21,10 +21,12 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Switch agent                     | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                   |
 | Send                             | `Enter` (`Shift+Enter` for a new line)                                                                                      |
 | Open the chat in Maestro         | The arrow in the window. The chat becomes a visible tab and Maestro comes forward                                           |
+| Keep the chat as a tab           | `Cmd+B` / `Ctrl+B`, or the bookmark in the window. Press again to make it temporary                                         |
+| Pin the window on top            | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                          |
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 
-The window shows on every desktop, including over full-screen apps. While the pin in the window is on (the default), it floats above other apps. Turn the pin off and it behaves like an ordinary window: it falls behind whatever you click next, and the hotkey still brings it to the front. Maestro remembers the pin across restarts.
+The window shows on every desktop, including over full-screen apps. While the pin in the window is on (the default, toggled with `Cmd+P` / `Ctrl+P`), it floats above other apps. Turn the pin off and it behaves like an ordinary window: it falls behind whatever you click next, and the hotkey still brings it to the front. Maestro remembers the pin across restarts.
 
 Drag the grip at the top of the window (or the header, once a conversation is showing) to move it, and drag an edge or corner to resize it. Maestro remembers the size and the spot across restarts. Until you move the window yourself, it opens centered on the screen under your pointer.
 
@@ -34,7 +36,7 @@ Before your first message the window is just the composer, so only its width cha
 
 Every Quick Chat is a real AI tab on the agent you choose. It uses that agent's provider, model, working directory, SSH remote, and permissions, exactly like a tab you open yourself. The agent can be busy in another tab: your quick chat does not wait for it.
 
-A chat has one of two modes, and you can flip between them at any time with the bookmark in the window:
+A chat has one of two modes, and you can flip between them at any time with the bookmark in the window or `Cmd+B` / `Ctrl+B`:
 
 | Mode                | What happens                                                                                                                                                |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
