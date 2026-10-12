@@ -2360,34 +2360,38 @@ function SessionListInner(props: SessionListProps) {
 					{/* SHOW HIDDEN - only exists once something is actually parked, so the
 					    foot of the list stays empty for anyone not using the feature. It is
 					    the ONLY way back to a hidden group: its header is off the list, so
-					    the right-click that hid it is out of reach. */}
-					{!activeVirtualGrouping && !isSecondaryWindow && hiddenGroupCount > 0 && (
-						<div className="mt-2 px-3">
-							<button
-								type="button"
-								onClick={() => setShowHiddenGroups(!showHiddenGroups)}
-								disabled={!settingsLoaded}
-								aria-pressed={showHiddenGroups}
-								data-testid="show-hidden-groups-toggle"
-								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-default"
-								style={{
-									backgroundColor: showHiddenGroups ? theme.colors.accent + '20' : 'transparent',
-									color: showHiddenGroups ? theme.colors.accent : theme.colors.textDim,
-									border: `1px solid ${showHiddenGroups ? theme.colors.accent + '40' : theme.colors.border}`,
-								}}
-								title={
-									showHiddenGroups
-										? 'Suppress hidden groups from this list again'
-										: `Reveal ${hiddenGroupCount} hidden group${hiddenGroupCount === 1 ? '' : 's'}`
-								}
-							>
-								{showHiddenGroups ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-								<span>
-									{showHiddenGroups ? 'Hide Hidden' : 'Show Hidden'} ({hiddenGroupCount})
-								</span>
-							</button>
-						</div>
-					)}
+					    the right-click that hid it is out of reach. Suppressed while the
+					    unread filter is on, like the other list-foot controls. */}
+					{!activeVirtualGrouping &&
+						!isSecondaryWindow &&
+						!showUnreadAgentsOnly &&
+						hiddenGroupCount > 0 && (
+							<div className="mt-2 px-3">
+								<button
+									type="button"
+									onClick={() => setShowHiddenGroups(!showHiddenGroups)}
+									disabled={!settingsLoaded}
+									aria-pressed={showHiddenGroups}
+									data-testid="show-hidden-groups-toggle"
+									className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-default"
+									style={{
+										backgroundColor: showHiddenGroups ? theme.colors.accent + '20' : 'transparent',
+										color: showHiddenGroups ? theme.colors.accent : theme.colors.textDim,
+										border: `1px solid ${showHiddenGroups ? theme.colors.accent + '40' : theme.colors.border}`,
+									}}
+									title={
+										showHiddenGroups
+											? 'Suppress hidden groups from this list again'
+											: `Reveal ${hiddenGroupCount} hidden group${hiddenGroupCount === 1 ? '' : 's'}`
+									}
+								>
+									{showHiddenGroups ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+									<span>
+										{showHiddenGroups ? 'Hide Hidden' : 'Show Hidden'} ({hiddenGroupCount})
+									</span>
+								</button>
+							</div>
+						)}
 
 					{/* Flexible spacer to push group chats to bottom */}
 					<div className="flex-grow min-h-4" />

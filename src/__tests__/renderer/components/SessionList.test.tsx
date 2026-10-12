@@ -1090,6 +1090,19 @@ describe('SessionList', () => {
 			useSettingsStore.setState({ showHiddenGroups: false });
 		});
 
+		it('suppresses the Show Hidden toggle while the unread filter is on', () => {
+			const hidden = createMockGroup({ id: 'g-hidden', name: 'Parked', hidden: true });
+			const sessions = [createMockSession({ id: 's1', name: 'Parked Agent', groupId: 'g-hidden' })];
+			useSessionStore.setState({ sessions, groups: [hidden] });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+			expect(screen.queryByTestId('show-hidden-groups-toggle')).not.toBeInTheDocument();
+
+			act(() => useUIStore.setState({ showUnreadAgentsOnly: false }));
+			expect(screen.getByTestId('show-hidden-groups-toggle')).toBeInTheDocument();
+		});
+
 		it('renders a selected standard icon and label color', () => {
 			enableGroupsPlus();
 			const group = createMockGroup({
