@@ -38,7 +38,7 @@ import type { AITab, Session } from '../types';
 import { closeTab, createTab, getTabDisplayName, revealAiTab } from '../utils/tabHelpers';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
-import { nextRunnableQueueItem } from '../utils/executionQueue';
+import { nextRunnableQueueItem, spawnCollisionCooldownMs } from '../utils/executionQueue';
 import { leftBarAgentOrder } from '../utils/leftBarOrder';
 import { generateId } from '../utils/ids';
 import { captureException } from '../utils/sentry';
@@ -511,6 +511,11 @@ function isTabFreeFor(session: Session | null, tabId: string, itemId: string): b
 	if (!session || !tab || tab.state === 'busy') return false;
 	if (session.state === 'error' && session.agentError) return false;
 	if (hasPendingRetry(session.id, tabId)) return false;
+	// Its last dispatch was refused because the tab's previous process had not
+	// let go yet. A refused dispatch puts back exactly the state runFreedTurns
+	// fires on, so without this wait it would dispatch into the same refusal on
+	// every store change. The queue's own poll honours the same back-off.
+	if (spawnCollisionCooldownMs(itemId) > 0) return false;
 	const queue = session.executionQueue ?? [];
 	if (queue.some((item) => item.waitingForConnection)) return false;
 	const forTab = queue.filter((item) => item.tabId === tabId);

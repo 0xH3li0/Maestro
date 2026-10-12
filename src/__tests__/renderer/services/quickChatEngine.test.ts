@@ -29,6 +29,10 @@ import {
 	startQuickChatEngine,
 } from '../../../renderer/services/quickChatEngine';
 import { DEFAULT_QUICK_CHAT_SETTINGS, type QuickChatMessage } from '../../../shared/quickChat';
+import {
+	noteSpawnCollision,
+	resetSpawnCollisionsForTest,
+} from '../../../renderer/utils/executionQueue';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
 
 vi.mock('../../../renderer/services/agentNavigation', () => ({ jumpToAgent: vi.fn() }));
@@ -140,6 +144,7 @@ beforeEach(() => {
 afterEach(() => {
 	registerDispatchDepsProvider(null);
 	useRetryStore.setState({ retries: {}, outages: {} });
+	resetSpawnCollisionsForTest();
 });
 
 /**
@@ -492,6 +497,20 @@ describe('a queued message runs when its own tab is free', () => {
 		patchTab('b', 'b-other', () => ({ name: 'Renamed' }));
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(sent()[0].route?.status).toBe('queued');
+		expect(useAgentStore.getState().processQueuedItem).not.toHaveBeenCalled();
+		stop();
+	});
+
+	it('backs off after a refused dispatch instead of retrying on every change', async () => {
+		const stop = startQuickChatEngine();
+		await queueBehindBusyMain();
+		// The tab's previous process still owned its key, so the dispatch was
+		// refused and the message went back in the queue, runnable.
+		noteSpawnCollision(session('b').executionQueue[0].id);
+
+		patchTab('b', 'b-main', () => ({ state: 'idle' }));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(session('b').executionQueue).toHaveLength(1);
 		expect(useAgentStore.getState().processQueuedItem).not.toHaveBeenCalled();
 		stop();
 	});

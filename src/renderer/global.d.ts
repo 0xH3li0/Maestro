@@ -3120,6 +3120,7 @@ interface MaestroAPI {
 			bufferExhausted?: boolean;
 			error?: string;
 		}>;
+		profilingRunInBackground: () => Promise<{ success: boolean }>;
 		// Stop + bundle to a temp .zip without a save dialog (for feedback attach)
 		stopProfilingToFile: () => Promise<{
 			success: boolean;

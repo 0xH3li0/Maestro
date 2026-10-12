@@ -124,6 +124,7 @@ import { supportPackage } from './commands/support-package';
 import {
 	feedbackAccounts,
 	feedbackAuth,
+	feedbackDiagnose,
 	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
@@ -2764,6 +2765,14 @@ feedback
 	.option('--clear', 'Forget the remembered account and pick automatically again')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAccounts);
+
+feedback
+	.command('diagnose')
+	.description(
+		'Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackDiagnose);
 
 feedback
 	.command('search <query>')
