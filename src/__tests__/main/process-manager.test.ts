@@ -6,6 +6,7 @@
  */
 
 import * as os from 'os';
+import { EventEmitter } from 'events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock node-pty before importing process-manager (native module)
@@ -585,6 +586,68 @@ describe('process-manager.ts', () => {
 				expect(mockPtyKill).toHaveBeenCalledWith('SIGTERM');
 
 				vi.useRealTimers();
+			});
+		});
+
+		describe('interrupt() child-process escalation', () => {
+			// A real ChildProcess sets `.killed` the moment a signal is delivered, so
+			// the double mirrors that: escalation must key off an observed exit.
+			function registerChild(sessionId: string) {
+				const child = Object.assign(new EventEmitter(), {
+					pid: 4242,
+					killed: false,
+					exitCode: null as number | null,
+					signalCode: null as string | null,
+					kill: vi.fn(function (this: { killed: boolean }) {
+						this.killed = true;
+						return true;
+					}),
+				});
+				const processes = (processManager as any).processes as Map<string, any>;
+				processes.set(sessionId, {
+					sessionId,
+					toolType: 'claude-code',
+					isTerminal: false,
+					pid: 4242,
+					cwd: os.tmpdir(),
+					startTime: Date.now(),
+					childProcess: child,
+				});
+				return { child, processes };
+			}
+
+			afterEach(() => {
+				vi.useRealTimers();
+				mockIsWindows.mockImplementation(() => process.platform === 'win32');
+			});
+
+			it('escalates to kill when SIGINT was delivered but the child never exited', () => {
+				mockIsWindows.mockReturnValue(false);
+				vi.useFakeTimers();
+				const { child, processes } = registerChild('int-session');
+
+				expect(processManager.interrupt('int-session')).toBe(true);
+				expect(child.kill).toHaveBeenCalledWith('SIGINT');
+				expect(child.killed).toBe(true);
+
+				vi.advanceTimersByTime(2100);
+
+				expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+				expect(processes.has('int-session')).toBe(false);
+			});
+
+			it('does not escalate once the child has exited', () => {
+				mockIsWindows.mockReturnValue(false);
+				vi.useFakeTimers();
+				const { child, processes } = registerChild('int-session');
+
+				processManager.interrupt('int-session');
+				child.signalCode = 'SIGINT';
+				child.emit('exit', null, 'SIGINT');
+				vi.advanceTimersByTime(2100);
+
+				expect(child.kill).toHaveBeenCalledTimes(1);
+				expect(processes.has('int-session')).toBe(true);
 			});
 		});
 

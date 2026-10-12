@@ -410,12 +410,18 @@ export class ProcessManager extends EventEmitter {
 
 				// Escalate to forceful kill if the process doesn't exit promptly.
 				// Some agents (e.g., Claude Code --print) may not exit on SIGINT alone.
-				// On Windows, we don't call child.kill('SIGINT') because it's unreliable
-				// for shell-spawned processes. The .killed flag remains false, which
-				// correctly allows the escalation timer to fire.
+				// Test for an observed exit, NOT `.killed`: node sets `.killed` as soon
+				// as a signal is DELIVERED, so after the SIGINT above it was always true
+				// on macOS and Linux and this escalation never fired there.
 				const escalationTimer = setTimeout(() => {
 					const stillRunning = this.processes.get(sessionId);
-					if (stillRunning?.childProcess && !stillRunning.childProcess.killed) {
+					const stillChild = stillRunning?.childProcess;
+					if (
+						stillChild &&
+						stillChild === child &&
+						stillChild.exitCode === null &&
+						(stillChild.signalCode === null || stillChild.signalCode === undefined)
+					) {
 						logger.warn(
 							'[ProcessManager] Process did not exit after interrupt, escalating to kill',
 							'ProcessManager',

@@ -18,6 +18,7 @@ import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
+import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
@@ -590,11 +591,35 @@ export class ChildProcessSpawner {
 				// unregistered, and handleExit must settle THIS process rather than
 				// whatever currently owns the session id.
 				void this.exitHandler.handleExit(sessionId, code || 0, managedProcess).catch((err) => {
+					void captureException(err);
 					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 						sessionId,
 						error: String(err),
 					});
+					// handleExit releases the entry immediately before emitting `exit`,
+					// so an entry that is still ours means it threw before getting there.
+					// Left alone, that entry owns the tab forever: every later spawn is
+					// refused as "already running" and the renderer never learns the turn
+					// ended. Release it and report the exit so the turn settles.
+					if (this.processes.get(sessionId) === managedProcess) {
+						this.processes.delete(sessionId);
+						this.emitter.emit('exit', sessionId, code || 0);
+					}
 				});
+			});
+
+			// `close` waits on every holder of the stdio pipes, and an SSH
+			// ControlMaster or a stray grandchild can hold them long after the child
+			// itself is dead. Without this, a stopped SSH turn left its entry behind
+			// and the tab's queue hot-looped against the spawn refusal.
+			armStdioCloseWatchdog(childProcess, {
+				onForceClose: () => {
+					logger.warn(
+						'[ProcessManager] stdio still open after exit, forcing close',
+						'ProcessManager',
+						{ sessionId, pid: childProcess.pid }
+					);
+				},
 			});
 
 			// Handle errors
