@@ -42,11 +42,17 @@ import { installStopSignalHandlers, STOP_EXIT_CODES } from './stop-signals';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
+import { OpenToolCalls, skipsPermissionPrompts } from './open-tool-calls';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
 
 // Watchdog tick. Cheap; the real budget lives in args.maxWaitSeconds.
 const WATCHDOG_INTERVAL_MS = 1000;
+
+// Longest transcript silence the watchdog tolerates while a tool call runs
+// unattended. Claude bounds its own Bash calls well under this; the ceiling
+// is for a call nothing else bounds, such as a hung MCP tool.
+const OPEN_TOOL_SILENCE_CEILING_MS = 60 * 60 * 1000;
 
 // Interval between Enter re-submits while waiting for the first transcript
 // byte. send()'s initial burst all lands within ~3s; on agents that load
@@ -384,6 +390,9 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	let firstEntrySeen = false;
 	// Set once the first prompt-echo row has been compared with what we typed.
 	let promptEchoChecked = false;
+	// Tool calls claude has issued and not yet answered; see the idle watchdog.
+	const openToolCalls = new OpenToolCalls();
+	const permissionsBypassed = skipsPermissionPrompts(args.passThroughArgs);
 	const slashCommandPrompt = isSlashCommandPrompt(prompt);
 	let limitHit = false;
 	const reply = new ReplyText();
@@ -618,6 +627,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			reply.addAssistant(message);
 			addUsage(usage, message.usage);
 			emitter.emitAssistantMessage(message);
+			openToolCalls.noteAssistant(message);
 
 			// Plan/read-only mode (`--permission-mode plan`) ends the turn with an
 			// ExitPlanMode tool call that parks the TUI on a blocking approval
@@ -651,6 +661,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				graceTimer = null;
 			}
 			if (hasToolResultBlock(message)) {
+				openToolCalls.noteToolResult(message);
 				reply.addToolResult();
 				emitter.emitUserMessage(message);
 				return;
@@ -910,6 +921,14 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (finalized || !tailer) return;
 		const idleMs = Date.now() - tailer.getLastByteAt();
 		if (idleMs > args.maxWaitSeconds * 1000) {
+			// A tool still running unattended (a long `npm test`, a subagent) is
+			// expected silence, not a stall, up to the ceiling (see open-tool-calls.ts).
+			if (
+				idleMs < OPEN_TOOL_SILENCE_CEILING_MS &&
+				openToolCalls.runningUnattended(permissionsBypassed)
+			) {
+				return;
+			}
 			// Dump the screen before finalize() quits the TUI: a turn that goes
 			// silent mid-turn is parked on something (a permission prompt, a
 			// modal, a hung tool or API call), and the screen is the only record
