@@ -246,6 +246,28 @@ describe('CueSelect', () => {
 			expect(screen.getByRole('option', { name: 'Beta' })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: 'Gamma' })).toBeInTheDocument();
 		});
+
+		it('closes the filter with the pointer, restores trigger focus, and clears the query without changing selection', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			const trigger = screen.getByRole('button', { name: 'Alpha' });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			expect(screen.getByRole('option', { name: 'Beta' })).toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'Gamma' })).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Close filter (Esc)' }));
+
+			expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+			expect(trigger).toHaveFocus();
+			expect(trigger).toHaveTextContent('Alpha');
+			expect(onChange).not.toHaveBeenCalled();
+
+			fireEvent.click(trigger);
+			expect(screen.getByPlaceholderText('Filter…')).toHaveValue('');
+			expect(screen.getAllByRole('option')).toHaveLength(3);
+		});
 	});
 
 	it('forwards id and aria-label to trigger button', () => {

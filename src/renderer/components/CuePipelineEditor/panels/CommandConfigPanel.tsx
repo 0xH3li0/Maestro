@@ -117,25 +117,23 @@ export function CommandConfigPanel({
 	// Sort sessions alphabetically by name (case-insensitive) so the picker
 	// list is scannable. The leading "Select an agent…" placeholder stays
 	// pinned at the top regardless of sort order.
-	const ownerSelectOptions = useMemo(() => {
+	const { ownerSelectOptions, targetSelectOptions } = useMemo(() => {
 		const sorted = [...(sessions ?? [])].sort((a, b) =>
 			a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
 		);
-		return [
+		const ownerSelectOptions = [
 			{ value: '', label: 'Select an agent…' },
 			...sorted.map((s) => ({
 				value: s.id,
 				label: `${s.name} · ${s.toolType}`,
 			})),
 		];
+		const terminalIds = new Set(sorted.filter((s) => s.toolType === 'terminal').map((s) => s.id));
+		return {
+			ownerSelectOptions,
+			targetSelectOptions: ownerSelectOptions.filter((option) => !terminalIds.has(option.value)),
+		};
 	}, [sessions]);
-
-	const targetSelectOptions = useMemo(() => {
-		const terminalIds = new Set(
-			(sessions ?? []).filter((s) => s.toolType === 'terminal').map((s) => s.id)
-		);
-		return ownerSelectOptions.filter((option) => !terminalIds.has(option.value));
-	}, [ownerSelectOptions, sessions]);
 
 	const handleNameChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
