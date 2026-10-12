@@ -17,6 +17,7 @@ import type {
 } from '../../shared/local-models/system-one-ledger';
 import type { SystemOneAnswers } from '../../shared/local-models/system-one';
 import { SYSTEM_ONE_AGENT_SOURCE_PREFIX } from '../../shared/local-models/system-one-agent';
+import type { SystemOneAgentSpend } from '../../shared/local-models/system-one-spend';
 import { generateId, LOG_CONTEXT, StatementCache } from './utils';
 import { logger } from '../utils/logger';
 
@@ -161,18 +162,8 @@ export function getSystemOneDecisions(
 	return { entries: rows.map(toEntry), total: count?.total ?? 0 };
 }
 
-/** What one agent's own requests came to since a time. `agentId` is null for requests that named none. */
-export interface SystemOneAgentSpendRow {
-	agentId: string | null;
-	requests: number;
-	/** Requests answered from the cache: nothing was sent for them. */
-	cachedRequests: number;
-	tokensIn: number;
-	tokensOut: number;
-	costUsd: number;
-	/** Mean round trip of the requests that were sent and answered. 0 when there were none. */
-	averageLatencyMs: number;
-}
+/** What one agent's own requests came to since a time. The shape `s1 usage` reports. */
+export type SystemOneAgentSpendRow = SystemOneAgentSpend;
 
 /**
  * What agents' own requests (`agent:<verb>` rows) came to since a time, per

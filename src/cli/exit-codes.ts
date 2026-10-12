@@ -20,7 +20,25 @@ export enum ExitCode {
 	Unsupported = 4,
 	/** The app was reachable but did not respond in time. */
 	Timeout = 5,
+	/**
+	 * The app declined the request by a switch or a budget (System One is off,
+	 * or today's budget is spent). Asking again will not help; go on without it.
+	 */
+	Refused = 6,
+	/**
+	 * The request was sent to what answers it and some or all of it has no
+	 * answer: the engine failed, or a long job is incomplete.
+	 */
+	NoAnswer = 7,
 }
+
+/**
+ * What a verb that answers a question exits with for "no" (`s1 yes`), or for an
+ * answer under the confidence the caller asked for (`s1 pick`, `s1 rate`), so
+ * the verb can sit in a shell `if`. It is the number `GeneralError` has, so
+ * such a verb never reports a failure with it: its failures are 2 or more.
+ */
+export const NEGATIVE_ANSWER_EXIT_CODE = ExitCode.GeneralError;
 
 /** Exit the process with a typed code. Never returns. */
 export function exitWith(code: ExitCode): never {

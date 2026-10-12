@@ -290,6 +290,21 @@ vi.mock('../../../../main/local-models/system-one/decisions', () => ({
 import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
 
 vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
+	readSystemOneAgentUsage: vi.fn(async () => ({
+		since: 1_800_000_000_000,
+		retentionDays: 30,
+		rows: [],
+		totals: { requests: 0, cachedRequests: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 },
+		budget: {
+			dayStartedAt: 1_800_000_000_000,
+			dailyBudgetUsd: 1,
+			spentTodayUsd: 0,
+			remainingTodayUsd: 1,
+		},
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		notice: null,
+	})),
 	runAgentSystemOneRequest: vi.fn(async () => ({
 		ok: true,
 		kind: 'ask',
@@ -306,7 +321,10 @@ vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
 		redacted: false,
 	})),
 }));
-import { runAgentSystemOneRequest } from '../../../../main/local-models/system-one/agent-service';
+import {
+	readSystemOneAgentUsage,
+	runAgentSystemOneRequest,
+} from '../../../../main/local-models/system-one/agent-service';
 
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
@@ -6501,6 +6519,43 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			});
 			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-3'));
 			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith({ kind: 'batch' }, undefined);
+		});
+
+		it('system_one_usage hands the query and the caller to the service, and reports a bad query', async () => {
+			const query = { agentId: 'agent-2', since: 1_800_000_000_000 };
+			handler.handleMessage(client, {
+				type: 'system_one_usage',
+				query,
+				fromSessionId: ' agent-1 ',
+				requestId: 's1-usage-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_usage_result'));
+
+			expect(readSystemOneAgentUsage).toHaveBeenLastCalledWith(query, 'agent-1');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-usage-1',
+				report: { retentionDays: 30, engine: 'jev-cloud', rows: [] },
+			});
+
+			// A caller that names nobody: a person at a terminal.
+			handler.handleMessage(client, { type: 'system_one_usage', requestId: 's1-usage-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-usage-2'));
+			expect(readSystemOneAgentUsage).toHaveBeenLastCalledWith(undefined, undefined);
+
+			vi.mocked(readSystemOneAgentUsage).mockRejectedValueOnce(
+				new Error('since is a time in epoch milliseconds.')
+			);
+			handler.handleMessage(client, {
+				type: 'system_one_usage',
+				query: { since: 'yesterday' },
+				requestId: 's1-usage-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-usage-3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'since is a time in epoch milliseconds.',
+			});
 		});
 
 		it('system_one_agent_request carries a refusal as a successful round trip, and a bug as a failed one', async () => {

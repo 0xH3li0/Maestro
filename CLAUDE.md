@@ -81,6 +81,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
+- **Reading standard input in a CLI verb:** `readStdinText()`, `readStdinIfReady(timeoutMs?)`, `isStdinTerminal()` in `src/cli/services/stdin.ts` (never a bare `fs.readFileSync(0)` for input nobody was told to pipe)
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
@@ -384,6 +385,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Asking a System One engine a typed question:** `askSystemOne()`, `noul()`, `choice()`, `score()` in `src/main/local-models/system-one/jev-client.ts`; types in `src/shared/local-models/system-one.ts`
 - **Running a task on System One:** `runSystemOneTask()` in `src/main/local-models/task-router.ts`; `taskAcceptsSystemOne()`, `buildSystemOneTaskRequest()` in `src/shared/local-models/tasks.ts`
 - **Which key a System One engine is called with:** `resolveSystemOneKey()` in `src/main/local-models/system-one/service.ts`; `describeSystemOneKey()` in `src/shared/local-models/system-one-settings.ts`
+- **What agents' System One requests cost, and what a job would:** `readSystemOneAgentUsage()` in `src/main/local-models/system-one/agent-service.ts`; `estimateSystemOneJob()`, `formatSystemOneCost()`, `parseSystemOneUsageQuery()` in `src/shared/local-models/system-one-spend.ts`
+- **The command line of a System One verb (the `jev` flag grammar):** `readState()`, `buildQuestions()`, `collectQuestionFlags()`, `readRankCandidates()`, `readBatchRows()` in `src/cli/services/system-one-input.ts`; `registerSystemOneAgentCommands()` in `src/cli/commands/system-one-ask.ts`
 - **Versioned schema migrations for a SQLite file:** `runSqliteMigrations(db, migrations, logContext)`, `sqliteUserVersion()` in `src/main/utils/sqlite-migrations.ts` (shared by `stats.db` and `embeddings.db`; never copy the runner)
 - **Writing the A Cappella settings blob from the renderer:** `patchVoiceSettingsSection(section, patch)`, `readVoiceSettingsBlob()`, `ACAPPELLA_SETTINGS_KEY` in `src/renderer/services/voiceSettings.ts`
 - **The voice send phrases (the spoken "send it"):** `DEFAULT_SEND_PHRASES`, `parseSendPhrases()`, `formatSendPhrases()`, `isLegacyDefaultSendPhrases()` in `src/shared/acappella/voice-controls.ts`; matched by `matchSendPhrase()` in `src/main/acappella/speech/send-phrase.ts`; edited in the HUD's send panel

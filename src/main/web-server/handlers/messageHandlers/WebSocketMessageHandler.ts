@@ -127,6 +127,7 @@ import {
 	handleSystemOneSet,
 	handleSystemOneStatus,
 	handleSystemOneTest,
+	handleSystemOneUsage,
 	handleLocalModelsTaskReadiness,
 	handleLocalModelsVerify,
 	handleNotifySpeak,
@@ -907,6 +908,10 @@ export class WebSocketMessageHandler {
 
 			case 'system_one_agent_request':
 				void handleSystemOneAgentRequest(this.ctx, client, message);
+				break;
+
+			case 'system_one_usage':
+				void handleSystemOneUsage(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':

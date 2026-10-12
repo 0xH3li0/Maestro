@@ -37,8 +37,9 @@
 
 import { formatCost } from '../formatters';
 import { modelsSettingsLocation } from './settings-location';
-import type { SystemOneEngineChoice } from './system-one-settings';
+import { SYSTEM_ONE_MAX_TIMEOUT_MS, type SystemOneEngineChoice } from './system-one-settings';
 import {
+	LOCAL_JUDGE_DEFAULT_TIMEOUT_MS,
 	SYSTEM_ONE_MAX_SCORE_LEVELS,
 	SYSTEM_ONE_MIN_SCORE_LEVELS,
 	estimateSystemOneTokens,
@@ -457,6 +458,56 @@ export function parseSystemOneAgentRequest(raw: unknown): SystemOneAgentRequestP
 		default:
 			return refuse(`"${String(raw.kind)}" is not a kind of request. Use ask, rank or batch.`);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Time
+// ---------------------------------------------------------------------------
+
+/**
+ * The budget one agent request gets on Jev or OpenJev, unless the user set a
+ * longer one. The stored budget is sized for a gate: one question, about a
+ * second. An agent's request can carry 250 questions, so it gets what the `jev`
+ * CLI gives a request.
+ */
+export const SYSTEM_ONE_AGENT_TIMEOUT_MS = 30_000;
+
+/** The most one request to the local judge may take, however many questions it carries. */
+export const SYSTEM_ONE_AGENT_JUDGE_MAX_TIMEOUT_MS = 300_000;
+
+/**
+ * What a `rank` or a `batch` is allowed per item, on top of one request's
+ * budget, before the CLI stops waiting. Far above a remote engine's pace (a
+ * request every 60 ms) and about what a local judge takes to answer one
+ * question on a warm model.
+ */
+export const SYSTEM_ONE_AGENT_WAIT_PER_ITEM_MS = 1_000;
+
+/** What the round trip adds around the engine's own budget: the bridge, the cache, the ledger. */
+const SYSTEM_ONE_AGENT_WAIT_MARGIN_MS = 15_000;
+
+/**
+ * How long the CLI waits for the desktop to answer a request before it gives
+ * up. The CLI does not know which engine is in force, so this is the longest
+ * budget any of them gives one request, plus {@link
+ * SYSTEM_ONE_AGENT_WAIT_PER_ITEM_MS} for every item of a long job. A job that
+ * outlasts it is not lost: the desktop goes on, and what it answered is in the
+ * answer cache for the next run.
+ */
+export function systemOneAgentWaitMs(request: SystemOneAgentRequest): number {
+	const questions = request.kind === 'rank' ? 1 : Object.keys(request.questions).length;
+	const oneRequest = Math.max(
+		SYSTEM_ONE_MAX_TIMEOUT_MS,
+		SYSTEM_ONE_AGENT_TIMEOUT_MS,
+		Math.min(LOCAL_JUDGE_DEFAULT_TIMEOUT_MS * questions, SYSTEM_ONE_AGENT_JUDGE_MAX_TIMEOUT_MS)
+	);
+	const items =
+		request.kind === 'ask'
+			? 0
+			: request.kind === 'rank'
+				? request.candidates.length
+				: request.rows.length;
+	return oneRequest + items * SYSTEM_ONE_AGENT_WAIT_PER_ITEM_MS + SYSTEM_ONE_AGENT_WAIT_MARGIN_MS;
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ import {
 	readSystemOneLedger,
 	recordSystemOneDecision,
 	resetSystemOneLedgerForTests,
+	systemOneLedgerNotice,
 } from '../../../../main/local-models/system-one/decisions';
 import { runMigrations } from '../../../../main/stats/migrations';
 import { clearSystemOneDecisionsCache } from '../../../../main/stats/s1-decisions';
@@ -203,6 +204,23 @@ describe.skipIf(!canLoadNodeSqlite())('the System One decision ledger', () => {
 			readSystemOneLedger(undefined, now);
 
 			expect(state.pruneCalls).toEqual([now - SYSTEM_ONE_LEDGER_RETENTION_MS]);
+		});
+	});
+
+	describe('systemOneLedgerNotice', () => {
+		it('says nothing while the ledger is open and keeping records', () => {
+			expect(systemOneLedgerNotice()).toBeNull();
+		});
+
+		it('says the ledger keeps nothing new while usage statistics are off', () => {
+			state.statsEnabled = false;
+			expect(systemOneLedgerNotice()).toBe(SYSTEM_ONE_LEDGER_STATS_OFF_NOTICE);
+		});
+
+		it('says the ledger cannot be read while the database is not open, whatever else is true', () => {
+			state.ready = false;
+			state.statsEnabled = false;
+			expect(systemOneLedgerNotice()).toBe(SYSTEM_ONE_LEDGER_UNAVAILABLE_NOTICE);
 		});
 	});
 

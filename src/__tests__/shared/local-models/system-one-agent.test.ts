@@ -50,11 +50,19 @@ import {
 	systemOneRankQuestionId,
 	systemOneRankQuestionWarning,
 	systemOneRankState,
+	SYSTEM_ONE_AGENT_JUDGE_MAX_TIMEOUT_MS,
+	SYSTEM_ONE_AGENT_TIMEOUT_MS,
+	SYSTEM_ONE_AGENT_WAIT_PER_ITEM_MS,
+	systemOneAgentWaitMs,
 	type SystemOneAgentBudget,
 	type SystemOneAgentGate,
 	type SystemOneAgentRequest,
 } from '../../../shared/local-models/system-one-agent';
-import { JEV_MAX_STATE_AND_QUESTION_TOKENS } from '../../../shared/local-models/system-one';
+import {
+	JEV_MAX_STATE_AND_QUESTION_TOKENS,
+	LOCAL_JUDGE_DEFAULT_TIMEOUT_MS,
+} from '../../../shared/local-models/system-one';
+import { SYSTEM_ONE_MAX_TIMEOUT_MS } from '../../../shared/local-models/system-one-settings';
 
 function parsed(raw: unknown): SystemOneAgentRequest {
 	const result = parseSystemOneAgentRequest(raw);
@@ -531,5 +539,52 @@ describe('refusals', () => {
 		]) {
 			expect(isSystemOneOptedOut(record as never)).toBe(false);
 		}
+	});
+});
+
+describe('systemOneAgentWaitMs', () => {
+	const questions = (count: number) =>
+		Object.fromEntries(Array.from({ length: count }, (_, i) => [`q${i}`, noul(`Question ${i}?`)]));
+	const one = systemOneAgentWaitMs({
+		kind: 'ask',
+		verb: 'yes',
+		state: 'x',
+		questions: questions(1),
+	});
+
+	it('outlasts the longest budget any engine gives one request', () => {
+		// Jev at the longest timeout a user can set, and the agent budget.
+		expect(one).toBeGreaterThan(SYSTEM_ONE_MAX_TIMEOUT_MS);
+		expect(one).toBeGreaterThan(SYSTEM_ONE_AGENT_TIMEOUT_MS);
+	});
+
+	it('gives a request of many questions what the local judge may take, up to its cap', () => {
+		const five = systemOneAgentWaitMs({
+			kind: 'ask',
+			verb: 'ask',
+			state: 'x',
+			questions: questions(5),
+		});
+		expect(five - one).toBe(5 * LOCAL_JUDGE_DEFAULT_TIMEOUT_MS - SYSTEM_ONE_MAX_TIMEOUT_MS);
+
+		const many = systemOneAgentWaitMs({
+			kind: 'ask',
+			verb: 'ask',
+			state: 'x',
+			questions: questions(200),
+		});
+		expect(many - one).toBe(SYSTEM_ONE_AGENT_JUDGE_MAX_TIMEOUT_MS - SYSTEM_ONE_MAX_TIMEOUT_MS);
+	});
+
+	it('adds time for every candidate of a rank and every row of a batch', () => {
+		const candidates = Array.from({ length: 400 }, (_, i) => ({ key: String(i + 1), item: 'x' }));
+		expect(systemOneAgentWaitMs({ kind: 'rank', query: 'q', candidates })).toBe(
+			one + 400 * SYSTEM_ONE_AGENT_WAIT_PER_ITEM_MS
+		);
+
+		const rows = Array.from({ length: 50 }, (_, i) => ({ line: i + 1, state: 'x' }));
+		expect(systemOneAgentWaitMs({ kind: 'batch', rows, questions: questions(1) })).toBe(
+			one + 50 * SYSTEM_ONE_AGENT_WAIT_PER_ITEM_MS
+		);
 	});
 });

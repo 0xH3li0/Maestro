@@ -2363,7 +2363,7 @@ Put a harness back on the built-in tier table, or one tier with --tier
 
 ## `maestro-cli s1`
 
-System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, a test, and the decision ledger
+System One: ask typed questions about a text (yes, pick, rate, ask, rank, batch) and get calibrated judgments back; plus the engine that answers them (Jev, OpenJev, or a local judge), its key, a test, the decision ledger and the spend
 
 ## `maestro-cli s1 status`
 
@@ -2381,11 +2381,11 @@ Change the System One engine, its timeout, a task fail policy, or what the ledge
 
 Choose the engine: off | jev-cloud (sends task text to TypeSafe) | openjev (your server) | local-judge (a local model, not calibrated) (requires the desktop app)
 
-| Option            | Description                                                                                                                                                | Default |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--url <url>`     | The OpenJev server (openjev only)                                                                                                                          | -       |
-| `--model <model>` | jev-cloud, openjev: pin this model, or "default" to remove the pin. local-judge: the source it answers on, local:<model-id> or endpoint:<endpoint>:<model> | -       |
-| `--json`          | Output as JSON (for scripting)                                                                                                                             | -       |
+| Option            | Description                                                                                                                                                         | Default |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--url <url>`     | The OpenJev server (openjev only)                                                                                                                                   | -       |
+| `--model <model>` | jev-cloud, openjev: pin this model, or "default" to remove the pin. local-judge: the source it answers on, local:&lt;model-id> or endpoint:&lt;endpoint>:&lt;model> | -       |
+| `--json`          | Output as JSON (for scripting)                                                                                                                                      | -       |
 
 ## `maestro-cli s1 set timeout <ms>`
 
@@ -2452,6 +2452,143 @@ The decision ledger: what each System One run decided, or what its fail policy d
 | `--since <time>`      | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default: 30 days)             | -       |
 | `--limit <n>`         | At most this many decisions, 1 to 1000 (default 100)                      | -       |
 | `--json`              | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli s1 yes <question>`
+
+Ask one yes or no question about a state: prints P(yes) and yes, no or uncertain; exits 0 for yes and 1 for no, so it works in a shell if (requires the desktop app)
+
+| Option                 | Description                                                                                                               | Default |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--true <text>`        | What a yes means, when the boundary is subtle                                                                             | -       |
+| `--false <text>`       | What a no means                                                                                                           | -       |
+| `--threshold <p>`      | P(yes) at or above this is yes (default 0.5)                                                                              | -       |
+| `--band <low_high...>` | LOW HIGH: under LOW is no, HIGH and over is yes, between them is uncertain                                                | -       |
+| `-s, --state <text>`   | The text to judge; @path reads a file; - reads standard input                                                             | -       |
+| `--state-file <path>`  | A file to judge (.json is parsed, anything else is text)                                                                  | -       |
+| `--state-json <json>`  | The state as inline JSON                                                                                                  | -       |
+| `--field <key=value>`  | Build an object state, one field per flag; the value may be @path or JSON; with --state the text becomes the field "text" | `[]`    |
+| `--no-cache`           | Ask the engine even when the answer cache holds this request                                                              | -       |
+| `--timeout <seconds>`  | How long to wait for the desktop app (default: what the request can take)                                                 | -       |
+| `--json`               | Output as JSON (for scripting)                                                                                            | -       |
+
+## `maestro-cli s1 pick <question> <options>`
+
+Pick one option, each as NAME or NAME=description: prints the option, the probability of each, and confidence; exits 1 under --min-confidence (requires the desktop app)
+
+| Option                 | Description                                                                                                               | Default |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--min-confidence <p>` | Exit 1 when confidence is under this (default 0)                                                                          | -       |
+| `-s, --state <text>`   | The text to judge; @path reads a file; - reads standard input                                                             | -       |
+| `--state-file <path>`  | A file to judge (.json is parsed, anything else is text)                                                                  | -       |
+| `--state-json <json>`  | The state as inline JSON                                                                                                  | -       |
+| `--field <key=value>`  | Build an object state, one field per flag; the value may be @path or JSON; with --state the text becomes the field "text" | `[]`    |
+| `--no-cache`           | Ask the engine even when the answer cache holds this request                                                              | -       |
+| `--timeout <seconds>`  | How long to wait for the desktop app (default: what the request can take)                                                 | -       |
+| `--json`               | Output as JSON (for scripting)                                                                                            | -       |
+
+## `maestro-cli s1 rate <question> <levels>`
+
+Rate a state on a rubric of 2 to 10 levels, low to high, each describing a situation: prints the position and confidence; exits 1 under --min-confidence (requires the desktop app)
+
+| Option                 | Description                                                                                                               | Default |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--min-confidence <p>` | Exit 1 when confidence is under this (default 0)                                                                          | -       |
+| `-s, --state <text>`   | The text to judge; @path reads a file; - reads standard input                                                             | -       |
+| `--state-file <path>`  | A file to judge (.json is parsed, anything else is text)                                                                  | -       |
+| `--state-json <json>`  | The state as inline JSON                                                                                                  | -       |
+| `--field <key=value>`  | Build an object state, one field per flag; the value may be @path or JSON; with --state the text becomes the field "text" | `[]`    |
+| `--no-cache`           | Ask the engine even when the answer cache holds this request                                                              | -       |
+| `--timeout <seconds>`  | How long to wait for the desktop app (default: what the request can take)                                                 | -       |
+| `--json`               | Output as JSON (for scripting)                                                                                            | -       |
+
+## `maestro-cli s1 ask`
+
+Ask several questions about one state in one request, in any mix of --noul, --choice and --score; or pass a whole request as JSON (requires the desktop app)
+
+| Option                    | Description                                                                                                               | Default |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-f, --request <file>`    | A whole request as JSON, \{ "state": ..., "questions": \{ ... \} \}; - reads standard input                               | -       |
+| `-s, --state <text>`      | The text to judge; @path reads a file; - reads standard input                                                             | -       |
+| `--state-file <path>`     | A file to judge (.json is parsed, anything else is text)                                                                  | -       |
+| `--state-json <json>`     | The state as inline JSON                                                                                                  | -       |
+| `--field <key=value>`     | Build an object state, one field per flag; the value may be @path or JSON; with --state the text becomes the field "text" | `[]`    |
+| `--noul <args...>`        | A yes or no question: ID INSTRUCTIONS [true=...] [false=...] (repeatable)                                                 | -       |
+| `--choice <args...>`      | Pick one option: ID INSTRUCTIONS OPTION[=description] OPTION[=description] ... (repeatable)                               | -       |
+| `--score <args...>`       | Rate on a rubric: ID INSTRUCTIONS LEVEL LEVEL ... low to high, 2 to 10 levels (repeatable)                                | -       |
+| `--questions-file <path>` | A JSON file of id to question                                                                                             | -       |
+| `--questions-json <json>` | Inline JSON of id to question                                                                                             | -       |
+| `--no-cache`              | Ask the engine even when the answer cache holds this request                                                              | -       |
+| `--timeout <seconds>`     | How long to wait for the desktop app (default: what the request can take)                                                 | -       |
+| `--json`                  | Output as JSON (for scripting)                                                                                            | -       |
+
+## `maestro-cli s1 rank [candidates]`
+
+Rank or filter many candidates against a query, one question per candidate; the last line says whether every candidate was judged, and an unjudged one is unknown (requires the desktop app)
+
+| Option                     | Description                                                                                         | Default |
+| -------------------------- | --------------------------------------------------------------------------------------------------- | ------- |
+| `--query <query>`          | What is looked for: text, JSON, or @path                                                            | -       |
+| `--candidates-file <path>` | One candidate per line (keyed by line number), or a .json list or .jsonl rows                       | -       |
+| `--id-key <field>`         | The field of a JSON candidate that names it in the results (default id; else its place in the list) | -       |
+| `--instructions <text>`    | The question, naming the item `candidate` and the query `query` (default: is it relevant)           | -       |
+| `--true <text>`            | What a yes means (not with --levels)                                                                | -       |
+| `--false <text>`           | What a no means (not with --levels)                                                                 | -       |
+| `--levels <levels...>`     | Grade on a rubric, low to high, instead of yes or no                                                | -       |
+| `--context <context>`      | Shared background for every judgment: text, JSON, or @path                                          | -       |
+| `--top <n>`                | Keep the best N                                                                                     | -       |
+| `--min <p>`                | Keep results at or above this, 0 to 1                                                               | -       |
+| `--width <n>`              | Cut a candidate shown on a row at this length (default 110)                                         | -       |
+| `--echo`                   | With --json, include each candidate in its result                                                   | -       |
+| `--no-cache`               | Ask the engine even when the answer cache holds this request                                        | -       |
+| `--timeout <seconds>`      | How long to wait for the desktop app (default: what the request can take)                           | -       |
+| `--json`                   | Output as JSON (for scripting)                                                                      | -       |
+
+## `maestro-cli s1 batch`
+
+Ask the same questions of every row of a file, one request per row: prints JSONL, one answer row per input row and a last row that says whether the run finished (requires the desktop app)
+
+| Option                    | Description                                                                                 | Default |
+| ------------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| `-i, --input <file>`      | JSONL (a row is the state) or text lines; - reads standard input                            | -       |
+| `--state-key <field>`     | The field of each JSON row that is the state                                                | -       |
+| `--id-key <field>`        | The field of each JSON row echoed back as id (default id)                                   | -       |
+| `--text-lines`            | Read every line as text, even one that is JSON                                              | -       |
+| `--echo`                  | Include the state in each output row                                                        | -       |
+| `-o, --out <file>`        | Write the JSONL here and print only the summary                                             | -       |
+| `--noul <args...>`        | A yes or no question: ID INSTRUCTIONS [true=...] [false=...] (repeatable)                   | -       |
+| `--choice <args...>`      | Pick one option: ID INSTRUCTIONS OPTION[=description] OPTION[=description] ... (repeatable) | -       |
+| `--score <args...>`       | Rate on a rubric: ID INSTRUCTIONS LEVEL LEVEL ... low to high, 2 to 10 levels (repeatable)  | -       |
+| `--questions-file <path>` | A JSON file of id to question                                                               | -       |
+| `--questions-json <json>` | Inline JSON of id to question                                                               | -       |
+| `--no-cache`              | Ask the engine even when the answer cache holds this request                                | -       |
+| `--timeout <seconds>`     | How long to wait for the desktop app (default: what the request can take)                   | -       |
+| `--json`                  | Output as JSON (for scripting)                                                              | -       |
+
+## `maestro-cli s1 usage`
+
+What agents' own System One requests came to, per agent: requests, cached requests, tokens, cost and latency, with today's spend against the budget (requires the desktop app)
+
+| Option           | Description                                                   | Default |
+| ---------------- | ------------------------------------------------------------- | ------- |
+| `--agent <id>`   | Only this agent (an id or the start of one)                   | -       |
+| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default: 30 days) | -       |
+| `--json`         | Output as JSON (for scripting)                                | -       |
+
+## `maestro-cli s1 cost [state]`
+
+Estimate a request or a job before it is run: its tokens against the request limit, its requests and its price. Nothing is sent to an engine (requires the desktop app)
+
+| Option                 | Description                                                                                                               | Default |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--questions <n>`      | Questions asked of each state (default 1)                                                                                 | -       |
+| `--question-chars <n>` | Average characters of one question with its criteria (default 120)                                                        | -       |
+| `--items <n>`          | Candidates of a rank, or rows of a batch                                                                                  | -       |
+| `--per-item`           | Each item is its own request with the whole state (a batch), not packed (a rank)                                          | -       |
+| `-s, --state <text>`   | The text to judge; @path reads a file; - reads standard input                                                             | -       |
+| `--state-file <path>`  | A file to judge (.json is parsed, anything else is text)                                                                  | -       |
+| `--state-json <json>`  | The state as inline JSON                                                                                                  | -       |
+| `--field <key=value>`  | Build an object state, one field per flag; the value may be @path or JSON; with --state the text becomes the field "text" | `[]`    |
+| `--json`               | Output as JSON (for scripting)                                                                                            | -       |
 
 ## `maestro-cli models config`
 

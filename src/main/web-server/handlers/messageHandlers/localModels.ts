@@ -14,7 +14,7 @@
  * local_models_server_key, local_models_server_ensure,
  * local_models_run_on_test, local_models_tier_options, system_one_status,
  * system_one_set, system_one_key_set, system_one_key_clear, system_one_test,
- * system_one_ledger, system_one_agent_request, notify_speak.
+ * system_one_ledger, system_one_agent_request, system_one_usage, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -80,7 +80,10 @@ import {
 	testSystemOne,
 	updateSystemOneSettingsRequest,
 } from '../../../local-models/system-one/service';
-import { runAgentSystemOneRequest } from '../../../local-models/system-one/agent-service';
+import {
+	readSystemOneAgentUsage,
+	runAgentSystemOneRequest,
+} from '../../../local-models/system-one/agent-service';
 import { readSystemOneLedger } from '../../../local-models/system-one/decisions';
 import { testAgentRunOn } from '../../../local-models/run-on-test';
 import { listHarnessTierOptionsRequest } from '../../../local-models/tier-options';
@@ -665,6 +668,26 @@ export function handleSystemOneAgentRequest(
 			),
 		};
 	});
+}
+
+/**
+ * Handle system_one_usage - what agents' own requests came to, per agent, and
+ * today's spend against the budget (`maestro-cli s1 usage`). The caller is read
+ * as `system_one_agent_request` reads it, so an agent that asks sees its own
+ * count beside the day's. A query that cannot be read comes back as an error.
+ * It sends nothing to an engine and changes nothing.
+ */
+export function handleSystemOneUsage(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_usage_result', async () => ({
+		report: await readSystemOneAgentUsage(
+			message.query,
+			readCallerMessageFields(message)?.fromSessionId
+		),
+	}));
 }
 
 /**

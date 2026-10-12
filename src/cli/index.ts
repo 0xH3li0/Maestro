@@ -157,6 +157,7 @@ import {
 	systemOneStatus,
 	systemOneTest,
 } from './commands/system-one';
+import { registerSystemOneAgentCommands } from './commands/system-one-ask';
 import { modelsStatus } from './commands/models-status';
 import {
 	voiceWakeAdd,
@@ -2898,7 +2899,7 @@ modelServer
 const systemOne = program
 	.command('s1')
 	.description(
-		'System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, a test, and the decision ledger'
+		'System One: ask typed questions about a text (yes, pick, rate, ask, rank, batch) and get calibrated judgments back; plus the engine that answers them (Jev, OpenJev, or a local judge), its key, a test, the decision ledger and the spend'
 	);
 
 systemOne
@@ -2994,6 +2995,10 @@ systemOne
 	.option('--limit <n>', 'At most this many decisions, 1 to 1000 (default 100)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(systemOneLedger);
+
+// The verbs an agent asks System One with: yes, pick, rate, ask, rank, batch,
+// and what they cost (usage, cost).
+registerSystemOneAgentCommands(systemOne);
 
 const modelTiers = models
 	.command('tiers')

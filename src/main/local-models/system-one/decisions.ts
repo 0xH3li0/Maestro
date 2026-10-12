@@ -135,6 +135,15 @@ export function readSystemOneAgentSpend(since: number): SystemOneAgentSpendRow[]
 }
 
 /**
+ * What a reader of the ledger must be told about it right now, or null: it is
+ * not open, or it keeps nothing new while usage statistics are off.
+ */
+export function systemOneLedgerNotice(): string | null {
+	if (!getStatsDB().isReady()) return SYSTEM_ONE_LEDGER_UNAVAILABLE_NOTICE;
+	return isStatsCollectionEnabled(getSettingsStore()) ? null : SYSTEM_ONE_LEDGER_STATS_OFF_NOTICE;
+}
+
+/**
  * Read the ledger: what the view and `maestro-cli s1 ledger` both show. A query
  * that cannot be read rejects with the reason. Nothing older than the retention
  * window is returned, whatever `since` asks for.
@@ -163,11 +172,7 @@ export function readSystemOneLedger(raw: unknown, now: number = Date.now()): Sys
 		since: Math.max(query.since ?? 0, now - SYSTEM_ONE_LEDGER_RETENTION_MS),
 		limit: query.limit ?? SYSTEM_ONE_LEDGER_DEFAULT_LIMIT,
 	});
-	return page(
-		entries,
-		total,
-		isStatsCollectionEnabled(getSettingsStore()) ? null : SYSTEM_ONE_LEDGER_STATS_OFF_NOTICE
-	);
+	return page(entries, total, systemOneLedgerNotice());
 }
 
 /** Forget when the ledger was last pruned, so each test starts from a fresh process. */

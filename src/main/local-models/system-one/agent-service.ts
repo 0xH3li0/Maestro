@@ -49,7 +49,9 @@ import {
 	type SystemOneUsage,
 } from '../../../shared/local-models/system-one';
 import {
+	SYSTEM_ONE_AGENT_JUDGE_MAX_TIMEOUT_MS,
 	SYSTEM_ONE_AGENT_MAX_KEY_CHARS,
+	SYSTEM_ONE_AGENT_TIMEOUT_MS,
 	buildSystemOneCompleteness,
 	chunkSystemOneQuestions,
 	isSystemOneOptedOut,
@@ -77,8 +79,17 @@ import {
 	type SystemOneCompletenessError,
 	type SystemOneRankResult,
 } from '../../../shared/local-models/system-one-agent';
-import type { SystemOneDecision } from '../../../shared/local-models/system-one-ledger';
+import {
+	SYSTEM_ONE_LEDGER_RETENTION_DAYS,
+	SYSTEM_ONE_LEDGER_RETENTION_MS,
+	type SystemOneDecision,
+} from '../../../shared/local-models/system-one-ledger';
 import type { SystemOneAgentSettings } from '../../../shared/local-models/system-one-settings';
+import {
+	parseSystemOneUsageQuery,
+	sumSystemOneUsage,
+	type SystemOneUsageReport,
+} from '../../../shared/local-models/system-one-spend';
 import { mapWithConcurrency } from '../../utils/concurrency';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
@@ -90,7 +101,7 @@ import {
 	systemOneCacheKey,
 	type SystemOneCacheScope,
 } from './answer-cache';
-import { keepSystemOneDecision, readSystemOneAgentSpend } from './decisions';
+import { keepSystemOneDecision, readSystemOneAgentSpend, systemOneLedgerNotice } from './decisions';
 import {
 	askResolvedSystemOne,
 	resolveSystemOneForAgents,
@@ -100,17 +111,6 @@ import {
 } from './service';
 
 const LOG_CONTEXT = 'SystemOne';
-
-/**
- * The budget one agent request gets on Jev or OpenJev, unless the user set a
- * longer one. The stored budget is sized for a gate: one question, about a
- * second. An agent's request can carry 250 questions, so it gets what the `jev`
- * CLI gives a request.
- */
-export const SYSTEM_ONE_AGENT_TIMEOUT_MS = 30_000;
-
-/** The most one request to the local judge may take, however many questions it carries. */
-export const SYSTEM_ONE_AGENT_JUDGE_MAX_TIMEOUT_MS = 300_000;
 
 /** Requests in flight at once on a remote engine. The local judge has one model: one at a time. */
 const REMOTE_CONCURRENCY = 4;
@@ -337,6 +337,45 @@ export async function getSystemOneAgentAccess(agentId?: string): Promise<SystemO
 		engineLabel: setup.engineLabel,
 		calibrated: setup.resolved.id === 'off' ? null : isSystemOneEngineCalibrated(setup.resolved.id),
 		budget,
+	};
+}
+
+/**
+ * What agents' own requests came to since a time, per agent, with today's spend
+ * against the budget: what `maestro-cli s1 usage` prints. Read from the decision
+ * ledger and the day's count; sends nothing. A query that cannot be read
+ * rejects with the reason.
+ *
+ * `callerAgentId` is the agent that asked, when one did: with no agent named in
+ * the query, the budget is reported with that agent's own count beside the
+ * day's.
+ */
+export async function readSystemOneAgentUsage(
+	raw: unknown,
+	callerAgentId?: string
+): Promise<SystemOneUsageReport> {
+	const parsed = parseSystemOneUsageQuery(raw);
+	if (!parsed.ok) throw new Error(parsed.message);
+	const { query } = parsed;
+	const since = Math.max(query.since ?? 0, clock() - SYSTEM_ONE_LEDGER_RETENTION_MS);
+	const access = await getSystemOneAgentAccess(query.agentId ?? callerAgentId);
+
+	const spend = readSystemOneAgentSpend(since) ?? [];
+	const rows = spend
+		.filter((row) => query.agentId === undefined || row.agentId === query.agentId)
+		.map((row) => {
+			const name = row.agentId === null ? undefined : agentRecord(row.agentId)?.name;
+			return { ...row, agentName: typeof name === 'string' && name !== '' ? name : null };
+		});
+	return {
+		since,
+		retentionDays: SYSTEM_ONE_LEDGER_RETENTION_DAYS,
+		rows,
+		totals: sumSystemOneUsage(rows),
+		budget: access.budget,
+		engine: access.engine,
+		engineLabel: access.engineLabel,
+		notice: systemOneLedgerNotice(),
 	};
 }
 

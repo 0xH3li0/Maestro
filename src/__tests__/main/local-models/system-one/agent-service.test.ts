@@ -80,6 +80,7 @@ import {
 	SYSTEM_ONE_AGENT_REQUEST_SPACING_MS,
 	configureAgentSystemOne,
 	getSystemOneAgentAccess,
+	readSystemOneAgentUsage,
 	resetAgentSystemOneForTests,
 	runAgentSystemOneRequest,
 } from '../../../../main/local-models/system-one/agent-service';
@@ -88,7 +89,11 @@ import {
 	SYSTEM_ONE_CACHE_TTL_MS,
 	resetSystemOneAnswerCacheForTests,
 } from '../../../../main/local-models/system-one/answer-cache';
-import { resetSystemOneLedgerForTests } from '../../../../main/local-models/system-one/decisions';
+import {
+	SYSTEM_ONE_LEDGER_STATS_OFF_NOTICE,
+	SYSTEM_ONE_LEDGER_UNAVAILABLE_NOTICE,
+	resetSystemOneLedgerForTests,
+} from '../../../../main/local-models/system-one/decisions';
 import {
 	configureSystemOne,
 	resetSystemOneServiceForTests,
@@ -1368,6 +1373,126 @@ describe.skipIf(!canLoadNodeSqlite())('runAgentSystemOneRequest', () => {
 
 			expect(access).toMatchObject({ allowed: true, engine: 'local-judge', calibrated: false });
 			expect(access.engineLabel).toContain('not calibrated');
+		});
+	});
+
+	describe('readSystemOneAgentUsage', () => {
+		it("reports each agent's requests by name, highest spend first, with the total and today's budget", async () => {
+			const jev = await jevReady();
+			sessions = [{ id: 'agent-1', name: 'acappella' }, { id: 'agent-2' }];
+			const first = answered<SystemOneAgentAskResult>(await ask(ASK, AGENT));
+			// The same request again: answered from the cache, so nothing is sent for it.
+			answered(await ask(ASK, AGENT));
+			const second = answered<SystemOneAgentAskResult>(
+				await ask({ ...ASK, state: 'Another deploy went out clean.' }, AGENT)
+			);
+			answered(await ask({ ...ASK, state: 'A third thing happened.' }, { agentId: 'agent-2' }));
+			answered(await ask({ ...ASK, state: 'Typed by a person.' }, NOBODY));
+			jev.requests.length = 0;
+
+			const report = await readSystemOneAgentUsage(undefined, 'agent-1');
+
+			const [top, ...rest] = report.rows.map((row) => [row.agentId, row.agentName, row.requests]);
+			expect(top).toEqual(['agent-1', 'acappella', 3]);
+			// An agent with no name of its own, and requests that named nobody.
+			expect(rest).toHaveLength(2);
+			expect(rest).toEqual(
+				expect.arrayContaining([
+					['agent-2', null, 1],
+					[null, null, 1],
+				])
+			);
+			expect(report.rows[0]).toMatchObject({ cachedRequests: 1 });
+			expect(report.rows[0].tokensIn).toBe(first.tokens.inputTokens + second.tokens.inputTokens);
+			expect(report.rows[0].costUsd).toBeCloseTo(first.costUsd + second.costUsd, 12);
+			expect(report.totals).toMatchObject({ requests: 5, cachedRequests: 1 });
+			expect(report.totals.costUsd).toBeCloseTo(
+				report.rows.reduce((sum, row) => sum + row.costUsd, 0),
+				12
+			);
+			expect(report).toMatchObject({
+				retentionDays: 30,
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				notice: null,
+			});
+			expect(report.since).toBe(nowMs - 30 * DAY_MS);
+			expect(report.budget.spentTodayUsd).toBeCloseTo(report.totals.costUsd, 12);
+			expect(report.budget.agent).toMatchObject({ agentId: 'agent-1' });
+			// A read: nothing is asked of the engine to answer it.
+			expect(jev.requests).toHaveLength(0);
+		});
+
+		it('narrows to one agent, and to a start time', async () => {
+			await jevReady();
+			answered(await ask(ASK, AGENT));
+			answered(await ask({ ...ASK, state: 'From the other agent.' }, { agentId: 'agent-2' }));
+
+			const one = await readSystemOneAgentUsage({ agentId: 'agent-2' });
+			expect(one.rows.map((row) => row.agentId)).toEqual(['agent-2']);
+			expect(one.totals.requests).toBe(1);
+			// The budget beside it is that agent's own.
+			expect(one.budget.agent).toMatchObject({ agentId: 'agent-2' });
+
+			const later = await readSystemOneAgentUsage({ since: nowMs + 60_000 });
+			expect(later.rows).toEqual([]);
+			expect(later.since).toBe(nowMs + 60_000);
+			expect(later.totals).toMatchObject({ requests: 0, costUsd: 0 });
+		});
+
+		it('never reads past what the ledger keeps, whatever the query asks for', async () => {
+			await jevReady();
+			const report = await readSystemOneAgentUsage({ since: 0 });
+			expect(report.since).toBe(nowMs - 30 * DAY_MS);
+		});
+
+		it("does not count a task's own run as an agent's request", async () => {
+			await jevReady();
+			const { insertSystemOneDecision } = await import('../../../../main/stats/s1-decisions');
+			insertSystemOneDecision(ledger.db as Database.Database, {
+				taskId: 'cue-gate',
+				engine: 'jev-cloud',
+				questionIds: ['proceed'],
+				outcome: 'ok',
+				startedAt: nowMs - 1000,
+				latencyMs: 200,
+				costUsd: 5,
+				agentId: 'agent-1',
+			});
+
+			const report = await readSystemOneAgentUsage(undefined);
+			expect(report.rows).toEqual([]);
+		});
+
+		it('says why the rows may be short: statistics off, or the database not open', async () => {
+			await jevReady();
+			answered(await ask());
+
+			settings.set('statsCollectionEnabled', false);
+			const off = await readSystemOneAgentUsage(undefined);
+			expect(off.notice).toBe(SYSTEM_ONE_LEDGER_STATS_OFF_NOTICE);
+			expect(off.rows).toHaveLength(1);
+
+			ledger.ready = false;
+			const closed = await readSystemOneAgentUsage(undefined);
+			expect(closed.notice).toBe(SYSTEM_ONE_LEDGER_UNAVAILABLE_NOTICE);
+			expect(closed.rows).toEqual([]);
+			// The day's count is kept in the process, so the budget is still reported.
+			expect(closed.budget.spentTodayUsd).toBeGreaterThan(0);
+		});
+
+		it('reports with no engine chosen, and refuses a query it cannot read', async () => {
+			expect(await readSystemOneAgentUsage(undefined)).toMatchObject({
+				engine: 'off',
+				rows: [],
+				totals: { requests: 0 },
+			});
+			await expect(readSystemOneAgentUsage({ since: 'yesterday' })).rejects.toThrow(
+				'since is a time in epoch milliseconds.'
+			);
+			await expect(readSystemOneAgentUsage({ agentId: '' })).rejects.toThrow(
+				'Name the agent by its id.'
+			);
 		});
 	});
 });

@@ -27,9 +27,8 @@
 // cannot answer as it is set up (no key, no URL, no model); `off` is not a
 // failure. `test` exits non-zero when the engine gave no answer.
 
-import * as fs from 'fs';
-
 import { withMaestroClient } from '../services/maestro-client';
+import { isStdinTerminal, readStdinText } from '../services/stdin';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import {
 	formatSuccess,
@@ -83,13 +82,17 @@ interface JsonOption {
 
 type ReportReply = { success: boolean; error?: string; report?: SystemOneReport };
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
+export function fail(
+	message: string,
+	json: boolean | undefined,
+	code = ExitCode.GeneralError
+): never {
 	if (json) console.log(JSON.stringify({ success: false, error: message }));
 	else console.error(`Error: ${message}`);
 	return exitWith(code);
 }
 
-async function send<T extends { success: boolean; error?: string }>(
+export async function send<T extends { success: boolean; error?: string }>(
 	payload: Record<string, unknown>,
 	responseType: string,
 	json: boolean | undefined,
@@ -112,7 +115,7 @@ function requireReport(reply: ReportReply, json: boolean | undefined): SystemOne
 	return reply.report;
 }
 
-async function readStatus(json: boolean | undefined): Promise<SystemOneReport> {
+export async function readStatus(json: boolean | undefined): Promise<SystemOneReport> {
 	return requireReport(
 		await send<ReportReply>({ type: 'system_one_status' }, 'system_one_status_result', json),
 		json
@@ -314,7 +317,7 @@ function keyEngine(options: KeyOptions): SystemOneRemoteEngineId | undefined {
  * an argument would be in shell history.
  */
 function readKeyFromStdin(json: boolean | undefined): string {
-	if (process.stdin.isTTY) {
+	if (isStdinTerminal()) {
 		fail(
 			'Pipe the key on standard input, for example: pbpaste | maestro-cli s1 key set',
 			json,
@@ -323,7 +326,7 @@ function readKeyFromStdin(json: boolean | undefined): string {
 	}
 	let text: string;
 	try {
-		text = fs.readFileSync(0, 'utf-8');
+		text = readStdinText();
 	} catch {
 		fail('Could not read the key from standard input.', json);
 	}
