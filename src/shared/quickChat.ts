@@ -149,6 +149,31 @@ export interface QuickChatWindowBounds {
 	 * window that falls behind whatever the user clicks next. Absent means pinned.
 	 */
 	pinned?: boolean;
+	/** Text zoom for the conversation (1 = normal). Absent means 1. */
+	fontScale?: number;
+}
+
+/**
+ * A change to the conversation's text zoom: one step up or down, an exact
+ * multiplier, or back to normal. The window's buttons and chords and
+ * `maestro-cli quick-chat font` all send one of these.
+ */
+export type QuickChatFontScaleRequest = { step: 1 | -1 } | { scale: number } | { reset: true };
+
+/**
+ * Read a text zoom request off the wire (IPC from the window, a WS message from
+ * the CLI), or null when it is not one. Out-of-range scales are allowed here and
+ * clamped where they are applied.
+ */
+export function parseQuickChatFontScaleRequest(raw: unknown): QuickChatFontScaleRequest | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	if (r.reset === true) return { reset: true };
+	if (r.step === 1 || r.step === -1) return { step: r.step };
+	if (typeof r.scale === 'number' && Number.isFinite(r.scale) && r.scale > 0) {
+		return { scale: r.scale };
+	}
+	return null;
 }
 
 /** The narrowest the window can be dragged, in either shape. */
@@ -197,6 +222,8 @@ export interface QuickChatStatus {
 	bounds: { x: number; y: number; width: number; height: number } | null;
 	/** Whether the window floats above other windows (see `QuickChatWindowBounds.pinned`). */
 	pinned: boolean;
+	/** The conversation's text zoom (1 = normal). */
+	fontScale: number;
 	snapshot: QuickChatSnapshot;
 }
 

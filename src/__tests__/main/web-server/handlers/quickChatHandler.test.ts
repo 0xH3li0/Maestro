@@ -23,6 +23,7 @@ const status = {
 	hotkeyRegistered: true,
 	bounds: null,
 	pinned: true,
+	fontScale: 1,
 	snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
 };
 const controller = {
@@ -31,6 +32,7 @@ const controller = {
 	windowAction: vi.fn(),
 	setBounds: vi.fn(),
 	setPinned: vi.fn(),
+	setFontScale: vi.fn(),
 	getStatus: vi.fn(),
 };
 let activeController: typeof controller | null = controller;
@@ -68,6 +70,7 @@ describe('quick_chat handler', () => {
 		controller.windowAction.mockReturnValue(status);
 		controller.setBounds.mockReturnValue(status);
 		controller.setPinned.mockReturnValue(status);
+		controller.setFontScale.mockReturnValue(status);
 		controller.runCommand.mockResolvedValue({ ok: true, snapshot: EMPTY_QUICK_CHAT_SNAPSHOT });
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
@@ -194,5 +197,32 @@ describe('quick_chat handler', () => {
 
 		handler.handleMessage(client, { type: 'quick_chat', action: 'pin', requestId: 'r12' });
 		expect(controller.setPinned).toHaveBeenLastCalledWith(true);
+	});
+
+	it('changes the text zoom through the controller, and reads it with no request', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'font',
+			fontScale: { step: 1 },
+			requestId: 'r13',
+		});
+		expect(controller.setFontScale).toHaveBeenCalledWith({ step: 1 });
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r13' });
+
+		handler.handleMessage(client, { type: 'quick_chat', action: 'font', requestId: 'r14' });
+		expect(controller.setFontScale).toHaveBeenCalledTimes(1);
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r14' });
+		expect(lastResponse(client).status).toMatchObject({ fontScale: 1 });
+	});
+
+	it('rejects a malformed text zoom request instead of ignoring it', () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'font',
+			fontScale: { step: 3 },
+			requestId: 'r15',
+		});
+		expect(controller.setFontScale).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r15' });
 	});
 });

@@ -2121,6 +2121,14 @@ Float the window above other windows ("off" lets it fall behind them)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli quick-chat font [size]`
+
+Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli quick-chat agent <agent-id>`
 
 Switch Quick Chat to another agent and start a new chat there

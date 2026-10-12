@@ -8,6 +8,7 @@
 
 import { getQuickChatController } from '../../../quick-chat';
 import {
+	parseQuickChatFontScaleRequest,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
 	type QuickChatCommand,
@@ -90,6 +91,21 @@ export function handleQuickChat(
 
 	if (action === 'pin') {
 		reply({ success: true, status: controller.setPinned(message.pinned !== false) });
+		return;
+	}
+
+	if (action === 'font') {
+		// No request reads the current zoom; a malformed one is an error, not a no-op.
+		if (message.fontScale === undefined) {
+			reply({ success: true, status: controller.getStatus() });
+			return;
+		}
+		const request = parseQuickChatFontScaleRequest(message.fontScale);
+		if (!request) {
+			reply({ success: false, error: 'Invalid text zoom request' });
+			return;
+		}
+		reply({ success: true, status: controller.setFontScale(request) });
 		return;
 	}
 

@@ -9,8 +9,10 @@ import { parseCliBool } from '../utils/parse';
 import {
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
+	type QuickChatFontScaleRequest,
 	type QuickChatStatus,
 } from '../../shared/quickChat';
+import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared/scaleRange';
 
 export interface QuickChatOptions {
 	json?: boolean;
@@ -37,10 +39,40 @@ export type QuickChatAction =
 	| 'new'
 	| 'keep'
 	| 'pin'
+	| 'font'
 	| 'agent'
 	| 'reveal'
 	| 'stop'
 	| 'bounds';
+
+const FONT_STEP_UP = new Set(['in', 'up', 'bigger', 'larger', '+']);
+const FONT_STEP_DOWN = new Set(['out', 'down', 'smaller', '-']);
+const FONT_RESET = new Set(['reset', 'normal', 'default']);
+
+/**
+ * `quick-chat font <size>`: `in` / `out` step it like Cmd+= / Cmd+-, `reset`
+ * goes back to normal, and a number sets it: `120%`, `120`, or `1.2` all mean
+ * 120%. Throws on anything else, so a typo never resizes the text.
+ */
+export function parseQuickChatFontArg(arg: string): QuickChatFontScaleRequest {
+	const word = arg.trim().toLowerCase();
+	if (FONT_STEP_UP.has(word)) return { step: 1 };
+	if (FONT_STEP_DOWN.has(word)) return { step: -1 };
+	if (FONT_RESET.has(word)) return { reset: true };
+	const percent = word.endsWith('%');
+	const value = Number(percent ? word.slice(0, -1) : word);
+	if (word === '' || !Number.isFinite(value) || value <= 0) {
+		throw new Error(`Unknown text size "${arg}". Use in, out, reset, or a size such as 120%`);
+	}
+	// A bare number above the largest multiplier can only be a percentage.
+	const scale = percent || value > FONT_SCALE_MAX ? value / 100 : value;
+	if (scale < FONT_SCALE_MIN || scale > FONT_SCALE_MAX) {
+		throw new Error(
+			`Text size must be between ${FONT_SCALE_MIN * 100}% and ${FONT_SCALE_MAX * 100}%`
+		);
+	}
+	return { scale };
+}
 
 function fail(message: string, options: QuickChatOptions): void {
 	if (options.json) {
@@ -64,6 +96,7 @@ function printStatus(status: QuickChatStatus): void {
 		console.log(`Window: ${width}x${height} at ${x},${y}`);
 	}
 	console.log(`Pinned: ${status.pinned ? 'yes, floats above other windows' : 'no'}`);
+	console.log(`Text size: ${Math.round(status.fontScale * 100)}%`);
 	console.log(
 		`Agent: ${snapshot.agentName ?? 'none'}${snapshot.agentId ? ` (${snapshot.agentId})` : ''}`
 	);
@@ -103,6 +136,14 @@ export async function quickChat(
 		}
 		message[action === 'keep' ? 'persistent' : 'pinned'] = on;
 	}
+	if (action === 'font' && args.state !== undefined) {
+		try {
+			message.fontScale = parseQuickChatFontArg(args.state);
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options);
+			return;
+		}
+	}
 	if (action === 'bounds') {
 		const request: QuickChatBoundsRequest = {};
 		for (const key of ['x', 'y', 'width', 'height'] as const) {
@@ -140,7 +181,9 @@ export async function quickChat(
 			fail(result.error || `quick-chat ${action} failed`, options);
 			return;
 		}
-		if ((action === 'status' || action === 'bounds' || action === 'pin') && result.status) {
+		if (action === 'font' && result.status) {
+			console.log(`Text size: ${Math.round(result.status.fontScale * 100)}%`);
+		} else if ((action === 'status' || action === 'bounds' || action === 'pin') && result.status) {
 			printStatus(result.status);
 		} else console.log(`Quick Chat: ${action} done`);
 	} catch (error) {
