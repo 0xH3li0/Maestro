@@ -257,6 +257,11 @@ interface MaestroAPI {
 				// grooming or transfer - their output becomes the context every later
 				// turn reads, so a cheap compaction compounds silently.
 				cheapTurn?: boolean;
+				// For a turn that only answers (a classification): no tools, no
+				// writes, and a deadline shorter than the grooming default.
+				readOnly?: boolean;
+				disableTools?: boolean;
+				timeoutMs?: number;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions

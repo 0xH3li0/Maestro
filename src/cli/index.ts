@@ -2660,14 +2660,24 @@ quickChatCmd
 	.action((agent: string, options) => quickChat('agent', { agent }, options));
 
 quickChatCmd
-	.command('reveal')
-	.description('Open the current chat as a tab in the main Maestro window')
+	.command('reveal [message-id]')
+	.description(
+		'Open a tab of the chat in the main Maestro window: the tab a message went to, or the latest'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
-	.action((options) => quickChat('reveal', {}, options));
+	.action((messageId: string | undefined, options) => quickChat('reveal', { messageId }, options));
+
+quickChatCmd
+	.command('new-tab [message-id]')
+	.description(
+		'Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((messageId: string | undefined, options) => quickChat('new-tab', { messageId }, options));
 
 quickChatCmd
 	.command('stop')
-	.description('Stop the reply the agent is writing')
+	.description('Stop the replies in progress and withdraw the messages still queued')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('stop', {}, options));
 

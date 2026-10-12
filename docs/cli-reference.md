@@ -2208,9 +2208,17 @@ Switch Quick Chat to another agent and start a new chat there
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat reveal`
+## `maestro-cli quick-chat reveal [message-id]`
 
-Open the current chat as a tab in the main Maestro window
+Open a tab of the chat in the main Maestro window: the tab a message went to, or the latest
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli quick-chat new-tab [message-id]`
+
+Send a message that is queued behind a busy tab to a new tab instead (default: the latest queued one)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2218,7 +2226,7 @@ Open the current chat as a tab in the main Maestro window
 
 ## `maestro-cli quick-chat stop`
 
-Stop the reply the agent is writing
+Stop the replies in progress and withdraw the messages still queued
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
