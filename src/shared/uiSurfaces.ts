@@ -155,6 +155,7 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'overview', label: 'Overview' },
 			{ id: 'agent-overview', label: 'Agent Overview' },
 			{ id: 'agents', label: 'Agents' },
+			{ id: 'models', label: 'Models' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
 			{ id: 'cue', label: 'Cue' },

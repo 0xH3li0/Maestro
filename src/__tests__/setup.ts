@@ -1007,6 +1007,49 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// The Models tab's record. Empty, so the tab renders its empty state.
+		getModelUsage: vi.fn().mockResolvedValue({
+			range: 'week',
+			since: 0,
+			totals: {
+				requests: 0,
+				otherModelRequests: 0,
+				onDeviceRequests: 0,
+				errors: 0,
+				tokensIn: 0,
+				tokensOut: 0,
+				onDeviceTokens: 0,
+			},
+			sources: [],
+			byTask: [],
+			byAgent: [],
+			systemOne: {
+				decisions: 0,
+				cached: 0,
+				outcomes: { ok: 0, 'failed-open': 0, 'failed-closed': 0, unavailable: 0, cancelled: 0 },
+				timeouts: 0,
+				tokensIn: 0,
+				tokensOut: 0,
+				costUsd: 0,
+				byTask: [],
+				byEngine: [],
+				routedTiers: { low: 0, medium: 0, high: 0 },
+				retentionDays: 30,
+				coversRange: true,
+			},
+			proxy: {
+				totals: {
+					requests: 0,
+					compressRequests: 0,
+					originalTokens: 0,
+					sentTokens: 0,
+					tokensSaved: 0,
+					avgAddedLatencyMs: 0,
+				},
+				routedRequests: 0,
+				byAgent: [],
+			},
+		}),
 		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
 		// dashboard renders the "nothing tracked yet" state rather than throwing.
 		getDelegationTotals: vi.fn().mockResolvedValue({

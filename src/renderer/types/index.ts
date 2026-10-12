@@ -84,6 +84,7 @@ export type UsageDashboardViewMode =
 	| 'groups'
 	| 'agent-overview'
 	| 'tokens'
+	| 'models'
 	| 'activity'
 	| 'autorun'
 	| 'anthropic-usage'

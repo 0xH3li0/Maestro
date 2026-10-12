@@ -20,7 +20,8 @@
  */
 
 import { classifyCredentialKind } from '../providerAuthIdentity';
-import type { ProxyCompressionEntry, ProxyRequestUsage } from '../stats-types';
+import { formatCount } from '../formatters';
+import type { ProxyCompressionEntry, ProxyRequestTotals, ProxyRequestUsage } from '../stats-types';
 import { agentGatewaySupport, isLoopbackGatewayUrl } from './gateway';
 
 /** The only interface the proxy listens on. Never a wildcard address. */
@@ -278,6 +279,24 @@ export const TOKEN_PROXY_MODE_LABELS: Record<TokenProxyMode, string> = {
  */
 export const TOKEN_PROXY_ESTIMATE_NOTE =
 	'Token counts are estimates at 4 characters per token. On paths, digits and stack traces the real saving can be about twice the figure shown.';
+
+/**
+ * Tokens saved, with the share of what arrived: `10,000 (25%)`. A dash when
+ * the proxy read no request body in the range, because a passthrough request
+ * is counted and nothing else. The figure is an estimate: show
+ * {@link TOKEN_PROXY_ESTIMATE_NOTE} beside it.
+ */
+export function describeTokensSaved(totals: ProxyRequestTotals): string {
+	if (totals.compressRequests === 0) return '-';
+	const share =
+		totals.originalTokens > 0 ? Math.round((totals.tokensSaved / totals.originalTokens) * 100) : 0;
+	return `${formatCount(totals.tokensSaved)} (${share}%)`;
+}
+
+/** Mean time a request was held while the proxy read it. A dash when it read none. */
+export function describeAddedLatency(totals: ProxyRequestTotals): string {
+	return totals.compressRequests === 0 ? '-' : `${formatCount(totals.avgAddedLatencyMs)} ms`;
+}
 
 /** One sentence per mode: what it does and what it costs. Shown under the picker. */
 export const TOKEN_PROXY_MODE_DESCRIPTIONS: Record<TokenProxyMode, string> = {

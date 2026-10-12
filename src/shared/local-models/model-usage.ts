@@ -234,6 +234,40 @@ export interface ModelUsageSource extends ModelUsageSourceRef, ModelUsageSourceI
 	models: ModelUsageModel[];
 }
 
+/**
+ * `12 runs, 3 turns, 1 routed`: how a source's requests split, each in the unit
+ * it was counted in. Said wherever a source's request count is shown, because
+ * the three units are not the same size of work: a turn is many model calls.
+ */
+export function describeModelUsageRequestSplit(
+	source: Pick<ModelUsageSource, 'runs' | 'turns' | 'routed'>
+): string {
+	return [
+		source.runs > 0 ? `${source.runs} ${source.runs === 1 ? 'run' : 'runs'}` : '',
+		source.turns > 0 ? `${source.turns} ${source.turns === 1 ? 'turn' : 'turns'}` : '',
+		source.routed > 0 ? `${source.routed} routed` : '',
+	]
+		.filter(Boolean)
+		.join(', ');
+}
+
+/**
+ * Which duration a source's latency reads from, and what one sample of it is.
+ * A source that ran model calls reads `latency` (one request). One that only
+ * launched agent turns (a provider's own cloud, a Run on target with no
+ * housekeeping work) has no request latency on record, so it reads
+ * `turnDuration` (one whole turn, start to exit). The two are never compared
+ * without saying which is which: a turn is many requests and the tools between
+ * them. Null for a source with no answered work.
+ */
+export function modelUsageSourceLatency(
+	source: Pick<ModelUsageSource, 'latency' | 'turnDuration'>
+): { unit: 'request' | 'turn'; distribution: DurationPercentiles } | null {
+	if (source.latency.count > 0) return { unit: 'request', distribution: source.latency };
+	if (source.turnDuration.count > 0) return { unit: 'turn', distribution: source.turnDuration };
+	return null;
+}
+
 /** The range summed over every source. */
 export interface ModelUsageTotals {
 	/** Requests on every source, the providers' own cloud included. */

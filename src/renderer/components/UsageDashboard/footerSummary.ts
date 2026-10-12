@@ -212,6 +212,32 @@ export function buildCueSummary(input: {
 }
 
 /**
+ * Models: how much work ran on something other than a provider's own model,
+ * on how many sources, and how much of ALL the work stayed on this machine.
+ * Failures are appended only when there are some: a row of "0 failed" is noise
+ * on a tab whose usual state is that everything answered.
+ */
+export function buildModelsSummary(input: {
+	/** Requests on a source that is not a provider's own cloud. */
+	requests: number;
+	/** Sources that are not a provider's own cloud. */
+	sources: number;
+	/** Share of every request, the providers' included, that ran on this machine: 0 to 1. */
+	onDeviceShare: number;
+	errors: number;
+	decisions: number;
+}): string | null {
+	if (input.requests === 0 && input.decisions === 0) return null;
+	return join([
+		count(input.requests, 'request'),
+		input.sources > 0 ? count(input.sources, 'source') : null,
+		input.requests > 0 ? `${Math.round(input.onDeviceShare * 100)}% on this machine` : null,
+		input.decisions > 0 ? count(input.decisions, 'System One decision') : null,
+		input.errors > 0 ? `${formatNumber(input.errors)} failed` : null,
+	]);
+}
+
+/**
  * Shortcuts: presses in range, and the mastery fraction the whole tab is built
  * around. The denominator is BOUND shortcuts only - an unbound chord cannot be
  * pressed, so counting it would hold the ratio under 100% forever.
@@ -276,7 +302,7 @@ export function buildModalOwnedFooterSummary(
 			return buildTokensSummary(ctx.data);
 		default:
 			// Panel-owned: 'agents', 'groups', 'autorun', 'cue', 'shortcuts',
-			// 'anthropic-usage', 'codex-usage'.
+			// 'models', 'anthropic-usage', 'codex-usage'.
 			return null;
 	}
 }

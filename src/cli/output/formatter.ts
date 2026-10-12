@@ -9,11 +9,12 @@ import {
 } from '../../shared/local-models/model-server';
 import {
 	MODEL_USAGE_SOURCE_KIND_LABELS,
+	describeModelUsageRequestSplit,
 	isModelUsageEmpty,
 	modelUsageOnDeviceShare,
+	modelUsageSourceLatency,
 	type ModelUsage,
 	type ModelUsageDecisionCounts,
-	type ModelUsageSource,
 } from '../../shared/local-models/model-usage';
 import { serverAcceleratorProblemMessage } from '../../shared/local-models/server-accelerator';
 import { JEV_DEFAULT_MODEL } from '../../shared/local-models/system-one';
@@ -1224,17 +1225,6 @@ function latencyCells(latency: DurationPercentiles): string {
 		: `p50 ${formatDurationDecimal(latency.p50)}  p95 ${formatDurationDecimal(latency.p95)}`;
 }
 
-/** How a source's requests split, in the units they were counted in. */
-function sourceRequestSplit(source: ModelUsageSource): string {
-	return [
-		source.runs > 0 ? plural(source.runs, 'run') : '',
-		source.turns > 0 ? plural(source.turns, 'turn') : '',
-		source.routed > 0 ? `${source.routed} routed` : '',
-	]
-		.filter(Boolean)
-		.join(', ');
-}
-
 function decisionOutcomeLine(counts: ModelUsageDecisionCounts): string {
 	const outcomes = (Object.keys(counts.outcomes) as Array<keyof typeof counts.outcomes>)
 		.filter((outcome) => counts.outcomes[outcome] > 0)
@@ -1274,13 +1264,15 @@ export function formatModelUsage(usage: ModelUsage): string {
 	const labelWidth = Math.max(...usage.sources.map((source) => source.label.length), 0);
 	for (const source of usage.sources) {
 		const errors = source.errors > 0 ? c('red', plural(source.errors, 'error')) : '';
-		const latency =
-			source.kind === 'provider' ? latencyCells(source.turnDuration) : latencyCells(source.latency);
+		const read = modelUsageSourceLatency(source);
+		const latency = read
+			? `${latencyCells(read.distribution)}${read.unit === 'turn' ? ' (turns)' : ''}`
+			: '';
 		lines.push(
 			[
 				`  ${c('white', source.label.padEnd(labelWidth))}`,
 				dim(MODEL_USAGE_SOURCE_KIND_LABELS[source.kind]),
-				`${plural(source.requests, 'request')} ${dim(`(${sourceRequestSplit(source)})`)}`,
+				`${plural(source.requests, 'request')} ${dim(`(${describeModelUsageRequestSplit(source)})`)}`,
 				`${formatTokens(source.tokensIn)} in, ${formatTokens(source.tokensOut)} out`,
 				errors,
 				latency,
@@ -1292,8 +1284,8 @@ export function formatModelUsage(usage: ModelUsage): string {
 			lines.push(`    ${dim(source.models.map((entry) => entry.model).join(', '))}`);
 		}
 	}
-	if (usage.sources.some((source) => source.kind === 'provider')) {
-		lines.push(dim('  For a provider cloud, p50 and p95 are whole turns, not single requests.'));
+	if (usage.sources.some((source) => modelUsageSourceLatency(source)?.unit === 'turn')) {
+		lines.push(dim('  p50 and p95 marked (turns) are whole agent turns, not single requests.'));
 	}
 
 	if (usage.byTask.length > 0) {

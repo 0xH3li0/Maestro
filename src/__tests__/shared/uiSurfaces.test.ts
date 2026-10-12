@@ -147,6 +147,13 @@ describe('resolveUiSurfaceTarget', () => {
 		});
 	});
 
+	it('resolves the Usage Dashboard Models tab, which has no sub-tab', () => {
+		const dashboard = resolveUiSurface('usage-dashboard')!;
+		expect(resolveUiSurfaceTarget(dashboard, { tab: 'Models' })).toMatchObject({
+			tab: { id: 'models', label: 'Models' },
+		});
+	});
+
 	it('resolves a tab without a sub-tab', () => {
 		const target = resolveUiSurfaceTarget(settings, { tab: 'shortcuts' });
 		expect(target).toMatchObject({ tab: { id: 'shortcuts' } });

@@ -10,12 +10,12 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import type { Session, Theme } from '../../../../../renderer/types';
 import { LocalModelsGatewaySection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsGatewaySection';
 import { tokenProxyModeBlocker } from '../../../../../renderer/components/shared/TokenProxyModeField';
+import { describeProxyListener } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsProxyUsage';
 import {
 	describeAddedLatency,
-	describeProxyListener,
 	describeTokensSaved,
-} from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsProxyUsage';
-import type { TokenProxyReport } from '../../../../../shared/local-models/token-proxy';
+	type TokenProxyReport,
+} from '../../../../../shared/local-models/token-proxy';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 

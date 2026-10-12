@@ -20,12 +20,14 @@ import { useCallback, useState } from 'react';
 
 import { formatCount, formatRelativeTime } from '../../../../../shared/formatters';
 import {
+	describeAddedLatency,
+	describeTokensSaved,
 	TOKEN_PROXY_ESTIMATE_NOTE,
 	TOKEN_PROXY_HOST,
 	type TokenProxyBlockDetail,
 	type TokenProxyReport,
 } from '../../../../../shared/local-models/token-proxy';
-import type { ProxyCompressionEntry, ProxyRequestTotals } from '../../../../../shared/stats-types';
+import type { ProxyCompressionEntry } from '../../../../../shared/stats-types';
 import type { Theme } from '../../../../types';
 import { TextDiff } from '../../../ui/TextDiff';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
@@ -53,19 +55,6 @@ export function describeProxyListener(report: TokenProxyReport): string {
 	}
 	if (status.lastError) return `Could not start on ${address}: ${status.lastError}.`;
 	return `Stopped. It starts on ${address} when an agent uses it.`;
-}
-
-/** Tokens saved, with the share of what arrived. A dash when nothing was read. */
-export function describeTokensSaved(totals: ProxyRequestTotals): string {
-	if (totals.compressRequests === 0) return '-';
-	const share =
-		totals.originalTokens > 0 ? Math.round((totals.tokensSaved / totals.originalTokens) * 100) : 0;
-	return `${formatCount(totals.tokensSaved)} (${share}%)`;
-}
-
-/** Mean time a request was held. A dash when nothing was read. */
-export function describeAddedLatency(totals: ProxyRequestTotals): string {
-	return totals.compressRequests === 0 ? '-' : `${formatCount(totals.avgAddedLatencyMs)} ms`;
 }
 
 export function LocalModelsProxyUsage({

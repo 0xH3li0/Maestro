@@ -8,16 +8,20 @@ import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints'
 import {
 	MODEL_USAGE_SOURCE_KIND_LABELS,
 	MODEL_USAGE_SOURCE_KINDS,
+	describeModelUsageRequestSplit,
 	describeModelUsageSource,
 	isModelUsageEmpty,
 	modelUsageEndpointSource,
 	modelUsageOnDeviceShare,
 	modelUsageProviderSource,
 	modelUsageRunSource,
+	modelUsageSourceLatency,
 	type ModelUsage,
 	type ModelUsageTotals,
 } from '../../../shared/local-models/model-usage';
+import { emptyPercentiles } from '../../../shared/percentiles';
 import { LOCAL_MODEL_RUN_SOURCE_TYPES } from '../../../shared/stats-types';
+import { modelUsageLatency } from '../../helpers/modelUsageFixtures';
 
 const LAN: LocalModelEndpoint = {
 	id: 'ep-lan',
@@ -177,6 +181,34 @@ describe('describeModelUsageSource', () => {
 });
 
 describe('model usage summaries', () => {
+	it("says how a source's requests split, each in its own unit", () => {
+		expect(describeModelUsageRequestSplit({ runs: 36, turns: 4, routed: 1 })).toBe(
+			'36 runs, 4 turns, 1 routed'
+		);
+		expect(describeModelUsageRequestSplit({ runs: 1, turns: 1, routed: 0 })).toBe('1 run, 1 turn');
+		expect(describeModelUsageRequestSplit({ runs: 0, turns: 40, routed: 0 })).toBe('40 turns');
+		expect(describeModelUsageRequestSplit({ runs: 0, turns: 0, routed: 0 })).toBe('');
+	});
+
+	it("reads a source's latency from its requests, and from its turns only when it has no request", () => {
+		const requests = modelUsageLatency(240, 1200);
+		const turns = modelUsageLatency(60_000, 240_000, 4);
+
+		// A source that answered requests and also ran turns reads the requests.
+		expect(modelUsageSourceLatency({ latency: requests, turnDuration: turns })).toEqual({
+			unit: 'request',
+			distribution: requests,
+		});
+		// A provider's own cloud, or a Run on target with no housekeeping work.
+		expect(modelUsageSourceLatency({ latency: emptyPercentiles(), turnDuration: turns })).toEqual({
+			unit: 'turn',
+			distribution: turns,
+		});
+		expect(
+			modelUsageSourceLatency({ latency: emptyPercentiles(), turnDuration: emptyPercentiles() })
+		).toBeNull();
+	});
+
 	it('reads the on-device share as a fraction, and 0 with no request', () => {
 		expect(modelUsageOnDeviceShare(totals())).toBe(0);
 		expect(modelUsageOnDeviceShare(totals({ requests: 8, onDeviceRequests: 2 }))).toBe(0.25);
