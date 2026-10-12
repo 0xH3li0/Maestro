@@ -56,6 +56,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
 	addHistoryEntry: vi.fn(),
+	readHarnessTierDefaults: vi.fn(() => ({})),
 }));
 
 // Mock prompt-loader so the synopsis turn gets a fixed prompt
@@ -85,7 +86,13 @@ import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { UnsupportedCommandError } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readHarnessTierDefaults,
+} from '../../../cli/services/storage';
+import { autoTurnReport } from '../../../shared/autoTurn';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { resolveCliAutoTurn } from '../../../cli/services/auto-turn';
@@ -939,6 +946,222 @@ describe('send command', () => {
 
 			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
 			expect(spawnOptions()).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+		});
+	});
+
+	// `--model <model>`: this one turn's model, in place of the agent's own.
+	// `auto` routes the turn the way an agent set to Auto is routed.
+	describe('--model', () => {
+		const spawnOptions = () => vi.mocked(spawnAgent).mock.calls[0][4];
+		const output = () => JSON.parse(consoleSpy.mock.calls[0][0]);
+
+		const ready = (overrides: Partial<SessionInfo> = {}) => {
+			const agent = mockAgent({ customModel: 'opus', customEffort: 'high', ...overrides });
+			vi.mocked(resolveAgentId).mockReturnValue(agent.id);
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'done' });
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			return agent;
+		};
+		/** A routed turn as the resolver answers it, with the router's decision on its stamp. */
+		const routedTurn = {
+			model: 'haiku',
+			effort: 'low',
+			notes: [],
+			warnings: [],
+			stamp: {
+				status: 'routed' as const,
+				route: {
+					tier: 'low' as const,
+					effort: 'low' as const,
+					engine: 'Embedding router',
+					calibrated: false,
+				},
+			},
+		};
+
+		it("spawns on the named model in place of the agent's own, and routes nothing", async () => {
+			ready();
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'sonnet',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnOptions()).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+			expect(output()).not.toHaveProperty('auto');
+		});
+
+		it('keeps the named model for this turn even when the agent is set to Auto', async () => {
+			ready({ customModel: 'auto' });
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'sonnet',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnOptions()).toMatchObject({ customModel: 'sonnet' });
+		});
+
+		it('routes an auto turn for an agent on a named model, and reports what Auto did', async () => {
+			const agent = ready();
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue(routedTurn as never);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledWith({
+				agent,
+				prompt: 'rename the helper',
+				agentEffort: 'high',
+				client: null,
+			});
+			// The harness is handed the routed model, never the word and never the agent's own.
+			expect(spawnOptions()).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+			expect(output()).toMatchObject({
+				success: true,
+				auto: autoTurnReport(routedTurn as never),
+			});
+			expect(output().auto).toEqual({
+				label: 'Auto → low · haiku',
+				detail: expect.stringContaining('Embedding router chose tier low, effort low.'),
+			});
+		});
+
+		it('reads the word auto whatever its case', async () => {
+			ready();
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue(routedTurn as never);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'Auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledOnce();
+			expect(spawnOptions()).toMatchObject({ customModel: 'haiku' });
+		});
+
+		it('refuses auto by name, before anything is started, for an agent Auto cannot act on', async () => {
+			ready({ toolType: 'opencode', customModel: undefined, customEffort: undefined });
+			desktop.connect.mockResolvedValue(undefined);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(output()).toMatchObject({ success: false, code: 'AUTO_MODEL_UNAVAILABLE' });
+			expect(output().error).toMatch(/^--model auto: Auto would change nothing for this agent/);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(desktop.connect).not.toHaveBeenCalled();
+			expect(desktop.sendCommand).not.toHaveBeenCalled();
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('allows auto for that provider once one of its tiers is mapped to a model', async () => {
+			ready({
+				toolType: 'opencode',
+				customModel: undefined,
+				tierTargets: { medium: { type: 'provider-model', model: 'some-model' } },
+			});
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue({
+				...routedTurn,
+				model: 'some-model',
+			} as never);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(processExitSpy).not.toHaveBeenCalledWith(1);
+			expect(spawnOptions()).toMatchObject({ customModel: 'some-model' });
+		});
+
+		it.each(['-x', '', ' sonnet', 'sonnet ', 'son\nnet'])(
+			'refuses %j as a model name before anything is started',
+			async (model) => {
+				ready();
+				desktop.connect.mockResolvedValue(undefined);
+
+				await send('agent-abc', 'rename the helper', { model, synopsis: false, history: false });
+
+				expect(output()).toMatchObject({ success: false, code: 'INVALID_MODEL' });
+				expect(processExitSpy).toHaveBeenCalledWith(1);
+				expect(desktop.connect).not.toHaveBeenCalled();
+				expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+				expect(spawnAgent).not.toHaveBeenCalled();
+			}
+		);
+
+		it('hands the model to the desktop when the desktop runs the send, and passes its Auto report on', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			const auto = { label: 'Auto → low · haiku', detail: 'Auto: the router chose tier low.' };
+			desktop.sendCommand.mockResolvedValue({
+				available: true,
+				success: true,
+				response: 'done',
+				auto,
+			});
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(desktop.sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'plugins_send_agent',
+					agentId: 'agent-abc-123',
+					prompt: 'rename the helper',
+					model: 'auto',
+				}),
+				'plugins_send_agent_result',
+				expect.any(Number)
+			);
+			// The desktop routes a send it runs; the CLI asks nothing and spawns nothing.
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(output()).toMatchObject({ success: true, response: 'done', auto });
+		});
+
+		it('hands a named model to the desktop too', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'sonnet',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(desktop.sendCommand.mock.calls[0][0]).toMatchObject({ model: 'sonnet' });
+			expect(output()).not.toHaveProperty('auto');
+		});
+
+		it('sends no model field to the desktop without --model', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(desktop.sendCommand.mock.calls[0][0]).not.toHaveProperty('model');
 		});
 	});
 

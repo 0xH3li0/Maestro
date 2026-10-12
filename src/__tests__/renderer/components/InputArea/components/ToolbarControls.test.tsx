@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
@@ -9,6 +9,7 @@ import {
 	useDictationStore,
 } from '../../../../../renderer/stores/dictationStore';
 import type { DictationTarget } from '../../../../../renderer/utils/dictationTargets';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 
 const mockUpdateSessionWith = vi.fn();
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
@@ -245,6 +246,106 @@ describe('ToolbarControls', () => {
 			// make the click resolve to whichever mounted first.
 			const { container } = renderPhoneToolbar();
 			expect(container.querySelectorAll('#image-file-input')).toHaveLength(1);
+		});
+	});
+
+	// Auto is added here, where the agent is known, so the desktop pill and the
+	// phone sheet list the same thing.
+	describe('the Auto model choice', () => {
+		const AXES = 'Auto: picks the model and the effort for each turn.';
+
+		beforeEach(() => {
+			// The shipped defaults: no harness tier overrides, the model router off.
+			useSettingsStore.setState({
+				harnessTierDefaults: {},
+				localModelAssignments: {},
+				localModelEndpoints: [],
+			});
+		});
+
+		function renderWithModels(overrides = {}) {
+			return renderToolbar({
+				availableModels: ['', 'opus', 'sonnet'],
+				onModelChange: vi.fn(),
+				modelMenuOpen: true,
+				...overrides,
+			});
+		}
+
+		it('offers Auto after (default) in the model menu of a Claude Code agent', () => {
+			const onModelChange = vi.fn();
+			renderWithModels({ onModelChange });
+
+			const row = screen.getByText('Auto').closest('button')!;
+			expect(row.getAttribute('title')).toContain(AXES);
+			expect(row.getAttribute('title')).toContain('The model router is off');
+			// Right after the leading (default) row, ahead of the provider's models.
+			const rows = Array.from(row.parentElement!.querySelectorAll('button')).map(
+				(b) => b.textContent
+			);
+			expect(rows).toEqual(['(default)', 'Auto', 'opus', 'sonnet']);
+
+			fireEvent.click(row);
+			expect(onModelChange).toHaveBeenCalledWith('auto');
+		});
+
+		it('offers no Auto for an agent it would change nothing for', () => {
+			// OpenCode has no effort ladder Maestro can name, and none of this
+			// agent's tiers is mapped to a model.
+			renderWithModels({ session: createInputAreaSession({ toolType: 'opencode' }) });
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('offers Auto for that agent once one of its tiers is mapped', () => {
+			renderWithModels({
+				session: createInputAreaSession({
+					toolType: 'opencode',
+					tierTargets: { medium: { type: 'provider-model', model: 'opus' } },
+				}),
+			});
+
+			expect(screen.getByText('Auto')).toBeInTheDocument();
+		});
+
+		it('says on the pill who decides while Auto is the model', () => {
+			useSettingsStore.setState({
+				localModelAssignments: { 'model-routing': { type: 'system-one' } },
+			});
+			renderWithModels({ currentModel: 'auto', modelMenuOpen: false });
+
+			const pill = screen.getByText('Auto').closest('button')!;
+			expect(pill.getAttribute('title')).toContain(`${AXES} Decided by System One.`);
+		});
+
+		it('lists the same Auto in the phone options sheet', () => {
+			mockedUsePhoneLayout.mockReturnValue(true);
+			const onModelChange = vi.fn();
+			renderWithModels({ processInput: vi.fn(), onModelChange, modelMenuOpen: false });
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+			const row = screen.getByRole('button', { name: /^Auto/ });
+			// The tooltip has no hover on a phone: it is the row's description.
+			expect(row).toHaveTextContent(AXES);
+
+			fireEvent.click(row);
+			expect(onModelChange).toHaveBeenCalledWith('auto');
+		});
+
+		it('lists no Auto in the phone options sheet for an agent it would change nothing for', () => {
+			mockedUsePhoneLayout.mockReturnValue(true);
+			renderWithModels({
+				processInput: vi.fn(),
+				modelMenuOpen: false,
+				session: createInputAreaSession({ toolType: 'opencode' }),
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+			expect(screen.getByRole('button', { name: 'opus' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Auto/ })).not.toBeInTheDocument();
 		});
 	});
 

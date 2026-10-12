@@ -328,6 +328,11 @@ export interface LogEntry {
 	// Where this turn ran when the agent's Run on target was a source, copied
 	// from `AITab.turnRunOn`. Shown in place of the model pill.
 	turnRunOn?: string;
+	// Set when this turn was sent on the Auto model, copied from
+	// `AITab.turnAuto`: what the router answered and what the turn did with it.
+	// The footer draws it as one pill (`Auto → medium · sonnet`) in the model
+	// pill's place.
+	turnAuto?: AutoTurnStamp;
 	// For session_not_found system entries - payload for the inline "Create new
 	// session from prior context" action. The button on the entry opens
 	// SessionRecoveryModal which re-spawns the agent in place on `tabId`,

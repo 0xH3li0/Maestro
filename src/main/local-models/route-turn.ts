@@ -44,9 +44,9 @@ import {
 	MODEL_ROUTING_QUESTION_IDS,
 	MODEL_ROUTING_TASK_ID,
 	MODEL_ROUTING_TIMEOUT_MS,
-	embeddingRouterLabel,
 	modelRouteAnswers,
 	modelRouteFromSystemOne,
+	modelRouterEngineLabel,
 	modelRouterKind,
 	modelRoutingSystemOneRequest,
 	parseRouteTurnRequest,
@@ -60,7 +60,6 @@ import {
 import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
 import {
 	isSystemOneEngineCalibrated,
-	systemOneEngineLabel,
 	type SystemOneTaskRequest,
 	type SystemOneUsage,
 } from '../../shared/local-models/system-one';
@@ -293,7 +292,7 @@ function localRouter(
 	const model = formatLocalModelAssignmentSpec(assignment);
 	if (kind === EMBEDDING_ROUTER_ENGINE_ID) {
 		return {
-			engine: { id: kind, label: embeddingRouterLabel(name), calibrated: false },
+			engine: { id: kind, label: modelRouterEngineLabel(kind, name), calibrated: false },
 			model,
 			// The embedding router reads the prompt and asks no question.
 			request: { state: prompt, questions: {} },
@@ -302,7 +301,7 @@ function localRouter(
 	return {
 		engine: {
 			id: kind,
-			label: systemOneEngineLabel(kind, { model: name }),
+			label: modelRouterEngineLabel(kind, name),
 			calibrated: isSystemOneEngineCalibrated(kind),
 		},
 		model,

@@ -122,6 +122,7 @@ import {
 	handleLocalModelsTabCleanup,
 	handleSystemOneAccess,
 	handleModelRouteTurn,
+	handleModelRouteCorrect,
 	handleSystemOneAgentRequest,
 	handleSystemOneKeyClear,
 	handleSystemOneKeySet,
@@ -922,6 +923,10 @@ export class WebSocketMessageHandler {
 
 			case 'model_route_turn':
 				void handleModelRouteTurn(this.ctx, client, message);
+				break;
+
+			case 'model_route_correct':
+				void handleModelRouteCorrect(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':

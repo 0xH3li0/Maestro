@@ -1949,7 +1949,7 @@ Rules that are easy to break:
   follows: the launch reads the agent's target when the turn spawns.
 - **An edit to a queued message drops its answer.** The answer is about the item's text.
   `applyQueuedItemEdit()` removes `route` when the text changed, and the dispatch routes the new
-  words.
+  words. It removes it too when the edit took the item off Auto.
 - **A resend keeps its answer.** `retryStore`'s `replayItem()` re-reads the model and effort the
   agent carries now, on purpose. It hands the snapshot's `route` back to
   `captureQueuedTurnSettings()`, which keeps it only while the model is still `auto`: the words
@@ -1976,7 +1976,80 @@ resumed one takes the router's tier.
 
 How a stamp reads is `autoTurnLabel(stamp, target)`: `Auto → medium · sonnet`,
 `Auto → low · qwen3.5-4b · Maestro`, `Auto → haiku (kept)`, `Auto (router off)`,
-`Auto (no decision)`.
+`Auto (no decision)`. Its sentence is `autoTurnDetail(stamp)`: who decided and what was done with
+the answer, or why there is no decision. It is the line the resolver writes into a launch's notes,
+so a pill's tooltip and a log cannot disagree.
+
+#### Where Auto is offered
+
+Auto picks a tier and an effort, so it is offered only for an agent it can act on.
+`autoModelSupport(agent, harnessDefaults)` in `src/shared/autoTurn.ts` answers the two axes:
+
+| Axis     | True when                                                                                                                        |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `model`  | At least one tier resolves to a target (`agentTierRows()`): the agent's own tier map, the harness default, or the built-in table |
+| `effort` | The provider has an effort ladder (`supportsEffortSelection()`)                                                                  |
+
+`autoModelChoice(agent, { harnessDefaults, assignments, endpoints })` is the choice a picker
+offers, or `null` when neither axis is true. Its `title` is the tooltip: which axes Auto acts on
+(`autoModelAxesNote()`), then which router decides (`autoRouterNote()`, read from the
+`model-routing` assignment through `modelRouterEngineLabel()`, the function `routeTurn` names its
+engine with). A router that is off is still a choice. The tooltip says its turns run on the
+agent's default, and where the router is turned on.
+
+The renderer reads it through one hook, `useAutoModelChoice(agent)`
+(`src/renderer/hooks/agent/useAutoModelChoice.ts`), which supplies the three settings.
+`withAutoModelOption(models, choice)` puts the word in a model list, after the leading
+`(default)` entry, and `modelChoiceLabel(model)` draws it as `Auto`.
+
+| Picker                                   | How it gets the choice                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Provider tab, New Agent and Edit Agent   | `<AgentConfigPanel autoModelFor={{ tierTargets, runOn }}>`, judged against the form's working copy, not the stored agent |
+| Composer model pill, and its phone sheet | `ToolbarControls` calls the hook with the session and hands `ModelEffortPills` and `ComposerOptionsSheet` the list       |
+| Model & Effort console                   | `ModelEffortModal` calls the hook. The wheel's caption is the axes note; the tooltip is the full title                   |
+| Queued-message editor                    | `QueuedItemEditModal` calls the hook. An item with no capture is seeded from `captureQueuedTurnSettings()`               |
+
+`autoModelFor` is opt-in on `AgentConfigPanel`. The Group Chat moderator, the wizard and
+`AgentCreationDialog` do not pass it, because their turns are never routed: offering Auto there
+would offer a choice that changes nothing.
+
+A surface that is handed the word instead of offering it refuses an Auto that would change
+nothing, with `autoModelProblem()`: `update-agent --model auto`, `create-agent --model auto`,
+`send --model auto`, and the bridge that applies an `update_session_config` patch. All four store
+the word as `auto`, whatever the caller's spelling.
+
+#### The pills
+
+`AITab.turnAuto` is copied onto each streamed transcript entry as `LogEntry.turnAuto`, where
+`turnModel`, `turnEffort` and `turnRunOn` are copied (`useBatchedSessionUpdates`), and
+`collapseAiResponseLogs()` carries it onto the combined entry. `<TurnSettingPills auto>` draws it
+as ONE pill in the model pill's place (`data-testid="turn-auto-pill"`): the label is
+`autoTurnLabel(stamp, turnRunOn ?? turnModel)` and the tooltip is `autoTurnDetail(stamp)`. The
+effort pill beside it is the effort the turn launched at.
+
+A queued message's pills come from `queuedTurnPills(item.turnSettings)`
+(`providerTabSessions.ts`). For an item on Auto the stamp is `queuedAutoTurnStamp(route)`:
+`pending` until the router answers, then `Auto → medium` with no target, because the tier's target
+is read when the turn launches. A routed item shows no effort pill: the effort captured from the
+tab is not the one the turn will run at.
+
+#### The command line
+
+| Verb                                        | What it does                                                                                                                                                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `update-agent --model auto`, `create-agent` | Sets the agent's model to Auto, as the Provider tab's picker does                                                                                                                                                         |
+| `send --model <model>`                      | This ONE turn's model, in place of the agent's own. `auto` routes the message. Sent to the desktop as `model` on `plugins_send_agent` (the headless runner's `turn.model`), or resolved by `resolveCliAutoTurn()` locally |
+| `s1 route "<prompt>"`                       | A dry run: the tier, the effort, the router and its latency. Nothing is sent to an agent                                                                                                                                  |
+| `s1 route "<prompt>" --agent <id>`          | Also what a turn on Auto would launch on for that agent, through `resolveAutoTurn()`, as a turn that starts a session (rule 1 needs a session a dry run does not have)                                                    |
+| `s1 route "<prompt>" --correct <tier>`      | Records a correction (`recordModelRoutingCorrectionRequest()`, the WS message `model_route_correct`). It does not route                                                                                                   |
+
+A send on Auto reports what it did: the JSON a `send` prints carries
+`auto: { label, detail }` (`autoTurnReport()`), from the local spawn and from the desktop's reply
+alike. A dry run IS a routing: it is answered by the same router, with the patient timeout of an
+unattended turn, and it is kept in the decision ledger. An answer slower than
+`MODEL_ROUTING_TIMEOUT_MS` is flagged (`withinSendTimeout: false`), because a typed send would
+have gone ahead with no decision. `s1 route` exits 0 on a decision, 6 when the router is off, and 7
+when a router was asked and gave none.
 
 ### The embedding router: `getEmbeddingRouter().route(source, text)`
 

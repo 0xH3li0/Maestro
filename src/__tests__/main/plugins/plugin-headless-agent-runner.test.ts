@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
+import { autoTurnReport } from '../../../shared/autoTurn';
 import type { SessionInfo } from '../../../shared/types';
 import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
 
@@ -407,7 +408,13 @@ describe('plugin headless agent runner', () => {
 				response: 'done',
 				agentSessionId: 'sess-new',
 			}));
-			const resolveAutoTurn = vi.fn(async () => ({ notes: [], warnings: [], ...turn }));
+			// A resolved Auto turn always carries its stamp: the reply reports it.
+			const resolveAutoTurn = vi.fn(async () => ({
+				notes: [],
+				warnings: [],
+				stamp: { status: 'routed' },
+				...turn,
+			}));
 			const noteAutoSessionLaunch = vi.fn();
 			const run = createPluginHeadlessAgentRunner({
 				getAgent: () => autoAgent as SessionInfo,
@@ -517,6 +524,138 @@ describe('plugin headless agent runner', () => {
 			expect(resolveAutoTurn).not.toHaveBeenCalled();
 			expect(noteAutoSessionLaunch).not.toHaveBeenCalled();
 			expect(spawnOptions(spawn)).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+		});
+
+		it('reports what Auto did with the turn: how its pill reads, and who decided', async () => {
+			const stamp = {
+				status: 'routed' as const,
+				route: {
+					tier: 'low' as const,
+					effort: 'low' as const,
+					engine: 'Embedding router',
+					calibrated: false,
+				},
+			};
+			const { run } = harness({ model: 'haiku', effort: 'low', stamp });
+
+			const reply = await run('agent-a', 'rename the helper');
+
+			expect(reply.auto).toEqual(autoTurnReport({ model: 'haiku', stamp }));
+			expect(reply.auto).toEqual({
+				label: 'Auto → low · haiku',
+				detail: expect.stringContaining('Embedding router chose tier low, effort low.'),
+			});
+		});
+
+		it('reports a turn the router did not decide, which still runs', async () => {
+			const stamp = {
+				status: 'router-off' as const,
+				route: { skipped: 'off' as const, detail: 'The model-routing task is off.' },
+			};
+			const { run, spawn } = harness({ model: undefined, effort: 'high', stamp });
+
+			const reply = await run('agent-a', 'rename the helper');
+
+			expect(reply.success).toBe(true);
+			expect(spawn).toHaveBeenCalledOnce();
+			expect(reply.auto).toEqual({
+				label: 'Auto (router off)',
+				detail: expect.stringContaining('The model-routing task is off.'),
+			});
+		});
+
+		// `turn.model` is this one turn's model (`maestro-cli send --model`), in
+		// place of the agent's own. The eighth argument.
+		describe('with a model for this one turn', () => {
+			const named = { ...autoAgent, customModel: 'opus' };
+			const send = (run: ReturnType<typeof harness>['run'], turn?: { model?: string }) =>
+				run(
+					'agent-a',
+					'rename the helper',
+					undefined,
+					undefined,
+					'user',
+					undefined,
+					undefined,
+					turn
+				);
+
+			it("spawns on the named model in place of the agent's own, and asks no router", async () => {
+				const { run, spawn, resolveAutoTurn, noteAutoSessionLaunch } = harness(
+					{ model: 'haiku' },
+					{ getAgent: () => named as SessionInfo }
+				);
+
+				const reply = await send(run, { model: 'sonnet' });
+
+				expect(resolveAutoTurn).not.toHaveBeenCalled();
+				expect(noteAutoSessionLaunch).not.toHaveBeenCalled();
+				expect(spawnOptions(spawn)).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+				expect(reply.success).toBe(true);
+				expect(reply).not.toHaveProperty('auto');
+			});
+
+			it('keeps the named model for this turn even when the agent is set to Auto', async () => {
+				const { run, spawn, resolveAutoTurn } = harness({ model: 'haiku' });
+
+				const reply = await send(run, { model: 'sonnet' });
+
+				expect(resolveAutoTurn).not.toHaveBeenCalled();
+				expect(spawnOptions(spawn)).toMatchObject({ customModel: 'sonnet' });
+				expect(reply).not.toHaveProperty('auto');
+			});
+
+			it('routes an auto turn for an agent on a named model, and reports it', async () => {
+				const { run, spawn, resolveAutoTurn, noteAutoSessionLaunch } = harness(
+					{ model: 'haiku', effort: 'low' },
+					{ getAgent: () => named as SessionInfo }
+				);
+
+				const reply = await send(run, { model: 'auto' });
+
+				expect(resolveAutoTurn).toHaveBeenCalledWith({
+					agent: named,
+					prompt: 'rename the helper',
+				});
+				// The harness is handed the routed model, never the word and never the agent's own.
+				expect(spawnOptions(spawn)).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+				expect(noteAutoSessionLaunch).toHaveBeenCalledWith(
+					'claude-code',
+					'sess-new',
+					expect.objectContaining({ model: 'haiku' })
+				);
+				expect(reply.auto).toEqual({
+					label: expect.stringMatching(/^Auto/),
+					detail: expect.stringMatching(/^Auto/),
+				});
+				expect(reply.auto?.label).toContain('haiku');
+			});
+
+			it.each([[undefined], [{}]])(
+				"runs on the agent's own model when no turn model is given (%j)",
+				async (turn) => {
+					const { run, spawn, resolveAutoTurn } = harness(
+						{ model: 'haiku' },
+						{ getAgent: () => named as SessionInfo }
+					);
+
+					const reply = await send(run, turn);
+
+					expect(resolveAutoTurn).not.toHaveBeenCalled();
+					expect(spawnOptions(spawn)).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+					expect(reply).not.toHaveProperty('auto');
+				}
+			);
+
+			it('still routes an agent set to Auto when no turn model is given', async () => {
+				const { run, spawn, resolveAutoTurn } = harness({ model: 'haiku' });
+
+				const reply = await send(run, undefined);
+
+				expect(resolveAutoTurn).toHaveBeenCalledOnce();
+				expect(spawnOptions(spawn)).toMatchObject({ customModel: 'haiku' });
+				expect(reply.auto).toBeDefined();
+			});
 		});
 	});
 });

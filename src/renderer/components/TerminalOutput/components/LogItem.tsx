@@ -1003,7 +1003,8 @@ export const LogItem = memo(
 						((isClaudeCode && showProviderModePill) ||
 							log.turnModel ||
 							log.turnEffort ||
-							log.turnRunOn) && (
+							log.turnRunOn ||
+							log.turnAuto) && (
 							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
 								{isClaudeCode &&
 									showProviderModePill &&
@@ -1031,6 +1032,7 @@ export const LogItem = memo(
 									model={log.turnModel}
 									effort={log.turnEffort}
 									runOn={log.turnRunOn}
+									auto={log.turnAuto}
 								/>
 							</div>
 						)}

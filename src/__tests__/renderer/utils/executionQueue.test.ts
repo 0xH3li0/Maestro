@@ -392,6 +392,47 @@ describe('applyQueuedItemEdit', () => {
 
 			expect(next[0].turnSettings).toEqual({ model: 'auto', effort: 'low', route });
 		});
+
+		// An answer means nothing on a named model: the edit took the item off
+		// Auto, so the answer goes even though the words are the same.
+		it('is dropped when the edit names a model, with the text unchanged', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: [],
+				turnSettings: { ...routed!, model: 'opus' },
+			});
+
+			expect(next[0].turnSettings).toEqual({ model: 'opus', effort: 'high' });
+			expect(next[0].turnSettings).not.toHaveProperty('route');
+		});
+
+		it('is dropped when the edit clears the model back to the default, with the text unchanged', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: [],
+				turnSettings: { ...routed!, model: undefined },
+			});
+
+			expect(next[0].turnSettings).not.toHaveProperty('route');
+			expect(next[0].turnSettings?.model).toBeUndefined();
+			expect(next[0].turnSettings?.effort).toBe('high');
+		});
+
+		it('is kept when the text is unchanged and the model is still Auto', () => {
+			const queue = [{ ...item('a'), turnSettings: routed }];
+
+			const next = applyQueuedItemEdit(queue, 'a', {
+				text: queue[0].text!,
+				images: [],
+				turnSettings: routed!,
+			});
+
+			expect(next[0].turnSettings).toEqual({ model: 'auto', effort: 'high', route });
+		});
 	});
 
 	it('preserves queue order and length', () => {

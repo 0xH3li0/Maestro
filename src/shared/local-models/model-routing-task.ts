@@ -33,6 +33,7 @@ import { normalizeModelRoutingText } from './model-routing';
 import {
 	isSystemOneEngineCalibrated,
 	score,
+	systemOneEngineLabel,
 	type SystemOneAnswer,
 	type SystemOneAnswers,
 	type SystemOneEngineId,
@@ -316,6 +317,18 @@ export function modelRouterSourceNote(
 	return systemOneEngine !== 'off' && isSystemOneEngineCalibrated(systemOneEngine)
 		? 'calibrated'
 		: 'not calibrated';
+}
+
+/**
+ * What a router is called, wherever one is named before it has answered: the
+ * record of a decision, and the tooltip of the Auto model choice. `sourceName`
+ * is the assigned model as a person reads it. System One is named as itself:
+ * which engine is in force is the main process's to say, when it answers.
+ */
+export function modelRouterEngineLabel(kind: ModelRouterKind, sourceName?: string | null): string {
+	if (kind === EMBEDDING_ROUTER_ENGINE_ID) return embeddingRouterLabel(sourceName);
+	if (kind === 'local-judge') return systemOneEngineLabel(kind, { model: sourceName });
+	return 'System One';
 }
 
 // ---------------------------------------------------------------------------

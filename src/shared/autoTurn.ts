@@ -37,17 +37,35 @@
  * used sets `refusal`, and the turn must not launch on some other model.
  */
 
-import { isAutoModel, AUTO_MODEL_LABEL } from './autoModel';
+import { getAgentDisplayName } from './agentMetadata';
+import { AUTO_MODEL, AUTO_MODEL_LABEL, isAutoModel } from './autoModel';
 import type { HintDirective, ModelHint } from './autorunModelHints';
 import { resolveTurnSettings, type ResolvedTurnSettings } from './autorunTurnSettings';
 import { DURATION_MS } from './duration';
+import type { LocalModelEndpoint } from './local-models/endpoints';
 import {
+	MODEL_ROUTING_TASK_ID,
 	isModelRouteSkipped,
+	modelRouterEngineLabel,
+	modelRouterKind,
 	type ModelRoutingSkipReason,
 	type RouteTurnResult,
 } from './local-models/model-routing-task';
 import type { RunOnTarget } from './local-models/run-on';
-import type { TierRouting } from './modelTiers';
+import { taskAssignmentLocation } from './local-models/settings-location';
+import {
+	LOCAL_MODEL_TASKS,
+	localModelAssignmentSourceLabel,
+	resolveLocalModelAssignment,
+	type LocalModelAssignments,
+} from './local-models/tasks';
+import {
+	agentTierRows,
+	supportsEffortSelection,
+	type HarnessTierDefaults,
+	type TierRouting,
+	type TierTargetAgent,
+} from './modelTiers';
 import type { EffortLevel, ModelTier } from './tierLevels';
 import type { ToolType } from './types';
 
@@ -358,4 +376,183 @@ export function autoTurnLabel(stamp: AutoTurnStamp, target?: string): string {
 			return parts.length > 0 ? `${AUTO_MODEL_LABEL} → ${parts.join(' · ')}` : AUTO_MODEL_LABEL;
 		}
 	}
+}
+
+/**
+ * A turn's Auto in a sentence, for the tooltip of its pill: who decided and
+ * what was done with the answer, or why there is no decision. The same line the
+ * resolver writes into a launch's notes, so a pill and a log cannot disagree.
+ */
+export function autoTurnDetail(stamp: AutoTurnStamp): string {
+	if (stamp.status === 'pending') {
+		return `${AUTO_MODEL_LABEL}: waiting for the model router.`;
+	}
+	const line = autoNote(stamp.route, stamp.hold);
+	return stamp.refusal ? `${line} ${stamp.refusal}` : line;
+}
+
+/** A turn's Auto for a caller with no pill to read: `maestro-cli send`, a plugin's send. */
+export interface AutoTurnReport {
+	/** `Auto → medium · sonnet`, `Auto (router off)`, `Auto (no decision)`. */
+	label: string;
+	/** Who decided and what was done with the answer, or why there is no decision. */
+	detail: string;
+}
+
+/**
+ * A resolved Auto turn as its report. `target` is where the turn runs as a
+ * person reads it (a Run on label) when the caller has one; otherwise the model
+ * names it.
+ */
+export function autoTurnReport(
+	turn: Pick<AutoTurn, 'model' | 'stamp'>,
+	target?: string
+): AutoTurnReport {
+	return {
+		label: autoTurnLabel(turn.stamp, target ?? turn.model),
+		detail: autoTurnDetail(turn.stamp),
+	};
+}
+
+/**
+ * A queued message's Auto as a stamp its pill can read. The router's answer is
+ * frozen on the item when it is queued; rule 1 and the tier's target are read
+ * when the turn takes the tab, so neither is on it yet. No answer yet is
+ * `pending`, which is what the item is doing.
+ */
+export function queuedAutoTurnStamp(route: AutoRouteStamp | undefined): AutoTurnStamp {
+	return route ? { status: statusOf(route), route } : { status: 'pending' };
+}
+
+// ---------------------------------------------------------------------------
+// Whether Auto is offered, and what it says before a turn is sent
+// ---------------------------------------------------------------------------
+
+/**
+ * What Auto can change for one agent. Auto picks a tier and an effort, so it
+ * acts only where Maestro knows what those mean for the agent: a tier that
+ * resolves to a target (the agent's own tier map, the harness default, the
+ * built-in table), and a provider with an effort ladder.
+ */
+export interface AutoModelSupport {
+	/** At least one tier resolves to a target, so a routed tier can change the model. */
+	model: boolean;
+	/** The provider has effort levels Maestro can name. */
+	effort: boolean;
+}
+
+export function autoModelSupport(
+	agent: TierTargetAgent,
+	harnessDefaults?: HarnessTierDefaults | null
+): AutoModelSupport {
+	return {
+		model: agentTierRows(agent, harnessDefaults).some((row) => row.target !== null),
+		effort: supportsEffortSelection(agent.toolType),
+	};
+}
+
+/** Auto is offered only where it can act on at least one axis. */
+export function isAutoModelOffered(support: AutoModelSupport): boolean {
+	return support.model || support.effort;
+}
+
+/** Which axes Auto acts on, as the clause after "Auto:". */
+export function autoModelAxesNote(support: AutoModelSupport): string {
+	if (support.model && support.effort) return 'picks the model and the effort for each turn';
+	if (support.effort) return 'picks effort; map tiers in the Models tab to also pick the model';
+	if (support.model) return 'picks the model; this provider has no effort levels to pick';
+	return 'would change nothing';
+}
+
+/**
+ * Why an agent cannot be set to Auto, or `null` when it can. For a surface that
+ * is handed the word instead of offering it (`update-agent --model auto`,
+ * `send --model auto`): an Auto that would change nothing is refused by name.
+ */
+export function autoModelProblem(
+	agent: TierTargetAgent,
+	harnessDefaults?: HarnessTierDefaults | null
+): string | null {
+	if (isAutoModelOffered(autoModelSupport(agent, harnessDefaults))) return null;
+	return `${AUTO_MODEL_LABEL} would change nothing for this agent: ${getAgentDisplayName(agent.toolType)} has no effort levels Maestro can pick, and none of its tiers is mapped to a model. Map a tier first (the Models tab, or update-agent --tier).`;
+}
+
+/** Who decides a turn sent on Auto, as a surface says it before the turn is sent. */
+export interface AutoRouterNote {
+	/** False when the `model-routing` task is off: Auto then runs the agent's default. */
+	on: boolean;
+	text: string;
+}
+
+/**
+ * The router the `model-routing` task is assigned, in a sentence. An agent set
+ * to Auto with the router off is not an error; the sentence says what happens
+ * and where the router is turned on.
+ */
+export function autoRouterNote(
+	assignments: LocalModelAssignments | undefined,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
+): AutoRouterNote {
+	const assignment = resolveLocalModelAssignment(assignments, MODEL_ROUTING_TASK_ID);
+	const kind = modelRouterKind(assignment);
+	if (!kind) {
+		return {
+			on: false,
+			text: `The model router is off, so a turn runs on the agent's default. Assign ${LOCAL_MODEL_TASKS[MODEL_ROUTING_TASK_ID].label} a router in ${taskAssignmentLocation(MODEL_ROUTING_TASK_ID)}.`,
+		};
+	}
+	return {
+		on: true,
+		text: `Decided by ${modelRouterEngineLabel(kind, localModelAssignmentSourceLabel(assignment, endpoints))}.`,
+	};
+}
+
+/** The Auto choice as a model picker offers it. */
+export interface AutoModelChoice {
+	support: AutoModelSupport;
+	/** False when the router is off. The choice is still offered; its turns run the agent's default. */
+	routerOn: boolean;
+	/** The tooltip: which axes Auto acts on, and which router decides. */
+	title: string;
+}
+
+/**
+ * The Auto choice for one agent, or `null` when it must not be offered because
+ * it would change nothing. Every picker reads this, so no two can disagree
+ * about whether an agent has Auto or what it says.
+ */
+export function autoModelChoice(
+	agent: TierTargetAgent,
+	context: {
+		harnessDefaults?: HarnessTierDefaults | null;
+		assignments?: LocalModelAssignments;
+		endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[];
+	} = {}
+): AutoModelChoice | null {
+	const support = autoModelSupport(agent, context.harnessDefaults);
+	if (!isAutoModelOffered(support)) return null;
+	const router = autoRouterNote(context.assignments, context.endpoints);
+	return {
+		support,
+		routerOn: router.on,
+		title: `${AUTO_MODEL_LABEL}: ${autoModelAxesNote(support)}. ${router.text}`,
+	};
+}
+
+/**
+ * A model list with Auto in it, right after the leading "(default)" entry when
+ * the list has one. Unchanged when Auto is not offered.
+ */
+export function withAutoModelOption(
+	models: readonly string[],
+	choice: AutoModelChoice | null | undefined
+): string[] {
+	const named = models.filter((model) => !isAutoModel(model));
+	if (!choice) return named.length === models.length ? (models as string[]) : named;
+	return named[0] === '' ? ['', AUTO_MODEL, ...named.slice(1)] : [AUTO_MODEL, ...named];
+}
+
+/** How a model value reads in a picker: Auto by its label, every other model as itself. */
+export function modelChoiceLabel(model: string): string {
+	return isAutoModel(model) ? AUTO_MODEL_LABEL : model;
 }

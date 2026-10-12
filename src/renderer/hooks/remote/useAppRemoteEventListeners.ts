@@ -15,6 +15,8 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
 import { parseTierTargetsEdit } from '../../../shared/modelTiers';
+import { AUTO_MODEL, isAutoModel } from '../../../shared/autoModel';
+import { autoModelProblem } from '../../../shared/autoTurn';
 import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import { parseSystemOneOptOutEdit } from '../../../shared/local-models/system-one-agent';
@@ -2133,6 +2135,29 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			updated.tierTargets = edit.tierTargets;
+		}
+
+		// `auto` as the model is stored as the word, and only for an agent Auto
+		// can act on, judged against the tiers and the Run on target this same
+		// patch leaves it with. An Auto that would change nothing is refused by
+		// name, the way no picker offers it.
+		if (isAutoModel(updated.customModel)) {
+			const problem = autoModelProblem(
+				{
+					toolType: session.toolType,
+					tierTargets: 'tierTargets' in updated ? updated.tierTargets : session.tierTargets,
+					runOn: 'runOn' in patch ? patch.runOn : session.runOn,
+				},
+				useSettingsStore.getState().harnessTierDefaults
+			);
+			if (problem) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: problem,
+				});
+				return;
+			}
+			updated.customModel = AUTO_MODEL;
 		}
 
 		// A background requests target needs the proxy. Taking the agent off the

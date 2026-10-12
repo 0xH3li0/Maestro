@@ -208,3 +208,126 @@ describe('getModelRoutingCorrectionStore', () => {
 		expect(fs.existsSync(path.join(dir, MODEL_ROUTING_CORRECTIONS_FILE))).toBe(true);
 	});
 });
+
+// A correction that crossed a process boundary (`maestro-cli s1 route
+// --correct`, the WS message `model_route_correct`). The store behind it is the
+// app's one store, so each case loads the module again: a fresh store over this
+// case's own data dir.
+describe('recordModelRoutingCorrectionRequest', () => {
+	let record: typeof import('../../../main/local-models/model-routing-corrections').recordModelRoutingCorrectionRequest;
+	const dataFile = () => path.join(dir, MODEL_ROUTING_CORRECTIONS_FILE);
+
+	beforeEach(async () => {
+		vi.resetModules();
+		({ recordModelRoutingCorrectionRequest: record } =
+			await import('../../../main/local-models/model-routing-corrections'));
+	});
+
+	it.each([
+		['nothing', undefined],
+		['null', null],
+		['a string', 'rename the helper'],
+		['a number', 3],
+		['a list', [{ prompt: 'rename the helper', tier: 'high' }]],
+	])('rejects %s as a request, and writes nothing', async (_what, request) => {
+		await expect(record(request)).rejects.toThrow(
+			'A routing correction is an object with a prompt and a tier.'
+		);
+		expect(fs.existsSync(dataFile())).toBe(false);
+	});
+
+	it.each([
+		['absent', {}],
+		['a number', { prompt: 7 }],
+		['null', { prompt: null }],
+		['a list', { prompt: ['rename the helper'] }],
+	])('rejects a prompt that is %s', async (_what, fields) => {
+		await expect(record({ tier: 'high', ...fields })).rejects.toThrow(
+			"A routing correction's prompt is text."
+		);
+		expect(fs.existsSync(dataFile())).toBe(false);
+	});
+
+	it.each([
+		['absent', {}],
+		['a word that is not a tier', { tier: 'enormous' }],
+		['a tier in another case', { tier: 'High' }],
+		['a number', { tier: 2 }],
+		['null', { tier: null }],
+	])('rejects a tier that is %s', async (_what, fields) => {
+		await expect(record({ prompt: 'rename the helper', ...fields })).rejects.toThrow(
+			"A routing correction's tier is one of low, medium, high."
+		);
+		expect(fs.existsSync(dataFile())).toBe(false);
+	});
+
+	it.each([
+		['a word that is not a level', 'extreme'],
+		['a number', 1],
+		['null', null],
+		['an empty string', ''],
+	])('rejects an effort that is %s', async (_what, effort) => {
+		await expect(record({ prompt: 'rename the helper', tier: 'high', effort })).rejects.toThrow(
+			"A routing correction's effort is one of low, medium, high."
+		);
+		expect(fs.existsSync(dataFile())).toBe(false);
+	});
+
+	it("records a good one in the app's store, with no effort when none was given", async () => {
+		const result = await record({ prompt: '  migrate the schema  ', tier: 'high' });
+
+		expect(result).toEqual({
+			ok: true,
+			correction: { text: 'migrate the schema', tier: 'high', recordedAt: expect.any(Number) },
+			replaced: false,
+			total: 1,
+		});
+		const saved = JSON.parse(fs.readFileSync(dataFile(), 'utf-8'));
+		expect(saved.corrections).toEqual([
+			{ text: 'migrate the schema', tier: 'high', recordedAt: expect.any(Number) },
+		]);
+	});
+
+	it('keeps the effort it is given, and ignores fields it does not know', async () => {
+		const result = await record({
+			prompt: 'migrate the schema',
+			tier: 'high',
+			effort: 'medium',
+			agentId: 'agent-7',
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			correction: { text: 'migrate the schema', tier: 'high', effort: 'medium' },
+		});
+		const saved = JSON.parse(fs.readFileSync(dataFile(), 'utf-8'));
+		expect(saved.corrections).toEqual([
+			{
+				text: 'migrate the schema',
+				tier: 'high',
+				effort: 'medium',
+				recordedAt: expect.any(Number),
+			},
+		]);
+	});
+
+	it('replaces the earlier correction for the same prompt', async () => {
+		await record({ prompt: 'migrate the schema', tier: 'low' });
+		const result = await record({ prompt: 'migrate the schema', tier: 'high' });
+
+		expect(result).toMatchObject({ ok: true, replaced: true, total: 1 });
+		expect(JSON.parse(fs.readFileSync(dataFile(), 'utf-8')).corrections).toEqual([
+			expect.objectContaining({ text: 'migrate the schema', tier: 'high' }),
+		]);
+	});
+
+	it('answers a blank prompt with the store refusal instead of rejecting', async () => {
+		const result = await record({ prompt: '   ', tier: 'high' });
+
+		expect(result).toEqual({
+			ok: false,
+			message: 'There is no prompt to record a correction for.',
+		});
+		expect(fs.existsSync(dataFile())).toBe(false);
+	});
+});

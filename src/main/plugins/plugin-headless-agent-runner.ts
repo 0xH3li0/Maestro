@@ -6,7 +6,7 @@ import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-too
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { isAutoModel } from '../../shared/autoModel';
-import type { AutoTurn } from '../../shared/autoTurn';
+import { autoTurnReport, type AutoTurn } from '../../shared/autoTurn';
 import type { AgentAutoTurnRequest } from '../local-models/auto-turn';
 import { logger } from '../utils/logger';
 
@@ -60,7 +60,8 @@ export function createPluginHeadlessAgentRunner(
 		signal,
 		origin = 'auto',
 		onProgress,
-		receiptToolId
+		receiptToolId,
+		turn
 	) => {
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
@@ -110,7 +111,10 @@ export function createPluginHeadlessAgentRunner(
 			// router decides this turn's model and effort, and the place when the
 			// tier names one. A tier target that cannot be used fails the send by
 			// name; the turn is never launched on some other model in its place.
-			const autoTurn = isAutoModel(agent.customModel)
+			// `turn.model` is this one turn's model (`maestro-cli send --model`), in
+			// place of the agent's own. It may be the word `auto` too.
+			const turnModel = turn?.model ?? agent.customModel;
+			const autoTurn = isAutoModel(turnModel)
 				? await deps.resolveAutoTurn({
 						agent,
 						prompt,
@@ -130,7 +134,7 @@ export function createPluginHeadlessAgentRunner(
 				logger.info(`agents.send -> agent ${agent.id}: ${line}`, '[ModelRouting]');
 			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
-				customModel: autoTurn ? autoTurn.model : agent.customModel,
+				customModel: autoTurn ? autoTurn.model : turnModel,
 				customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
 				...(autoTurn?.runOn ? { runOn: autoTurn.runOn } : {}),
 				customArgs: agent.customArgs,
@@ -168,6 +172,7 @@ export function createPluginHeadlessAgentRunner(
 				sessionId: result.agentSessionId ?? null,
 				usageStats: result.usageStats,
 				...(receiptToolId && runToken ? { toolReceipts: deps.getRunReceipts!(runToken) } : {}),
+				...(autoTurn ? { auto: autoTurnReport(autoTurn) } : {}),
 				...(success
 					? {}
 					: {

@@ -46,6 +46,7 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			const turnModel = currentResponseGroup.find((l) => l.turnModel)?.turnModel;
 			const turnEffort = currentResponseGroup.find((l) => l.turnEffort)?.turnEffort;
 			const turnRunOn = currentResponseGroup.find((l) => l.turnRunOn)?.turnRunOn;
+			const turnAuto = currentResponseGroup.find((l) => l.turnAuto)?.turnAuto;
 			result.push({
 				...currentResponseGroup[0],
 				text: combinedText,
@@ -54,6 +55,7 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 				...(turnModel ? { turnModel } : {}),
 				...(turnEffort ? { turnEffort } : {}),
 				...(turnRunOn ? { turnRunOn } : {}),
+				...(turnAuto ? { turnAuto } : {}),
 			});
 			currentResponseGroup = [];
 		}

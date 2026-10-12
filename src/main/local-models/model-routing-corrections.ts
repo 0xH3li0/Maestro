@@ -25,7 +25,12 @@ import {
 	withModelRoutingCorrection,
 	type ModelRoutingCorrection,
 } from '../../shared/local-models/model-routing';
-import type { EffortLevel, ModelTier } from '../../shared/modelTiers';
+import {
+	TIER_LEVELS,
+	asTierLevel,
+	type EffortLevel,
+	type ModelTier,
+} from '../../shared/tierLevels';
 import { corruptStorePath } from '../stores/corrupt-store-recovery';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
@@ -175,4 +180,33 @@ export function getModelRoutingCorrectionStore(): ModelRoutingCorrectionStore {
 		);
 	}
 	return instance;
+}
+
+/**
+ * Record a correction that crossed a process boundary (`maestro-cli s1 route
+ * --correct <tier>`, the WS message `model_route_correct`). A request that
+ * cannot be read is the caller's bug and rejects with what is wrong with it; a
+ * correction the store refuses (a blank prompt) comes back as its result.
+ */
+export async function recordModelRoutingCorrectionRequest(
+	request: unknown
+): Promise<ModelRoutingCorrectionResult> {
+	if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+		throw new Error('A routing correction is an object with a prompt and a tier.');
+	}
+	const raw = request as Record<string, unknown>;
+	if (typeof raw.prompt !== 'string') throw new Error("A routing correction's prompt is text.");
+	const tier = asTierLevel(raw.tier);
+	if (!tier) {
+		throw new Error(`A routing correction's tier is one of ${TIER_LEVELS.join(', ')}.`);
+	}
+	const effort = raw.effort === undefined ? undefined : asTierLevel(raw.effort);
+	if (raw.effort !== undefined && !effort) {
+		throw new Error(`A routing correction's effort is one of ${TIER_LEVELS.join(', ')}.`);
+	}
+	return getModelRoutingCorrectionStore().record({
+		text: raw.prompt,
+		tier,
+		...(effort ? { effort } : {}),
+	});
 }

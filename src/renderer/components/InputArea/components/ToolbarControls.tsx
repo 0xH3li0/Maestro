@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
 	ArrowUp,
 	Brain,
@@ -28,6 +28,8 @@ import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import { useAutoModelChoice } from '../../../hooks/agent/useAutoModelChoice';
+import { withAutoModelOption } from '../../../../shared/autoTurn';
 import {
 	nextPermissionMode,
 	permissionModeFields,
@@ -186,6 +188,15 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// shortcutSuffix both render nothing for an empty list, which is what keeps
 	// a cleared binding from drawing a bare "Try: ".
 	const modelEffortKeys = shortcuts?.openModelEffort?.keys;
+
+	// Auto is a model choice like any other, offered only for an agent it can
+	// act on. It is added here, where the agent is known, so the desktop pill and
+	// the phone sheet below list the same thing.
+	const autoModel = useAutoModelChoice(session);
+	const modelOptions = useMemo(
+		() => withAutoModelOption(availableModels, autoModel),
+		[availableModels, autoModel]
+	);
 
 	// The three tab-scoped toggles below are all bindable chords. Read them live
 	// from the tab shortcut map rather than spelling the default combo into the
@@ -374,7 +385,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 						tabShowThinking={tabShowThinking}
 						onThinkingModeChange={onToggleTabShowThinking ? handleThinkingModeChange : undefined}
 						currentModel={currentModel}
-						availableModels={availableModels}
+						availableModels={modelOptions}
+						autoModelTitle={autoModel?.title}
 						onModelChange={onModelChange}
 						currentEffort={currentEffort}
 						availableEfforts={availableEfforts}
@@ -451,8 +463,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
 					currentEffort={currentEffort}
-					availableModels={availableModels}
+					availableModels={modelOptions}
 					availableEfforts={availableEfforts}
+					autoModelTitle={autoModel?.title}
 					onModelChange={onModelChange}
 					onEffortChange={onEffortChange}
 					modelMenuOpen={modelMenuOpen}

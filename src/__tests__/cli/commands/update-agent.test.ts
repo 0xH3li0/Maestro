@@ -32,6 +32,8 @@ vi.mock('../../../cli/services/storage', () => ({
 			enabled: true,
 		},
 	]),
+	// The harness tier defaults `--model auto` is judged against.
+	readHarnessTierDefaults: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../cli/output/formatter', () => ({
@@ -41,7 +43,12 @@ vi.mock('../../../cli/output/formatter', () => ({
 
 import { updateAgent } from '../../../cli/commands/update-agent';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { resolveAgentId, resolveGroupId, getSessionById } from '../../../cli/services/storage';
+import {
+	resolveAgentId,
+	resolveGroupId,
+	getSessionById,
+	readHarnessTierDefaults,
+} from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
 describe('update-agent command', () => {
@@ -1076,6 +1083,122 @@ describe('update-agent command', () => {
 					target: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:4b' },
 				},
 			});
+		});
+	});
+
+	// `--model auto`: the Auto choice of the model picker. Stored as the word,
+	// and only for an agent Auto can act on.
+	describe('--model auto', () => {
+		function mockAgent(agent: Record<string, unknown> = {}) {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+				...agent,
+			} as never);
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		const sentPatch = (sendCommand: ReturnType<typeof vi.fn>) =>
+			sendCommand.mock.calls[0][0].configPatch;
+
+		/** Run a call that must be refused before it reaches the app. */
+		async function refused(flags: Parameters<typeof updateAgent>[1]) {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(updateAgent('agent-1', flags)).rejects.toThrow('process.exit');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+
+		it.each(['auto', 'Auto', 'AUTO'])('stores %s as the word auto', async (model) => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { model });
+
+			expect(sentPatch(sendCommand)).toEqual({ customModel: 'auto' });
+		});
+
+		it('leaves a named model as it was typed', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { model: 'Opus' });
+
+			expect(sentPatch(sendCommand)).toEqual({ customModel: 'Opus' });
+			expect(readHarnessTierDefaults).not.toHaveBeenCalled();
+		});
+
+		it('refuses it by name for an agent Auto cannot act on', async () => {
+			mockAgent({ toolType: 'opencode' });
+
+			await refused({ model: 'auto' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringMatching(/^--model auto: Auto would change nothing for this agent/)
+			);
+		});
+
+		it('refuses it as JSON with --json', async () => {
+			mockAgent({ toolType: 'opencode' });
+
+			await refused({ model: 'auto', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: expect.stringMatching(/^--model auto: /),
+			});
+		});
+
+		it('allows it for that provider when the same call maps a tier', async () => {
+			const sendCommand = mockAgent({ toolType: 'opencode' });
+
+			await updateAgent('agent-1', { model: 'Auto', tier: ['medium=provider:some-model'] });
+
+			expect(sentPatch(sendCommand)).toEqual({
+				customModel: 'auto',
+				tierTargets: { medium: { type: 'provider-model', model: 'some-model' } },
+			});
+		});
+
+		it('allows it for that provider when the agent already holds a mapped tier', async () => {
+			const sendCommand = mockAgent({
+				toolType: 'opencode',
+				tierTargets: { high: { type: 'provider-model', model: 'some-model' } },
+			});
+
+			await updateAgent('agent-1', { model: 'auto' });
+
+			expect(sentPatch(sendCommand)).toEqual({ customModel: 'auto' });
+		});
+
+		it('allows it for that provider when a harness default maps a tier', async () => {
+			const sendCommand = mockAgent({ toolType: 'opencode' });
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				opencode: { low: { type: 'provider-model', model: 'some-model' } },
+			});
+
+			await updateAgent('agent-1', { model: 'auto' });
+
+			expect(sentPatch(sendCommand)).toEqual({ customModel: 'auto' });
+		});
+
+		it('refuses it when the same call takes away the only mapped tier', async () => {
+			mockAgent({
+				toolType: 'opencode',
+				tierTargets: { high: { type: 'provider-model', model: 'some-model' } },
+			});
+
+			await refused({ model: 'auto', tier: ['high=default'] });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringMatching(/^--model auto: /));
 		});
 	});
 

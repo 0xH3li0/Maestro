@@ -25,6 +25,9 @@ import {
 	type SimpleResult,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
+import { getSessionById, readHarnessTierDefaults } from '../services/storage';
+import { AUTO_MODEL, AUTO_MODEL_LABEL, isAutoModel } from '../../shared/autoModel';
+import { autoModelProblem } from '../../shared/autoTurn';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
@@ -348,20 +351,44 @@ export async function tabReadOnly(
  * Override the model for one tab, or pass `null` to drop the override so the
  * tab inherits the agent's model again. Values are not validated against the
  * provider's model list - same as `update-agent --model`, which lets you name a
- * model the local install knows about before Maestro has probed for it.
+ * model the local install knows about before Maestro has probed for it. `auto`
+ * is the exception.
  */
 export async function tabModel(
 	tabId: string,
 	model: string | null,
 	options: TabMutateOptions
 ): Promise<void> {
-	await tabFlag(
-		tabId,
-		{ customModel: model },
-		(owner) =>
-			model === null
-				? `Tab ${owner.tabId} now inherits the agent's model`
-				: `Set tab ${owner.tabId} model to ${model}`,
+	// `auto` is the composer's Auto choice: the model router picks the tier and
+	// effort of each turn this tab sends. It is the one value that IS checked,
+	// because the composer only offers it for an agent it can act on. An Auto
+	// that would change nothing is refused by name, and the word is stored as
+	// `auto` whatever the caller's spelling.
+	if (!isAutoModel(model)) {
+		await tabFlag(
+			tabId,
+			{ customModel: model },
+			(owner) =>
+				model === null
+					? `Tab ${owner.tabId} now inherits the agent's model`
+					: `Set tab ${owner.tabId} model to ${model}`,
+			options
+		);
+		return;
+	}
+	let owner: { agentId: string; tabId: string };
+	try {
+		owner = await resolveTabOwner(tabId, options.agent);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+	const agent = getSessionById(owner.agentId);
+	const problem = agent ? autoModelProblem(agent, readHarnessTierDefaults()) : null;
+	if (problem) return failCommand(problem, options.json);
+	await writeTabPatch(
+		owner,
+		{ customModel: AUTO_MODEL },
+		`Set tab ${owner.tabId} model to ${AUTO_MODEL_LABEL}`,
 		options
 	);
 }

@@ -15,7 +15,7 @@
  * local_models_run_on_test, local_models_tier_options, system_one_status,
  * system_one_set, system_one_key_set, system_one_key_clear, system_one_test,
  * system_one_ledger, system_one_agent_request, system_one_usage,
- * system_one_access, model_route_turn, notify_speak.
+ * system_one_access, model_route_turn, model_route_correct, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -88,6 +88,7 @@ import {
 } from '../../../local-models/system-one/agent-service';
 import { readSystemOneLedger } from '../../../local-models/system-one/decisions';
 import { routeTurnRequest } from '../../../local-models/route-turn';
+import { recordModelRoutingCorrectionRequest } from '../../../local-models/model-routing-corrections';
 import { testAgentRunOn } from '../../../local-models/run-on-test';
 import { listHarnessTierOptionsRequest } from '../../../local-models/tier-options';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -731,6 +732,24 @@ export function handleModelRouteTurn(
 ): Promise<void> {
 	return respond(ctx, client, message, 'model_route_turn_result', async () => ({
 		result: await routeTurnRequest(message.request),
+	}));
+}
+
+/**
+ * Handle model_route_correct - record that a prompt needed a different tier
+ * than the router picked (`maestro-cli s1 route --correct <tier>`). The
+ * embedding router reads the corrections beside its shipped examples, so the
+ * next prompt like it is voted on with this one. A correction the store
+ * refuses (a blank prompt) is a successful round trip with the reason in
+ * `result`; only a request that cannot be read is an error.
+ */
+export function handleModelRouteCorrect(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'model_route_correct_result', async () => ({
+		result: await recordModelRoutingCorrectionRequest(message.request),
 	}));
 }
 

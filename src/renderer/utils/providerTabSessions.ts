@@ -21,11 +21,13 @@ import { isAutoModel } from '../../shared/autoModel';
 import {
 	autoModelHold,
 	pendingAutoTurnStamp,
+	queuedAutoTurnStamp,
 	resolveAutoTurn,
 	type AutoModelHold,
 	type AutoRouteStamp,
 	type AutoSessionLaunch,
 	type AutoTurn,
+	type AutoTurnStamp,
 } from '../../shared/autoTurn';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import {
@@ -310,6 +312,25 @@ export function captureQueuedTurnSettings(
 	const model = tab?.customModel ?? session.customModel;
 	const effort = tab?.customEffort ?? session.customEffort;
 	return { model, effort, ...(route && isAutoModel(model) ? { route } : {}) };
+}
+
+/**
+ * What a queued item's pills read (`<TurnSettingPills>`): its frozen model and
+ * effort, or, for an item queued on Auto, the stamp of what the router
+ * answered. A routed item's effort is the router's, resolved to the provider's
+ * word when the turn launches, so the effort captured from the tab is not
+ * shown for it: it is not what the turn will run at.
+ */
+export function queuedTurnPills(settings: QueuedTurnSettings | undefined): {
+	model?: string;
+	effort?: string;
+	auto?: AutoTurnStamp;
+} {
+	if (!settings || !isAutoModel(settings.model)) {
+		return { model: settings?.model, effort: settings?.effort };
+	}
+	const auto = queuedAutoTurnStamp(settings.route);
+	return { auto, ...(auto.status === 'routed' ? {} : { effort: settings.effort }) };
 }
 
 /**

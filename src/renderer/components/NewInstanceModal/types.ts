@@ -3,7 +3,7 @@ import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from 
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
-import type { TierTargets } from '../../../shared/modelTiers';
+import type { TierTargetAgent, TierTargets } from '../../../shared/modelTiers';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -208,4 +208,6 @@ export interface AgentPickerGridProps {
 	 * form edits them on its Environment tab instead.
 	 */
 	hideEnvVars?: boolean;
+	/** Offer Auto in each provider's model field (`AgentConfigPanelProps.autoModelFor`). */
+	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
 }

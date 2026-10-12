@@ -160,6 +160,7 @@ import {
 	systemOneTest,
 } from './commands/system-one';
 import { registerSystemOneAgentCommands } from './commands/system-one-ask';
+import { systemOneRoute } from './commands/system-one-route';
 import { modelsStatus } from './commands/models-status';
 import {
 	voiceWakeAdd,
@@ -545,6 +546,10 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
+	.option(
+		'--model <model>',
+		'Run this one turn on a model other than the agent\'s own. "auto" asks the model router for the tier and effort this message needs (see: s1 route)'
+	)
 	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
 	.option(
 		'--require-tool-receipt <tool-id>',
@@ -1471,7 +1476,10 @@ program
 		(val: string, prev: string[]) => [...prev, val],
 		[] as string[]
 	)
-	.option('--model <model>', 'Model override (e.g., sonnet, opus)')
+	.option(
+		'--model <model>',
+		'Model override (e.g., sonnet, opus; "auto" lets the model router pick the tier and effort of each turn)'
+	)
 	.option('--effort <level>', 'Effort/reasoning level override')
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
@@ -1665,7 +1673,10 @@ program
 		'--system-one <on|off>',
 		'Whether this agent may ask System One with maestro-cli s1: off switches it off for this agent only, on follows "Let agents use System One" (default on)'
 	)
-	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
+	.option(
+		'--model <model>',
+		'Model override (e.g. sonnet, opus; "auto" lets the model router pick per turn; empty string clears)'
+	)
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
 	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')
 	.option(
@@ -1830,7 +1841,9 @@ tabTargetOptions(tab.command('read-only <tab-id> <bool>'))
 	.action((tabId, bool, options) => tabReadOnly(tabId, tabBoolArg(bool, 'read-only'), options));
 
 tabTargetOptions(tab.command('model <tab-id> <model>'))
-	.description('Override the model for this tab ("inherit" clears the override)')
+	.description(
+		'Override the model for this tab ("inherit" clears the override; "auto" lets the model router pick the tier and effort of each turn)'
+	)
 	.action((tabId, model, options) =>
 		tabModel(tabId, isInheritValue(model) ? null : model, options)
 	);
@@ -3021,6 +3034,22 @@ systemOne
 	.option('--limit <n>', 'At most this many decisions, 1 to 1000 (default 100)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(systemOneLedger);
+
+systemOne
+	.command('route <prompt>')
+	.description(
+		'A dry run of the model router: the tier and effort the model-routing task picks for a prompt, the router that decided and its latency, without sending anything. With --agent, also what a turn on the Auto model would launch on for that agent. Exits 6 when the router is off and 7 when it gave no decision (requires the desktop app)'
+	)
+	.option(
+		'--agent <id>',
+		'Resolve the decision for this agent: its tier targets, the harness defaults, and the model, effort and place a turn on Auto would launch on (supports partial IDs)'
+	)
+	.option(
+		'--correct <tier>',
+		'Record that this prompt needed low | medium | high instead of routing it. The embedding router votes with the correction from the next prompt'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneRoute);
 
 // The verbs an agent asks System One with: yes, pick, rate, ask, rank, batch,
 // and what they cost (usage, cost).

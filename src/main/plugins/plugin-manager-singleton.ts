@@ -15,6 +15,7 @@
 import type { PluginManager } from './plugin-manager';
 import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
+import type { AutoTurnReport } from '../../shared/autoTurn';
 
 export interface HeadlessAgentReply {
 	success: boolean;
@@ -24,6 +25,13 @@ export interface HeadlessAgentReply {
 	usageStats?: import('../../shared/types').UsageStats;
 	/** Present only for an authenticated CLI run that requested one tool ID. */
 	toolReceipts?: PluginToolReceipt[];
+	/** Set for a turn on the Auto model: how its pill reads and what the router did. */
+	auto?: AutoTurnReport;
+}
+/** What one headless turn may set in place of the agent's own settings. */
+export interface HeadlessTurnSettings {
+	/** The model for this turn. `auto` asks the model router. */
+	model?: string;
 }
 export type HeadlessAgentRunner = (
 	agentId: string,
@@ -32,7 +40,9 @@ export type HeadlessAgentRunner = (
 	signal?: AbortSignal,
 	origin?: 'user' | 'auto' | 'relay',
 	onProgress?: (event: AgentSendProgressEvent) => void,
-	receiptToolId?: string
+	receiptToolId?: string,
+	/** Settings for this one turn that replace the agent's own (`maestro-cli send --model`). */
+	turn?: HeadlessTurnSettings
 ) => Promise<HeadlessAgentReply>;
 let headlessAgentRunner: HeadlessAgentRunner | null = null;
 

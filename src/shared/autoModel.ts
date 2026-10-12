@@ -35,3 +35,13 @@ export function isAutoModel(model: unknown): model is string {
 export function ownModel(model: string | undefined | null): string | undefined {
 	return model && !isAutoModel(model) ? model : undefined;
 }
+
+/**
+ * Whether a string can be one turn's model as a caller typed it (`maestro-cli
+ * send --model`): one short line with no surrounding space, and not a flag. It
+ * becomes a launch argument, so a value that starts with `-` or carries a
+ * control character is refused before it is handed to a harness.
+ */
+export function isTurnModelName(value: string): boolean {
+	return /^[^\x00-\x1f\x7f\s-][^\x00-\x1f\x7f]{0,199}$/.test(value) && value === value.trim();
+}

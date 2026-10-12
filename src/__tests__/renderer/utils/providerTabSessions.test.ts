@@ -19,6 +19,7 @@ import {
 	tabSessionLaunch,
 	settleAutoTurnOnTab,
 	autoTurnLaunch,
+	queuedTurnPills,
 } from '../../../renderer/utils/providerTabSessions';
 import { promptCacheLifetimeMs, type AutoRouteStamp } from '../../../shared/autoTurn';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -656,6 +657,50 @@ describe('a turn sent on the Auto model', () => {
 
 		it('from before settings were captured follows the agent, Auto included', () => {
 			expect(codifyQueuedTurnSettings({}, makeTab(), AUTO).turnAuto).toEqual({ status: 'pending' });
+		});
+	});
+
+	describe('queuedTurnPills: what a queued item reads while it waits', () => {
+		it('is nothing for an item with no captured settings', () => {
+			expect(queuedTurnPills(undefined)).toEqual({ model: undefined, effort: undefined });
+		});
+
+		it('passes a named model and its effort through, with no Auto stamp', () => {
+			const pills = queuedTurnPills({ model: 'opus', effort: 'high' });
+			expect(pills).toEqual({ model: 'opus', effort: 'high' });
+			expect(pills.auto).toBeUndefined();
+		});
+
+		it('ignores an answer left on a named model', () => {
+			const pills = queuedTurnPills({ model: 'opus', effort: 'high', route: route('low', 'low') });
+			expect(pills).toEqual({ model: 'opus', effort: 'high' });
+		});
+
+		it('on Auto and not routed yet: pending, with the effort the tab was on', () => {
+			expect(queuedTurnPills({ model: 'auto', effort: 'high' })).toEqual({
+				auto: { status: 'pending' },
+				effort: 'high',
+			});
+		});
+
+		it('on Auto and routed: the answer, and no effort, because the router picks it', () => {
+			const pills = queuedTurnPills({ model: 'auto', effort: 'high', route: route('low', 'low') });
+			expect(pills).toEqual({ auto: { status: 'routed', route: route('low', 'low') } });
+			expect('effort' in pills).toBe(false);
+			// Never the word as a model: the Auto pill stands in for the model pill.
+			expect(pills.model).toBeUndefined();
+		});
+
+		it('on Auto with the router off: says so, and keeps the effort the turn will run at', () => {
+			const skipped: AutoRouteStamp = { skipped: 'off', detail: 'x' };
+			expect(queuedTurnPills({ model: 'auto', effort: 'high', route: skipped })).toEqual({
+				auto: { status: 'router-off', route: skipped },
+				effort: 'high',
+			});
+		});
+
+		it('reads the word in any spelling', () => {
+			expect(queuedTurnPills({ model: 'Auto' }).auto).toEqual({ status: 'pending' });
 		});
 	});
 });

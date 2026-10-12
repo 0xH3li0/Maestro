@@ -351,6 +351,15 @@ vi.mock('../../../../main/local-models/route-turn', () => ({
 }));
 import { routeTurnRequest } from '../../../../main/local-models/route-turn';
 
+vi.mock('../../../../main/local-models/model-routing-corrections', () => ({
+	recordModelRoutingCorrectionRequest: vi.fn(async () => ({
+		ok: true,
+		replaced: false,
+		total: 1,
+	})),
+}));
+import { recordModelRoutingCorrectionRequest } from '../../../../main/local-models/model-routing-corrections';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -5693,6 +5702,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect.any(AbortSignal),
 			'user',
 			undefined,
+			undefined,
+			// No `model` on the message: no turn settings, so the agent's own model runs.
 			undefined
 		);
 		expect(client.socket.off).toHaveBeenCalledWith('close', expect.any(Function));
@@ -5703,6 +5714,81 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			response: 'hello',
 			sessionId: 'provider-1',
 		});
+	});
+
+	it.each(['sonnet', 'auto'])(
+		'hands the runner the model of this one turn (%s), and carries its Auto report back',
+		async (model) => {
+			const auto = { label: 'Auto → low · haiku', detail: 'Auto: the router chose tier low.' };
+			const run = vi.fn(async () => ({
+				success: true,
+				response: 'hello',
+				sessionId: 'provider-1',
+				...(model === 'auto' ? { auto } : {}),
+			}));
+			vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+			client.cliAuthenticated = true;
+			(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+				remoteAddress: '127.0.0.1',
+			};
+			handler.handleMessage(client, {
+				type: 'plugins_send_agent',
+				agentId: 'agent-a',
+				prompt: 'hello',
+				model,
+			});
+			await vi.waitFor(() => expect(run).toHaveBeenCalled());
+			expect(run).toHaveBeenCalledWith(
+				'agent-a',
+				'hello',
+				undefined,
+				expect.any(AbortSignal),
+				'user',
+				undefined,
+				undefined,
+				{ model }
+			);
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastResult()).toMatchObject({
+				type: 'plugins_send_agent_result',
+				available: true,
+				success: true,
+				response: 'hello',
+			});
+			if (model === 'auto') expect(lastResult().auto).toEqual(auto);
+			else expect(lastResult()).not.toHaveProperty('auto');
+		}
+	);
+
+	it.each([
+		['a flag', '-x'],
+		['a number', 7],
+		['an empty string', ''],
+		['a name with a space before it', ' sonnet'],
+		['a name with a line break', 'son\nnet'],
+		['an object', { model: 'sonnet' }],
+		['null', null],
+	])('refuses %s as the model of a CLI send, and starts no run', async (_what, model) => {
+		const run = vi.fn();
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+			model,
+		});
+		await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+		expect(lastResult()).toMatchObject({
+			type: 'plugins_send_agent_result',
+			available: true,
+			success: false,
+			error: 'Invalid headless agent request',
+		});
+		expect(run).not.toHaveBeenCalled();
 	});
 
 	it('aborts a desktop-routed CLI send when its socket closes', async () => {
@@ -5772,7 +5858,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect.any(AbortSignal),
 			'user',
 			undefined,
-			'acme/dostuff'
+			'acme/dostuff',
+			undefined
 		);
 		expect(lastResult()).toMatchObject({
 			success: false,
@@ -6662,6 +6749,56 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(lastResponse()).toMatchObject({
 				success: false,
 				error: "A routing request's prompt is text.",
+			});
+		});
+
+		it('model_route_correct records the correction the request names, and carries a refusal as an answer', async () => {
+			const request = { prompt: 'rename the helper', tier: 'high' };
+			const routedBefore = vi.mocked(routeTurnRequest).mock.calls.length;
+			handler.handleMessage(client, {
+				type: 'model_route_correct',
+				request,
+				requestId: 'correct-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('model_route_correct_result'));
+
+			expect(recordModelRoutingCorrectionRequest).toHaveBeenLastCalledWith(request);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'correct-1',
+				result: { ok: true, replaced: false, total: 1 },
+			});
+			// A correction is not a routing: the router is not asked.
+			expect(routeTurnRequest).toHaveBeenCalledTimes(routedBefore);
+
+			// A correction the store refuses is a result with the reason in it.
+			vi.mocked(recordModelRoutingCorrectionRequest).mockResolvedValueOnce({
+				ok: false,
+				message: 'There is no prompt to record a correction for.',
+			});
+			handler.handleMessage(client, {
+				type: 'model_route_correct',
+				request: { prompt: '  ', tier: 'low' },
+				requestId: 'correct-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('correct-2'));
+			expect(lastResponse()).toMatchObject({
+				type: 'model_route_correct_result',
+				success: true,
+				result: { ok: false, message: 'There is no prompt to record a correction for.' },
+			});
+
+			// Only a request that cannot be read is a failed round trip.
+			vi.mocked(recordModelRoutingCorrectionRequest).mockRejectedValueOnce(
+				new Error("A routing correction's tier is one of low, medium, high.")
+			);
+			handler.handleMessage(client, { type: 'model_route_correct', requestId: 'correct-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('correct-3'));
+			expect(recordModelRoutingCorrectionRequest).toHaveBeenLastCalledWith(undefined);
+			expect(lastResponse()).toMatchObject({
+				type: 'model_route_correct_result',
+				success: false,
+				error: "A routing correction's tier is one of low, medium, high.",
 			});
 		});
 

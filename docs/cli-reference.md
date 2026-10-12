@@ -237,6 +237,7 @@ Send a message to an agent and get a JSON response
 | `-s, --session <id>`               | Resume an existing agent session (for multi-turn conversations)                                                                                         | -       |
 | `-r, --read-only`                  | Run in read-only/plan mode (agent cannot modify files)                                                                                                  | -       |
 | `-t, --tab`                        | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
+| `--model <model>`                  | Run this one turn on a model other than the agent's own. "auto" asks the model router for the tier and effort this message needs (see: s1 route)        | -       |
 | `--require-plugin-tools`           | Fail if a desktop-backed run with plugin tools is unavailable                                                                                           | -       |
 | `--require-tool-receipt <tool-id>` | Require a host-observed delivery receipt from this plugin tool ID                                                                                       | -       |
 | `--no-system-prompt`               | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
@@ -1038,7 +1039,7 @@ Create a new agent in the Maestro desktop app
 | `--custom-path <path>`            | Custom binary path for the agent                                                                                                | -               |
 | `--custom-args <args>`            | Custom CLI arguments for the agent                                                                                              | -               |
 | `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                               | `[]`            |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                                             | -               |
+| `--model <model>`                 | Model override (e.g., sonnet, opus; "auto" lets the model router pick the tier and effort of each turn)                         | -               |
 | `--effort <level>`                | Effort/reasoning level override                                                                                                 | -               |
 | `--context-window <size>`         | Context window size in tokens                                                                                                   | -               |
 | `--provider-path <path>`          | Custom provider path                                                                                                            | -               |
@@ -1147,7 +1148,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--tier <tier=target>`            | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, low=default clears        | -       |
 | `--background-requests <target>`  | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none (Claude Code on the proxy)         | -       |
 | `--system-one <on\|off>`          | Whether this agent may ask System One with maestro-cli s1: off for this agent only, on follows the global switch | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                                          | -       |
+| `--model <model>`                 | Model override (e.g. sonnet, opus; "auto" lets the model router pick per turn; empty string clears)              | -       |
 | `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                            | -       |
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                               | -       |
 | `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                                             | -       |
@@ -1321,7 +1322,7 @@ Put the tab in read-only/plan mode so the agent cannot modify files
 
 ## `maestro-cli tab model <tab-id> <model>`
 
-Override the model for this tab ("inherit" clears the override)
+Override the model for this tab ("inherit" clears the override; "auto" lets the model router pick the tier and effort of each turn)
 
 | Option             | Description                                    | Default |
 | ------------------ | ---------------------------------------------- | ------- |
@@ -2470,6 +2471,16 @@ The decision ledger: what each System One run decided, or what its fail policy d
 | `--since <time>`      | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default: 30 days)             | -       |
 | `--limit <n>`         | At most this many decisions, 1 to 1000 (default 100)                      | -       |
 | `--json`              | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli s1 route <prompt>`
+
+A dry run of the model router: the tier and effort the model-routing task picks for a prompt, the router that decided and its latency, without sending anything. With --agent, also what a turn on the Auto model would launch on for that agent. Exits 6 when the router is off and 7 when it gave no decision (requires the desktop app)
+
+| Option             | Description                                                                                                                                                        | Default |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--agent <id>`     | Resolve the decision for this agent: its tier targets, the harness defaults, and the model, effort and place a turn on Auto would launch on (supports partial IDs) | -       |
+| `--correct <tier>` | Record that this prompt needed low \| medium \| high instead of routing it. The embedding router votes with the correction from the next prompt                    | -       |
+| `--json`           | Output as JSON (for scripting)                                                                                                                                     | -       |
 
 ## `maestro-cli s1 yes <question>`
 

@@ -599,6 +599,9 @@ export function NewInstanceModal({
 		() => (agentRunOnSupport(selectedAgent).supported ? runOn : { type: 'provider' }),
 		[selectedAgent, runOn]
 	);
+	// What the Auto model choice is judged against besides the provider: a new
+	// agent has no tier targets of its own yet, so only where it runs.
+	const autoModelFor = useMemo(() => ({ runOn: effectiveRunOn }), [effectiveRunOn]);
 
 	// One test turn on the target the picker shows, launched with the form as it
 	// stands. No agent exists yet, so every launch setting comes from the form.
@@ -1377,6 +1380,7 @@ export function NewInstanceModal({
 							<AgentPickerGrid
 								theme={theme}
 								hideEnvVars
+								autoModelFor={autoModelFor}
 								loading={loading}
 								sshConnectionError={sshConnectionError}
 								visibleAgents={visibleAgents}

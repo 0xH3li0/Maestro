@@ -12,6 +12,7 @@ import {
 } from '../../../plugins/plugin-manager-singleton';
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
+import { isTurnModelName } from '../../../../shared/autoModel';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -100,6 +101,8 @@ export async function handlePluginsSendAgent(
 	const prompt = message.prompt;
 	const sessionId = message.providerSessionId;
 	const requiredToolId = message.requiredToolId;
+	// `maestro-cli send --model`: this one turn's model, in place of the agent's own.
+	const model = message.model;
 	if (
 		typeof agentId !== 'string' ||
 		!ctx.callbacks.getSessionDetail?.(agentId) ||
@@ -107,7 +110,8 @@ export async function handlePluginsSendAgent(
 		!prompt.trim() ||
 		prompt.length > 64 * 1024 ||
 		(sessionId !== undefined &&
-			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId)))
+			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId))) ||
+		(model !== undefined && (typeof model !== 'string' || !isTurnModelName(model)))
 	) {
 		respond({ available: true, success: false, error: 'Invalid headless agent request' });
 		return;
@@ -134,7 +138,8 @@ export async function handlePluginsSendAgent(
 				controller.signal,
 				'user',
 				undefined,
-				requiredToolId as string | undefined
+				requiredToolId as string | undefined,
+				typeof model === 'string' ? { model } : undefined
 			);
 			const toolStillActive =
 				requiredToolId === undefined ||

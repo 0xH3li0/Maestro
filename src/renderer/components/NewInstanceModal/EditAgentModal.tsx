@@ -113,6 +113,9 @@ export function EditAgentModal({
 	// refused it. A tier the record does not hold follows the harness default.
 	const [tierTargets, setTierTargets] = useState<TierTargets>({});
 	const [tierTargetsError, setTierTargetsError] = useState<string | undefined>(undefined);
+	// What the Auto model choice is judged against besides the provider, as the
+	// form holds it: mapping a tier on the Models tab can make Auto offered here.
+	const autoModelFor = useMemo(() => ({ tierTargets, runOn }), [tierTargets, runOn]);
 	// A save was refused: an empty name now says so instead of blocking silently.
 	const [saveAttempted, setSaveAttempted] = useState(false);
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
@@ -1110,6 +1113,7 @@ export function EditAgentModal({
 											theme={theme}
 											agent={agent}
 											hideEnvVars
+											autoModelFor={autoModelFor}
 											configOptionNotes={configOptionNotes}
 											customPath={customPath}
 											onCustomPathChange={setCustomPath}

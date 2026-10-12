@@ -85,6 +85,29 @@ describe('useBatchedSessionUpdates - turn settings stamped on agent output', () 
 		expect(tabLogs()[0].turnRunOn).toBe('qwen3:latest · Ollama');
 	});
 
+	it("stamps a turn's Auto, from the send-time stamp", () => {
+		const turnAuto = {
+			status: 'routed' as const,
+			route: {
+				tier: 'medium' as const,
+				effort: 'high' as const,
+				engine: 'Embedding router',
+				calibrated: false,
+			},
+		};
+		seed({ turnModel: 'sonnet', turnAuto });
+
+		const { result } = renderHook(() => useBatchedSessionUpdates());
+
+		act(() => {
+			result.current.appendLog(SESSION_ID, TAB_ID, true, 'Answered on the routed model.');
+			result.current.flushNow();
+		});
+
+		expect(tabLogs()[0].turnAuto).toEqual(turnAuto);
+		expect(tabLogs()[0].turnModel).toBe('sonnet');
+	});
+
 	it('leaves the entry unstamped when the agent default was in force', () => {
 		seed({});
 
@@ -99,5 +122,6 @@ describe('useBatchedSessionUpdates - turn settings stamped on agent output', () 
 		expect(entry.turnModel).toBeUndefined();
 		expect(entry.turnEffort).toBeUndefined();
 		expect(entry.turnRunOn).toBeUndefined();
+		expect(entry.turnAuto).toBeUndefined();
 	});
 });

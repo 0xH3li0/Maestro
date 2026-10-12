@@ -3,11 +3,17 @@
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readHarnessTierDefaults,
+} from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { requestCliSynopsis } from '../services/synopsis';
 import { resolveCliAutoTurn } from '../services/auto-turn';
-import { isAutoModel } from '../../shared/autoModel';
+import { isAutoModel, isTurnModelName } from '../../shared/autoModel';
+import { autoModelProblem, autoTurnReport, type AutoTurnReport } from '../../shared/autoTurn';
 import { turnRunOnTarget } from '../../shared/autorunTurnSettings';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
@@ -32,6 +38,12 @@ interface SendOptions {
 	session?: string;
 	readOnly?: boolean;
 	tab?: boolean;
+	/**
+	 * `--model <model>`: this one turn's model, in place of the agent's own.
+	 * `auto` asks the desktop's model router for the tier and effort the message
+	 * needs, as a turn of an agent set to Auto does.
+	 */
+	model?: string;
 	/** Fail closed when the desktop cannot start a run with plugin tools. */
 	requirePluginTools?: boolean;
 	/** Require an actual successful call to this namespaced plugin tool ID. */
@@ -189,6 +201,8 @@ interface SendResponse {
 	toolReceipts?: PluginToolReceipt[];
 	/** How the turn ended: `completed`, `completed-with-warning`, `interrupted` or `crashed`. */
 	outcome?: TurnOutcome;
+	/** Set for a turn on the Auto model: how its pill reads, and what the router did. */
+	auto?: AutoTurnReport;
 	usage: {
 		inputTokens: number;
 		outputTokens: number;
@@ -208,9 +222,10 @@ interface DesktopSendAgentReply {
 	error?: string;
 	usageStats?: AgentResult['usageStats'];
 	toolReceipts?: PluginToolReceipt[];
+	auto?: AutoTurnReport;
 }
 
-type SendAgentResult = AgentResult & { toolReceipts?: PluginToolReceipt[] };
+type SendAgentResult = AgentResult & { toolReceipts?: PluginToolReceipt[]; auto?: AutoTurnReport };
 
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
@@ -248,6 +263,7 @@ function buildResponse(
 		...(result.success ? {} : { error: result.error }),
 		...(result.toolReceipts !== undefined ? { toolReceipts: result.toolReceipts } : {}),
 		...(result.outcome ? { outcome: result.outcome } : {}),
+		...(result.auto ? { auto: result.auto } : {}),
 		usage,
 	};
 }
@@ -290,6 +306,31 @@ export async function send(
 		emitErrorJson(`${def.name} CLI not found. Please install ${def.name}.`, errorCode);
 		process.exit(1);
 	}
+
+	// `--model`: this one turn's model. Checked before anything is started: a
+	// value that cannot be a model name, and an `auto` that would change nothing
+	// for this agent (the pickers do not offer it; the CLI refuses it by name).
+	const turnModel = options.model;
+	if (turnModel !== undefined) {
+		if (!isTurnModelName(turnModel)) {
+			emitErrorJson(
+				'--model takes a model name, or "auto" to let the model router decide.',
+				'INVALID_MODEL'
+			);
+			process.exit(1);
+			return;
+		}
+		const autoProblem = isAutoModel(turnModel)
+			? autoModelProblem(agent, readHarnessTierDefaults())
+			: null;
+		if (autoProblem) {
+			emitErrorJson(`--model auto: ${autoProblem}`, 'AUTO_MODEL_UNAVAILABLE');
+			process.exit(1);
+			return;
+		}
+	}
+	// What the turn runs on when nothing routes it: `--model`, else the agent's own.
+	const sendModel = turnModel ?? agent.customModel;
 
 	// Only resume a session when explicitly requested via --session flag.
 	// Without -s, always create a fresh session to prevent session leakage
@@ -382,6 +423,7 @@ export async function send(
 								prompt: message,
 								providerSessionId: agentSessionId || undefined,
 								...(requiredToolId ? { requiredToolId } : {}),
+								...(turnModel !== undefined ? { model: turnModel } : {}),
 							},
 							'plugins_send_agent_result',
 							HEADLESS_RUN_COMPLETION_TIMEOUT_MS
@@ -428,6 +470,7 @@ export async function send(
 									: 'Required plugin tool returned no delivery receipt'),
 							usageStats: reply.usageStats,
 							...(requiredToolId ? { toolReceipts: reply.toolReceipts ?? [] } : {}),
+							...(reply.auto ? { auto: reply.auto } : {}),
 						};
 					}
 					if (requirePluginHost) {
@@ -437,13 +480,14 @@ export async function send(
 						};
 					}
 				}
-				// An agent set to the Auto model has no model of its own to pass:
+				// A turn on the Auto model (the agent's own setting, or `--model
+				// auto` for this one send) has no model of its own to pass:
 				// the desktop's model router decides this turn's model and effort,
 				// and the place when the tier names one. With no desktop to ask (or
 				// no decision) the turn runs on the agent's default. A tier target
 				// that cannot be used fails the send by name. (A send the desktop
 				// runs, above, is routed there, by the same resolver.)
-				const autoTurn = isAutoModel(agent.customModel)
+				const autoTurn = isAutoModel(sendModel)
 					? await resolveCliAutoTurn({
 							agent,
 							prompt: message,
@@ -455,13 +499,13 @@ export async function send(
 				for (const warning of autoTurn?.warnings ?? []) console.error(`Warning: ${warning}`);
 				const appendSystemPrompt =
 					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
-				return spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+				const spawned = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
-					customModel: autoTurn ? autoTurn.model : agent.customModel,
+					customModel: autoTurn ? autoTurn.model : sendModel,
 					customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
 					customArgs: agent.customArgs,
 					additionalDirectories: agent.additionalDirectories,
@@ -476,6 +520,7 @@ export async function send(
 					maestroPMode: agent.maestroPMode,
 					maestroPPath: agent.maestroPPath,
 				});
+				return autoTurn ? { ...spawned, auto: autoTurnReport(autoTurn) } : spawned;
 			},
 			settlementFromAgentResult
 		);

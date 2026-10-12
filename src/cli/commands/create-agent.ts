@@ -16,6 +16,10 @@ import {
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
 import { readRunOnFlags } from '../services/run-on';
+import { readHarnessTierDefaults } from '../services/storage';
+import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
+import { autoModelProblem } from '../../shared/autoTurn';
+import type { ToolType } from '../../shared/types';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -183,6 +187,27 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		process.exit(1);
 	}
 
+	// `--model auto`: the Auto choice of the New Agent model picker, stored as
+	// the word and only for a provider Auto can act on. A new agent has no tier
+	// targets of its own, so the harness defaults and the built-in table decide.
+	let customModel = options.model;
+	if (isAutoModel(options.model)) {
+		const problem = autoModelProblem(
+			{ toolType: options.type as ToolType, runOn },
+			readHarnessTierDefaults()
+		);
+		if (problem) {
+			const msg = `--model auto: ${problem}`;
+			if (options.json) {
+				console.log(JSON.stringify({ success: false, error: msg }));
+			} else {
+				console.error(formatError(msg));
+			}
+			process.exit(1);
+		}
+		customModel = AUTO_MODEL;
+	}
+
 	// Build the WebSocket message payload
 	const background = resolveBackgroundFlag(options, 'create-agent');
 	const payload: Record<string, unknown> = {
@@ -200,7 +225,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (options.customPath) payload.customPath = options.customPath;
 	if (options.customArgs) payload.customArgs = options.customArgs;
 	if (customEnvVars) payload.customEnvVars = customEnvVars;
-	if (options.model) payload.customModel = options.model;
+	if (customModel) payload.customModel = customModel;
 	if (options.effort) payload.customEffort = options.effort;
 	if (customContextWindow !== undefined) {
 		payload.customContextWindow = customContextWindow;

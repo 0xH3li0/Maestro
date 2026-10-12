@@ -27,6 +27,16 @@ import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPA
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
 import { AgentEnvVarsSection, type AgentEnvVarsSectionProps } from './AgentEnvVarsSection';
+import { useAutoModelChoice } from '../../hooks/agent/useAutoModelChoice';
+import { isAutoModel } from '../../../shared/autoModel';
+import {
+	autoModelAxesNote,
+	modelChoiceLabel,
+	withAutoModelOption,
+	type AutoModelChoice,
+} from '../../../shared/autoTurn';
+import type { TierTargetAgent } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -72,6 +82,8 @@ interface ModelTextInputProps {
 	availableModels: string[];
 	loadingModels: boolean;
 	onRefreshModels?: () => void;
+	/** The Auto choice for this agent, when the surface offers one. Model field only. */
+	autoModel?: AutoModelChoice | null;
 }
 
 function ModelTextInput({
@@ -83,6 +95,7 @@ function ModelTextInput({
 	availableModels,
 	loadingModels,
 	onRefreshModels,
+	autoModel,
 }: ModelTextInputProps): JSX.Element {
 	const [showDropdown, setShowDropdown] = useState(false);
 	const [filterText, setFilterText] = useState('');
@@ -100,12 +113,19 @@ function ModelTextInput({
 		committedValueRef.current = value;
 	}, [value]);
 
+	// Auto is listed first, ahead of the provider's own models, for an agent it
+	// can act on. It is a choice like any model: the stored value is the word.
+	const modelOptions = useMemo(
+		() => withAutoModelOption(availableModels, autoModel),
+		[availableModels, autoModel]
+	);
+
 	// Filter models based on input
 	const filteredModels = useMemo(() => {
-		if (!filterText) return availableModels;
+		if (!filterText) return modelOptions;
 		const lower = filterText.toLowerCase();
-		return availableModels.filter((m) => m.toLowerCase().includes(lower));
-	}, [availableModels, filterText]);
+		return modelOptions.filter((m) => m.toLowerCase().includes(lower));
+	}, [modelOptions, filterText]);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -126,7 +146,7 @@ function ModelTextInput({
 	}, [showDropdown, isFiltering]);
 
 	const isModelField = option.key === 'model';
-	const hasModels = availableModels.length > 0;
+	const hasModels = modelOptions.length > 0;
 
 	// Display value: when filtering, show filter text; otherwise show actual value
 	const displayValue = isFiltering ? filterText : value;
@@ -229,13 +249,19 @@ function ModelTextInput({
 										setIsFiltering(false);
 										onBlur(model);
 									}}
+									title={isAutoModel(model) ? autoModel?.title : undefined}
 									className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
 									style={{
 										color: model === value ? theme.colors.accent : theme.colors.textMain,
 										backgroundColor: model === value ? 'rgba(255,255,255,0.05)' : undefined,
 									}}
 								>
-									{model}
+									{modelChoiceLabel(model)}
+									{isAutoModel(model) && autoModel && (
+										<span className="ml-2 font-sans" style={{ color: theme.colors.textDim }}>
+											{autoModelAxesNote(autoModel.support)}
+										</span>
+									)}
 								</button>
 							))}
 						</div>
@@ -279,9 +305,18 @@ function ModelTextInput({
 					Loading available models...
 				</p>
 			)}
-			{isModelField && !loadingModels && hasModels && (
+			{isModelField && !loadingModels && availableModels.length > 0 && (
 				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
 					{availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available
+				</p>
+			)}
+			{isModelField && autoModel && isAutoModel(value) && (
+				<p
+					className="text-xs mt-1"
+					style={{ color: autoModel.routerOn ? theme.colors.textDim : theme.colors.warning }}
+					data-testid="auto-model-note"
+				>
+					{autoModel.title}
 				</p>
 			)}
 		</>
@@ -346,6 +381,15 @@ export interface AgentConfigPanelProps extends Pick<
 	availableModels?: string[];
 	loadingModels?: boolean;
 	onRefreshModels?: () => void;
+	/**
+	 * Offer Auto in the model field, for an agent it can act on
+	 * (`useAutoModelChoice`). Opt-in: only a surface whose agent has an Auto
+	 * send path passes it (New Agent, Edit Agent). The moderator, the wizard and
+	 * the creation dialog do not, because their turns are never routed. The
+	 * value is the part of the agent the choice is judged against besides its
+	 * provider: its tier targets and its Run on target, as the form holds them.
+	 */
+	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
 	// Dynamic config options (for select fields with dynamic: true)
 	dynamicOptions?: Record<string, string[]>;
 	loadingDynamicOptions?: boolean;
@@ -418,6 +462,7 @@ export function AgentConfigPanel({
 	availableModels = [],
 	loadingModels = false,
 	onRefreshModels,
+	autoModelFor,
 	dynamicOptions = {},
 	loadingDynamicOptions = false,
 	onRefreshAgent,
@@ -450,6 +495,9 @@ export function AgentConfigPanel({
 			});
 		}
 	};
+	const autoModel = useAutoModelChoice(
+		autoModelFor ? { toolType: agent.id as ToolType, ...autoModelFor } : null
+	);
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
 	// Probe the SSH remote for maestro-p. When it's known-absent the remote can't
@@ -858,6 +906,7 @@ export function AgentConfigPanel({
 								onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
 								availableModels={option.key === 'model' ? availableModels : []}
 								loadingModels={option.key === 'model' ? loadingModels : false}
+								autoModel={option.key === 'model' ? autoModel : null}
 								onRefreshModels={
 									option.key === 'model' && agent.capabilities?.supportsModelSelection
 										? onRefreshModels

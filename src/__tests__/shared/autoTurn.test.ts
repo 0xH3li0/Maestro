@@ -12,15 +12,26 @@ import { describe, it, expect } from 'vitest';
 import { AUTO_MODEL, isAutoModel, ownModel } from '../../shared/autoModel';
 import {
 	DEFAULT_PROMPT_CACHE_LIFETIME_MS,
+	autoModelAxesNote,
+	autoModelChoice,
 	autoModelHold,
+	autoModelProblem,
+	autoModelSupport,
 	autoRouteStamp,
+	autoRouterNote,
+	autoTurnDetail,
 	autoTurnLabel,
 	autoTurnNeedsRoute,
+	autoTurnReport,
+	isAutoModelOffered,
 	isAutoRouteDecision,
+	modelChoiceLabel,
 	pendingAutoTurnStamp,
 	promptCacheLifetimeMs,
+	queuedAutoTurnStamp,
 	resolveAutoTurn,
 	unreachableAutoRoute,
+	withAutoModelOption,
 	type AutoRouteStamp,
 } from '../../shared/autoTurn';
 import type { ModelHint } from '../../shared/autorunModelHints';
@@ -398,5 +409,162 @@ describe('rule 3: what is frozen', () => {
 			'Auto (no decision)'
 		);
 		expect(autoTurnLabel(pendingAutoTurnStamp(undefined))).toBe('Auto');
+	});
+});
+
+describe('what a turn on Auto says about itself', () => {
+	it('names the router and what was done with its answer', () => {
+		const free = resolveAutoTurn({ toolType: 'claude-code', route: routed('medium', 'low') });
+		expect(autoTurnDetail(free.stamp)).toBe(
+			'Auto: Embedding router (Gemma) chose tier medium, effort low.'
+		);
+
+		const kept = resolveAutoTurn({
+			toolType: 'claude-code',
+			route: routed('high', 'low'),
+			hold: { model: 'haiku' },
+		});
+		expect(autoTurnDetail(kept.stamp)).toContain('chose tier high, effort low.');
+		expect(autoTurnDetail(kept.stamp)).toContain('The session keeps haiku');
+	});
+
+	it('says why there is no decision', () => {
+		const off = resolveAutoTurn({ toolType: 'claude-code', route: OFF });
+		expect(autoTurnDetail(off.stamp)).toContain('Auto (router off): Model routing is off.');
+		const slow = resolveAutoTurn({ toolType: 'claude-code', route: TIMEOUT });
+		expect(autoTurnDetail(slow.stamp)).toContain('Auto (no decision):');
+		expect(autoTurnDetail(pendingAutoTurnStamp(undefined))).toBe(
+			'Auto: waiting for the model router.'
+		);
+	});
+
+	it('carries a refusal, so a pill never hides a turn that did not launch', () => {
+		const refused = resolveAutoTurn({
+			toolType: 'claude-code',
+			route: routed('low', 'low'),
+			routing: { tierTargets: { low: { type: 'nonsense' } as unknown as TierTarget } },
+		});
+		expect(refused.stamp.refusal).toBeTruthy();
+		expect(autoTurnDetail(refused.stamp)).toContain(refused.stamp.refusal);
+	});
+
+	it('reports a turn in a label and a sentence, for a caller with no pill', () => {
+		const turn = resolveAutoTurn({ toolType: 'claude-code', route: routed('medium', 'low') });
+		expect(autoTurnReport(turn)).toEqual({
+			label: 'Auto → medium · sonnet',
+			detail: 'Auto: Embedding router (Gemma) chose tier medium, effort low.',
+		});
+		// A place the caller can name wins over the model.
+		expect(autoTurnReport(turn, 'qwen · Maestro').label).toBe('Auto → medium · qwen · Maestro');
+	});
+
+	it('stamps a queued item from the answer frozen on it', () => {
+		expect(queuedAutoTurnStamp(undefined)).toEqual({ status: 'pending' });
+		const answer = routed('high', 'medium');
+		expect(queuedAutoTurnStamp(answer)).toEqual({ status: 'routed', route: answer });
+		expect(queuedAutoTurnStamp(OFF)).toEqual({ status: 'router-off', route: OFF });
+		expect(queuedAutoTurnStamp(TIMEOUT)).toEqual({ status: 'no-decision', route: TIMEOUT });
+		// The tier's target is read when the turn launches, so the label has none yet.
+		expect(autoTurnLabel(queuedAutoTurnStamp(answer))).toBe('Auto → high');
+	});
+});
+
+describe('whether Auto is offered', () => {
+	it('acts on both axes where the provider has tiers and an effort ladder', () => {
+		const support = autoModelSupport({ toolType: 'claude-code' });
+		expect(support).toEqual({ model: true, effort: true });
+		expect(isAutoModelOffered(support)).toBe(true);
+		expect(autoModelAxesNote(support)).toBe('picks the model and the effort for each turn');
+		expect(autoModelProblem({ toolType: 'claude-code' })).toBeNull();
+	});
+
+	it('is not offered where it would change nothing', () => {
+		const support = autoModelSupport({ toolType: 'opencode' });
+		expect(support).toEqual({ model: false, effort: false });
+		expect(isAutoModelOffered(support)).toBe(false);
+		expect(autoModelChoice({ toolType: 'opencode' })).toBeNull();
+		expect(autoModelProblem({ toolType: 'opencode' })).toMatch(
+			/^Auto would change nothing for this agent: .* Map a tier first/
+		);
+	});
+
+	it('is offered on the model axis alone once a tier is mapped', () => {
+		const mapped = { medium: { type: 'provider-model', model: 'big-pickle' } as TierTarget };
+		// The agent's own tier map.
+		const own = autoModelSupport({ toolType: 'opencode', tierTargets: mapped });
+		expect(own).toEqual({ model: true, effort: false });
+		expect(autoModelAxesNote(own)).toBe(
+			'picks the model; this provider has no effort levels to pick'
+		);
+		// The harness default is a layer too.
+		expect(autoModelSupport({ toolType: 'opencode' }, { opencode: mapped }).model).toBe(true);
+		expect(autoModelProblem({ toolType: 'opencode', tierTargets: mapped })).toBeNull();
+	});
+
+	it('picks effort alone for an agent whose tiers do not apply', () => {
+		// The built-in table names the provider's cloud models, so it does not
+		// apply to an agent that runs on a Local Models source.
+		const support = autoModelSupport({ toolType: 'claude-code', runOn: LOCAL });
+		expect(support).toEqual({ model: false, effort: true });
+		expect(autoModelAxesNote(support)).toBe(
+			'picks effort; map tiers in the Models tab to also pick the model'
+		);
+	});
+
+	it('says which router decides, or that none does', () => {
+		const off = autoRouterNote(undefined);
+		expect(off.on).toBe(false);
+		expect(off.text).toMatch(/^The model router is off, so a turn runs on the agent's default\./);
+		expect(off.text).toContain('Model routing');
+
+		const engine = autoRouterNote({ 'model-routing': { type: 'system-one' } });
+		expect(engine).toEqual({ on: true, text: 'Decided by System One.' });
+
+		const judge = autoRouterNote(
+			{ 'model-routing': { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3:latest' } },
+			[{ id: 'ep-1', name: 'Ollama' }]
+		);
+		expect(judge.on).toBe(true);
+		expect(judge.text).toBe('Decided by Local judge (qwen3:latest on Ollama), not calibrated.');
+	});
+
+	it('builds one tooltip from the axes and the router', () => {
+		const choice = autoModelChoice(
+			{ toolType: 'claude-code' },
+			{ assignments: { 'model-routing': { type: 'system-one' } } }
+		);
+		expect(choice).toEqual({
+			support: { model: true, effort: true },
+			routerOn: true,
+			title: 'Auto: picks the model and the effort for each turn. Decided by System One.',
+		});
+		// Router off is still a choice: its turns run the agent's default.
+		const off = autoModelChoice({ toolType: 'claude-code' });
+		expect(off?.routerOn).toBe(false);
+		expect(off?.title).toContain('The model router is off');
+	});
+
+	it('lists Auto after the default entry, once, and only when offered', () => {
+		const choice = autoModelChoice({ toolType: 'claude-code' });
+		expect(withAutoModelOption(['', 'opus', 'sonnet'], choice)).toEqual([
+			'',
+			AUTO_MODEL,
+			'opus',
+			'sonnet',
+		]);
+		expect(withAutoModelOption(['opus'], choice)).toEqual([AUTO_MODEL, 'opus']);
+		expect(withAutoModelOption([], choice)).toEqual([AUTO_MODEL]);
+		// A list that already carries the word does not get it twice.
+		expect(withAutoModelOption(['Auto', 'opus'], choice)).toEqual([AUTO_MODEL, 'opus']);
+		// Not offered: the list is the provider's own, and a stray word is dropped.
+		const models = ['', 'opus'];
+		expect(withAutoModelOption(models, null)).toBe(models);
+		expect(withAutoModelOption(['auto', 'opus'], null)).toEqual(['opus']);
+	});
+
+	it('labels the word and leaves every other model alone', () => {
+		expect(modelChoiceLabel('auto')).toBe('Auto');
+		expect(modelChoiceLabel('AUTO')).toBe('Auto');
+		expect(modelChoiceLabel('claude-opus-5-5')).toBe('claude-opus-5-5');
 	});
 });

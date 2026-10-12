@@ -22,6 +22,8 @@ vi.mock('../../../cli/services/storage', () => ({
 			enabled: true,
 		},
 	]),
+	// The harness tier defaults `--model auto` is judged against.
+	readHarnessTierDefaults: vi.fn(() => ({})),
 }));
 
 // Mock formatter
@@ -32,6 +34,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 
 import { createAgent } from '../../../cli/commands/create-agent';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { readHarnessTierDefaults } from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
 describe('create-agent command', () => {
@@ -437,6 +440,81 @@ describe('create-agent command', () => {
 			expect(parsed.success).toBe(false);
 			expect(parsed.error).toContain('speaks only the Gemini API');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	// `--model auto`: the Auto choice of the New Agent model picker. Stored as
+	// the word, and only for a provider Auto can act on.
+	describe('--model auto', () => {
+		let sentPayload: Record<string, unknown>;
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'auto-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		/** Run a call that must be refused before it reaches the app. */
+		async function refused(flags: Parameters<typeof createAgent>[1]) {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(createAgent('Bad', flags)).rejects.toThrow('process.exit');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+
+		it.each(['auto', 'Auto'])('sends %s as the word auto for claude-code', async (model) => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', model });
+
+			expect(sentPayload.customModel).toBe('auto');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('leaves a named model as it was typed', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', model: 'Opus' });
+
+			expect(sentPayload.customModel).toBe('Opus');
+			expect(readHarnessTierDefaults).not.toHaveBeenCalled();
+		});
+
+		it('refuses it by name for a provider Auto cannot act on', async () => {
+			await refused({ cwd: '/tmp', type: 'opencode', model: 'auto' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringMatching(/^--model auto: Auto would change nothing for this agent/)
+			);
+		});
+
+		it('refuses it as JSON with --json', async () => {
+			await refused({ cwd: '/tmp', type: 'opencode', model: 'auto', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: expect.stringMatching(/^--model auto: /),
+			});
+		});
+
+		it('allows it for that provider when a harness default maps a tier', async () => {
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				opencode: { medium: { type: 'provider-model', model: 'some-model' } },
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'opencode', model: 'auto' });
+
+			expect(sentPayload.customModel).toBe('auto');
+			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 	});
 

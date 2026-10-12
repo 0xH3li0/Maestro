@@ -29,6 +29,7 @@ import {
 	isModelRoutingEngineCalibrated,
 	modelRouteAnswers,
 	modelRouteFromSystemOne,
+	modelRouterEngineLabel,
 	modelRouterKind,
 	modelRouterSourceNote,
 	modelRoutingSystemOneRequest,
@@ -286,6 +287,18 @@ describe('what a router is called', () => {
 		// No engine chosen answers nothing, so it is never called calibrated.
 		expect(modelRouterSourceNote('system-one', 'off')).toBe('not calibrated');
 		expect(modelRouterSourceNote('system-one')).toBe('not calibrated');
+	});
+
+	it('names a router before it has answered', () => {
+		expect(modelRouterEngineLabel(EMBEDDING_ROUTER_ENGINE_ID, 'EmbeddingGemma 300M')).toBe(
+			'Embedding router (EmbeddingGemma 300M), not calibrated'
+		);
+		expect(modelRouterEngineLabel('local-judge', 'Qwen3.5 4B')).toBe(
+			'Local judge (Qwen3.5 4B), not calibrated'
+		);
+		expect(modelRouterEngineLabel('local-judge')).toBe('Local judge, not calibrated');
+		// Which engine is in force is the main process's to say, when it answers.
+		expect(modelRouterEngineLabel('system-one')).toBe('System One');
 	});
 });
 

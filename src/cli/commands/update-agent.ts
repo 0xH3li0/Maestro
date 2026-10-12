@@ -41,7 +41,9 @@ import {
 	TIER_LEVELS,
 	type TierTarget,
 } from '../../shared/modelTiers';
-import { readLocalModelEndpoints } from '../services/storage';
+import { readHarnessTierDefaults, readLocalModelEndpoints } from '../services/storage';
+import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
+import { autoModelProblem } from '../../shared/autoTurn';
 import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/system-one-agent';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
@@ -369,12 +371,34 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	// saves with, against this agent's provider and the saved sources, so the CLI
 	// cannot store a tier every launch on it would refuse. The patch is sent as
 	// typed; the app runs the same check against the tiers it holds.
+	let tierTargetsAfter = session?.tierTargets;
 	if (configPatch?.tierTargets !== undefined && currentToolType !== undefined) {
 		const edit = parseTierTargetsEdit(currentToolType, configPatch.tierTargets, {
 			base: session?.tierTargets,
 			endpoints: readLocalModelEndpoints(),
 		});
 		if (!edit.ok) emitError(`--tier ${edit.error}`, options);
+		tierTargetsAfter = edit.tierTargets;
+	}
+
+	// `--model auto`: the Auto choice of the Provider tab's model picker. It is
+	// stored as the word, and only for an agent Auto can act on, judged against
+	// the tiers and the Run on target this same call leaves it with. The picker
+	// does not offer an Auto that would change nothing; the CLI refuses it by
+	// name. The app runs the same check before it writes.
+	if (configPatch !== undefined && isAutoModel(configPatch.customModel)) {
+		if (currentToolType !== undefined) {
+			const problem = autoModelProblem(
+				{
+					toolType: currentToolType,
+					tierTargets: tierTargetsAfter,
+					runOn: 'runOn' in configPatch ? configPatch.runOn : session?.runOn,
+				},
+				readHarnessTierDefaults()
+			);
+			if (problem) emitError(`--model auto: ${problem}`, options);
+		}
+		configPatch.customModel = AUTO_MODEL;
 	}
 
 	// `--background-requests`: the provider, the saved sources and the route the
