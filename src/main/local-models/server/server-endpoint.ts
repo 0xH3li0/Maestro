@@ -105,6 +105,27 @@ export async function modelServerCallTarget(model: string): Promise<ModelServerC
 	return { endpoint: modelServerEndpoint(ensured.baseUrl), apiKey: await getModelServerKey() };
 }
 
+/** The server, ready for one model: where a harness reaches it and its key. */
+export type ModelServerForHarness =
+	| { ok: true; baseUrl: string; key: string }
+	| { ok: false; error: string };
+
+/**
+ * {@link modelServerCallTarget} for a harness (an agent's Run on target): the
+ * server's root and key, or the reason it cannot serve the model, as a result.
+ * A result and not a throw because it crosses the CLI bridge, and because its
+ * caller refuses a launch with the reason rather than catching an error.
+ */
+export async function modelServerForHarness(model: string): Promise<ModelServerForHarness> {
+	try {
+		const target = await modelServerCallTarget(model);
+		return { ok: true, baseUrl: target.endpoint.baseUrl, key: target.apiKey };
+	} catch (error) {
+		if (isLocalModelEndpointError(error)) return { ok: false, error: error.message };
+		throw error;
+	}
+}
+
 /**
  * Where to send a call for local model `modelId` when the running server
  * already has it loaded, or null. Never starts the server or loads a model.

@@ -151,6 +151,14 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: () => mockReadSshRemotes(),
 }));
 
+// The agent's Run on target: how its source is looked up is run-on.test.ts's
+// business. Here the answer is decided, and the tests say what the spawner does
+// with it. By default the agent has none.
+const mockPrepareCliRunOn = vi.fn();
+vi.mock('../../../cli/services/run-on', () => ({
+	prepareCliRunOn: (...args: unknown[]) => mockPrepareCliRunOn(...args),
+}));
+
 // Mock SSH wrapper so SSH tests don't need real ssh/bash on the test machine
 const mockWrapSpawnWithSsh = vi.fn();
 vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
@@ -184,6 +192,7 @@ describe('agent-spawner', () => {
 		(mockChild as EventEmitter).removeAllListeners();
 		mockGetAgentCustomPath.mockReturnValue(undefined);
 		mockReadAgentConfig.mockReturnValue({});
+		mockPrepareCliRunOn.mockResolvedValue({ kind: 'none' });
 		// The remote the SSH tests point at. The launch plan resolves it before
 		// the wrapper runs, so a remote missing from this list is an error.
 		mockReadSshRemotes.mockReturnValue([
@@ -2915,6 +2924,146 @@ Some text with [x] in it that's not a checkbox
 
 			const { args } = spawnCall();
 			expect(args).not.toContain('--model');
+		});
+	});
+
+	describe("spawnAgent: the agent's Run on target", () => {
+		isolateAgentEnv();
+
+		const OLLAMA = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' };
+		const ready = (toolType: string, key?: string) => ({
+			kind: 'ready',
+			runOn: { toolType, target: QWEN, endpoint: OLLAMA, key },
+			model: QWEN.model,
+			label: 'qwen3:latest on Ollama',
+		});
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('hands the stored target, the provider and the user vars to the lookup', async () => {
+			const sshRemoteConfig = { enabled: false, remoteId: null };
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				runOn: QWEN,
+				customEnvVars: { FOO: 'bar' },
+				sshRemoteConfig,
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(mockPrepareCliRunOn).toHaveBeenCalledWith({
+				toolType: 'claude-code',
+				target: QWEN,
+				userEnvVars: { FOO: 'bar' },
+				sshRemoteConfig,
+			});
+		});
+
+		it('points Claude Code at the source, with the model in place of its own', async () => {
+			mockPrepareCliRunOn.mockResolvedValue(ready('claude-code'));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				runOn: QWEN,
+				customModel: 'opus',
+			});
+			const result = await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(result.success).toBe(true);
+			const { args, options } = spawnCall();
+			expect(args[args.indexOf('--model') + 1]).toBe('qwen3:latest');
+			expect(args.filter((arg) => arg === '--model')).toHaveLength(1);
+			expect(args).not.toContain('opus');
+			expect(options.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+			expect(options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('qwen3:latest');
+			// Blank, so a key the shell holds for Anthropic is not sent to the source.
+			expect(options.env.ANTHROPIC_API_KEY).toBe('');
+		});
+
+		it('gives Codex a provider of its own ahead of exec, and the model after it', async () => {
+			mockPrepareCliRunOn.mockResolvedValue(ready('codex', 'sk-source'));
+
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { runOn: QWEN });
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args, options } = spawnCall();
+			const provider = args.findIndex((arg) => arg.startsWith('model_providers.maestro='));
+			expect(provider).toBeGreaterThan(-1);
+			expect(provider).toBeLessThan(args.indexOf('exec'));
+			expect(args[provider]).toContain('base_url="http://127.0.0.1:11434/v1"');
+			expect(args.indexOf('-m')).toBeGreaterThan(args.indexOf('exec'));
+			expect(args[args.indexOf('-m') + 1]).toBe('qwen3:latest');
+			expect(options.env.MAESTRO_RUN_ON_KEY).toBe('sk-source');
+		});
+
+		it('takes the place of the gateway', async () => {
+			mockPrepareCliRunOn.mockResolvedValue(ready('claude-code'));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				runOn: QWEN,
+				gatewayUrl: 'http://127.0.0.1:8787/anthropic',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(spawnCall().options.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+		});
+
+		it('keeps Claude Code on claude --print when the agent selected the TUI', async () => {
+			mockPrepareCliRunOn.mockResolvedValue(ready('claude-code'));
+			// maestro-p is "present", as in the interactive token source test above.
+			vi.mocked(fs.accessSync).mockReturnValue(undefined);
+			vi.mocked(fs.existsSync).mockImplementation((p) => !String(p).endsWith('app.asar'));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				runOn: QWEN,
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { command, args, options } = spawnCall();
+			// Not rewritten to maestro-p: the recipe was measured on `claude --print`.
+			expect(command).not.toBe(process.execPath);
+			expect(args.some((arg) => /maestro-p\.js$/.test(String(arg)))).toBe(false);
+			expect(options.env.MAESTRO_CLAUDE_BIN).toBeUndefined();
+		});
+
+		it.each(['claude-code', 'codex'] as const)(
+			"fails a %s turn by name when the target cannot run, and never spawns it on the provider's model",
+			async (toolType) => {
+				mockPrepareCliRunOn.mockResolvedValue({
+					kind: 'refused',
+					code: 'run-on-source-unreachable',
+					message:
+						'This agent is set to run on qwen3:latest on Ollama, but the source "Ollama" did not answer.',
+				});
+
+				const result = await spawnAgent(toolType, '/p', 'hi', undefined, { runOn: QWEN });
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('set to run on qwen3:latest on Ollama');
+				expect(mockSpawn).not.toHaveBeenCalled();
+			}
+		);
+
+		it('fails the turn when the plan refuses the prepared target', async () => {
+			// The source was switched off between the lookup and the plan.
+			mockPrepareCliRunOn.mockResolvedValue({
+				...ready('claude-code'),
+				runOn: { toolType: 'claude-code', target: QWEN, endpoint: { ...OLLAMA, enabled: false } },
+			});
+
+			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, { runOn: QWEN });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('the source "Ollama" is disabled');
+			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 	});
 

@@ -79,6 +79,11 @@ function loadExecutorsUncached() {
 		import('../../main/cue/cue-cli-executor'),
 		import('../../main/cue/cue-notify-executor'),
 		import('../../main/cue/cue-auth-detector'),
+		// A Cue run of an agent with a Run on target looks its source up through
+		// stores the desktop wires at boot. Nothing does that here, and an
+		// unwired lookup throws rather than run the agent on its provider's
+		// model (see `./run-on`).
+		import('./run-on').then((runOn) => runOn.configureCliRunOn()),
 	]).then(([, executor, shell, cli, notify, authDetector]) => ({
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
@@ -279,6 +284,7 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			customArgs: storedSession.customArgs,
 			customEnvVars: storedSession.customEnvVars,
 			gatewayUrl: storedSession.gatewayUrl,
+			runOn: storedSession.runOn,
 			customModel: turn.model,
 			customEffort: turn.effort,
 			enableMaestroP: storedSession.enableMaestroP,

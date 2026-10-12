@@ -187,6 +187,15 @@ import {
 	stopModelServer,
 } from '../../../../main/local-models/server/supervisor';
 
+vi.mock('../../../../main/local-models/server/server-endpoint', () => ({
+	modelServerForHarness: vi.fn(async () => ({
+		ok: true,
+		baseUrl: 'http://127.0.0.1:47811',
+		key: 'sk-maestro-key',
+	})),
+}));
+import { modelServerForHarness } from '../../../../main/local-models/server/server-endpoint';
+
 vi.mock('../../../../main/local-models/server/service', () => ({
 	getModelServerReport: vi.fn(async () => ({
 		status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' },
@@ -6157,6 +6166,48 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_key_result'));
 			expect(getModelServerKey).toHaveBeenCalled();
 			expect(lastResponse()).toMatchObject({ success: true, key: 'sk-maestro-key' });
+		});
+
+		it('local_models_server_ensure makes the server ready and answers with its address and key', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_server_ensure',
+				model: ' gpt-oss-20b ',
+				requestId: 'ms-8',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_ensure_result'));
+			expect(modelServerForHarness).toHaveBeenCalledWith('gpt-oss-20b');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				baseUrl: 'http://127.0.0.1:47811',
+				key: 'sk-maestro-key',
+			});
+		});
+
+		it('local_models_server_ensure answers with the reason when the server cannot serve the model', async () => {
+			vi.mocked(modelServerForHarness).mockResolvedValueOnce({
+				ok: false,
+				error: 'gpt-oss 20B is not downloaded.',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_server_ensure',
+				model: 'gpt-oss-20b',
+				requestId: 'ms-9',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-9'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'gpt-oss 20B is not downloaded.',
+			});
+			// A refusal carries no address and no key.
+			expect(lastResponse()).not.toHaveProperty('key');
+		});
+
+		it('local_models_server_ensure refuses a request that names no model', async () => {
+			vi.mocked(modelServerForHarness).mockClear();
+			handler.handleMessage(client, { type: 'local_models_server_ensure', requestId: 'ms-10' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-10'));
+			expect(lastResponse()).toMatchObject({ success: false });
+			expect(modelServerForHarness).not.toHaveBeenCalled();
 		});
 
 		it('local_models_proxy_block answers with both sides of the block', async () => {

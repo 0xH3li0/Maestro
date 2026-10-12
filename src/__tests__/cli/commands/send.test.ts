@@ -1111,6 +1111,21 @@ describe('send command', () => {
 			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ customModel: 'opus[1m]' });
 		});
 
+		it("runs the turn and its synopsis on the agent's Run on target", async () => {
+			const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			ready({ runOn });
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			// The synopsis resumes the turn's conversation. Without the target it
+			// would send that conversation to the provider's cloud.
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn });
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ runOn });
+		});
+
 		it('keeps the synopsis turn read-only after a --read-only send', async () => {
 			ready();
 			vi.mocked(spawnAgent)

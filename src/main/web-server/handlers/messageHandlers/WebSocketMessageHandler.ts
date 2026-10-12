@@ -110,6 +110,7 @@ import {
 	handleLocalModelsSemanticIndexStatus,
 	handleLocalModelsProxyStatus,
 	handleLocalModelsProxyBlock,
+	handleLocalModelsServerEnsure,
 	handleLocalModelsServerKey,
 	handleLocalModelsServerSet,
 	handleLocalModelsServerStart,
@@ -857,6 +858,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_server_key':
 				void handleLocalModelsServerKey(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_ensure':
+				void handleLocalModelsServerEnsure(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':

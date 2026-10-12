@@ -41,6 +41,7 @@ import {
 	listModelServerModels,
 	loadedModelServerTarget,
 	modelServerCallTarget,
+	modelServerForHarness,
 	modelServerUnsupported,
 	refersToModelServer,
 	testModelServer,
@@ -65,6 +66,38 @@ beforeEach(() => {
 	});
 	supervisor.modelServerServingLoaded.mockResolvedValue(null);
 	engine.isServerEngineInstalled.mockResolvedValue(true);
+});
+
+describe('modelServerForHarness', () => {
+	it('makes the server ready for the model and answers with its root and key', async () => {
+		expect(await modelServerForHarness('qwen3-1.7b')).toEqual({
+			ok: true,
+			baseUrl: BASE_URL,
+			key: 'sk-maestro-key',
+		});
+		expect(supervisor.ensureModelServerFor).toHaveBeenCalledWith('qwen3-1.7b');
+	});
+
+	it('answers with the reason, as a result, when the server cannot serve the model', async () => {
+		supervisor.ensureModelServerFor.mockResolvedValue({
+			ok: false,
+			code: 'model-not-installed',
+			error: 'Qwen3 1.7B is not downloaded.',
+		});
+
+		expect(await modelServerForHarness('qwen3-1.7b')).toEqual({
+			ok: false,
+			error: 'Qwen3 1.7B is not downloaded.',
+		});
+		// No key is read for a server that will not be used.
+		expect(supervisor.getModelServerKey).not.toHaveBeenCalled();
+	});
+
+	it('lets an unexpected failure through', async () => {
+		supervisor.ensureModelServerFor.mockRejectedValue(new Error('disk on fire'));
+
+		await expect(modelServerForHarness('qwen3-1.7b')).rejects.toThrow('disk on fire');
+	});
 });
 
 describe('refersToModelServer', () => {

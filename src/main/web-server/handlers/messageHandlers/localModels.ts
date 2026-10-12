@@ -11,7 +11,7 @@
  * local_models_proxy_block, local_models_runtimes_list,
  * local_models_runtime_install, local_models_server_status,
  * local_models_server_start, local_models_server_stop, local_models_server_set,
- * local_models_server_key, notify_speak.
+ * local_models_server_key, local_models_server_ensure, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -68,6 +68,7 @@ import {
 	installModelServerEngine,
 	updateModelServerConfigRequest,
 } from '../../../local-models/server/service';
+import { modelServerForHarness } from '../../../local-models/server/server-endpoint';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -481,6 +482,29 @@ export function handleLocalModelsServerKey(
 	return respond(ctx, client, message, 'local_models_server_key_result', async () => ({
 		key: await getModelServerKey(),
 	}));
+}
+
+/**
+ * Handle local_models_server_ensure - make the model server ready to serve one
+ * model (start it and load the model when needed) and answer with where it
+ * listens and its key. This is how a `maestro-cli` spawn launches an agent
+ * whose Run on target is the server: the CLI runs the agent in its own process
+ * and cannot start the server, which the app supervises. The same function the
+ * app's own launches call. A server that cannot serve the model answers with
+ * the reason, and the CLI refuses the launch with it.
+ */
+export function handleLocalModelsServerEnsure(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_server_ensure_result', async () => {
+		const model = typeof message.model === 'string' ? message.model.trim() : '';
+		if (model === '') throw new Error('Name the model the server should serve.');
+		const server = await modelServerForHarness(model);
+		if (!server.ok) throw new Error(server.error);
+		return { baseUrl: server.baseUrl, key: server.key };
+	});
 }
 
 /**

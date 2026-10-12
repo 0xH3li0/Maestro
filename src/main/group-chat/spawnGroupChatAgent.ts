@@ -27,6 +27,8 @@ import {
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
 import { applyAgentGatewayToSpawn } from '../local-models/proxy/service';
+import { applyAgentRunOnToSpawn, logRunOnLaunch, storedAgentRunOn } from '../local-models/run-on';
+import { runOnHarnessMode } from '../../shared/local-models/run-on';
 
 /** The remote's display name for a refusal message; its id when it cannot be resolved. */
 function sshRemoteName(
@@ -56,10 +58,11 @@ export interface SpawnGroupChatAgentConfig {
 	customEnvVars?: Record<string, string>;
 	/**
 	 * The Left Bar agent this process runs AS, when there is one (a participant,
-	 * a cross-agent consult target). Its Local Models gateway is applied to the
-	 * spawn, so the turn takes the same route as that agent's own tab. Omit for
-	 * a process that is nobody's agent (the moderator, synthesis): a gateway is
-	 * a per-agent setting and there is none to read.
+	 * a cross-agent consult target). Its Run on target, or failing that its Local
+	 * Models gateway, is applied to the spawn, so the turn runs on the same model
+	 * by the same route as that agent's own tab. Omit for a process that is
+	 * nobody's agent (the moderator, synthesis): both are per-agent settings and
+	 * there is none to read.
 	 */
 	maestroAgentId?: string;
 	/** Agent config values (used for context window resolution) */
@@ -155,23 +158,44 @@ export async function spawnGroupChatAgent(
 	});
 	const prompt = delivered.prompt;
 
-	// The agent's Local Models gateway, applied before anything below reads the
-	// arguments or the env, so the local, maestro-p and SSH paths all carry it.
-	// One that cannot be used (a loopback URL for a remote host, a proxy that
-	// will not start) refuses the turn by name rather than connecting direct.
+	// Where the agent's model runs, applied before anything below reads the
+	// arguments or the env, so the local, maestro-p and SSH paths all carry it:
+	// its Run on target first, and its Local Models gateway only when it has
+	// none (a Run on target takes the gateway's place, since the gateway routes
+	// to the provider). Either one that cannot be used (a source that is down, a
+	// loopback address for a remote host, a proxy that will not start) refuses
+	// the turn by name rather than running it somewhere the user did not choose.
 	let args = delivered.args;
 	let customEnvVars = config.customEnvVars;
 	if (config.maestroAgentId) {
-		const gateway = await applyAgentGatewayToSpawn({
+		const remote = sshRemoteConfig?.enabled
+			? { name: sshRemoteName(sshStore, sshRemoteConfig) }
+			: null;
+		const runOn = await applyAgentRunOnToSpawn({
 			agentId: config.maestroAgentId,
 			toolType: agentId,
+			agent,
 			args,
 			customEnvVars,
-			remote: sshRemoteConfig?.enabled ? { name: sshRemoteName(sshStore, sshRemoteConfig) } : null,
+			remote,
 		});
-		if (!gateway.ok) throw new Error(gateway.error);
-		args = gateway.args;
-		customEnvVars = gateway.customEnvVars;
+		if (!runOn.ok) throw new Error(runOn.error);
+		args = runOn.args;
+		customEnvVars = runOn.customEnvVars;
+		if (runOn.runOn) {
+			logRunOnLaunch('[GroupChat:Spawn]', { sessionId, toolType: agentId }, runOn.runOn);
+		} else {
+			const gateway = await applyAgentGatewayToSpawn({
+				agentId: config.maestroAgentId,
+				toolType: agentId,
+				args,
+				customEnvVars,
+				remote,
+			});
+			if (!gateway.ok) throw new Error(gateway.error);
+			args = gateway.args;
+			customEnvVars = gateway.customEnvVars;
+		}
 	}
 
 	let spawnCommand = baseCommand;
@@ -202,7 +226,13 @@ export async function spawnGroupChatAgent(
 	// args processManager appends), so prompt delivery is unchanged.
 	const claudeDecision = resolveClaudeSpawnMode({
 		agent,
-		tokenMode: config.tokenMode ?? 'api',
+		// An agent that runs on a source keeps to `claude --print`, the mode its
+		// recipe was measured in.
+		tokenMode: runOnHarnessMode(
+			config.maestroAgentId ? storedAgentRunOn(config.maestroAgentId) : undefined,
+			config.tokenMode ?? 'api',
+			'api'
+		),
 		sshEnabled: !!sshRemoteConfig?.enabled,
 		// Lets the resolver fall a remote TUI spawn back to API when the remote
 		// has no maestro-p on its PATH (avoids exit 127).

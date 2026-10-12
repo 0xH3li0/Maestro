@@ -63,7 +63,12 @@ import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode'
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver';
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
-import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
+import {
+	buildAgentLaunchPlan,
+	type LaunchPlanRunOn,
+} from '../../../../shared/maestro-lib/launch/launch-plan';
+import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
+import { logRunOnLaunch, prepareLaunchRunOn } from '../../../local-models/run-on';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import {
 	ensureTokenProxyForGateway,
@@ -211,10 +216,28 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	};
 
+	// The agent this spawn runs AS, and its stored Run on target. Looked up by
+	// `agentIdFromProcessId`, which strips every process suffix: an Auto Run task
+	// (`{agentId}-batch-{ts}`) and the History synopsis (`{agentId}-synopsis-{ts}`)
+	// are the agent's own work and run where its typed turns run. The synopsis
+	// resumes the agent's conversation, so missing it here would send that
+	// conversation to the provider's cloud. Read from the store, not from the
+	// renderer's spawn request, for the reason the gateway is (see below).
+	const launchAgentId = agentIdFromProcessId(config.sessionId);
+	const launchAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			gatewayUrl?: string;
+			runOn?: unknown;
+		}>
+	).find((s) => s?.id === launchAgentId);
+	const storedRunOn = launchAgent?.runOn;
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
 		envLayers: claudeEnvLayers,
+		runOn: storedRunOn,
 	});
 	const {
 		baseSessionId,
@@ -227,7 +250,13 @@ async function handleProcessSpawnImpl(
 	// Codex transport (exec default, app-server opt-in), read from the persisted
 	// agent record so a stale renderer cannot route the turn differently from
 	// what is saved. Handed to ProcessManager.spawn() below.
-	const codexTransport = resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore);
+	// An agent that runs on a source keeps to `codex exec`, the transport its
+	// recipe was measured on.
+	const codexTransport = runOnHarnessMode(
+		storedRunOn,
+		resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore),
+		'exec'
+	);
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -293,36 +322,55 @@ async function handleProcessSpawnImpl(
 	// the FINAL prompt (system prompt and preambles folded in), with the same
 	// shared function.
 	// ========================================================================
-	// The agent's stored record. Read once here for the two things only it can
-	// say: its Local Models gateway (below) and whether it is Pianola (further
-	// down). The gateway is read from the store, not from the renderer's spawn
-	// request, because a dozen-odd renderer call sites build that request and
-	// one that forgot the field would send the agent's traffic direct with
-	// nothing to show for it. Every surface that edits a gateway flushes the
-	// agent to this store before reporting success.
+	// The agent's stored record. Read here for the one thing only it can say
+	// under this id: whether it is Pianola (further down).
 	const storedAgent = (
 		deps.sessionsStore.get('sessions', []) as Array<{
 			id?: string;
 			isPianola?: boolean;
-			gatewayUrl?: string;
 		}>
 	).find((s) => s?.id === baseSessionId);
 
-	// The agent whose gateway this spawn uses. NOT `baseSessionId`, which strips
-	// only the `-ai-{tab}` suffix: an Auto Run task spawns as
-	// `{agentId}-batch-{ts}` and the History synopsis as `{agentId}-synopsis-{ts}`,
-	// so looking the gateway up by `baseSessionId` found no agent for either and
-	// sent both direct, while the agent's typed turns went through the gateway.
-	const gatewayAgentId = agentIdFromProcessId(config.sessionId);
-	const gatewayAgent =
-		gatewayAgentId === baseSessionId
-			? storedAgent
-			: (
-					deps.sessionsStore.get('sessions', []) as Array<{ id?: string; gatewayUrl?: string }>
-				).find((s) => s?.id === gatewayAgentId);
+	// The agent whose gateway this spawn uses: `launchAgent`, read above. NOT
+	// the record under `baseSessionId`, which strips only the `-ai-{tab}` suffix:
+	// an Auto Run task spawns as `{agentId}-batch-{ts}` and the History synopsis
+	// as `{agentId}-synopsis-{ts}`, so looking the gateway up by `baseSessionId`
+	// found no agent for either and sent both direct, while the agent's typed
+	// turns went through the gateway. The gateway is read from the store, not
+	// from the renderer's spawn request, because a dozen-odd renderer call sites
+	// build that request and one that forgot the field would send the agent's
+	// traffic direct with nothing to show for it. Every surface that edits a
+	// gateway flushes the agent to this store before reporting success.
+	const gatewayAgentId = launchAgentId;
+	const gatewayAgent = launchAgent;
 
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
+	// What the agent's Run on target did to this launch, when it has one.
+	let appliedRunOn: LaunchPlanRunOn | undefined;
 	if (config.toolType !== 'terminal') {
+		const sshStore = createSshRemoteStoreAdapter(settingsStore);
+		const providerCustomEnvVars = agentConfigValues.customEnvVars as
+			| Record<string, string>
+			| undefined;
+		// The agent's Run on target: its source looked up and asked whether it
+		// can serve the model (starting the Maestro model server when the target
+		// is one of its models). A target that cannot run refuses the spawn by
+		// name; it never runs the turn on the provider's model.
+		const preparedRunOn = await prepareLaunchRunOn({
+			toolType: config.toolType,
+			target: storedRunOn,
+			userEnvVars: config.sessionCustomEnvVars ?? providerCustomEnvVars,
+			sshRemoteConfig: config.sessionSshRemoteConfig,
+			sshStore,
+		});
+		if (preparedRunOn.kind === 'refused') {
+			logger.error('Run on target cannot run; not spawning', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				reason: preparedRunOn.code,
+			});
+			reportSpawnRefusal(deps, config.sessionId, preparedRunOn.message);
+			return { success: false, pid: 0 };
+		}
 		// A gateway that is the Maestro token proxy is given to the process with
 		// this agent's id in its path, which is how the proxy knows whose request
 		// it carries and which mode (passthrough or compress) the agent chose.
@@ -340,17 +388,19 @@ async function handleProcessSpawnImpl(
 			prompt: config.prompt,
 			hasImages: !!config.images?.length,
 			globalShellEnvVars,
-			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+			agentCustomEnvVars: providerCustomEnvVars,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
 			readOnlyMode: isReadOnly,
 			gateway: { toolType: config.toolType, url: launchGatewayUrl },
+			runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 			sshRemoteConfig: config.sessionSshRemoteConfig,
-			sshStore: createSshRemoteStoreAdapter(settingsStore),
+			sshStore,
 		});
 		if (!planResult.ok) {
-			// Either the SSH remote could not be resolved or the agent's gateway
-			// cannot be used; `reason` says which. Both refuse the spawn rather
-			// than run the turn somewhere the user did not choose.
+			// The SSH remote could not be resolved, the agent's gateway cannot be
+			// used, or its Run on target cannot run; `reason` says which. Each
+			// refuses the spawn rather than run the turn somewhere the user did
+			// not choose.
 			logger.error('Launch plan refused; not spawning', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				remoteId: config.sessionSshRemoteConfig?.remoteId,
@@ -360,12 +410,22 @@ async function handleProcessSpawnImpl(
 			return { success: false, pid: 0 };
 		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
+		// This handler places the prompt itself, so it spawns from the plan's
+		// `launchArgs`: `finalArgs` with the gateway's config arguments in front
+		// (a provider whose base-URL variable is not enough, Codex), or with the
+		// Run on target's root arguments and its model. That model takes the
+		// place of the agent's own (its stored model, a tier model, the
+		// synopsis's cheap model): each names something the source does not serve.
+		finalArgs = planResult.plan.launchArgs;
+		if (planResult.plan.runOn) {
+			appliedRunOn = planResult.plan.runOn;
+			logRunOnLaunch(
+				LOG_CONTEXT,
+				{ sessionId: config.sessionId, toolType: config.toolType },
+				appliedRunOn
+			);
+		}
 		if (planResult.plan.gateway) {
-			// A provider whose base-URL variable is not enough (Codex) is pointed at
-			// the gateway by a config argument too. This handler spawns from
-			// `finalArgs`, not from the plan's own list, so they are placed here:
-			// at the front, where a CLI reads a global option.
-			finalArgs = [...planResult.plan.gateway.args, ...finalArgs];
 			logger.info(`Routing ${config.toolType} through its Local Models gateway`, LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				envVar: planResult.plan.gateway.envVar,
@@ -742,10 +802,11 @@ async function handleProcessSpawnImpl(
 
 	// Get contextWindow: session-level override takes priority over agent-level config
 	// Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
+	// A Run on target states its own: the window the harness was told it has.
 	const contextWindow = getContextWindowValue(
 		agent,
 		agentConfigValues,
-		config.sessionCustomContextWindow
+		appliedRunOn?.contextTokens ?? config.sessionCustomContextWindow
 	);
 
 	// ========================================================================

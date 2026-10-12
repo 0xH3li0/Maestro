@@ -38,6 +38,8 @@ import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-tota
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
+import { prepareCliRunOn } from './run-on';
+import { runOnHarnessMode, type ResolvedRunOn } from '../../shared/local-models/run-on';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
@@ -167,6 +169,7 @@ type SpawnOverrides = Pick<
 	| 'customArgs'
 	| 'customEnvVars'
 	| 'gatewayUrl'
+	| 'runOn'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -352,6 +355,7 @@ function planCliLaunch(
 		querySource?: SpawnOverrides['querySource'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
 		gatewayUrl?: string;
+		runOn?: ResolvedRunOn;
 	}
 ): AgentLaunchPlanResult {
 	return buildAgentLaunchPlan({
@@ -368,6 +372,7 @@ function planCliLaunch(
 		isResuming: input.isResuming,
 		querySource: input.querySource,
 		gateway: { toolType, url: input.gatewayUrl },
+		runOn: input.runOn,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
@@ -735,6 +740,19 @@ async function spawnClaudeAgent(
 		: await resolveLocalAgentCommand('claude-code');
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
+	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
+	// One that cannot run fails the turn by name; it never runs on Claude's own
+	// model instead.
+	const preparedRunOn = await prepareCliRunOn({
+		toolType: 'claude-code',
+		target: overrides.runOn,
+		userEnvVars: userCustomEnvVars,
+		sshRemoteConfig,
+	});
+	if (preparedRunOn.kind === 'refused') {
+		return spawnFailureResult(preparedRunOn.message);
+	}
+
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch). An SSH remote that cannot be
 	// resolved fails here, before anything is spawned.
@@ -750,6 +768,7 @@ async function spawnClaudeAgent(
 		querySource: overrides.querySource,
 		sshRemoteConfig,
 		gatewayUrl: overrides.gatewayUrl,
+		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -768,10 +787,17 @@ async function spawnClaudeAgent(
 	// do NOT pass the `{ sshEnabled }` default-flip option (which the desktop uses
 	// only because it has a live remote maestro-p probe as a safety net). Only an
 	// EXPLICIT TUI/Dynamic selection routes through maestro-p.
-	const tokenMode = getClaudeTokenMode({
-		enableMaestroP: tokenSource.enableMaestroP,
-		maestroPMode: tokenSource.maestroPMode,
-	});
+	//
+	// An agent that runs on a source keeps to `claude --print`, the mode its
+	// recipe was measured in, whatever it selected.
+	const tokenMode = runOnHarnessMode(
+		overrides.runOn,
+		getClaudeTokenMode({
+			enableMaestroP: tokenSource.enableMaestroP,
+			maestroPMode: tokenSource.maestroPMode,
+		}),
+		'api'
+	);
 	const spawnDecision = resolveClaudeSpawnModeCore(
 		{
 			agent: def
@@ -1169,13 +1195,11 @@ async function spawnJsonLineAgent(
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
-	const { args: resolvedArgs, agentCustomEnvVars } = resolveAgentOverrides(
-		toolType,
-		def,
-		preOverrideArgs,
-		overrides,
-		readOnlyMode
-	);
+	const {
+		args: resolvedArgs,
+		userCustomEnvVars,
+		agentCustomEnvVars,
+	} = resolveAgentOverrides(toolType, def, preOverrideArgs, overrides, readOnlyMode);
 
 	// System prompt delivery for JSON-line agents:
 	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
@@ -1219,6 +1243,19 @@ async function spawnJsonLineAgent(
 		? getAgentCommand(toolType)
 		: await resolveLocalAgentCommand(toolType);
 
+	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
+	// One that cannot run fails the turn by name; it never runs on the
+	// provider's own model instead.
+	const preparedRunOn = await prepareCliRunOn({
+		toolType,
+		target: overrides.runOn,
+		userEnvVars: userCustomEnvVars,
+		sshRemoteConfig,
+	});
+	if (preparedRunOn.kind === 'refused') {
+		return spawnFailureResult(preparedRunOn.message);
+	}
+
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
 	// (Copilot's `-p`), a bare positional or `-- <prompt>`, on the command line
@@ -1236,6 +1273,7 @@ async function spawnJsonLineAgent(
 		querySource: overrides.querySource,
 		sshRemoteConfig,
 		gatewayUrl: overrides.gatewayUrl,
+		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1497,6 +1535,13 @@ export interface SpawnAgentOptions {
 	 */
 	gatewayUrl?: string;
 	/**
+	 * The agent's stored Run on target, as data (the launch validates it). One
+	 * that names a source replaces `customModel` and the gateway: the launch plan
+	 * points the harness at the source, and fails the spawn by name when the
+	 * source cannot serve the model. It never falls back to the provider's model.
+	 */
+	runOn?: unknown;
+	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
@@ -1570,6 +1615,7 @@ export async function spawnAgent(
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
 		gatewayUrl: options?.gatewayUrl,
+		runOn: options?.runOn,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

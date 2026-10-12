@@ -171,6 +171,9 @@ import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
 import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
 import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
+import { configureAgentRunOn } from './local-models/run-on';
+import { getConfiguredLocalModelEndpoints } from './local-models/endpoint-service';
+import { modelServerForHarness } from './local-models/server/server-endpoint';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -1654,6 +1657,7 @@ app
 					customArgs: storedSession.customArgs,
 					customEnvVars: storedSession.customEnvVars,
 					gatewayUrl: storedSession.gatewayUrl,
+					runOn: storedSession.runOn,
 					customModel: turn.model,
 					customEffort: turn.effort,
 					// Claude token-source selection (TUI / API / dynamic), read from
@@ -3695,6 +3699,19 @@ app
 		// The model server never starts itself: only Start, or a feature the user
 		// turned on that needs it. Wiring it starts nothing; app quit stops it.
 		configureModelServer({ safeSend });
+
+		// An agent's Run on target is resolved at each launch from these stores.
+		// Wiring it reads nothing and starts nothing: the model server starts
+		// only for a launch whose agent the user pointed at it.
+		configureAgentRunOn({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+			endpoints: getConfiguredLocalModelEndpoints,
+			shellEnvVars: () => store.get('shellEnvVars', {}) as Record<string, string>,
+			modelServer: modelServerForHarness,
+		});
 
 		// Start watching for system timezone changes (laptop crossing zones).
 		timeZoneWatcher.start();

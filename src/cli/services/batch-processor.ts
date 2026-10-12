@@ -655,6 +655,7 @@ export async function* runPlaybook(
 								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
 								gatewayUrl: session.gatewayUrl,
+								runOn: session.runOn,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
 								appendSystemPrompt: playbookSystemPrompt,
 								// This is Auto Run, not someone typing. Marks the turn so delegation

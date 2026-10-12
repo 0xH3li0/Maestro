@@ -419,6 +419,48 @@ export function applyAgentConfigOverrides(
 	};
 }
 
+/**
+ * `args` naming `model` with the provider's own model flag (`modelArgs`): the
+ * value of every such flag already in the list is replaced, and the flag is
+ * appended when the list has none. Appended is where `applyAgentConfigOverrides`
+ * puts a model, after any subcommand, which is where Codex reads `-m`.
+ *
+ * For a launch whose model is decided after its arguments were built (an agent's
+ * Run on target). Replacing matters: a second flag beside the agent's stored
+ * model leaves the CLI to pick one, and the stored model names something the
+ * target's server does not serve.
+ *
+ * Reads `modelArgs` as `[flag, value]`, which is what every provider with a
+ * model flag returns. Null for a provider that has none.
+ */
+export function replaceModelArg(
+	agent: Pick<AgentDefinition, 'modelArgs'> | null | undefined,
+	args: readonly string[],
+	model: string
+): string[] | null {
+	const built = agent?.modelArgs?.(model);
+	const flag = built?.[0];
+	if (!built || !flag) return null;
+
+	const next: string[] = [];
+	let replaced = false;
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === flag) {
+			next.push(flag, model);
+			replaced = true;
+			// The value that followed the flag is dropped with it.
+			index++;
+		} else if (arg.startsWith(`${flag}=`)) {
+			next.push(`${flag}=${model}`);
+			replaced = true;
+		} else {
+			next.push(arg);
+		}
+	}
+	return replaced ? next : [...next, ...built];
+}
+
 /** Resolve the effective context window size from session, agent config, or defaults. */
 export function getContextWindowValue(
 	agent: AgentConfig | null | undefined,

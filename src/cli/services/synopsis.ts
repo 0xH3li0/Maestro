@@ -81,6 +81,10 @@ export async function requestCliSynopsis(
 					additionalDirectories: session.additionalDirectories,
 					customEnvVars: session.customEnvVars,
 					gatewayUrl: session.gatewayUrl,
+					// The synopsis resumes the agent's own conversation, so it runs
+					// where that conversation runs. On the provider's model it would
+					// send the conversation to the provider's cloud.
+					runOn: session.runOn,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					// A synopsis is never someone typing, whatever turn it summarizes.
 					querySource: 'auto',

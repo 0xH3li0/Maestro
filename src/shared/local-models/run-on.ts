@@ -12,7 +12,7 @@
  * so the launch plan, the settings picker, the CLI and the turn pills cannot
  * disagree about them.
  *
- * Four rules every caller inherits:
+ * Five rules every caller inherits:
  *
  * 1. A target that cannot run refuses the launch by name. It is never dropped
  *    so the turn can go to the provider's cloud model: that would spend money
@@ -30,6 +30,15 @@
  *    the provider's own `modelArgs` builder, in the position that builder is
  *    known to work in (Codex reads `-m` after `exec`), and so that it REPLACES
  *    the agent's stored model instead of sitting beside it.
+ * 5. The provider's own key never goes to the source. Claude Code sends
+ *    `ANTHROPIC_API_KEY` as `x-api-key` to whatever its base URL is, beside the
+ *    source's token (measured 2026-10-12, Claude Code 2.1.296), so a key the
+ *    shell, Settings or the agent itself holds for Anthropic would reach a
+ *    server Anthropic does not run. Such a variable is set blank for the launch,
+ *    whoever set it. Rule 3 does not apply to it: a blank is not a value the
+ *    user can be said to have chosen for this source. It is left alone only
+ *    when the agent sets the base URL itself, because the request then goes
+ *    where the agent's own variables send it.
  */
 
 import { isEnvVarSet } from '../agentEnvironment';
@@ -113,6 +122,11 @@ export type AgentRunOnSupport =
 			/** The variable that carries the source's key. */
 			keyEnvVar: string;
 			/**
+			 * The provider's own credential variables that the harness would send to
+			 * the source as well. Set blank for the launch (rule 5).
+			 */
+			providerKeyEnvVars?: readonly string[];
+			/**
 			 * The variables and the ROOT arguments that point the harness at the
 			 * source. The arguments go before the agent's own (ahead of any
 			 * subcommand), which is where a CLI reads a global option. The model flag
@@ -141,6 +155,10 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 		supported: true,
 		baseUrlEnvVar: 'ANTHROPIC_BASE_URL',
 		keyEnvVar: 'ANTHROPIC_AUTH_TOKEN',
+		// Sent as `x-api-key` beside the token. A blank value sends no such header;
+		// `CLAUDE_CODE_OAUTH_TOKEN` is not sent while the token is set (both
+		// measured 2026-10-12).
+		providerKeyEnvVars: ['ANTHROPIC_API_KEY'],
 		recipe: ({ baseUrl, key, model, contextTokens }) => ({
 			envVars: {
 				ANTHROPIC_BASE_URL: baseUrl,
@@ -311,6 +329,11 @@ export type RunOnLaunchResolution =
 			contextTokens: number;
 			/** Recipe variables the agent sets itself, which were left alone (rule 3). */
 			userOverrides: string[];
+			/**
+			 * The provider's own key variables, which `envVars` sets blank so the
+			 * harness does not send them to the source (rule 5).
+			 */
+			clearedEnvVars: string[];
 	  }
 	/** The launch must fail with this message (rule 1). */
 	| RunOnRefusal;
@@ -336,6 +359,39 @@ export interface RunOnLaunchInput {
 	/** The SSH remote the agent runs on, when it runs on one. */
 	remote?: { name: string } | null;
 }
+
+/**
+ * Whether a stored `runOn` value names a source, read as data: the launch will
+ * run on that source or be refused. A malformed value counts, because it is
+ * refused and never runs on the provider's model.
+ */
+export function storedRunOnNamesSource(value: unknown): boolean {
+	const parsed = parseRunOnTarget(value);
+	return !parsed.ok || parsed.target.type === 'source';
+}
+
+/**
+ * The mode a harness launches in when its agent runs on a source: the one its
+ * recipe was measured in (rule 2). Claude Code runs as `claude --print`, not
+ * through the maestro-p TUI, which exists to spend a subscription plan that a
+ * source does not have. Codex runs as `codex exec`, not on its app-server.
+ * Any other launch keeps the mode it chose.
+ */
+export function runOnHarnessMode<Mode extends string>(
+	target: unknown,
+	chosen: Mode,
+	measured: Mode
+): Mode {
+	return storedRunOnNamesSource(target) ? measured : chosen;
+}
+
+/**
+ * A stored target with its source already looked up: what a launch plan is
+ * handed. The lookup needs the saved endpoints, Settings -> Environment and the
+ * Maestro model server, so a process that has them does it (`prepareAgentRunOn`
+ * in the main process) and the plan stays pure.
+ */
+export type ResolvedRunOn = Pick<RunOnLaunchInput, 'toolType' | 'target' | 'endpoint' | 'key'>;
 
 const RECOVERY = 'Fix the source, or set Run on to Provider.';
 
@@ -410,16 +466,21 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 	);
 	const withheld = new Set(userOverrides);
 	if (userSetsBaseUrl) withheld.add(support.keyEnvVar);
+	// Rule 5. Not when the agent routes itself: its request does not go to the
+	// source, so its own key is its own business.
+	const clearedEnvVars = userSetsBaseUrl ? [] : [...(support.providerKeyEnvVars ?? [])];
 
 	return {
 		kind: 'inject',
-		envVars: Object.fromEntries(
-			Object.entries(recipe.envVars).filter(([name]) => !withheld.has(name))
-		),
+		envVars: {
+			...Object.fromEntries(clearedEnvVars.map((name) => [name, ''])),
+			...Object.fromEntries(Object.entries(recipe.envVars).filter(([name]) => !withheld.has(name))),
+		},
 		args: recipe.args,
 		model: target.model,
 		contextTokens,
 		userOverrides,
+		clearedEnvVars,
 	};
 }
 

@@ -448,6 +448,7 @@ export async function send(
 					additionalDirectories: agent.additionalDirectories,
 					customEnvVars: agent.customEnvVars,
 					gatewayUrl: agent.gatewayUrl,
+					runOn: agent.runOn,
 					sshRemoteConfig: agent.sessionSshRemoteConfig,
 					appendSystemPrompt,
 					// Honor the agent's Claude token source for `maestro-cli send` turns.

@@ -51,6 +51,17 @@ vi.mock('../../../main/local-models/proxy/service', () => ({
 	applyAgentGatewayToSpawn: (...args: unknown[]) => mockApplyGateway(...args),
 }));
 
+// The agent's Run on target: stubbed the same way (run-on.test.ts covers how the
+// answer is reached). By default the agent has none, so the spawn is unchanged.
+const mockApplyRunOn = vi.fn();
+const mockStoredRunOn = vi.fn();
+const mockLogRunOn = vi.fn();
+vi.mock('../../../main/local-models/run-on', () => ({
+	applyAgentRunOnToSpawn: (...args: unknown[]) => mockApplyRunOn(...args),
+	storedAgentRunOn: (...args: unknown[]) => mockStoredRunOn(...args),
+	logRunOnLaunch: (...args: unknown[]) => mockLogRunOn(...args),
+}));
+
 // Pin the non-Windows branch so the system-prompt flag is passed inline on
 // every CI host (the Windows temp-file branch is covered by the delivery tests).
 vi.mock('../../../shared/platformDetection', async (importOriginal) => {
@@ -78,6 +89,15 @@ describe('spawnGroupChatAgent', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockStoredRunOn.mockReturnValue(undefined);
+		mockApplyRunOn.mockImplementation(
+			async (input: { args: string[]; customEnvVars?: Record<string, string> }) => ({
+				ok: true,
+				args: input.args,
+				customEnvVars: input.customEnvVars,
+				runOn: null,
+			})
+		);
 		spawnSpy = vi.fn().mockReturnValue({ pid: 4242, success: true });
 		processManager = {
 			spawn: spawnSpy,
@@ -300,6 +320,176 @@ describe('spawnGroupChatAgent', () => {
 					processManager,
 				})
 			).rejects.toThrow('The turn was not sent.');
+			expect(spawnSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("the agent's Run on target", () => {
+		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+		const applied = {
+			model: 'qwen3:latest',
+			contextTokens: 40_960,
+			args: [],
+			envVarNames: ['ANTHROPIC_BASE_URL'],
+			userOverrides: [],
+			clearedEnvVars: ['ANTHROPIC_API_KEY'],
+		};
+
+		beforeEach(() => {
+			mockResolve.mockReturnValue({ mode: 'api', reason: 'auto' });
+		});
+
+		it("is not looked up for a process that is nobody's agent", async () => {
+			await spawnGroupChatAgent({
+				sessionId: 'sess-mod',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				processManager,
+				debugLabel: 'moderator',
+			});
+
+			expect(mockApplyRunOn).not.toHaveBeenCalled();
+			expect(mockStoredRunOn).not.toHaveBeenCalled();
+		});
+
+		it('spawns with the arguments and env the target gives back, and skips the gateway', async () => {
+			const agent = makeAgent();
+			mockStoredRunOn.mockReturnValue(QWEN);
+			mockApplyRunOn.mockResolvedValue({
+				ok: true,
+				args: ['--print', '--model', 'qwen3:latest'],
+				customEnvVars: { FOO: '1', ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434' },
+				runOn: applied,
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-p',
+				agentId: 'claude-code',
+				agent,
+				args: ['--print', '--model', 'opus'],
+				cwd: '/tmp/work',
+				customEnvVars: { FOO: '1' },
+				maestroAgentId: 'agent-7',
+				processManager,
+			});
+
+			expect(mockApplyRunOn).toHaveBeenCalledWith({
+				agentId: 'agent-7',
+				toolType: 'claude-code',
+				agent,
+				args: ['--print', '--model', 'opus'],
+				customEnvVars: { FOO: '1' },
+				remote: null,
+			});
+			// A Run on target takes the gateway's place: it is not even asked.
+			expect(mockApplyGateway).not.toHaveBeenCalled();
+			const spawned = spawnSpy.mock.calls[0][0] as {
+				args: string[];
+				customEnvVars: Record<string, string>;
+			};
+			expect(spawned.args).toEqual(['--print', '--model', 'qwen3:latest']);
+			expect(spawned.customEnvVars).toEqual({
+				FOO: '1',
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+			});
+			expect(mockLogRunOn).toHaveBeenCalledWith(
+				'[GroupChat:Spawn]',
+				{ sessionId: 'sess-p', toolType: 'claude-code' },
+				applied
+			);
+		});
+
+		it('falls through to the gateway for an agent with no target', async () => {
+			mockApplyGateway.mockResolvedValue({
+				ok: true,
+				args: ['--print'],
+				customEnvVars: undefined,
+				gateway: null,
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-p',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				maestroAgentId: 'agent-7',
+				processManager,
+			});
+
+			expect(mockApplyRunOn).toHaveBeenCalledTimes(1);
+			expect(mockApplyGateway).toHaveBeenCalledTimes(1);
+			expect(mockLogRunOn).not.toHaveBeenCalled();
+		});
+
+		it('keeps the turn on claude --print whatever token source the agent selected', async () => {
+			mockStoredRunOn.mockReturnValue(QWEN);
+			mockApplyRunOn.mockResolvedValue({
+				ok: true,
+				args: ['--print', '--model', 'qwen3:latest'],
+				customEnvVars: {},
+				runOn: applied,
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-p',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				maestroAgentId: 'agent-7',
+				tokenMode: 'interactive',
+				processManager,
+			});
+
+			expect(mockStoredRunOn).toHaveBeenCalledWith('agent-7');
+			expect(mockResolve).toHaveBeenCalledWith(expect.objectContaining({ tokenMode: 'api' }));
+		});
+
+		it('leaves the token source alone for an agent with no target', async () => {
+			mockApplyGateway.mockResolvedValue({
+				ok: true,
+				args: ['--print'],
+				customEnvVars: undefined,
+				gateway: null,
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-p',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				maestroAgentId: 'agent-7',
+				tokenMode: 'interactive',
+				processManager,
+			});
+
+			expect(mockResolve).toHaveBeenCalledWith(
+				expect.objectContaining({ tokenMode: 'interactive' })
+			);
+		});
+
+		it("refuses the turn rather than run it on the provider's model when the target cannot run", async () => {
+			mockApplyRunOn.mockResolvedValue({
+				ok: false,
+				error: 'This agent is set to run on qwen3:latest on Ollama, but the source did not answer.',
+			});
+
+			await expect(
+				spawnGroupChatAgent({
+					sessionId: 'sess-p',
+					agentId: 'claude-code',
+					agent: makeAgent(),
+					args: ['--print'],
+					cwd: '/tmp/work',
+					maestroAgentId: 'agent-7',
+					processManager,
+				})
+			).rejects.toThrow('set to run on qwen3:latest on Ollama');
+			expect(mockApplyGateway).not.toHaveBeenCalled();
 			expect(spawnSpy).not.toHaveBeenCalled();
 		});
 	});

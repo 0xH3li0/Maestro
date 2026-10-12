@@ -543,6 +543,17 @@ describe('batch-processor', () => {
 				});
 			};
 
+			it("runs the task on the agent's Run on target", async () => {
+				singleTask();
+				const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+				await collectEvents(
+					runPlaybook(mockSession({ runOn } as never), mockPlaybook(), '/playbooks', {})
+				);
+
+				expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn });
+			});
+
 			it('lets the run model/effort win over the session values on the task spawn', async () => {
 				singleTask();
 				const session = mockSession({ customModel: 'opus', customEffort: 'high' });

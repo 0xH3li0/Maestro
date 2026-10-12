@@ -21,8 +21,10 @@ import {
 	isRunOnSourceTarget,
 	parseRunOnTarget,
 	resolveRunOnLaunch,
+	runOnHarnessMode,
 	runOnTargetLabel,
 	runOnUnavailable,
+	storedRunOnNamesSource,
 	type RunOnLaunchInput,
 	type RunOnSourceTarget,
 	type RunOnTarget,
@@ -179,6 +181,34 @@ describe('isRunOnSourceTarget', () => {
 	});
 });
 
+describe('storedRunOnNamesSource', () => {
+	it.each([[undefined], [null], [{ type: 'provider' }]])('is false for %j', (value) => {
+		expect(storedRunOnNamesSource(value)).toBe(false);
+	});
+
+	it('is true for a source', () => {
+		expect(storedRunOnNamesSource(QWEN)).toBe(true);
+	});
+
+	it('is true for a malformed target, which is refused and never read as the provider', () => {
+		expect(storedRunOnNamesSource({ type: 'source', endpointId: 'ep' })).toBe(true);
+		expect(storedRunOnNamesSource('qwen3')).toBe(true);
+	});
+});
+
+describe('runOnHarnessMode', () => {
+	it('keeps the mode the launch chose for an agent on its provider', () => {
+		expect(runOnHarnessMode(undefined, 'interactive', 'api')).toBe('interactive');
+		expect(runOnHarnessMode({ type: 'provider' }, 'app-server', 'exec')).toBe('app-server');
+	});
+
+	it('pins a launch on a source to the mode its recipe was measured in', () => {
+		expect(runOnHarnessMode(QWEN, 'interactive', 'api')).toBe('api');
+		expect(runOnHarnessMode(QWEN, 'dynamic', 'api')).toBe('api');
+		expect(runOnHarnessMode(QWEN, 'app-server', 'exec')).toBe('exec');
+	});
+});
+
 describe('runOnTargetLabel', () => {
 	it('names a model on a configured source', () => {
 		expect(runOnTargetLabel(QWEN, [OLLAMA])).toBe('qwen3:latest on Ollama');
@@ -219,6 +249,8 @@ describe('resolveRunOnLaunch: Claude Code', () => {
 		expect(injected()).toEqual({
 			kind: 'inject',
 			envVars: {
+				// Blank: Claude Code's own key is not the source's to see.
+				ANTHROPIC_API_KEY: '',
 				ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
 				ANTHROPIC_AUTH_TOKEN: RUN_ON_PLACEHOLDER_KEY,
 				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:latest',
@@ -231,7 +263,37 @@ describe('resolveRunOnLaunch: Claude Code', () => {
 			model: 'qwen3:latest',
 			contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
 			userOverrides: [],
+			clearedEnvVars: ['ANTHROPIC_API_KEY'],
 		});
+	});
+
+	it("blanks the provider's own key even when the agent sets it, so it never reaches the source", () => {
+		const resolution = injected({
+			target: { type: 'source', endpointId: CLOUD.id, model: 'big-model' },
+			endpoint: CLOUD,
+			key: 'sk-workstation',
+			userEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-the-users-own' },
+		});
+
+		// Claude Code sends this variable as `x-api-key` to whatever its base URL
+		// is. A blank is what stops it, and the user's value is not an override.
+		expect(resolution.envVars.ANTHROPIC_API_KEY).toBe('');
+		expect(resolution.clearedEnvVars).toEqual(['ANTHROPIC_API_KEY']);
+		expect(resolution.userOverrides).toEqual([]);
+		expect(JSON.stringify(resolution)).not.toContain('sk-ant-the-users-own');
+	});
+
+	it("leaves the agent's own key alone when the agent routes itself", () => {
+		const resolution = injected({
+			userEnvVars: {
+				ANTHROPIC_BASE_URL: 'http://127.0.0.1:4000',
+				ANTHROPIC_API_KEY: 'sk-ant-the-users-own',
+			},
+		});
+
+		// The request goes where the agent's own variables send it, not to the source.
+		expect(resolution.envVars).not.toHaveProperty('ANTHROPIC_API_KEY');
+		expect(resolution.clearedEnvVars).toEqual([]);
 	});
 
 	it('sends the key of a source that has one, and the context the target carries', () => {
@@ -321,6 +383,8 @@ describe('resolveRunOnLaunch: Codex', () => {
 			model: GPT_OSS_20B_ID,
 			contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
 			userOverrides: [],
+			// A provider of its own with its own `env_key` sends that key and no other.
+			clearedEnvVars: [],
 		});
 	});
 

@@ -3,7 +3,9 @@
  *
  * The desktop registers every provider's output parser at boot; the standalone
  * runner has to do it itself, or every prompt run is recorded as raw
- * stream-json with no provider session id and no usage.
+ * stream-json with no provider session id and no usage. The same goes for the
+ * stores an agent's Run on target is looked up in: unwired, a run of such an
+ * agent throws rather than run on its provider's model.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -24,9 +26,18 @@ vi.mock('../../../main/cue/cue-cli-executor', () => ({
 }));
 vi.mock('../../../main/cue/cue-notify-executor', () => ({ executeCueNotify: vi.fn() }));
 vi.mock('../../../main/cue/cue-auth-detector', () => ({ detectCueAuthFailure: vi.fn(() => null) }));
+const RUN_ON = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => [
 		{ id: 'agent-1', name: 'alpha', toolType: 'claude-code', cwd: '/p', projectRoot: '/p' },
+		{
+			id: 'agent-2',
+			name: 'beta',
+			toolType: 'claude-code',
+			cwd: '/p',
+			projectRoot: '/p',
+			runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' },
+		},
 	],
 	readSshRemotes: () => [],
 	getAgentCustomPath: () => undefined,
@@ -34,6 +45,7 @@ vi.mock('../../../cli/services/storage', () => ({
 }));
 
 import { buildStandaloneCueEngineDeps } from '../../../cli/services/cue-standalone-engine';
+import { isAgentRunOnConfigured } from '../../../main/local-models/run-on';
 
 const event: CueEvent = {
 	id: 'evt-1',
@@ -106,5 +118,27 @@ describe('buildStandaloneCueEngineDeps', () => {
 
 		expect(executeCuePrompt.mock.calls[0][0].customModel).toBeUndefined();
 		expect(executeCuePrompt.mock.calls[0][0].customEffort).toBeUndefined();
+	});
+
+	it("hands the run the agent's Run on target, with its lookup wired first", async () => {
+		executeCuePrompt.mockClear();
+		executeCuePrompt.mockImplementation(async () => {
+			// The spawn builder looks the target's source up through these stores.
+			expect(isAgentRunOnConfigured()).toBe(true);
+			return { status: 'completed' } as CueRunResult;
+		});
+		const deps = buildStandaloneCueEngineDeps({ onLog: vi.fn() });
+
+		await deps.onCueRun({
+			runId: 'run-4',
+			sessionId: 'agent-2',
+			prompt: 'Say pong',
+			subscriptionName: 'ask',
+			event,
+			timeoutMs: 1000,
+		} as Parameters<typeof deps.onCueRun>[0]);
+
+		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
+		expect(executeCuePrompt.mock.calls[0][0]).toMatchObject({ runOn: RUN_ON });
 	});
 });

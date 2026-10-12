@@ -1,7 +1,8 @@
 /**
  * Tests for src/main/utils/agent-args.ts
  *
- * Covers buildAgentArgs, applyAgentConfigOverrides, and getContextWindowValue.
+ * Covers buildAgentArgs, applyAgentConfigOverrides, getContextWindowValue, and
+ * replaceModelArg.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -9,6 +10,7 @@ import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
 	getContextWindowValue,
+	replaceModelArg,
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
@@ -1633,5 +1635,58 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 			'--print-timeout',
 			'30m',
 		]);
+	});
+});
+
+describe('replaceModelArg', () => {
+	const claude = getAgentDefinition('claude-code');
+	const codex = getAgentDefinition('codex');
+
+	it('replaces the value of the model flag where it stands', () => {
+		expect(
+			replaceModelArg(claude, ['--print', '--model', 'opus', '--effort', 'high'], 'qwen3:latest')
+		).toEqual(['--print', '--model', 'qwen3:latest', '--effort', 'high']);
+	});
+
+	it('appends the flag when the arguments name no model, after any subcommand', () => {
+		// Codex reads `-m` after `exec`; a root `-m` belongs to its TUI.
+		expect(replaceModelArg(codex, ['-C', '/project', 'exec', '--json'], 'gpt-oss-20b')).toEqual([
+			'-C',
+			'/project',
+			'exec',
+			'--json',
+			'-m',
+			'gpt-oss-20b',
+		]);
+	});
+
+	it('replaces every occurrence, so no stale model is left for the CLI to pick', () => {
+		// A tier model from buildAgentArgs and a stored model from the config option.
+		expect(
+			replaceModelArg(claude, ['--model', 'haiku', '--print', '--model', 'opus'], 'q')
+		).toEqual(['--model', 'q', '--print', '--model', 'q']);
+	});
+
+	it('replaces the joined form a user may have typed in custom arguments', () => {
+		expect(replaceModelArg(claude, ['--print', '--model=opus'], 'q')).toEqual([
+			'--print',
+			'--model=q',
+		]);
+	});
+
+	it('completes a flag that was left without a value', () => {
+		expect(replaceModelArg(codex, ['exec', '-m'], 'q')).toEqual(['exec', '-m', 'q']);
+	});
+
+	it('does not mutate the list it was given', () => {
+		const args = ['--model', 'opus'];
+		replaceModelArg(claude, args, 'q');
+
+		expect(args).toEqual(['--model', 'opus']);
+	});
+
+	it('answers null for a provider with no model flag', () => {
+		expect(replaceModelArg({}, ['--print'], 'q')).toBeNull();
+		expect(replaceModelArg(null, ['--print'], 'q')).toBeNull();
 	});
 });

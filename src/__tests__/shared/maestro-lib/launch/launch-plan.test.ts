@@ -7,6 +7,13 @@ import { resolveSshLaunchTarget } from '../../../../shared/maestro-lib/launch/ss
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
+import {
+	RUN_ON_CODEX_KEY_ENV_VAR,
+	RUN_ON_DEFAULT_CONTEXT_TOKENS,
+	RUN_ON_PLACEHOLDER_KEY,
+	type ResolvedRunOn,
+} from '../../../../shared/local-models/run-on';
 
 function remote(overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig {
 	return {
@@ -27,6 +34,13 @@ function storeWith(...remotes: SshRemoteConfig[]) {
 
 function codex(): AgentLaunchInput['agent'] {
 	return { ...getAgentDefinition('codex'), capabilities: getAgentCapabilities('codex') };
+}
+
+function claude(): AgentLaunchInput['agent'] {
+	return {
+		...getAgentDefinition('claude-code'),
+		capabilities: getAgentCapabilities('claude-code'),
+	};
 }
 
 function input(overrides: Partial<AgentLaunchInput> = {}): AgentLaunchInput {
@@ -378,6 +392,260 @@ describe('buildAgentLaunchPlan', () => {
 					sshRemoteConfig: { enabled: true, remoteId: 'gone' },
 					sshStore: storeWith(),
 					gateway: { toolType: 'codex', url },
+				})
+			);
+
+			expect(result).toMatchObject({ ok: false, reason: 'remote-not-found' });
+		});
+	});
+
+	describe("the agent's Run on target", () => {
+		const SURFACES = ['desktop', 'cli', 'cue'] as const;
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const WORKSTATION: LocalModelEndpoint = {
+			id: 'ep-ws',
+			name: 'Workstation',
+			kind: 'openai-compatible',
+			baseUrl: 'https://models.example.com',
+			apiKeyEnvVar: 'WORKSTATION_KEY',
+			enabled: true,
+		};
+
+		function runOn(overrides: Partial<ResolvedRunOn> = {}): ResolvedRunOn {
+			return {
+				toolType: 'claude-code',
+				target: { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' },
+				endpoint: OLLAMA,
+				...overrides,
+			};
+		}
+
+		function claudeInput(overrides: Partial<AgentLaunchInput> = {}): AgentLaunchInput {
+			return input({
+				agent: claude(),
+				command: '/usr/local/bin/claude',
+				args: ['--print', '--model', 'opus', '--effort', 'high'],
+				runOn: runOn(),
+				...overrides,
+			});
+		}
+
+		function codexRunOn(): ResolvedRunOn {
+			return runOn({
+				toolType: 'codex',
+				target: { type: 'source', endpointId: WORKSTATION.id, model: 'gpt-oss-20b' },
+				endpoint: WORKSTATION,
+				key: 'sk-workstation',
+			});
+		}
+
+		it('leaves a launch alone for an agent on its provider', () => {
+			for (const target of [undefined, { type: 'provider' } as const]) {
+				const result = buildAgentLaunchPlan(input({ runOn: { toolType: 'codex', target } }));
+
+				if (!result.ok) throw new Error(result.error);
+				expect(result.plan.runOn).toBeUndefined();
+				expect(result.plan.launchArgs).toEqual(['exec', '--json']);
+				expect(result.plan.envVars).toBeUndefined();
+			}
+		});
+
+		it('points Claude Code at the source on every surface, with the model in place of its own', () => {
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(claudeInput({ surface }));
+
+				if (!result.ok) throw new Error(result.error);
+				const { plan } = result;
+				// The agent's stored model is replaced where it stood, not joined by a
+				// second flag the CLI would have to choose between.
+				expect(plan.launchArgs).toEqual(['--print', '--model', 'qwen3:latest', '--effort', 'high']);
+				expect(plan.launchArgs.filter((arg) => arg === '--model')).toHaveLength(1);
+				expect(plan.envVars).toMatchObject({
+					ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+					ANTHROPIC_AUTH_TOKEN: RUN_ON_PLACEHOLDER_KEY,
+					ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:latest',
+					ANTHROPIC_DEFAULT_SONNET_MODEL: 'qwen3:latest',
+					ANTHROPIC_DEFAULT_OPUS_MODEL: 'qwen3:latest',
+					CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(RUN_ON_DEFAULT_CONTEXT_TOKENS),
+				});
+				expect(plan.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+				expect(plan.runOn).toMatchObject({
+					model: 'qwen3:latest',
+					contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
+					args: [],
+					userOverrides: [],
+					clearedEnvVars: ['ANTHROPIC_API_KEY'],
+				});
+				expect(plan.runOn?.skippedGatewayUrl).toBeUndefined();
+			}
+		});
+
+		it('adds the model flag when the launch named no model', () => {
+			const result = buildAgentLaunchPlan(claudeInput({ args: ['--print'] }));
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.launchArgs).toEqual(['--print', '--model', 'qwen3:latest']);
+		});
+
+		it('gives Codex a provider of its own ahead of the subcommand, and the model after it', () => {
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(
+					input({ surface, args: ['exec', '--json', '-m', 'gpt-5.3-codex'], runOn: codexRunOn() })
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				const { plan } = result;
+				expect(plan.launchArgs.slice(0, 6)).toEqual(plan.runOn?.args);
+				expect(plan.launchArgs[1]).toContain('base_url="https://models.example.com/v1"');
+				// `-m` belongs to `exec`: a root `-m` is the TUI's.
+				expect(plan.launchArgs.slice(6)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
+				expect(plan.envVars).toEqual({ [RUN_ON_CODEX_KEY_ENV_VAR]: 'sk-workstation' });
+				expect(plan.env?.[RUN_ON_CODEX_KEY_ENV_VAR]).toBe('sk-workstation');
+			}
+		});
+
+		it('keeps the prompt out of launchArgs and at the end of args', () => {
+			const result = buildAgentLaunchPlan(claudeInput({ args: ['--print'] }));
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.launchArgs).not.toContain('fix the bug');
+			expect(result.plan.args.slice(0, 3)).toEqual(result.plan.launchArgs);
+			expect(result.plan.args[result.plan.args.length - 1]).toBe('fix the bug');
+		});
+
+		it('names only the variables in its record, never the key', () => {
+			const result = buildAgentLaunchPlan(input({ runOn: codexRunOn() }));
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.runOn?.envVarNames).toEqual([RUN_ON_CODEX_KEY_ENV_VAR]);
+			expect(JSON.stringify(result.plan.runOn)).not.toContain('sk-workstation');
+		});
+
+		it('takes the place of the gateway, and says which gateway was passed over', () => {
+			const gatewayUrl = 'http://127.0.0.1:8787/anthropic';
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(
+					claudeInput({ surface, gateway: { toolType: 'claude-code', url: gatewayUrl } })
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				expect(result.plan.gateway).toBeUndefined();
+				expect(result.plan.runOn?.skippedGatewayUrl).toBe(gatewayUrl);
+				// The base URL is the source's, not the gateway's.
+				expect(result.plan.envVars?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+				expect(result.plan.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+			}
+		});
+
+		it('does not let a gateway that could not be used refuse a launch that skips it', () => {
+			// A loopback gateway refuses an SSH launch on its own. With a Run on
+			// target the launch never goes through it.
+			const result = buildAgentLaunchPlan(
+				input({
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: storeWith(remote()),
+					gateway: { toolType: 'codex', url: 'http://127.0.0.1:8787' },
+					runOn: codexRunOn(),
+				})
+			);
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.target.kind).toBe('remote');
+			expect(result.plan.gateway).toBeUndefined();
+			// What crosses to the remote host: the key variable and the arguments.
+			expect(result.plan.envVars).toEqual({ [RUN_ON_CODEX_KEY_ENV_VAR]: 'sk-workstation' });
+			expect(result.plan.args).toEqual(result.plan.launchArgs);
+			expect(result.plan.args).toContain('gpt-oss-20b');
+		});
+
+		it("keeps the provider's own key from the source, whoever set it", () => {
+			process.env.ANTHROPIC_API_KEY = 'sk-ant-from-the-shell';
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(
+					claudeInput({
+						surface,
+						globalShellEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-from-settings' },
+						sessionCustomEnvVars: { ANTHROPIC_API_KEY: 'sk-ant-from-the-agent' },
+					})
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				// Blank in the record that crosses to a remote, and unset or blank in
+				// the local environment: Claude Code sends no `x-api-key` for either.
+				expect(result.plan.envVars?.ANTHROPIC_API_KEY).toBe('');
+				expect(result.plan.env?.ANTHROPIC_API_KEY ?? '').toBe('');
+				expect(JSON.stringify(result.plan.env)).not.toContain('sk-ant-from');
+			}
+		});
+
+		it("yields to a recipe variable in the agent's own vars, one variable at a time", () => {
+			const result = buildAgentLaunchPlan(
+				claudeInput({ sessionCustomEnvVars: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '100000' } })
+			);
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('100000');
+			expect(result.plan.env?.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+			expect(result.plan.runOn?.userOverrides).toEqual(['CLAUDE_CODE_MAX_CONTEXT_TOKENS']);
+		});
+
+		it.each<[string, Partial<ResolvedRunOn>, string]>([
+			['a source that is gone', { endpoint: null }, 'run-on-source-missing'],
+			[
+				'a source that is disabled',
+				{ endpoint: { ...OLLAMA, enabled: false } },
+				'run-on-source-disabled',
+			],
+			['a harness with no recipe', { toolType: 'opencode' }, 'run-on-unsupported-provider'],
+			[
+				'a target that is not a source and a model',
+				{ target: { type: 'source', endpointId: 'ep-ollama' } as never },
+				'run-on-invalid-target',
+			],
+		])('refuses %s on every surface, and plans nothing', (_case, overrides, reason) => {
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(claudeInput({ surface, runOn: runOn(overrides) }));
+
+				expect(result).toMatchObject({ ok: false, reason });
+				if (result.ok) throw new Error('expected a refusal');
+				expect(result.error).toContain('Run on');
+			}
+		});
+
+		it('refuses a loopback source for an SSH remote, as the gateway does', () => {
+			const result = buildAgentLaunchPlan(
+				claudeInput({
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: storeWith(remote()),
+				})
+			);
+
+			expect(result).toMatchObject({ ok: false, reason: 'run-on-loopback-on-remote' });
+			if (result.ok) throw new Error('expected a refusal');
+			expect(result.error).toContain('loopback address');
+			expect(result.error).toContain('"Build Box"');
+		});
+
+		it('refuses a recipe whose provider has no model flag to carry the model', () => {
+			const result = buildAgentLaunchPlan(claudeInput({ agent: {} }));
+
+			expect(result).toMatchObject({ ok: false, reason: 'run-on-unsupported-provider' });
+			if (result.ok) throw new Error('expected a refusal');
+			expect(result.error).toContain('no model flag');
+		});
+
+		it('reports an unresolvable SSH remote before it looks at the target', () => {
+			const result = buildAgentLaunchPlan(
+				claudeInput({
+					sshRemoteConfig: { enabled: true, remoteId: 'gone' },
+					sshStore: storeWith(),
+					runOn: runOn({ endpoint: null }),
 				})
 			);
 

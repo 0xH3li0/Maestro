@@ -117,6 +117,18 @@ describe('requestCliSynopsis', () => {
 		});
 	});
 
+	it("runs on the agent's Run on target, where the conversation it resumes ran", async () => {
+		const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		await requestCliSynopsis(mockSession({ runOn } as never), 's', {
+			source: 'cli:send-synopsis',
+		});
+
+		// On the provider's model the synopsis would send the whole conversation
+		// to the provider's cloud. The spawner swaps its cheap model for the target's.
+		expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn });
+	});
+
 	it('keeps a read-only turn read-only', async () => {
 		await requestCliSynopsis(mockSession(), 's', {
 			source: 'cli:send-synopsis',
