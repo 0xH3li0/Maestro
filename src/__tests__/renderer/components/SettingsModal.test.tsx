@@ -443,8 +443,8 @@ const openExtensionDetail = (extensionId: string): void => {
 	fireEvent.click(card as HTMLElement);
 };
 
-/** Select a detail-pane sub-tab (Settings or Permissions). */
-const selectSubTab = (which: 'settings' | 'permissions'): void => {
+/** Select a detail-pane sub-tab (Help, Settings, or Permissions). */
+const selectSubTab = (which: 'help' | 'settings' | 'permissions'): void => {
 	fireEvent.click(screen.getByTestId(`extension-subtab-${which}`));
 };
 // useViewportBreakpoint reads window.innerWidth synchronously during render, so
@@ -2605,11 +2605,9 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Configurable tile opens on Settings; disabled → hint, not config.
-			expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
-				'aria-selected',
-				'true'
-			);
+			// A disabled tile opens on Help; its Settings tab shows the hint, not config.
+			expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
+			selectSubTab('settings');
 			expect(screen.getByTestId('extension-settings-disabled-hint')).toHaveTextContent(
 				'Enable this plugin to configure it.'
 			);
@@ -2695,6 +2693,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
+			selectSubTab('settings');
 			expect(screen.getByTestId('extension-settings-disabled-hint')).toBeInTheDocument();
 			expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
 		});
