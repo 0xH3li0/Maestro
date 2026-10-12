@@ -2,8 +2,8 @@
  * ModelsSettingsTab - the Models settings tab: everything model-related, behind
  * one strip of five inner tabs.
  *
- * - Library: models installed on this machine, the engines they run on, and
- *   their disk use.
+ * - Library: models installed on this machine, the engines they run on, their
+ *   disk use, and the Maestro model server that serves them over HTTP.
  * - Sources: where models come from besides the Library (model servers and
  *   user endpoints).
  * - System One: the tasks whose output is a judgment (a decision, label,
@@ -48,6 +48,7 @@ import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
+import { LocalModelsServerSection } from './LocalModelsServerSection';
 import { UtilityAgentSettings } from './UtilityAgentSettings';
 
 /** localStorage key for the last inner tab the user opened. */
@@ -121,6 +122,8 @@ export function ModelsSettingsTab({
 						<LocalModelsModelsSection theme={theme} models={models} runtimes={runtimes} />
 					</div>
 				)}
+
+				{panel === 'library' && <LocalModelsServerSection theme={theme} />}
 
 				{panel === 'sources' && (
 					<div data-setting-id="local-models-endpoints">

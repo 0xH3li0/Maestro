@@ -11,6 +11,8 @@
  */
 
 import type { LocalModelEndpoint } from './endpoints';
+import type { ServerAcceleratorReport } from './server-accelerator';
+import type { ServerBuildChoice, ServerBuildKind } from './server-engine';
 
 export const MODEL_SERVER_NAME = 'Maestro model server';
 
@@ -163,6 +165,75 @@ export function isModelServerMaxModels(value: unknown): value is number {
 /** `http://127.0.0.1:<port>`: the root a harness on this machine is pointed at. */
 export function modelServerBaseUrl(port: number): string {
 	return `http://${MODEL_SERVER_LOOPBACK_HOST}:${port}`;
+}
+
+// ---------------------------------------------------------------------------
+// The report: what the Model server card and `maestro-cli models server status` show
+// ---------------------------------------------------------------------------
+
+/** One build this platform can install, for the build picker. */
+export interface ModelServerBuildOption {
+	choice: ServerBuildChoice;
+	/** "Metal", "Vulkan", "CPU", "CUDA 12.4". */
+	label: string;
+	kind: ServerBuildKind;
+	/** Compressed download, companions included. */
+	downloadBytes: number;
+}
+
+/** The `llama-server` engine: what is installed, and what could be. */
+export interface ModelServerEngineInfo {
+	installed: boolean;
+	/** Installed, but not the build this app pins: Install again fetches the pin. */
+	stale: boolean;
+	/** The installed release tag, or null when nothing is installed. */
+	release: string | null;
+	/** The installed build: what the user chose, its label and kind. Null when nothing is installed. */
+	choice: ServerBuildChoice | null;
+	label: string | null;
+	kind: ServerBuildKind | null;
+	/** What `--list-devices` found at install time, or null. */
+	accelerator: ServerAcceleratorReport | null;
+	/** Bytes the installed engine occupies on disk. */
+	bytes: number;
+	/** The builds this platform has, `default` first. Empty on a platform with none. */
+	builds: ModelServerBuildOption[];
+}
+
+/** A model the running server has in memory. */
+export interface ModelServerLoadedModel {
+	id: string;
+	displayName: string;
+	/**
+	 * Approximate memory: the size of its weights file. The context cache comes
+	 * on top, so the real figure is somewhat higher.
+	 */
+	approxBytes: number;
+}
+
+export type ModelServerEnginePhase = 'downloading' | 'verifying' | 'extracting' | 'done';
+
+/** An engine install in progress. Broadcast, so every window sees the same one. */
+export interface ModelServerEngineProgress {
+	choice: ServerBuildChoice;
+	phase: ModelServerEnginePhase;
+	bytes: number;
+	totalBytes: number;
+}
+
+export interface ModelServerReport {
+	status: ModelServerStatus;
+	engine: ModelServerEngineInfo;
+	loaded: ModelServerLoadedModel[];
+	/** The engine install running now, or null. */
+	installing: ModelServerEngineProgress | null;
+}
+
+/** One line for the card and the CLI: where the server is reachable from, in words. */
+export function modelServerBindLabel(bind: ModelServerBind): string {
+	return bind === 'network'
+		? `Network (${MODEL_SERVER_BIND_HOSTS.network}, other machines can reach it)`
+		: `Local only (${MODEL_SERVER_BIND_HOSTS.local})`;
 }
 
 // ---------------------------------------------------------------------------

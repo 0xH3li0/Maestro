@@ -15,7 +15,8 @@
  * one, and `suggestTabCleanup()` only when Tab cleanup suggestions is.
  * `semanticIndex.*` reads the indexer's in-memory progress. `dictation.start()`
  * is the one call that opens a device: the microphone, for this window only.
- * `spokenNotices.*` makes sound on this machine's speakers.
+ * `spokenNotices.*` makes sound on this machine's speakers. `server.start()`
+ * launches the model server and `server.installEngine()` downloads its engine.
  */
 
 import { ipcRenderer } from 'electron';
@@ -50,6 +51,14 @@ import type { SemanticIndexProgress } from '../../shared/local-models/embedding-
 import type { AgentFinishedNotice, SpokenNoticeResult } from '../../shared/spokenNotices';
 import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
 import type { TabCleanupResult } from '../../shared/tabCleanup';
+import type {
+	ModelServerBind,
+	ModelServerEngineProgress,
+	ModelServerReport,
+	ModelServerState,
+	ModelServerStatus,
+} from '../../shared/local-models/model-server';
+import type { ServerBuildChoice } from '../../shared/local-models/server-engine';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -143,6 +152,46 @@ function createTokenProxyApi() {
 		/** Both sides of one compressed block, or null when the cache has none. */
 		block: (hash: string): Promise<TokenProxyBlockDetail | null> =>
 			ipcRenderer.invoke('localModels:proxy:block', hash),
+	};
+}
+
+/**
+ * `window.maestro.localModels.server.*` - the Maestro model server (llama.cpp's
+ * `llama-server`). Nothing here starts it on its own: `start()` is the Start
+ * button, and `installEngine()` is the only call that downloads.
+ */
+function createModelServerApi() {
+	return {
+		/** State, engine, loaded models and install progress. Reads only. */
+		report: (): Promise<ModelServerReport> => ipcRenderer.invoke('localModels:server:report'),
+
+		/** Start it. Rejects with why it could not (no engine, port taken, ...). */
+		start: (): Promise<ModelServerStatus> => ipcRenderer.invoke('localModels:server:start'),
+
+		/** Stop it and wait for it to exit. */
+		stop: (): Promise<ModelServerStatus> => ipcRenderer.invoke('localModels:server:stop'),
+
+		/** Change the bind mode or model count, or rotate the key. A running server restarts. */
+		set: (patch: {
+			bind?: ModelServerBind;
+			maxModels?: number;
+			rotateKey?: boolean;
+		}): Promise<ModelServerStatus> => ipcRenderer.invoke('localModels:server:set', patch),
+
+		/** The server's API key, made on first use. For Copy; never log it. */
+		key: (): Promise<string> => ipcRenderer.invoke('localModels:server:key'),
+
+		/** Download, verify and install the engine for a build choice. */
+		installEngine: (choice: ServerBuildChoice): Promise<ModelServerReport> =>
+			ipcRenderer.invoke('localModels:server:installEngine', choice),
+
+		/** The server's state changed. Broadcast; read `report()` for the rest. */
+		onChanged: (handler: (state: ModelServerState) => void): (() => void) =>
+			subscribe('localModels:server:changed', handler),
+
+		/** Engine install progress. Broadcast, so every window sees the same install. */
+		onProgress: (handler: (progress: ModelServerEngineProgress) => void): (() => void) =>
+			subscribe('localModels:server:progress', handler),
 	};
 }
 
@@ -296,6 +345,8 @@ export function createLocalModelsApi() {
 		semanticIndex: createSemanticIndexApi(),
 
 		proxy: createTokenProxyApi(),
+
+		server: createModelServerApi(),
 
 		runtimes: createLocalRuntimesApi(),
 

@@ -198,6 +198,35 @@ let lastError: string | null = null;
 let restarts = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 
+const stateListeners = new Set<(next: ModelServerState) => void>();
+
+/**
+ * Subscribe to the server's state changes (`starting`, `running`, `failed`,
+ * ...). The payload is only the new state: a listener that needs the rest reads
+ * `getModelServerStatus()`. Returns the unsubscribe.
+ */
+export function onModelServerStateChange(listener: (next: ModelServerState) => void): () => void {
+	stateListeners.add(listener);
+	return () => {
+		stateListeners.delete(listener);
+	};
+}
+
+function setState(next: ModelServerState): void {
+	if (state === next) return;
+	state = next;
+	for (const listener of stateListeners) {
+		try {
+			listener(next);
+		} catch (error) {
+			logger.warn(
+				`A ${MODEL_SERVER_NAME} state listener threw: ${errorMessage(error)}`,
+				LOG_CONTEXT
+			);
+		}
+	}
+}
+
 // Every start, stop, restart and settings change runs on one chain: a stop
 // pressed while a start is still waiting for the server waits for that start.
 const lifecycle = createKeyedWriteQueue();
@@ -391,7 +420,7 @@ function onExit(
 	if (run !== current) return;
 	run = null;
 	if (current.stopping) {
-		state = 'stopped';
+		setState('stopped');
 		logger.info(`The ${MODEL_SERVER_NAME} stopped`, LOG_CONTEXT);
 		return;
 	}
@@ -550,7 +579,7 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 		// Set here, with `readyAt`, and nowhere after: a crash from this moment on
 		// moves it to `restarting`, and nothing later may write over that.
 		current.readyAt = Date.now();
-		state = 'running';
+		setState('running');
 		startHealthMonitor(current);
 		logger.info(
 			`The ${MODEL_SERVER_NAME} is listening on ${host}:${port} (${current.models.length} model${current.models.length === 1 ? '' : 's'})`,
@@ -651,7 +680,7 @@ function scheduleRestart(reason: string): void {
 		return;
 	}
 	lastError = reason;
-	state = 'restarting';
+	setState('restarting');
 	const delayMs = timing('restartBackoffMs') * 2 ** (restarts - 1);
 	logger.warn(
 		`${reason} Restarting in ${delayMs} ms (${restarts} of ${MAX_CRASH_RESTARTS}).`,
@@ -675,7 +704,7 @@ async function restartLocked(): Promise<void> {
 }
 
 function giveUp(reason: string): void {
-	state = 'failed';
+	setState('failed');
 	lastError = `${reason} It was restarted ${MAX_CRASH_RESTARTS} times and did not stay up, so it was left stopped. ${seeLog()}`;
 	logger.error(lastError, LOG_CONTEXT);
 	void captureMessage(`${MODEL_SERVER_NAME} left stopped after repeated crashes`, 'warning', {
@@ -697,12 +726,12 @@ function giveUp(reason: string): void {
 async function startLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 	if (run) return;
 	cancelRestart();
-	state = 'starting';
+	setState('starting');
 	lastError = null;
 	try {
 		await launchLocked(knownModels);
 	} catch (error) {
-		state = 'failed';
+		setState('failed');
 		lastError = errorMessage(error);
 		logger.warn(`The ${MODEL_SERVER_NAME} could not start: ${lastError}`, LOG_CONTEXT);
 		throw error;
@@ -713,7 +742,7 @@ async function stopLocked(): Promise<void> {
 	const current = run;
 	if (!current) return;
 	current.stopping = true;
-	state = 'stopping';
+	setState('stopping');
 	stopHealthMonitor(current);
 	stopProcess(
 		{ child: current.child },
@@ -750,7 +779,7 @@ export function stopModelServer(): Promise<ModelServerStatus> {
 		restarts = 0;
 		lastError = null;
 		await stopLocked();
-		state = 'stopped';
+		setState('stopped');
 		return getModelServerStatus();
 	});
 }
@@ -1070,7 +1099,7 @@ export async function resetModelServerForTests(): Promise<void> {
 	cancelRestart();
 	await lifecycle.enqueue(LIFECYCLE_KEY, stopLocked);
 	run = null;
-	state = 'stopped';
+	setState('stopped');
 	lastError = null;
 	restarts = 0;
 	deps = {};

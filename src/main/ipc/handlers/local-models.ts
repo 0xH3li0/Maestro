@@ -20,6 +20,9 @@
  * and only for the window that asked, only while the Dictation task is ready.
  * `spokenNotices:*` makes sound on this machine: `agentFinished` only when the
  * user switched spoken notices on, `speak` because a person or an agent asked.
+ * `server:installEngine` downloads the model server engine and `server:start`
+ * launches it, each because the user pressed that button; nothing here starts
+ * the server on its own.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`. A dictation is the exception: it belongs to
@@ -65,6 +68,24 @@ import {
 	readTokenProxyBlock,
 } from '../../local-models/proxy/service';
 import { suggestTabCleanup } from '../../local-models/tab-cleanup';
+import {
+	getModelServerKey,
+	onModelServerStateChange,
+	startModelServer,
+	stopModelServer,
+} from '../../local-models/server/supervisor';
+import {
+	getModelServerReport,
+	installModelServerEngine,
+	onModelServerEngineProgress,
+	updateModelServerConfigRequest,
+} from '../../local-models/server/service';
+import type {
+	ModelServerEngineProgress,
+	ModelServerReport,
+	ModelServerState,
+	ModelServerStatus,
+} from '../../../shared/local-models/model-server';
 import type {
 	DictationInterruption,
 	DictationResult,
@@ -113,6 +134,12 @@ export const LOCAL_RUNTIME_PROGRESS_CHANNEL = 'localModels:runtimes:progress';
 
 /** The push channel the semantic indexer's progress goes out on. */
 export const SEMANTIC_INDEX_PROGRESS_CHANNEL = 'localModels:semanticIndex:progress';
+
+/** The push channel the model server's state changes go out on. */
+export const MODEL_SERVER_CHANGED_CHANNEL = 'localModels:server:changed';
+
+/** The push channel the model server engine's install progress goes out on. */
+export const MODEL_SERVER_PROGRESS_CHANNEL = 'localModels:server:progress';
 
 /** Pushed to the ONE window whose dictation ended on its own. Never broadcast. */
 export const DICTATION_INTERRUPTED_CHANNEL = 'localModels:dictation:interrupted';
@@ -194,11 +221,21 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			if (owner && !owner.isDestroyed()) owner.send(DICTATION_INTERRUPTED_CHANNEL, interruption);
 		}
 	);
+	const releaseServerState = onModelServerStateChange((state: ModelServerState) => {
+		safeSend(MODEL_SERVER_CHANGED_CHANNEL, state);
+	});
+	const releaseServerProgress = onModelServerEngineProgress(
+		(progress: ModelServerEngineProgress) => {
+			safeSend(MODEL_SERVER_PROGRESS_CHANNEL, progress);
+		}
+	);
 	releaseProgressListeners = () => {
 		releaseModel();
 		releaseRuntime();
 		releaseIndex();
 		releaseDictation();
+		releaseServerState();
+		releaseServerProgress();
 	};
 
 	ipcMain.handle(
@@ -368,6 +405,48 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('proxy:block'),
 			async (hash: unknown): Promise<TokenProxyBlockDetail | null> => readTokenProxyBlock(hash)
+		)
+	);
+
+	// The Maestro model server. `report` and `key` read (the key is made on first
+	// use); `start`, `stop`, `set` and `installEngine` are the card's buttons.
+	ipcMain.handle(
+		'localModels:server:report',
+		withIpcErrorLogging(
+			handlerOpts('server:report'),
+			async (): Promise<ModelServerReport> => getModelServerReport()
+		)
+	);
+	ipcMain.handle(
+		'localModels:server:start',
+		withIpcErrorLogging(
+			handlerOpts('server:start'),
+			async (): Promise<ModelServerStatus> => startModelServer()
+		)
+	);
+	ipcMain.handle(
+		'localModels:server:stop',
+		withIpcErrorLogging(
+			handlerOpts('server:stop'),
+			async (): Promise<ModelServerStatus> => stopModelServer()
+		)
+	);
+	ipcMain.handle(
+		'localModels:server:set',
+		withIpcErrorLogging(
+			handlerOpts('server:set'),
+			async (patch: unknown): Promise<ModelServerStatus> => updateModelServerConfigRequest(patch)
+		)
+	);
+	ipcMain.handle(
+		'localModels:server:key',
+		withIpcErrorLogging(handlerOpts('server:key'), async (): Promise<string> => getModelServerKey())
+	);
+	ipcMain.handle(
+		'localModels:server:installEngine',
+		withIpcErrorLogging(
+			handlerOpts('server:installEngine'),
+			async (choice: unknown): Promise<ModelServerReport> => installModelServerEngine(choice)
 		)
 	);
 

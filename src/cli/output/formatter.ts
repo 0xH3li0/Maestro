@@ -1,7 +1,13 @@
 // Human-readable output formatter for CLI
 // Provides beautiful, colored terminal output
 
-import { formatDurationDecimal, formatRelativeTime } from '../../shared/formatters';
+import { formatDurationDecimal, formatRelativeTime, formatSize } from '../../shared/formatters';
+import {
+	MODEL_SERVER_NAME,
+	modelServerBindLabel,
+	type ModelServerReport,
+} from '../../shared/local-models/model-server';
+import { serverAcceleratorProblemMessage } from '../../shared/local-models/server-accelerator';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import {
 	EMBEDDING_SOURCE_TYPES,
@@ -1124,6 +1130,100 @@ export function formatTokenProxyBlockHeader(block: TokenProxyBlockDetail): strin
 		`  ${block.originalTokens} -> ${block.compressedTokens} tokens  ${dim(`${block.compressors.join(', ')}, ${formatRelativeTime(block.createdAt)}`)}`,
 		'',
 	].join('\n');
+}
+
+/**
+ * `maestro-cli models server status`: the state and address, the engine build
+ * with its accelerator, the models served and loaded, where the key is kept and
+ * where the log is. The key itself is never printed here (`models server key`).
+ */
+export function formatModelServerReport(report: ModelServerReport): string {
+	const { status, engine } = report;
+	const stateColor: Record<typeof status.state, keyof typeof colors> = {
+		running: 'green',
+		starting: 'yellow',
+		restarting: 'yellow',
+		stopping: 'yellow',
+		stopped: 'gray',
+		failed: 'red',
+	};
+	const lines = [
+		`${bold(c('cyan', MODEL_SERVER_NAME.toUpperCase()))}  ${c(stateColor[status.state], status.state)}`,
+	];
+	if (status.lastError) lines.push(`  ${c('red', status.lastError)}`);
+
+	const row = (label: string, value: string) => `  ${c('white', label.padEnd(11))}  ${value}`;
+	lines.push('');
+	lines.push(
+		row(
+			'Address',
+			status.baseUrl
+				? `${status.baseUrl}  ${dim(modelServerBindLabel(status.bind))}`
+				: dim(`not chosen yet (${modelServerBindLabel(status.bind)})`)
+		)
+	);
+	if (status.pid !== null) lines.push(row('Process', `pid ${status.pid}`));
+	if (status.startedAt !== null) lines.push(row('Up since', formatRelativeTime(status.startedAt)));
+
+	if (report.installing) {
+		const { phase, bytes, totalBytes, choice } = report.installing;
+		const percent =
+			totalBytes > 0 ? ` ${Math.min(100, Math.round((bytes / totalBytes) * 100))}%` : '';
+		lines.push(row('Engine', c('yellow', `installing the ${choice} build: ${phase}${percent}`)));
+	} else if (!engine.installed) {
+		lines.push(row('Engine', c('yellow', 'not installed')));
+	} else {
+		const stale = engine.stale ? c('yellow', '  needs update') : '';
+		lines.push(
+			row('Engine', `${engine.label} build, ${engine.release}, ${formatSize(engine.bytes)}${stale}`)
+		);
+	}
+	if (engine.accelerator) {
+		lines.push(row('Accelerator', engine.accelerator.label));
+		const problem = serverAcceleratorProblemMessage(engine.accelerator);
+		if (problem) lines.push(`  ${c('yellow', problem)}`);
+	}
+	if (engine.builds.length > 0) {
+		lines.push(
+			row(
+				'Builds',
+				engine.builds
+					.map((build) => `${build.choice} (${build.label}, ${formatSize(build.downloadBytes)})`)
+					.join(', ')
+			)
+		);
+	}
+
+	lines.push(row('Max loaded', String(status.maxModels)));
+	lines.push(row('Serves', status.models.length > 0 ? status.models.join(', ') : dim('-')));
+	lines.push(
+		row(
+			'Loaded',
+			report.loaded.length > 0
+				? report.loaded
+						.map((model) => `${model.displayName} (about ${formatSize(model.approxBytes)})`)
+						.join(', ')
+				: dim('-')
+		)
+	);
+	lines.push(
+		row(
+			'Key',
+			status.keyStorage === null
+				? dim('not made yet')
+				: status.keyStorage === 'os'
+					? 'sealed by the OS key store'
+					: c('yellow', 'obscured (this system has no OS key store)')
+		)
+	);
+	lines.push(row('Log', status.logPath));
+
+	if (!engine.installed && !report.installing) {
+		lines.push('', dim('  -> Install the engine: maestro-cli models server set --build default'));
+	} else if (status.state === 'stopped' || status.state === 'failed') {
+		lines.push('', dim('  -> Start it: maestro-cli models server start'));
+	}
+	return lines.join('\n');
 }
 
 /** What ranks a hit, as the first column of its row: a score, or a match count. */

@@ -39,3 +39,5 @@ export type {
 	TokenProxyModeChoiceState,
 	UseTokenProxyModeChoiceOptions,
 } from './useTokenProxyModeChoice';
+export { MODEL_SERVER_POLL_MS, useModelServer } from './useModelServer';
+export type { ModelServerBusy, ModelServerHookState } from './useModelServer';

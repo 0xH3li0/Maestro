@@ -8,7 +8,9 @@
  * local_models_semantic_index_status, local_models_search,
  * local_models_tab_cleanup, local_models_transcribe, local_models_proxy_status,
  * local_models_proxy_block, local_models_runtimes_list,
- * local_models_runtime_install, notify_speak.
+ * local_models_runtime_install, local_models_server_status,
+ * local_models_server_start, local_models_server_stop, local_models_server_set,
+ * local_models_server_key, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -49,6 +51,16 @@ import { semanticIndexProgress } from '../../../local-models/semantic-indexer';
 import { searchPastWorkRequest } from '../../../local-models/work-search';
 import { suggestTabCleanup } from '../../../local-models/tab-cleanup';
 import { getTokenProxyReport, readTokenProxyBlock } from '../../../local-models/proxy/service';
+import {
+	getModelServerKey,
+	startModelServer,
+	stopModelServer,
+} from '../../../local-models/server/supervisor';
+import {
+	getModelServerReport,
+	installModelServerEngine,
+	updateModelServerConfigRequest,
+} from '../../../local-models/server/service';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -333,6 +345,88 @@ export function handleLocalModelsProxyBlock(
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_proxy_block_result', async () => ({
 		block: await readTokenProxyBlock(message.hash),
+	}));
+}
+
+/**
+ * Handle local_models_server_status - the Maestro model server's report: its
+ * state, address, engine and accelerator, and the models it has loaded
+ * (`maestro-cli models server status`). The same report the Model server card
+ * reads through `localModels:server:report`; it never starts the server.
+ */
+export function handleLocalModelsServerStatus(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_server_status_result', async () => ({
+		report: await getModelServerReport(),
+	}));
+}
+
+/**
+ * Handle local_models_server_start - start the model server, answering with
+ * the report once it is ready (`maestro-cli models server start`). A start that
+ * fails (no engine, port taken) is an error carrying the supervisor's message.
+ */
+export function handleLocalModelsServerStart(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_server_start_result', async () => {
+		await startModelServer();
+		return { report: await getModelServerReport() };
+	});
+}
+
+/** Handle local_models_server_stop - stop the model server and wait for it to exit. */
+export function handleLocalModelsServerStop(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_server_stop_result', async () => {
+		await stopModelServer();
+		return { report: await getModelServerReport() };
+	});
+}
+
+/**
+ * Handle local_models_server_set - change the bind mode or model count, rotate
+ * the key, and/or install a build of the engine (`maestro-cli models server
+ * set`). The settings apply first, then the build, each through the function
+ * the card's controls call. A running server restarts to apply either.
+ */
+export function handleLocalModelsServerSet(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_server_set_result', async () => {
+		const patch: Record<string, unknown> = {};
+		if (message.bind !== undefined) patch.bind = message.bind;
+		if (message.maxModels !== undefined) patch.maxModels = message.maxModels;
+		if (message.rotateKey === true) patch.rotateKey = true;
+		if (Object.keys(patch).length > 0) await updateModelServerConfigRequest(patch);
+		if (message.build !== undefined) await installModelServerEngine(message.build);
+		return { report: await getModelServerReport() };
+	});
+}
+
+/**
+ * Handle local_models_server_key - the model server's API key, made on first
+ * use (`maestro-cli models server key`), the same key the card's Copy copies.
+ * The bridge only accepts clients that hold the CLI's token, so this goes no
+ * further than the card does.
+ */
+export function handleLocalModelsServerKey(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_server_key_result', async () => ({
+		key: await getModelServerKey(),
 	}));
 }
 

@@ -60,11 +60,13 @@ describe('ModelsSettingsTab', () => {
 		const present = (id: string) => container.querySelector(`[data-setting-id="${id}"]`) !== null;
 
 		expect(present('local-models-models')).toBe(true);
+		expect(present('local-models-model-server')).toBe(true);
 		expect(present('local-models-endpoints')).toBe(false);
 
 		openPanel('Sources');
 		expect(present('local-models-endpoints')).toBe(true);
 		expect(present('local-models-models')).toBe(false);
+		expect(present('local-models-model-server')).toBe(false);
 
 		openPanel('Gateway');
 		expect(present('local-models-gateway')).toBe(true);

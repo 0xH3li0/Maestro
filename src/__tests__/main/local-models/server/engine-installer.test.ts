@@ -312,6 +312,47 @@ describe('installServerEngine', () => {
 		expect(await fs.readFile(path.join(serverEngineDir(), 'llama-server'), 'utf8')).toBe('NEW');
 	});
 
+	it('calls beforePromote after the new build is verified, while the old one is still in place', async () => {
+		const first = await tarAsset('llama-b0', { 'llama-server': 'OLD' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes: first, format: 'tar.gz' }]);
+		await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': first }),
+		});
+
+		const second = await tarAsset('llama-b1', { 'llama-server': 'NEW' });
+		state.build = makeBuild([{ name: 'b.tar.gz', bytes: second, format: 'tar.gz' }]);
+		let seenAtPromote: string | null = null;
+		await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/b.tar.gz': second }),
+			beforePromote: async () => {
+				seenAtPromote = await fs.readFile(path.join(serverEngineDir(), 'llama-server'), 'utf8');
+			},
+		});
+
+		expect(seenAtPromote).toBe('OLD');
+		expect(await fs.readFile(path.join(serverEngineDir(), 'llama-server'), 'utf8')).toBe('NEW');
+	});
+
+	it('never calls beforePromote for a download that fails verification', async () => {
+		const bytes = await tarAsset('llama-b0', { 'llama-server': 'BIN' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+		const beforePromote = vi.fn(async () => {});
+
+		await expect(
+			installServerEngine('default', {
+				platform: 'linux',
+				arch: 'x64',
+				fetchImpl: serve({ 'https://example.test/a.tar.gz': Buffer.from('tampered') }),
+				beforePromote,
+			})
+		).rejects.toThrow();
+		expect(beforePromote).not.toHaveBeenCalled();
+	});
+
 	it('reports progress ending on done at the full size', async () => {
 		const bytes = await tarAsset('llama-b0', { 'llama-server': 'BIN' });
 		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);

@@ -54,6 +54,7 @@ import {
 	MODEL_SERVER_KEY_FILE,
 	MODEL_SERVER_PRESETS_FILE,
 	modelServerServingLoaded,
+	onModelServerStateChange,
 	resetModelServerForTests,
 	startModelServer,
 	stopModelServer,
@@ -296,6 +297,22 @@ describe('starting and stopping', () => {
 		expect(again).toMatchObject({ state: 'running', port });
 		expect(again.pid).not.toBe(first.pid);
 		expect(spawnServer).toHaveBeenCalledTimes(2);
+	});
+
+	it('tells state listeners about each change, once per change', async () => {
+		const seen: string[] = [];
+		const off = onModelServerStateChange((state) => seen.push(state));
+		try {
+			await startModelServer();
+			await stopModelServer();
+		} finally {
+			off();
+		}
+		expect(seen).toEqual(['starting', 'running', 'stopping', 'stopped']);
+
+		// Unsubscribed: a later start is not reported.
+		await startModelServer();
+		expect(seen).toHaveLength(4);
 	});
 
 	it('keeps its port across launches of the app', async () => {

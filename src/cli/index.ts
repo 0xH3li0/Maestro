@@ -128,6 +128,13 @@ import { modelsRun } from './commands/models-run';
 import { modelsRuntimesInstall, modelsRuntimesList } from './commands/models-runtimes';
 import { modelsIndex } from './commands/models-index';
 import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
+import {
+	modelsServerKey,
+	modelsServerSet,
+	modelsServerStart,
+	modelsServerStatus,
+	modelsServerStop,
+} from './commands/models-server';
 import { modelsStatus } from './commands/models-status';
 import {
 	voiceWakeAdd,
@@ -2750,6 +2757,55 @@ modelProxy
 	.option('--compressed', 'Print only the text sent in its place')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsProxyBlock);
+
+const modelServer = models
+	.command('server')
+	.description(
+		"The Maestro model server: llama.cpp's llama-server, serving downloaded models to agent harnesses over HTTP"
+	);
+
+modelServer
+	.command('status')
+	.description(
+		'State, address, engine build and accelerator, models served and loaded, key storage and log path (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerStatus);
+
+modelServer
+	.command('start')
+	.description('Start the model server and wait until it answers (requires the desktop app)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerStart);
+
+modelServer
+	.command('stop')
+	.description('Stop the model server and wait until it exits (requires the desktop app)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerStop);
+
+modelServer
+	.command('set')
+	.description(
+		'Change who can reach it, how many models stay loaded, the key, or the engine build; a running server restarts (requires the desktop app)'
+	)
+	.option('--bind <mode>', 'local (127.0.0.1, this machine) | network (0.0.0.0, needs the key)')
+	.option('--max-models <n>', 'Models loaded at the same time (1 to 16, default 1)')
+	.option('--rotate-key', 'Replace the API key; whatever used the old key needs the new one')
+	.option(
+		'--build <choice>',
+		'Install this engine build: default | cpu | cuda | rocm (cuda and rocm on Windows and Linux x64 only)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerSet);
+
+modelServer
+	.command('key')
+	.description(
+		'Print the API key a harness sends to the model server, made on first use (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsServerKey);
 
 const modelEndpoints = models
 	.command('endpoints')

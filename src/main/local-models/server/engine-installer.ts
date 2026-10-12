@@ -63,6 +63,14 @@ export interface ServerEngineInstallOptions {
 	arch?: string;
 	/** Injected in tests, where the "binary" is a text file. */
 	runListDevices?: AcceleratorCheckOptions['runListDevices'];
+	/**
+	 * Called once the new build is downloaded, verified and extracted, right
+	 * before it replaces the installed one. The model service stops a running
+	 * server here, so the server keeps serving through the download and is never
+	 * running from a directory that is being deleted (Windows refuses to delete
+	 * a running `.exe`).
+	 */
+	beforePromote?: () => Promise<void>;
 }
 
 /** A choice that has no build on this platform. Names the platform and the choice. */
@@ -127,6 +135,7 @@ export async function installServerEngine(
 		// fails at spawn with EACCES, far from the download that caused it.
 		if (!platform.startsWith('win32')) await fs.chmod(binary, 0o755);
 
+		await options.beforePromote?.();
 		const target = serverEngineDir();
 		await fs.rm(target, { recursive: true, force: true });
 		await fs.rename(staging, target);

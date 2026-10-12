@@ -176,6 +176,33 @@ import {
 	readTokenProxyBlock,
 } from '../../../../main/local-models/proxy/service';
 
+vi.mock('../../../../main/local-models/server/supervisor', () => ({
+	startModelServer: vi.fn(async () => ({ state: 'running' })),
+	stopModelServer: vi.fn(async () => ({ state: 'stopped' })),
+	getModelServerKey: vi.fn(async () => 'sk-maestro-key'),
+}));
+import {
+	getModelServerKey,
+	startModelServer,
+	stopModelServer,
+} from '../../../../main/local-models/server/supervisor';
+
+vi.mock('../../../../main/local-models/server/service', () => ({
+	getModelServerReport: vi.fn(async () => ({
+		status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' },
+		engine: { installed: true },
+		loaded: [],
+		installing: null,
+	})),
+	installModelServerEngine: vi.fn(async () => ({})),
+	updateModelServerConfigRequest: vi.fn(async () => ({ state: 'running' })),
+}));
+import {
+	getModelServerReport,
+	installModelServerEngine,
+	updateModelServerConfigRequest,
+} from '../../../../main/local-models/server/service';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -6011,6 +6038,91 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			handler.handleMessage(client, { type: 'local_models_proxy_status', requestId: 'px-2' });
 			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_proxy_status_result'));
 			expect(lastResponse()).toMatchObject({ success: false, error: 'state file unreadable' });
+		});
+
+		it('local_models_server_status answers with the model server report', async () => {
+			handler.handleMessage(client, { type: 'local_models_server_status', requestId: 'ms-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_status_result'));
+			expect(getModelServerReport).toHaveBeenCalled();
+			expect(startModelServer).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'ms-1',
+				report: { status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' } },
+			});
+		});
+
+		it('local_models_server_start and _stop call the supervisor and answer with the report', async () => {
+			handler.handleMessage(client, { type: 'local_models_server_start', requestId: 'ms-2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_start_result'));
+			expect(startModelServer).toHaveBeenCalledTimes(1);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				report: { status: { state: 'running' } },
+			});
+
+			handler.handleMessage(client, { type: 'local_models_server_stop', requestId: 'ms-3' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_stop_result'));
+			expect(stopModelServer).toHaveBeenCalledTimes(1);
+		});
+
+		it('local_models_server_start reports a failed start with its reason', async () => {
+			vi.mocked(startModelServer).mockRejectedValueOnce(
+				new Error('Another program is using 127.0.0.1:47811.')
+			);
+			handler.handleMessage(client, { type: 'local_models_server_start', requestId: 'ms-4' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-4'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Another program is using 127.0.0.1:47811.',
+			});
+		});
+
+		it('local_models_server_set applies the settings, then the build', async () => {
+			const order: string[] = [];
+			vi.mocked(updateModelServerConfigRequest).mockImplementationOnce(async () => {
+				order.push('settings');
+				return { state: 'running' } as never;
+			});
+			vi.mocked(installModelServerEngine).mockImplementationOnce(async () => {
+				order.push('build');
+				return {} as never;
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_server_set',
+				bind: 'network',
+				maxModels: 2,
+				rotateKey: true,
+				build: 'cpu',
+				requestId: 'ms-5',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-5'));
+			expect(updateModelServerConfigRequest).toHaveBeenCalledWith({
+				bind: 'network',
+				maxModels: 2,
+				rotateKey: true,
+			});
+			expect(installModelServerEngine).toHaveBeenCalledWith('cpu');
+			expect(order).toEqual(['settings', 'build']);
+			expect(lastResponse()).toMatchObject({ success: true });
+		});
+
+		it('local_models_server_set with only a build leaves the settings alone', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_server_set',
+				build: 'default',
+				requestId: 'ms-6',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-6'));
+			expect(updateModelServerConfigRequest).not.toHaveBeenCalled();
+			expect(installModelServerEngine).toHaveBeenCalledWith('default');
+		});
+
+		it('local_models_server_key answers with the key', async () => {
+			handler.handleMessage(client, { type: 'local_models_server_key', requestId: 'ms-7' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_server_key_result'));
+			expect(getModelServerKey).toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({ success: true, key: 'sk-maestro-key' });
 		});
 
 		it('local_models_proxy_block answers with both sides of the block', async () => {
