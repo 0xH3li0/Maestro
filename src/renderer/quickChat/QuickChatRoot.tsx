@@ -91,6 +91,28 @@ function DragHandle({ theme }: { theme: Theme }) {
 	);
 }
 
+/**
+ * Follow a value the main process owns: read it once, then take every change
+ * it announces. The read and the announcements are separate IPC messages with
+ * no ordering between them, so a change announced while the read is in flight
+ * wins: the read's answer may predate it.
+ */
+function followMainValue<T>(
+	read: () => Promise<T>,
+	subscribe: (callback: (value: T) => void) => () => void,
+	apply: (value: T) => void
+): () => void {
+	let announced = false;
+	const off = subscribe((value) => {
+		announced = true;
+		apply(value);
+	});
+	void read().then((value) => {
+		if (!announced) apply(value);
+	});
+	return off;
+}
+
 function useElapsedSeconds(since: number | null): number {
 	const [now, setNow] = useState(() => Date.now());
 	useEffect(() => {
@@ -252,11 +274,17 @@ function QuickChatWindow() {
 			}
 			textareaRef.current?.focus();
 		});
-		const offPinned = window.maestro.quickChat.onPinned(setPinned);
-		const offFontScale = window.maestro.quickChat.onFontScale(setFontScaleValue);
+		const offPinned = followMainValue(
+			window.maestro.quickChat.getPinned,
+			window.maestro.quickChat.onPinned,
+			setPinned
+		);
+		const offFontScale = followMainValue(
+			window.maestro.quickChat.getFontScale,
+			window.maestro.quickChat.onFontScale,
+			setFontScaleValue
+		);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
-		void window.maestro.quickChat.getPinned().then(setPinned);
-		void window.maestro.quickChat.getFontScale().then(setFontScaleValue);
 		return () => {
 			offSnapshot();
 			offFocus();

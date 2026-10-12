@@ -292,6 +292,17 @@ describe('text zoom', () => {
 		expect(messagesFontSize()).toBe(1.5);
 	});
 
+	it('a change announced while the first read is in flight is not overwritten by it', async () => {
+		let answerRead: (value: number) => void = () => {};
+		vi.mocked(window.maestro.quickChat.getFontScale).mockImplementation(
+			() => new Promise((resolve) => (answerRead = resolve))
+		);
+		await renderWith(conversation());
+		act(() => pushFromMain?.(1.5));
+		await act(async () => answerRead(1));
+		expect(messagesFontSize()).toBe(1.5);
+	});
+
 	it('draws the shared control, with overlays that name each chord', async () => {
 		await renderWith(conversation());
 		const larger = screen.getByRole('button', { name: 'Increase text font size' });
