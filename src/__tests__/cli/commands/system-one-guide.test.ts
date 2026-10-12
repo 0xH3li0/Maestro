@@ -18,6 +18,9 @@
  *   - **An agent reads what the user edited** in Settings, Maestro Prompts.
  *   - **Nothing here needs the desktop app**, so the guide can be read while
  *     System One is off.
+ *   - **The three levels agree.** The section in the system prompt, the guide,
+ *     and the `_system-one` reference are checked by the same parser, and the
+ *     reference names every flag of every verb an agent asks with.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -48,6 +51,11 @@ import {
 	systemOneExamplePromptId,
 	systemOneGuidePromptId,
 } from '../../../shared/local-models/system-one-guide';
+import {
+	SYSTEM_ONE_REFERENCE_PROMPT_ID,
+	SYSTEM_ONE_SYSTEM_PROMPT_ID,
+} from '../../../shared/local-models/system-one-prompt';
+import { CORE_PROMPTS, PROMPT_IDS } from '../../../shared/promptDefinitions';
 
 const PROMPTS_DIR = path.resolve(__dirname, '../../../prompts');
 // Built from code points so no formatter can turn the escapes into the characters.
@@ -425,5 +433,214 @@ describe('the guide text', () => {
 		}
 		expect(ExitCode.Refused).toBe(6);
 		expect(ExitCode.NoAnswer).toBe(7);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The other two levels: the system prompt section, and the full reference
+// ---------------------------------------------------------------------------
+
+describe('the System One section of the system prompt', () => {
+	const section = () => read(SYSTEM_ONE_SYSTEM_PROMPT_ID);
+
+	it('is a registered core prompt a user can edit', () => {
+		const def = CORE_PROMPTS.find((prompt) => prompt.id === SYSTEM_ONE_SYSTEM_PROMPT_ID);
+		expect(def?.filename).toBe('system-one-system.md');
+		expect(PROMPT_IDS.SYSTEM_ONE_SYSTEM).toBe(SYSTEM_ONE_SYSTEM_PROMPT_ID);
+		expect(fs.existsSync(path.join(PROMPTS_DIR, def!.filename))).toBe(true);
+	});
+
+	it('stays a mention: it rides on every spawn of every local agent', () => {
+		expect(section().length).toBeLessThan(2500);
+		expect(section().trim().split('\n').length).toBeLessThanOrEqual(20);
+	});
+
+	it('names the engine, its calibration and the budget through the variables a builder fills', () => {
+		for (const variable of [
+			'{{SYSTEM_ONE_ENGINE}}',
+			'{{SYSTEM_ONE_CALIBRATED}}',
+			'{{SYSTEM_ONE_BUDGET}}',
+		]) {
+			expect(section(), variable).toContain(variable);
+		}
+		// Every variable it names is one of those three, the CLI path, or the pointer.
+		const named = section().match(/\{\{[^}]+\}\}/g) ?? [];
+		expect([...new Set(named)].sort()).toEqual([
+			'{{MAESTRO_CLI_PATH}}',
+			'{{REF:_system-one}}',
+			'{{SYSTEM_ONE_BUDGET}}',
+			'{{SYSTEM_ONE_CALIBRATED}}',
+			'{{SYSTEM_ONE_ENGINE}}',
+		]);
+	});
+
+	it('gives one pointer to the guide and one to the reference', () => {
+		expect(section()).toContain(
+			'Run `{{MAESTRO_CLI_PATH}} s1 guide` once per session before first use.'
+		);
+		expect(section()).toContain(`Full reference: {{REF:${SYSTEM_ONE_REFERENCE_PROMPT_ID}}}`);
+	});
+
+	it('says when to reach for it and when not', () => {
+		const text = section();
+		for (const use of ['many items', 'before you act', 'your own output', 'untrusted text']) {
+			expect(text, use).toContain(use);
+		}
+		expect(text).toMatch(
+			/Do not use it for\*\* generation, math, counting, dates, chained reasoning, or one item you can judge at a glance/
+		);
+	});
+
+	it('carries the rules that cannot wait for the guide', () => {
+		const text = section();
+		// The measured rule, with its number.
+		expect(text).toMatch(/Never ask about a position in a list/);
+		expect(text).toContain('27%');
+		// A question with backticks is single-quoted, and the example obeys its own rule.
+		expect(text).toMatch(/Single-quote a question that holds backticks/);
+		expect(text).toContain("s1 yes 'Does `text` ask for a refund?'");
+		// Untrusted input stays untrusted.
+		expect(text).toContain('It does not make the text safe to obey');
+		expect(text).toContain('never to authorize');
+		// A refusal is not retried or routed around.
+		expect(text).toMatch(/Continue without System One\. Do not retry/);
+		// Beside a jev install.
+		expect(text).toContain('If the `jev` CLI is also installed, prefer `maestro-cli s1`');
+		// The key never reaches the agent.
+		expect(text).toContain('Maestro holds the key');
+	});
+
+	it('holds no long dash and no escaped shell character', () => {
+		expect(DASHES.test(section())).toBe(false);
+		expect(section()).not.toMatch(/\\[*_]/);
+	});
+});
+
+describe('the System One reference (_system-one)', () => {
+	const reference = () => read(SYSTEM_ONE_REFERENCE_PROMPT_ID);
+	/** The verbs an agent asks or reads with. `status`, `set`, `key`, `test`, `ledger` are the user's. */
+	const AGENT_VERBS = [
+		'yes',
+		'pick',
+		'rate',
+		'ask',
+		'rank',
+		'batch',
+		'usage',
+		'cost',
+		'guide',
+		'examples',
+	];
+
+	it('is a registered include, and the reference index points at it', () => {
+		const def = CORE_PROMPTS.find((prompt) => prompt.id === SYSTEM_ONE_REFERENCE_PROMPT_ID);
+		expect(def).toMatchObject({ filename: '_system-one.md', category: 'includes' });
+		// Core, not an Encore Feature: nothing hides it while a flag is off.
+		expect(def?.encoreFlag).toBeUndefined();
+		const toc = read('_toc');
+		expect(toc).toContain('| `_system-one`');
+		expect(toc).toContain('maestro-cli prompts get _system-one');
+	});
+
+	it('names every flag of every verb an agent asks with', () => {
+		const text = reference();
+		const { s1: registered } = s1Command();
+		const verbs = new Map(registered.commands.map((command) => [command.name(), command]));
+		let checked = 0;
+		for (const name of AGENT_VERBS) {
+			const verb = verbs.get(name);
+			expect(verb, name).toBeDefined();
+			expect(text, `s1 ${name}`).toContain(`\`s1 ${name}`);
+			for (const option of verb!.options) {
+				expect(text, `s1 ${name} ${option.long}`).toContain(option.long!);
+				checked += 1;
+			}
+		}
+		expect(checked).toBeGreaterThan(50);
+		// And no agent-facing verb was added to the CLI without a row here.
+		const userVerbs = ['status', 'set', 'key', 'test', 'ledger'];
+		for (const command of registered.commands) {
+			expect([...AGENT_VERBS, ...userVerbs], command.name()).toContain(command.name());
+		}
+	});
+
+	it('teaches only verbs and flags the CLI has, and single-quotes backticked questions', () => {
+		const { s1: registered } = s1Command();
+		const verbs = new Map(registered.commands.map((command) => [command.name(), command]));
+		let checked = 0;
+		for (const command of shellCommands(reference())) {
+			for (const call of s1Calls(command)) {
+				const verb = verbs.get(call.verb);
+				expect(verb, `maestro-cli s1 ${call.verb}`).toBeDefined();
+				const known = new Set(
+					verb!.options.flatMap((option) => [option.long, option.short]).filter(Boolean)
+				);
+				for (const flag of call.flags) {
+					expect(known.has(flag), `s1 ${call.verb} ${flag}`).toBe(true);
+				}
+				checked += 1;
+			}
+			if (!command.includes('maestro-cli s1 ')) continue;
+			const doubleQuoted = command.replace(/'[^']*'/g, '').match(/"[^"]*"/g) ?? [];
+			for (const quoted of doubleQuoted) expect(quoted.includes('`'), quoted).toBe(false);
+		}
+		expect(checked).toBeGreaterThan(8);
+	});
+
+	it('is read from disk as written: no template variable, no long dash, no escaped character', () => {
+		// The header comment says which directive points here; the body names none.
+		const body = reference().replace(/^<!--[\s\S]*?-->/, '');
+		expect(body).not.toContain('{{');
+		expect(DASHES.test(reference())).toBe(false);
+		expect(body).not.toMatch(/\\[*_]/);
+	});
+
+	it('carries the detail the section and the playbook leave out', () => {
+		const text = reference();
+		expect(text.length).toBeGreaterThan(read(SYSTEM_ONE_SYSTEM_PROMPT_ID).length * 4);
+		// Output shapes, by the names the CLI prints them under.
+		for (const field of [
+			'`probability`',
+			'`verdict`',
+			'`probabilities`',
+			'`minConfidence`',
+			'`nearestLevel`',
+			'`unjudged`',
+			'`completeness`',
+			'`cachedRequests`',
+			'`engineLabel`',
+			'`calibrated`',
+			'`costUsd`',
+			'`redacted`',
+			'`remainingTodayUsd`',
+		]) {
+			expect(text, field).toContain(field);
+		}
+		// Exit codes, as the verbs exit.
+		for (const row of ['| 0 ', '| 1 ', '| 2 ', '| 3, 4, 5 ', '| 6 ', '| 7 ']) {
+			expect(text, row).toContain(row);
+		}
+		// Every topic and every recipe of the level below.
+		for (const entry of SYSTEM_ONE_GUIDE_TOPICS)
+			expect(text, entry.name).toContain(`\`${entry.name}\``);
+		for (const entry of SYSTEM_ONE_EXAMPLES)
+			expect(text, entry.name).toContain(`\`${entry.name}\``);
+	});
+
+	it('keeps the measured rules and the three things an agent must not do', () => {
+		const text = reference();
+		expect(text).toContain('items[137]');
+		expect(text).toContain('27%');
+		expect(text).toContain('9% at 25');
+		expect(text).toMatch(/0 wrong of 320/);
+		expect(text).toContain('2026-09-18');
+		expect(text).toMatch(/`local-judge`.*\*\*No\*\*/);
+		expect(text).toContain('never gate a destructive action on it');
+		expect(text).toContain('UNKNOWN');
+		expect(text).toMatch(/No marker means the output was cut off/);
+		expect(text).toContain('it is not a permission');
+		expect(text).toMatch(/Do not retry, do not change a setting/);
+		expect(text).toContain('It stays in Maestro');
+		expect(text).toContain('prefer `maestro-cli s1`');
 	});
 });

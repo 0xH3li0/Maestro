@@ -341,6 +341,16 @@ export async function getSystemOneAgentAccess(agentId?: string): Promise<SystemO
 }
 
 /**
+ * {@link getSystemOneAgentAccess} for an agent id as a surface sends it: the
+ * one function the renderer's IPC channel and the CLI's WS message both call,
+ * so the system prompt builders of all three processes read one answer. An id
+ * that is not text reads as "no agent named".
+ */
+export function getSystemOneAgentAccessRequest(rawAgentId: unknown): Promise<SystemOneAgentAccess> {
+	return getSystemOneAgentAccess(typeof rawAgentId === 'string' ? rawAgentId : undefined);
+}
+
+/**
  * What agents' own requests came to since a time, per agent, with today's spend
  * against the budget: what `maestro-cli s1 usage` prints. Read from the decision
  * ledger and the day's count; sends nothing. A query that cannot be read

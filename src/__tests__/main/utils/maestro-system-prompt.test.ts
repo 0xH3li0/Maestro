@@ -61,12 +61,24 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+/** What the System One service answers for the agent asked about. Off unless a test sets it. */
+const systemOne = vi.hoisted(() => ({
+	getSystemOneAgentAccess: vi.fn(),
+}));
+vi.mock('../../../main/local-models/system-one/agent-service', () => systemOne);
+
 import {
 	buildMaestroSystemPromptForSession,
 	buildPluginSystemPromptSections,
+	localSystemOneAccess,
 } from '../../../main/utils/maestro-system-prompt';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import {
+	SYSTEM_ONE_GATES,
+	refusedSystemOneAccess,
+	systemOneAccess,
+} from '../../helpers/systemOneAccess';
 
 const agent = (overrides: Record<string, any> = {}) => ({
 	id: 'agent-1',
@@ -76,6 +88,12 @@ const agent = (overrides: Record<string, any> = {}) => ({
 	projectRoot: '/proj',
 	isGitRepo: true,
 	...overrides,
+});
+
+// System One is off for every test that does not turn it on, in every describe below.
+beforeEach(() => {
+	systemOne.getSystemOneAgentAccess.mockReset();
+	systemOne.getSystemOneAgentAccess.mockResolvedValue(refusedSystemOneAccess('engine-off'));
 });
 
 describe('buildMaestroSystemPromptForSession', () => {
@@ -148,6 +166,86 @@ describe('buildMaestroSystemPromptForSession', () => {
 		await expect(buildMaestroSystemPromptForSession('nobody')).resolves.toBeUndefined();
 		delete prompts['maestro-system-prompt'];
 		await expect(buildMaestroSystemPromptForSession('agent-1')).resolves.toBeUndefined();
+	});
+});
+
+describe('the System One section (main builder)', () => {
+	const SSH = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		for (const key of Object.keys(prompts)) delete prompts[key];
+		prompts['maestro-system-prompt'] = 'BASE';
+		prompts['pianola-system'] = 'PIANOLA';
+		prompts['computer-history-system'] = 'HISTORY';
+		prompts['system-one-system'] =
+			'S1 {{SYSTEM_ONE_ENGINE}}|{{SYSTEM_ONE_CALIBRATED}}|{{SYSTEM_ONE_BUDGET}}';
+		storedSessions = [agent()];
+		settings = {};
+		systemOne.getSystemOneAgentAccess.mockResolvedValue(systemOneAccess());
+	});
+
+	it('is appended, with the engine and the budget, when every gate passes', async () => {
+		const result = await buildMaestroSystemPromptForSession('agent-1');
+		expect(result).toBe(
+			'BASE\n\n---\n\nS1 Jev (TypeSafe cloud)|calibrated: of the answers it gives 0.8, about 80% are true, so act on thresholds|$1.00 a day across all agents; more than half is left today'
+		);
+		// Asked for the agent being spawned, so its own switch and its own cap count.
+		expect(systemOne.getSystemOneAgentAccess).toHaveBeenCalledWith('agent-1');
+	});
+
+	it('is left out behind each gate that refuses the agent', async () => {
+		for (const gate of SYSTEM_ONE_GATES) {
+			systemOne.getSystemOneAgentAccess.mockResolvedValue(refusedSystemOneAccess(gate));
+			expect(await buildMaestroSystemPromptForSession('agent-1'), gate).toBe('BASE');
+		}
+	});
+
+	it('is asked on every spawn, so switching System One off removes it from the next one', async () => {
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toContain('S1 ');
+		systemOne.getSystemOneAgentAccess.mockResolvedValue(refusedSystemOneAccess('agents-off'));
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+		expect(systemOne.getSystemOneAgentAccess).toHaveBeenCalledTimes(2);
+	});
+
+	it('is never given to an SSH remote agent, and the service is not asked', async () => {
+		storedSessions = [agent(SSH)];
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+		expect(systemOne.getSystemOneAgentAccess).not.toHaveBeenCalled();
+
+		storedSessions = [agent({ sshRemoteId: 'r1' })];
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+		expect(systemOne.getSystemOneAgentAccess).not.toHaveBeenCalled();
+	});
+
+	it('reads a failed check as no answer instead of failing the spawn', async () => {
+		systemOne.getSystemOneAgentAccess.mockRejectedValue(new Error('settings unreadable'));
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+		expect(logger.warn).toHaveBeenCalled();
+		await expect(localSystemOneAccess('agent-1')).resolves.toBeUndefined();
+	});
+
+	it('sits after the role section and before the plugin sections', async () => {
+		storedSessions = [agent({ isPianola: true })];
+		settings.encoreFeatures = { computerHistory: true };
+		const result = await buildMaestroSystemPromptForSession('agent-1');
+		expect(result?.split('\n\n---\n\n').map((part) => part.slice(0, 4))).toEqual([
+			'BASE',
+			'PIAN',
+			'S1 J',
+			'HIST',
+		]);
+	});
+
+	it('skips the section when its prompt is missing instead of failing', async () => {
+		delete prompts['system-one-system'];
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe('BASE');
+	});
+
+	it('is not part of the moderator variant, which has no agent to count it against', () => {
+		settings.encoreFeatures = { computerHistory: true };
+		expect(buildPluginSystemPromptSections({ isSsh: false })).toBe('HISTORY');
+		expect(systemOne.getSystemOneAgentAccess).not.toHaveBeenCalled();
 	});
 });
 

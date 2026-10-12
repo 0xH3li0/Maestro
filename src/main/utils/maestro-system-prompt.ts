@@ -15,15 +15,20 @@
 import { app } from 'electron';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { computerHistoryDir } from '../../shared/computer-history/paths';
+import type { SystemOneAgentAccess } from '../../shared/local-models/system-one-agent';
 import {
 	assembleMaestroSystemPrompt,
+	coreSystemPromptContext,
+	coreSystemPromptSectionsFor,
 	systemPromptSectionsFor,
+	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { StoredSession } from '../stores/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
+import { getSystemOneAgentAccess } from '../local-models/system-one/agent-service';
 import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
@@ -139,6 +144,35 @@ async function localMaestroRunPath(): Promise<string | undefined> {
 	}
 }
 
+/**
+ * Whether a System One request from this agent would be answered right now, or
+ * undefined when that cannot be read. Never throws: no answer leaves the
+ * section out rather than advertising a tool that may refuse. Reads the
+ * settings and the day's count; sends nothing to an engine.
+ *
+ * Exported for the one other builder that runs in this process: the CLI's
+ * (`prepareMaestroSystemPromptCli`), which the plugin headless runner calls.
+ */
+export async function localSystemOneAccess(
+	agentId: string
+): Promise<SystemOneAgentAccess | undefined> {
+	try {
+		return await getSystemOneAgentAccess(agentId);
+	} catch (err) {
+		logger.warn('System One access check failed; leaving its section out', LOG_CONTEXT, {
+			error: err instanceof Error ? err.message : String(err),
+		});
+		return undefined;
+	}
+}
+
+/** Load the core section texts that apply to this agent (blank or missing ones dropped). */
+function loadCoreSections(core: CoreSystemPromptInput): string[] {
+	return coreSystemPromptSectionsFor(core)
+		.map((ref) => loadPrompt(ref.promptId))
+		.filter((text): text is string => !!text && !!text.trim());
+}
+
 /** Load the plugin section texts that apply right now (blank or missing ones dropped). */
 function loadPluginSections(
 	encoreFeatures: unknown,
@@ -157,7 +191,8 @@ function loadPluginSections(
  * The full Maestro system prompt for one persisted agent: the base template
  * with that agent's identity, git branch (local only), history file (local
  * only), conductor profile, the Pianola role section when it is the Pianola
- * agent, and every enabled plugin section (`localOnly` ones skipped over SSH).
+ * agent, the core sections that are ready for it (System One, local agents
+ * only), and every enabled plugin section (`localOnly` ones skipped over SSH).
  *
  * Accepts the session id or the already-loaded stored record. Returns undefined
  * when the agent is unknown or the base template cannot be loaded.
@@ -187,6 +222,11 @@ export async function buildMaestroSystemPromptForSession(
 	const historyFilePath = isSsh ? undefined : await localHistoryFilePath(record.id);
 	// The launcher is on this Mac, so an SSH agent is never told about it.
 	const maestroRunPath = isSsh ? undefined : await localMaestroRunPath();
+	// `maestro-cli s1` reaches this desktop, so an SSH agent is never asked about.
+	const core: CoreSystemPromptInput = {
+		isSsh,
+		systemOne: isSsh ? undefined : await localSystemOneAccess(record.id),
+	};
 
 	const context: TemplateContext = {
 		session: {
@@ -209,6 +249,7 @@ export async function buildMaestroSystemPromptForSession(
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
 		maestroRunPath,
 		maestroCliPath: resolvedCliPath(),
+		...coreSystemPromptContext(core),
 	};
 
 	const roleSections = record.isPianola ? [loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
@@ -217,6 +258,7 @@ export async function buildMaestroSystemPromptForSession(
 		template,
 		context,
 		roleSections,
+		coreSections: loadCoreSections(core),
 		pluginSections: loadPluginSections(encoreFeatures, isSsh, maestroRunPath),
 	});
 }
@@ -226,6 +268,10 @@ export async function buildMaestroSystemPromptForSession(
  * behind it (the Group Chat moderator and its synthesis turn). Substituted with
  * a minimal context: agent-specific variables render empty. Returns undefined
  * when no section applies, so the caller passes nothing at all.
+ *
+ * Core sections are not included. System One is told to an agent: its requests
+ * are counted, capped and switched off per agent, and a spawn with no agent
+ * behind it has none of the three.
  */
 export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): string | undefined {
 	const { encoreFeatures, conductorProfile } = readSettings();

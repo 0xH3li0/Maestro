@@ -7,7 +7,14 @@
  */
 
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
-import { systemOneGuidePromptDefinitions } from './local-models/system-one-guide';
+import {
+	SYSTEM_ONE_GUIDE_PROMPT_CATEGORY,
+	systemOneGuidePromptDefinitions,
+} from './local-models/system-one-guide';
+import {
+	SYSTEM_ONE_REFERENCE_PROMPT_ID,
+	SYSTEM_ONE_SYSTEM_PROMPT_ID,
+} from './local-models/system-one-prompt';
 
 // ============================================================================
 // Types
@@ -181,6 +188,15 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 	// and per recipe (`system-one-example-<name>`), declared once in
 	// `SYSTEM_ONE_GUIDE_TOPICS` and `SYSTEM_ONE_EXAMPLES`.
 	...systemOneGuidePromptDefinitions(),
+	// System One (core system-prompt section): what every local agent is told
+	// while a System One request from it would be answered.
+	{
+		id: SYSTEM_ONE_SYSTEM_PROMPT_ID,
+		filename: 'system-one-system.md',
+		description:
+			'System One section appended to a local agent system prompt while a System One request from that agent would be answered',
+		category: SYSTEM_ONE_GUIDE_PROMPT_CATEGORY,
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -412,6 +428,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		encoreFlag: 'maestroCue',
 	},
 	{
+		id: SYSTEM_ONE_REFERENCE_PROMPT_ID,
+		filename: '_system-one.md',
+		description:
+			'System One reference for agents: every `maestro-cli s1` verb and flag, the output shapes, exit codes, limits and pitfalls',
+		category: 'includes',
+	},
+	{
 		id: '_computer-history',
 		filename: '_computer-history.md',
 		description:
@@ -487,6 +510,8 @@ export const PROMPT_IDS = {
 	CUE_GATE_LOCAL: 'cue-gate-local',
 	TOKEN_PROXY_LOCAL: 'token-proxy-local',
 	SYSTEM_ONE_JUDGE_LOCAL: 'system-one-judge-local',
+	// System One (core system-prompt section)
+	SYSTEM_ONE_SYSTEM: SYSTEM_ONE_SYSTEM_PROMPT_ID,
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

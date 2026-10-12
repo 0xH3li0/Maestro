@@ -29,7 +29,30 @@ vi.mock('../../../cli/services/git-utils', () => ({
 	isGitRepo: vi.fn(),
 }));
 
+// The desktop app, as the CLI reaches it. `desktop.reply` is what it answers
+// `system_one_access` with; `null` is a desktop that is not running.
+const desktop = vi.hoisted(() => ({
+	reply: null as Record<string, unknown> | null,
+	sendCommand: (async () => null) as (...args: unknown[]) => Promise<unknown>,
+}));
+vi.mock('../../../cli/services/maestro-client', () => ({
+	withMaestroClient: vi.fn(async (action: (client: unknown) => Promise<unknown>) => {
+		if (desktop.reply === null) throw new Error('Maestro desktop app is not running');
+		return action({ sendCommand: (...args: unknown[]) => desktop.sendCommand(...args) });
+	}),
+}));
+
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import {
+	SYSTEM_ONE_ACCESS_TIMEOUT_MS,
+	readSystemOneAccessFromDesktop,
+} from '../../../cli/services/system-one-access';
+import { withMaestroClient } from '../../../cli/services/maestro-client';
+import {
+	SYSTEM_ONE_GATES,
+	refusedSystemOneAccess,
+	systemOneAccess,
+} from '../../helpers/systemOneAccess';
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
 import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
@@ -58,6 +81,9 @@ describe('prepareMaestroSystemPromptCli', () => {
 		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
 		// Default: the app has not recorded MaestroRun as ready.
 		vi.mocked(readMaestroRunReadyPath).mockReturnValue(undefined);
+		// Default: the desktop app is not running, so System One cannot be asked about.
+		desktop.reply = null;
+		desktop.sendCommand = vi.fn(async () => desktop.reply);
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {
@@ -229,6 +255,95 @@ describe('prepareMaestroSystemPromptCli', () => {
 				);
 				expect(result).toBe('BASE A');
 				expect(readMaestroRunReadyPath).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('System One', () => {
+			const SSH = { sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } };
+			const SECTION =
+				'S1 Jev (TypeSafe cloud)|calibrated: of the answers it gives 0.8, about 80% are true, so act on thresholds|$1.00 a day across all agents; more than half is left today';
+
+			beforeEach(() => {
+				prompts['system-one-system'] =
+					'S1 {{SYSTEM_ONE_ENGINE}}|{{SYSTEM_ONE_CALIBRATED}}|{{SYSTEM_ONE_BUDGET}}';
+				desktop.reply = { success: true, access: systemOneAccess() };
+			});
+
+			it('is appended when the desktop says a request from this agent would be answered', async () => {
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+				expect(result).toBe(`BASE A\n\n---\n\n${SECTION}`);
+				// Asked about the agent being spawned, with a wait that cannot hold a spawn long.
+				expect(desktop.sendCommand).toHaveBeenCalledWith(
+					{ type: 'system_one_access', agentId: 'agent-abc-123' },
+					'system_one_access_result',
+					SYSTEM_ONE_ACCESS_TIMEOUT_MS
+				);
+			});
+
+			it('is left out behind each gate that refuses the agent', async () => {
+				for (const gate of SYSTEM_ONE_GATES) {
+					desktop.reply = { success: true, access: refusedSystemOneAccess(gate) };
+					expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' })), gate).toBe(
+						'BASE A'
+					);
+				}
+			});
+
+			it('is left out when the desktop app is not running: the verbs could not reach it either', async () => {
+				desktop.reply = null;
+				const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }))).toBe('BASE A');
+				// A closed desktop is a normal state for a headless run: nothing is printed.
+				expect(errSpy).not.toHaveBeenCalled();
+				errSpy.mockRestore();
+			});
+
+			it('is left out when the desktop is too old for the question, or refuses it', async () => {
+				desktop.sendCommand = vi.fn(async () => {
+					throw new Error('Unsupported command: system_one_access');
+				});
+				expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }))).toBe('BASE A');
+
+				desktop.sendCommand = vi.fn(async () => ({ success: false, error: 'no' }));
+				expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }))).toBe('BASE A');
+				await expect(readSystemOneAccessFromDesktop('agent-abc-123')).resolves.toBeUndefined();
+			});
+
+			it('is never given to an SSH remote agent, and the desktop is not asked', async () => {
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A', ...SSH }));
+				expect(result).toBe('BASE A');
+				expect(withMaestroClient).not.toHaveBeenCalled();
+			});
+
+			it('asks the reader it is handed instead of the desktop (the builder inside the app)', async () => {
+				desktop.reply = null;
+				const readSystemOneAccess = vi.fn(async () => systemOneAccess());
+				const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }), {
+					readSystemOneAccess,
+				});
+				expect(result).toBe(`BASE A\n\n---\n\n${SECTION}`);
+				expect(readSystemOneAccess).toHaveBeenCalledWith('agent-abc-123');
+				expect(withMaestroClient).not.toHaveBeenCalled();
+			});
+
+			it('sits after the role section and before the plugin sections', async () => {
+				vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+				const result = await prepareMaestroSystemPromptCli(
+					mockSession({ name: 'A', isPianola: true })
+				);
+				expect(result?.split('\n\n---\n\n').map((part) => part.slice(0, 4))).toEqual([
+					'BASE',
+					'PIAN',
+					'S1 J',
+					'HIST',
+				]);
+			});
+
+			it('skips the section when its prompt file is missing', async () => {
+				delete prompts['system-one-system'];
+				const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				expect(await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }))).toBe('BASE A');
+				errSpy.mockRestore();
 			});
 		});
 

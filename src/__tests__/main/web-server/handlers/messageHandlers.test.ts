@@ -320,8 +320,23 @@ vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
 		costUsd: 0.000005,
 		redacted: false,
 	})),
+	getSystemOneAgentAccessRequest: vi.fn(async () => ({
+		allowed: true,
+		gate: null,
+		message: null,
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		calibrated: true,
+		budget: {
+			dayStartedAt: 1_800_000_000_000,
+			dailyBudgetUsd: 1,
+			spentTodayUsd: 0,
+			remainingTodayUsd: 1,
+		},
+	})),
 }));
 import {
+	getSystemOneAgentAccessRequest,
 	readSystemOneAgentUsage,
 	runAgentSystemOneRequest,
 } from '../../../../main/local-models/system-one/agent-service';
@@ -6556,6 +6571,48 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				success: false,
 				error: 'since is a time in epoch milliseconds.',
 			});
+		});
+
+		it('system_one_access asks the service about the agent that was named, and answers with what it says', async () => {
+			handler.handleMessage(client, {
+				type: 'system_one_access',
+				agentId: 'agent-7',
+				requestId: 's1-access-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_access_result'));
+
+			// The agent asked ABOUT, not the caller: the CLI builds a prompt for the agent it spawns.
+			expect(getSystemOneAgentAccessRequest).toHaveBeenLastCalledWith('agent-7');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-access-1',
+				access: { allowed: true, gate: null, engine: 'jev-cloud', calibrated: true },
+			});
+
+			// A refusal is an answer, not a failed round trip: the builder reads the gate.
+			vi.mocked(getSystemOneAgentAccessRequest).mockResolvedValueOnce({
+				allowed: false,
+				gate: 'agents-off',
+				message: 'System One is off for agents. Continue without System One.',
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				calibrated: true,
+				budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0, remainingTodayUsd: 1 },
+			});
+			handler.handleMessage(client, { type: 'system_one_access', requestId: 's1-access-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-access-2'));
+			expect(getSystemOneAgentAccessRequest).toHaveBeenLastCalledWith(undefined);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				access: { allowed: false, gate: 'agents-off' },
+			});
+
+			vi.mocked(getSystemOneAgentAccessRequest).mockRejectedValueOnce(
+				new Error('settings unreadable')
+			);
+			handler.handleMessage(client, { type: 'system_one_access', requestId: 's1-access-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-access-3'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'settings unreadable' });
 		});
 
 		it('system_one_agent_request carries a refusal as a successful round trip, and a bug as a failed one', async () => {

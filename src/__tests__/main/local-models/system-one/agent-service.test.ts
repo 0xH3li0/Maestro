@@ -80,10 +80,12 @@ import {
 	SYSTEM_ONE_AGENT_REQUEST_SPACING_MS,
 	configureAgentSystemOne,
 	getSystemOneAgentAccess,
+	getSystemOneAgentAccessRequest,
 	readSystemOneAgentUsage,
 	resetAgentSystemOneForTests,
 	runAgentSystemOneRequest,
 } from '../../../../main/local-models/system-one/agent-service';
+import { coreSystemPromptSectionsFor } from '../../../../shared/maestroSystemPrompt';
 import {
 	SYSTEM_ONE_CACHE_DIR,
 	SYSTEM_ONE_CACHE_TTL_MS,
@@ -1373,6 +1375,75 @@ describe.skipIf(!canLoadNodeSqlite())('runAgentSystemOneRequest', () => {
 
 			expect(access).toMatchObject({ allowed: true, engine: 'local-judge', calibrated: false });
 			expect(access.engineLabel).toContain('not calibrated');
+		});
+
+		it('reads an agent id as a surface sends it, and anything else as no agent named', async () => {
+			await jevReady();
+			sessions = [{ id: 'agent-1', systemOneOptOut: true }];
+
+			expect((await getSystemOneAgentAccessRequest('agent-1')).gate).toBe('agent-opted-out');
+			for (const junk of [undefined, null, 7, { id: 'agent-1' }, ['agent-1']]) {
+				const access = await getSystemOneAgentAccessRequest(junk);
+				expect(access.allowed, String(junk)).toBe(true);
+				expect(access.budget.agent, String(junk)).toBeUndefined();
+			}
+		});
+
+		// The system prompt builders gate the System One section on this answer
+		// (`coreSystemPromptSectionsFor`). One agent, one switch at a time.
+		it('is what the system prompt section follows: there only while every switch passes', async () => {
+			const section = async (agentId = 'agent-1', isSsh = false) =>
+				coreSystemPromptSectionsFor({
+					isSsh,
+					systemOne: await getSystemOneAgentAccessRequest(agentId),
+				}).map((ref) => ref.promptId);
+			const told = ['system-one-system'];
+
+			// No engine chosen.
+			expect(await section()).toEqual([]);
+
+			// Chosen, with no key: not set up.
+			server = await startMockJevServer({ apiKey: KEY });
+			shellEnv[TYPESAFE_BASE_URL_ENV_VAR] = server.baseUrl;
+			await updateSystemOneSettingsRequest({ engine: 'jev-cloud' });
+			expect((await getSystemOneAgentAccess('agent-1')).gate).toBe('engine-not-ready');
+			expect(await section()).toEqual([]);
+
+			// Set up, not tested.
+			await setSystemOneKeyRequest({ engine: 'jev-cloud', key: KEY });
+			expect((await getSystemOneAgentAccess('agent-1')).gate).toBe('engine-untested');
+			expect(await section()).toEqual([]);
+
+			// Tested: every gate passes.
+			expect((await testSystemOne()).ok).toBe(true);
+			expect(await section()).toEqual(told);
+			// Never for an SSH remote agent, whose shell cannot reach this desktop.
+			expect(await section('agent-1', true)).toEqual([]);
+
+			// "Let agents use System One" off, then on again: the next spawn follows.
+			await updateSystemOneSettingsRequest({ agents: { enabled: false } });
+			expect(await section()).toEqual([]);
+			await updateSystemOneSettingsRequest({ agents: { enabled: true } });
+			expect(await section()).toEqual(told);
+
+			// This agent switched off in its own settings; another agent is not.
+			sessions = [{ id: 'agent-1', systemOneOptOut: true }];
+			expect(await section()).toEqual([]);
+			expect(await section('agent-2')).toEqual(told);
+			sessions = [];
+
+			// The day's budget spent.
+			await updateSystemOneSettingsRequest({ agents: { dailyBudgetUsd: 0 } });
+			expect(await section()).toEqual([]);
+			await updateSystemOneSettingsRequest({ agents: { dailyBudgetUsd: 1 } });
+			expect(await section()).toEqual(told);
+
+			// The engine switched off.
+			await updateSystemOneSettingsRequest({ engine: 'off' });
+			expect(await section()).toEqual([]);
+
+			// Deciding all of that asked the engine nothing but its one Test.
+			expect(server.requests).toHaveLength(1);
 		});
 	});
 

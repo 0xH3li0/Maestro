@@ -64,6 +64,7 @@ import type {
 } from '../../shared/local-models/model-server';
 import type { ServerBuildChoice } from '../../shared/local-models/server-engine';
 import type { SystemOneRemoteEngineId } from '../../shared/local-models/system-one';
+import type { SystemOneAgentAccess } from '../../shared/local-models/system-one-agent';
 import type {
 	SystemOneLedgerPage,
 	SystemOneLedgerQuery,
@@ -315,6 +316,15 @@ function createSystemOneApi() {
 		 */
 		ledger: (query?: SystemOneLedgerQuery): Promise<SystemOneLedgerPage> =>
 			ipcRenderer.invoke('localModels:systemOne:ledger', query),
+
+		/**
+		 * Whether a System One request from this agent would be answered right now,
+		 * by which engine, and what is left of the day's budget. Reads only. The
+		 * system prompt builder asks on every spawn, so a switch turned off is
+		 * gone from the next agent's prompt.
+		 */
+		agentAccess: (agentId?: string): Promise<SystemOneAgentAccess> =>
+			ipcRenderer.invoke('localModels:systemOne:agentAccess', agentId),
 
 		/** The settings or a key changed, here or from the CLI. Read `report()` for the rest. */
 		onChanged: (handler: () => void): (() => void) =>

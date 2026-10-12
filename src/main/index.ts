@@ -119,6 +119,7 @@ import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
 import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
+import { localSystemOneAccess } from './utils/maestro-system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
 import { generateTabName } from './ipc/handlers/tabNaming';
@@ -2714,7 +2715,10 @@ app
 			detectAgent,
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
-			prepareSystemPrompt: prepareMaestroSystemPromptCli,
+			// This builder runs in the main process here, so it asks the System One
+			// service directly instead of the WS bridge the CLI goes through.
+			prepareSystemPrompt: (agent) =>
+				prepareMaestroSystemPromptCli(agent, { readSystemOneAccess: localSystemOneAccess }),
 			issueRunToken: (agentId, ttlMs, receiptToolId) =>
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),

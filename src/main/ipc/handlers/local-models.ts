@@ -94,7 +94,9 @@ import {
 	testSystemOne,
 	updateSystemOneSettingsRequest,
 } from '../../local-models/system-one/service';
+import { getSystemOneAgentAccessRequest } from '../../local-models/system-one/agent-service';
 import { readSystemOneLedger } from '../../local-models/system-one/decisions';
+import type { SystemOneAgentAccess } from '../../../shared/local-models/system-one-agent';
 import type { SystemOneLedgerPage } from '../../../shared/local-models/system-one-ledger';
 import type {
 	SystemOneReport,
@@ -567,6 +569,18 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('systemOne:test'),
 			async (): Promise<SystemOneTestResult> => testSystemOne()
+		)
+	);
+
+	// Whether a System One request from one agent would be answered right now:
+	// what the renderer's system prompt builder gates the System One section on.
+	// Reads the settings and the day's count; sends nothing.
+	ipcMain.handle(
+		'localModels:systemOne:agentAccess',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:agentAccess'),
+			async (agentId: unknown): Promise<SystemOneAgentAccess> =>
+				getSystemOneAgentAccessRequest(agentId)
 		)
 	);
 

@@ -166,7 +166,7 @@ const CATEGORY_HELP: Record<string, string> = {
 	'maestro-run':
 		'The section appended to every local agent system prompt once the MaestroRun launcher is installed and granted.',
 	[SYSTEM_ONE_GUIDE_PROMPT_CATEGORY]:
-		'The guide agents read before they ask System One: one prompt per topic of `maestro-cli s1 guide`, and one per recipe of `maestro-cli s1 examples`. The CLI prints them as written, so template variables are not filled in here.',
+		'What agents are told about System One. `system-one-system` is the section added to a local agent system prompt while a System One request from that agent would be answered; it is the one prompt here that takes template variables. The rest is the guide agents read before they ask: one prompt per topic of `maestro-cli s1 guide`, and one per recipe of `maestro-cli s1 examples`. The CLI prints those as written, so template variables are not filled in there.',
 };
 
 // Group template variables by prefix for the help panel. `variables` is the

@@ -13,9 +13,13 @@ import { computerHistoryDir } from '../../shared/computer-history/paths';
 import { readMaestroRunReadyPath } from '../../shared/maestro-run/state-file';
 import {
 	assembleMaestroSystemPrompt,
+	coreSystemPromptContext,
+	coreSystemPromptSectionsFor,
 	systemPromptSectionsFor,
+	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
+import { readSystemOneAccessFromDesktop, type SystemOneAccessReader } from './system-one-access';
 import { getConfigDirectory, readSettingValue, resolveSessionHistoryFilePath } from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
 
@@ -46,6 +50,16 @@ async function loadSection(promptId: string): Promise<string | undefined> {
 	}
 }
 
+export interface PrepareMaestroSystemPromptCliOptions {
+	/**
+	 * How to learn whether a System One request from the agent would be
+	 * answered. The CLI asks the desktop app over the WS bridge (the default). A
+	 * caller that runs INSIDE the desktop's main process passes the service
+	 * function itself, so the app does not open a socket to itself.
+	 */
+	readSystemOneAccess?: SystemOneAccessReader;
+}
+
 /**
  * Build the Maestro system prompt to pass via `appendSystemPrompt` when
  * spawning a CLI agent. Returns undefined if the prompt template fails to
@@ -57,7 +71,8 @@ async function loadSection(promptId: string): Promise<string | undefined> {
  * expanded to absolute on-disk paths the agent can read with its file tools.
  */
 export async function prepareMaestroSystemPromptCli(
-	session: SessionInfo
+	session: SessionInfo,
+	options: PrepareMaestroSystemPromptCliOptions = {}
 ): Promise<string | undefined> {
 	let template: string;
 	try {
@@ -89,8 +104,19 @@ export async function prepareMaestroSystemPromptCli(
 	const conductorProfile =
 		typeof conductorProfileSetting === 'string' ? conductorProfileSetting : undefined;
 
-	// Same role and plugin sections the desktop appends (see spawnHelpers.ts).
+	// Same role, core and plugin sections the desktop appends (see spawnHelpers.ts).
 	const roleSections = session.isPianola ? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	// `maestro-cli s1` reaches the desktop on this machine, so an SSH agent is
+	// never asked about. A reader that cannot answer leaves the section out.
+	const readSystemOneAccess = options.readSystemOneAccess ?? readSystemOneAccessFromDesktop;
+	const core: CoreSystemPromptInput = {
+		isSsh,
+		systemOne: isSsh ? undefined : await readSystemOneAccess(session.id),
+	};
+	const coreSections: Array<string | undefined> = [];
+	for (const ref of coreSystemPromptSectionsFor(core)) {
+		coreSections.push(await loadSection(ref.promptId));
+	}
 	// The app owns the MaestroRun check and records its answer on disk; the CLI
 	// has no service to ask. An SSH agent is never told about a local launcher.
 	const maestroRunPath = isSsh ? undefined : readMaestroRunReadyPath(getConfigDirectory());
@@ -122,8 +148,10 @@ export async function prepareMaestroSystemPromptCli(
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,
+			...coreSystemPromptContext(core),
 		},
 		roleSections,
+		coreSections,
 		pluginSections,
 	});
 }

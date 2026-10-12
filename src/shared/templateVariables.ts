@@ -2,6 +2,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
 import type { AdditionalDirectory } from './types';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+import type { SystemOnePromptVariables } from './local-models/system-one-prompt';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -63,6 +64,12 @@ import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatu
  *
  * Maestro Variables:
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
+ *
+ * System One Variables (filled only in a system prompt, and only while a System One
+ * request from the agent would be answered; empty otherwise):
+ *   {{SYSTEM_ONE_ENGINE}}     - The engine that answers, as a person reads it
+ *   {{SYSTEM_ONE_CALIBRATED}} - Whether its numbers are calibrated, and what to do about it
+ *   {{SYSTEM_ONE_BUDGET}}     - The daily budget and roughly how much of it is left
  *
  * Cue Variables (Cue automation only):
  *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger, webhook.received)
@@ -235,6 +242,13 @@ export interface TemplateContext {
 	 * back to `getMaestroCLIPath()`.
 	 */
 	maestroCliPath?: string;
+	/**
+	 * What the System One system-prompt section says about the engine and the
+	 * budget (`systemOnePromptVariables`). A builder sets it only while a System
+	 * One request from this agent would be answered, which is exactly when the
+	 * section is included; unset renders the three variables empty.
+	 */
+	systemOne?: SystemOnePromptVariables;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
 	// Cue event context (for Cue automation prompts)
@@ -531,6 +545,18 @@ export const TEMPLATE_VARIABLES = [
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
+	{
+		variable: '{{SYSTEM_ONE_BUDGET}}',
+		description: 'System One daily budget and roughly how much is left (system prompt only)',
+	},
+	{
+		variable: '{{SYSTEM_ONE_CALIBRATED}}',
+		description: 'Whether the System One engine is calibrated (system prompt only)',
+	},
+	{
+		variable: '{{SYSTEM_ONE_ENGINE}}',
+		description: 'The System One engine that answers (system prompt only)',
+	},
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -790,6 +816,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		MAESTRO_CLI_PATH: context.maestroCliPath
 			? `node "${context.maestroCliPath}"`
 			: getMaestroCLIPath(),
+
+		// System One variables (set by a system prompt builder; empty otherwise)
+		SYSTEM_ONE_ENGINE: context.systemOne?.engine || '',
+		SYSTEM_ONE_CALIBRATED: context.systemOne?.calibrated || '',
+		SYSTEM_ONE_BUDGET: context.systemOne?.budget || '',
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',

@@ -867,6 +867,22 @@ const mockMaestro = {
 				retentionDays: 30,
 				notice: null,
 			}),
+			// Off by default, so no spawn in a test carries the System One section
+			// unless the test turns it on.
+			agentAccess: vi.fn().mockResolvedValue({
+				allowed: false,
+				gate: 'engine-off',
+				message: 'System One is off: no engine is chosen. Continue without System One.',
+				engine: 'off',
+				engineLabel: 'Off',
+				calibrated: null,
+				budget: {
+					dayStartedAt: 0,
+					dailyBudgetUsd: 1,
+					spentTodayUsd: 0,
+					remainingTodayUsd: 1,
+				},
+			}),
 			onChanged: vi.fn().mockReturnValue(() => {}),
 		},
 		semanticIndex: {

@@ -14,7 +14,8 @@
  * local_models_server_key, local_models_server_ensure,
  * local_models_run_on_test, local_models_tier_options, system_one_status,
  * system_one_set, system_one_key_set, system_one_key_clear, system_one_test,
- * system_one_ledger, system_one_agent_request, system_one_usage, notify_speak.
+ * system_one_ledger, system_one_agent_request, system_one_usage,
+ * system_one_access, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -81,6 +82,7 @@ import {
 	updateSystemOneSettingsRequest,
 } from '../../../local-models/system-one/service';
 import {
+	getSystemOneAgentAccessRequest,
 	readSystemOneAgentUsage,
 	runAgentSystemOneRequest,
 } from '../../../local-models/system-one/agent-service';
@@ -687,6 +689,24 @@ export function handleSystemOneUsage(
 			message.query,
 			readCallerMessageFields(message)?.fromSessionId
 		),
+	}));
+}
+
+/**
+ * Handle system_one_access - whether a System One request from one agent would
+ * be answered right now, by which engine, and what is left of the day's budget.
+ * The CLI's system prompt builder asks it for the agent it is about to spawn
+ * (`agentId`), through the function the renderer's builder reaches over
+ * `localModels:systemOne:agentAccess`. It sends nothing to an engine and
+ * changes nothing.
+ */
+export function handleSystemOneAccess(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_access_result', async () => ({
+		access: await getSystemOneAgentAccessRequest(message.agentId),
 	}));
 }
 

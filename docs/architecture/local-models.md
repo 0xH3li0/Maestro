@@ -1523,9 +1523,9 @@ branch stamped 18 still gets the table).
 
 | Surface  | Name                                                                                                                                                                    |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IPC      | `localModels:systemOne:report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, and the push `localModels:systemOne:changed`                                             |
-| Preload  | `window.maestro.localModels.systemOne` (`report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `onChanged`)                                                           |
-| Bridge   | `system_one_status`, `system_one_set`, `system_one_key_set`, `system_one_key_clear`, `system_one_test`, `system_one_ledger`                                             |
+| IPC      | `localModels:systemOne:report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `agentAccess`, and the push `localModels:systemOne:changed`                              |
+| Preload  | `window.maestro.localModels.systemOne` (`report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `agentAccess`, `onChanged`)                                            |
+| Bridge   | `system_one_status`, `system_one_set`, `system_one_key_set`, `system_one_key_clear`, `system_one_test`, `system_one_ledger`, `system_one_access`                        |
 | CLI      | `maestro-cli s1 status`, `set engine`, `set timeout`, `set fail-policy`, `set keep-inputs`, `key set`, `key clear`, `test`, `ledger`; `models assign <task> system-one` |
 | Renderer | `useSystemOne()` (the tab owns one instance), `useSystemOneLedger()`, `SystemOneEngineCard`, the **If no answer** column, `SystemOneLedgerSection`                      |
 

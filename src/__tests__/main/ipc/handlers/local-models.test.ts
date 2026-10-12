@@ -228,6 +228,17 @@ vi.mock('../../../../main/local-models/system-one/service', () => {
 	};
 });
 
+vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
+	getSystemOneAgentAccessRequest: vi.fn(async () => ({
+		allowed: false,
+		gate: 'engine-untested',
+		message: 'System One is off: Jev (TypeSafe cloud) has not passed its Test.',
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		calibrated: true,
+		budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0, remainingTodayUsd: 1 },
+	})),
+}));
 vi.mock('../../../../main/local-models/system-one/decisions', () => ({
 	readSystemOneLedger: vi.fn(() => ({ entries: [], total: 0, retentionDays: 30, notice: null })),
 }));
@@ -305,6 +316,7 @@ import {
 	updateSystemOneSettingsRequest,
 } from '../../../../main/local-models/system-one/service';
 import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
+import { getSystemOneAgentAccessRequest } from '../../../../main/local-models/system-one/agent-service';
 import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
 import {
 	artifactForThisPlatform,
@@ -723,6 +735,18 @@ describe('task router channel', () => {
 		});
 
 		expect(readSystemOneLedger).toHaveBeenCalledWith(query);
+		expect(testSystemOne).not.toHaveBeenCalled();
+	});
+
+	it('answers whether one agent may ask System One, and asks the engine nothing', async () => {
+		vi.mocked(testSystemOne).mockClear();
+
+		await expect(
+			handlerFor('localModels:systemOne:agentAccess')({}, 'agent-7')
+		).resolves.toMatchObject({ allowed: false, gate: 'engine-untested', engine: 'jev-cloud' });
+
+		// The agent id arrives as the first argument, not shifted by the IPC event.
+		expect(getSystemOneAgentAccessRequest).toHaveBeenCalledWith('agent-7');
 		expect(testSystemOne).not.toHaveBeenCalled();
 	});
 

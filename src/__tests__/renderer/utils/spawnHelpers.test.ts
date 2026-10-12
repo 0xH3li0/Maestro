@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import {
+	SYSTEM_ONE_GATES,
+	refusedSystemOneAccess,
+	systemOneAccess,
+} from '../../helpers/systemOneAccess';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {
@@ -253,6 +258,81 @@ describe('prepareMaestroSystemPrompt', () => {
 			it('reads a failed check as not ready', async () => {
 				readyPath().mockRejectedValue(new Error('main not ready'));
 				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+			});
+		});
+
+		describe('System One', () => {
+			const SECTION =
+				'S1 Jev (TypeSafe cloud)|calibrated: of the answers it gives 0.8, about 80% are true, so act on thresholds|$1.00 a day across all agents; more than half is left today';
+			const agentAccess = () =>
+				(window as any).maestro.localModels.systemOne.agentAccess as ReturnType<typeof vi.fn>;
+
+			beforeEach(() => {
+				prompts['system-one-system'] =
+					'S1 {{SYSTEM_ONE_ENGINE}}|{{SYSTEM_ONE_CALIBRATED}}|{{SYSTEM_ONE_BUDGET}}';
+				agentAccess().mockReset();
+				agentAccess().mockResolvedValue(systemOneAccess());
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: false },
+				});
+			});
+
+			afterEach(() => {
+				delete prompts['system-one-system'];
+				agentAccess().mockResolvedValue(refusedSystemOneAccess('engine-off'));
+			});
+
+			it('is appended when main says a request from this agent would be answered', async () => {
+				const result = await prepareMaestroSystemPrompt({ session: baseSession });
+				expect(result).toBe(`BASE\n\n---\n\n${SECTION}`);
+				expect(agentAccess()).toHaveBeenCalledWith('session-1');
+			});
+
+			it('is left out behind each gate that refuses the agent', async () => {
+				for (const gate of SYSTEM_ONE_GATES) {
+					agentAccess().mockResolvedValue(refusedSystemOneAccess(gate));
+					expect(await prepareMaestroSystemPrompt({ session: baseSession }), gate).toBe('BASE');
+				}
+				expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith('system-one-system');
+			});
+
+			it('asks main on every spawn, so switching System One off removes it from the next one', async () => {
+				agentAccess()
+					.mockResolvedValueOnce(systemOneAccess())
+					.mockResolvedValueOnce(refusedSystemOneAccess('agents-off'));
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toContain('S1 ');
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+			});
+
+			it('is never given to an SSH remote agent, and main is not asked', async () => {
+				for (const ssh of [{ sessionSshRemoteConfig: { enabled: true } }, { sshRemoteId: 'r1' }]) {
+					const result = await prepareMaestroSystemPrompt({ session: { ...baseSession, ...ssh } });
+					expect(result).toBe('BASE');
+				}
+				expect(agentAccess()).not.toHaveBeenCalled();
+			});
+
+			it('reads a failed check, or an older preload, as no answer', async () => {
+				agentAccess().mockRejectedValue(new Error('main not ready'));
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+
+				const saved = (window as any).maestro.localModels;
+				(window as any).maestro.localModels = undefined;
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+				(window as any).maestro.localModels = saved;
+			});
+
+			it('sits after the role section and before the plugin sections', async () => {
+				enableComputerHistory();
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...baseSession, isPianola: true },
+				});
+				expect(result?.split('\n\n---\n\n').map((part) => part.slice(0, 4))).toEqual([
+					'BASE',
+					'PIAN',
+					'S1 J',
+					'HIST',
+				]);
 			});
 		});
 
