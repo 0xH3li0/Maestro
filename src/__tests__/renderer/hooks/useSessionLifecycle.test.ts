@@ -537,6 +537,92 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		describe('Peer grants', () => {
+			const ROWS = [
+				{ sessionId: 'peer-1', read: true, write: false, description: 'Owns the docs' },
+				// Neither bit: an exclusion, which the save must keep.
+				{ sessionId: 'peer-2', read: false, write: false },
+			];
+
+			const saveWithPeers = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				peerGrants: Record<string, unknown> | undefined,
+				toolType?: string
+			) => {
+				// `peerGrants` is the 27th argument, after `tierTargets`; everything
+				// between is left unset, bar the provider a case wants switched.
+				const args = new Array(27).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[2] = toolType;
+				args[26] = peerGrants;
+				return (save as (...all: unknown[]) => void)(...args);
+			};
+
+			it('stores the rows and both grants on the agent', () => {
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				act(() => {
+					saveWithPeers(result.current.handleSaveEditAgent, {
+						peerAgents: ROWS,
+						groupPeerAccess: { read: true, write: false },
+						worktreePeerAccess: { read: true, write: true },
+					});
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.peerAgents).toEqual(ROWS);
+				expect(updated.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(updated.worktreePeerAccess).toEqual({ read: true, write: true });
+			});
+
+			it('removes a source the form switched off', () => {
+				const session = createMockSession({
+					id: 'session-1',
+					peerAgents: ROWS,
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: { read: true, write: true },
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				act(() => {
+					// The form hands back absent fields for an empty list and two
+					// unchecked grants.
+					saveWithPeers(result.current.handleSaveEditAgent, {
+						worktreePeerAccess: { read: false, write: true },
+					});
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.peerAgents).toBeUndefined();
+				expect(updated.groupPeerAccess).toBeUndefined();
+				expect(updated.worktreePeerAccess).toEqual({ read: false, write: true });
+			});
+
+			it('keeps the grants across a provider switch', () => {
+				// A peer names another agent, not a provider.
+				const session = createMockSession({ id: 'session-1', toolType: 'claude-code' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				act(() => {
+					saveWithPeers(
+						result.current.handleSaveEditAgent,
+						{ peerAgents: ROWS, groupPeerAccess: { read: true, write: false } },
+						'codex'
+					);
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.toolType).toBe('codex');
+				expect(updated.peerAgents).toEqual(ROWS);
+				expect(updated.groupPeerAccess).toEqual({ read: true, write: false });
+			});
+		});
+
 		describe('Background requests', () => {
 			const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:4b' };
 			const onProxy = 'http://127.0.0.1:48123/anthropic';

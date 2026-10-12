@@ -5,6 +5,7 @@ import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { normalizePeerAgents } from '../../../shared/peerAgents';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
@@ -14,7 +15,13 @@ import {
 	resolveContextWindow,
 	isStoredContextWindowOverridden,
 } from '../../utils/contextWindowPrecedence';
-import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	PeerAccess,
+	PeerAgent,
+	ToolType,
+} from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateEditSession } from '../../utils/sessionValidation';
@@ -86,6 +93,11 @@ export function EditAgentModal({
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
+	// Peer Agents: the explicit rows, and the group and worktree grants. A grant
+	// that is off is `undefined`, never a pair of false bits.
+	const [peerAgents, setPeerAgents] = useState<PeerAgent[]>([]);
+	const [groupPeerAccess, setGroupPeerAccess] = useState<PeerAccess | undefined>(undefined);
+	const [worktreePeerAccess, setWorktreePeerAccess] = useState<PeerAccess | undefined>(undefined);
 	const homeDir = useHomeDir();
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
@@ -431,6 +443,10 @@ export function EditAgentModal({
 			// Clone the grants so editing a row doesn't mutate the persisted array
 			// in the session store before the user hits Save.
 			setAdditionalDirectories((session.additionalDirectories ?? []).map((d) => ({ ...d })));
+			// The same for the peer rows and the two grants.
+			setPeerAgents((session.peerAgents ?? []).map((peer) => ({ ...peer })));
+			setGroupPeerAccess(session.groupPeerAccess && { ...session.groupPeerAccess });
+			setWorktreePeerAccess(session.worktreePeerAccess && { ...session.worktreePeerAccess });
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
@@ -523,6 +539,19 @@ export function EditAgentModal({
 
 	/** Live store entry for this agent; see the snapshot note in the memo below. */
 	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+
+	// What the Peers tab draws from besides the form: the live fleet (the three
+	// fields its picker and its group count read) and the group this agent is in
+	// right now. This form does not edit the group, so the live entry is the
+	// truth and the opening snapshot is the fallback.
+	const fleetSessions = useSessionStore((s) => s.sessions);
+	const groups = useSessionStore((s) => s.groups);
+	const peerFleet = useMemo(
+		() => fleetSessions.map(({ id, name, groupId }) => ({ id, name, groupId })),
+		[fleetSessions]
+	);
+	const peerGroupId = (liveSession ?? session)?.groupId;
+	const peerGroupName = peerGroupId ? groups.find((g) => g.id === peerGroupId)?.name : undefined;
 
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
@@ -685,7 +714,13 @@ export function EditAgentModal({
 			// Provider is the absence of a target on the agent record.
 			runOnEdit.target,
 			// No tier set is the absence of the field: every tier follows its harness default.
-			tiersEdit.tierTargets
+			tiersEdit.tierTargets,
+			// A row with neither square lit is kept: it is an exclusion.
+			{
+				peerAgents: normalizePeerAgents(peerAgents),
+				groupPeerAccess,
+				worktreePeerAccess,
+			}
 		);
 		onClose();
 	}, [
@@ -699,6 +734,9 @@ export function EditAgentModal({
 		newSessionMessage,
 		additionalDirectories,
 		homeDir,
+		peerAgents,
+		groupPeerAccess,
+		worktreePeerAccess,
 		customPath,
 		customArgs,
 		customEnvVars,
@@ -1317,7 +1355,22 @@ export function EditAgentModal({
 					/>
 				)}
 
-				{activeTab === 'peers' && <PeersTab theme={theme} idPrefix="edit-agent" />}
+				{activeTab === 'peers' && (
+					<PeersTab
+						theme={theme}
+						idPrefix="edit-agent"
+						peers={peerAgents}
+						onChange={setPeerAgents}
+						groupAccess={groupPeerAccess}
+						onGroupAccessChange={setGroupPeerAccess}
+						worktreeAccess={worktreePeerAccess}
+						onWorktreeAccessChange={setWorktreePeerAccess}
+						availableAgents={peerFleet}
+						selfSessionId={session.id}
+						groupId={peerGroupId}
+						groupName={peerGroupName}
+					/>
+				)}
 
 				{activeTab === 'ssh' && (
 					// Always rendered (not gated on sshRemotes.length) because the

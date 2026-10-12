@@ -43,6 +43,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargets } from '../../../shared/modelTiers';
+import type { PeerGrants } from '../../../shared/peerAgents';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { flushAgentToStore, OFF_TOKEN_PROXY_FIELDS } from '../../services/agentGateway';
@@ -110,7 +111,9 @@ export interface SessionLifecycleReturn {
 		/** Run on target, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
-		tierTargets?: TierTargets
+		tierTargets?: TierTargets,
+		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+		peerGrants?: PeerGrants
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -209,7 +212,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** Run on target, already validated; `undefined` means the provider's model. */
 			runOn?: RunOnSourceTarget,
 			/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
-			tierTargets?: TierTargets
+			tierTargets?: TierTargets,
+			/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+			peerGrants?: PeerGrants
 		) => {
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
@@ -235,6 +240,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// Directory grants are provider-agnostic, so (like resilience) they
 					// survive a provider switch below.
 					additionalDirectories,
+					// Peer grants name other agents, not a provider, so they survive
+					// the switch too. Each field is written, so a grant the form
+					// switched off is removed and not left behind.
+					peerAgents: peerGrants?.peerAgents,
+					groupPeerAccess: peerGrants?.groupPeerAccess,
+					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					customPath,
 					customArgs,
 					customEnvVars,

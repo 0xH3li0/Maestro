@@ -4,6 +4,7 @@ import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargetAgent, TierTargets } from '../../../shared/modelTiers';
+import type { PeerGrants } from '../../../shared/peerAgents';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -115,7 +116,9 @@ export interface EditAgentModalProps {
 		/** Run on target, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
-		tierTargets?: TierTargets
+		tierTargets?: TierTargets,
+		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+		peerGrants?: PeerGrants
 	) => void;
 	theme: Theme;
 	session: Session | null;

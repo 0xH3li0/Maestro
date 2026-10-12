@@ -119,6 +119,17 @@ export interface PeerRosterInput {
 }
 
 /**
+ * The three stored sources of an agent's peer roster, as a settings form hands
+ * them to a save: the explicit rows (already through `normalizePeerAgents`),
+ * the group grant and the worktree grant. An absent field means that source
+ * is off, so a save writes all three and a cleared one is removed.
+ */
+export type PeerGrants = Pick<
+	PeerRosterInput,
+	'peerAgents' | 'groupPeerAccess' | 'worktreePeerAccess'
+>;
+
+/**
  * The agent a roster is resolved FOR. Its own name is never read (a roster
  * never lists the agent itself), so a caller holding a partial record of the
  * agent being spawned can pass it as it is.

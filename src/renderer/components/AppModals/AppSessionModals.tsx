@@ -15,6 +15,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargets } from '../../../shared/modelTiers';
+import type { PeerGrants } from '../../../shared/peerAgents';
 
 /**
  * Props for the AppSessionModals component
@@ -107,7 +108,9 @@ export interface AppSessionModalsProps {
 		/** Run on target, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
-		tierTargets?: TierTargets
+		tierTargets?: TierTargets,
+		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+		peerGrants?: PeerGrants
 	) => void;
 	editAgentSession: Session | null;
 

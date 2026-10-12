@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Folder, AlertTriangle, Terminal } from 'lucide-react';
+import { Folder, AlertTriangle, Terminal, Users } from 'lucide-react';
 import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -21,7 +21,6 @@ import {
 	firstTabWithError,
 	GeneralTab,
 	ModelsTab,
-	PeersTab,
 	ProviderTab,
 	SshTab,
 } from '../AgentSettings';
@@ -1587,7 +1586,17 @@ export function NewInstanceModal({
 						</AgentSettingsPanel>
 					))}
 
-				{activeTab === 'peers' && <PeersTab theme={theme} idPrefix="new-agent" />}
+				{activeTab === 'peers' && (
+					// A placeholder until this form holds peer state of its own: Edit
+					// Agent is wired first (MODELS-14 mounts `PeersTab` here next).
+					<AgentSettingsPanel theme={theme} idPrefix="new-agent" tab="peers">
+						<EmptyStatePlaceholder
+							theme={theme}
+							icon={<Users className="w-10 h-10" />}
+							title="Peer Agents are set up here."
+						/>
+					</AgentSettingsPanel>
+				)}
 
 				{activeTab === 'ssh' && (
 					// Always rendered, even when no remotes are configured, so the
