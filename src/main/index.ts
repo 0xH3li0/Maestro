@@ -142,8 +142,6 @@ import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
-import { resolveCueTurnSettings } from '../shared/cue/turn-settings';
-import { describeTurnSettings } from '../shared/autorunTurnSettings';
 import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,

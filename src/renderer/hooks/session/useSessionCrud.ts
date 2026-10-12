@@ -27,7 +27,6 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
-import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
