@@ -2408,7 +2408,7 @@ whole-context cache: one in four for `qwen35`, `qwen35moe` and `qwen3next`; the 
 layers for `gemma4` and `gpt-oss`, whose other layers slide a small window; and for Gemma 4 E4B
 only the layers that do not reuse another layer's KV. The vision models (Gemma 4 E4B, 12B and 31B)
 download their `mmproj` projector with the weights, and the server hands it to `llama-server`.
-None of them has the `agent` role yet: only a real-harness qualification grants it.
+Only a real-harness qualification grants the `agent` role (next section).
 
 A hash proves the bytes are the pinned ones, not that the pinned engine can run them.
 `src/__tests__/main/local-models/model-catalog-load-e2e.test.ts` (opt-in: `MAESTRO_LOCAL_MODEL_E2E=1`
@@ -2417,29 +2417,117 @@ lists it on `/v1/models` and generates, with an image request for a model that h
 
 ### Result: 2026-10-12, darwin-arm64 (Apple M5 Max, 128 GB), engine `b11559` Metal
 
-| Model               | Architecture | Download | Load  | Generation     | Result                                   |
-| ------------------- | ------------ | -------- | ----- | -------------- | ---------------------------------------- |
-| Qwen3.5 4B (Q4_K_M) | `qwen35`     | 2.6 GB   | 1.8 s | 32.3 tokens/s  | Loaded, listed, generated                |
-| Gemma 4 E4B (Q4_0)  | `gemma4`     | 5.2 GB   | 1.8 s | 92.5 tokens/s  | Loaded, listed, generated, read an image |
-| gpt-oss 20B (MXFP4) | `gpt-oss`    | 11.3 GB  | 1.8 s | 142.3 tokens/s | Loaded, listed, generated                |
+| Model                | Architecture | Download | Load   | Generation     | Result                                   |
+| -------------------- | ------------ | -------- | ------ | -------------- | ---------------------------------------- |
+| Qwen3.5 4B (Q4_K_M)  | `qwen35`     | 2.6 GB   | 1.8 s  | 32.3 tokens/s  | Loaded, listed, generated                |
+| Gemma 4 E4B (Q4_0)   | `gemma4`     | 5.2 GB   | 1.8 s  | 92.5 tokens/s  | Loaded, listed, generated, read an image |
+| Qwen3.5 9B (Q4_K_M)  | `qwen35`     | 5.3 GB   | 1.5 s  | 30.0 tokens/s  | Loaded, listed, generated                |
+| Gemma 4 12B (Q4_K_M) | `gemma4`     | 6.8 GB   | 2.1 s  | 55.0 tokens/s  | Loaded, listed, generated, read an image |
+| gpt-oss 20B (MXFP4)  | `gpt-oss`    | 11.3 GB  | 1.8 s  | 142.3 tokens/s | Loaded, listed, generated                |
+| Devstral Small 2 24B | `mistral3`   | 13.3 GB  | 9.4 s  | 30.3 tokens/s  | Loaded, listed, generated                |
+| Qwen3-Coder 30B-A3B  | `qwen3moe`   | 17.3 GB  | 2.1 s  | 65.8 tokens/s  | Loaded, listed, generated                |
+| Qwen3.6 35B-A3B      | `qwen35moe`  | 19.0 GB  | 10.2 s | 45.4 tokens/s  | Loaded, listed, generated                |
+| Gemma 4 31B (Q4_K_M) | `gemma4`     | 18.2 GB  | 5.4 s  | 18.2 tokens/s  | Loaded, listed, generated, read an image |
+| Qwen3.8 27B (Q4_K_M) | `qwen35`     | 17.7 GB  | 5.5 s  | 16.6 tokens/s  | Loaded, listed, generated                |
 
 Load time is from server start to the model answering at its 40,960-token `defaultContext`, with
 the file just written (page cache warm). Tokens per second is from a 2 to 35 token reply, so read
 it as a smoke figure, not a benchmark; the harness qualification pass measures real turns.
+Qwen3-Coder-Next 80B-A3B (`qwen3next`) and gpt-oss 120B are loaded by the qualification pass,
+which deletes them afterwards (they are over 25 GB).
 
-**Not loaded here:** Qwen3.5 9B, Gemma 4 12B and 31B, Devstral Small 2 24B, Qwen3-Coder 30B-A3B,
-Qwen3.6 35B-A3B, Qwen3.8 27B, Qwen3-Coder-Next 80B-A3B and gpt-oss 120B. The machine has the memory
-for every one of them. The reason is the download: this link ran at about 2.7 MB/s, and these
-files are 5.7 to 63.4 GB. What was checked instead is weaker: the architecture name each one uses
-(`qwen35`, `qwen35moe`, `qwen3next`, `qwen3moe`, `gemma4`, `gpt-oss`, `mistral3`) is registered in
-the pinned build's `libllama` (strings check), and Qwen3.5 4B, Gemma 4 E4B and gpt-oss 20B share
-architectures with seven of them. `qwen3moe`, `mistral3` and `qwen35moe` have no real load yet.
-Task 4's harness qualification will load each model it qualifies.
+**Download speed under Node 26.** The first downloads here ran at about 2.5 MB/s, which looked like
+a slow link. It was the dev shell's Node 26.5: its global `fetch` pulls a Hugging Face file at
+about 2.5 MB/s where Node's `https.get` and `curl` pull 46 MB/s on the same URL, and Electron's
+Node 24.18 `fetch` (what the app runs) pulls 47.6 MB/s. The app is not affected. For an e2e run
+that downloads, run vitest under Electron's Node (`ELECTRON_RUN_AS_NODE=1` with the Electron
+binary). Do not interrupt a download run and start another on the same data dir: the first one's
+worker kept appending to the Qwen3.5 9B `.part` file, and the result failed its hash check. A
+clean download then verified.
 
 **Not checked:** the in-process text engine (`node-llama-cpp`, `generateText()`) against these
 architectures. Its bundled llama.cpp has its own release, so a model the model server loads may
 still be `model-unsupported` there. The housekeeping comparison in the default-model task runs
 Qwen3.5 in-process and will show it.
+
+## Agent qualification
+
+The `agent` role (the Library's "Runs agents" badge) is granted by a measurement, never by a model
+card. `src/__tests__/main/local-models/model-agent-qualification-e2e.test.ts` (opt-in:
+`MAESTRO_LOCAL_MODEL_E2E=1`; `MAESTRO_LOCAL_MODEL_E2E_MODELS` = `installed`, `all` or ids) starts
+the model server on each model and runs Claude Code and Codex through it on one scripted task in a
+scratch git repo: read `notes.md`, fix the bug in `math.js` that the failing test shows (an
+off-by-one that drops the first element), run `node test.js`, report. The task, the launch recipes
+and the rules live in `src/__tests__/helpers/agentQualification.ts`.
+
+A run **passes** when all of these hold:
+
+- `node test.js` is green afterwards, within 10 model turns, and `test.js` is unchanged;
+- the harness itself ran the test and saw `PASS` (a green repo without that was fixed by luck: on
+  the first pass Qwen3 1.7B's background subagent made the edit while its main turn reported "no
+  bug found");
+- no tool call was malformed (refused by the harness's schema, or tool-call markup leaked into
+  text because the server could not parse it);
+- the harness reported back.
+
+A harness **qualifies** a model when a majority of 3 attempts pass (sampling makes one run a coin
+flip near the edge of a model's ability). Turns are Claude Code's own `num_turns`, and for Codex
+the tool calls plus the final answer, since each tool result goes back in a request of its own.
+Throughput is from `llama-server`'s per-request timings in its log, over every request the run
+made.
+
+The recipes: Claude Code on the Anthropic route, `--model <id>` with
+`ANTHROPIC_DEFAULT_HAIKU_MODEL=<id>`, the server key as `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS=40960`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`, `--max-turns 10`
+and its own `CLAUDE_CONFIG_DIR`. Codex on the Responses route as a provider of its own
+(`wire_api="responses"`), `model_context_window=40960`, `--sandbox workspace-write` and its own
+`CODEX_HOME`. The output budget matters: Claude Code holds back its maximum output (32,000 tokens
+by default) from the window before deciding to compact. At 40,960 that leaves about 9K, under its
+own system prompt in most tokenizers, so it compacted on every turn and gave up ("Autocompact is
+thrashing"). That first pass failed Gemma 4 12B on the recipe, not the model. Phase 06 (Run on)
+needs the same budget.
+
+### Result: 2026-10-12, darwin-arm64 (Apple M5 Max, 128 GB), engine `b11559` Metal, Claude Code 2.1.296, Codex 0.162.1
+
+| Model                    | Claude Code       | Codex             | Turns (CC / Codex) | Wall (CC / Codex)     | Tokens/s | Failure mode                                                                        |
+| ------------------------ | ----------------- | ----------------- | ------------------ | --------------------- | -------- | ----------------------------------------------------------------------------------- |
+| Qwen3 1.7B               | fail (0 of 2)     | fail (0 of 2)     | 1, 8 / 0, 1        | 31-199 s / 11 s       | 150-170  | Never fixed the bug; one green repo came from a subagent it never checked           |
+| Qwen3.5 4B               | fail (0 of 2)     | fail (0 of 2)     | no turn            | 180 s / 25 s          | -        | Chat template refuses a second system message (below)                               |
+| Gemma 4 E4B              | **pass (2 of 3)** | fail (0 of 2)     | 7-11 / 13-14       | 20-42 s / 56-72 s     | 80-87    | Codex: still red at 13 to 14 turns. Claude Code: one run took 11 turns              |
+| Qwen3.5 9B               | fail (0 of 2)     | fail (0 of 2)     | no turn            | 180 s / 25 s          | -        | Chat template refuses a second system message                                       |
+| Gemma 4 12B              | fail (0 of 2)     | fail (0 of 2)     | 11 / 12-15         | 34-44 s / 61-66 s     | 47-50    | Green both ways, but past 10 turns                                                  |
+| gpt-oss 20B              | **pass (2 of 2)** | **pass (2 of 2)** | 5 / 6-7            | 7-9 s / 5-7 s         | 128-129  | -                                                                                   |
+| Devstral Small 2 24B     | fail (0 of 2)     | fail (0 of 2)     | no turn            | 183 s / 25 s          | -        | Chat template allows only user, assistant and tool after the system message         |
+| Qwen3-Coder 30B-A3B      | **pass (2 of 2)** | fail (0 of 2)     | 8 / 12             | 25-27 s / 17-21 s     | 86-91    | Codex: called `apply_patch` through the shell three times, then fixed it with `sed` |
+| Qwen3.6 35B-A3B          | fail (0 of 2)     | fail (0 of 2)     | no turn            | 178 s / 25 s          | -        | Chat template refuses a second system message                                       |
+| Gemma 4 31B              | **pass (2 of 2)** | fail (0 of 2)     | 7-10 / 11-17       | 103-151 s / 152-209 s | 19-20    | Codex: green, but past 10 turns                                                     |
+| Qwen3.8 27B              | fail (0 of 2)     | fail (0 of 2)     | no turn            | 184 s / 25 s          | -        | Chat template refuses a second system message                                       |
+| Qwen3-Coder-Next 80B-A3B | **pass (2 of 2)** | **pass (2 of 3)** | 6 / 5-79           | 25-28 s / 17-140 s    | 60-62    | Codex: one run ran `node test.js` ten times before editing, 79 turns                |
+| gpt-oss 120B             | **pass (2 of 2)** | **pass (2 of 2)** | 9 / 6-7            | 20-24 s / 16 s        | 71-75    | -                                                                                   |
+
+Ranges are over the attempts made; a harness stops once the majority is settled, so a model that
+passed or failed its first two has no third. Qwen3-Coder-Next 80B-A3B and gpt-oss 120B were
+downloaded for the run and deleted after it. Qwen3-Coder-Next's Claude Code runs first read as
+failures: it ran the test by its absolute path, which the first version of the "ran the test"
+rule missed. The stored streams and repos were judged again with the fixed rule. The catalog's `agentHarnesses` follow this table, and
+`local-models-model-catalog.test.ts` pins the set.
+
+**Six models never start a turn, and the cause is the server path, not the model.** Claude Code
+(2.1.296) sends a `role: "system"` message inside `messages`, after the first user turn. Codex's
+Responses requests carry `developer` input items. `llama-server` passes both to the chat template
+as a system message after the first. The Qwen3.5-family template (`qwen35`, `qwen35moe`: Qwen3.5
+4B and 9B, Qwen3.6 35B-A3B, Qwen3.8 27B) raises "System message must be at the beginning", and
+Devstral's raises "Only user, assistant and tool roles are supported". The server answers 500.
+Claude Code retries for about 3 minutes and Codex reports "high demand". Two system blocks in the
+Anthropic `system` field are merged and work (probed directly). These models may well drive a
+harness once the request is reshaped: fold a later system message into the first, or into the
+user turn, either in a per-model chat template the server passes with `--chat-template-file` or in
+the token proxy. That is a change to what Maestro serves, so it is left to Phase 06 (Run on), and
+they keep no `agent` role until a run passes.
+
+**Not measured:** a second machine, or a smaller memory budget. Every result here is from the
+128 GB Mac. Gemma 4 E4B (5.2 GB) and gpt-oss 20B (11.3 GB) are the qualified models a 16 GB
+machine could hold.
 
 ## Verification
 

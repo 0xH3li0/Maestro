@@ -36,10 +36,12 @@
 
 import { MODEL_SERVER_AGENT_MIN_CONTEXT } from './model-server';
 import type { NativeRuntimeId } from './native-runtimes';
+import { LOCAL_MODEL_AGENT_HARNESSES } from './types';
 import type {
 	LocalClassifierSpec,
 	LocalEmbeddingSpec,
 	LocalEncoderGraph,
+	LocalModelAgentHarness,
 	LocalModelEntry,
 	LocalModelFile,
 	LocalModelKind,
@@ -71,6 +73,8 @@ interface ModelDraftBase {
 interface TextGenDraft {
 	kind: 'text-gen';
 	roles: LocalModelRole[];
+	/** The harnesses the model passed the agent qualification with. Required with `agent`. */
+	agentHarnesses?: LocalModelAgentHarness[];
 	parameters: LocalModelParameters;
 	contextLength: number;
 	defaultContext: number;
@@ -156,15 +160,42 @@ function assertGgufSet(draft: ModelDraftBase): void {
 	}
 }
 
+/**
+ * The harnesses a text model qualified with, frozen in badge order, or
+ * undefined for a model that is not an agent. The `agent` role and the harness
+ * list come together: a role with no harness named was granted from a model
+ * card, and a harness list without the role would never show its badge.
+ */
+function qualifiedHarnesses(
+	draft: ModelDraftBase & TextGenDraft
+): readonly LocalModelAgentHarness[] | undefined {
+	const named = draft.agentHarnesses ?? [];
+	const isAgent = draft.roles.includes('agent');
+	if (isAgent && named.length === 0) {
+		throw new Error(
+			`Model "${draft.id}" has the agent role but names no harness it passed the agent qualification with.`
+		);
+	}
+	if (!isAgent && named.length > 0) {
+		throw new Error(`Model "${draft.id}" names qualified harnesses but lacks the agent role.`);
+	}
+	if (!isAgent) return undefined;
+	if (new Set(named).size !== named.length) {
+		throw new Error(`Model "${draft.id}" names a qualified harness twice.`);
+	}
+	return Object.freeze(LOCAL_MODEL_AGENT_HARNESSES.filter((harness) => named.includes(harness)));
+}
+
 /** Freeze a text model's spec, checking its context and weights. */
 function freezeTextGenSpec(
 	draft: ModelDraftBase & TextGenDraft,
 	fileBytes: number
 ): Pick<
 	LocalModelEntry,
-	'roles' | 'parameters' | 'contextLength' | 'defaultContext' | 'memoryHint'
+	'roles' | 'agentHarnesses' | 'parameters' | 'contextLength' | 'defaultContext' | 'memoryHint'
 > {
 	assertGgufSet(draft);
+	const agentHarnesses = qualifiedHarnesses(draft);
 	if (draft.defaultContext > draft.contextLength) {
 		throw new Error(
 			`Model "${draft.id}" runs at ${draft.defaultContext} tokens, past its ${draft.contextLength}-token context.`
@@ -181,6 +212,7 @@ function freezeTextGenSpec(
 	const kvLayout = Object.freeze({ ...draft.kvLayout });
 	return {
 		roles: Object.freeze([...draft.roles]),
+		...(agentHarnesses ? { agentHarnesses } : {}),
 		parameters: Object.freeze({ ...draft.parameters }),
 		contextLength: draft.contextLength,
 		defaultContext: draft.defaultContext,
@@ -532,6 +564,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			'A small, fast general model for the quick jobs: routing, labels, tab names and short summaries. Runs comfortably on a laptop with 8 GB of memory.',
 		goodAt: 'Fast judgments and housekeeping: routing, labels, tab names and short summaries.',
 		roles: ['housekeeping', 'judge'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. Its chat template refuses a system message after the first, which both harnesses send.
 		// GGUF metadata: 32 layers, one in four (`full_attention_interval` 4) is full attention, 4 KV heads at head dimension 256. The rest are linear-attention layers with a small fixed state.
 		parameters: { totalB: 4.2, activeB: 4.2 },
 		contextLength: 262_144,
@@ -558,7 +591,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		description:
 			"Google's efficient Gemma 4 model with an image encoder. It reads screenshots and photos, answers in many languages, and replies quickly on a laptop.",
 		goodAt: 'Reading screenshots and images, many languages, and fast replies on laptops.',
-		roles: ['housekeeping', 'vision'],
+		roles: ['agent', 'housekeeping', 'vision'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): passed with Claude Code (2 of 3); with Codex it never fixed the bug.
+		agentHarnesses: ['claude-code'],
 		// GGUF metadata: 42 layers, 7 of them full attention (the rest slide a 512-token window), and the last 18 reuse earlier layers' KV, so 4 layers keep a whole-context cache: 2 KV heads at head dimension 512. The vision projector is downloaded with it.
 		parameters: { totalB: 7.5, activeB: 4.5 },
 		contextLength: 131_072,
@@ -591,6 +626,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			'A mid-size general model with better writing than the 4B: commit and pull request drafts, shell commands and summaries.',
 		goodAt: 'Commit and PR drafts, shell commands and summaries.',
 		roles: ['housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. Its chat template refuses a system message after the first, which both harnesses send.
 		// GGUF metadata: 32 layers, one in four is full attention, 4 KV heads at head dimension 256.
 		parameters: { totalB: 9, activeB: 9 },
 		contextLength: 262_144,
@@ -618,6 +654,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			"Google's mid-size Gemma 4 model with an image encoder, strong at writing and at languages other than English.",
 		goodAt: 'Writing and multilingual work, with images.',
 		roles: ['housekeeping', 'vision'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. It fixed the bug with both harnesses, but in 11 to 15 turns.
 		// GGUF metadata: 48 layers, 8 of them full attention (the rest slide a 1,024-token window), 1 KV head at head dimension 512 on those. The vision projector is downloaded with it.
 		parameters: { totalB: 11.9, activeB: 11.9 },
 		contextLength: 262_144,
@@ -649,8 +686,10 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		description:
 			"OpenAI's open-weight reasoning model. A mixture of experts, so only 3.6B parameters run per token and it answers fast for its size.",
 		goodAt:
-			'Reasoning with tool calls; the smallest model here likely to drive an agent harness on simple tasks.',
-		roles: ['housekeeping'],
+			'Reasoning with tool calls; the smallest model here that drives both Claude Code and Codex.',
+		roles: ['agent', 'housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): passed with both harnesses, every attempt.
+		agentHarnesses: ['claude-code', 'codex'],
 		// GGUF metadata: 24 layers alternating a 128-token window with full attention, so 12 keep a whole-context cache: 8 KV heads at head dimension 64. A mixture of experts: 32 experts, 4 used per token.
 		parameters: { totalB: 20.9, activeB: 3.6 },
 		contextLength: 131_072,
@@ -681,6 +720,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			"Mistral's coding-agent model: it edits several files at once in a large repository. A dense model, so it is slower than the mixture-of-experts coders at the same size.",
 		goodAt: 'Built for coding agents: multi-file edits in large repositories.',
 		roles: ['housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. Its chat template refuses the system message both harnesses send after the first turn, so no turn starts.
 		// GGUF metadata: 40 layers, all full attention, 8 KV heads at head dimension 128. Mistral's own weights, in unsloth's GGUF.
 		parameters: { totalB: 23.6, activeB: 23.6 },
 		contextLength: 393_216,
@@ -710,7 +750,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		description:
 			'A fast coding model: a mixture of experts that runs about 3B parameters per token, tuned for tool use.',
 		goodAt: 'A fast coding agent with tool use.',
-		roles: ['housekeeping'],
+		roles: ['agent', 'housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): passed with Claude Code; with Codex it fixed the bug in 12 turns (it called apply_patch through the shell).
+		agentHarnesses: ['claude-code'],
 		// GGUF metadata: 48 layers, all full attention, 4 KV heads at head dimension 128. A mixture of experts: 128 experts, 8 used per token.
 		parameters: { totalB: 30.5, activeB: 3 },
 		contextLength: 262_144,
@@ -738,6 +780,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			'A general-purpose mixture-of-experts model that runs about 3B parameters per token, with a very long context.',
 		goodAt: 'General agent work: fast, with a long context.',
 		roles: ['housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. Its chat template refuses a system message after the first, which both harnesses send.
 		// GGUF metadata: 40 layers, one in four is full attention, 2 KV heads at head dimension 256. A mixture of experts: 256 experts, 8 used per token.
 		parameters: { totalB: 34.7, activeB: 3 },
 		contextLength: 262_144,
@@ -764,7 +807,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		description:
 			'The largest Gemma 4: strong tool calling and image reading. A dense model, so it is slower than the mixture-of-experts models of similar size.',
 		goodAt: 'The strongest Gemma: tool calling and images (dense, so slower).',
-		roles: ['housekeeping', 'vision'],
+		roles: ['agent', 'housekeeping', 'vision'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): passed with Claude Code; with Codex it fixed the bug in 11 to 17 turns.
+		agentHarnesses: ['claude-code'],
 		// GGUF metadata: 60 layers, 10 of them full attention (the rest slide a 1,024-token window), 4 KV heads at head dimension 512 on those. The vision projector is downloaded with it.
 		parameters: { totalB: 30.7, activeB: 30.7 },
 		contextLength: 262_144,
@@ -797,6 +842,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			'The newest dense Qwen: strong at hard reasoning and coding, and slower than the mixture-of-experts models.',
 		goodAt: 'Hard reasoning and coding (dense, so slower than the mixture-of-experts models).',
 		roles: ['housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. Its chat template refuses a system message after the first, which both harnesses send.
 		// GGUF metadata: 64 layers, one in four is full attention, 4 KV heads at head dimension 256.
 		parameters: { totalB: 26.9, activeB: 26.9 },
 		contextLength: 262_144,
@@ -824,7 +870,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 			'The strongest local coding model here. A large mixture of experts that runs about 3B parameters per token, and needs a machine with plenty of memory to hold it.',
 		goodAt:
 			'The strongest local coding agent; its model card names Claude Code as a supported harness.',
-		roles: ['housekeeping'],
+		roles: ['agent', 'housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): passed with Claude Code, and with Codex 2 of 3 (one run looped for 79 turns).
+		agentHarnesses: ['claude-code', 'codex'],
 		// GGUF metadata: 48 layers, one in four is full attention, 2 KV heads at head dimension 256. A mixture of experts: 512 experts, 10 used per token. The model card names Claude Code as a supported harness.
 		parameters: { totalB: 79.7, activeB: 3 },
 		contextLength: 262_144,
@@ -851,7 +899,9 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		description:
 			"OpenAI's large open-weight reasoning model. It needs a workstation with a lot of memory.",
 		goodAt: 'The strongest local reasoning and tool use.',
-		roles: ['housekeeping'],
+		roles: ['agent', 'housekeeping'],
+		// Agent qualification (2026-10-12, docs/architecture/local-models.md): passed with both harnesses, every attempt.
+		agentHarnesses: ['claude-code', 'codex'],
 		// GGUF metadata: 36 layers alternating a 128-token window with full attention, so 18 keep a whole-context cache: 8 KV heads at head dimension 64. A mixture of experts: 128 experts, 4 used per token.
 		parameters: { totalB: 116.8, activeB: 5.1 },
 		contextLength: 131_072,

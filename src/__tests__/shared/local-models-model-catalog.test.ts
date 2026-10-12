@@ -148,6 +148,7 @@ describe('local model catalog', () => {
 			if (entry.roles!.includes('agent')) {
 				expect(entry.defaultContext!).toBeGreaterThanOrEqual(MODEL_SERVER_AGENT_MIN_CONTEXT);
 			}
+			expect((entry.agentHarnesses?.length ?? 0) > 0).toBe(entry.roles!.includes('agent'));
 			expect(entry.memoryHint!.fileBytes).toBe(entry.bytes);
 			expect(entry.memoryHint!.kvBytesPer1kTokens).toBe(
 				kvBytesPer1kTokens(entry.memoryHint!.kvLayout)
@@ -169,11 +170,27 @@ describe('local model catalog', () => {
 			}
 		});
 
-		it('keep to open licenses and name no model "agent" before a harness qualifies it', () => {
-			for (const entry of curated) {
-				expect(entry.license.spdx).toBe('Apache-2.0');
-				expect(entry.roles).not.toContain('agent');
-			}
+		it('keep to open licenses', () => {
+			for (const entry of curated) expect(entry.license.spdx).toBe('Apache-2.0');
+		});
+
+		it('name as agents exactly the models the harness qualification passed, with their harnesses', () => {
+			// The 2026-10-12 results table in docs/architecture/local-models.md. Change
+			// this only with a new qualification run, never from a model card.
+			const agents = Object.fromEntries(
+				LOCAL_MODEL_CATALOG.filter((entry) => entry.roles?.includes('agent')).map((entry) => [
+					entry.id,
+					entry.agentHarnesses,
+				])
+			);
+			expect(agents).toEqual({
+				[GEMMA_4_E4B_ID]: ['claude-code'],
+				[GPT_OSS_20B_ID]: ['claude-code', 'codex'],
+				[QWEN3_CODER_30B_A3B_ID]: ['claude-code'],
+				[GEMMA_4_31B_ID]: ['claude-code'],
+				[QWEN3_CODER_NEXT_ID]: ['claude-code', 'codex'],
+				[GPT_OSS_120B_ID]: ['claude-code', 'codex'],
+			});
 		});
 
 		it('hold a vision projector exactly when the model has the vision role', () => {
@@ -518,10 +535,35 @@ describe('text model drafts', () => {
 		expect(() => defineModel(textDraft({ defaultContext: 300_000 }))).toThrow(/past its/);
 		expect(() =>
 			defineModel(
-				textDraft({ roles: ['agent'], defaultContext: MODEL_SERVER_AGENT_MIN_CONTEXT - 1 })
+				textDraft({
+					roles: ['agent'],
+					agentHarnesses: ['codex'],
+					defaultContext: MODEL_SERVER_AGENT_MIN_CONTEXT - 1,
+				})
 			)
 		).toThrow(/agent harness needs/);
-		expect(defineModel(textDraft({ roles: ['agent'] })).defaultContext).toBe(65_536);
+		expect(
+			defineModel(textDraft({ roles: ['agent'], agentHarnesses: ['codex'] })).defaultContext
+		).toBe(65_536);
+	});
+
+	it('grants the agent role only with the harnesses that qualified the model, in badge order', () => {
+		expect(() => defineModel(textDraft({ roles: ['agent', 'housekeeping'] }))).toThrow(
+			/names no harness/
+		);
+		expect(() => defineModel(textDraft({ agentHarnesses: ['codex'] }))).toThrow(
+			/lacks the agent role/
+		);
+		expect(() =>
+			defineModel(textDraft({ roles: ['agent'], agentHarnesses: ['codex', 'codex'] }))
+		).toThrow(/twice/);
+
+		const agent = defineModel(
+			textDraft({ roles: ['agent'], agentHarnesses: ['codex', 'claude-code'] })
+		);
+		expect(agent.agentHarnesses).toEqual(['claude-code', 'codex']);
+		expect(Object.isFrozen(agent.agentHarnesses)).toBe(true);
+		expect(defineModel(textDraft()).agentHarnesses).toBeUndefined();
 	});
 
 	it('refuses more active parameters than total', () => {

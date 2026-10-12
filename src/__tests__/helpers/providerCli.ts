@@ -29,6 +29,10 @@ export interface ProviderCliResult {
 	code: number;
 	stdout: string;
 	stderr: string;
+	/** True when the CLI was killed for running past `timeoutMs`. */
+	timedOut: boolean;
+	/** Wall time from spawn to exit. */
+	wallMs: number;
 }
 
 /** Run a provider CLI to completion. Never rejects: a failure is a non-zero `code`. */
@@ -37,6 +41,7 @@ export function runProviderCli(
 	args: string[],
 	options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; stdin?: string }
 ): Promise<ProviderCliResult> {
+	const started = Date.now();
 	return new Promise((resolve) => {
 		const child = execFile(
 			command,
@@ -49,7 +54,13 @@ export function runProviderCli(
 			},
 			(error, stdout, stderr) => {
 				const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-				resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+				resolve({
+					code,
+					stdout: String(stdout),
+					stderr: String(stderr),
+					timedOut: Boolean(error?.killed && error.signal),
+					wallMs: Date.now() - started,
+				});
 			}
 		);
 		// Always closed: an open pipe makes Codex wait for a prompt it was given as

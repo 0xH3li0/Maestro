@@ -93,6 +93,18 @@ export interface LocalEmbeddingSpec extends LocalEncoderGraph {
  */
 export type LocalModelRole = 'judge' | 'housekeeping' | 'agent' | 'vision';
 
+/**
+ * A harness the agent qualification runs a model through. A model that passed
+ * with at least one carries the `agent` role and names the ones it passed.
+ */
+export type LocalModelAgentHarness = 'claude-code' | 'codex';
+
+/** Every qualified harness, in the order a badge names them. */
+export const LOCAL_MODEL_AGENT_HARNESSES: readonly LocalModelAgentHarness[] = Object.freeze([
+	'claude-code',
+	'codex',
+]);
+
 /** Every role, in the order a Library lists its groups. */
 export const LOCAL_MODEL_ROLES: readonly LocalModelRole[] = Object.freeze([
 	'agent',
@@ -182,6 +194,12 @@ export interface LocalModelEntry {
 	readonly goodAt: string;
 	/** What a text model is fit to do. Present exactly when `kind` is `text-gen`. */
 	readonly roles?: readonly LocalModelRole[];
+	/**
+	 * The harnesses this model passed the agent qualification with, in
+	 * `LOCAL_MODEL_AGENT_HARNESSES` order. Present exactly when `roles` has
+	 * `agent`: the role is granted by the qualification, never by a model card.
+	 */
+	readonly agentHarnesses?: readonly LocalModelAgentHarness[];
 	/** Present exactly when `kind` is `text-gen`. */
 	readonly parameters?: LocalModelParameters;
 	/** The context the model was trained for, in tokens. Present exactly when `kind` is `text-gen`. */
