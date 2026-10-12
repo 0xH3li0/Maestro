@@ -667,7 +667,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		render(<AgentConfigPanel {...createDefaultProps({ onCodexTransportChange: vi.fn() })} />);
 
 		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
-		expect(screen.queryByText('Standard (codex exec)')).not.toBeInTheDocument();
+		expect(screen.queryByText('codex exec')).not.toBeInTheDocument();
 	});
 
 	it('is hidden for a Codex agent when no surface persists the value', () => {
@@ -676,7 +676,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
 	});
 
-	it('defaults a Codex agent to Standard', () => {
+	it('defaults a Codex agent to codex exec', () => {
 		render(
 			<AgentConfigPanel
 				{...createDefaultProps({ agent: codexAgent(), onCodexTransportChange: vi.fn() })}
@@ -684,14 +684,12 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 		);
 
 		expect(screen.getByText('Codex Transport')).toBeInTheDocument();
-		const standard = screen.getByText('Standard (codex exec)').closest('button');
-		const appServer = screen
-			.getByText('App server (experimental, enables steering)')
-			.closest('button');
+		const standard = screen.getByText('codex exec').closest('button');
+		const appServer = screen.getByText('codex app-server').closest('button');
 		expect(standard?.className).toContain('ring-2');
 		expect(appServer?.className).not.toContain('ring-2');
 		// The help text names the experimental status and the turns that stay on exec.
-		expect(screen.getByText(/App server is experimental/)).toBeInTheDocument();
+		expect(screen.getByText(/codex app-server is experimental/)).toBeInTheDocument();
 		expect(
 			screen.getByText(/SSH, image, Auto Run, and Cue turns keep using codex exec/)
 		).toBeInTheDocument();
@@ -703,7 +701,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 			<AgentConfigPanel {...createDefaultProps({ agent: codexAgent(), onCodexTransportChange })} />
 		);
 
-		fireEvent.click(screen.getByText('App server (experimental, enables steering)'));
+		fireEvent.click(screen.getByText('codex app-server'));
 
 		expect(onCodexTransportChange).toHaveBeenCalledWith('app-server');
 	});
@@ -720,9 +718,7 @@ describe('AgentConfigPanel - Codex Transport selector', () => {
 			/>
 		);
 
-		const appServer = screen
-			.getByText('App server (experimental, enables steering)')
-			.closest('button');
+		const appServer = screen.getByText('codex app-server').closest('button');
 		expect(appServer?.className).toContain('ring-2');
 		expect(
 			screen.getByText(/This agent runs over SSH, so its turns use codex exec/)
