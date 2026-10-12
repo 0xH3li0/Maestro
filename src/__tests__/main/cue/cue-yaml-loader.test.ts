@@ -205,6 +205,26 @@ subscriptions:
 			expect(result!.settings.queue_size).toBe(512);
 		});
 
+		it('omits max_concurrent_commands unless it is a valid opt-in', () => {
+			const load = (settingsYaml: string) => {
+				mockExistsSync.mockReturnValue(true);
+				mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: minimal
+    event: time.heartbeat
+    prompt: Do stuff
+    interval_minutes: 5
+${settingsYaml}`);
+				return loadCueConfig('/projects/test')!.settings;
+			};
+
+			expect('max_concurrent_commands' in load('')).toBe(false);
+			expect('max_concurrent_commands' in load('settings:\n  max_concurrent_commands: 0\n')).toBe(
+				false
+			);
+			expect(load('settings:\n  max_concurrent_commands: 6\n').max_concurrent_commands).toBe(6);
+		});
+
 		it('defaults enabled to true when not specified', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(`
@@ -1073,6 +1093,25 @@ subscriptions:
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
 				expect.arrayContaining([expect.stringContaining('max_concurrent')])
+			);
+		});
+
+		it('accepts max_concurrent_commands within 1-10', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { max_concurrent_commands: 6 },
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it.each([0, 11, 1.5, '6'])('rejects max_concurrent_commands of %p', (value) => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { max_concurrent_commands: value },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('max_concurrent_commands')])
 			);
 		});
 

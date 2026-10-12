@@ -70,6 +70,7 @@ settings:
   timeout_minutes: number # Default: 30. Max run duration before timeout
   timeout_on_fail: string # Default: 'break'. What to do on timeout: 'break' or 'continue'
   max_concurrent: number # Default: 1. Simultaneous runs (1-10)
+  max_concurrent_commands: number # Optional. Separate limit for "command" actions (1-10). Unset: commands share max_concurrent
   queue_size: number # Default: 512. Max queued events (0-10000; 0 disables buffering)
   owner_agent_id: string # Optional. Pin this cue.yaml to a single agent (id or name). See "Sharing a workspace".
 ```
@@ -351,6 +352,18 @@ settings:
   max_concurrent: 3 # Allow up to 3 parallel runs
 ```
 
+### max_concurrent_commands
+
+**Default:** unset | **Type:** integer, 1-10
+
+Optional separate limit for `action: command` subscriptions (shell and CLI). When set, command runs are counted in their own lane up to this value, and `max_concurrent` applies only to agent prompt runs. When unset, commands share the `max_concurrent` slots. See [Concurrency Control](./maestro-cue-advanced#max_concurrent_commands).
+
+```yaml
+settings:
+  max_concurrent: 1 # One agent prompt at a time
+  max_concurrent_commands: 6 # Up to 6 commands, never blocked by a prompt
+```
+
 ### queue_size
 
 **Default:** `512` | **Type:** integer, 0-10000
@@ -380,6 +393,7 @@ The engine validates your YAML on every load. Common validation errors:
 | `"watch" is required`                      | `file.changed` and `task.pending` events need a glob pattern                                        |
 | `"source_session" is required`             | `agent.completed` events need the name of the source agent                                          |
 | `"max_concurrent" must be between 1-10`    | Keep concurrent runs within the allowed range                                                       |
+| `"max_concurrent_commands" must be 1-10`   | Use an integer from 1 to 10, or remove the key to share `max_concurrent`                            |
 | `"queue_size" must be between 0-10000`     | Keep queue size within the allowed range                                                            |
 | `filter key must be string/number/bool`    | Filter values only accept primitive types                                                           |
 

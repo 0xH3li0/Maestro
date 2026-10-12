@@ -66,5 +66,6 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #   timeout_minutes: 30
 #   timeout_on_fail: break
 #   max_concurrent: 1
+#   max_concurrent_commands: 4   # optional: separate lane for action: command
 #   queue_size: 512
 `;

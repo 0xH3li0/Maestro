@@ -487,6 +487,195 @@ describe('createCueRunManager', () => {
 		});
 	});
 
+	describe('command lane (max_concurrent_commands)', () => {
+		const shellCommand = { mode: 'shell' as const, shell: 'echo hi' };
+		const laneSettings: CueSettings = { ...defaultSettings, max_concurrent_commands: 2 };
+
+		/** onCueRun whose runs stay pending until resolved by subscription name. */
+		function pendingRuns() {
+			const resolvers = new Map<string, (val: CueRunResult) => void>();
+			const onCueRun = vi.fn(
+				(request: { subscriptionName: string }) =>
+					new Promise<CueRunResult>((resolve) => {
+						resolvers.set(request.subscriptionName, resolve);
+					})
+			);
+			return { onCueRun, resolvers };
+		}
+
+		function startedSubs(onCueRun: ReturnType<typeof vi.fn>): string[] {
+			return onCueRun.mock.calls.map(
+				(call) => (call[0] as { subscriptionName: string }).subscriptionName
+			);
+		}
+
+		function runCommand(manager: ReturnType<typeof createCueRunManager>, name: string): void {
+			manager.execute(
+				'session-1',
+				'',
+				createEvent(),
+				name,
+				undefined,
+				undefined,
+				undefined,
+				'command',
+				shellCommand
+			);
+		}
+
+		it('unset: a command waits behind a prompt run in the shared slot', () => {
+			const { onCueRun } = pendingRuns();
+			const deps = createDeps({ onCueRun });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'long-prompt');
+			runCommand(manager, 'shell-job');
+
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('set: a prompt run holding the only prompt slot does not delay a command', () => {
+			const { onCueRun } = pendingRuns();
+			const deps = createDeps({ onCueRun, getSessionSettings: vi.fn(() => laneSettings) });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'long-prompt');
+			runCommand(manager, 'shell-job');
+
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt', 'shell-job']);
+			expect(manager.getQueueStatus().size).toBe(0);
+		});
+
+		it('set: commands do not consume prompt slots', () => {
+			const { onCueRun } = pendingRuns();
+			const deps = createDeps({ onCueRun, getSessionSettings: vi.fn(() => laneSettings) });
+			const manager = createCueRunManager(deps);
+
+			runCommand(manager, 'shell-1');
+			runCommand(manager, 'shell-2');
+			manager.execute('session-1', 'prompt', createEvent(), 'prompt-1');
+
+			expect(startedSubs(onCueRun)).toEqual(['shell-1', 'shell-2', 'prompt-1']);
+		});
+
+		it('set: commands queue at their own cap and drain when a command finishes', async () => {
+			const { onCueRun, resolvers } = pendingRuns();
+			const deps = createDeps({ onCueRun, getSessionSettings: vi.fn(() => laneSettings) });
+			const manager = createCueRunManager(deps);
+
+			runCommand(manager, 'shell-1');
+			runCommand(manager, 'shell-2');
+			runCommand(manager, 'shell-3');
+			expect(startedSubs(onCueRun)).toEqual(['shell-1', 'shell-2']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+
+			resolvers.get('shell-1')!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(startedSubs(onCueRun)).toEqual(['shell-1', 'shell-2', 'shell-3']);
+			expect(manager.getQueueStatus().size).toBe(0);
+		});
+
+		it('set: drain skips a queued prompt whose lane is full to start a queued command', async () => {
+			const { onCueRun, resolvers } = pendingRuns();
+			const deps = createDeps({
+				onCueRun,
+				getSessionSettings: vi.fn(() => ({ ...laneSettings, max_concurrent_commands: 1 })),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'long-prompt');
+			runCommand(manager, 'shell-1');
+			manager.execute('session-1', 'prompt', createEvent(), 'queued-prompt');
+			runCommand(manager, 'shell-2');
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt', 'shell-1']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(2);
+
+			// The command slot frees while the prompt slot is still held: the
+			// queued command starts even though a prompt sits ahead of it.
+			resolvers.get('shell-1')!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt', 'shell-1', 'shell-2']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+
+			// A finishing command never admits a prompt past max_concurrent.
+			resolvers.get('shell-2')!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt', 'shell-1', 'shell-2']);
+
+			resolvers.get('long-prompt')!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt', 'shell-1', 'shell-2', 'queued-prompt']);
+		});
+
+		it('set: stopRun frees the command slot, not the prompt slot', () => {
+			const { onCueRun } = pendingRuns();
+			const deps = createDeps({
+				onCueRun,
+				getSessionSettings: vi.fn(() => ({ ...laneSettings, max_concurrent_commands: 1 })),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'long-prompt');
+			runCommand(manager, 'shell-1');
+			manager.execute('session-1', 'prompt', createEvent(), 'queued-prompt');
+			runCommand(manager, 'shell-2');
+
+			const shellRun = manager.getActiveRuns().find((r) => r.subscriptionName === 'shell-1')!;
+			manager.stopRun(shellRun.runId);
+
+			expect(startedSubs(onCueRun)).toEqual(['long-prompt', 'shell-1', 'shell-2']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('set: a run releases the lane it was admitted into when the setting is removed mid-run', async () => {
+			const { onCueRun, resolvers } = pendingRuns();
+			let settings: CueSettings = { ...laneSettings, max_concurrent_commands: 1 };
+			const deps = createDeps({ onCueRun, getSessionSettings: vi.fn(() => settings) });
+			const manager = createCueRunManager(deps);
+
+			runCommand(manager, 'shell-1');
+			settings = defaultSettings;
+			resolvers.get('shell-1')!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+
+			// Back on the shared lane with max_concurrent 1: the slot must be
+			// free (nothing leaked into the prompt counter) and hold exactly one.
+			manager.execute('session-1', 'prompt', createEvent(), 'prompt-1');
+			runCommand(manager, 'shell-2');
+			expect(startedSubs(onCueRun)).toEqual(['shell-1', 'prompt-1']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('set: reset clears the command lane', () => {
+			const { onCueRun } = pendingRuns();
+			const deps = createDeps({
+				onCueRun,
+				getSessionSettings: vi.fn(() => ({ ...laneSettings, max_concurrent_commands: 1 })),
+			});
+			const manager = createCueRunManager(deps);
+
+			runCommand(manager, 'shell-1');
+			manager.reset();
+			runCommand(manager, 'shell-2');
+
+			expect(startedSubs(onCueRun)).toEqual(['shell-1', 'shell-2']);
+		});
+
+		it('set: the self-overlap guard still serializes a command with itself', () => {
+			const { onCueRun } = pendingRuns();
+			const deps = createDeps({ onCueRun, getSessionSettings: vi.fn(() => laneSettings) });
+			const manager = createCueRunManager(deps);
+
+			runCommand(manager, 'shell-1');
+			runCommand(manager, 'shell-1');
+
+			expect(startedSubs(onCueRun)).toEqual(['shell-1']);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+	});
+
 	describe('DB recording', () => {
 		it('updates DB status on natural completion', async () => {
 			const deps = createDeps();

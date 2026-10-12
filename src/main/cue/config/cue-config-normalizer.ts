@@ -422,6 +422,15 @@ function normalizeSettings(rawSettings: Record<string, unknown> | undefined): Cu
 			typeof rawSettings?.max_concurrent === 'number'
 				? rawSettings.max_concurrent
 				: DEFAULT_CUE_SETTINGS.max_concurrent,
+		// Opt-in command lane. Spread so the key is ABSENT when unset or out of
+		// range (`loadCueConfig` skips validation): an invalid value falls back
+		// to the shared-slot behavior instead of a lane that never admits.
+		...(typeof rawSettings?.max_concurrent_commands === 'number' &&
+		Number.isInteger(rawSettings.max_concurrent_commands) &&
+		rawSettings.max_concurrent_commands >= 1 &&
+		rawSettings.max_concurrent_commands <= 10
+			? { max_concurrent_commands: rawSettings.max_concurrent_commands }
+			: {}),
 		queue_size:
 			typeof rawSettings?.queue_size === 'number'
 				? rawSettings.queue_size

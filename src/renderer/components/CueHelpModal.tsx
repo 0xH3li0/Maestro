@@ -1217,6 +1217,11 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						to 10) and processed as slots free.
 					</p>
 					<p>Stale queued events (older than the timeout) are automatically dropped.</p>
+					<p>
+						Command subscriptions share those slots unless you set{' '}
+						<code>max_concurrent_commands</code>. With it set, commands run in their own lane, so a
+						long agent prompt cannot delay a scheduled shell job.
+					</p>
 					<div
 						className="font-mono text-xs p-3 rounded border"
 						style={{
@@ -1227,6 +1232,8 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						settings:
 						<br />
 						{'  '}max_concurrent: 3{'    '}# Up to 3 parallel runs
+						<br />
+						{'  '}max_concurrent_commands: 6{'  '}# Optional: separate lane for commands
 						<br />
 						{'  '}queue_size: 20{'       '}# Queue up to 20 events
 						<br />

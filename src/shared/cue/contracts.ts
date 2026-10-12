@@ -282,6 +282,17 @@ export interface CueSettings {
 	timeout_minutes: number;
 	timeout_on_fail: 'break' | 'continue';
 	max_concurrent: number;
+	/**
+	 * Opt-in separate lane for `action: command` runs (1-10). When set, command
+	 * runs are counted against this cap on their own per-session counter, and
+	 * `max_concurrent` covers only the remaining (agent prompt / notify) runs, so
+	 * a long agent prompt cannot delay a shell job that must start on time.
+	 *
+	 * Unset (the default) keeps commands in the shared `max_concurrent` slots.
+	 * The key is omitted, never `undefined`, when unset: the settings block is
+	 * dumped back to YAML and js-yaml refuses an `undefined` value.
+	 */
+	max_concurrent_commands?: number;
 	queue_size: number;
 	/**
 	 * When multiple agents share the same projectRoot, the config is otherwise

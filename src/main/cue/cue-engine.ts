@@ -938,6 +938,12 @@ export class CueEngine {
 		// root's owner leaked through getSettings() and got broadcast to all.
 		// Each file keeps its OWN existing owner_agent_id via the merge below.
 		const { owner_agent_id: _perRootOwner, ...globalSettings } = settings;
+		// `max_concurrent_commands` is the one global setting whose "off" state is
+		// an absent key. A merge alone could never turn it back off, and an
+		// explicit `undefined` would make yaml.dump throw, so drop the key from
+		// the patch and delete it from each merged result instead.
+		const clearCommandLane = globalSettings.max_concurrent_commands === undefined;
+		if (clearCommandLane) delete globalSettings.max_concurrent_commands;
 		// Dedupe by config root so two sessions sharing the same cue.yaml don't
 		// cause a double-write race. Prefer `configRoot` (config-from-ancestor
 		// case) over the session's own projectRoot.
@@ -957,7 +963,12 @@ export class CueEngine {
 				if (!file) continue;
 				const parsed = (yaml.load(file.raw) ?? {}) as Record<string, unknown>;
 				const existingSettings = (parsed.settings ?? {}) as Record<string, unknown>;
-				parsed.settings = { ...existingSettings, ...globalSettings };
+				const mergedSettings: Record<string, unknown> = {
+					...existingSettings,
+					...globalSettings,
+				};
+				if (clearCommandLane) delete mergedSettings.max_concurrent_commands;
+				parsed.settings = mergedSettings;
 				const dumped = yaml.dump(parsed, {
 					indent: 2,
 					lineWidth: 120,
@@ -979,6 +990,7 @@ export class CueEngine {
 		// the updated values immediately (without waiting for a YAML re-read).
 		for (const state of states.values()) {
 			state.config.settings = { ...state.config.settings, ...globalSettings };
+			if (clearCommandLane) delete state.config.settings.max_concurrent_commands;
 		}
 
 		return { writtenRoots };

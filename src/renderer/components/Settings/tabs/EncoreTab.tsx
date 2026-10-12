@@ -261,6 +261,9 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 	// Local string state for queue size so the user can clear the field while
 	// typing without the controlled-input round-trip snapping back to a number.
 	const [cueQueueSizeStr, setCueQueueSizeStr] = useState(String(DEFAULT_CUE_SETTINGS.queue_size));
+	// Same idea for the command lane, where an empty field is also a real value:
+	// it means "unset", i.e. commands share the Max Concurrent Runs slots.
+	const [cueCommandLaneStr, setCueCommandLaneStr] = useState('');
 
 	useEffect(() => {
 		if (!isOpen || !encoreFeatures.maestroCue) return;
@@ -275,6 +278,9 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 				};
 				setCueSettings(merged);
 				setCueQueueSizeStr(String(merged.queue_size));
+				setCueCommandLaneStr(
+					merged.max_concurrent_commands === undefined ? '' : String(merged.max_concurrent_commands)
+				);
 			})
 			.catch((err: unknown) => {
 				captureException(err instanceof Error ? err : new Error(String(err)), {
@@ -947,6 +953,56 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									<p className="text-2xs mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
 										How many Cue-triggered runs can execute in parallel. Higher values increase
 										throughput but agents may conflict on shared files. Default: 1.
+									</p>
+								</div>
+
+								<div>
+									<label
+										className="block text-xs-plus font-medium mb-1"
+										style={{ color: theme.colors.textDim }}
+									>
+										Max Concurrent Commands
+									</label>
+									<input
+										type="number"
+										min={1}
+										max={10}
+										placeholder="Shared with runs"
+										value={cueCommandLaneStr}
+										onChange={(e) => {
+											const raw = e.target.value;
+											setCueCommandLaneStr(raw);
+											if (raw === '') {
+												updateCueSettings({ max_concurrent_commands: undefined });
+												return;
+											}
+											const parsed = parseInt(raw, 10);
+											if (!Number.isNaN(parsed)) {
+												updateCueSettings({
+													max_concurrent_commands: Math.min(10, Math.max(1, parsed)),
+												});
+											}
+										}}
+										onBlur={() =>
+											setCueCommandLaneStr(
+												cueSettings.max_concurrent_commands === undefined
+													? ''
+													: String(cueSettings.max_concurrent_commands)
+											)
+										}
+										className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+										aria-label="Max concurrent commands"
+									/>
+									<p className="text-2xs mt-1 opacity-70" style={{ color: theme.colors.textDim }}>
+										Optional separate limit (1-10) for shell and CLI command subscriptions. When
+										set, commands run in their own lane and Max Concurrent Runs covers only agent
+										prompts, so a long prompt cannot delay a scheduled command. Leave empty to share
+										the slots above.
 									</p>
 								</div>
 

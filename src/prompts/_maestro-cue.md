@@ -322,6 +322,20 @@ subscriptions:
       Give me a 5-bullet briefing: what shipped, what's open, who's blocked.
 ```
 
+#### Concurrency: keeping commands on time (`settings.max_concurrent_commands`)
+
+Each agent runs at most `settings.max_concurrent` Cue runs at once (default 1); extra events wait in a queue of `settings.queue_size`. By default a command run and an agent prompt run share those slots, so a scheduled shell job can start late behind a long prompt.
+
+Set `settings.max_concurrent_commands` (integer 1-10, optional) to give `action: command` runs their own lane. Commands are then counted only against that value, prompts only against `max_concurrent`, and neither lane blocks the other. Leave it unset when commands and prompts must not run together.
+
+```yaml
+settings:
+  max_concurrent: 1 # one agent prompt at a time
+  max_concurrent_commands: 6 # up to 6 commands, never delayed by a prompt
+```
+
+A subscription never overlaps itself in either lane.
+
 ### Template Variables Available in Cue Prompts
 
 **Always available:**

@@ -27,6 +27,7 @@ settings:
   timeout_minutes: 30
   timeout_on_fail: break | continue
   max_concurrent: 1
+  max_concurrent_commands: <1-10>  # optional - gives action: command runs their own concurrency lane so agent prompts cannot delay them. Omit to share max_concurrent.
   queue_size: 10
   owner_agent_id: <agent id or name>  # optional — recommended when >1 agent shares this projectRoot, so unowned subscriptions fire once on a named agent instead of whichever happens to be first in the session list. If unset with >1 agent, the runtime deterministically picks the first-in-list as a fallback. Subs with explicit agent_id keep fanning out regardless.
 

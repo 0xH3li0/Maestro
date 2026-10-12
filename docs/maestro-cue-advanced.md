@@ -321,6 +321,27 @@ With `max_concurrent: 1` (default), events are processed one at a time in order.
 
 Increase `max_concurrent` when your subscriptions are independent and don't conflict with each other (e.g., reviewing different PRs, scanning different files).
 
+### max_concurrent_commands
+
+Gives `action: command` subscriptions their own concurrency lane.
+
+```yaml
+settings:
+  max_concurrent: 1 # One agent prompt at a time
+  max_concurrent_commands: 6 # Up to 6 shell / CLI commands at once
+```
+
+**Range:** 1-10. **Default:** unset (commands share the `max_concurrent` slots).
+
+By default a command run and an agent prompt run compete for the same slots, so a shell job scheduled for 08:20 waits behind a 25-minute prompt that started at 08:15. With `max_concurrent_commands` set:
+
+- Command runs are counted only against `max_concurrent_commands`.
+- Agent prompt runs (and `notify` actions) are counted only against `max_concurrent`.
+- A full lane never blocks the other lane. A queued command starts as soon as a command slot is free, even when prompts are queued ahead of it.
+- Both lanes share one queue (`queue_size`), and a subscription still never overlaps itself.
+
+Use it when command subscriptions must start on time and are cheap or quick to hand off. Keep it unset when commands and prompts touch the same files and must not run together.
+
 ### queue_size
 
 Controls how many events can wait when all concurrent slots are full.

@@ -171,6 +171,40 @@ describe('CueEngine.saveSettings', () => {
 		expect(mockWriteCueConfigFile).toHaveBeenCalledTimes(1);
 	});
 
+	it('writes max_concurrent_commands when set and removes it when the patch omits it', () => {
+		const cfg = createMockConfig();
+		const engine = startEngineWithSessions([{ id: 's1', projectRoot: '/proj', config: cfg }]);
+		const base = {
+			timeout_minutes: 30,
+			timeout_on_fail: 'break' as const,
+			max_concurrent: 1,
+			queue_size: 10,
+		};
+		mockReadCueConfigFile.mockReturnValue({
+			filePath: '/proj/.maestro/cue.yaml',
+			raw: yaml.dump({ settings: base, subscriptions: [] }),
+		});
+
+		engine.saveSettings({ ...base, max_concurrent_commands: 6 });
+		const written = yaml.load(mockWriteCueConfigFile.mock.calls[0][1]) as {
+			settings: Record<string, unknown>;
+		};
+		expect(written.settings.max_concurrent_commands).toBe(6);
+		expect(engine.getSettings().max_concurrent_commands).toBe(6);
+
+		// Unset arrives as an absent key or (over IPC) an explicit undefined.
+		mockReadCueConfigFile.mockReturnValue({
+			filePath: '/proj/.maestro/cue.yaml',
+			raw: yaml.dump(written),
+		});
+		engine.saveSettings({ ...base, max_concurrent_commands: undefined });
+		const cleared = yaml.load(mockWriteCueConfigFile.mock.calls[1][1]) as {
+			settings: Record<string, unknown>;
+		};
+		expect('max_concurrent_commands' in cleared.settings).toBe(false);
+		expect('max_concurrent_commands' in engine.getSettings()).toBe(false);
+	});
+
 	it('preserves subscriptions: in the YAML round-trip and only mutates settings:', () => {
 		const cfg = createMockConfig();
 		const engine = startEngineWithSessions([{ id: 's1', projectRoot: '/proj', config: cfg }]);

@@ -634,6 +634,16 @@ function validateSettings(rawSettings: unknown): string[] {
 			errors.push('"settings.max_concurrent" must be a positive integer between 1 and 10');
 		}
 	}
+	if (settings.max_concurrent_commands !== undefined) {
+		if (
+			typeof settings.max_concurrent_commands !== 'number' ||
+			!Number.isInteger(settings.max_concurrent_commands) ||
+			settings.max_concurrent_commands < 1 ||
+			settings.max_concurrent_commands > 10
+		) {
+			errors.push('"settings.max_concurrent_commands" must be a positive integer between 1 and 10');
+		}
+	}
 	if (settings.queue_size !== undefined) {
 		if (
 			typeof settings.queue_size !== 'number' ||
