@@ -121,7 +121,7 @@ describe('PluginModalPanelMount', () => {
 		broadcast('open');
 		await act(async () => resolve({ ...EMPTY, panels: [panel({ placement: 'settings' })] }));
 		expect(useModalStore.getState().getData('settings')).toMatchObject({
-			settingId: 'plugin-settings:acme.flow/flow',
+			settingId: 'plugin-settings:acme.panel/flow',
 		});
 		expect(useUIStore.getState().openPluginPanelId).toBeNull();
 	});
@@ -134,7 +134,7 @@ describe('PluginModalPanelMount', () => {
 		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
 		broadcast('open');
 		expect(useModalStore.getState().getData('settings')).toMatchObject({
-			settingId: 'plugin-settings:acme.flow/flow',
+			settingId: 'plugin-settings:acme.panel/flow',
 		});
 		expect(useUIStore.getState().openPluginPanelId).toBeNull();
 	});

@@ -237,7 +237,7 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		textarea.remove();
 
 		expect(pluginBridge.invokeCommand).toHaveBeenCalledTimes(1);
-		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.panel/overlay');
 		expect(event.defaultPrevented).toBe(true);
 	});
 
