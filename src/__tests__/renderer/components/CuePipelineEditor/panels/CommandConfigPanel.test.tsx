@@ -231,6 +231,73 @@ describe('CommandConfigPanel agent messages', () => {
 		expect(onUpdateNode).toHaveBeenCalledWith('cmd-1', { cliNewTab: true });
 	});
 
+	it.each([undefined, false, true])(
+		'preserves an existing new-tab setting of %s when switching to shell and back',
+		(cliNewTab) => {
+			const onUpdateNode = vi.fn();
+			const data: Partial<CommandNodeData> = {
+				mode: 'cli',
+				owningSessionId: 'sess-a',
+				owningSessionName: 'Alpha',
+				cliTarget: 'sess-b',
+				cliNewTab,
+			};
+			const { rerender } = render(
+				<CommandConfigPanel
+					node={makeCommandNode(data)}
+					theme={theme}
+					sessions={sessions}
+					onUpdateNode={onUpdateNode}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Agent message' }));
+			expect(onUpdateNode).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByRole('button', { name: 'Shell command' }));
+			expect(onUpdateNode).toHaveBeenLastCalledWith('cmd-1', {
+				mode: 'shell',
+				cliCommand: undefined,
+			});
+			rerender(
+				<CommandConfigPanel
+					node={makeCommandNode({ ...data, mode: 'shell' })}
+					theme={theme}
+					sessions={sessions}
+					onUpdateNode={onUpdateNode}
+				/>
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Agent message' }));
+			expect(onUpdateNode).toHaveBeenLastCalledWith('cmd-1', {
+				mode: 'cli',
+				cliCommand: 'send',
+				cliTarget: 'sess-b',
+				cliNewTab,
+			});
+		}
+	);
+
+	it('leaves a terminal-owned message target empty so an AI agent can be selected', () => {
+		const onUpdateNode = vi.fn();
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({ owningSessionId: 'terminal-1', owningSessionName: 'Terminal' })}
+				theme={theme}
+				sessions={[...sessions, { id: 'terminal-1', name: 'Terminal', toolType: 'terminal' }]}
+				onUpdateNode={onUpdateNode}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Shell command' }));
+		expect(onUpdateNode).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole('button', { name: 'Agent message' }));
+		expect(onUpdateNode).toHaveBeenCalledWith('cmd-1', {
+			mode: 'cli',
+			cliCommand: 'send',
+			cliTarget: '',
+			cliNewTab: true,
+		});
+	});
+
 	it('flushes the chosen target and slash command with template arguments before saving', () => {
 		const onUpdateNode = vi.fn();
 		render(

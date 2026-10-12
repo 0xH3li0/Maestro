@@ -71,3 +71,71 @@ describe('quickChat font', () => {
 		);
 	});
 });
+
+describe('quickChat routing verbs', () => {
+	let sendCommand: ReturnType<typeof vi.fn>;
+	let log: MockInstance;
+
+	const route = {
+		status: 'queued' as const,
+		tabId: 'tab-1',
+		tabName: 'CI Build',
+		origin: 'open' as const,
+		tabOpen: true,
+		since: null,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sendCommand = vi.fn().mockResolvedValue({
+			type: 'quick_chat_result',
+			success: true,
+			status: {
+				enabled: true,
+				visible: true,
+				hotkey: [],
+				hotkeyRegistered: true,
+				bounds: null,
+				pinned: true,
+				fontScale: 1,
+				snapshot: {
+					...EMPTY_QUICK_CHAT_SNAPSHOT,
+					messages: [
+						{ id: 'm7', role: 'user', text: 'one more thing', timestamp: 0, route },
+						{ id: 'r1', role: 'assistant', text: 'ok', timestamp: 0 },
+					],
+				},
+			},
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (fn) => fn({ sendCommand } as never));
+		log = vi.spyOn(console, 'log').mockImplementation(() => {});
+	});
+
+	it('status names where each message went, with the id the other verbs take', async () => {
+		await quickChat('status', {}, {});
+		const printed = log.mock.calls.map(([line]) => line).join('\n');
+		expect(printed).toContain('You [m7] (queued for open tab "CI Build"): one more thing');
+		expect(printed).toContain('Agent: ok');
+	});
+
+	it('new-tab moves the named message, or the latest queued one', async () => {
+		await quickChat('new-tab', { messageId: 'm7' }, {});
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			{ type: 'quick_chat', action: 'new-tab', messageId: 'm7' },
+			'quick_chat_result'
+		);
+		await quickChat('new-tab', {}, {});
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			{ type: 'quick_chat', action: 'new-tab' },
+			'quick_chat_result'
+		);
+	});
+
+	it('reveal opens the tab a message went to', async () => {
+		await quickChat('reveal', { messageId: 'm7' }, {});
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			{ type: 'quick_chat', action: 'reveal', messageId: 'm7' },
+			'quick_chat_result'
+		);
+	});
+});

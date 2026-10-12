@@ -168,18 +168,31 @@ export function CommandConfigPanel({
 
 	const setMode = useCallback(
 		(mode: CueCommandMode) => {
+			if (mode === data.mode) return;
 			onUpdateNode(node.id, {
 				mode,
 				cliCommand: mode === 'cli' ? 'send' : undefined,
 				...(mode === 'cli'
 					? {
-							cliTarget: localCliTarget || data.owningSessionId,
-							cliNewTab: data.cliNewTab ?? true,
+							cliTarget:
+								localCliTarget ||
+								(targetSelectOptions.some((option) => option.value === data.owningSessionId)
+									? data.owningSessionId
+									: ''),
+							cliNewTab: data.cliNewTab ?? (localCliTarget ? undefined : true),
 						}
 					: {}),
 			});
 		},
-		[node.id, onUpdateNode, localCliTarget, data.owningSessionId, data.cliNewTab]
+		[
+			node.id,
+			onUpdateNode,
+			localCliTarget,
+			data.mode,
+			data.owningSessionId,
+			data.cliNewTab,
+			targetSelectOptions,
+		]
 	);
 
 	const ModeButton = ({

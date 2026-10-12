@@ -11,7 +11,7 @@
  * composer before the first message, then the conversation above it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowUp,
 	Bookmark,
@@ -28,9 +28,9 @@ import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
 	type QuickChatCommand,
 	type QuickChatMessage,
+	type QuickChatRoute,
 	type QuickChatSnapshot,
 } from '../../shared/quickChat';
-import { formatDurationHuman } from '../../shared/duration';
 import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
@@ -47,6 +47,7 @@ import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../compone
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
+import { QuickChatRouteLine, QuickChatWorkingLine } from './QuickChatRouteLine';
 
 const COMPOSER_MAX_HEIGHT = 120;
 /** `-webkit-app-region` lets the frameless window be dragged by its header. */
@@ -111,17 +112,6 @@ function followMainValue<T>(
 		if (!announced) apply(value);
 	});
 	return off;
-}
-
-function useElapsedSeconds(since: number | null): number {
-	const [now, setNow] = useState(() => Date.now());
-	useEffect(() => {
-		if (since === null) return;
-		setNow(Date.now());
-		const id = setInterval(() => setNow(Date.now()), 1000);
-		return () => clearInterval(id);
-	}, [since]);
-	return since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
 }
 
 /** Widest a hover overlay gets before its explanation wraps. */
@@ -204,16 +194,44 @@ function IconButton({
 	);
 }
 
-function MessageView({ message, theme }: { message: QuickChatMessage; theme: Theme }) {
+/** The route of the turn a message belongs to: its own, or the user message above it. */
+function turnRoute(messages: QuickChatMessage[], index: number): QuickChatRoute | undefined {
+	for (let i = index; i >= 0; i--) {
+		if (messages[i].role === 'user') return messages[i].route;
+	}
+	return undefined;
+}
+
+function MessageView({
+	message,
+	theme,
+	onOpenTab,
+	onMoveToNewTab,
+}: {
+	message: QuickChatMessage;
+	theme: Theme;
+	onOpenTab: (messageId: string) => void;
+	onMoveToNewTab: (messageId: string) => void;
+}) {
 	if (message.role === 'user') {
 		return (
-			<div className="flex justify-end">
-				<div
-					className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words select-text"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
-				>
-					{message.text}
+			<div className="flex flex-col gap-1.5">
+				<div className="flex justify-end">
+					<div
+						className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words select-text"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+					>
+						{message.text}
+					</div>
 				</div>
+				{message.route && (
+					<QuickChatRouteLine
+						route={message.route}
+						theme={theme}
+						onOpenTab={() => onOpenTab(message.id)}
+						onMoveToNewTab={() => onMoveToNewTab(message.id)}
+					/>
+				)}
 			</div>
 		);
 	}
@@ -308,22 +326,34 @@ function QuickChatWindow() {
 		window.maestro.quickChat.setLayout(expanded ? 'expanded' : 'compact');
 	}, [expanded]);
 
-	const lastMessage = snapshot.messages[snapshot.messages.length - 1];
-	// The text zoom is in the key: growing the text pushes the latest reply down,
+	// Replies arrive under their own messages, so any message can be the one
+	// that grew: the key is the whole thread's length and where each one stands.
+	// The text zoom is in it too: growing the text pushes the latest reply down,
 	// and a reader at the bottom should stay there.
+	const threadSize = snapshot.messages.reduce((n, m) => n + m.text.length, 0);
+	const threadStatus = snapshot.messages.map((m) => m.route?.status ?? '').join('');
 	const stickRef = useStickToBottom<HTMLDivElement>(
-		`${snapshot.messages.length}:${lastMessage?.text.length ?? 0}:${snapshot.busy}:${fontScaleValue}`
+		`${snapshot.messages.length}:${threadSize}:${threadStatus}:${fontScaleValue}`
 	);
 	useAutosizeTextarea({ textareaRef, value: draft, maxHeight: COMPOSER_MAX_HEIGHT });
-	const elapsed = useElapsedSeconds(snapshot.busySince);
 
+	// Sending does not wait for a reply in progress: each message finds its own
+	// tab, so the next one can go out while the last is still being answered.
 	const send = useCallback(async () => {
 		const text = draft.trim();
-		if (!text || snapshot.busy) return;
+		if (!text) return;
 		setDraft('');
 		const ok = await run({ type: 'send', text });
 		if (!ok) setDraft(text);
-	}, [draft, snapshot.busy, run]);
+	}, [draft, run]);
+	const openMessageTab = useCallback(
+		(messageId: string) => void run({ type: 'reveal', messageId }),
+		[run]
+	);
+	const moveMessageToNewTab = useCallback(
+		(messageId: string) => void run({ type: 'moveToNewTab', messageId }),
+		[run]
+	);
 
 	const hide = useCallback(() => void window.maestro.quickChat.window('hide'), []);
 	const togglePinned = useCallback(() => {
@@ -576,11 +606,17 @@ function QuickChatWindow() {
 						<PinOff className="w-4 h-4" />
 					)}
 				</IconButton>
-				{snapshot.busy ? (
-					<QuickChatTooltip label="Stop the reply" theme={theme}>
+				{/* Stop sits BESIDE Send while something is in motion, not in its
+				    place: the next message can go out before the last is answered. */}
+				{snapshot.busy && (
+					<QuickChatTooltip
+						label="Stop"
+						hint="Stops replies in progress and withdraws messages still waiting."
+						theme={theme}
+					>
 						<button
 							type="button"
-							aria-label="Stop the reply"
+							aria-label="Stop"
 							onClick={() => void run({ type: 'stop' })}
 							className="w-9 h-9 rounded-full flex items-center justify-center"
 							style={{ backgroundColor: c.textMain, color: c.bgMain }}
@@ -588,20 +624,19 @@ function QuickChatWindow() {
 							<Square className="w-3.5 h-3.5" fill="currentColor" />
 						</button>
 					</QuickChatTooltip>
-				) : (
-					<QuickChatTooltip label="Send" shortcut="Enter" theme={theme}>
-						<button
-							type="button"
-							aria-label="Send"
-							onClick={() => void send()}
-							disabled={!draft.trim()}
-							className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
-							style={{ backgroundColor: c.accent, color: c.accentForeground }}
-						>
-							<ArrowUp className="w-4 h-4" />
-						</button>
-					</QuickChatTooltip>
 				)}
+				<QuickChatTooltip label="Send" shortcut="Enter" theme={theme}>
+					<button
+						type="button"
+						aria-label="Send"
+						onClick={() => void send()}
+						disabled={!draft.trim()}
+						className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
+						style={{ backgroundColor: c.accent, color: c.accentForeground }}
+					>
+						<ArrowUp className="w-4 h-4" />
+					</button>
+				</QuickChatTooltip>
 			</div>
 		</div>
 	);
@@ -669,17 +704,26 @@ function QuickChatWindow() {
 					className="quick-chat-messages flex-1 overflow-y-auto px-5 pb-3 flex flex-col gap-4"
 					style={{ ...NO_DRAG_REGION, fontSize: messagesFontSize }}
 				>
-					{snapshot.messages.map((message) => (
-						<MessageView key={message.id} message={message} theme={theme} />
-					))}
-					{snapshot.busy && (
-						<div style={{ color: c.textDim }}>
-							{/* No known start: say so rather than freeze a "0s" that never moves. */}
-							{snapshot.busySince === null
-								? 'Working…'
-								: `Working for ${formatDurationHuman(elapsed * 1000)}`}
-						</div>
-					)}
+					{snapshot.messages.map((message, index) => {
+						// A reply being written gets its counter at the end of its own
+						// turn: after its last message, before the next one the user sent.
+						const next = snapshot.messages[index + 1];
+						const endsTurn = !next || next.role === 'user';
+						const turn = endsTurn ? turnRoute(snapshot.messages, index) : undefined;
+						return (
+							<Fragment key={message.id}>
+								<MessageView
+									message={message}
+									theme={theme}
+									onOpenTab={openMessageTab}
+									onMoveToNewTab={moveMessageToNewTab}
+								/>
+								{turn?.status === 'running' && (
+									<QuickChatWorkingLine since={turn.since} theme={theme} />
+								)}
+							</Fragment>
+						);
+					})}
 				</div>
 			)}
 			{shownError && (
