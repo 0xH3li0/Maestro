@@ -552,6 +552,10 @@ export interface AgentDetailDisplay {
 	customEnvVars?: Record<string, string> | null;
 	gatewayUrl?: string | null;
 	tokenProxyMode?: string | null;
+	/** The Run on target; a source target carries its context size. */
+	runOn?: unknown;
+	runOnLabel?: string | null;
+	runOnProblem?: string | null;
 	customModel?: string | null;
 	customEffort?: string | null;
 	customContextWindow?: number | null;
@@ -647,6 +651,19 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	}
 	addConfig('Gateway URL', agent.gatewayUrl ? dim(agent.gatewayUrl) : undefined);
 	addConfig('Token proxy mode', agent.tokenProxyMode ?? undefined);
+	// Shown only for an agent on a source: the provider's own model is the default.
+	if (agent.runOnProblem) {
+		addConfig('Run on', c('red', `unusable target: ${agent.runOnProblem}`));
+	} else if (agent.runOnLabel) {
+		const contextTokens = (agent.runOn as { contextTokens?: unknown } | null | undefined)
+			?.contextTokens;
+		addConfig(
+			'Run on',
+			typeof contextTokens === 'number'
+				? `${agent.runOnLabel} ${dim(`(context ${contextTokens} tokens)`)}`
+				: agent.runOnLabel
+		);
+	}
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);
 	}

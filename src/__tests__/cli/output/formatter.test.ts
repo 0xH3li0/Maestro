@@ -1032,6 +1032,32 @@ describe('formatter', () => {
 			expect(claude).not.toContain('Codex transport:');
 		});
 
+		it('should show the Run on target only for an agent on a source', () => {
+			const onSource = formatAgentDetail({
+				...baseAgent,
+				runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3', contextTokens: 65536 },
+				runOnLabel: 'qwen3 on Ollama',
+			});
+			expect(onSource).toContain('Run on:');
+			expect(onSource).toContain('qwen3 on Ollama');
+			expect(onSource).toContain('(context 65536 tokens)');
+
+			// The provider's own model is the default, like any unset setting.
+			const onProvider = formatAgentDetail({ ...baseAgent, runOn: { type: 'provider' } });
+			expect(onProvider).not.toContain('Run on:');
+		});
+
+		it('should say why a stored Run on target cannot be used', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				runOn: { type: 'source' },
+				runOnProblem: 'A Run on target names a source.',
+			});
+
+			expect(result).toContain('Run on:');
+			expect(result).toContain('unusable target: A Run on target names a source.');
+		});
+
 		it('should show auto run folder when provided', () => {
 			const agent: AgentDetailDisplay = {
 				...baseAgent,

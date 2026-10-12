@@ -9,6 +9,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { useAppRemoteEventListeners } from '../../../renderer/hooks/remote/useAppRemoteEventListeners';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { RUN_ON_GATEWAY_SKIPPED_REASON } from '../../../shared/local-models/run-on';
 import type { Session } from '../../../renderer/types';
 
 // The mode switch is its own suite (agentGateway.test.ts). Here it is the one
@@ -241,6 +243,153 @@ describe('remoteUpdateSessionConfig - token proxy mode', () => {
 		);
 
 		expect(updated.tokenProxyMode).toBe('compress');
+	});
+});
+
+describe('remoteUpdateSessionConfig - Run on target', () => {
+	const OLLAMA = {
+		id: 'ep-ollama',
+		name: 'Ollama',
+		kind: 'ollama' as const,
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const QWEN = {
+		type: 'source' as const,
+		endpointId: OLLAMA.id,
+		model: 'qwen3:latest',
+		contextTokens: 65_536,
+	};
+
+	beforeEach(() => {
+		useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+		// The shared preload mock keeps its calls across tests in this file.
+		vi.mocked(window.maestro.sessions.setMany).mockClear();
+	});
+	afterEach(() => {
+		useSettingsStore.setState({ localModelEndpoints: [] });
+	});
+
+	it('stores a target in its stored form and flushes it to main', async () => {
+		const session = makeSession();
+		const updated = await applyPatch(session, {
+			runOn: { ...QWEN, model: ' qwen3:latest ', unknown: true },
+		});
+
+		expect(updated.runOn).toEqual(QWEN);
+		// The launch reads the target from main's store; a miss there sends a turn
+		// to the provider's cloud model the caller just turned away from.
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: session.id, runOn: QWEN })],
+			[]
+		);
+	});
+
+	it.each([[null], [{ type: 'provider' }]])('clears the target on %j', async (runOn) => {
+		const updated = await applyPatch(makeSession({ runOn: QWEN }), { runOn });
+
+		expect(updated.runOn).toBeUndefined();
+		expect(
+			vi.mocked(window.maestro.sessions.setMany).mock.calls[0][0][0] as Partial<Session>
+		).toMatchObject({ runOn: undefined });
+	});
+
+	it('still clears a target left on a provider with no recipe', async () => {
+		const updated = await applyPatch(makeSession({ toolType: 'gemini-cli', runOn: QWEN }), {
+			runOn: null,
+		});
+
+		expect(updated.runOn).toBeUndefined();
+	});
+
+	it.each([
+		['a provider with no recipe', { toolType: 'gemini-cli' }, QWEN, 'speaks only the Gemini API'],
+		[
+			'a source id that names nothing',
+			{},
+			{ ...QWEN, endpointId: 'ep-typo' },
+			'No source has the id "ep-typo"',
+		],
+		['a target with no model', {}, { type: 'source', endpointId: OLLAMA.id }, 'names a model'],
+		['a context under the agent minimum', {}, { ...QWEN, contextTokens: 8192 }, 'at least 40960'],
+		['a value that is not a target', {}, 'ep-ollama:qwen3', 'object with a type'],
+	])('refuses %s, and writes nothing', async (_name, agent, runOn, expected) => {
+		const reply = await refusePatch(makeSession(agent as Partial<Session>), {
+			runOn,
+			customModel: 'opus',
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain(expected);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	describe('and the gateway', () => {
+		it('refuses a gateway URL for an agent on a source, with the reason the dialog shows', async () => {
+			const reply = await refusePatch(makeSession({ runOn: QWEN }), {
+				gatewayUrl: 'http://127.0.0.1:8787',
+			});
+
+			expect(reply).toEqual({ success: false, error: RUN_ON_GATEWAY_SKIPPED_REASON });
+		});
+
+		it('refuses a proxy mode for an agent on a source, and never starts the proxy', async () => {
+			const reply = await refusePatch(makeSession({ runOn: QWEN }), { tokenProxyMode: 'compress' });
+
+			expect(reply).toEqual({ success: false, error: RUN_ON_GATEWAY_SKIPPED_REASON });
+			expect(gatewayService.setAgentTokenProxyMode).not.toHaveBeenCalled();
+		});
+
+		it('refuses a gateway set in the same patch as a source target', async () => {
+			const reply = await refusePatch(makeSession(), {
+				runOn: QWEN,
+				gatewayUrl: 'http://127.0.0.1:8787',
+			});
+
+			expect(reply).toEqual({ success: false, error: RUN_ON_GATEWAY_SKIPPED_REASON });
+		});
+
+		it('allows clearing the gateway of an agent on a source', async () => {
+			const updated = await applyPatch(
+				makeSession({ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787' }),
+				{ gatewayUrl: null }
+			);
+
+			expect(updated.gatewayUrl).toBeUndefined();
+			expect(updated.runOn).toEqual(QWEN);
+		});
+
+		it('allows switching the proxy off for an agent on a source', async () => {
+			gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+				ok: true,
+				mode: 'off',
+				gatewayUrl: undefined,
+			});
+
+			const updated = await applyPatch(makeSession({ runOn: QWEN }), { tokenProxyMode: 'off' });
+
+			expect(gatewayService.setAgentTokenProxyMode).toHaveBeenCalledWith('session-1', 'off');
+			expect(updated.tokenProxyMode).toBeUndefined();
+		});
+
+		it('allows a gateway in the patch that moves the agent back to its provider', async () => {
+			const updated = await applyPatch(makeSession({ runOn: QWEN }), {
+				runOn: null,
+				gatewayUrl: 'http://127.0.0.1:8787',
+			});
+
+			expect(updated.runOn).toBeUndefined();
+			expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787');
+		});
+
+		it('leaves a gateway stored before the target alone: the launch skips it', async () => {
+			const updated = await applyPatch(makeSession({ gatewayUrl: 'http://127.0.0.1:8787' }), {
+				runOn: QWEN,
+			});
+
+			expect(updated.runOn).toEqual(QWEN);
+			expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787');
+		});
 	});
 });
 

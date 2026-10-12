@@ -107,3 +107,19 @@ describe('handleCreateSession - Local Models gateway', () => {
 		expect(created({ gatewayUrl: 42 as unknown as string })).toBeUndefined();
 	});
 });
+
+describe('handleCreateSession - Run on target', () => {
+	const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it('passes runOn through the config allowlist, as data for the renderer to check', () => {
+		// `create-agent --run-on` sends it; without the allowlist entry the agent
+		// would be created on its provider's model and the CLI would report success.
+		expect(created({ runOn })?.runOn).toEqual(runOn);
+	});
+
+	it('leaves the target unset when none was sent', () => {
+		expect(created({})).toBeUndefined();
+		createSession.mockClear();
+		expect(created({ runOn: null })).toBeUndefined();
+	});
+});

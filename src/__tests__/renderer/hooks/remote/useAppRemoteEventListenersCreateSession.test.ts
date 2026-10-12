@@ -6,8 +6,9 @@
  * refuses the create: dropping it would make an agent the caller did not ask for.
  */
 import { renderHook } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -128,6 +129,86 @@ describe('maestro:remoteCreateSession gateway', () => {
 		await flush();
 
 		expect(setSessions).not.toHaveBeenCalled();
+		expect(respond).toHaveBeenCalledWith('ch', null);
+	});
+});
+
+describe('maestro:remoteCreateSession Run on', () => {
+	const OLLAMA = {
+		id: 'ep-ollama',
+		name: 'Ollama',
+		kind: 'ollama',
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const QWEN = {
+		type: 'source',
+		endpointId: OLLAMA.id,
+		model: 'qwen3:latest',
+		contextTokens: 65_536,
+	};
+
+	beforeEach(() => {
+		vi.mocked(useSettingsStore.getState).mockReturnValue({
+			localModelEndpoints: [OLLAMA],
+		} as never);
+	});
+	afterEach(() => {
+		vi.mocked(useSettingsStore.getState).mockReturnValue({} as never);
+	});
+
+	it('stores the target on the new agent and flushes it to main', async () => {
+		const { setSessions } = setup();
+
+		dispatchCreate('claude-code', { runOn: QWEN });
+		await flush();
+
+		const session = createdSession(setSessions);
+		expect(session.runOn).toEqual(QWEN);
+		// The launch reads the target from main's store.
+		expect(setMany).toHaveBeenCalledWith([expect.objectContaining({ runOn: QWEN })], []);
+		expect(respond).toHaveBeenCalledWith('ch', { sessionId: session.id });
+	});
+
+	it.each([[undefined], [{ type: 'provider' }]])(
+		'creates the agent on its provider for %j: no target is stored',
+		async (runOn) => {
+			const { setSessions } = setup();
+
+			dispatchCreate('claude-code', runOn ? { runOn } : undefined);
+			await flush();
+
+			expect(createdSession(setSessions)).not.toHaveProperty('runOn');
+		}
+	);
+
+	it.each([
+		['a provider with no recipe', 'gemini-cli', { runOn: QWEN }],
+		[
+			'a source id that names nothing',
+			'claude-code',
+			{ runOn: { ...QWEN, endpointId: 'ep-typo' } },
+		],
+		['a target with no model', 'claude-code', { runOn: { type: 'source', endpointId: OLLAMA.id } }],
+		[
+			'a context under the agent minimum',
+			'claude-code',
+			{ runOn: { ...QWEN, contextTokens: 8192 } },
+		],
+		['a target that is not an object', 'claude-code', { runOn: 'ep-ollama:qwen3' }],
+		[
+			'a gateway beside a source target',
+			'claude-code',
+			{ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787' },
+		],
+	])('refuses the create for %s: no agent is made', async (_name, toolType, config) => {
+		const { setSessions } = setup();
+
+		dispatchCreate(toolType, config);
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
 		expect(respond).toHaveBeenCalledWith('ch', null);
 	});
 });

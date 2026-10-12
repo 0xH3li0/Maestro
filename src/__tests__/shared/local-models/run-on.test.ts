@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { AGENT_IDS } from '../../../shared/agentIds';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
-import { GPT_OSS_20B_ID } from '../../../shared/local-models/model-catalog';
+import { GPT_OSS_20B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
 import {
 	MODEL_SERVER_AGENT_MIN_CONTEXT,
 	MODEL_SERVER_ENDPOINT_ID,
@@ -26,10 +26,14 @@ import {
 	runOnOutputTokens,
 	runOnPillLabel,
 	isRunOnSourceTarget,
+	parseRunOnEdit,
 	parseRunOnSpec,
 	parseRunOnTarget,
 	parseRunOnTestRequest,
 	resolveRunOnLaunch,
+	RUN_ON_GATEWAY_SKIPPED_REASON,
+	runOnDefaultContextTokens,
+	runOnGatewayEditProblem,
 	runOnHarnessMode,
 	runOnTargetLabel,
 	runOnUnavailable,
@@ -856,6 +860,142 @@ describe('formatRunOnSpec and parseRunOnSpec', () => {
 		const parsed = parseRunOnSpec('ep-ollama:qwen3:latest', 8192);
 
 		expect(parsed.ok).toBe(false);
+	});
+});
+
+describe('runOnDefaultContextTokens', () => {
+	it("starts a model on the Maestro model server at the catalog's context", () => {
+		const catalog = getLocalModel(GPT_OSS_20B_ID)?.defaultContext ?? RUN_ON_DEFAULT_CONTEXT_TOKENS;
+
+		expect(
+			runOnDefaultContextTokens({ endpointId: MODEL_SERVER_ENDPOINT_ID, model: GPT_OSS_20B_ID })
+		).toBe(Math.max(catalog, RUN_ON_MIN_CONTEXT_TOKENS));
+	});
+
+	it('starts any other model at the smallest agent context: a source reports none', () => {
+		expect(runOnDefaultContextTokens(QWEN)).toBe(RUN_ON_DEFAULT_CONTEXT_TOKENS);
+		// A name the catalog knows means nothing on a source that is not the server.
+		expect(runOnDefaultContextTokens({ endpointId: OLLAMA.id, model: GPT_OSS_20B_ID })).toBe(
+			RUN_ON_DEFAULT_CONTEXT_TOKENS
+		);
+		// Nor does a name the catalog does not know on the server itself.
+		expect(
+			runOnDefaultContextTokens({ endpointId: MODEL_SERVER_ENDPOINT_ID, model: 'not-a-model' })
+		).toBe(RUN_ON_DEFAULT_CONTEXT_TOKENS);
+	});
+});
+
+describe('parseRunOnEdit', () => {
+	it.each([[undefined], [null], [{ type: 'provider' }]])(
+		'reads %j as no target: the provider is the absence of one',
+		(value) => {
+			expect(parseRunOnEdit('claude-code', value)).toEqual({ ok: true, target: undefined });
+			// Clearing is allowed for a provider with no recipe too.
+			expect(parseRunOnEdit('gemini-cli', value)).toEqual({ ok: true, target: undefined });
+		}
+	);
+
+	it('returns a source target in its stored form', () => {
+		expect(
+			parseRunOnEdit('codex', { ...QWEN, model: ' qwen3:latest ', contextTokens: 65_536, x: 1 })
+		).toEqual({ ok: true, target: { ...QWEN, contextTokens: 65_536 } });
+	});
+
+	it("refuses a malformed target with the parser's own reason", () => {
+		const edit = parseRunOnEdit('claude-code', { type: 'source', endpointId: OLLAMA.id });
+
+		expect(edit).toEqual({ ok: false, error: 'A Run on target names a model.' });
+	});
+
+	it('refuses a context under the agent minimum', () => {
+		const edit = parseRunOnEdit('claude-code', { ...QWEN, contextTokens: 8192 });
+
+		expect(edit.ok).toBe(false);
+		if (!edit.ok) expect(edit.error).toContain(`at least ${RUN_ON_MIN_CONTEXT_TOKENS}`);
+	});
+
+	it("refuses a source for a provider with no recipe, with that provider's reason", () => {
+		const support = agentRunOnSupport('gemini-cli');
+		const edit = parseRunOnEdit('gemini-cli', QWEN);
+
+		expect(support.supported).toBe(false);
+		expect(edit).toEqual({ ok: false, error: !support.supported && support.reason });
+	});
+
+	it('does not look the source up unless it is handed the saved sources', () => {
+		const gone = { ...QWEN, endpointId: 'ep-removed' };
+
+		// The dialog: an agent whose source was removed can still save.
+		expect(parseRunOnEdit('claude-code', gone)).toEqual({ ok: true, target: gone });
+	});
+
+	it('refuses a source id that names nothing, and lists what exists', () => {
+		const edit = parseRunOnEdit('claude-code', { ...QWEN, endpointId: 'ep-typo' }, [OLLAMA, CLOUD]);
+
+		expect(edit.ok).toBe(false);
+		if (!edit.ok) {
+			expect(edit.error).toContain('No source has the id "ep-typo"');
+			expect(edit.error).toContain(MODEL_SERVER_ENDPOINT_ID);
+			expect(edit.error).toContain('ep-ollama (Ollama), ep-cloud (Workstation)');
+		}
+	});
+
+	it('says so when no source is saved', () => {
+		const edit = parseRunOnEdit('claude-code', QWEN, []);
+
+		expect(edit.ok).toBe(false);
+		if (!edit.ok) expect(edit.error).toContain('no other source is saved');
+	});
+
+	it('accepts a saved source, and the Maestro model server with none saved', () => {
+		expect(parseRunOnEdit('claude-code', QWEN, [OLLAMA])).toEqual({ ok: true, target: QWEN });
+		const onServer = {
+			type: 'source',
+			endpointId: MODEL_SERVER_ENDPOINT_ID,
+			model: GPT_OSS_20B_ID,
+		};
+		expect(parseRunOnEdit('codex', onServer, [])).toEqual({ ok: true, target: onServer });
+	});
+
+	it('accepts a disabled source: the launch refuses it by name until it is enabled', () => {
+		expect(parseRunOnEdit('claude-code', QWEN, [{ ...OLLAMA, enabled: false }])).toEqual({
+			ok: true,
+			target: QWEN,
+		});
+	});
+});
+
+describe('runOnGatewayEditProblem', () => {
+	it.each([
+		['a gateway URL', { gatewayUrl: 'http://127.0.0.1:8787' }],
+		['a proxy mode', { tokenProxyMode: 'compress' }],
+		['passthrough', { tokenProxyMode: 'passthrough' }],
+	])('refuses %s for an agent on a source, with the reason the dialog shows', (_name, edit) => {
+		expect(runOnGatewayEditProblem(QWEN, edit)).toBe(RUN_ON_GATEWAY_SKIPPED_REASON);
+	});
+
+	it.each([
+		['a cleared URL (null)', { gatewayUrl: null }],
+		['a cleared URL (undefined)', { gatewayUrl: undefined }],
+		['a blank URL', { gatewayUrl: '  ' }],
+		['the proxy switched off', { tokenProxyMode: 'off' }],
+		['no gateway edit at all', {}],
+	])('allows %s for an agent on a source', (_name, edit) => {
+		expect(runOnGatewayEditProblem(QWEN, edit)).toBeNull();
+	});
+
+	it.each([[undefined], [null], [{ type: 'provider' }]])(
+		'allows a gateway for an agent on its provider (%j)',
+		(runOn) => {
+			expect(runOnGatewayEditProblem(runOn, { gatewayUrl: 'http://127.0.0.1:8787' })).toBeNull();
+			expect(runOnGatewayEditProblem(runOn, { tokenProxyMode: 'compress' })).toBeNull();
+		}
+	);
+
+	it('counts a malformed stored target as a source: its launch never reaches the provider', () => {
+		expect(
+			runOnGatewayEditProblem({ type: 'source' }, { gatewayUrl: 'http://127.0.0.1:8787' })
+		).toBe(RUN_ON_GATEWAY_SKIPPED_REASON);
 	});
 });
 

@@ -21,6 +21,13 @@ import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport'
 import { parseCliBool } from '../utils/parse';
 import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../shared/local-models/token-proxy';
+import {
+	formatRunOnSpec,
+	RUN_ON_PROVIDER_SPEC,
+	runOnGatewayEditProblem,
+	type RunOnSourceTarget,
+} from '../../shared/local-models/run-on';
+import { readRunOnFlags } from '../services/run-on';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -44,6 +51,8 @@ interface UpdateAgentOptions {
 	clearEnv?: boolean;
 	gatewayUrl?: string;
 	proxyMode?: string;
+	runOn?: string;
+	runOnContext?: string;
 	model?: string;
 	effort?: string;
 	contextWindow?: string;
@@ -199,15 +208,20 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		emitError(error instanceof Error ? error.message : String(error), options);
 	}
 
+	// `--run-on` / `--run-on-context` are read once the agent is: the target is
+	// checked against the agent's provider and builds on the target it has.
+	const runOnFlagsPresent = options.runOn !== undefined || options.runOnContext !== undefined;
+
 	if (
 		options.group === undefined &&
 		options.cwd === undefined &&
 		!sshFlagsPresent &&
 		configPatch === undefined &&
+		!runOnFlagsPresent &&
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -261,6 +275,38 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			emitError(`--gateway-url: ${edit.error}`, options);
 		}
 		configPatch.gatewayUrl = edit.gatewayUrl;
+	}
+
+	// `--run-on provider|<source id>:<model>` and `--run-on-context <n>`: the
+	// Models tab's Run on picker and its context field. Read into the target the
+	// picker would store, with the provider and the saved sources checked, so the
+	// CLI cannot store a target every launch would refuse. `provider` clears it
+	// (`null` on the wire). The app runs the same check before it writes.
+	if (runOnFlagsPresent) {
+		if (!session) {
+			emitError(`Agent "${sessionId}" could not be read from the agent store.`, options);
+		}
+		const runOnEdit = readRunOnFlags(options, session);
+		if (runOnEdit.kind === 'refused') emitError(runOnEdit.error, options);
+		if (runOnEdit.kind === 'set') {
+			configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };
+		}
+	}
+
+	// A gateway is not applied to an agent on a source, and the dialog disables
+	// both gateway controls for one. Refused here (and by the app) so the caller
+	// is not told a gateway was set that no launch will use. Clearing is allowed.
+	if (configPatch !== undefined) {
+		const gatewayProblem = runOnGatewayEditProblem(
+			'runOn' in configPatch ? configPatch.runOn : session?.runOn,
+			configPatch
+		);
+		if (gatewayProblem) {
+			emitError(
+				`${configPatch.tokenProxyMode !== undefined ? '--proxy-mode' : '--gateway-url'}: ${gatewayProblem}`,
+				options
+			);
+		}
 	}
 
 	// Provider switch is destructive (resets tabs, clears provider config, kills
@@ -499,6 +545,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			customEnvVars: 'Env vars',
 			gatewayUrl: 'Gateway URL',
 			tokenProxyMode: 'Token proxy mode',
+			runOn: 'Run on',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',
@@ -515,6 +562,16 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			// A cleared transport is not "unset", it is the default transport.
 			if (key === 'codexTransport') {
 				console.log(`  ${label}: ${value ?? 'exec'}`);
+			} else if (key === 'runOn') {
+				// A cleared target is not "unset", it is the provider's own model.
+				const target = value as RunOnSourceTarget | null;
+				console.log(
+					`  ${label}: ${
+						target
+							? `${formatRunOnSpec(target)} (context ${target.contextTokens} tokens)`
+							: RUN_ON_PROVIDER_SPEC
+					}`
+				);
 			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);
 			} else if (key === 'customEnvVars' && value && typeof value === 'object') {

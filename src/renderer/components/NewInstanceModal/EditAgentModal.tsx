@@ -42,6 +42,7 @@ import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import {
 	agentRunOnSupport,
 	isRunOnSourceTarget,
+	parseRunOnEdit,
 	parseRunOnTarget,
 	RUN_ON_GATEWAY_SKIPPED_REASON,
 	type RunOnSourceTarget,
@@ -573,15 +574,9 @@ export function EditAgentModal({
 
 		// The Run on target goes through the validator every writer shares, so
 		// nothing is stored that the launch would refuse as malformed.
-		const runOnEdit = parseRunOnTarget(runOn);
-		const runOnSupport = agentRunOnSupport(selectedToolType);
-		const runOnProblem = !runOnEdit.ok
-			? runOnEdit.error
-			: runOnEdit.target.type === 'source' && !runOnSupport.supported
-				? runOnSupport.reason
-				: undefined;
-		if (!runOnEdit.ok || runOnProblem) {
-			setRunOnError(runOnProblem);
+		const runOnEdit = parseRunOnEdit(selectedToolType, runOn);
+		if (!runOnEdit.ok) {
+			setRunOnError(runOnEdit.error);
 			setActiveTab('models');
 			return;
 		}
@@ -661,7 +656,7 @@ export function EditAgentModal({
 			codexTransport,
 			gatewayEdit.gatewayUrl ?? undefined,
 			// Provider is the absence of a target on the agent record.
-			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined
+			runOnEdit.target
 		);
 		onClose();
 	}, [

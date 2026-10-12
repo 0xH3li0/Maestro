@@ -159,6 +159,39 @@ describe('maestro:remoteUpdateSessionConfig', () => {
 	});
 });
 
+describe('maestro:remoteUpdateSessionConfig provider switch and Run on', () => {
+	const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it('keeps the target when the new harness has a recipe: it names a source, not a provider', async () => {
+		const sessions = [createMockSession({ id: 'session-1', toolType: 'claude-code', runOn: QWEN })];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.toolType).toBe('codex');
+		expect(updated.runOn).toEqual(QWEN);
+		expect(setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'session-1', toolType: 'codex', runOn: QWEN })],
+			[]
+		);
+	});
+
+	it('drops the target when the new harness has none: kept, it would refuse every launch', async () => {
+		const sessions = [createMockSession({ id: 'session-1', toolType: 'claude-code', runOn: QWEN })];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'gemini-cli' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.toolType).toBe('gemini-cli');
+		expect(updated.runOn).toBeUndefined();
+		expect(setMany.mock.calls[0][0][0].runOn).toBeUndefined();
+	});
+});
+
 describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
 	it('writes the app-server opt-in and flushes it before acking', async () => {
 		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];

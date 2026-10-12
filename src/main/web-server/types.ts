@@ -1213,6 +1213,11 @@ export interface CreateSessionConfig {
 	autoRunFolderPath?: string;
 	/** Local Models gateway URL. The CLI validated it; the renderer checks it again. */
 	gatewayUrl?: string;
+	/**
+	 * Run on target, as data off the wire. The CLI checked it; the renderer
+	 * checks it again with `parseRunOnEdit` before it is stored.
+	 */
+	runOn?: unknown;
 }
 
 export type CreateSessionCallback = (

@@ -1,10 +1,20 @@
 // Show agent command
 // Displays detailed information about a specific agent including history and usage stats
 
-import { getSessionById, readHistory, readGroups } from '../services/storage';
+import {
+	getSessionById,
+	readHistory,
+	readGroups,
+	readLocalModelEndpoints,
+} from '../services/storage';
 import { formatAgentDetail, formatError } from '../output/formatter';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveCodexTransport } from '../../shared/codexTransport';
+import {
+	formatRunOnSpec,
+	parseRunOnTarget,
+	runOnTargetLabel,
+} from '../../shared/local-models/run-on';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -64,6 +74,13 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			{ sshEnabled: agent.sessionSshRemoteConfig?.enabled === true }
 		);
 
+		// Where the agent's model runs (the Models tab's Run on picker). An agent
+		// with no stored target runs on its provider's model, which is a value, not
+		// an unset field. A stored target that cannot be read is reported as it is
+		// stored, with the reason: every launch of that agent is refused for it.
+		const runOn = parseRunOnTarget(agent.runOn);
+		const runOnSource = runOn.ok && runOn.target.type === 'source' ? runOn.target : undefined;
+
 		const output = {
 			id: agent.id,
 			name: agent.name,
@@ -92,6 +109,13 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			// gateway points at it (settable with `update-agent --proxy-mode`).
 			// Null means the default, passthrough.
 			tokenProxyMode: agent.tokenProxyMode ?? null,
+			// Run on (settable with `update-agent --run-on` / `--run-on-context`).
+			// `runOnSpec` is the spelling `--run-on` takes, so a read can be written
+			// back; `runOnLabel` is the target as the desktop names it.
+			runOn: runOn.ok ? runOn.target : (agent.runOn ?? null),
+			runOnSpec: runOn.ok ? formatRunOnSpec(runOn.target) : null,
+			runOnLabel: runOnSource ? runOnTargetLabel(runOnSource, readLocalModelEndpoints()) : null,
+			runOnProblem: runOn.ok ? null : runOn.error,
 			customModel: agent.customModel ?? null,
 			customEffort: agent.customEffort ?? null,
 			customContextWindow: agent.customContextWindow ?? null,

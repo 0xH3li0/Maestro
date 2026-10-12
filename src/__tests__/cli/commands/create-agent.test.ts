@@ -10,6 +10,20 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
 }));
 
+// The saved sources `--run-on` is checked against. Mocked so the real settings
+// file is never read.
+vi.mock('../../../cli/services/storage', () => ({
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
+}));
+
 // Mock formatter
 vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((msg) => `Error: ${msg}`),
@@ -324,6 +338,105 @@ describe('create-agent command', () => {
 
 			expect(sentPayload).not.toHaveProperty('gatewayUrl');
 			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('--run-on', () => {
+		let sentPayload: Record<string, unknown>;
+		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'ro-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		it('sends the target the New Agent picker would store, at its default context', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				runOn: 'ep-ollama:qwen3:latest',
+			});
+
+			expect(sentPayload.runOn).toEqual({ ...QWEN, contextTokens: 40_960 });
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'  Run on: ep-ollama:qwen3:latest (context 40960 tokens)'
+			);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('sends the context it is given, and reports the target in JSON', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				runOn: 'ep-ollama:qwen3:latest',
+				runOnContext: '131072',
+				json: true,
+			});
+
+			const target = { ...QWEN, contextTokens: 131_072 };
+			expect(sentPayload.runOn).toEqual(target);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				runOn: target,
+			});
+		});
+
+		it.each([[{ runOn: 'provider' }], [{}]])(
+			'sends no target for the provider (%j): it is the absence of one',
+			async (flags) => {
+				await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', ...flags, json: true });
+
+				expect(sentPayload).not.toHaveProperty('runOn');
+				expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('runOn');
+				expect(processExitSpy).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			['a spelling that is not a target', { runOn: 'qwen3' }, '--run-on:'],
+			['a source id that names nothing', { runOn: 'ep-typo:qwen3' }, 'No source has the id'],
+			[
+				'a context under the agent minimum',
+				{ runOn: 'ep-ollama:qwen3', runOnContext: '8192' },
+				'at least 40960 tokens',
+			],
+			['a context with no target', { runOnContext: '65536' }, 'Pass --run-on'],
+			[
+				'a gateway beside a source target',
+				{ runOn: 'ep-ollama:qwen3', gatewayUrl: 'http://127.0.0.1:8787' },
+				'--gateway-url: Not applied while Run on is a source',
+			],
+		])('refuses %s before it reaches the app', async (_name, flags, expected) => {
+			await createAgent('Bad', { cwd: '/tmp', type: 'claude-code', ...flags });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining(expected));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a source for a provider with no recipe, with the reason, in JSON', async () => {
+			await createAgent('Bad', {
+				cwd: '/tmp',
+				type: 'gemini-cli',
+				runOn: 'ep-ollama:qwen3',
+				json: true,
+			});
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('speaks only the Gemini API');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
 

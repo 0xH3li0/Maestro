@@ -10,6 +10,12 @@ import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
+import {
+	formatRunOnSpec,
+	runOnGatewayEditProblem,
+	type RunOnSourceTarget,
+} from '../../shared/local-models/run-on';
+import { readRunOnFlags } from '../services/run-on';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -31,6 +37,8 @@ interface CreateAgentOptions {
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
 	gatewayUrl?: string;
+	runOn?: string;
+	runOnContext?: string;
 	background?: boolean;
 	focus?: boolean;
 	json?: boolean;
@@ -146,6 +154,35 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		gatewayUrl = edit.gatewayUrl ?? undefined;
 	}
 
+	// `--run-on provider|<source id>:<model>` and `--run-on-context <n>`: the New
+	// Agent Models tab's Run on picker. Read into the target the picker would
+	// store, and checked against the provider and the saved sources, so a create
+	// never stores a target the agent's first launch would refuse.
+	let runOn: RunOnSourceTarget | undefined;
+	const runOnEdit = readRunOnFlags(options, { toolType: options.type });
+	if (runOnEdit.kind === 'refused') {
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: runOnEdit.error }));
+		} else {
+			console.error(formatError(runOnEdit.error));
+		}
+		process.exit(1);
+	}
+	if (runOnEdit.kind === 'set') runOn = runOnEdit.target;
+
+	// A gateway is not applied to an agent on a source, and the dialog disables
+	// the field for one. Refused here so the caller is not told it was set.
+	const gatewayProblem = runOnGatewayEditProblem(runOn, { gatewayUrl });
+	if (gatewayProblem) {
+		const msg = `--gateway-url: ${gatewayProblem}`;
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: msg }));
+		} else {
+			console.error(formatError(msg));
+		}
+		process.exit(1);
+	}
+
 	// Build the WebSocket message payload
 	const background = resolveBackgroundFlag(options, 'create-agent');
 	const payload: Record<string, unknown> = {
@@ -178,6 +215,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);
 	if (gatewayUrl) payload.gatewayUrl = gatewayUrl;
+	if (runOn) payload.runOn = runOn;
 
 	try {
 		const result = await withMaestroClient(async (client) => {
@@ -198,6 +236,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 						name,
 						type: options.type,
 						background,
+						...(runOn ? { runOn } : {}),
 					})
 				);
 			} else {
@@ -208,6 +247,11 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 				);
 				console.log(`  ID: ${result.sessionId}`);
 				console.log(`  CWD: ${cwd}`);
+				if (runOn) {
+					console.log(
+						`  Run on: ${formatRunOnSpec(runOn)} (context ${runOn.contextTokens} tokens)`
+					);
+				}
 			}
 		} else {
 			const msg = result.error || 'Failed to create agent';

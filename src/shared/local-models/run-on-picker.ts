@@ -25,9 +25,8 @@ import { MODEL_FIT_LABELS, modelFit, type HardwareProfile, type ModelFit } from 
 import { MODEL_SERVER_ENDPOINT_ID } from './model-server';
 import {
 	formatRunOnSpec,
-	RUN_ON_DEFAULT_CONTEXT_TOKENS,
-	RUN_ON_MIN_CONTEXT_TOKENS,
 	RUN_ON_PROVIDER_SPEC,
+	runOnDefaultContextTokens,
 	runOnTargetLabel,
 	type RunOnSourceTarget,
 	type RunOnTarget,
@@ -83,23 +82,15 @@ export function runOnModelFacts(
 ): RunOnModelFacts {
 	const entry =
 		target.endpointId === MODEL_SERVER_ENDPOINT_ID ? getLocalModel(target.model) : undefined;
+	const defaultContextTokens = runOnDefaultContextTokens(target);
 	if (!entry) {
-		return {
-			displayName: target.model,
-			qualified: false,
-			defaultContextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
-		};
+		return { displayName: target.model, qualified: false, defaultContextTokens };
 	}
 	return {
 		displayName: entry.displayName,
 		qualified: (entry.agentHarnesses ?? []).includes(toolType as LocalModelAgentHarness),
 		...(hardware ? { fit: modelFit(entry, hardware) } : {}),
-		// The server runs the model at its catalog context. A harness told it has
-		// less than the agent minimum cannot start, so the field never starts lower.
-		defaultContextTokens: Math.max(
-			entry.defaultContext ?? RUN_ON_DEFAULT_CONTEXT_TOKENS,
-			RUN_ON_MIN_CONTEXT_TOKENS
-		),
+		defaultContextTokens,
 	};
 }
 

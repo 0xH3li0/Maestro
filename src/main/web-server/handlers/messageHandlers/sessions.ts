@@ -103,6 +103,9 @@ export function handleCreateSession(
 	if (typeof message.gatewayUrl === 'string' && message.gatewayUrl) {
 		config.gatewayUrl = message.gatewayUrl;
 	}
+	// Passed as data: the renderer validates it against the provider and the
+	// saved sources, and refuses the create for a target it cannot store.
+	if (message.runOn !== undefined && message.runOn !== null) config.runOn = message.runOn;
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks

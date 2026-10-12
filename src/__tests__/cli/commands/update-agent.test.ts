@@ -14,6 +14,16 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	resolveGroupId: vi.fn(),
 	getSessionById: vi.fn(),
+	// The saved sources `--run-on` is checked against.
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
 }));
 
 vi.mock('../../../cli/output/formatter', () => ({
@@ -474,6 +484,222 @@ describe('update-agent command', () => {
 				expect.stringContaining('Use --proxy-mode or --gateway-url, not both')
 			);
 			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('--run-on', () => {
+		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		function mockAgent(agent: Record<string, unknown> = {}) {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+				...agent,
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		const sentPatch = (sendCommand: ReturnType<typeof vi.fn>) =>
+			sendCommand.mock.calls[0][0].configPatch;
+
+		/**
+		 * Run a call that must be refused. The suite's `process.exit` stub returns,
+		 * so a refused command would carry on and send its patch; here it stops
+		 * the command, as the real exit does.
+		 */
+		async function refused(flags: Parameters<typeof updateAgent>[1]) {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(updateAgent('agent-1', flags)).rejects.toThrow('process.exit');
+		}
+
+		it('sends the target the picker would store, at its default context', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest' });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				{
+					type: 'update_session_config',
+					sessionId: 'full-session-id',
+					configPatch: { runOn: { ...QWEN, contextTokens: 40_960 } },
+				},
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'  Run on: ep-ollama:qwen3:latest (context 40960 tokens)'
+			);
+		});
+
+		it.each(['provider', 'PROVIDER'])('clears the target for %j', async (value) => {
+			const sendCommand = mockAgent({ runOn: QWEN });
+
+			await updateAgent('agent-1', { runOn: value });
+
+			// `null` on the wire: the app stores the absence of a target.
+			expect(sentPatch(sendCommand)).toEqual({ runOn: null });
+			expect(consoleSpy).toHaveBeenCalledWith('  Run on: provider');
+		});
+
+		it('stores the context it is given', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', runOnContext: '131072' });
+
+			expect(sentPatch(sendCommand)).toEqual({ runOn: { ...QWEN, contextTokens: 131_072 } });
+		});
+
+		it("changes only the context of the agent's current target, given the context alone", async () => {
+			const sendCommand = mockAgent({ runOn: { ...QWEN, contextTokens: 131_072 } });
+
+			await updateAgent('agent-1', { runOnContext: '65536' });
+
+			expect(sentPatch(sendCommand)).toEqual({ runOn: { ...QWEN, contextTokens: 65_536 } });
+		});
+
+		it('rides in the same patch as another setting', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', nudge: 'be brief' });
+
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(sentPatch(sendCommand)).toEqual({
+				nudgeMessage: 'be brief',
+				runOn: { ...QWEN, contextTokens: 40_960 },
+			});
+		});
+
+		it('reports the target in JSON, the form show agent reads back', async () => {
+			mockAgent();
+
+			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				agentId: 'full-session-id',
+				config: { runOn: { ...QWEN, contextTokens: 40_960 } },
+			});
+		});
+
+		it.each([
+			['a spelling that is not a target', {}, { runOn: 'qwen3' }, '--run-on:'],
+			['a source id that names nothing', {}, { runOn: 'ep-typo:qwen3' }, 'No source has the id'],
+			[
+				'a context under the agent minimum',
+				{},
+				{ runOn: 'ep-ollama:qwen3', runOnContext: '8192' },
+				'at least 40960 tokens',
+			],
+			[
+				'a context alone for an agent on its provider',
+				{},
+				{ runOnContext: '65536' },
+				'Pass --run-on',
+			],
+			[
+				'a source for a provider with no recipe',
+				{ toolType: 'gemini-cli' },
+				{ runOn: 'ep-ollama:qwen3' },
+				'speaks only the Gemini API',
+			],
+		])('refuses %s before it reaches the app', async (_name, agent, flags, expected) => {
+			const sendCommand = mockAgent(agent);
+
+			await refused(flags);
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining(expected));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('still clears a target left on a provider with no recipe', async () => {
+			const sendCommand = mockAgent({ toolType: 'gemini-cli', runOn: QWEN });
+
+			await updateAgent('agent-1', { runOn: 'provider' });
+
+			expect(sentPatch(sendCommand)).toEqual({ runOn: null });
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('counts as a field to update on its own', async () => {
+			mockAgent();
+
+			await updateAgent('agent-1', { runOn: 'provider' });
+
+			expect(formatError).not.toHaveBeenCalledWith(
+				expect.stringContaining('Specify at least one field to update')
+			);
+		});
+
+		it('cannot be combined with --provider, like any other settings edit', async () => {
+			const sendCommand = mockAgent();
+
+			await refused({ runOn: 'provider', provider: 'codex', force: true });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--provider cannot be combined with other settings edits')
+			);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		describe('and the gateway', () => {
+			it.each([
+				['--gateway-url', { gatewayUrl: 'http://127.0.0.1:8787' }],
+				['--proxy-mode', { proxyMode: 'compress' }],
+			])('refuses %s for an agent on a source, with the reason', async (flag, flags) => {
+				const sendCommand = mockAgent({ runOn: QWEN });
+
+				await refused(flags);
+
+				expect(formatError).toHaveBeenCalledWith(
+					expect.stringContaining(`${flag}: Not applied while Run on is a source`)
+				);
+				expect(processExitSpy).toHaveBeenCalledWith(1);
+				expect(sendCommand).not.toHaveBeenCalled();
+			});
+
+			it('refuses a gateway set in the same call as a source target', async () => {
+				const sendCommand = mockAgent();
+
+				await refused({ runOn: 'ep-ollama:qwen3:latest', gatewayUrl: 'http://127.0.0.1:8787' });
+
+				expect(formatError).toHaveBeenCalledWith(
+					expect.stringContaining('Not applied while Run on is a source')
+				);
+				expect(sendCommand).not.toHaveBeenCalled();
+			});
+
+			it.each([
+				['clearing the gateway', { gatewayUrl: 'none' }, { gatewayUrl: null }],
+				['switching the proxy off', { proxyMode: 'off' }, { tokenProxyMode: 'off' }],
+			])('allows %s for an agent on a source', async (_name, flags, patch) => {
+				const sendCommand = mockAgent({ runOn: QWEN });
+
+				await updateAgent('agent-1', flags);
+
+				expect(sentPatch(sendCommand)).toEqual(patch);
+				expect(processExitSpy).not.toHaveBeenCalled();
+			});
+
+			it('allows a gateway in the call that moves the agent back to its provider', async () => {
+				const sendCommand = mockAgent({ runOn: QWEN });
+
+				await updateAgent('agent-1', { runOn: 'provider', gatewayUrl: 'http://127.0.0.1:8787' });
+
+				expect(sentPatch(sendCommand)).toEqual({
+					gatewayUrl: 'http://127.0.0.1:8787',
+					runOn: null,
+				});
+			});
 		});
 	});
 

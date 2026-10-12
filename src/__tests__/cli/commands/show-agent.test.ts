@@ -18,6 +18,16 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	readHistory: vi.fn(),
 	readGroups: vi.fn(),
+	// The saved sources a Run on target is labeled from.
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
 }));
 
 // Mock the formatter
@@ -399,6 +409,59 @@ describe('show-agent command', () => {
 			showAgent('agent-123', { json: true });
 
 			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBeNull();
+		});
+
+		it("reports the agent's Run on target, the read for update-agent --run-on", () => {
+			const runOn = {
+				type: 'source' as const,
+				endpointId: 'ep-ollama',
+				model: 'qwen3:latest',
+				contextTokens: 65_536,
+			};
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ runOn }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				runOn,
+				// The spelling `--run-on` takes, so the read can be written back.
+				runOnSpec: 'ep-ollama:qwen3:latest',
+				runOnLabel: 'qwen3:latest on Ollama',
+				runOnProblem: null,
+			});
+		});
+
+		it('reports the provider for an agent with no target: a value, not an unset field', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				runOn: { type: 'provider' },
+				runOnSpec: 'provider',
+				runOnLabel: null,
+				runOnProblem: null,
+			});
+		});
+
+		it('reports a stored target that cannot be read as it is stored, with the reason', () => {
+			const stored = { type: 'source', endpointId: 'ep-ollama' };
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ runOn: stored as never }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				runOn: stored,
+				runOnSpec: null,
+				runOnLabel: null,
+				runOnProblem: 'A Run on target names a model.',
+			});
 		});
 
 		it("reports the agent's token proxy mode, the read for update-agent --proxy-mode", () => {

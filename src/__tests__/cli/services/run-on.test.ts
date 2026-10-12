@@ -37,10 +37,15 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { configureCliRunOn, prepareCliRunOn } from '../../../cli/services/run-on';
+import { configureCliRunOn, prepareCliRunOn, readRunOnFlags } from '../../../cli/services/run-on';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { isAgentRunOnConfigured, resetAgentRunOnForTests } from '../../../main/local-models/run-on';
+import { GPT_OSS_20B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../shared/local-models/model-server';
+import {
+	RUN_ON_DEFAULT_CONTEXT_TOKENS,
+	RUN_ON_MIN_CONTEXT_TOKENS,
+} from '../../../shared/local-models/run-on';
 
 const WORKSTATION = {
 	id: 'ep-ws',
@@ -212,5 +217,165 @@ describe('configureCliRunOn', () => {
 		await configureCliRunOn();
 		// Still nothing read: wiring is not a lookup.
 		expect(storage.readLocalModelEndpoints).not.toHaveBeenCalled();
+	});
+});
+
+describe('readRunOnFlags', () => {
+	const CLAUDE = { toolType: 'claude-code' };
+	const BIG_DEFAULT = { ...BIG, contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS };
+
+	it('leaves the target alone, and reads nothing, when neither flag is passed', () => {
+		expect(readRunOnFlags({}, { ...CLAUDE, runOn: BIG })).toEqual({ kind: 'unchanged' });
+		expect(storage.readLocalModelEndpoints).not.toHaveBeenCalled();
+	});
+
+	it.each(['provider', 'Provider', ' provider '])('clears the target for %j', (runOn) => {
+		expect(readRunOnFlags({ runOn }, { ...CLAUDE, runOn: BIG })).toEqual({
+			kind: 'set',
+			target: undefined,
+		});
+	});
+
+	it('names a saved source, at the context the picker field starts at', () => {
+		expect(readRunOnFlags({ runOn: 'ep-ws:big-model' }, CLAUDE)).toEqual({
+			kind: 'set',
+			target: BIG_DEFAULT,
+		});
+	});
+
+	it("starts a model on the Maestro model server at the catalog's context", () => {
+		const edit = readRunOnFlags({ runOn: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` }, CLAUDE);
+
+		expect(edit).toEqual({
+			kind: 'set',
+			target: {
+				type: 'source',
+				endpointId: MODEL_SERVER_ENDPOINT_ID,
+				model: GPT_OSS_20B_ID,
+				contextTokens: Math.max(
+					getLocalModel(GPT_OSS_20B_ID)?.defaultContext ?? 0,
+					RUN_ON_MIN_CONTEXT_TOKENS
+				),
+			},
+		});
+	});
+
+	it('ends the source id at the first colon, so a model name may hold one', () => {
+		storage.readLocalModelEndpoints.mockReturnValue([{ ...WORKSTATION, id: 'ep-ollama' }]);
+
+		const edit = readRunOnFlags({ runOn: 'ep-ollama:qwen3:latest' }, CLAUDE);
+
+		expect(edit).toMatchObject({
+			kind: 'set',
+			target: { endpointId: 'ep-ollama', model: 'qwen3:latest' },
+		});
+	});
+
+	it('stores the context it is given', () => {
+		expect(readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext: ' 131072 ' }, CLAUDE)).toEqual({
+			kind: 'set',
+			target: { ...BIG, contextTokens: 131_072 },
+		});
+	});
+
+	it('keeps the stored context when the same target is named again', () => {
+		const stored = { ...BIG, contextTokens: 131_072 };
+
+		expect(readRunOnFlags({ runOn: 'ep-ws:big-model' }, { ...CLAUDE, runOn: stored })).toEqual({
+			kind: 'set',
+			target: stored,
+		});
+	});
+
+	it('starts another model on the same source from its own default', () => {
+		const stored = { ...BIG, contextTokens: 131_072 };
+
+		expect(readRunOnFlags({ runOn: 'ep-ws:other' }, { ...CLAUDE, runOn: stored })).toEqual({
+			kind: 'set',
+			target: { ...BIG, model: 'other', contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS },
+		});
+	});
+
+	it("changes only the context of the agent's current target when given the context alone", () => {
+		expect(
+			readRunOnFlags(
+				{ runOnContext: '65536' },
+				{ ...CLAUDE, runOn: { ...BIG, contextTokens: 131_072 } }
+			)
+		).toEqual({ kind: 'set', target: { ...BIG, contextTokens: 65_536 } });
+	});
+
+	it.each([[undefined], [{ type: 'provider' }], [{ type: 'source' }]])(
+		'refuses the context alone for an agent with no usable source target (%j)',
+		(runOn) => {
+			const edit = readRunOnFlags({ runOnContext: '65536' }, { ...CLAUDE, runOn });
+
+			expect(edit.kind).toBe('refused');
+			if (edit.kind === 'refused') expect(edit.error).toContain('Pass --run-on');
+		}
+	);
+
+	it('refuses a context beside --run-on provider', () => {
+		const edit = readRunOnFlags({ runOn: 'provider', runOnContext: '65536' }, CLAUDE);
+
+		expect(edit.kind).toBe('refused');
+		if (edit.kind === 'refused')
+			expect(edit.error).toContain('does not apply to --run-on provider');
+	});
+
+	it.each(['64k', '65536.5', '-1', '', '1e5'])('refuses %j as a context size', (runOnContext) => {
+		const edit = readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext }, CLAUDE);
+
+		expect(edit.kind).toBe('refused');
+		if (edit.kind === 'refused') {
+			expect(edit.error).toContain('--run-on-context expects a whole number of tokens');
+		}
+	});
+
+	it('refuses a context under the agent minimum, by the shared rule', () => {
+		const edit = readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext: '8192' }, CLAUDE);
+
+		expect(edit.kind).toBe('refused');
+		if (edit.kind === 'refused') {
+			expect(edit.error).toMatch(/^--run-on-context: .*at least 40960 tokens/);
+		}
+	});
+
+	it('refuses a spelling that is not a target', () => {
+		const edit = readRunOnFlags({ runOn: 'big-model' }, CLAUDE);
+
+		expect(edit.kind).toBe('refused');
+		if (edit.kind === 'refused') expect(edit.error).toMatch(/^--run-on: .*<source id>:<model>/);
+	});
+
+	it('refuses a source id that names nothing, before any launch does', () => {
+		const edit = readRunOnFlags({ runOn: 'ep-typo:big-model' }, CLAUDE);
+
+		expect(edit.kind).toBe('refused');
+		if (edit.kind === 'refused') {
+			expect(edit.error).toContain('--run-on: No source has the id "ep-typo"');
+			expect(edit.error).toContain('ep-ws (Workstation)');
+		}
+	});
+
+	it("refuses a source for a provider with no recipe, with the provider's reason", () => {
+		const edit = readRunOnFlags({ runOn: 'ep-ws:big-model' }, { toolType: 'gemini-cli' });
+
+		expect(edit.kind).toBe('refused');
+		if (edit.kind === 'refused') expect(edit.error).toContain('speaks only the Gemini API');
+	});
+
+	it('still clears a target left on a provider with no recipe', () => {
+		expect(readRunOnFlags({ runOn: 'provider' }, { toolType: 'gemini-cli', runOn: BIG })).toEqual({
+			kind: 'set',
+			target: undefined,
+		});
+	});
+
+	it("asks no source and no app: whether the model is served is the test verb's question", () => {
+		readRunOnFlags({ runOn: 'ep-ws:big-model' }, CLAUDE);
+
+		expect(endpointClient.listEndpointModels).not.toHaveBeenCalled();
+		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 });

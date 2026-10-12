@@ -18,7 +18,15 @@
 
 import type { AgentRunOnPreparation, RunOnModelServer } from '../../main/local-models/run-on';
 import { MODEL_SERVER_NAME } from '../../shared/local-models/model-server';
-import { storedRunOnNamesSource } from '../../shared/local-models/run-on';
+import {
+	parseRunOnEdit,
+	parseRunOnSpec,
+	parseRunOnTarget,
+	runOnContextProblem,
+	runOnDefaultContextTokens,
+	storedRunOnNamesSource,
+	type RunOnSourceTarget,
+} from '../../shared/local-models/run-on';
 import type { AgentSshRemoteConfig } from '../../shared/types';
 import { withMaestroClient } from './maestro-client';
 import { readLocalModelEndpoints, readSessions, readSettingValue, readSshRemotes } from './storage';
@@ -108,4 +116,103 @@ export async function prepareCliRunOn(request: CliRunOnRequest): Promise<AgentRu
 		sshRemoteConfig: request.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
+}
+
+/** `--run-on` and `--run-on-context`, as typed. */
+export interface RunOnFlags {
+	runOn?: string;
+	runOnContext?: string;
+}
+
+export type RunOnFlagsEdit =
+	/** Neither flag was passed: the agent's target is left alone. */
+	| { kind: 'unchanged' }
+	/** Store this. `undefined` is the provider's own model: no target on the record. */
+	| { kind: 'set'; target: RunOnSourceTarget | undefined }
+	| { kind: 'refused'; error: string };
+
+/**
+ * Read `create-agent` / `update-agent`'s Run on flags into the target the
+ * Models tab's picker would store for the same choice.
+ *
+ * - `--run-on provider` clears the target.
+ * - `--run-on <source id>:<model>` names one. With no `--run-on-context` the
+ *   context is the one the picker's field starts at (`runOnDefaultContextTokens`),
+ *   unless the agent already runs on that source and model: naming the same
+ *   target again keeps the context it has, as re-picking it in the dialog does.
+ * - `--run-on-context <n>` alone changes the context of the target the agent
+ *   already has, which is the picker's context field on its own.
+ *
+ * The target is checked with `parseRunOnEdit` against the agent's provider and
+ * the saved sources, so a typed id that names nothing is refused here and not
+ * at the agent's next launch. Whether the source serves the model is not asked:
+ * that needs the network, and `agent test-run-on` is the verb for it.
+ */
+export function readRunOnFlags(
+	flags: RunOnFlags,
+	agent: { toolType: string; runOn?: unknown }
+): RunOnFlagsEdit {
+	if (flags.runOn === undefined && flags.runOnContext === undefined) return { kind: 'unchanged' };
+
+	let contextTokens: number | undefined;
+	if (flags.runOnContext !== undefined) {
+		const raw = flags.runOnContext.trim();
+		if (!/^\d+$/.test(raw)) {
+			return {
+				kind: 'refused',
+				error: `--run-on-context expects a whole number of tokens, got "${flags.runOnContext}"`,
+			};
+		}
+		contextTokens = Number(raw);
+		const problem = runOnContextProblem(contextTokens);
+		if (problem) return { kind: 'refused', error: `--run-on-context: ${problem}` };
+	}
+
+	const storedParse = parseRunOnTarget(agent.runOn);
+	const stored =
+		storedParse.ok && storedParse.target.type === 'source' ? storedParse.target : undefined;
+
+	let named: Pick<RunOnSourceTarget, 'endpointId' | 'model'>;
+	if (flags.runOn === undefined) {
+		if (!stored) {
+			return {
+				kind: 'refused',
+				error:
+					"--run-on-context sets the context size of a Run on source, and this agent runs on its provider's model. Pass --run-on <source id>:<model> with it.",
+			};
+		}
+		named = stored;
+	} else {
+		const spec = parseRunOnSpec(flags.runOn);
+		if (!spec.ok) return { kind: 'refused', error: `--run-on: ${spec.error}` };
+		if (spec.target.type === 'provider') {
+			if (contextTokens !== undefined) {
+				return {
+					kind: 'refused',
+					error:
+						'--run-on-context does not apply to --run-on provider: the provider sets its own context.',
+				};
+			}
+			return { kind: 'set', target: undefined };
+		}
+		named = spec.target;
+	}
+
+	const sameAsStored =
+		stored !== undefined && stored.endpointId === named.endpointId && stored.model === named.model;
+	const edit = parseRunOnEdit(
+		agent.toolType,
+		{
+			type: 'source',
+			endpointId: named.endpointId,
+			model: named.model,
+			contextTokens:
+				contextTokens ??
+				(sameAsStored ? stored.contextTokens : undefined) ??
+				runOnDefaultContextTokens(named),
+		},
+		readLocalModelEndpoints()
+	);
+	if (!edit.ok) return { kind: 'refused', error: `--run-on: ${edit.error}` };
+	return { kind: 'set', target: edit.target };
 }

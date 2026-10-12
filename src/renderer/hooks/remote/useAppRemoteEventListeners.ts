@@ -17,6 +17,12 @@ import { asThinkingMode } from '../../../shared/types';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
 import {
+	agentRunOnSupport,
+	parseRunOnEdit,
+	runOnGatewayEditProblem,
+	type RunOnSourceTarget,
+} from '../../../shared/local-models/run-on';
+import {
 	getRemoteMediaKind,
 	getRemoteMediaName,
 	isRemoteMediaUrl,
@@ -1489,6 +1495,27 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				gatewayUrl = edit.gatewayUrl ?? undefined;
 			}
 
+			// The Run on target (`create-agent --run-on`), checked the same way and
+			// for the same reason: against this provider and the saved sources, so
+			// the agent's first launch is not refused for a target nobody could
+			// have picked. A gateway beside a source target is refused as the
+			// dialog's disabled field refuses it.
+			let runOn: RunOnSourceTarget | undefined;
+			if (config?.runOn !== undefined) {
+				const edit = parseRunOnEdit(
+					toolType,
+					config.runOn,
+					useSettingsStore.getState().localModelEndpoints ?? []
+				);
+				const problem = edit.ok ? runOnGatewayEditProblem(edit.target, { gatewayUrl }) : edit.error;
+				if (!edit.ok || problem) {
+					logger.error(`[Remote] Refused create-agent Run on target: ${problem}`);
+					window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, null);
+					return;
+				}
+				runOn = edit.target;
+			}
+
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
 			const initialTabId = generateId();
@@ -1609,6 +1636,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
 				...(gatewayUrl && { gatewayUrl }),
+				...(runOn && { runOn }),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
@@ -1834,6 +1862,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// A gateway speaks one provider's API, so it does not carry across.
 				gatewayUrl: undefined,
 				tokenProxyMode: undefined,
+				// A Run on target names a source and a model, not a provider, so it
+				// carries across when the new harness has a recipe for one and is
+				// dropped when it has none (the Edit Agent dialog's rule): kept
+				// there, it would refuse every launch.
+				...(agentRunOnSupport(requestedToolType).supported ? {} : { runOn: undefined }),
 				customModel: undefined,
 				customContextWindow: undefined,
 				// Provenance describes the value cleared above and must not outlive
@@ -1975,6 +2008,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customEnvVars',
 			// Local Models gateway. Validated below, never written as given.
 			'gatewayUrl',
+			// Run on target (`update-agent --run-on`). Validated below as well.
+			'runOn',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -2038,6 +2073,46 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// gateway starts from the default, the same rule `setAgentGatewayUrl` has.
 		if ('gatewayUrl' in patch && (updated.gatewayUrl ?? undefined) !== session.gatewayUrl) {
 			updated.tokenProxyMode = undefined;
+		}
+
+		// A Run on target goes through the check the Edit Agent dialog saves with,
+		// plus the saved sources, since this caller typed the source's id: a target
+		// for a provider with no recipe, or for a source that does not exist, would
+		// refuse every launch. `null` (the CLI's `provider`) clears it. The write
+		// below flushes to main, which is where the launch reads the target.
+		if ('runOn' in patch) {
+			const edit = parseRunOnEdit(
+				session.toolType,
+				patch.runOn,
+				useSettingsStore.getState().localModelEndpoints ?? []
+			);
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.runOn = edit.target;
+		}
+
+		// A gateway is not applied to an agent on a source, and the dialog disables
+		// both gateway controls for one. Refused before the proxy mode below is
+		// acted on, so the token proxy is never started for an agent that will not
+		// use it. Clearing a gateway stays allowed.
+		const gatewayProblem = runOnGatewayEditProblem(
+			'runOn' in patch ? updated.runOn : session.runOn,
+			{
+				gatewayUrl: 'gatewayUrl' in patch ? updated.gatewayUrl : undefined,
+				tokenProxyMode: patch.tokenProxyMode,
+			}
+		);
+		if (gatewayProblem) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: gatewayProblem,
+			});
+			return;
 		}
 
 		// The Maestro token proxy mode (`update-agent --proxy-mode`). It is not a

@@ -1047,6 +1047,8 @@ Create a new agent in the Maestro desktop app
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                               | -               |
 | `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic. Set the proxy mode afterwards with `update-agent --proxy-mode` | -               |
+| `--run-on <target>`               | Run on: provider (default), or &lt;source id>:&lt;model> on a Local Models source. The agent keeps its provider's CLI           | -               |
+| `--run-on-context <tokens>`       | Context size the harness is told a --run-on source has (at least 40960; default: the catalog context, or 40960)                 | -               |
 | `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                            | -               |
 | `--focus`                         | Select the new agent after creating it (default)                                                                                | -               |
 | `--json`                          | Output as JSON (for scripting)                                                                                                  | -               |
@@ -1140,6 +1142,8 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--clear-env`                     | Clear all per-agent environment variables                                                                       | -       |
 | `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                                 | -       |
 | `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app) | -       |
+| `--run-on <target>`               | Run on: provider (clears a target), or &lt;source id>:&lt;model> on a Local Models source                       | -       |
+| `--run-on-context <tokens>`       | Context size for the Run on source (at least 40960). Alone, it changes the current target's context             | -       |
 | `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                                         | -       |
 | `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                           | -       |
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                              | -       |

@@ -1468,6 +1468,14 @@ program
 		'--gateway-url <url|none>',
 		"Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode"
 	)
+	.option(
+		'--run-on <target>',
+		"Where this agent's model runs: provider (the default), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). The agent keeps its provider's CLI"
+	)
+	.option(
+		'--run-on-context <tokens>',
+		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, 40960 elsewhere)"
+	)
 	.option('--background', 'Create the agent without selecting it (Left Bar selection stays put)')
 	.option('--focus', 'Select the new agent after creating it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
@@ -1609,6 +1617,14 @@ program
 	.option(
 		'--gateway-url <url|none>',
 		'Local Models gateway: an HTTP proxy this agent\'s provider traffic goes through, set as its base-URL variable at launch ("none" clears)'
+	)
+	.option(
+		'--run-on <target>',
+		"Where this agent's model runs: provider (its provider's own model; clears a target), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). Check it with agent test-run-on"
+	)
+	.option(
+		'--run-on-context <tokens>',
+		"Context size the harness is told the Run on source has (at least 40960). Alone, it changes the context of the agent's current target"
 	)
 	.option(
 		'--proxy-mode <mode>',

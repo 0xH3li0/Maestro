@@ -53,7 +53,11 @@ import { getAgentDisplayName } from '../agentMetadata';
 import type { LocalModelEndpoint } from './endpoints';
 import { isLoopbackGatewayUrl } from './gateway';
 import { getLocalModel } from './model-catalog';
-import { MODEL_SERVER_AGENT_MIN_CONTEXT, MODEL_SERVER_ENDPOINT_ID } from './model-server';
+import {
+	MODEL_SERVER_AGENT_MIN_CONTEXT,
+	MODEL_SERVER_ENDPOINT_ID,
+	MODEL_SERVER_NAME,
+} from './model-server';
 import { localModelAssignmentSourceLabel } from './tasks';
 
 /** A model on a Local Models source, named the way an assignment names one. */
@@ -494,6 +498,73 @@ export function parseRunOnSpec(spec: string, contextTokens?: number): RunOnTarge
 }
 
 /**
+ * The context a target starts at when its writer names none: the catalog's
+ * context for a model on the Maestro model server (the server runs it at that
+ * size), and the smallest agent context for a model on any other source, which
+ * does not report one. Never under {@link RUN_ON_MIN_CONTEXT_TOKENS}. The
+ * picker's field and the CLI's `--run-on` both start here.
+ */
+export function runOnDefaultContextTokens(
+	target: Pick<RunOnSourceTarget, 'endpointId' | 'model'>
+): number {
+	const entry =
+		target.endpointId === MODEL_SERVER_ENDPOINT_ID ? getLocalModel(target.model) : undefined;
+	return Math.max(
+		entry?.defaultContext ?? RUN_ON_DEFAULT_CONTEXT_TOKENS,
+		RUN_ON_MIN_CONTEXT_TOKENS
+	);
+}
+
+/**
+ * What a writer stores: a source target, or `undefined` for the provider's own
+ * model, which is the absence of a target on the agent record.
+ */
+export type RunOnEdit =
+	| { ok: true; target: RunOnSourceTarget | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Check a target someone is about to store on an agent: the Edit Agent dialog,
+ * `create-agent` / `update-agent --run-on`, and the bridge that applies them.
+ * On top of {@link parseRunOnTarget} it refuses a source for a provider whose
+ * harness has no recipe, with that provider's reason, so no writer can store a
+ * target every launch would then refuse.
+ *
+ * Pass `endpoints` (the saved sources) to also refuse a source id that names
+ * nothing. A writer that takes the id as typed text does; the dialog does not,
+ * because its picker cannot produce an unknown id and an agent whose source was
+ * removed must still be able to save its other settings.
+ */
+export function parseRunOnEdit(
+	toolType: string,
+	value: unknown,
+	endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[]
+): RunOnEdit {
+	const parsed = parseRunOnTarget(value);
+	if (!parsed.ok) return parsed;
+	if (parsed.target.type === 'provider') return { ok: true, target: undefined };
+	const target = parsed.target;
+
+	const support = agentRunOnSupport(toolType);
+	if (!support.supported) return { ok: false, error: support.reason };
+
+	if (
+		endpoints &&
+		target.endpointId !== MODEL_SERVER_ENDPOINT_ID &&
+		!endpoints.some((endpoint) => endpoint.id === target.endpointId)
+	) {
+		const saved = endpoints.map((endpoint) => `${endpoint.id} (${endpoint.name})`);
+		return {
+			ok: false,
+			error: `No source has the id "${target.endpointId}". Use ${MODEL_SERVER_ENDPOINT_ID} for the ${MODEL_SERVER_NAME}${
+				saved.length > 0 ? `, or a saved source: ${saved.join(', ')}` : '; no other source is saved'
+			}.`,
+		};
+	}
+	return { ok: true, target };
+}
+
+/**
  * A target for a person: the catalog name on the Maestro model server, or
  * `<model> on <source name>`. A source that is gone is named by the model alone.
  */
@@ -515,6 +586,24 @@ export function runOnTargetLabel(
  */
 export const RUN_ON_GATEWAY_SKIPPED_REASON =
 	'Not applied while Run on is a source: the gateway routes requests to the provider, and this agent sends its requests to the source. Set Run on to Provider to use it.';
+
+/**
+ * Why a gateway edit cannot be stored on an agent whose Run on target is
+ * `runOn`, or null when it can. The dialog disables both gateway controls for
+ * such an agent; a writer that takes typed values (the CLI, the bridge) refuses
+ * with the same reason, so nobody is told a gateway was set that no launch will
+ * use, and the token proxy is not started for an agent that cannot reach it.
+ * Clearing a gateway (no URL, mode `off`) is always allowed.
+ */
+export function runOnGatewayEditProblem(
+	runOn: unknown,
+	edit: { gatewayUrl?: unknown; tokenProxyMode?: unknown }
+): string | null {
+	const setsGateway =
+		(typeof edit.gatewayUrl === 'string' && edit.gatewayUrl.trim() !== '') ||
+		(typeof edit.tokenProxyMode === 'string' && edit.tokenProxyMode !== 'off');
+	return setsGateway && storedRunOnNamesSource(runOn) ? RUN_ON_GATEWAY_SKIPPED_REASON : null;
+}
 
 /** What the Maestro model server is called on a turn's pill. */
 const RUN_ON_PILL_SERVER_NAME = 'Maestro';
