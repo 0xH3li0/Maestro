@@ -1186,7 +1186,7 @@ export const QUICK_CHAT_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		overview: [
 			'Press the Quick Chat hotkey (Option+Space on macOS, Alt+Space on Windows and Linux, by default) anywhere on your computer. A small window opens on top of whatever you are doing, ready to type. Press the hotkey again, or Escape, to put it away. Your conversation is still there the next time you open it.',
 			"Every chat runs as a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
-			'An ephemeral chat lives in a hidden tab and is deleted when you start a new chat. A kept chat is an ordinary tab on the agent that stays after you move on. Flip between the two with the pin in the window; the setting below picks the default.',
+			'An ephemeral chat lives in a hidden tab and is deleted when you start a new chat. A kept chat is an ordinary tab on the agent that stays after you move on. Flip between the two with the bookmark in the window; the setting below picks the default.',
 		],
 		access: [
 			{ label: 'Open or close Quick Chat', menu: 'the Quick Chat hotkey, from any app' },

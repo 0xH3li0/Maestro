@@ -30,14 +30,18 @@ export function QuickChatSection({
 
 	return (
 		<div data-setting-id="encore-quick-chat" className="space-y-5 pt-4">
-			<div data-setting-id="encore-quick-chat-hotkey">
-				<SettingsSectionHeading
-					icon={Keyboard}
-					description="Opens and closes the Quick Chat window from any app. Leave blank to turn the hotkey off."
-				>
-					Hotkey
-				</SettingsSectionHeading>
-				<div className="flex justify-center">
+			{/* The capture button sits at the right of its heading, in line with the
+			    toggles below, rather than floating centered under the text. */}
+			<div data-setting-id="encore-quick-chat-hotkey" className="flex items-center gap-4">
+				<div className="flex-1 min-w-0">
+					<SettingsSectionHeading
+						icon={Keyboard}
+						description="Opens and closes the Quick Chat window from any app. Leave blank to turn the hotkey off."
+					>
+						Hotkey
+					</SettingsSectionHeading>
+				</div>
+				<div className="shrink-0">
 					<KeyCaptureButton
 						theme={theme}
 						keys={quickChatSettings.hotkey}
@@ -84,7 +88,7 @@ export function QuickChatSection({
 						description={
 							quickChatSettings.persistent
 								? 'Each chat is a visible tab on its agent and stays after you start the next one.'
-								: 'Each chat is ephemeral: a hidden tab, deleted when you start the next chat. The pin in the window keeps one.'
+								: 'Each chat is ephemeral: a hidden tab, deleted when you start the next chat. The bookmark in the window keeps one.'
 						}
 						checked={quickChatSettings.persistent}
 						onChange={(persistent) => update({ persistent })}
