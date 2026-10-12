@@ -109,6 +109,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A size-capped log file for a supervised process:** `openCappedLogFile(path, { maxBytes?, onError? })` in `src/main/utils/capped-log-file.ts`
 - **Running and reaching the Maestro model server (`llama-server`):** `startModelServer()`, `stopModelServer()`, `getModelServerStatus()`, `ensureModelServerFor(modelId)` in `src/main/local-models/server/supervisor.ts`; `getModelServerReport()`, `installModelServerEngine()` in `server/service.ts`
 - **Which `llama-server` build a platform gets:** `selectServerBuild(platform, arch, choice)`, `availableServerBuildChoices()`, `LLAMA_SERVER_RELEASE` in `src/shared/local-models/server-engine.ts` (never a second platform table)
+- **Whether a model fits this computer (Fits / Tight / Too large):** `modelFit(entry, profile, context?)`, `modelMemoryNeed()` in `src/shared/local-models/model-fit.ts`; the profile from `resolveHardwareProfile()` in `src/main/local-models/hardware.ts`
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
