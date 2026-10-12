@@ -69,60 +69,62 @@ flowchart TD
 
 ### Shared (`src/shared/local-models/`)
 
-| File                    | Responsibility                                                                                                                                                                                                                                                                                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `types.ts`              | `LocalModelEntry`, `LocalModelFile`, `LocalModelKind` (`wake-word`, `stt`, `tts`, `text-gen`, `embedding`, `classifier`)                                                                                                                                                                                                                                                                  |
-| `model-catalog.ts`      | `LOCAL_MODEL_CATALOG`: id, kind, `runtime`, `source` (repo + pinned revision), per-file URL + SHA-256 + size, `license`, `goodAt`; text models add `roles`, `parameters`, `contextLength`, `defaultContext` (the server's context) and `memoryHint` (file bytes + KV per 1,024 tokens). Split GGUF sets list every part; `localModelGgufFile()` returns part 1. `localModelsForRuntime()` |
-| `native-runtimes.ts`    | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                                                                                                                                                                                                                                                                                |
-| `runtime-artifacts.ts`  | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                                                                                                                                                                                                                                                                                     |
-| `llama-dependencies.ts` | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload                                                                                                                                                                                                                                                                     |
-| `tasks.ts`              | `LOCAL_MODEL_TASKS` (the housekeeping jobs, each with a `system`), `tasksForSystem()`, `LocalModelAssignment`, and the `localModelAssignments` reader and validator                                                                                                                                                                                                                       |
-| `settings-location.ts`  | `MODELS_SETTINGS_PANELS`, `modelsSettingsLocation()`, `taskAssignmentLocation()`: the one source for the Models inner tabs and every sentence that names one                                                                                                                                                                                                                              |
-| `embedding-index.ts`    | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)                                                                                                                                                                                                                                                                 |
-| `model-fit.ts`          | `modelFit()`, `HardwareProfile`, `describeHardwareProfile()`, `hardwareFitCaveat()`, `MODEL_FIT_LABELS`: whether a model runs on a computer, and the sentence that says why                                                                                                                                                                                                               |
-| `library.ts`            | `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` group and badge models                                                                                                                                                                                                                                                     |
-| `user-models.ts`        | `huggingFaceModelRecord()`, `userLocalModelEntry()`, `parseUserLocalModels()`: a model the user adds from Hugging Face, as a record and as a catalog entry                                                                                                                                                                                                                                |
+| File                                                              | Responsibility                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`                                                        | `LocalModelEntry`, `LocalModelFile`, `LocalModelKind` (`wake-word`, `stt`, `tts`, `text-gen`, `embedding`, `classifier`)                                                                                                                                                                                                                                                                  |
+| `model-catalog.ts`                                                | `LOCAL_MODEL_CATALOG`: id, kind, `runtime`, `source` (repo + pinned revision), per-file URL + SHA-256 + size, `license`, `goodAt`; text models add `roles`, `parameters`, `contextLength`, `defaultContext` (the server's context) and `memoryHint` (file bytes + KV per 1,024 tokens). Split GGUF sets list every part; `localModelGgufFile()` returns part 1. `localModelsForRuntime()` |
+| `native-runtimes.ts`                                              | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                                                                                                                                                                                                                                                                                |
+| `runtime-artifacts.ts`                                            | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                                                                                                                                                                                                                                                                                     |
+| `llama-dependencies.ts`                                           | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload                                                                                                                                                                                                                                                                     |
+| `tasks.ts`                                                        | `LOCAL_MODEL_TASKS` (the housekeeping jobs, each with a `system`), `tasksForSystem()`, `LocalModelAssignment`, and the `localModelAssignments` reader and validator                                                                                                                                                                                                                       |
+| `system-one.ts`, `system-one-settings.ts`, `system-one-ledger.ts` | The System One vocabulary, what the user configures, and the decision record: see [System One](#system-one-engines-the-router-entry-and-the-ledger)                                                                                                                                                                                                                                       |
+| `settings-location.ts`                                            | `MODELS_SETTINGS_PANELS`, `modelsSettingsLocation()`, `taskAssignmentLocation()`: the one source for the Models inner tabs and every sentence that names one                                                                                                                                                                                                                              |
+| `embedding-index.ts`                                              | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)                                                                                                                                                                                                                                                                 |
+| `model-fit.ts`                                                    | `modelFit()`, `HardwareProfile`, `describeHardwareProfile()`, `hardwareFitCaveat()`, `MODEL_FIT_LABELS`: whether a model runs on a computer, and the sentence that says why                                                                                                                                                                                                               |
+| `library.ts`                                                      | `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` group and badge models                                                                                                                                                                                                                                                     |
+| `user-models.ts`                                                  | `huggingFaceModelRecord()`, `userLocalModelEntry()`, `parseUserLocalModels()`: a model the user adds from Hugging Face, as a record and as a catalog entry                                                                                                                                                                                                                                |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
 
 ### Main (`src/main/local-models/`)
 
-| File                           | Responsibility                                                                                          |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `paths.ts`                     | `LOCAL_MODELS_DIRNAME`, `LOCAL_RUNTIMES_DIRNAME`, `localModelsDataDir()`: the only place roots resolve  |
-| `model-store.ts`               | Install layout, manifests, `isInstalled`, `verify`, `remove`, `totalFootprint`                          |
-| `model-downloader.ts`          | Resumable range downloads, streaming SHA-256, pause/resume/cancel, progress                             |
-| `runtime/native-loader.ts`     | Loads a downloaded runtime; refuses with the consumer's download and self-test locations                |
-| `runtime/runtime-consumers.ts` | Consumer registry: which runtimes a consumer uses and where its UI lives                                |
-| `runtime/load-runtime.ts`      | `loadLocalRuntime()`: the consumer entry point, throws `LocalModelError`                                |
-| `runtime/runtime-installer.ts` | Fetches and verifies a runtime tarball and its dependencies                                             |
-| `runtime/runtime-store.ts`     | Runtime install layout and footprint                                                                    |
-| `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()`; the llama probe initializes the real backend   |
-| `runtime/llama-options.ts`     | `LLAMA_GET_OPTIONS` (never compile from source) and `llamaBackendLabel()`, shared by every `getLlama()` |
-| `text-gen.ts`                  | `generateText()` for a local model or an endpoint; the one shared, idle-unloading `LocalTextEngine`     |
-| `tokenizer.ts`                 | `loadTokenizer()`: a model's own `tokenizer.json`, truncation that keeps specials, windows, batches     |
-| `onnx-encoder.ts`              | `OnnxEncoderPool`: one idle-unloading ONNX session per encoder model; `encoderFeeds()` by input name    |
-| `embeddings.ts`                | `embedTexts()` for a local model or an endpoint; pooling, prefixes, L2 normalization, batching          |
-| `classifier.ts`                | `classifyText()` on a local classifier; overlapping windows, max positive score across them             |
-| `stt/`                         | Speech-to-text engines (Parakeet, Whisper), the model-to-engine table, `sanitizeTranscript()`           |
-| `speech-to-text.ts`            | `SpeechToTextPool` (one leased engine per model); `transcribeSpeech()` for a model or endpoint          |
-| `dictation.ts`                 | `transcribeClip()`; `startDictation()` / `stopDictation()` over a registered microphone (below)         |
-| `vectors.ts`                   | `l2Normalize()`, `dotProduct()`: import-free vector math shared by the service and the store            |
-| `embedding-store.ts`           | `EmbeddingStore` over `userData/embeddings.db`: upsert, delete, in-memory cosine search (below)         |
-| `text-chunker.ts`              | `chunkText()`: token-counted windows with overlap, ending at sentence ends, bounded per text            |
-| `semantic-sources.ts`          | Readers for History, the Director's Notes archive, and persisted transcript turns (below)               |
-| `directors-notes-archive.ts`   | The index's own copy of generated synopses (`userData/semantic-index/directors-notes.jsonl`)            |
-| `semantic-indexer.ts`          | `SemanticIndexer`: the background pass, incremental adds, pause, progress (below)                       |
-| `semantic-index-startup.ts`    | `startSemanticIndex()`: the indexer over the app's real stores, and its two settings listeners          |
-| `work-search.ts`               | `searchPastWork()`: the one search (by meaning or by text) behind every search surface (below)          |
-| `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                              |
-| `task-router.ts`               | `runLocalTask()` and its embedding, classifier, and speech-to-text twins: assignment picks the source   |
-| `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)             |
-| `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`          |
-| `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                  |
-| `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)   |
-| `storage-migration.ts`         | One-time move of the legacy `acappella/` roots (below)                                                  |
+| File                           | Responsibility                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `paths.ts`                     | `LOCAL_MODELS_DIRNAME`, `LOCAL_RUNTIMES_DIRNAME`, `localModelsDataDir()`: the only place roots resolve                   |
+| `model-store.ts`               | Install layout, manifests, `isInstalled`, `verify`, `remove`, `totalFootprint`                                           |
+| `model-downloader.ts`          | Resumable range downloads, streaming SHA-256, pause/resume/cancel, progress                                              |
+| `runtime/native-loader.ts`     | Loads a downloaded runtime; refuses with the consumer's download and self-test locations                                 |
+| `runtime/runtime-consumers.ts` | Consumer registry: which runtimes a consumer uses and where its UI lives                                                 |
+| `runtime/load-runtime.ts`      | `loadLocalRuntime()`: the consumer entry point, throws `LocalModelError`                                                 |
+| `runtime/runtime-installer.ts` | Fetches and verifies a runtime tarball and its dependencies                                                              |
+| `runtime/runtime-store.ts`     | Runtime install layout and footprint                                                                                     |
+| `runtime/runtime-selftest.ts`  | `runRuntimeSelfTest()` / `formatRuntimeSelfTestLines()`; the llama probe initializes the real backend                    |
+| `runtime/llama-options.ts`     | `LLAMA_GET_OPTIONS` (never compile from source) and `llamaBackendLabel()`, shared by every `getLlama()`                  |
+| `text-gen.ts`                  | `generateText()` for a local model or an endpoint; the one shared, idle-unloading `LocalTextEngine`                      |
+| `tokenizer.ts`                 | `loadTokenizer()`: a model's own `tokenizer.json`, truncation that keeps specials, windows, batches                      |
+| `onnx-encoder.ts`              | `OnnxEncoderPool`: one idle-unloading ONNX session per encoder model; `encoderFeeds()` by input name                     |
+| `embeddings.ts`                | `embedTexts()` for a local model or an endpoint; pooling, prefixes, L2 normalization, batching                           |
+| `classifier.ts`                | `classifyText()` on a local classifier; overlapping windows, max positive score across them                              |
+| `stt/`                         | Speech-to-text engines (Parakeet, Whisper), the model-to-engine table, `sanitizeTranscript()`                            |
+| `speech-to-text.ts`            | `SpeechToTextPool` (one leased engine per model); `transcribeSpeech()` for a model or endpoint                           |
+| `dictation.ts`                 | `transcribeClip()`; `startDictation()` / `stopDictation()` over a registered microphone (below)                          |
+| `vectors.ts`                   | `l2Normalize()`, `dotProduct()`: import-free vector math shared by the service and the store                             |
+| `embedding-store.ts`           | `EmbeddingStore` over `userData/embeddings.db`: upsert, delete, in-memory cosine search (below)                          |
+| `text-chunker.ts`              | `chunkText()`: token-counted windows with overlap, ending at sentence ends, bounded per text                             |
+| `semantic-sources.ts`          | Readers for History, the Director's Notes archive, and persisted transcript turns (below)                                |
+| `directors-notes-archive.ts`   | The index's own copy of generated synopses (`userData/semantic-index/directors-notes.jsonl`)                             |
+| `semantic-indexer.ts`          | `SemanticIndexer`: the background pass, incremental adds, pause, progress (below)                                        |
+| `semantic-index-startup.ts`    | `startSemanticIndex()`: the indexer over the app's real stores, and its two settings listeners                           |
+| `work-search.ts`               | `searchPastWork()`: the one search (by meaning or by text) behind every search surface (below)                           |
+| `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                                               |
+| `task-router.ts`               | `runLocalTask()` and its embedding, classifier, and speech-to-text twins: assignment picks the source                    |
+| `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)                              |
+| `system-one/`                  | The System One engines, key, settings, and ledger: see [System One](#system-one-engines-the-router-entry-and-the-ledger) |
+| `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`                           |
+| `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                                   |
+| `service.ts`                   | The one implementation behind both IPC surfaces (list, download, pause, verify, remove, install, ...)                    |
+| `storage-migration.ts`         | One-time move of the legacy `acappella/` roots (below)                                                                   |
 
 ### IPC and renderer
 
@@ -808,12 +810,13 @@ A **task** is a named job (`tab-naming`, `git-drafts`, `semantic-search`, ...), 
 `needs`, whether it has an existing agent path (`allowsUtilityAgent`), its `defaultAssignment`, and
 its `system`. The user's choice per task is a `LocalModelAssignment`:
 
-| Assignment                                | Meaning                                                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `{ type: 'off' }`                         | The task does not run.                                                                               |
-| `{ type: 'utility-agent' }`               | The task's existing agent path, unchanged (`utilityAgentId` / `utilityModelId`, or the tab's agent). |
-| `{ type: 'local', modelId }`              | A catalog model of the needed kind, run on this machine.                                             |
-| `{ type: 'endpoint', endpointId, model }` | A model on one of the user's `localModelEndpoints`.                                                  |
+| Assignment                                | Meaning                                                                                                                                                                                       |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ type: 'off' }`                         | The task does not run.                                                                                                                                                                        |
+| `{ type: 'utility-agent' }`               | The task's existing agent path, unchanged (`utilityAgentId` / `utilityModelId`, or the tab's agent).                                                                                          |
+| `{ type: 'local', modelId }`              | A catalog model of the needed kind, run on this machine.                                                                                                                                      |
+| `{ type: 'endpoint', endpointId, model }` | A model on one of the user's `localModelEndpoints`.                                                                                                                                           |
+| `{ type: 'system-one' }`                  | The System One engine in force answers the task's typed questions. Only for a task that declares `systemOneQuestions`. See [System One](#system-one-engines-the-router-entry-and-the-ledger). |
 
 The `localModelAssignments` setting is SPARSE: only tasks the user changed are stored, and
 `resolveLocalModelAssignment()` falls back to the registry default. Tab naming, summaries, and AI
@@ -1258,6 +1261,324 @@ the catalog later needs no code change.
 
 **Logging.** A finding is logged by kind and count only. A preview is masked, but a log is not the
 place for even the tail of a credential.
+
+## System One: engines, the router entry, and the ledger
+
+System One is a fast judgment layer. It gates, routes and verifies, and it does not generate text.
+A task hands it a state and typed questions; an engine answers with typed answers. This section is
+about the ENGINE and what surrounds it. The rule that sorts every task onto the System One or System
+Two tab is the earlier section, [System One and System Two](#system-one-and-system-two).
+
+```mermaid
+flowchart TD
+	task["A task that declares systemOneQuestions(input)<br/>(cue-gate today)"]
+	run["runSystemOneTask(taskId, input, options)<br/>task-router.ts"]
+	svc["resolveSystemOneForTask(taskId)<br/>one read: engine, label, fail policy, keepInputs"]
+	ask["askResolvedSystemOne(resolved, state, questions)"]
+	jev["askSystemOne(engine, ...)<br/>jev-client.ts<br/>jev-cloud | openjev"]
+	judge["askLocalJudge(...)<br/>local-judge.ts<br/>runLocalTask('local-judge')"]
+	rec["recordSystemOneDecision()<br/>s1_decisions in stats.db"]
+	none["no answer: the task's fail policy<br/>open | closed | unavailable"]
+
+	task --> run --> svc --> ask
+	ask --> jev
+	ask --> judge
+	jev --> rec
+	judge --> rec
+	jev -. "SystemOneError" .-> none
+	judge -. "SystemOneError" .-> none
+	none --> rec
+```
+
+| File                                               | Responsibility                                                                                                                                                              |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/shared/local-models/system-one.ts`            | The vocabulary: engine ids and labels, the `noul` / `choice` / `score` builders, typed answers, `SystemOneResult`, error codes, redaction, token and cost estimates         |
+| `src/shared/local-models/system-one-settings.ts`   | What the user configures: engine choices and their disclosures, `applySystemOneSettingsPatch()` (the one validator), fail policy rows, `SystemOneReport`, the Test question |
+| `src/shared/local-models/system-one-ledger.ts`     | The record: `SystemOneDecision`, `parseSystemOneLedgerQuery()`, `formatSystemOneLedgerInput()`, the outcome labels, the 30 day window                                       |
+| `src/main/local-models/system-one/jev-client.ts`   | `askSystemOne()`, `listSystemOneModels()`, `parseSystemOneAnswers()`: the HTTP client for Jev and OpenJev                                                                   |
+| `src/main/local-models/system-one/local-judge.ts`  | `askLocalJudge()`: the same questions on a text model through `runLocalTask`                                                                                                |
+| `src/main/local-models/system-one/config-store.ts` | `system-one.json`: the settings and one sealed key per remote engine                                                                                                        |
+| `src/main/local-models/system-one/service.ts`      | `resolveSystemOneKey()`, `resolveSystemOneEngine()`, `resolveSystemOneForTask()`, `askResolvedSystemOne()`, the report, the setters, `testSystemOne()`                      |
+| `src/main/local-models/system-one/decisions.ts`    | `recordSystemOneDecision()` and `readSystemOneLedger()`                                                                                                                     |
+| `src/main/stats/s1-decisions.ts`                   | The SQL for `s1_decisions`: insert, filtered read, prune                                                                                                                    |
+| `src/main/local-models/task-router.ts`             | `runSystemOneTask()` beside its model twins                                                                                                                                 |
+
+### The question vocabulary
+
+A question is also the Jev wire shape, so there is no translation layer.
+
+| Builder                 | Answer                                                                        | Limits                            |
+| ----------------------- | ----------------------------------------------------------------------------- | --------------------------------- |
+| `noul(text)`            | `probability` of yes, 0 to 1                                                  |                                   |
+| `choice(text, options)` | `choice` (an option id), `confidence`, and a `probabilities` entry per option | Up to 255 options, each described |
+| `score(text, levels)`   | `score`, `confidence`, and a `probabilities` array indexed by level           | 2 to 10 described levels          |
+
+Three traps from the `jev` skill hold for every builder. Key each question and each choice option by
+an id and never by position, because an answer is read back by id. Describe every option distinctly.
+Pin a model for any threshold that was tuned against one version, because identical requests can
+return slightly different numbers. A score is a float and can sit at its top bound, so a value within
+1e-6 of a bound is clamped, not refused. A request is limited to about 32,388 tokens
+(`JEV_MAX_STATE_AND_QUESTION_TOKENS`).
+
+The builders live in `src/shared` and `jev-client.ts` re-exports them, because a task definition in
+`src/shared/local-models/tasks.ts` declares `systemOneQuestions(input)` and cannot import from main.
+
+### The client: `askSystemOne()`
+
+```
+POST {baseUrl}/v1/systemone   { state, model?, questions: { id: Question } }
+                           -> { model, answers: { id: Answer }, usage }
+GET  {baseUrl}/v1/models   -> { models: [{ name, release_date, description }] }
+```
+
+`askSystemOne(engine, state, questions, { timeoutMs, signal, model? })` takes a
+`SystemOneRemoteEngine` (`{ id, baseUrl, apiKey? }`) and resolves a `SystemOneResult` (typed answers,
+`model`, `usage`, `latencyMs`, `costUsd`, `redacted`, `calibrated`). It is the only place in the app
+that speaks to Jev. Four rules hold for every caller, so none has to remember them:
+
+1. **Redacted before it leaves.** `redactSystemOneRequest()` runs inside the client over every string
+   VALUE of the state and the questions (a question can carry the item it judges). Object keys are
+   left alone, because a choice's option ids are keys. `SystemOneResult.redacted` says a span was
+   removed. A caller cannot skip it.
+2. **One attempt.** No retry and no backoff. The `jev` command retries 429 and 5xx because it is a
+   batch tool with a 30 second budget. A task has about 1.5 seconds and a fail policy.
+3. **The budget covers the body.** `fetchWithTimeout` stops its clock at the response headers, so a
+   second deadline rides on the request signal. A server that sends headers and stalls is a `timeout`.
+4. **Every failure is a `SystemOneError`** (`errors.ts`) that names the engine asked. Nothing here
+   falls back to another engine.
+
+| Code           | When                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------- |
+| `auth`         | The hosted engine with no key (nothing is sent), or a 401 or 403                               |
+| `rate-limited` | A 429                                                                                          |
+| `too-large`    | `400 max_tokens_exceeded`, or a 413. The local judge refuses an oversized state before it asks |
+| `unavailable`  | An unconfigured URL, a 404, a 5xx or 529, a network error, or a 2xx body that does not parse   |
+| `timeout`      | The budget ran out, including a stalled body                                                   |
+| `invalid`      | An empty state, a malformed question, a 400 or 422: a retry cannot help                        |
+| `cancelled`    | The caller aborted. Never a fault                                                              |
+
+There is no pre-flight size refusal for Jev. The estimate (`estimateSystemOneRequest()`, 3.32
+characters per token, Jev's measured rate) reports `fits`, but the engine has the last word: an
+estimate that refused a borderline request would fail a gate the server would have answered.
+
+**Cost.** Only `jev-cloud` has a price, $0.042 per million input tokens. OpenJev and the local judge
+cost 0. The estimate is a FLOOR on a small request: Jev bills a fixed overhead of about 256 tokens
+per request that the character rate does not include (see the real run below). The ledger is not
+affected, because it keeps the tokens the engine reports.
+
+### The local judge: `askLocalJudge()`
+
+`askLocalJudge(state, questions, { timeoutMs, signal })` answers the same questions on a text model.
+It runs ONE generation per question, in order, each held to a JSON schema built for it, so one answer
+never conditions the next. The model is the assignment of the `local-judge` task, so there is no
+second place a judge model is stored, and every generation is recorded as a run of that task.
+
+| Question | Schema                                                                   | Result                                                                                     |
+| -------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `noul`   | `{ answer: yes \| no, confidence }`, confidence an enum of tenths 0 to 1 | P(yes) is the confidence on the side chosen. Under 0.5 reads as 0.5                        |
+| `choice` | An enum of the option ids                                                | One option. No `probabilities`, no `confidence`: the model names one and invents no spread |
+| `score`  | An enum of the level numbers                                             | One level. Same                                                                            |
+
+Every result is `calibrated: false`, and `model` is the source spelling (`local:<id>` or
+`endpoint:<id>:<model>`). The request is redacted like any other engine's, because the source can be
+an endpoint on another machine. The first failed question fails the request: all answers or none.
+Its budget defaults to `LOCAL_JUDGE_DEFAULT_TIMEOUT_MS` (30 s), since the first call after an idle
+spell loads the model, and the stored timeout does not apply to it.
+
+### The key: `resolveSystemOneKey()`
+
+`resolveSystemOneKey(engine)` in `service.ts` returns the key a remote engine is called with, and
+WHERE it came from. It never returns a key to a surface: the report carries a `SystemOneKeyInfo`.
+
+| Order | Source                              | Applies to       | `SystemOneKeyInfo`                                         |
+| ----- | ----------------------------------- | ---------------- | ---------------------------------------------------------- |
+| 1     | The sealed key in `system-one.json` | both             | `{ source: 'stored', storage: 'os' \| 'obscured' }`        |
+| 2     | `TYPESAFE_API_KEY`                  | `jev-cloud` only | `{ source: 'env', envVar, from: 'settings' \| 'process' }` |
+| 3     | `~/.config/typesafe/api_key`        | `jev-cloud` only | `{ source: 'file', path }`                                 |
+| -     | None                                |                  | `{ source: 'none' }`                                       |
+
+Settings > Environment is read before Maestro's own environment, the way `resolveEndpointApiKey`
+does. Three rules:
+
+- **An OpenJev server is only sent the key stored for it.** The two fallbacks belong to the hosted
+  engine, so the TypeSafe key never goes to somebody else's machine.
+- **A stored key that will not open does not fall through.** It reports `problem` (a reset key store,
+  a file from another machine), the engine has no key (`auth`), and nothing is sent. The unreadable
+  bytes stay in the file until the person chooses Replace or Clear.
+- **A key is write-only.** No IPC channel, bridge message or CLI verb returns one. `s1 key set` reads
+  it from stdin so it is not in shell history.
+
+The file is a `createPrivateStateFile` (see the canonical entry): per device, because a key sealed by
+this machine opens nowhere else, so the engine choice travels with its key. The hosted address
+follows `TYPESAFE_BASE_URL`, as the `jev` command does, and a value that is not a URL is `unavailable`,
+not a silent return to the default.
+
+### The engine in force: `resolveSystemOneEngine()`
+
+`resolveSystemOneEngine()` reads the settings and the key and returns `{ id: 'off' }`, the local
+judge, or a remote engine with its URL, key, pinned model and budget. It sends nothing. A
+`refusal` on the result says why it cannot be asked as set up (no key, no URL, no judge model).
+`askResolvedSystemOne(resolved, state, questions, { signal })` calls `askSystemOne` or
+`askLocalJudge` by the stored choice and rejects with the refusal. **`off` is not an engine**, and
+`askResolvedSystemOne` does not accept it: a caller decides what no engine means for it.
+
+The settings keep one pinned model per remote engine (`models['jev-cloud']`, `models.openjev`)
+because a Jev version id means nothing to an OpenJev server. The local judge has no pin and no stored
+timeout.
+
+### A task on System One: `runSystemOneTask()`
+
+The `system-one` assignment (`SYSTEM_ONE_ASSIGNMENT`, spelled `system-one`) names no engine. It is
+valid for a task that satisfies `taskAcceptsSystemOne(task)`: `system === 'one'` AND a
+`systemOneQuestions(input)` builder, which turns the task's input into `{ state, questions }`.
+`defineTask` throws for a System Two task that declares one. A stored `system-one` on a task that
+does not accept it is dropped by `parseLocalModelAssignment` (the task stays on its default), and
+`localModelAssignmentProblem()` refuses it at save with the reason and the sources the task takes.
+
+`runSystemOneTask(taskId, input, { signal, failPolicy, agentId })` sits beside `runLocalTask` and its
+twins. `SystemOneTaskInputs` holds each task's input type, so a call is checked at the call site.
+
+| Status          | Meaning                                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `not-assigned`  | The assignment is not `system-one`. Nothing was asked and nothing recorded. The caller runs its model twin |
+| `ok`            | The engine answered every question: the `SystemOneResult` plus `engineLabel`                               |
+| `failed-open`   | No answer, and the fail policy lets the work go ahead unchecked                                            |
+| `failed-closed` | No answer, and the fail policy stops the work                                                              |
+| `unavailable`   | No answer, for a task with no fail policy. The caller decides, as with every other twin                    |
+| `cancelled`     | The caller aborted. Recorded, never treated as a fault                                                     |
+
+No answer includes no engine chosen: code `off`, the policy applies, nothing is sent, and the reason
+says where to choose one. **There is no fallback**: no other engine and no model is asked. An
+unclassified failure inside an engine still throws (a bug, for Sentry) and is not recorded. A model
+twin (`runLocalTask`) now REFUSES a task assigned to System One by name, where it used to read any
+non-model assignment as the Utility Agent.
+
+**Fail policy.** `failPolicy` is `open` or `closed` per task, defaulted on the task definition (the
+Cue gate is `open`, the injection screen is `closed`) and changed by the user (`s1 set fail-policy`).
+A caller that holds a more specific rule passes `failPolicy` and it replaces the task's, so the
+recorded outcome is the one that happened. The Cue gate reconciles the two rather than stacking them:
+
+| Order | Rule                                               | Carried by                                             |
+| ----- | -------------------------------------------------- | ------------------------------------------------------ |
+| 1     | The subscription's `gate_on_unavailable`, when set | `CueGateRequest.onUnavailable` into `runSystemOneTask` |
+| 2     | The Cue gate task's fail policy                    | `CueGateCheck.onUnavailable`                           |
+| 3     | Fail open                                          |                                                        |
+
+`resolveCueGateDecision()` says whose rule skipped a run ("gate_on_unavailable is \"skip\"" or "the
+Cue gate task fails closed"). The fail policy applies to the System One path ONLY: a gate on a local
+model or an endpoint keeps Cue's rule alone.
+
+**Readiness.** A task on System One is `ready` when the engine in force is set up, read from the
+settings with nothing sent. The two new reasons are `system-one-off` and `system-one-not-ready`, and
+a full listing reads the engine once. The picker labels come from `systemOneAssignmentLabel(engine)`:
+"System One (Jev)", "System One (OpenJev)", "System One (local judge)", and "System One (no engine
+chosen)" for a task left on it after the engine was switched off.
+
+### The Cue gate on System One
+
+`cueGateSystemOneRequest({ condition, event })` in `src/shared/cue/gate.ts` makes the event the state
+(the SAME capped text a local model reads) and the condition one noul, id `proceed`: "Should this run
+proceed? It proceeds when the event in the state meets this condition: ...". An event that does not
+say enough passes, as the local prompt says. `cueGateCheckFromSystemOne(answers, engineLabel)`
+passes at P(yes) >= 0.5 (`CUE_GATE_PASS_PROBABILITY`) and names the engine in the reason kept on the
+event: "Jev (TypeSafe cloud): yes, 93% that the run should proceed." `evaluateCueGate()` asks
+`runSystemOneTask` first and on `not-assigned` runs the model path exactly as before. The agent id
+of the subscription's owner goes into the record.
+
+### The ledger: `s1_decisions`
+
+Every run that reached System One is handed to `recordSystemOneDecision()`, which writes one line to
+the system log (debug for `ok`, info otherwise, never text) and one row to `s1_decisions` in
+`stats.db` (migration v18 through `runSqliteMigrations`, with `isApplied` so a database another
+branch stamped 18 still gets the table).
+
+| Column                                              | Holds                                                                                 |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `id`, `started_at`                                  | Row id and start time                                                                 |
+| `task_id`, `engine`, `model`                        | The task, the engine (`off` included) and the model that answered                     |
+| `question_ids`, `answers`                           | JSON: the ids asked and the typed answers                                             |
+| `outcome`                                           | `ok`, `failed-open`, `failed-closed`, `unavailable`, `cancelled` (a CHECK constraint) |
+| `error_code`                                        | Why there was no answer: `timeout`, `auth`, `off`, ...                                |
+| `latency_ms`, `tokens_in`, `tokens_out`, `cost_usd` | What the engine reported and the cost estimate                                        |
+| `agent_id`                                          | The agent the run was for, when the caller knows one                                  |
+| `input`                                             | The redacted state and questions, only while `keepInputs` is on                       |
+
+- **The outcome says what the policy did and the code says why.** A timeout is not an outcome of its
+  own, so the record never loses whether the work went ahead. `timeout` is a FILTER that matches the
+  code, in the view and in `s1 ledger --outcome timeout`.
+- **No input unless asked.** `SystemOneSettings.keepInputs` is off by default. When on,
+  `formatSystemOneLedgerInput()` redacts the state and the questions and, past 20,000 characters,
+  keeps the questions and the start of the state with a `truncated` mark. A run with no answer keeps
+  its input too. The router builds that text inside its record guard, so a record that cannot be kept
+  never fails the run. Turning the setting off does not delete what was kept.
+- **It is a stats writer.** It honors `statsCollectionEnabled` and writes nothing while the database
+  is not open. A read then answers with a `notice` that both surfaces print.
+- **Thirty days, no timer.** A read never returns an older record whatever `since` asks for, and old
+  rows are deleted at most once a day on the next write or read. The test shim over `node:sqlite` can
+  return `changes` as a bigint, which the prune handles. `better-sqlite3` itself was not exercised.
+- **One reader.** `readSystemOneLedger()` is what the Settings view and `s1 ledger` both read through,
+  with `parseSystemOneLedgerQuery()` as the one validator.
+
+### Transports
+
+| Surface  | Name                                                                                                                                                                    |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IPC      | `localModels:systemOne:report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, and the push `localModels:systemOne:changed`                                             |
+| Preload  | `window.maestro.localModels.systemOne` (`report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `onChanged`)                                                           |
+| Bridge   | `system_one_status`, `system_one_set`, `system_one_key_set`, `system_one_key_clear`, `system_one_test`, `system_one_ledger`                                             |
+| CLI      | `maestro-cli s1 status`, `set engine`, `set timeout`, `set fail-policy`, `set keep-inputs`, `key set`, `key clear`, `test`, `ledger`; `models assign <task> system-one` |
+| Renderer | `useSystemOne()` (the tab owns one instance), `useSystemOneLedger()`, `SystemOneEngineCard`, the **If no answer** column, `SystemOneLedgerSection`                      |
+
+Every one calls the functions above. The CLI reads the app's state through the bridge, so `s1` needs
+the desktop app, and `s1 set engine local-judge --model` stores the assignment through
+`resolveAssignmentSpec()` and `storeTaskAssignment()` in `models-assign.ts`, the same two functions
+`models assign` uses.
+
+### Real run: 2026-10-12, darwin-arm64
+
+`src/__tests__/main/local-models/system-one/jev-e2e.test.ts` is opt-in. Run it with:
+
+```bash
+MAESTRO_JEV_E2E=1 env -u MAESTRO_USER_DATA npx vitest run src/__tests__/main/local-models/system-one/jev-e2e.test.ts
+```
+
+It goes through the service, not the client alone: an empty scratch data folder,
+`updateSystemOneSettingsRequest({ engine: 'jev-cloud' })`, `resolveSystemOneEngine()`, then
+`askResolvedSystemOne()`. That is the path a task takes, so `TYPESAFE_BASE_URL` is honored. The key is
+whatever a test process can read: `TYPESAFE_API_KEY`, then the `jev` command's key file. A key stored
+in Settings is sealed by the app and out of reach, so with no key the tests skip and say why. It
+asks one noul, one choice and one score about one fixed, made-up support ticket, so nothing of the
+user's is sent, and it checks the shapes AND the direction of each answer. The key is checked out of
+the written record with a boolean, so a failure cannot print it. Measurements also go to
+`$TMPDIR/maestro-jev-e2e/jev-e2e-results.json` (override with `MAESTRO_JEV_E2E_DIR`).
+
+| Measure                                                | Value                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Model that answered `jev-latest`                       | `jev-1.13.0`                                                                    |
+| Latency: noul (first request, pays for the connection) | 194 ms                                                                          |
+| Latency: choice, score (connection reused)             | 111 ms, 105 ms                                                                  |
+| All inside the 1500 ms default budget                  | Yes                                                                             |
+| Reported tokens, 3 requests                            | 1,125 in + 76 out = 1,201                                                       |
+| Estimated input tokens (`estimateSystemOneRequest`)    | 358                                                                             |
+| Cost                                                   | $0.000047                                                                       |
+| Answers                                                | P(refund) 0.99; team `billing`, confidence 1; urgency 2 of 0 to 2, confidence 1 |
+
+**Finding.** The estimate is about three times low on a small request. The engine reported about 375
+input tokens per request where the estimate said about 119, a fixed overhead of roughly 256 tokens
+that the 3.32 characters per token figure does not include. It does not matter for `fits` (under 1%
+of the 32,388 token limit). It matters for a cost shown BEFORE a request is sent: such a surface
+should add the overhead or label the number as a floor.
+
+**Not verified.**
+
+- OpenJev's `model` field. There was no OpenJev server. The client sends `model` only when one is
+  pinned; the hosted engine defaults to `jev-latest`. If a server requires the field, its 422 comes
+  back as `invalid` and quotes it.
+- A decision written to `stats.db` by a real gate. The e2e test does not open the database.
+- The local judge on a real model. Every local-judge test mocks `generateText`. That node-llama-cpp
+  compiles a numeric `enum` into a grammar is unchecked; if it does not, the engine falls back to no
+  grammar and the parser still enforces the range.
+- The engine card, the picker and the ledger view in the running app: component tests only.
 
 ## Speech-to-text and dictation
 

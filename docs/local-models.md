@@ -184,6 +184,7 @@ The picker only offers sources that can do the job:
 - **Utility Agent**: the task's existing agent path, for tasks that had one. The Utility Agent settings themselves (which agent and model) sit under the table on **System Two**. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
 - **An installed model** of the kind the task needs.
 - **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation and embeddings).
+- **System One**, for a task that asks typed questions, while an [engine](#system-one-engines) is chosen. See [System One](#system-one).
 
 The readiness line shows a green **Ready**, or names what is wrong and offers the fix: **Download** or **Resume** for a missing model, **Enable** for a switched-off endpoint, or **Check again** when a server did not answer. Some fixes are outside Maestro (for example, starting Ollama), and the line tells you what to do.
 
@@ -280,6 +281,133 @@ When it finds something, nothing is sent. A dialog lists what it found, with eac
 The **Secret screen** task adds a model pass on top of the pattern check. It is off by default. If you assign it a classifier, the content is also scored by that model, and a flag from the model is listed with the model's name and score. A model that cannot run does not block publishing and does not hide a pattern finding: the dialog says that only patterns ran. The catalog's classifiers are trained to detect prompt injection, not credentials, so treat a model flag as a reason to look, not as proof.
 
 The check is a safety net. It does not find every secret, and a clean result is not a guarantee. Read what you publish.
+
+## System One
+
+System One answers a question with a judgment, not with text. A task hands it some text and a question with a fixed shape. It sends back a number or a pick, never a paragraph.
+
+| Question         | What comes back                                                         |
+| ---------------- | ----------------------------------------------------------------------- |
+| Yes or no        | The probability of yes, from 0 to 1                                     |
+| Pick one of N    | The option it chose, how likely each option is, and how sure it is      |
+| Rate on a rubric | A level on a rubric of 2 to 10 described levels, and how likely each is |
+
+A task uses it for a decision it must make fast and often. The Cue gate is the first: before an agent starts, it asks "should this run proceed?" about the event. Jev answers in about 0.1 to 0.2 seconds.
+
+Do not confuse this with [System One and System Two](#system-one-and-system-two), the rule that sorts tasks onto two tabs. That rule says which tab a task's row sits on. This section is about the **engine** that can answer for the rows on the System One tab.
+
+System One is **off** until you choose an engine. Only a task that asks typed questions is offered System One, which today means the Cue gate. Every other task keeps the sources in [Assignments](#assignments).
+
+### System One engines
+
+| Engine                   | What it is                                                                   | Calibrated | Named in the UI as                      |
+| ------------------------ | ---------------------------------------------------------------------------- | ---------- | --------------------------------------- |
+| **Jev (TypeSafe cloud)** | TypeSafe's hosted Jev, at `https://api.typesafe.ai`                          | Yes        | Jev (TypeSafe cloud)                    |
+| **OpenJev**              | An OpenJev server you run, at a URL you give, with an optional key           | Yes        | OpenJev at `<host>`                     |
+| **Local judge**          | A text model on this machine or on an endpoint, answering the same questions | No         | Local judge (`<model>`), not calibrated |
+
+**Calibrated** means that when Jev says 0.9, it is right about nine times in ten. A local judge does not claim that. It names a side and says how sure it is, and the number is not a measured probability. Every surface says which engine answered: the Test result, the Cue event's reason, the decision ledger, and `maestro-cli s1`. A local judge is never shown as Jev.
+
+OpenJev needs a CUDA GPU, so on a Mac it is a server at another address, not `localhost`.
+
+<Warning>
+	**Choosing Jev sends text to TypeSafe.** The text of every System One request, a Cue event for
+	example, goes to `api.typesafe.ai` after Maestro removes secrets from it. Choosing OpenJev sends it
+	to the server at the URL you give. Only the local judge keeps the text on your machine, and then
+	only if its model is a download or a server on your own computer. Choose Jev only if you would send
+	that text there yourself.
+</Warning>
+
+### Choosing an engine
+
+Open **Settings -> Models -> System One**. The engine card is at the top.
+
+- **Engine.** The picker, with one sentence under each choice that says where the text goes.
+- **Server URL** (OpenJev only). The address of your OpenJev server. You can choose OpenJev before you type it: the card then says the URL is missing, and a request is refused.
+- **API key.** See [The key](#the-key).
+- **Model.** Optional. Jev's `jev-latest` moves to the newest version. If you tuned a threshold against one version, pin that version here. A pin belongs to one engine, so switching engines does not carry a wrong version over. The local judge has no pin: its model is the one assigned to the **Local judge** task.
+- **Timeout.** How long a request gets, 1,500 ms by default, from 100 ms to 60 seconds. It applies to Jev and OpenJev. The local judge keeps its own 30 second budget, because the first answer after an idle spell has to load the model.
+- **Test.** Asks one fixed question about one fixed sentence and shows the answer, the time it took, and the engine. It sends nothing of yours. If the engine answers "no" to a question whose right answer is "yes", the result says so.
+
+Every state and question is checked for secrets before it leaves your machine, whichever engine you chose. A removed span is noted on the result.
+
+If `TYPESAFE_BASE_URL` is set, Maestro sends hosted requests there, the way the `jev` command does, and the card warns you. A value that is not a URL is refused, not ignored.
+
+### The key
+
+A key is write-only. Maestro stores it sealed with your operating system's key store (or obscured, when the system offers none), and no screen and no command shows it again. A surface says only where the key in force comes from:
+
+| Source                           | When                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Stored**                       | You saved it in the card or with `maestro-cli s1 key set`. Used first.                   |
+| **`TYPESAFE_API_KEY`**           | Read from **Settings -> Environment**, then from the environment Maestro was started in. |
+| **`~/.config/typesafe/api_key`** | The file the `jev` command reads.                                                        |
+
+The last two are read-only fallbacks for Jev. An OpenJev server is only ever sent a key stored for it, so your TypeSafe key never goes to somebody else's machine. If a stored key cannot be opened (a reset key store, a file from another computer), Maestro says so and sends nothing. It does not fall through to another source. **Replace** or **Clear** is your call.
+
+### Giving a task to System One
+
+A task's source picker offers **System One (Jev)**, **System One (OpenJev)** or **System One (local judge)** when the task asks typed questions and an engine is chosen. The assignment names no engine. The engine in force answers for every task, and the label says which one that is. If you switch the engine off, a task left on System One shows **System One (no engine chosen)**.
+
+```bash
+maestro-cli models assign cue-gate system-one
+```
+
+The readiness line reads **Ready** when the engine in force is set up, and names what is missing when it is not. Nothing is sent to find out.
+
+### When there is no answer
+
+An engine can fail: no key, a timeout, a server that is down, a request that is too large, or no engine chosen. A task then applies its **fail policy**, shown in the **If no answer** column of the task list:
+
+| Policy     | What the task does             | Default for             |
+| ---------- | ------------------------------ | ----------------------- |
+| **Open**   | The work goes ahead, unchecked | Cue gate                |
+| **Closed** | The work stops                 | Prompt-injection screen |
+
+A task with no default policy has none to apply: it reports "unavailable", and its caller decides what no answer means. The injection screen's default is recorded now, ahead of the day it takes typed questions. Change a policy in the column, or with `maestro-cli s1 set fail-policy`.
+
+Two rules hold for every task:
+
+- **No silent fallback.** If Jev gives no answer, Maestro does not ask OpenJev, the local judge, or a model instead. The task applies its policy and says why.
+- **A subscription's own rule wins.** A Cue subscription with `gate_on_unavailable` set uses that rule for its gate, and the task's policy applies only when it is not set. The Cue event shows which rule skipped a run.
+
+A gate answers **proceed** when the probability of yes is 0.5 or more. An event that does not say enough passes, as the local gate does.
+
+### The decision ledger
+
+Each run that reaches System One leaves one record, answered or not. The **Decision ledger** under the task list shows them, newest first, and filters by task and outcome. A row opens to the model, the question ids, the tokens, the cost estimate, and the agent the run was for.
+
+| Outcome           | What happened                                   |
+| ----------------- | ----------------------------------------------- |
+| **ok**            | The engine answered every question              |
+| **failed-open**   | No answer, and the policy let the work go ahead |
+| **failed-closed** | No answer, and the policy stopped the work      |
+| **unavailable**   | No answer, for a task with no policy of its own |
+| **cancelled**     | The caller stopped the request                  |
+
+A timeout is not an outcome of its own: it is a failed run whose reason is `timeout`, so the record still says whether the work went ahead. **timeout** is a filter that matches that reason.
+
+A record holds the task, the engine, the question ids and the typed answers. It holds **no text** unless you turn on **Keep inputs in the ledger**, which is off by default. When it is on, the state and the questions are kept with secrets removed, and cut at 20,000 characters. Turning it off later does not delete what was kept: those rows go with the rest after 30 days.
+
+The ledger is kept for 30 days. It is written only while usage statistics are on, and a read says so when they are off.
+
+### System One from the command line
+
+Every verb needs the desktop app running.
+
+```bash
+maestro-cli s1 status [--json]                   # engine, address, model, timeout, where each key comes from, fail policies
+maestro-cli s1 set engine off|jev-cloud|openjev|local-judge [--url <url>] [--model <model>]
+maestro-cli s1 set timeout <ms>                  # 100 to 60000; Jev and OpenJev only
+maestro-cli s1 set fail-policy <task-id> open|closed|default
+maestro-cli s1 set keep-inputs on|off            # whether the ledger keeps what was asked
+pbpaste | maestro-cli s1 key set [--engine jev-cloud|openjev]   # the key is read from stdin, never an argument
+maestro-cli s1 key clear [--engine jev-cloud|openjev]
+maestro-cli s1 test [--json]                     # one fixed question: answer, latency, engine
+maestro-cli s1 ledger [--task <task-id>] [--outcome <outcome>] [--since 2h] [--limit <n>] [--json]
+```
+
+`s1 status` exits non-zero when the engine in force cannot answer as set up (no key, no URL, no judge model). Off is not a failure. `s1 test` exits non-zero when no answer came back. For the local judge, `--model` takes a source (`local:<model-id>` or `endpoint:<endpoint>:<model>`) and assigns it to the **Local judge** task, the same as `maestro-cli models assign local-judge <source>`. `--since` accepts `30m`, `2h`, `1d`, `1w`, an ISO-8601 time, or an epoch.
 
 ## Model server
 
@@ -666,6 +794,8 @@ An endpoint at any other address is a network service. Text sent to it leaves th
 
 An agent set to [Run on](#run-on) a source sends it the whole conversation: your prompts, the files the agent reads, and every tool result. A model on this machine keeps that text here. A cloud endpoint, or a server at another address, receives it, so choose one only if you would send that text there yourself.
 
+[System One](#system-one) on Jev sends the text of each request (a Cue event, for the Cue gate) to TypeSafe, and on OpenJev to the server you named. Secrets are removed first. The local judge sends it to the model assigned to the Local judge task, which is on this machine unless that task is on a remote endpoint. System One is off until you choose an engine.
+
 An agent with [tiers](#tiers) set to a source sends that source each task that asks for the tier, with the same conversation. An agent with [background requests](#background-requests) sends its target the page a web fetch read, or the text a session title is made from. Both go where you picked, and neither goes to the provider as well.
 
 ## Disk and memory
@@ -688,7 +818,7 @@ The "Hey Jarvis" wake phrase is CC-BY-NC-SA-4.0, which does not allow commercial
 
 ## From the command line
 
-Everything in the tab has a `maestro-cli models` verb, so an agent can set this up for you. Verbs that touch downloads or servers need the desktop app running; `assign` and `endpoints add` / `update` / `remove` work with it closed.
+Everything in the tab has a `maestro-cli models` verb, so an agent can set this up for you. Verbs that touch downloads or servers need the desktop app running; `assign` and `endpoints add` / `update` / `remove` work with it closed. The System One engine, its key, and its ledger have their own `maestro-cli s1` verbs: see [System One from the command line](#system-one-from-the-command-line).
 
 ```bash
 maestro-cli models list [--kind <kind>] [--fit]  # the Library in its groups, with status, what each model is good at, and what uses it; --fit adds Fits / Tight / Too large
