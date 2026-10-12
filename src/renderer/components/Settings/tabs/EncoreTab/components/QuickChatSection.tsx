@@ -87,8 +87,8 @@ export function QuickChatSection({
 						title="Keep new chats as tabs"
 						description={
 							quickChatSettings.persistent
-								? 'Each chat is a visible tab on its agent and stays after you start the next one.'
-								: 'Each chat is ephemeral: a hidden tab, deleted when you start the next chat. The bookmark in the window keeps one.'
+								? 'A tab a chat creates is visible on its agent and stays after you start the next chat.'
+								: 'A tab a chat creates is ephemeral: hidden, and deleted when you start the next chat. The bookmark in the window keeps one. Tabs you already had are never touched.'
 						}
 						checked={quickChatSettings.persistent}
 						onChange={(persistent) => update({ persistent })}
@@ -101,7 +101,7 @@ export function QuickChatSection({
 						title="Record ephemeral chats in History"
 						description={
 							quickChatSettings.ephemeralHistory
-								? 'Ephemeral chats write History entries, so you can find them after the tab is gone.'
+								? 'Ephemeral chats write History entries, so you can find them after the tab is gone, and a later message on the same subject can reopen them.'
 								: 'Ephemeral chats leave no History entries.'
 						}
 						checked={quickChatSettings.ephemeralHistory}
