@@ -12,12 +12,15 @@ import {
 	MODEL_SERVER_ENDPOINT_ID,
 	modelServerEndpoint,
 } from '../../../shared/local-models/model-server';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 import {
-	RUN_ON_CODEX_KEY_ENV_VAR,
+	OPENCODE_CONFIG_ENV_VAR,
+	RUN_ON_KEY_ENV_VAR,
 	RUN_ON_DEFAULT_CONTEXT_TOKENS,
 	RUN_ON_PLACEHOLDER_KEY,
 	agentRunOnSupport,
-	claudeCodeRunOnOutputTokens,
+	runOnOutputTokens,
 	isRunOnSourceTarget,
 	parseRunOnTarget,
 	resolveRunOnLaunch,
@@ -74,8 +77,19 @@ function refused(overrides: Partial<RunOnLaunchInput> = {}) {
 	return resolution;
 }
 
+/** The harnesses whose recipe was run against the real CLI. */
+const MEASURED = ['claude-code', 'codex', 'copilot-cli', 'opencode'];
+
+/** The inline config a merge produced, read back as OpenCode would read it. */
+function openCodeConfig(
+	resolution: ReturnType<typeof injected>,
+	current?: string
+): Record<string, any> {
+	return JSON.parse(resolution.envVarMerges[OPENCODE_CONFIG_ENV_VAR](current));
+}
+
 describe('agentRunOnSupport', () => {
-	it.each(['claude-code', 'codex'])('%s has a recipe', (toolType) => {
+	it.each(MEASURED)('%s has a recipe', (toolType) => {
 		expect(agentRunOnSupport(toolType).supported).toBe(true);
 	});
 
@@ -86,16 +100,49 @@ describe('agentRunOnSupport', () => {
 		}
 	});
 
-	it.each(
-		AGENT_IDS.filter((id) => id !== 'claude-code' && id !== 'codex' && id !== 'terminal').map(
-			(id) => [id]
-		)
-	)('%s has no verified recipe, and says so instead of guessing one', (toolType) => {
+	it.each(AGENT_IDS.filter((id) => !MEASURED.includes(id) && id !== 'terminal').map((id) => [id]))(
+		'%s has no measured recipe, and says why instead of guessing one',
+		(toolType) => {
+			const support = agentRunOnSupport(toolType);
+
+			expect(support.supported).toBe(false);
+			if (support.supported) throw new Error('expected unsupported');
+			expect(support.reason).toContain(getAgentDisplayName(toolType));
+			expect(support.reason).toContain("runs on its provider's model only");
+		}
+	);
+
+	it.each([
+		['qwen3-coder', '--auth-type openai with --openai-base-url'],
+		['hermes', '--provider openai-api with OPENAI_BASE_URL'],
+		['omp', 'LM_STUDIO_BASE_URL'],
+	])('%s names the documented way that has not been run yet', (toolType, way) => {
 		const support = agentRunOnSupport(toolType);
 
-		expect(support.supported).toBe(false);
 		if (support.supported) throw new Error('expected unsupported');
-		expect(support.reason).toContain('has not verified');
+		expect(support.reason).toContain(way);
+		expect(support.reason).toContain('has not checked it against the real CLI');
+	});
+
+	it.each(['antigravity', 'gemini-cli'])('%s speaks a wire no source serves', (toolType) => {
+		const support = agentRunOnSupport(toolType);
+
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain('speaks only the Gemini API');
+	});
+
+	it.each(['factory-droid', 'pi'])('%s needs a file Maestro does not write', (toolType) => {
+		const support = agentRunOnSupport(toolType);
+
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain('Maestro does not write one for a launch');
+	});
+
+	it('refuses Grok CLI because the credential it would send is not known', () => {
+		const support = agentRunOnSupport('grok');
+
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain('cannot tell which credential');
 	});
 
 	it('refuses a terminal, which is not an agent', () => {
@@ -109,14 +156,14 @@ describe('agentRunOnSupport', () => {
 	});
 });
 
-describe('claudeCodeRunOnOutputTokens', () => {
+describe('runOnOutputTokens', () => {
 	it('gives the measured 8,192 at the smallest agent window', () => {
-		expect(claudeCodeRunOnOutputTokens(MODEL_SERVER_AGENT_MIN_CONTEXT)).toBe(8192);
+		expect(runOnOutputTokens(MODEL_SERVER_AGENT_MIN_CONTEXT)).toBe(8192);
 	});
 
 	it("never goes past Claude Code's own default reservation", () => {
-		expect(claudeCodeRunOnOutputTokens(131_072)).toBe(26_214);
-		expect(claudeCodeRunOnOutputTokens(262_144)).toBe(32_000);
+		expect(runOnOutputTokens(131_072)).toBe(26_214);
+		expect(runOnOutputTokens(262_144)).toBe(32_000);
 	});
 });
 
@@ -238,7 +285,7 @@ describe('resolveRunOnLaunch: no target', () => {
 	});
 
 	it('does nothing for a provider target even on a harness with no recipe', () => {
-		expect(resolve({ toolType: 'opencode', target: { type: 'provider' } })).toEqual({
+		expect(resolve({ toolType: 'factory-droid', target: { type: 'provider' } })).toEqual({
 			kind: 'none',
 		});
 	});
@@ -260,7 +307,10 @@ describe('resolveRunOnLaunch: Claude Code', () => {
 				CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192',
 			},
 			args: [],
+			subcommandArgs: [],
 			model: 'qwen3:latest',
+			harnessModel: 'qwen3:latest',
+			envVarMerges: {},
 			contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
 			userOverrides: [],
 			clearedEnvVars: ['ANTHROPIC_API_KEY'],
@@ -371,7 +421,7 @@ describe('resolveRunOnLaunch: Codex', () => {
 	it('defines a provider of its own on the Responses route, at the root of the command line', () => {
 		expect(injected({ toolType: 'codex', target, endpoint: server, key: 'server-key' })).toEqual({
 			kind: 'inject',
-			envVars: { [RUN_ON_CODEX_KEY_ENV_VAR]: 'server-key' },
+			envVars: { [RUN_ON_KEY_ENV_VAR]: 'server-key' },
 			args: [
 				'-c',
 				'model_providers.maestro={name="Maestro", base_url="http://127.0.0.1:52100/v1", env_key="MAESTRO_RUN_ON_KEY", wire_api="responses"}',
@@ -380,7 +430,10 @@ describe('resolveRunOnLaunch: Codex', () => {
 				'-c',
 				`model_context_window=${RUN_ON_DEFAULT_CONTEXT_TOKENS}`,
 			],
+			subcommandArgs: [],
 			model: GPT_OSS_20B_ID,
+			harnessModel: GPT_OSS_20B_ID,
+			envVarMerges: {},
 			contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
 			userOverrides: [],
 			// A provider of its own with its own `env_key` sends that key and no other.
@@ -398,7 +451,7 @@ describe('resolveRunOnLaunch: Codex', () => {
 	it('gives a keyless source some text, because Codex refuses an unset env_key', () => {
 		const resolution = injected({ toolType: 'codex', target: QWEN, endpoint: OLLAMA });
 
-		expect(resolution.envVars).toEqual({ [RUN_ON_CODEX_KEY_ENV_VAR]: RUN_ON_PLACEHOLDER_KEY });
+		expect(resolution.envVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: RUN_ON_PLACEHOLDER_KEY });
 		expect(resolution.args[1]).toContain('base_url="http://127.0.0.1:11434/v1"');
 	});
 
@@ -408,11 +461,11 @@ describe('resolveRunOnLaunch: Codex', () => {
 			target,
 			endpoint: server,
 			key: 'server-key',
-			userEnvVars: { [RUN_ON_CODEX_KEY_ENV_VAR]: 'my-own-key' },
+			userEnvVars: { [RUN_ON_KEY_ENV_VAR]: 'my-own-key' },
 		});
 
 		expect(resolution.envVars).toEqual({});
-		expect(resolution.userOverrides).toEqual([RUN_ON_CODEX_KEY_ENV_VAR]);
+		expect(resolution.userOverrides).toEqual([RUN_ON_KEY_ENV_VAR]);
 	});
 
 	it('carries the context the target names', () => {
@@ -426,8 +479,182 @@ describe('resolveRunOnLaunch: Codex', () => {
 	});
 });
 
+describe('resolveRunOnLaunch: Copilot CLI', () => {
+	const copilot = (overrides: Partial<RunOnLaunchInput> = {}) =>
+		injected({ toolType: 'copilot-cli', ...overrides });
+
+	it('takes the launch off GitHub routing with its own provider variables, and nothing else', () => {
+		expect(copilot()).toEqual({
+			kind: 'inject',
+			envVars: {
+				// Blank: credentials for some other custom provider, which Copilot CLI
+				// would send to the source in place of the source's key.
+				COPILOT_PROVIDER_BEARER_TOKEN: '',
+				COPILOT_PROVIDER_API_KEY_COMMAND: '',
+				COPILOT_PROVIDER_HEADERS: '',
+				// Copilot CLI calls `/chat/completions` under the URL it is given.
+				COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:11434/v1',
+				COPILOT_PROVIDER_TYPE: 'openai',
+				COPILOT_PROVIDER_WIRE_API: 'completions',
+				COPILOT_PROVIDER_API_KEY: RUN_ON_PLACEHOLDER_KEY,
+				COPILOT_PROVIDER_WIRE_MODEL: 'qwen3:latest',
+				// The window, split into what the prompt and the reply may use.
+				COPILOT_PROVIDER_MAX_PROMPT_TOKENS: String(RUN_ON_DEFAULT_CONTEXT_TOKENS - 8192),
+				COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: '8192',
+			},
+			args: [],
+			subcommandArgs: [],
+			model: 'qwen3:latest',
+			harnessModel: 'qwen3:latest',
+			envVarMerges: {},
+			contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
+			userOverrides: [],
+			clearedEnvVars: [
+				'COPILOT_PROVIDER_BEARER_TOKEN',
+				'COPILOT_PROVIDER_API_KEY_COMMAND',
+				'COPILOT_PROVIDER_HEADERS',
+			],
+		});
+	});
+
+	it('sends the key of a source that has one, under the path the source is served on', () => {
+		const resolution = copilot({
+			target: { type: 'source', endpointId: CLOUD.id, model: 'big-model', contextTokens: 200_000 },
+			endpoint: CLOUD,
+			key: 'sk-workstation',
+		});
+
+		expect(resolution.envVars).toMatchObject({
+			COPILOT_PROVIDER_BASE_URL: 'https://models.example.com/api/v1',
+			COPILOT_PROVIDER_API_KEY: 'sk-workstation',
+			COPILOT_PROVIDER_WIRE_MODEL: 'big-model',
+			COPILOT_PROVIDER_MAX_PROMPT_TOKENS: '168000',
+			COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: '32000',
+		});
+	});
+
+	it('blanks a bearer token even when the agent sets it, so it never reaches the source', () => {
+		const resolution = copilot({
+			userEnvVars: { COPILOT_PROVIDER_BEARER_TOKEN: 'another-providers-token' },
+		});
+
+		expect(resolution.envVars.COPILOT_PROVIDER_BEARER_TOKEN).toBe('');
+		expect(resolution.userOverrides).toEqual([]);
+	});
+
+	it("withholds the source's key, and leaves the agent's own credentials, when the agent routes itself", () => {
+		const resolution = copilot({
+			endpoint: CLOUD,
+			key: 'sk-workstation',
+			userEnvVars: { COPILOT_PROVIDER_BASE_URL: 'https://proxy.example.com/v1' },
+		});
+
+		expect(resolution.envVars).not.toHaveProperty('COPILOT_PROVIDER_BASE_URL');
+		expect(resolution.envVars).not.toHaveProperty('COPILOT_PROVIDER_API_KEY');
+		expect(resolution.envVars).not.toHaveProperty('COPILOT_PROVIDER_BEARER_TOKEN');
+		expect(JSON.stringify(resolution)).not.toContain('sk-workstation');
+		expect(resolution.clearedEnvVars).toEqual([]);
+	});
+});
+
+describe('resolveRunOnLaunch: OpenCode', () => {
+	const openCode = (overrides: Partial<RunOnLaunchInput> = {}) =>
+		injected({ toolType: 'opencode', ...overrides });
+	const defaults = getAgentDefinition('opencode')?.defaultEnvVars?.[OPENCODE_CONFIG_ENV_VAR];
+
+	it('runs a private server, names the model under its own provider, and keeps the key in a variable', () => {
+		const resolution = openCode();
+
+		expect(resolution).toMatchObject({
+			envVars: { [RUN_ON_KEY_ENV_VAR]: RUN_ON_PLACEHOLDER_KEY },
+			// Nothing at the root: OpenCode rejects `--standalone` ahead of `run`.
+			args: [],
+			subcommandArgs: ['--standalone'],
+			model: 'qwen3:latest',
+			harnessModel: 'maestro/qwen3:latest',
+			userOverrides: [],
+			clearedEnvVars: [],
+		});
+		expect(Object.keys(resolution.envVarMerges)).toEqual([OPENCODE_CONFIG_ENV_VAR]);
+	});
+
+	it('defines the provider on the Chat Completions route, with the window and its output share', () => {
+		expect(openCodeConfig(openCode())).toEqual({
+			provider: {
+				maestro: {
+					npm: '@ai-sdk/openai-compatible',
+					name: 'Maestro',
+					options: {
+						baseURL: 'http://127.0.0.1:11434/v1',
+						apiKey: `{env:${RUN_ON_KEY_ENV_VAR}}`,
+					},
+					models: {
+						'qwen3:latest': {
+							name: 'qwen3:latest',
+							limit: { context: RUN_ON_DEFAULT_CONTEXT_TOKENS, output: 8192 },
+						},
+					},
+				},
+			},
+		});
+	});
+
+	it("adds the provider to Maestro's own inline config and keeps every key of it", () => {
+		expect(defaults).toBeTruthy();
+		const config = openCodeConfig(openCode(), defaults);
+
+		expect(config).toMatchObject(JSON.parse(defaults ?? '{}'));
+		expect(config.provider.maestro.models).toHaveProperty(['qwen3:latest']);
+	});
+
+	it("keeps the user's own providers, and takes the place of a stale one of its own", () => {
+		const mine = JSON.stringify({
+			theme: 'mine',
+			provider: {
+				ollama: { npm: '@ai-sdk/openai-compatible', models: { 'gemma4:latest': {} } },
+				maestro: { options: { baseURL: 'http://stale.example.com/v1' } },
+			},
+		});
+		const config = openCodeConfig(openCode(), mine);
+
+		expect(config.theme).toBe('mine');
+		expect(config.provider.ollama.models).toHaveProperty(['gemma4:latest']);
+		expect(config.provider.maestro.options.baseURL).toBe('http://127.0.0.1:11434/v1');
+	});
+
+	it.each([['not json'], ['[1, 2]'], ['"text"'], ['']])(
+		'makes the provider the whole document when the value it would add to is %j',
+		(current) => {
+			expect(Object.keys(openCodeConfig(openCode(), current))).toEqual(['provider']);
+		}
+	);
+
+	it('never writes the key into the document', () => {
+		const resolution = openCode({
+			target: { type: 'source', endpointId: CLOUD.id, model: 'big-model', contextTokens: 200_000 },
+			endpoint: CLOUD,
+			key: 'sk-workstation',
+		});
+		const text = resolution.envVarMerges[OPENCODE_CONFIG_ENV_VAR](defaults);
+
+		expect(text).not.toContain('sk-workstation');
+		expect(resolution.envVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: 'sk-workstation' });
+		expect(JSON.parse(text).provider.maestro).toMatchObject({
+			options: { baseURL: 'https://models.example.com/api/v1' },
+			models: { 'big-model': { limit: { context: 200_000, output: 32_000 } } },
+		});
+		expect(resolution.harnessModel).toBe('maestro/big-model');
+	});
+
+	it('refuses a loopback source for an SSH remote: its address is in the document, not a variable', () => {
+		const resolution = resolve({ toolType: 'opencode', remote: { name: 'Build Box' } });
+
+		expect(resolution).toMatchObject({ kind: 'refused', code: 'run-on-loopback-on-remote' });
+	});
+});
+
 describe('resolveRunOnLaunch: refusals', () => {
-	it.each(AGENT_IDS.filter((id) => id !== 'claude-code' && id !== 'codex').map((id) => [id]))(
+	it.each(AGENT_IDS.filter((id) => !MEASURED.includes(id)).map((id) => [id]))(
 		'refuses %s, which has no recipe, and never runs it on the provider',
 		(toolType) => {
 			const resolution = refused({ toolType });

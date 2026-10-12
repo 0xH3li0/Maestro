@@ -14,6 +14,7 @@ import {
 	isEnvVarSet,
 	isValidEnvVarName,
 	stripBlankEnvVars,
+	applyEnvVarMerges,
 } from '../../shared/agentEnvironment';
 
 describe('resolveAgentEnvironment', () => {
@@ -267,5 +268,43 @@ describe('isValidEnvVarName', () => {
 		expect(isValidEnvVarName('MY-KEY')).toBe(false);
 		expect(isValidEnvVarName('MY KEY')).toBe(false);
 		expect(isValidEnvVarName('$KEY')).toBe(false);
+	});
+});
+
+describe('applyEnvVarMerges', () => {
+	const merges = { DOC: (current: string | undefined) => `${current ?? 'none'}+added` };
+
+	it('builds each variable from the value the record carries', () => {
+		const env: Record<string, string | undefined> = { DOC: 'mine', OTHER: 'kept' };
+
+		applyEnvVarMerges(env, merges);
+
+		expect(env).toEqual({ DOC: 'mine+added', OTHER: 'kept' });
+	});
+
+	it('builds on the fallback when the record does not set the variable, or sets it blank', () => {
+		for (const own of [undefined, '', '  ']) {
+			const env: Record<string, string | undefined> = { DOC: own };
+
+			applyEnvVarMerges(env, merges, { DOC: 'beneath' });
+
+			expect(env.DOC).toBe('beneath+added');
+		}
+	});
+
+	it('hands the merge nothing when no layer has a value', () => {
+		const env: Record<string, string | undefined> = {};
+
+		applyEnvVarMerges(env, merges, { DOC: '' });
+
+		expect(env.DOC).toBe('none+added');
+	});
+
+	it('leaves the record alone when there is nothing to merge', () => {
+		const env = { DOC: 'mine' };
+
+		applyEnvVarMerges(env, undefined);
+
+		expect(env).toEqual({ DOC: 'mine' });
 	});
 });

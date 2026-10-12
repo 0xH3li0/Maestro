@@ -57,6 +57,7 @@ vi.mock('../../../shared/maestro-lib/launch/agent-args', async () => {
 	return {
 		// The launch plan puts a Run on target's model on the arguments with this.
 		replaceModelArg: actual.replaceModelArg,
+		placeSubcommandArgs: actual.placeSubcommandArgs,
 		buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
 		applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
 	};

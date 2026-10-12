@@ -39,9 +39,15 @@
  *    user can be said to have chosen for this source. It is left alone only
  *    when the agent sets the base URL itself, because the request then goes
  *    where the agent's own variables send it.
+ * 6. A variable that holds a whole document is added to, not replaced. OpenCode
+ *    takes its provider from `OPENCODE_CONFIG_CONTENT`, the same variable that
+ *    carries Maestro's permission block, the read-only override of it, or the
+ *    user's own config. The recipe returns a merge for such a variable
+ *    (`envVarMerges`), applied to whatever value the launch ends up with, so
+ *    rule 3 has nothing to withhold: the user's document is the base.
  */
 
-import { isEnvVarSet } from '../agentEnvironment';
+import { isEnvVarSet, type EnvVarMerge } from '../agentEnvironment';
 import type { AgentId } from '../agentIds';
 import { getAgentDisplayName } from '../agentMetadata';
 import type { LocalModelEndpoint } from './endpoints';
@@ -76,11 +82,21 @@ export const RUN_ON_DEFAULT_CONTEXT_TOKENS = MODEL_SERVER_AGENT_MIN_CONTEXT;
  */
 export const RUN_ON_PLACEHOLDER_KEY = 'maestro-run-on';
 
-/** The variable Codex reads its Run on key from (the provider's `env_key`). */
-export const RUN_ON_CODEX_KEY_ENV_VAR = 'MAESTRO_RUN_ON_KEY';
+/**
+ * The variable a harness reads its Run on key from, when the harness lets the
+ * launch name one: Codex's `env_key`, OpenCode's `{env:...}` reference.
+ */
+export const RUN_ON_KEY_ENV_VAR = 'MAESTRO_RUN_ON_KEY';
 
-/** The id of the model provider Maestro defines for Codex on the command line. */
-const CODEX_PROVIDER_ID = 'maestro';
+/**
+ * The id of the model provider Maestro defines for a harness that takes a
+ * provider definition (Codex on the command line, OpenCode in its inline
+ * config). OpenCode names the model `<this id>/<model>`.
+ */
+const RUN_ON_PROVIDER_ID = 'maestro';
+
+/** The variable OpenCode reads an inline config document from. */
+export const OPENCODE_CONFIG_ENV_VAR = 'OPENCODE_CONFIG_CONTENT';
 
 /**
  * Claude Code's own output reservation. It holds this many tokens back from the
@@ -89,13 +105,16 @@ const CODEX_PROVIDER_ID = 'maestro';
 const CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 
 /**
- * The output budget Claude Code is given for a window: a fifth of it, up to its
- * own default. Measured 2026-10-12 at 40,960 tokens: with the default 32,000
- * held back about 9K is left, under Claude Code's own system prompt, so it
- * compacted on every turn and gave up ("Autocompact is thrashing"); 8,192 (a
- * fifth) worked for every model that qualified.
+ * The output budget a harness is given for a window: a fifth of it, up to
+ * Claude Code's own default. Measured 2026-10-12 with Claude Code at 40,960
+ * tokens: with the default 32,000 held back about 9K is left, under Claude
+ * Code's own system prompt, so it compacted on every turn and gave up
+ * ("Autocompact is thrashing"); 8,192 (a fifth) worked for every model that
+ * qualified. OpenCode and Copilot CLI are given the same split: OpenCode as
+ * its model's output limit (it asked the source for exactly that many), Copilot
+ * CLI as its output limit with the rest of the window as its prompt limit.
  */
-export function claudeCodeRunOnOutputTokens(contextTokens: number): number {
+export function runOnOutputTokens(contextTokens: number): number {
 	return Math.min(CLAUDE_CODE_DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(contextTokens / 5));
 }
 
@@ -107,6 +126,31 @@ export interface RunOnRecipeInput {
 	key: string;
 	model: string;
 	contextTokens: number;
+}
+
+/** What a recipe hands back: everything that points one launch at the source. */
+export interface RunOnRecipe {
+	envVars: Record<string, string>;
+	/**
+	 * ROOT arguments. They go before the agent's own (ahead of any subcommand),
+	 * which is where a CLI reads a global option. The model flag is not among
+	 * them (rule 4).
+	 */
+	args: string[];
+	/**
+	 * Arguments that belong to the provider's batch subcommand, placed right
+	 * after it (`placeSubcommandArgs`). OpenCode reads `--standalone` after `run`
+	 * and rejects it in front.
+	 */
+	subcommandArgs?: string[];
+	/**
+	 * The name the harness is given for the model, when it is not the source's
+	 * own name for it (OpenCode: `<provider id>/<model>`). It goes through the
+	 * provider's `modelArgs` like any model (rule 4).
+	 */
+	harnessModel?: string;
+	/** Variables built from the value the launch would otherwise carry (rule 6). */
+	envVarMerges?: Record<string, EnvVarMerge>;
 }
 
 /** Whether a provider's harness can run on another model server, and how. */
@@ -126,13 +170,8 @@ export type AgentRunOnSupport =
 			 * the source as well. Set blank for the launch (rule 5).
 			 */
 			providerKeyEnvVars?: readonly string[];
-			/**
-			 * The variables and the ROOT arguments that point the harness at the
-			 * source. The arguments go before the agent's own (ahead of any
-			 * subcommand), which is where a CLI reads a global option. The model flag
-			 * is not among them (rule 4).
-			 */
-			recipe: (input: RunOnRecipeInput) => { envVars: Record<string, string>; args: string[] };
+			/** The variables and arguments that point the harness at the source. */
+			recipe: (input: RunOnRecipeInput) => RunOnRecipe;
 	  }
 	| {
 			supported: false;
@@ -142,9 +181,12 @@ export type AgentRunOnSupport =
 
 /**
  * Keyed by `AgentId`, so a new provider fails to compile until it is given a
- * recipe or a reason. Both recipes were run against the real CLIs on
- * 2026-10-11 and 2026-10-12: Claude Code 2.1.296 on the Maestro model server
- * and on Ollama, Codex CLI 0.162.1 on the Maestro model server.
+ * recipe or a reason. Every recipe was run against the real CLI: Claude Code
+ * 2.1.296 on the Maestro model server and on Ollama, and Codex CLI 0.162.1 on
+ * the Maestro model server (2026-10-11 and 2026-10-12); OpenCode 2.0.25 and
+ * Copilot CLI 1.0.85 on a loopback server that logs what it is sent
+ * (2026-10-12). The providers with a reason were checked against their
+ * documentation on 2026-10-12; none of their CLIs was on the machine to run.
  */
 const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 	// The base URL alone fails with "Not logged in": the token is what makes
@@ -167,7 +209,7 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 				ANTHROPIC_DEFAULT_SONNET_MODEL: model,
 				ANTHROPIC_DEFAULT_OPUS_MODEL: model,
 				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(contextTokens),
-				CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(claudeCodeRunOnOutputTokens(contextTokens)),
+				CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(runOnOutputTokens(contextTokens)),
 			},
 			args: [],
 		}),
@@ -179,37 +221,169 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 	// TOML basic string for any URL an endpoint record accepts.
 	codex: {
 		supported: true,
-		keyEnvVar: RUN_ON_CODEX_KEY_ENV_VAR,
+		keyEnvVar: RUN_ON_KEY_ENV_VAR,
 		recipe: ({ baseUrl, key, contextTokens }) => ({
-			envVars: { [RUN_ON_CODEX_KEY_ENV_VAR]: key },
+			envVars: { [RUN_ON_KEY_ENV_VAR]: key },
 			args: [
 				'-c',
-				`model_providers.${CODEX_PROVIDER_ID}={name="Maestro", base_url=${JSON.stringify(`${baseUrl}/v1`)}, env_key="${RUN_ON_CODEX_KEY_ENV_VAR}", wire_api="responses"}`,
+				`model_providers.${RUN_ON_PROVIDER_ID}={name="Maestro", base_url=${JSON.stringify(`${baseUrl}/v1`)}, env_key="${RUN_ON_KEY_ENV_VAR}", wire_api="responses"}`,
 				'-c',
-				`model_provider="${CODEX_PROVIDER_ID}"`,
+				`model_provider="${RUN_ON_PROVIDER_ID}"`,
 				'-c',
 				`model_context_window=${contextTokens}`,
 			],
 		}),
 	},
-	'copilot-cli': notVerified('copilot-cli'),
-	opencode: notVerified('opencode'),
-	'factory-droid': notVerified('factory-droid'),
-	antigravity: notVerified('antigravity'),
-	'gemini-cli': notVerified('gemini-cli'),
-	'qwen3-coder': notVerified('qwen3-coder'),
-	hermes: notVerified('hermes'),
-	pi: notVerified('pi'),
-	omp: notVerified('omp'),
-	grok: notVerified('grok'),
+	// Copilot CLI's own route for a custom provider (`copilot help providers`):
+	// setting the base URL takes the launch off GitHub's model routing, and
+	// GitHub sign-in is not used. It calls `/chat/completions` under the URL it
+	// is given, so the URL carries `/v1`. Measured: the source's key is the only
+	// credential sent (no GitHub token; a launch with no key sends an empty
+	// bearer), `--model` names the model, and a resumed session stays on the
+	// source.
+	'copilot-cli': {
+		supported: true,
+		baseUrlEnvVar: 'COPILOT_PROVIDER_BASE_URL',
+		keyEnvVar: 'COPILOT_PROVIDER_API_KEY',
+		// Credentials for some OTHER custom provider, which Copilot CLI prefers to
+		// the key above and would send to the source: a bearer token left in the
+		// shell went out in place of the source's key (measured). A blank value
+		// sends the key again.
+		providerKeyEnvVars: [
+			'COPILOT_PROVIDER_BEARER_TOKEN',
+			'COPILOT_PROVIDER_API_KEY_COMMAND',
+			'COPILOT_PROVIDER_HEADERS',
+		],
+		recipe: ({ baseUrl, key, model, contextTokens }) => {
+			const outputTokens = runOnOutputTokens(contextTokens);
+			return {
+				envVars: {
+					COPILOT_PROVIDER_BASE_URL: `${baseUrl}/v1`,
+					// Both are Copilot CLI's defaults, stated so a value exported for
+					// another provider does not pick the wire format.
+					COPILOT_PROVIDER_TYPE: 'openai',
+					COPILOT_PROVIDER_WIRE_API: 'completions',
+					COPILOT_PROVIDER_API_KEY: key,
+					// The name sent to the source. Left in the shell for another
+					// provider, it went out in place of `--model` (measured).
+					COPILOT_PROVIDER_WIRE_MODEL: model,
+					COPILOT_PROVIDER_MAX_PROMPT_TOKENS: String(contextTokens - outputTokens),
+					COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: String(outputTokens),
+				},
+				args: [],
+			};
+		},
+	},
+	// A provider of its own in OpenCode's inline config, on the Chat Completions
+	// route, with the key read from the environment so it is not written into
+	// the document. Two things the run showed:
+	//   - `--standalone` is required. OpenCode 2 runs turns through a background
+	//     service that was started with some other environment, and that service
+	//     does not see this launch's config ("Model unavailable: maestro/..."). A
+	//     private server reads it, and shares the session store, so a resumed
+	//     session still resumes.
+	//   - The session title is written by the same model: that request reached
+	//     the source too, with the same key.
+	// Measured on OpenCode 2.0.25. An older OpenCode has no `--standalone` and
+	// fails the launch on the unknown option.
+	opencode: {
+		supported: true,
+		keyEnvVar: RUN_ON_KEY_ENV_VAR,
+		recipe: ({ baseUrl, key, model, contextTokens }) => ({
+			envVars: { [RUN_ON_KEY_ENV_VAR]: key },
+			args: [],
+			subcommandArgs: ['--standalone'],
+			harnessModel: `${RUN_ON_PROVIDER_ID}/${model}`,
+			envVarMerges: {
+				[OPENCODE_CONFIG_ENV_VAR]: (current) =>
+					withOpenCodeProvider(current, {
+						npm: '@ai-sdk/openai-compatible',
+						name: 'Maestro',
+						options: { baseURL: `${baseUrl}/v1`, apiKey: `{env:${RUN_ON_KEY_ENV_VAR}}` },
+						models: {
+							[model]: {
+								name: model,
+								limit: { context: contextTokens, output: runOnOutputTokens(contextTokens) },
+							},
+						},
+					}),
+			},
+		}),
+	},
+	'factory-droid': {
+		supported: false,
+		reason: `${getAgentDisplayName('factory-droid')} takes another model server only from a settings file (its custom models list), and Maestro does not write one for a launch, so it runs on its provider's model only.`,
+	},
+	// Both speak the Gemini API only. `GOOGLE_GEMINI_BASE_URL` moves them to
+	// another Gemini-compatible endpoint, which no Local Models source is, and
+	// Antigravity also needs its settings file changed before it reads it.
+	antigravity: geminiWireOnly('antigravity'),
+	'gemini-cli': geminiWireOnly('gemini-cli'),
+	'qwen3-coder': documentedNotRun('qwen3-coder', '--auth-type openai with --openai-base-url'),
+	hermes: documentedNotRun('hermes', '--provider openai-api with OPENAI_BASE_URL'),
+	// `LLAMA_BASE_URL` exists, for llama.cpp's router server only, and a stored
+	// login for that provider wins over it.
+	pi: {
+		supported: false,
+		reason: `${getAgentDisplayName('pi')} takes another model server only from its models file or an extension file, and Maestro does not write one for a launch, so it runs on its provider's model only.`,
+	},
+	omp: documentedNotRun('omp', 'LM_STUDIO_BASE_URL'),
+	// `GROK_MODELS_BASE_URL` moves its requests, but a key for that address can
+	// only be set per model in its config file. Its documented credential order
+	// then falls to the signed-in session, which must not go to a source.
+	grok: {
+		supported: false,
+		reason: `${getAgentDisplayName('grok')} has a base-URL variable but no way to give a launch a key for it, so Maestro cannot tell which credential it would send to another model server, and it runs on its provider's model only.`,
+	},
 	terminal: { supported: false, reason: 'A terminal is a shell, not an agent.' },
 };
 
-function notVerified(agentId: AgentId): AgentRunOnSupport {
+/**
+ * A harness whose documentation names a way that Maestro has not run against
+ * the real CLI. Rule 2 keeps it unmapped until one launch has been measured.
+ */
+function documentedNotRun(agentId: AgentId, way: string): AgentRunOnSupport {
 	return {
 		supported: false,
-		reason: `Maestro has not verified a way to point ${getAgentDisplayName(agentId)} at another model server, so it runs on its provider's model only.`,
+		reason: `${getAgentDisplayName(agentId)} documents a way to use another model server (${way}), but Maestro has not checked it against the real CLI, so it runs on its provider's model only.`,
 	};
+}
+
+function geminiWireOnly(agentId: AgentId): AgentRunOnSupport {
+	return {
+		supported: false,
+		reason: `${getAgentDisplayName(agentId)} speaks only the Gemini API, which a Local Models source does not serve, so it runs on its provider's model only.`,
+	};
+}
+
+/**
+ * OpenCode's inline config with Maestro's provider added to it. `current` is
+ * the document the launch would otherwise carry (Maestro's permission block,
+ * or the user's own); every other key of it is kept. A value that is not a
+ * JSON object cannot be added to, and OpenCode could not have read it either,
+ * so the provider is then the whole document.
+ */
+function withOpenCodeProvider(current: string | undefined, provider: unknown): string {
+	const config = parseJsonObject(current);
+	const providers = isJsonObject(config.provider) ? config.provider : {};
+	return JSON.stringify({
+		...config,
+		provider: { ...providers, [RUN_ON_PROVIDER_ID]: provider },
+	});
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseJsonObject(text: string | undefined): Record<string, unknown> {
+	if (!text) return {};
+	try {
+		const parsed: unknown = JSON.parse(text);
+		return isJsonObject(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
 }
 
 /** Whether (and by which recipe) a provider's harness can run on another model server. */
@@ -318,14 +492,23 @@ export type RunOnLaunchResolution =
 	| { kind: 'none' }
 	/**
 	 * Set these variables on the agent's process, put `args` ahead of its own
-	 * arguments, and launch it with `model` through the provider's `modelArgs`
-	 * builder in place of the agent's stored model.
+	 * arguments and `subcommandArgs` after its batch subcommand, apply
+	 * `envVarMerges` to the environment it would otherwise get, and launch it
+	 * with `harnessModel` through the provider's `modelArgs` builder in place of
+	 * the agent's stored model.
 	 */
 	| {
 			kind: 'inject';
 			envVars: Record<string, string>;
 			args: string[];
+			/** Arguments for the provider's batch subcommand (`placeSubcommandArgs`). */
+			subcommandArgs: string[];
+			/** The source's name for the model: what a person is shown. */
 			model: string;
+			/** The name the harness is launched with. `model`, unless the harness wraps it. */
+			harnessModel: string;
+			/** Variables built from the value the launch would otherwise carry (rule 6). */
+			envVarMerges: Record<string, EnvVarMerge>;
 			contextTokens: number;
 			/** Recipe variables the agent sets itself, which were left alone (rule 3). */
 			userOverrides: string[];
@@ -477,7 +660,10 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 			...Object.fromEntries(Object.entries(recipe.envVars).filter(([name]) => !withheld.has(name))),
 		},
 		args: recipe.args,
+		subcommandArgs: recipe.subcommandArgs ?? [],
 		model: target.model,
+		harnessModel: recipe.harnessModel ?? target.model,
+		envVarMerges: recipe.envVarMerges ?? {},
 		contextTokens,
 		userOverrides,
 		clearedEnvVars,

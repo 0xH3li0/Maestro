@@ -461,6 +461,27 @@ export function replaceModelArg(
 	return replaced ? next : [...next, ...built];
 }
 
+/**
+ * `args` with `subcommandArgs` placed where the provider's batch subcommand
+ * reads its options: right after the subcommand (`batchModePrefix`) when the
+ * list starts with it, and at the front for a launch that has none. For a
+ * launch whose mode is decided after its arguments were built (an agent's Run
+ * on target), and never appended, so they cannot land behind a `--` separator.
+ * An argument the list already carries is not added a second time.
+ */
+export function placeSubcommandArgs(
+	agent: Pick<AgentDefinition, 'batchModePrefix'> | null | undefined,
+	args: readonly string[],
+	subcommandArgs: readonly string[]
+): string[] {
+	const added = subcommandArgs.filter((arg) => !args.includes(arg));
+	if (added.length === 0) return [...args];
+	const prefix = agent?.batchModePrefix ?? [];
+	const at =
+		prefix.length > 0 && prefix.every((part, index) => args[index] === part) ? prefix.length : 0;
+	return [...args.slice(0, at), ...added, ...args.slice(at)];
+}
+
 /** Resolve the effective context window size from session, agent config, or defaults. */
 export function getContextWindowValue(
 	agent: AgentConfig | null | undefined,

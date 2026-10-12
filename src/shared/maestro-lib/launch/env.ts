@@ -4,7 +4,12 @@ import { buildExpandedPath, detectNodeVersionManagerBinPaths } from '../../pathU
 import { isWindows } from '../../platformDetection';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { buildSpawnPath, STANDARD_UNIX_PATHS } from './spawn-path';
-import { isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
+import {
+	applyEnvVarMerges,
+	isBlankEnvKey,
+	isBlankEnvValue,
+	type EnvVarMerge,
+} from '../../agentEnvironment';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../agentDelegation';
 
 /**
@@ -435,6 +440,15 @@ export interface AgentEnvLayers {
 	 * undone by a per-agent var.
 	 */
 	readOnlyEnvOverrides?: Record<string, string>;
+	/**
+	 * Variables the agent's Run on target ADDS TO instead of setting
+	 * (`resolveRunOnLaunch`'s `envVarMerges`): OpenCode's inline config, which
+	 * also carries Maestro's permission block and its read-only override. Each
+	 * merge is handed the value every layer above has settled on, the read-only
+	 * override included, and keeps all of it, so it is applied last and undoes
+	 * nothing.
+	 */
+	runOnEnvVarMerges?: Record<string, EnvVarMerge>;
 }
 
 /**
@@ -445,7 +459,8 @@ export interface AgentEnvLayers {
  *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < gatewayEnvVars
  *     < runOnEnvVars < readOnlyEnvOverrides
  *
- * The same on every surface. This is the record that crosses to an SSH remote,
+ * and then `runOnEnvVarMerges`, each applied to the value that order settled
+ * on. The same on every surface. This is the record that crosses to an SSH remote,
  * where `process.env` does not exist, and the one Process Details shows. The
  * global Settings vars are NOT in it: on desktop they sit beneath this record.
  * They are not kept off the remote, though: desktop's SSH wrapper
@@ -464,6 +479,7 @@ export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, stri
 		...(layers.runOnEnvVars ?? {}),
 		...(layers.readOnlyEnvOverrides ?? {}),
 	};
+	applyEnvVarMerges(merged, layers.runOnEnvVarMerges);
 	for (const key of Object.keys(merged)) {
 		if (isBlankEnvKey(key)) delete merged[key];
 	}
@@ -565,6 +581,9 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 	Object.assign(env, options.gatewayEnvVars ?? {});
 	Object.assign(env, options.runOnEnvVars ?? {});
 	Object.assign(env, options.readOnlyEnvOverrides ?? {});
+	// After every layer, the shell's own value included: a merge adds to
+	// whichever value this launch ended up with.
+	applyEnvVarMerges(env, options.runOnEnvVarMerges);
 	Object.assign(env, options.maestroEnvVars ?? {});
 	env[QUERY_SOURCE_ENV_VAR] = options.querySource ?? DEFAULT_QUERY_SOURCE;
 	return env;

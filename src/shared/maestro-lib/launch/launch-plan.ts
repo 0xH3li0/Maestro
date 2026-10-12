@@ -44,7 +44,7 @@ import {
 	type RunOnLaunchResolution,
 	type RunOnRefusalCode,
 } from '../../local-models/run-on';
-import { replaceModelArg } from './agent-args';
+import { placeSubcommandArgs, replaceModelArg } from './agent-args';
 import { buildAgentEnvironment, resolveAgentEnvVars, type AgentEnvSurface } from './env';
 import {
 	resolvePromptDelivery,
@@ -66,6 +66,8 @@ export interface LaunchPlanAgent extends PromptDeliveryAgent {
 	readOnlyEnvOverrides?: Record<string, string>;
 	/** The provider's model flag, which a Run on target's model goes through. */
 	modelArgs?: (modelId: string) => string[];
+	/** The provider's batch subcommand, which a Run on target's own arguments follow. */
+	batchModePrefix?: string[];
 }
 
 /** What an agent's Run on target did to a launch. */
@@ -76,7 +78,12 @@ export interface LaunchPlanRunOn {
 	contextTokens: number;
 	/** The root arguments that point the harness at the source (Codex). */
 	args: string[];
-	/** The NAMES of the variables set for it. Never the values: one is a key. */
+	/** The arguments added after the provider's batch subcommand (OpenCode). */
+	subcommandArgs: string[];
+	/**
+	 * The NAMES of the variables set for it, a variable it added to
+	 * (`envVarMerges`) included. Never the values: one is a key.
+	 */
 	envVarNames: string[];
 	/** Recipe variables the agent sets itself, which were left alone. */
 	userOverrides: string[];
@@ -89,13 +96,14 @@ export interface LaunchPlanRunOn {
 /**
  * Turn a resolved Run on target into what a launch carries: its arguments, and
  * the record of what was done. The arguments get the target's root arguments in
- * front, where a CLI reads a global option, and its model in the provider's own
- * flag in place of the agent's (`replaceModelArg`). Shared by the plan and by
- * the spawns that build none (`applyAgentRunOnToSpawn`), so both refuse the
- * same way.
+ * front, where a CLI reads a global option, its subcommand arguments after the
+ * provider's batch subcommand (`placeSubcommandArgs`), and its model in the
+ * provider's own flag in place of the agent's (`replaceModelArg`). Shared by
+ * the plan and by the spawns that build none (`applyAgentRunOnToSpawn`), so
+ * both refuse the same way.
  */
 export function applyRunOnToLaunch(input: {
-	agent: Pick<LaunchPlanAgent, 'modelArgs'> | null | undefined;
+	agent: Pick<LaunchPlanAgent, 'modelArgs' | 'batchModePrefix'> | null | undefined;
 	toolType: string;
 	args: readonly string[];
 	runOn: Extract<RunOnLaunchResolution, { kind: 'inject' }>;
@@ -105,7 +113,7 @@ export function applyRunOnToLaunch(input: {
 	| { ok: true; args: string[]; runOn: LaunchPlanRunOn }
 	| { ok: false; reason: RunOnRefusalCode; error: string } {
 	const { runOn } = input;
-	const withModel = replaceModelArg(input.agent, input.args, runOn.model);
+	const withModel = replaceModelArg(input.agent, input.args, runOn.harnessModel);
 	if (!withModel) {
 		// A recipe with no model flag to carry its model: the harness would ask
 		// the source for whatever model the agent names on its own.
@@ -118,12 +126,13 @@ export function applyRunOnToLaunch(input: {
 	const skippedGatewayUrl = input.gatewayUrl?.trim();
 	return {
 		ok: true,
-		args: [...runOn.args, ...withModel],
+		args: [...runOn.args, ...placeSubcommandArgs(input.agent, withModel, runOn.subcommandArgs)],
 		runOn: {
 			model: runOn.model,
 			contextTokens: runOn.contextTokens,
 			args: runOn.args,
-			envVarNames: Object.keys(runOn.envVars),
+			subcommandArgs: runOn.subcommandArgs,
+			envVarNames: [...Object.keys(runOn.envVars), ...Object.keys(runOn.envVarMerges)],
 			userOverrides: runOn.userOverrides,
 			clearedEnvVars: runOn.clearedEnvVars,
 			...(skippedGatewayUrl ? { skippedGatewayUrl } : {}),
@@ -323,6 +332,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
 		gatewayEnvVars: gateway.kind === 'inject' ? gateway.envVars : undefined,
 		runOnEnvVars: runOn.kind === 'inject' ? runOn.envVars : undefined,
+		runOnEnvVarMerges: runOn.kind === 'inject' ? runOn.envVarMerges : undefined,
 		readOnlyEnvOverrides: input.readOnlyMode ? agent?.readOnlyEnvOverrides : undefined,
 	};
 	const layered = resolveAgentEnvVars(layers);

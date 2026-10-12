@@ -35,7 +35,7 @@ import {
 } from '../../../../main/local-models/run-on';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
 import {
-	RUN_ON_CODEX_KEY_ENV_VAR,
+	RUN_ON_KEY_ENV_VAR,
 	RUN_ON_DEFAULT_CONTEXT_TOKENS,
 	RUN_ON_PLACEHOLDER_KEY,
 } from '../../../../shared/local-models/run-on';
@@ -78,6 +78,7 @@ vi.mock('../../../../shared/maestro-lib/launch/agent-args', async () => {
 	return {
 		// The launch plan puts a Run on target's model on the arguments with this.
 		replaceModelArg: actual.replaceModelArg,
+		placeSubcommandArgs: actual.placeSubcommandArgs,
 		buildAgentArgs: vi.fn((agent, opts) => opts.baseArgs || []),
 		applyAgentConfigOverrides: vi.fn((agent, args, opts) => ({
 			args,
@@ -902,10 +903,10 @@ describe('process IPC handlers', () => {
 				expect(runOnDeps.modelServer).toHaveBeenCalledWith('gpt-oss-20b');
 				expect(spawned().args.slice(0, 2)).toEqual([
 					'-c',
-					`model_providers.maestro={name="Maestro", base_url="${SERVER_URL}/v1", env_key="${RUN_ON_CODEX_KEY_ENV_VAR}", wire_api="responses"}`,
+					`model_providers.maestro={name="Maestro", base_url="${SERVER_URL}/v1", env_key="${RUN_ON_KEY_ENV_VAR}", wire_api="responses"}`,
 				]);
 				expect(spawned().args.slice(-4)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
-				expect(spawned().customEnvVars).toMatchObject({ [RUN_ON_CODEX_KEY_ENV_VAR]: 'sk-server' });
+				expect(spawned().customEnvVars).toMatchObject({ [RUN_ON_KEY_ENV_VAR]: 'sk-server' });
 			});
 
 			it('keeps Codex on exec when the agent opted into the app-server', async () => {
@@ -1031,13 +1032,13 @@ describe('process IPC handlers', () => {
 
 			it('refuses a harness with no recipe without starting the model server', async () => {
 				storeAgent({ id: 'agent-ro', runOn: ON_SERVER });
-				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'factory-droid', requiresPty: false });
 
 				const result = await handlers.get('process:spawn')!({} as any, {
 					sessionId: 'agent-ro-ai-tab-1',
-					toolType: 'opencode',
+					toolType: 'factory-droid',
 					cwd: '/test',
-					command: 'opencode',
+					command: 'droid',
 					args: [],
 				});
 

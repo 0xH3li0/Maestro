@@ -216,3 +216,31 @@ export function stripBlankEnvVars(
 	}
 	return result;
 }
+
+/**
+ * A variable whose value is built from the one the launch would otherwise
+ * carry, when replacing that value would lose something the launch needs.
+ * OpenCode's `OPENCODE_CONFIG_CONTENT` is one JSON document: it holds Maestro's
+ * permission block, or the user's own config, and a Run on target adds its
+ * provider to that document instead of taking its place.
+ */
+export type EnvVarMerge = (current: string | undefined) => string;
+
+/**
+ * Apply {@link EnvVarMerge}s to an environment record, in place. `current` is
+ * the record's own value, or `fallback`'s when the record does not set the
+ * variable (a layer that sits beneath the record, which the merge must still
+ * build on). A blank value counts as none.
+ */
+export function applyEnvVarMerges(
+	env: Record<string, string | undefined>,
+	merges: Record<string, EnvVarMerge> | undefined,
+	fallback?: Record<string, string | undefined>
+): void {
+	for (const [name, merge] of Object.entries(merges ?? {})) {
+		const current = [env[name], fallback?.[name]].find(
+			(value) => value !== undefined && !isBlankEnvValue(value)
+		);
+		env[name] = merge(current);
+	}
+}

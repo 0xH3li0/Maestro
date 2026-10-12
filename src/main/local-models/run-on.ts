@@ -25,6 +25,7 @@
  * server or loads a model for nothing.
  */
 
+import { applyEnvVarMerges } from '../../shared/agentEnvironment';
 import {
 	resolveEndpointApiKey,
 	type LocalModelEndpoint,
@@ -257,8 +258,15 @@ export interface SpawnRunOnInput {
 	agentId: string;
 	/** That agent's provider, e.g. `claude-code`. */
 	toolType: string;
-	/** The provider's definition: its model flag carries the target's model. */
-	agent: Pick<LaunchPlanAgent, 'modelArgs'> | null | undefined;
+	/**
+	 * The provider's definition: its model flag carries the target's model, its
+	 * batch subcommand places the recipe's own arguments, and its default
+	 * variables are what a recipe's merge builds on when the agent sets none.
+	 */
+	agent:
+		| Pick<LaunchPlanAgent, 'modelArgs' | 'batchModePrefix' | 'defaultEnvVars'>
+		| null
+		| undefined;
 	/** The arguments the spawn was about to use. */
 	args: string[];
 	/** The agent's effective custom vars; a recipe variable set here wins. */
@@ -326,10 +334,14 @@ export async function applyAgentRunOnToSpawn(input: SpawnRunOnInput): Promise<Sp
 		gatewayUrl: storedGatewayUrl(input.agentId),
 	});
 	if (!applied.ok) return { ok: false, error: applied.error };
+	const customEnvVars = { ...(input.customEnvVars ?? {}), ...resolved.envVars };
+	// The spawn puts these over the provider's defaults, so a merged variable
+	// (OpenCode's inline config) is built here from the default it will cover.
+	applyEnvVarMerges(customEnvVars, resolved.envVarMerges, input.agent?.defaultEnvVars);
 	return {
 		ok: true,
 		args: applied.args,
-		customEnvVars: { ...(input.customEnvVars ?? {}), ...resolved.envVars },
+		customEnvVars,
 		runOn: applied.runOn,
 	};
 }

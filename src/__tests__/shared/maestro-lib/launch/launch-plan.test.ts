@@ -9,7 +9,8 @@ import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/c
 import type { SshRemoteConfig } from '../../../../shared/types';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
 import {
-	RUN_ON_CODEX_KEY_ENV_VAR,
+	OPENCODE_CONFIG_ENV_VAR,
+	RUN_ON_KEY_ENV_VAR,
 	RUN_ON_DEFAULT_CONTEXT_TOKENS,
 	RUN_ON_PLACEHOLDER_KEY,
 	type ResolvedRunOn,
@@ -479,6 +480,7 @@ describe('buildAgentLaunchPlan', () => {
 					model: 'qwen3:latest',
 					contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
 					args: [],
+					subcommandArgs: [],
 					userOverrides: [],
 					clearedEnvVars: ['ANTHROPIC_API_KEY'],
 				});
@@ -505,8 +507,159 @@ describe('buildAgentLaunchPlan', () => {
 				expect(plan.launchArgs[1]).toContain('base_url="https://models.example.com/v1"');
 				// `-m` belongs to `exec`: a root `-m` is the TUI's.
 				expect(plan.launchArgs.slice(6)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
-				expect(plan.envVars).toEqual({ [RUN_ON_CODEX_KEY_ENV_VAR]: 'sk-workstation' });
-				expect(plan.env?.[RUN_ON_CODEX_KEY_ENV_VAR]).toBe('sk-workstation');
+				expect(plan.envVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: 'sk-workstation' });
+				expect(plan.env?.[RUN_ON_KEY_ENV_VAR]).toBe('sk-workstation');
+			}
+		});
+
+		function openCodeInput(overrides: Partial<AgentLaunchInput> = {}): AgentLaunchInput {
+			return input({
+				agent: {
+					...getAgentDefinition('opencode'),
+					capabilities: getAgentCapabilities('opencode'),
+				},
+				command: '/opt/homebrew/bin/opencode',
+				args: ['run', '--format', 'json', '--model', 'anthropic/claude-sonnet-4'],
+				runOn: runOn({ toolType: 'opencode' }),
+				...overrides,
+			});
+		}
+
+		/** The inline config a plan carries, in the record and in the local environment. */
+		function openCodeConfigs(plan: {
+			envVars?: Record<string, string>;
+			env?: NodeJS.ProcessEnv;
+		}): Array<Record<string, any>> {
+			return [plan.envVars?.[OPENCODE_CONFIG_ENV_VAR], plan.env?.[OPENCODE_CONFIG_ENV_VAR]].map(
+				(text) => JSON.parse(text ?? 'null')
+			);
+		}
+
+		it('runs OpenCode on a private server, with the model under its own provider', () => {
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(openCodeInput({ surface }));
+
+				if (!result.ok) throw new Error(result.error);
+				const { plan } = result;
+				// `--standalone` belongs to `run`: OpenCode rejects it in front.
+				expect(plan.launchArgs).toEqual([
+					'run',
+					'--standalone',
+					'--format',
+					'json',
+					'--model',
+					'maestro/qwen3:latest',
+				]);
+				// The prompt still follows OpenCode's `--` separator, after everything.
+				expect(plan.args.slice(plan.launchArgs.length)).toEqual(['--', 'fix the bug']);
+				expect(plan.runOn).toMatchObject({
+					// What a person is shown: the source's own name for the model.
+					model: 'qwen3:latest',
+					args: [],
+					subcommandArgs: ['--standalone'],
+					envVarNames: [RUN_ON_KEY_ENV_VAR, OPENCODE_CONFIG_ENV_VAR],
+				});
+				expect(plan.env?.[RUN_ON_KEY_ENV_VAR]).toBe(RUN_ON_PLACEHOLDER_KEY);
+			}
+		});
+
+		it("adds OpenCode's provider to the permission block, in a read-only turn too", () => {
+			const permissions = JSON.parse(
+				getAgentDefinition('opencode')?.defaultEnvVars?.[OPENCODE_CONFIG_ENV_VAR] ?? 'null'
+			);
+			for (const surface of SURFACES) {
+				for (const readOnlyMode of [false, true]) {
+					const result = buildAgentLaunchPlan(openCodeInput({ surface, readOnlyMode }));
+
+					if (!result.ok) throw new Error(result.error);
+					for (const config of openCodeConfigs(result.plan)) {
+						// The read-only override sets the same variable above every other
+						// layer. It must not take the provider with it.
+						expect(config).toMatchObject(permissions);
+						expect(config.provider.maestro.options.baseURL).toBe('http://127.0.0.1:11434/v1');
+					}
+				}
+			}
+		});
+
+		it("adds OpenCode's provider to the agent's own inline config instead of yielding to it", () => {
+			const mine = JSON.stringify({ theme: 'mine', provider: { ollama: { models: {} } } });
+			for (const surface of SURFACES) {
+				const result = buildAgentLaunchPlan(
+					openCodeInput({ surface, sessionCustomEnvVars: { [OPENCODE_CONFIG_ENV_VAR]: mine } })
+				);
+
+				if (!result.ok) throw new Error(result.error);
+				for (const config of openCodeConfigs(result.plan)) {
+					expect(config.theme).toBe('mine');
+					expect(Object.keys(config.provider)).toEqual(['ollama', 'maestro']);
+				}
+				expect(result.plan.runOn?.userOverrides).toEqual([]);
+			}
+		});
+
+		it('sends the OpenCode provider and its key variable to an SSH remote', () => {
+			const result = buildAgentLaunchPlan(
+				openCodeInput({
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: storeWith(remote()),
+					runOn: runOn({
+						toolType: 'opencode',
+						target: { type: 'source', endpointId: WORKSTATION.id, model: 'big-model' },
+						endpoint: WORKSTATION,
+						key: 'sk-workstation',
+					}),
+				})
+			);
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.target.kind).toBe('remote');
+			expect(result.plan.envVars?.[RUN_ON_KEY_ENV_VAR]).toBe('sk-workstation');
+			const config = JSON.parse(result.plan.envVars?.[OPENCODE_CONFIG_ENV_VAR] ?? 'null');
+			expect(config.provider.maestro.options).toEqual({
+				baseURL: 'https://models.example.com/v1',
+				apiKey: `{env:${RUN_ON_KEY_ENV_VAR}}`,
+			});
+			expect(result.plan.envVars?.[OPENCODE_CONFIG_ENV_VAR]).not.toContain('sk-workstation');
+		});
+
+		it('points Copilot CLI at the source by its provider variables alone', () => {
+			process.env.COPILOT_PROVIDER_BEARER_TOKEN = 'another-providers-token';
+			try {
+				for (const surface of SURFACES) {
+					const result = buildAgentLaunchPlan(
+						input({
+							surface,
+							agent: {
+								...getAgentDefinition('copilot-cli'),
+								capabilities: getAgentCapabilities('copilot-cli'),
+							},
+							command: '/opt/homebrew/bin/copilot',
+							args: ['--allow-all', '--output-format', 'json', '--model', 'gpt-5.4'],
+							runOn: runOn({ toolType: 'copilot-cli' }),
+						})
+					);
+
+					if (!result.ok) throw new Error(result.error);
+					const { plan } = result;
+					expect(plan.launchArgs).toEqual([
+						'--allow-all',
+						'--output-format',
+						'json',
+						'--model',
+						'qwen3:latest',
+					]);
+					expect(plan.env).toMatchObject({
+						COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:11434/v1',
+						COPILOT_PROVIDER_API_KEY: RUN_ON_PLACEHOLDER_KEY,
+						COPILOT_PROVIDER_WIRE_MODEL: 'qwen3:latest',
+					});
+					// A bearer token exported for another provider would go out in place
+					// of the source's key.
+					expect(plan.env?.COPILOT_PROVIDER_BEARER_TOKEN ?? '').toBe('');
+				}
+			} finally {
+				delete process.env.COPILOT_PROVIDER_BEARER_TOKEN;
 			}
 		});
 
@@ -523,7 +676,7 @@ describe('buildAgentLaunchPlan', () => {
 			const result = buildAgentLaunchPlan(input({ runOn: codexRunOn() }));
 
 			if (!result.ok) throw new Error(result.error);
-			expect(result.plan.runOn?.envVarNames).toEqual([RUN_ON_CODEX_KEY_ENV_VAR]);
+			expect(result.plan.runOn?.envVarNames).toEqual([RUN_ON_KEY_ENV_VAR]);
 			expect(JSON.stringify(result.plan.runOn)).not.toContain('sk-workstation');
 		});
 
@@ -559,7 +712,7 @@ describe('buildAgentLaunchPlan', () => {
 			expect(result.plan.target.kind).toBe('remote');
 			expect(result.plan.gateway).toBeUndefined();
 			// What crosses to the remote host: the key variable and the arguments.
-			expect(result.plan.envVars).toEqual({ [RUN_ON_CODEX_KEY_ENV_VAR]: 'sk-workstation' });
+			expect(result.plan.envVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: 'sk-workstation' });
 			expect(result.plan.args).toEqual(result.plan.launchArgs);
 			expect(result.plan.args).toContain('gpt-oss-20b');
 		});
@@ -602,7 +755,7 @@ describe('buildAgentLaunchPlan', () => {
 				{ endpoint: { ...OLLAMA, enabled: false } },
 				'run-on-source-disabled',
 			],
-			['a harness with no recipe', { toolType: 'opencode' }, 'run-on-unsupported-provider'],
+			['a harness with no recipe', { toolType: 'factory-droid' }, 'run-on-unsupported-provider'],
 			[
 				'a target that is not a source and a model',
 				{ target: { type: 'source', endpointId: 'ep-ollama' } as never },

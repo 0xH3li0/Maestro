@@ -10,6 +10,7 @@ import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
 	getContextWindowValue,
+	placeSubcommandArgs,
 	replaceModelArg,
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
@@ -1688,5 +1689,39 @@ describe('replaceModelArg', () => {
 	it('answers null for a provider with no model flag', () => {
 		expect(replaceModelArg({}, ['--print'], 'q')).toBeNull();
 		expect(replaceModelArg(null, ['--print'], 'q')).toBeNull();
+	});
+});
+
+describe('placeSubcommandArgs', () => {
+	const openCode = getAgentDefinition('opencode');
+
+	it("puts them right after the provider's batch subcommand", () => {
+		expect(
+			placeSubcommandArgs(openCode, ['run', '--format', 'json', '--', 'prompt'], ['--standalone'])
+		).toEqual(['run', '--standalone', '--format', 'json', '--', 'prompt']);
+	});
+
+	it('puts them first for a launch with no subcommand', () => {
+		expect(placeSubcommandArgs(openCode, ['--session', 's1'], ['--standalone'])).toEqual([
+			'--standalone',
+			'--session',
+			's1',
+		]);
+		expect(placeSubcommandArgs({}, ['--print'], ['--flag'])).toEqual(['--flag', '--print']);
+		expect(placeSubcommandArgs(null, [], ['--flag'])).toEqual(['--flag']);
+	});
+
+	it('does not add an argument the launch already carries', () => {
+		const args = ['run', '--standalone', '--format', 'json'];
+
+		expect(placeSubcommandArgs(openCode, args, ['--standalone'])).toEqual(args);
+	});
+
+	it('hands back a copy when there is nothing to place', () => {
+		const args = ['run'];
+		const placed = placeSubcommandArgs(openCode, args, []);
+
+		expect(placed).toEqual(args);
+		expect(placed).not.toBe(args);
 	});
 });

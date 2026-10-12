@@ -35,7 +35,8 @@ import {
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../shared/local-models/model-server';
 import {
-	RUN_ON_CODEX_KEY_ENV_VAR,
+	OPENCODE_CONFIG_ENV_VAR,
+	RUN_ON_KEY_ENV_VAR,
 	RUN_ON_PLACEHOLDER_KEY,
 	type RunOnSourceTarget,
 } from '../../../shared/local-models/run-on';
@@ -232,7 +233,7 @@ describe('prepareAgentRunOn: refusals that need no network come first', () => {
 	};
 
 	it('refuses a harness with no recipe without starting the model server', async () => {
-		const prepared = await prepare({ toolType: 'opencode', target: ON_SERVER });
+		const prepared = await prepare({ toolType: 'factory-droid', target: ON_SERVER });
 
 		expect(prepared).toMatchObject({ kind: 'refused', code: 'run-on-unsupported-provider' });
 		untouched();
@@ -453,10 +454,63 @@ describe('applyAgentRunOnToSpawn', () => {
 		if (!result.ok) throw new Error(result.error);
 		expect(result.args.slice(0, 2)).toEqual([
 			'-c',
-			`model_providers.maestro={name="Maestro", base_url="${SERVER_URL}/v1", env_key="${RUN_ON_CODEX_KEY_ENV_VAR}", wire_api="responses"}`,
+			`model_providers.maestro={name="Maestro", base_url="${SERVER_URL}/v1", env_key="${RUN_ON_KEY_ENV_VAR}", wire_api="responses"}`,
 		]);
 		expect(result.args.slice(-4)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
-		expect(result.customEnvVars).toEqual({ [RUN_ON_CODEX_KEY_ENV_VAR]: 'sk-server' });
+		expect(result.customEnvVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: 'sk-server' });
+	});
+
+	it("adds OpenCode's provider to the permission block the spawn would otherwise cover", async () => {
+		configure([{ id: 'a1', runOn: QWEN }]);
+		const openCode = getAgentDefinition('opencode');
+
+		const result = await applyAgentRunOnToSpawn({
+			...input,
+			toolType: 'opencode',
+			agent: openCode,
+			args: ['run', '--format', 'json', '--model', 'anthropic/claude-sonnet-4'],
+			customEnvVars: { FOO: 'bar' },
+		});
+
+		if (!result.ok) throw new Error(result.error);
+		expect(result.args).toEqual([
+			'run',
+			'--standalone',
+			'--format',
+			'json',
+			'--model',
+			'maestro/qwen3:latest',
+		]);
+		expect(result.customEnvVars).toMatchObject({
+			FOO: 'bar',
+			[RUN_ON_KEY_ENV_VAR]: RUN_ON_PLACEHOLDER_KEY,
+		});
+		// These variables sit over the provider's defaults in the process, so the
+		// document is built from the default it covers.
+		const config = JSON.parse(result.customEnvVars?.[OPENCODE_CONFIG_ENV_VAR] ?? 'null');
+		expect(config).toMatchObject(
+			JSON.parse(openCode?.defaultEnvVars?.[OPENCODE_CONFIG_ENV_VAR] ?? 'null')
+		);
+		expect(config.provider.maestro.options.baseURL).toBe('http://127.0.0.1:11434/v1');
+		expect(result.runOn).toMatchObject({ model: 'qwen3:latest', subcommandArgs: ['--standalone'] });
+	});
+
+	it("adds OpenCode's provider to the agent's own inline config when it has one", async () => {
+		configure([{ id: 'a1', runOn: QWEN }]);
+
+		const result = await applyAgentRunOnToSpawn({
+			...input,
+			toolType: 'opencode',
+			agent: getAgentDefinition('opencode'),
+			args: ['run'],
+			customEnvVars: { [OPENCODE_CONFIG_ENV_VAR]: '{"theme":"mine"}' },
+		});
+
+		if (!result.ok) throw new Error(result.error);
+		const config = JSON.parse(result.customEnvVars?.[OPENCODE_CONFIG_ENV_VAR] ?? 'null');
+		expect(config.theme).toBe('mine');
+		expect(config).not.toHaveProperty('permission');
+		expect(config.provider).toHaveProperty('maestro');
 	});
 
 	it("says which gateway the agent's target took the place of", async () => {
@@ -484,7 +538,7 @@ describe('applyAgentRunOnToSpawn', () => {
 	it.each<[string, object, Partial<typeof input> & { remote?: { name: string } }, string]>([
 		['a source that is gone', { ...QWEN, endpointId: 'ep-gone' }, {}, 'no longer configured'],
 		['a loopback source for a remote host', QWEN, { remote: { name: 'Build Box' } }, 'loopback'],
-		['a harness with no recipe', QWEN, { toolType: 'opencode' }, 'has not verified'],
+		['a harness with no recipe', QWEN, { toolType: 'factory-droid' }, 'only from a settings file'],
 		['a malformed target', { type: 'source' }, {}, 'cannot be used'],
 	])(
 		'refuses %s with an error the caller must fail the spawn with',

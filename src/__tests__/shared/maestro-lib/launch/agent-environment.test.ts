@@ -369,3 +369,58 @@ describe('resolveAgentEnvVars: the record Maestro sets (and sends over SSH)', ()
 		});
 	});
 });
+
+describe('runOnEnvVarMerges: a variable a Run on target adds to', () => {
+	const merges = { DOC: (current: string | undefined) => `${current ?? 'none'}+provider` };
+
+	it('is built from the value every other layer settled on, the read-only override included', () => {
+		const layers = {
+			defaultEnvVars: { DOC: 'default' },
+			sessionCustomEnvVars: { DOC: 'session' },
+			runOnEnvVarMerges: merges,
+		};
+
+		expect(
+			resolveAgentEnvVars({ defaultEnvVars: { DOC: 'default' }, runOnEnvVarMerges: merges })
+		).toEqual({
+			DOC: 'default+provider',
+		});
+		expect(resolveAgentEnvVars(layers)).toEqual({ DOC: 'session+provider' });
+		expect(resolveAgentEnvVars({ ...layers, readOnlyEnvOverrides: { DOC: 'read-only' } })).toEqual({
+			DOC: 'read-only+provider',
+		});
+	});
+
+	it('is handed nothing when no layer sets the variable', () => {
+		expect(resolveAgentEnvVars({ runOnEnvVarMerges: merges })).toEqual({ DOC: 'none+provider' });
+	});
+
+	it.each<AgentEnvSurface>(['desktop', 'cli', 'cue'])(
+		'reaches the %s environment over the read-only override',
+		(surface) => {
+			const env = buildAgentEnvironment({
+				surface,
+				defaultEnvVars: { DOC: 'default' },
+				readOnlyEnvOverrides: { DOC: 'read-only' },
+				runOnEnvVarMerges: merges,
+			});
+
+			expect(env.DOC).toBe('read-only+provider');
+		}
+	);
+
+	it('adds to the value the shell exported on the cli surface, where the shell beats a default', () => {
+		process.env.DOC = 'from-the-shell';
+		try {
+			const env = buildAgentEnvironment({
+				surface: 'cli',
+				defaultEnvVars: { DOC: 'default' },
+				runOnEnvVarMerges: merges,
+			});
+
+			expect(env.DOC).toBe('from-the-shell+provider');
+		} finally {
+			delete process.env.DOC;
+		}
+	});
+});
