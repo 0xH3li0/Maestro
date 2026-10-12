@@ -40,6 +40,9 @@ export interface SystemOneHookState {
 	runTest: () => Promise<void>;
 }
 
+/** The settings a change may touch without dropping the last Test: they are not part of the engine. */
+const TEST_KEEPING_FIELDS: ReadonlySet<string> = new Set(['failPolicy', 'keepInputs', 'agents']);
+
 /** Resolved per call: the bridge is installed by the preload, and a test swaps it per case. */
 function systemOne() {
 	return window.maestro.localModels.systemOne;
@@ -117,9 +120,10 @@ export function useSystemOne(): SystemOneHookState {
 				change(
 					'set',
 					() => systemOne().set(patch),
-					// A fail policy is what a task does with no answer, and Keep inputs is
-					// what the ledger holds: neither is part of the engine the Test asked.
-					Object.keys(patch).every((field) => field === 'failPolicy' || field === 'keepInputs')
+					// A fail policy is what a task does with no answer, Keep inputs is what
+					// the ledger holds, and the agents block is who may ask and how much:
+					// none is part of the engine the Test asked.
+					Object.keys(patch).every((field) => TEST_KEEPING_FIELDS.has(field))
 				),
 			[change]
 		),

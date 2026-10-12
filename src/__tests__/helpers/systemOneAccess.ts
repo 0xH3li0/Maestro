@@ -16,6 +16,7 @@ export function systemOneAccess(
 		allowed: true,
 		gate: null,
 		message: null,
+		reason: null,
 		engine: 'jev-cloud',
 		engineLabel: 'Jev (TypeSafe cloud)',
 		calibrated: true,
@@ -35,6 +36,7 @@ export function refusedSystemOneAccess(gate: SystemOneAgentGate): SystemOneAgent
 		allowed: false,
 		gate,
 		message: `System One is off (${gate}). Continue without System One.`,
+		reason: `System One is off (${gate}).`,
 		...(gate === 'engine-off'
 			? { engine: 'off' as const, engineLabel: 'Off', calibrated: null }
 			: {}),

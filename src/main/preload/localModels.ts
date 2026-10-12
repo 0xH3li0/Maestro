@@ -70,6 +70,10 @@ import type {
 	SystemOneLedgerQuery,
 } from '../../shared/local-models/system-one-ledger';
 import type {
+	SystemOneUsageQuery,
+	SystemOneUsageReport,
+} from '../../shared/local-models/system-one-spend';
+import type {
 	SystemOneReport,
 	SystemOneSettingsPatch,
 	SystemOneTestResult,
@@ -294,7 +298,7 @@ function createSystemOneApi() {
 
 		/**
 		 * Change the engine, the OpenJev URL, a pinned model, the timeout, a fail
-		 * policy or "Keep inputs in the ledger".
+		 * policy, "Keep inputs in the ledger", or what agents may do and spend.
 		 */
 		set: (patch: SystemOneSettingsPatch): Promise<SystemOneReport> =>
 			ipcRenderer.invoke('localModels:systemOne:set', patch),
@@ -325,6 +329,13 @@ function createSystemOneApi() {
 		 */
 		agentAccess: (agentId?: string): Promise<SystemOneAgentAccess> =>
 			ipcRenderer.invoke('localModels:systemOne:agentAccess', agentId),
+
+		/**
+		 * What agents' own requests came to since a time, per agent, with today's
+		 * spend against the budget. Reads the decision ledger and the day's count.
+		 */
+		usage: (query?: SystemOneUsageQuery): Promise<SystemOneUsageReport> =>
+			ipcRenderer.invoke('localModels:systemOne:usage', query),
 
 		/** The settings or a key changed, here or from the CLI. Read `report()` for the rest. */
 		onChanged: (handler: () => void): (() => void) =>

@@ -4,7 +4,8 @@
  * crosses the WS bridge in the shape the desktop handler expects, a bad value
  * is refused before anything is sent, the key is read from standard input and
  * is never printed, and the exit code tells a script whether the engine can
- * answer.
+ * answer. `set agents` and `set budget` are what agents may ask and spend:
+ * every write is read back by `status`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -38,6 +39,8 @@ import {
 	systemOneKeyClear,
 	systemOneKeySet,
 	systemOneLedger,
+	systemOneSetAgents,
+	systemOneSetBudget,
 	systemOneSetEngine,
 	systemOneSetFailPolicy,
 	systemOneSetKeepInputs,
@@ -56,6 +59,9 @@ import type {
 import { LOCAL_JUDGE_TASK_ID } from '../../../shared/local-models/tasks';
 
 const KEY = 'sk-cli-test-0123456789abcdef';
+
+/** When the engine in the fixture report passed its Test. */
+const TESTED_AT = Date.now() - 60_000;
 
 interface Sent {
 	payload: Record<string, unknown>;
@@ -85,6 +91,7 @@ function report(overrides: Partial<SystemOneReport> = {}): SystemOneReport {
 			models: {},
 			failPolicies: {},
 			keepInputs: false,
+			agents: { enabled: true, dailyBudgetUsd: 1, perAgentBudgetUsd: null },
 		},
 		engineLabel: 'Jev (TypeSafe cloud)',
 		disclosure:
@@ -96,6 +103,7 @@ function report(overrides: Partial<SystemOneReport> = {}): SystemOneReport {
 		calibrated: true,
 		keys: { 'jev-cloud': { source: 'stored', storage: 'os' }, openjev: { source: 'none' } },
 		problem: null,
+		testPassedAt: TESTED_AT,
 		failPolicies: [
 			{ taskId: 'cue-gate', label: 'Cue gate', policy: 'open', defaultPolicy: 'open' },
 			{
@@ -117,6 +125,7 @@ const OFF = report({
 		models: {},
 		failPolicies: {},
 		keepInputs: false,
+		agents: { enabled: true, dailyBudgetUsd: 1, perAgentBudgetUsd: null },
 	},
 	engineLabel: 'Off',
 	disclosure: 'System One is off. No task text is sent to an engine.',
@@ -124,6 +133,7 @@ const OFF = report({
 	timeoutMs: null,
 	calibrated: null,
 	keys: { 'jev-cloud': { source: 'none' }, openjev: { source: 'none' } },
+	testPassedAt: null,
 });
 
 let logSpy: MockInstance;
@@ -181,6 +191,48 @@ describe('s1 status', () => {
 		await systemOneStatus({});
 
 		expect(printed()).toContain('keeps inputs, redacted');
+	});
+
+	it('says what agents may ask and spend, and that the engine passed its Test', async () => {
+		mockBridge(() => ({ success: true, report: report() }));
+		await systemOneStatus({});
+
+		const out = printed();
+		expect(out).toMatch(/Agents\s+may ask/);
+		expect(out).toContain('budget $1.00 a day across all agents, no cap per agent');
+		expect(out).toContain('maestro-cli s1 usage');
+		expect(out).toContain('The engine passed its Test');
+	});
+
+	it('says when agents are switched off, and names a cap per agent', async () => {
+		mockBridge(() => ({
+			success: true,
+			report: report({
+				settings: {
+					...report().settings,
+					agents: { enabled: false, dailyBudgetUsd: 2.5, perAgentBudgetUsd: 0.25 },
+				},
+			}),
+		}));
+		await systemOneStatus({});
+
+		const out = printed();
+		expect(out).toMatch(/Agents\s+may not ask/);
+		expect(out).toContain('budget $2.50 a day across all agents, $0.25 a day per agent');
+		// Off is the whole answer: nothing about the Test is said under it.
+		expect(out).not.toContain('passes its Test');
+		expect(out).not.toContain('The engine passed its Test');
+	});
+
+	it('says what still stops agents while the switch is on', async () => {
+		mockBridge(() => ({ success: true, report: report({ testPassedAt: null }) }));
+		await systemOneStatus({});
+		expect(printed()).toContain('Agents can ask once the engine passes its Test');
+
+		logSpy.mockClear();
+		mockBridge(() => ({ success: true, report: OFF }));
+		await systemOneStatus({});
+		expect(printed()).toContain('No engine is chosen, so no agent can ask.');
 	});
 
 	it('prints the whole report as JSON, which carries no key', async () => {
@@ -387,6 +439,170 @@ describe('s1 set keep-inputs', () => {
 			expect(await exitCode(() => systemOneSetKeepInputs(value, {}))).toBe(ExitCode.InvalidUsage);
 		}
 		expect(sent).toHaveLength(0);
+	});
+});
+
+describe('s1 set agents', () => {
+	/** A desktop that stores what it is sent and answers with the report. */
+	const storing = (base: SystemOneReport = report()) =>
+		mockBridge((payload) => ({
+			success: true,
+			report: {
+				...base,
+				settings: {
+					...base.settings,
+					agents: {
+						...base.settings.agents,
+						...(payload.patch as { agents: Record<string, unknown> }).agents,
+					},
+				},
+			},
+		}));
+
+	it('sends on and off as a boolean, and says what agents may now do', async () => {
+		const sent = storing();
+
+		await systemOneSetAgents('off', {});
+		expect(sent[0]).toEqual({
+			payload: { type: 'system_one_set', patch: { agents: { enabled: false } } },
+			responseType: 'system_one_set_result',
+		});
+		expect(printed()).toContain('Let agents use System One: off');
+		expect(printed()).toContain('No agent may ask System One');
+
+		logSpy.mockClear();
+		await systemOneSetAgents('on', {});
+		expect(sent[1].payload).toEqual({
+			type: 'system_one_set',
+			patch: { agents: { enabled: true } },
+		});
+		expect(printed()).toContain('Let agents use System One: on');
+		expect(printed()).toContain('update-agent <agent-id> --system-one off');
+		// The engine in the report is tested: nothing stands in the way.
+		expect(printed()).not.toContain('passes its Test');
+	});
+
+	it('says what still stops agents when it is switched on over an untested engine', async () => {
+		storing(report({ testPassedAt: null }));
+		await systemOneSetAgents('on', {});
+		expect(printed()).toContain('Agents can ask once the engine passes its Test');
+
+		logSpy.mockClear();
+		storing(OFF);
+		await systemOneSetAgents('on', {});
+		expect(printed()).toContain('No engine is chosen, so no agent can ask.');
+
+		// Off needs no such line: nothing can ask either way.
+		logSpy.mockClear();
+		storing(OFF);
+		await systemOneSetAgents('off', {});
+		expect(printed()).not.toContain('No engine is chosen');
+	});
+
+	it('prints the report as JSON', async () => {
+		storing();
+		await systemOneSetAgents('off', { json: true });
+		expect(jsonOut()).toMatchObject({
+			success: true,
+			settings: { agents: { enabled: false, dailyBudgetUsd: 1 } },
+		});
+	});
+
+	it('refuses anything but on or off before anything is sent', async () => {
+		const sent = storing();
+		for (const value of ['yes', 'true', '']) {
+			expect(await exitCode(() => systemOneSetAgents(value, {}))).toBe(ExitCode.InvalidUsage);
+		}
+		expect(sent).toHaveLength(0);
+	});
+
+	describe('s1 set budget', () => {
+		it('sends the daily budget in dollars, and says what agents may spend', async () => {
+			const sent = storing();
+			await systemOneSetBudget('2.50', {});
+
+			expect(sent).toEqual([
+				{
+					payload: { type: 'system_one_set', patch: { agents: { dailyBudgetUsd: 2.5 } } },
+					responseType: 'system_one_set_result',
+				},
+			]);
+			const out = printed();
+			expect(out).toContain('Agents may spend $2.50 a day on System One, across all of them');
+			expect(out).toContain('No agent has a cap of its own.');
+			expect(out).toContain('maestro-cli s1 usage');
+		});
+
+		it('reads a dollar sign, and sets the cap per agent with or without the daily budget', async () => {
+			const sent = storing();
+			await systemOneSetBudget('$3', { perAgent: '0.25' });
+			expect(sent[0].payload).toEqual({
+				type: 'system_one_set',
+				patch: { agents: { dailyBudgetUsd: 3, perAgentBudgetUsd: 0.25 } },
+			});
+			expect(printed()).toContain('One agent may spend $0.25 a day.');
+
+			await systemOneSetBudget(undefined, { perAgent: '0.5' });
+			expect(sent[1].payload).toEqual({
+				type: 'system_one_set',
+				patch: { agents: { perAgentBudgetUsd: 0.5 } },
+			});
+		});
+
+		it('removes the cap per agent with none, sent as null', async () => {
+			const sent = storing(
+				report({
+					settings: {
+						...report().settings,
+						agents: { enabled: true, dailyBudgetUsd: 1, perAgentBudgetUsd: 0.25 },
+					},
+				})
+			);
+			await systemOneSetBudget(undefined, { perAgent: 'None' });
+			expect(sent[0].payload).toEqual({
+				type: 'system_one_set',
+				patch: { agents: { perAgentBudgetUsd: null } },
+			});
+			expect(printed()).toContain('No agent has a cap of its own.');
+		});
+
+		it('warns that a budget of zero refuses every agent request', async () => {
+			storing();
+			await systemOneSetBudget('0', {});
+			expect(printed()).toContain('A budget of 0 refuses every agent request.');
+		});
+
+		it('says a budget never binds on an engine with no price', async () => {
+			storing(report({ settings: { ...report().settings, engine: 'local-judge' } }));
+			await systemOneSetBudget('5', {});
+			expect(printed()).toContain('has no price, so a budget above 0 never binds');
+		});
+
+		it('refuses a value that is not a budget, and a call that names none, before anything is sent', async () => {
+			const sent = storing();
+			for (const value of ['', 'lots', '-1', '1001', '1e2']) {
+				expect(await exitCode(() => systemOneSetBudget(value, {})), value).toBe(
+					ExitCode.InvalidUsage
+				);
+			}
+			expect(await exitCode(() => systemOneSetBudget('1', { perAgent: 'lots' }))).toBe(
+				ExitCode.InvalidUsage
+			);
+			expect(errors()).toContain('--per-agent');
+			expect(errors()).toContain('"none"');
+			expect(await exitCode(() => systemOneSetBudget(undefined, {}))).toBe(ExitCode.InvalidUsage);
+			expect(errors()).toContain('--per-agent <usd|none>');
+			expect(sent).toHaveLength(0);
+		});
+
+		it('prints the report as JSON', async () => {
+			storing();
+			await systemOneSetBudget('4', { json: true });
+			expect(jsonOut()).toMatchObject({
+				success: true,
+				settings: { agents: { enabled: true, dailyBudgetUsd: 4, perAgentBudgetUsd: null } },
+			});
+		});
 	});
 });
 

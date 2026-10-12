@@ -590,6 +590,20 @@ describe('show-agent command', () => {
 			});
 		});
 
+		it("reports the agent's System One switch, the read for update-agent --system-one", () => {
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ systemOneOptOut: true }));
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).systemOneOptOut).toBe(true);
+
+			// An agent that was never switched off reads false: a value, not an unset field.
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).systemOneOptOut).toBe(false);
+		});
+
 		it("reports the agent's token proxy mode, the read for update-agent --proxy-mode", () => {
 			vi.mocked(getSessionById).mockReturnValue(
 				mockSession({

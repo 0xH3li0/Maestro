@@ -9,7 +9,8 @@
  * - System One: the engine that answers typed questions (Jev, OpenJev, or a
  *   local judge) with its key and Test, then the tasks whose output is a
  *   judgment (a decision, label, score, vector or transcript), with their
- *   assignments and fail policies.
+ *   assignments and fail policies, then what agents may ask and spend, and
+ *   the decision ledger.
  * - System Two: the tasks whose output is text for someone to read or run,
  *   with their assignments, the Utility Agent, and the harness tier defaults
  *   (which model a low, medium or high task launches on).
@@ -64,6 +65,7 @@ import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
+import { SystemOneAgentsSection } from './SystemOneAgentsSection';
 import { SystemOneEngineSection } from './SystemOneEngineCard';
 import { SystemOneLedgerSection } from './SystemOneLedgerSection';
 import { TierDefaultsSection } from './TierDefaultsSection';
@@ -210,6 +212,8 @@ export function ModelsSettingsTab({
 						/>
 					</div>
 				)}
+
+				{panel === 'system-one' && <SystemOneAgentsSection theme={theme} systemOne={systemOne} />}
 
 				{panel === 'system-one' && <SystemOneLedgerSection theme={theme} systemOne={systemOne} />}
 

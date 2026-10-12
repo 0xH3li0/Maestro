@@ -35,6 +35,7 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		backgroundRequests: {
 			target: { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' },
 		},
+		systemOneOptOut: true,
 		customModel: 'opus',
 		customContextWindow: 200000,
 		contextWindowSource: 'user-edited' as const,
@@ -101,6 +102,9 @@ describe('buildWorktreeSession', () => {
 		expect(session.backgroundRequests).toEqual({
 			target: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
 		});
+		// And the System One switch: an agent the user switched off must not start
+		// asking, and spending, from a worktree of the same project.
+		expect(session.systemOneOptOut).toBe(true);
 		expect(session.customModel).toBe('opus');
 		expect(session.customContextWindow).toBe(200000);
 		// Provenance travels with the value (finding AD1): inheriting the number

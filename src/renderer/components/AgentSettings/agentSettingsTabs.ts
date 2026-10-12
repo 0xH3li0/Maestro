@@ -69,6 +69,7 @@ export const AGENT_SETTINGS_FIELD_TAB: Readonly<Record<string, AgentSettingsTabI
 	runOn: 'models',
 	tierTargets: 'models',
 	backgroundRequests: 'models',
+	systemOne: 'models',
 	envVars: 'environment',
 	peers: 'peers',
 	sshRemote: 'ssh',

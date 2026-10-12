@@ -1079,6 +1079,86 @@ describe('update-agent command', () => {
 		});
 	});
 
+	describe('--system-one', () => {
+		function mockAgent() {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		it.each(['off', 'OFF', ' off '])('stores the opt-out for %j', async (value) => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { systemOne: value });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				{
+					type: 'update_session_config',
+					sessionId: 'full-session-id',
+					configPatch: { systemOneOptOut: true },
+				},
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringMatching(/^ {2}System One: off\. This agent cannot ask System One/)
+			);
+		});
+
+		it('clears the opt-out for on, which is the agent following the switch for all agents', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { systemOne: 'on' });
+
+			// On is the absence of the field: null on the wire, never `false`.
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({ systemOneOptOut: null });
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringMatching(
+					/^ {2}System One: on\. This agent follows "Let agents use System One"/
+				)
+			);
+			expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('(cleared)'));
+		});
+
+		it('rides in one patch with the other settings', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { systemOne: 'off', nudge: 'be brief', json: true });
+
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({
+				systemOneOptOut: true,
+				nudgeMessage: 'be brief',
+			});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				config: { systemOneOptOut: true },
+			});
+		});
+
+		it.each(['yes', 'true', ''])('refuses %j before it reaches the app', async (value) => {
+			mockAgent();
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+
+			await expect(updateAgent('agent-1', { systemOne: value })).rejects.toThrow('process.exit');
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--system-one expects on or off')
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
 	it('errors when agent ID cannot be resolved', async () => {
 		vi.mocked(resolveAgentId).mockImplementation(() => {
 			throw new Error('Agent not found: xyz');

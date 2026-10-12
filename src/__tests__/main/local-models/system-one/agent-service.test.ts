@@ -1335,6 +1335,7 @@ describe.skipIf(!canLoadNodeSqlite())('runAgentSystemOneRequest', () => {
 				allowed: true,
 				gate: null,
 				message: null,
+				reason: null,
 				engine: 'jev-cloud',
 				engineLabel: 'Jev (TypeSafe cloud)',
 				calibrated: true,
@@ -1365,6 +1366,10 @@ describe.skipIf(!canLoadNodeSqlite())('runAgentSystemOneRequest', () => {
 			const spent = await getSystemOneAgentAccess('agent-2');
 			expect(spent).toMatchObject({ allowed: false, gate: 'budget-day' });
 			expect(spent.message).toContain('budget for today is spent');
+			// A settings surface shows the same sentence without the instruction to the agent.
+			expect(spent.reason).toContain('budget for today is spent');
+			expect(spent.reason).not.toContain(SYSTEM_ONE_CONTINUE_WITHOUT);
+			expect(spent.message).toBe(`${spent.reason} ${SYSTEM_ONE_CONTINUE_WITHOUT}`);
 			expect(jev.requests).toHaveLength(0);
 		});
 

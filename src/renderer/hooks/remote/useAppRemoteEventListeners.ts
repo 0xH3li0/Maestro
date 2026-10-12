@@ -17,6 +17,7 @@ import { asThinkingMode } from '../../../shared/types';
 import { parseTierTargetsEdit } from '../../../shared/modelTiers';
 import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import { parseSystemOneOptOutEdit } from '../../../shared/local-models/system-one-agent';
 import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
 import {
 	agentRunOnSupport,
@@ -2026,6 +2027,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// Where the token proxy sends background requests
 			// (`update-agent --background-requests`). Written by its service below.
 			'backgroundRequests',
+			// System One opt-out (`update-agent --system-one`). Validated below.
+			'systemOneOptOut',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -2220,6 +2223,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			updated.backgroundRequests = result.backgroundRequests;
+		}
+
+		// The System One opt-out goes through the validator the Models tab switch
+		// uses. On is the absence of the field, so `false` and `null` both clear
+		// it. The write below flushes to main, which is where a `maestro-cli s1`
+		// request and the system prompt builder read it.
+		if ('systemOneOptOut' in patch) {
+			const edit = parseSystemOneOptOutEdit(patch.systemOneOptOut);
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.systemOneOptOut = edit.optOut;
 		}
 
 		// Clearing the window clears its provenance too, even when the caller sent

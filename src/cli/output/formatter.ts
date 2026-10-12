@@ -18,11 +18,13 @@ import {
 import {
 	SYSTEM_ONE_REMOTE_ENGINE_IDS,
 	describeSystemOneKey,
+	systemOneAgentUseBlocker,
 	systemOneEngineChoiceLabel,
 	type SystemOneKeyInfo,
 	type SystemOneReport,
 	type SystemOneTestResult,
 } from '../../shared/local-models/system-one-settings';
+import { formatSystemOneCost } from '../../shared/local-models/system-one-spend';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import {
 	EMBEDDING_SOURCE_TYPES,
@@ -586,6 +588,7 @@ export interface AgentDetailDisplay {
 	}>;
 	backgroundRequestsLabel?: string | null;
 	backgroundRequestsProblem?: string | null;
+	systemOneOptOut?: boolean;
 	customModel?: string | null;
 	customEffort?: string | null;
 	customContextWindow?: number | null;
@@ -714,6 +717,8 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	} else if (agent.backgroundRequestsLabel) {
 		addConfig('Background requests', agent.backgroundRequestsLabel);
 	}
+	// Shown only when switched off: on is the default.
+	if (agent.systemOneOptOut) addConfig('System One', 'off for this agent');
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);
 	}
@@ -1753,6 +1758,25 @@ export function formatSystemOneReport(report: SystemOneReport): string {
 		'',
 		`  ${c('white', 'Ledger')}  ${settings.keepInputs ? c('yellow', 'keeps inputs, redacted') : 'keeps question ids and answers, not inputs'}  ${dim('maestro-cli s1 ledger')}`
 	);
+
+	// What agents may ask and spend. On means nothing until the engine has
+	// passed its Test, so the line under it says what still stands in the way.
+	const { agents } = settings;
+	const cap =
+		agents.perAgentBudgetUsd === null
+			? 'no cap per agent'
+			: `${formatSystemOneCost(agents.perAgentBudgetUsd)} a day per agent`;
+	lines.push(
+		'',
+		`  ${c('white', 'Agents')}  ${agents.enabled ? 'may ask' : c('yellow', 'may not ask')}  ${dim(`budget ${formatSystemOneCost(agents.dailyBudgetUsd)} a day across all agents, ${cap}`)}  ${dim('maestro-cli s1 usage')}`
+	);
+	const blocker = agents.enabled ? systemOneAgentUseBlocker(report) : null;
+	if (blocker) lines.push(`    ${c('yellow', blocker)}`);
+	else if (agents.enabled && report.testPassedAt !== null) {
+		lines.push(
+			`    ${dim(`The engine passed its Test ${formatRelativeTime(report.testPassedAt)}.`)}`
+		);
+	}
 
 	if (off) {
 		lines.push(

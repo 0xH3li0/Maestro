@@ -6,7 +6,9 @@
  * `tiers` (where a `low`, `medium` or `high` task launches, for a modal that
  * edits an existing agent) and `gateway` (`GatewayUrlField`, plus the Maestro
  * token proxy mode and its Background requests picker where the modal offers
- * them). A modal with none gets a quiet empty state rather than a blank panel.
+ * them) and `systemOne` (whether this agent may ask System One, for a modal
+ * that edits an existing agent). A modal with none gets a quiet empty state
+ * rather than a blank panel.
  */
 
 import type { ReactNode } from 'react';
@@ -18,10 +20,11 @@ export interface ModelsTabProps extends AgentSettingsPanelBaseProps {
 	runOn?: ReactNode;
 	tiers?: ReactNode;
 	gateway?: ReactNode;
+	systemOne?: ReactNode;
 }
 
-export function ModelsTab({ theme, idPrefix, runOn, tiers, gateway }: ModelsTabProps) {
-	const empty = !runOn && !tiers && !gateway;
+export function ModelsTab({ theme, idPrefix, runOn, tiers, gateway, systemOne }: ModelsTabProps) {
+	const empty = !runOn && !tiers && !gateway && !systemOne;
 	return (
 		<AgentSettingsPanel
 			theme={theme}
@@ -32,6 +35,7 @@ export function ModelsTab({ theme, idPrefix, runOn, tiers, gateway }: ModelsTabP
 			{runOn}
 			{tiers}
 			{gateway}
+			{systemOne}
 			{empty && (
 				<EmptyStatePlaceholder
 					theme={theme}

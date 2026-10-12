@@ -94,10 +94,14 @@ import {
 	testSystemOne,
 	updateSystemOneSettingsRequest,
 } from '../../local-models/system-one/service';
-import { getSystemOneAgentAccessRequest } from '../../local-models/system-one/agent-service';
+import {
+	getSystemOneAgentAccessRequest,
+	readSystemOneAgentUsage,
+} from '../../local-models/system-one/agent-service';
 import { readSystemOneLedger } from '../../local-models/system-one/decisions';
 import type { SystemOneAgentAccess } from '../../../shared/local-models/system-one-agent';
 import type { SystemOneLedgerPage } from '../../../shared/local-models/system-one-ledger';
+import type { SystemOneUsageReport } from '../../../shared/local-models/system-one-spend';
 import type {
 	SystemOneReport,
 	SystemOneTestResult,
@@ -581,6 +585,18 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			handlerOpts('systemOne:agentAccess'),
 			async (agentId: unknown): Promise<SystemOneAgentAccess> =>
 				getSystemOneAgentAccessRequest(agentId)
+		)
+	);
+
+	// What agents' own requests came to, per agent, with today's spend against
+	// the budget: the table under "Let agents use System One". The same
+	// function `maestro-cli s1 usage` reaches. Reads the ledger and the day's
+	// count; sends nothing.
+	ipcMain.handle(
+		'localModels:systemOne:usage',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:usage'),
+			async (query: unknown): Promise<SystemOneUsageReport> => readSystemOneAgentUsage(query)
 		)
 	);
 

@@ -32,6 +32,7 @@ import {
 	SYSTEM_ONE_AGENT_MAX_KEY_CHARS,
 	SYSTEM_ONE_AGENT_MAX_QUESTIONS,
 	SYSTEM_ONE_AGENT_REQUEST_TOKENS,
+	SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS,
 	SYSTEM_ONE_AGENT_VERBS,
 	SYSTEM_ONE_CONTINUE_WITHOUT,
 	SYSTEM_ONE_RANK_QUESTION,
@@ -41,7 +42,9 @@ import {
 	isSystemOneAgentSourceId,
 	isSystemOneOptedOut,
 	parseSystemOneAgentRequest,
+	parseSystemOneOptOutEdit,
 	systemOneAgentGateMessage,
+	systemOneAgentGateReason,
 	systemOneAgentRequestLimits,
 	systemOneAgentRequestVerb,
 	systemOneAgentSourceId,
@@ -526,6 +529,39 @@ describe('refusals', () => {
 		);
 		expect(systemOneAgentGateMessage('budget-agent', { budget })).toContain('($0.25 of $0.25)');
 		expect(systemOneAgentGateMessage('budget-day', { budget })).toContain('resets at midnight');
+	});
+
+	it('gives a person the same sentence without the instruction to the agent', () => {
+		for (const gate of gates) {
+			const detail = { engineLabel: 'Jev (TypeSafe cloud)', budget };
+			const reason = systemOneAgentGateReason(gate, detail);
+			expect(reason).not.toContain(SYSTEM_ONE_CONTINUE_WITHOUT);
+			expect(systemOneAgentGateMessage(gate, detail)).toBe(
+				`${reason} ${SYSTEM_ONE_CONTINUE_WITHOUT}`
+			);
+		}
+	});
+
+	it('stores the per-agent switch as an opt-out or as nothing', () => {
+		expect(parseSystemOneOptOutEdit(true)).toEqual({ ok: true, optOut: true });
+		// On is the absence of the field: an agent is never recorded as opted in.
+		for (const on of [false, null, undefined]) {
+			expect(parseSystemOneOptOutEdit(on)).toEqual({ ok: true, optOut: undefined });
+		}
+		for (const bad of ['off', 'true', 1, 0, {}, []]) {
+			const edit = parseSystemOneOptOutEdit(bad);
+			expect(edit.ok, String(bad)).toBe(false);
+			if (!edit.ok) expect(edit.error).toContain('systemOneOptOut');
+		}
+		// What the validator stores is what the reader reads.
+		expect(isSystemOneOptedOut({ systemOneOptOut: true })).toBe(true);
+		expect(isSystemOneOptedOut({ systemOneOptOut: undefined })).toBe(false);
+	});
+
+	it('says what the per-agent switch means in each position', () => {
+		expect(SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS.on).toContain('"Let agents use System One"');
+		expect(SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS.off).toContain('cannot ask System One');
+		expect(SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS.off).toContain('system prompt');
 	});
 
 	it('reads the per-agent switch only when it is exactly true', () => {

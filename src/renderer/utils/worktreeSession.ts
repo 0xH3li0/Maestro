@@ -138,6 +138,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// And the same background requests target: it is read with the gateway
 		// and the proxy mode above, which the worktree agent already shares.
 		backgroundRequests: params.parentSession.backgroundRequests,
+		// And the same System One switch: an agent the user switched off must not
+		// start asking, and spending, from a worktree of the same project.
+		systemOneOptOut: params.parentSession.systemOneOptOut,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,

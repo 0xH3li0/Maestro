@@ -150,6 +150,8 @@ import {
 	systemOneKeyClear,
 	systemOneKeySet,
 	systemOneLedger,
+	systemOneSetAgents,
+	systemOneSetBudget,
 	systemOneSetEngine,
 	systemOneSetFailPolicy,
 	systemOneSetKeepInputs,
@@ -1659,6 +1661,10 @@ program
 		'--background-requests <target>',
 		"Where the Maestro token proxy sends this agent's side requests (titles, summaries): <source id>:<model> for a model on a source that serves the Anthropic Messages route, or none. Claude Code agents on the token proxy only"
 	)
+	.option(
+		'--system-one <on|off>',
+		'Whether this agent may ask System One with maestro-cli s1: off switches it off for this agent only, on follows "Let agents use System One" (default on)'
+	)
 	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
 	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')
@@ -2905,7 +2911,7 @@ const systemOne = program
 systemOne
 	.command('status')
 	.description(
-		'The engine in force, its address, model and timeout, where each key comes from, and the fail policies (requires the desktop app)'
+		'The engine in force, its address, model and timeout, where each key comes from, the fail policies, and what agents may ask and spend (requires the desktop app)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(systemOneStatus);
@@ -2913,7 +2919,7 @@ systemOne
 const systemOneSet = systemOne
 	.command('set')
 	.description(
-		'Change the System One engine, its timeout, a task fail policy, or what the ledger keeps'
+		'Change the System One engine, its timeout, a task fail policy, what the ledger keeps, or what agents may ask and spend'
 	);
 
 systemOneSet
@@ -2952,6 +2958,26 @@ systemOneSet
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(systemOneSetKeepInputs);
+
+systemOneSet
+	.command('agents <on|off>')
+	.description(
+		"Let agents use System One: whether an agent's own s1 yes, pick, rate, ask, rank and batch are answered, and whether its system prompt says so (default on; one agent is switched off with update-agent --system-one off) (requires the desktop app)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetAgents);
+
+systemOneSet
+	.command('budget [usd]')
+	.description(
+		'What agents may spend on System One in a local day, in US dollars across all agents (0 to 1000, default 1; 0 refuses every agent request) (requires the desktop app)'
+	)
+	.option(
+		'--per-agent <usd|none>',
+		'The most one agent may spend in a day, or "none" for no cap of its own (default none)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetBudget);
 
 const systemOneKey = systemOne
 	.command('key')

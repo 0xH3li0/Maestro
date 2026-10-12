@@ -42,6 +42,7 @@ import {
 	type TierTarget,
 } from '../../shared/modelTiers';
 import { readLocalModelEndpoints } from '../services/storage';
+import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/system-one-agent';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -69,6 +70,7 @@ interface UpdateAgentOptions {
 	runOnContext?: string;
 	tier?: string[];
 	backgroundRequests?: string;
+	systemOne?: string;
 	model?: string;
 	effort?: string;
 	contextWindow?: string;
@@ -187,6 +189,17 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		patch.backgroundRequests = parsed.backgroundRequests ?? null;
 	}
 
+	// `--system-one <on|off>`: the Models tab's System One switch. On is the
+	// absence of the opt-out (`null` on the wire), so the agent follows "Let
+	// agents use System One"; off stores the opt-out for this agent only.
+	if (options.systemOne !== undefined) {
+		const word = options.systemOne.trim().toLowerCase();
+		if (word !== 'on' && word !== 'off') {
+			throw new Error(`--system-one expects on or off, got "${options.systemOne}"`);
+		}
+		patch.systemOneOptOut = word === 'off' ? true : null;
+	}
+
 	if (options.contextWindow !== undefined) {
 		const raw = options.contextWindow.trim().toLowerCase();
 		if (raw === '' || raw === 'none' || raw === '0') {
@@ -264,7 +277,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -625,6 +638,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			runOn: 'Run on',
 			tierTargets: 'Tiers',
 			backgroundRequests: 'Background requests',
+			systemOneOptOut: 'System One',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',
@@ -662,6 +676,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				console.log(
 					`  ${label}: ${formatBackgroundRequestsSpec(value as BackgroundRequests | null)}`
 				);
+			} else if (key === 'systemOneOptOut') {
+				// On is not "cleared", it is the agent following the switch for all agents.
+				const stored = value === true ? 'off' : 'on';
+				console.log(`  ${label}: ${stored}. ${SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS[stored]}`);
 			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);
 			} else if (key === 'customEnvVars' && value && typeof value === 'object') {

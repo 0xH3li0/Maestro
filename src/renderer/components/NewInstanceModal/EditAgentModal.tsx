@@ -38,6 +38,7 @@ import {
 	ProviderTab,
 	SshTab,
 } from '../AgentSettings';
+import { AgentSystemOneControl } from './AgentSystemOneControl';
 import { AgentTokenProxyModeControl } from './AgentTokenProxyModeControl';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import {
@@ -1287,6 +1288,17 @@ export function EditAgentModal({
 									/>
 								</div>
 							</>
+						}
+						systemOne={
+							// Whether this agent may ask System One. Applies at once, like the
+							// proxy mode above: main answers the request and builds the prompt.
+							<AgentSystemOneControl
+								theme={theme}
+								agentId={session.id}
+								agentName={session.name}
+								optedOut={(liveSession ?? session).systemOneOptOut === true}
+								sshRemoteName={sshRemoteName}
+							/>
 						}
 					/>
 				)}

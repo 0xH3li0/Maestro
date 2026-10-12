@@ -655,35 +655,45 @@ export const SYSTEM_ONE_CONTINUE_WITHOUT = 'Continue without System One.';
  */
 export function systemOneAgentGateMessage(
 	gate: SystemOneAgentGate,
-	detail: { engineLabel?: string; problem?: string | null; budget?: SystemOneAgentBudget } = {}
+	detail: SystemOneAgentGateDetail = {}
+): string {
+	return `${systemOneAgentGateReason(gate, detail)} ${SYSTEM_ONE_CONTINUE_WITHOUT}`;
+}
+
+/** What a gate's sentence is worded from. */
+export interface SystemOneAgentGateDetail {
+	engineLabel?: string;
+	problem?: string | null;
+	budget?: SystemOneAgentBudget;
+}
+
+/**
+ * Which switch refuses, as one sentence for a person: what a settings surface
+ * shows beside the control. {@link systemOneAgentGateMessage} is this sentence
+ * with the instruction to the agent after it.
+ */
+export function systemOneAgentGateReason(
+	gate: SystemOneAgentGate,
+	detail: SystemOneAgentGateDetail = {}
 ): string {
 	const where = modelsSettingsLocation('system-one');
-	const said = (sentence: string): string => `${sentence} ${SYSTEM_ONE_CONTINUE_WITHOUT}`;
 	switch (gate) {
 		case 'engine-off':
-			return said(`System One is off: no engine is chosen in ${where}.`);
+			return `System One is off: no engine is chosen in ${where}.`;
 		case 'agents-off':
-			return said(
-				`System One is off for agents: "Let agents use System One" is switched off in ${where}.`
-			);
+			return `System One is off for agents: "Let agents use System One" is switched off in ${where}.`;
 		case 'agent-opted-out':
-			return said(
-				"System One is off for this agent: it is switched off on the Models tab of the agent's settings."
-			);
+			return "System One is off for this agent: it is switched off on the Models tab of the agent's settings.";
 		case 'engine-not-ready':
-			return said(
-				`System One is off: ${detail.problem ?? `${detail.engineLabel ?? 'the engine'} is not set up. See ${where}.`}`
-			);
+			return `System One is off: ${detail.problem ?? `${detail.engineLabel ?? 'the engine'} is not set up. See ${where}.`}`;
 		case 'engine-untested':
-			return said(
-				`System One is off: ${detail.engineLabel ?? 'the engine'} has not passed its Test as it is set up now. Run the Test in ${where}, or \`maestro-cli s1 test\`.`
-			);
+			return `System One is off: ${detail.engineLabel ?? 'the engine'} has not passed its Test as it is set up now. Run the Test in ${where}, or \`maestro-cli s1 test\`.`;
 		case 'budget-day': {
 			const budget = detail.budget;
 			const spent = budget
 				? ` (${formatCost(budget.spentTodayUsd)} of ${formatCost(budget.dailyBudgetUsd)} across all agents)`
 				: '';
-			return said(`System One's budget for today is spent${spent}. It resets at midnight.`);
+			return `System One's budget for today is spent${spent}. It resets at midnight.`;
 		}
 		case 'budget-agent': {
 			const own = detail.budget?.agent;
@@ -691,9 +701,7 @@ export function systemOneAgentGateMessage(
 				own && own.budgetUsd !== null
 					? ` (${formatCost(own.spentTodayUsd)} of ${formatCost(own.budgetUsd)})`
 					: '';
-			return said(
-				`This agent's System One budget for today is spent${spent}. It resets at midnight.`
-			);
+			return `This agent's System One budget for today is spent${spent}. It resets at midnight.`;
 		}
 	}
 }
@@ -709,6 +717,8 @@ export interface SystemOneAgentAccess {
 	gate: SystemOneAgentGate | null;
 	/** {@link systemOneAgentGateMessage} for the gate. Null when allowed. */
 	message: string | null;
+	/** {@link systemOneAgentGateReason} for the gate: the same sentence for a person. Null when allowed. */
+	reason: string | null;
 	engine: SystemOneEngineChoice;
 	engineLabel: string;
 	/** Whether the engine's numbers are calibrated. Null when off. */
@@ -720,6 +730,32 @@ export interface SystemOneAgentAccess {
 export const SYSTEM_ONE_OPT_OUT_FIELD = 'systemOneOptOut';
 
 /** True when a stored agent record switches System One off for that agent. */
+export type SystemOneOptOutEdit =
+	| { ok: true; optOut: true | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Read an opt-out as a writer sends it. `true` switches System One off for the
+ * agent. `false`, `null` and an absent value all mean the agent follows "Let
+ * agents use System One", which is stored as NO field: an agent is never
+ * recorded as opted in, so a default that moves later still reaches it. The one
+ * validator for the Models tab switch and `update-agent --system-one`.
+ */
+export function parseSystemOneOptOutEdit(value: unknown): SystemOneOptOutEdit {
+	if (value === true) return { ok: true, optOut: true };
+	if (value === false || value === null || value === undefined) {
+		return { ok: true, optOut: undefined };
+	}
+	return { ok: false, error: `${SYSTEM_ONE_OPT_OUT_FIELD} must be true, false or null.` };
+}
+
+/** What the per-agent switch means in each position, for the Models tab and the CLI. */
+export const SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS: Readonly<Record<'on' | 'off', string>> =
+	Object.freeze({
+		on: 'This agent follows "Let agents use System One".',
+		off: 'This agent cannot ask System One, and its system prompt leaves it out from its next start.',
+	});
+
 export function isSystemOneOptedOut(record: Record<string, unknown> | null | undefined): boolean {
 	return record?.[SYSTEM_ONE_OPT_OUT_FIELD] === true;
 }

@@ -648,3 +648,38 @@ describe('remoteUpdateSessionConfig - context window provenance (finding AD1)', 
 		expect(updated.contextWindowSource).toBe('user-edited');
 	});
 });
+
+describe('remoteUpdateSessionConfig - System One switch', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.sessions.setMany).mockClear();
+	});
+
+	it('stores the opt-out and flushes it to main, where a request and the prompt read it', async () => {
+		const session = makeSession();
+
+		const updated = await applyPatch(session, { systemOneOptOut: true });
+
+		expect(updated.systemOneOptOut).toBe(true);
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: session.id, systemOneOptOut: true })],
+			[]
+		);
+	});
+
+	it.each([null, false])('clears it on %j: on is the absence of the field', async (value) => {
+		const updated = await applyPatch(makeSession({ systemOneOptOut: true }), {
+			systemOneOptOut: value,
+		});
+
+		expect('systemOneOptOut' in updated).toBe(true);
+		expect(updated.systemOneOptOut).toBeUndefined();
+	});
+
+	it.each(['off', 1, {}])('refuses %j, and writes nothing', async (value) => {
+		const reply = await refusePatch(makeSession(), { systemOneOptOut: value });
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('systemOneOptOut');
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+});

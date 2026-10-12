@@ -218,6 +218,46 @@ export function systemOneBudgetProblem(value: unknown): string | null {
 	return null;
 }
 
+export type SystemOneBudgetTextParse = { ok: true; usd: number } | { ok: false; message: string };
+
+/**
+ * Read a budget as a person types it (`1`, `0.25`, `$2`), or say why it is not
+ * one. The budget field in Settings and `maestro-cli s1 set budget` both read
+ * through this, so the same text means the same number on both.
+ */
+export function parseSystemOneBudgetText(raw: string): SystemOneBudgetTextParse {
+	const text = raw.trim().replace(/^\$/, '').trim();
+	// `Number('')` is 0, which would read an empty field as "refuse everything".
+	const usd = /^(\d+\.?\d*|\.\d+)$/.test(text) ? Number(text) : Number.NaN;
+	const problem = systemOneBudgetProblem(usd);
+	return problem ? { ok: false, message: problem } : { ok: true, usd };
+}
+
+/** What "Let agents use System One" means in each position, for the switch and the CLI. */
+export const SYSTEM_ONE_AGENT_USE_DESCRIPTIONS: Readonly<Record<'on' | 'off', string>> =
+	Object.freeze({
+		on: 'Agents may ask System One with maestro-cli s1, and their system prompt says so, once the engine has passed its Test.',
+		off: 'No agent may ask System One, and it is left out of every system prompt from the next start of an agent.',
+	});
+
+/**
+ * Why agents cannot ask although "Let agents use System One" is on, read from
+ * the report alone, or null when nothing in the setup stands in the way. One
+ * sentence for the switch in Settings and for `maestro-cli s1 set agents on`.
+ * An agent's own opt-out and the budget are not setup: `getSystemOneAgentAccess`
+ * answers for one agent.
+ */
+export function systemOneAgentUseBlocker(
+	report: Pick<SystemOneReport, 'settings' | 'problem' | 'testPassedAt'>
+): string | null {
+	if (report.settings.engine === 'off') return 'No engine is chosen, so no agent can ask.';
+	if (report.problem) return 'The engine cannot answer as it is set up, so no agent can ask.';
+	if (report.testPassedAt === null) {
+		return 'Agents can ask once the engine passes its Test as it is set up now.';
+	}
+	return null;
+}
+
 /** Read stored agent settings. An unusable field reads as its default. */
 function parseSystemOneAgentSettings(value: unknown): SystemOneAgentSettings {
 	const record = isPlainObject(value) ? value : {};

@@ -156,6 +156,9 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 				? runOnTargetLabel(backgroundTarget, endpoints)
 				: null,
 			backgroundRequestsProblem: background.ok ? null : background.error,
+			// System One switch (settable with `update-agent --system-one on|off`).
+			// False means the agent follows "Let agents use System One".
+			systemOneOptOut: agent.systemOneOptOut === true,
 			customModel: agent.customModel ?? null,
 			customEffort: agent.customEffort ?? null,
 			customContextWindow: agent.customContextWindow ?? null,

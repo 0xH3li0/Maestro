@@ -2350,6 +2350,65 @@ describe('EditAgentModal', () => {
 		});
 	});
 
+	describe('System One switch', () => {
+		const toggle = () => screen.getByRole('switch', { name: /use System One$/ });
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		function renderOnModels(session: Session) {
+			// The switch reads and writes the live store entry, as the proxy mode does.
+			useSessionStore.setState({ sessions: [session] } as never);
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+		}
+
+		it('sits on the Models tab, on for an agent that was never switched off', () => {
+			renderOnModels(createSession());
+
+			expect(screen.getByTestId('edit-agent-system-one')).toBeInTheDocument();
+			expect(toggle()).toHaveAttribute('aria-checked', 'true');
+		});
+
+		it('applies at once and flushes to main, without Save', async () => {
+			renderOnModels(createSession());
+
+			fireEvent.click(toggle());
+
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions[0].systemOneOptOut).toBe(true)
+			);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ systemOneOptOut: true })],
+				[]
+			);
+			await waitFor(() => expect(toggle()).toHaveAttribute('aria-checked', 'false'));
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('reads off for an agent that is switched off', () => {
+			renderOnModels(createSession({ systemOneOptOut: true }));
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'false');
+		});
+	});
+
 	describe('Tiers', () => {
 		const OLLAMA: LocalModelEndpoint = {
 			id: 'ep-ollama',

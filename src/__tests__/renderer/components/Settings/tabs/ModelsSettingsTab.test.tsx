@@ -110,6 +110,36 @@ describe('ModelsSettingsTab', () => {
 		expect(ledger()).toBeNull();
 	});
 
+	it('puts System One for agents between the tasks and the ledger, and on no other inner tab', async () => {
+		vi.mocked(window.maestro.localModels.systemOne.usage).mockClear();
+		const { container } = render(<ModelsSettingsTab theme={theme} />);
+		const agents = () =>
+			container.querySelector('[data-setting-id="local-models-system-one-agents"]');
+		expect(agents()).toBeNull();
+		expect(window.maestro.localModels.systemOne.usage).not.toHaveBeenCalled();
+
+		openPanel('System One');
+		expect(agents()).not.toBeNull();
+		const tasks = container.querySelector('[data-setting-id="local-models-system-one"]')!;
+		const ledger = container.querySelector('[data-setting-id="local-models-system-one-ledger"]')!;
+		expect(
+			tasks.compareDocumentPosition(agents()!) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		expect(
+			agents()!.compareDocumentPosition(ledger) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		// Opening the tab reads the spend. It asks the engine nothing.
+		expect(window.maestro.localModels.systemOne.usage).toHaveBeenCalledTimes(1);
+		expect(window.maestro.localModels.systemOne.test).not.toHaveBeenCalled();
+		// The switch reads the tab's one report: on by default.
+		expect(
+			await screen.findByRole('switch', { name: 'Let agents use System One' })
+		).toHaveAttribute('aria-checked', 'true');
+
+		openPanel('System Two');
+		expect(agents()).toBeNull();
+	});
+
 	it('puts the engine card above the System One tasks, and on no other inner tab', async () => {
 		const { container } = render(<ModelsSettingsTab theme={theme} />);
 		const engine = () =>

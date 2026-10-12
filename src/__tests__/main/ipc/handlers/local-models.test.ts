@@ -233,10 +233,21 @@ vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
 		allowed: false,
 		gate: 'engine-untested',
 		message: 'System One is off: Jev (TypeSafe cloud) has not passed its Test.',
+		reason: 'System One is off: Jev (TypeSafe cloud) has not passed its Test.',
 		engine: 'jev-cloud',
 		engineLabel: 'Jev (TypeSafe cloud)',
 		calibrated: true,
 		budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0, remainingTodayUsd: 1 },
+	})),
+	readSystemOneAgentUsage: vi.fn(async () => ({
+		since: 0,
+		retentionDays: 30,
+		rows: [],
+		totals: { requests: 0, cachedRequests: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 },
+		budget: { dayStartedAt: 0, dailyBudgetUsd: 1, spentTodayUsd: 0.2, remainingTodayUsd: 0.8 },
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		notice: null,
 	})),
 }));
 vi.mock('../../../../main/local-models/system-one/decisions', () => ({
@@ -316,7 +327,10 @@ import {
 	updateSystemOneSettingsRequest,
 } from '../../../../main/local-models/system-one/service';
 import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
-import { getSystemOneAgentAccessRequest } from '../../../../main/local-models/system-one/agent-service';
+import {
+	getSystemOneAgentAccessRequest,
+	readSystemOneAgentUsage,
+} from '../../../../main/local-models/system-one/agent-service';
 import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
 import {
 	artifactForThisPlatform,
@@ -747,6 +761,22 @@ describe('task router channel', () => {
 
 		// The agent id arrives as the first argument, not shifted by the IPC event.
 		expect(getSystemOneAgentAccessRequest).toHaveBeenCalledWith('agent-7');
+		expect(testSystemOne).not.toHaveBeenCalled();
+	});
+
+	it('reads what agents spent through the function the CLI reaches, and asks the engine nothing', async () => {
+		vi.mocked(testSystemOne).mockClear();
+		const query = { since: 1_700_000_000_000 };
+
+		await expect(handlerFor('localModels:systemOne:usage')({}, query)).resolves.toMatchObject({
+			rows: [],
+			budget: { dailyBudgetUsd: 1, spentTodayUsd: 0.2 },
+			engine: 'jev-cloud',
+		});
+
+		// The query arrives as the first argument, not shifted by the IPC event, and
+		// no caller is named: the table is for the user, not for one agent.
+		expect(readSystemOneAgentUsage).toHaveBeenCalledWith(query);
 		expect(testSystemOne).not.toHaveBeenCalled();
 	});
 

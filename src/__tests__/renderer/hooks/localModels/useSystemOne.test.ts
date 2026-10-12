@@ -153,6 +153,12 @@ describe('useSystemOne', () => {
 		});
 		expect(result.current.test).toEqual(TEST_OK);
 
+		// Nor is who may ask, or how much they may spend.
+		await act(async () => {
+			await result.current.set({ agents: { enabled: false, dailyBudgetUsd: 2 } });
+		});
+		expect(result.current.test).toEqual(TEST_OK);
+
 		await act(async () => {
 			await result.current.set({ timeoutMs: 900 });
 		});

@@ -1521,13 +1521,13 @@ branch stamped 18 still gets the table).
 
 ### Transports
 
-| Surface  | Name                                                                                                                                                                    |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IPC      | `localModels:systemOne:report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `agentAccess`, and the push `localModels:systemOne:changed`                              |
-| Preload  | `window.maestro.localModels.systemOne` (`report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `agentAccess`, `onChanged`)                                            |
-| Bridge   | `system_one_status`, `system_one_set`, `system_one_key_set`, `system_one_key_clear`, `system_one_test`, `system_one_ledger`, `system_one_access`                        |
-| CLI      | `maestro-cli s1 status`, `set engine`, `set timeout`, `set fail-policy`, `set keep-inputs`, `key set`, `key clear`, `test`, `ledger`; `models assign <task> system-one` |
-| Renderer | `useSystemOne()` (the tab owns one instance), `useSystemOneLedger()`, `SystemOneEngineCard`, the **If no answer** column, `SystemOneLedgerSection`                      |
+| Surface  | Name                                                                                                                                                                                                                                                                   |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IPC      | `localModels:systemOne:report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `agentAccess`, `usage`, and the push `localModels:systemOne:changed`                                                                                                                    |
+| Preload  | `window.maestro.localModels.systemOne` (`report`, `set`, `setKey`, `clearKey`, `test`, `ledger`, `agentAccess`, `usage`, `onChanged`)                                                                                                                                  |
+| Bridge   | `system_one_status`, `system_one_set`, `system_one_key_set`, `system_one_key_clear`, `system_one_test`, `system_one_ledger`, `system_one_access`, `system_one_agent_request`, `system_one_usage`                                                                       |
+| CLI      | `maestro-cli s1 status`, `set engine`, `set timeout`, `set fail-policy`, `set keep-inputs`, `set agents`, `set budget`, `key set`, `key clear`, `test`, `ledger`, `usage`; `update-agent --system-one`; `models assign <task> system-one`                              |
+| Renderer | `useSystemOne()` (the tab owns one instance), `useSystemOneLedger()`, `useSystemOneUsage()`, `useSystemOneAgentAccess()`, `SystemOneEngineCard`, the **If no answer** column, `SystemOneAgentsSection`, `SystemOneLedgerSection`, `AgentSystemOneControl` (Edit Agent) |
 
 Every one calls the functions above. The CLI reads the app's state through the bridge, so `s1` needs
 the desktop app, and `s1 set engine local-judge --model` stores the assignment through

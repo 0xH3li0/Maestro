@@ -12,6 +12,10 @@
  *   - **A key's description never contains a key.**
  *   - **Agents ask under a budget**: the switch is on by default, a day's spend
  *     is capped at a dollar, and a per-agent cap exists only when it is set.
+ *   - **A budget typed by a person** means the same number in Settings and on
+ *     the command line, and an empty field is never read as zero.
+ *   - **On is not "may ask now"**: the line beside the switch says what in the
+ *     setup still stands in the way.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -24,6 +28,7 @@ import {
 import {
 	DEFAULT_SYSTEM_ONE_AGENT_SETTINGS,
 	DEFAULT_SYSTEM_ONE_SETTINGS,
+	SYSTEM_ONE_AGENT_USE_DESCRIPTIONS,
 	SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD,
 	SYSTEM_ONE_ENGINE_CHOICES,
 	SYSTEM_ONE_ENGINE_DISCLOSURES,
@@ -34,8 +39,10 @@ import {
 	SYSTEM_ONE_TEST_QUESTION_ID,
 	applySystemOneSettingsPatch,
 	describeSystemOneKey,
+	parseSystemOneBudgetText,
 	parseSystemOneSettings,
 	resolveSystemOneFailPolicy,
+	systemOneAgentUseBlocker,
 	systemOneAssignmentLabel,
 	systemOneBudgetProblem,
 	systemOneEngineChoiceLabel,
@@ -294,6 +301,56 @@ describe('what agents may do', () => {
 		expect(parseSystemOneSettings({ agents: [] }).agents).toEqual(
 			DEFAULT_SYSTEM_ONE_AGENT_SETTINGS
 		);
+	});
+
+	it('reads a budget as a person types it', () => {
+		for (const [text, usd] of [
+			['1', 1],
+			['0.25', 0.25],
+			['.5', 0.5],
+			['2.', 2],
+			['$3', 3],
+			[' $ 0.10 ', 0.1],
+			['0', 0],
+			[String(SYSTEM_ONE_MAX_DAILY_BUDGET_USD), SYSTEM_ONE_MAX_DAILY_BUDGET_USD],
+		] as const) {
+			expect(parseSystemOneBudgetText(text), text).toEqual({ ok: true, usd });
+		}
+	});
+
+	it('refuses text that is not a budget, an empty field included', () => {
+		// `Number('')` is 0, and 0 refuses every agent request: an emptied field must not store it.
+		for (const text of ['', '   ', '$', 'none', '-1', '1e3', '0x10', '1,5', '1 2', 'Infinity']) {
+			const parsed = parseSystemOneBudgetText(text);
+			expect(parsed.ok, text).toBe(false);
+			if (!parsed.ok) expect(parsed.message).toContain('US dollars a day');
+		}
+		expect(parseSystemOneBudgetText(String(SYSTEM_ONE_MAX_DAILY_BUDGET_USD + 1)).ok).toBe(false);
+	});
+
+	it('says what the switch means in each position', () => {
+		expect(SYSTEM_ONE_AGENT_USE_DESCRIPTIONS.on).toContain('maestro-cli s1');
+		expect(SYSTEM_ONE_AGENT_USE_DESCRIPTIONS.on).toContain('passed its Test');
+		expect(SYSTEM_ONE_AGENT_USE_DESCRIPTIONS.off).toContain('No agent may ask');
+		expect(SYSTEM_ONE_AGENT_USE_DESCRIPTIONS.off).toContain('system prompt');
+	});
+
+	it('says what in the setup stops agents while the switch is on', () => {
+		const ready = {
+			settings: { ...base, engine: 'jev-cloud' as const },
+			problem: null,
+			testPassedAt: 1_700_000_000_000,
+		};
+		expect(systemOneAgentUseBlocker(ready)).toBeNull();
+		expect(systemOneAgentUseBlocker({ ...ready, settings: base })).toContain('No engine is chosen');
+		expect(
+			systemOneAgentUseBlocker({ ...ready, problem: 'Jev (TypeSafe cloud) has no API key.' })
+		).toContain('cannot answer as it is set up');
+		expect(systemOneAgentUseBlocker({ ...ready, testPassedAt: null })).toContain('passes its Test');
+		// The engine being off is the first thing to say, whatever else is true.
+		expect(
+			systemOneAgentUseBlocker({ settings: base, problem: 'anything', testPassedAt: null })
+		).toContain('No engine is chosen');
 	});
 });
 

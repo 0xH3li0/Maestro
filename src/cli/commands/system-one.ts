@@ -14,6 +14,10 @@
 //   set timeout       the request budget for Jev and OpenJev, in milliseconds
 //   set fail-policy   what one task does when the engine gives no answer
 //   set keep-inputs   whether a decision record keeps what was asked, redacted
+//   set agents        "Let agents use System One": whether an agent's own
+//                     `s1 yes | pick | rate | ask | rank | batch` is answered
+//   set budget        what agents may spend in a local day, across all of them
+//                     and, with --per-agent, each
 //   key set           store a key, read from STANDARD INPUT. It is never an
 //                     argument, so it is never in shell history or a process list
 //   key clear         forget the stored key
@@ -51,11 +55,14 @@ import {
 	type SystemOneLedgerQuery,
 } from '../../shared/local-models/system-one-ledger';
 import {
+	SYSTEM_ONE_AGENT_USE_DESCRIPTIONS,
 	SYSTEM_ONE_ENGINE_CHOICES,
 	SYSTEM_ONE_KEEP_INPUTS_DESCRIPTIONS,
 	SYSTEM_ONE_REMOTE_ENGINE_IDS,
 	isSystemOneEngineChoice,
 	isSystemOneRemoteEngineId,
+	parseSystemOneBudgetText,
+	systemOneAgentUseBlocker,
 	systemOneFailPolicyProblem,
 	systemOneKeyProblem,
 	systemOneModelProblem,
@@ -65,6 +72,7 @@ import {
 	type SystemOneSettingsPatch,
 	type SystemOneTestResult,
 } from '../../shared/local-models/system-one-settings';
+import { formatSystemOneCost } from '../../shared/local-models/system-one-spend';
 import { LOCAL_JUDGE_TASK_ID, localModelAssignmentCaution } from '../../shared/local-models/tasks';
 import { resolveAssignmentSpec, storeTaskAssignment } from './models-assign';
 
@@ -292,6 +300,94 @@ export async function systemOneSetKeepInputs(value: string, options: JsonOption)
 	if (stored === 'off') {
 		console.log('  Inputs already kept stay until their records are 30 days old.');
 	}
+}
+
+/** "Let agents use System One": whether an agent's own `maestro-cli s1` request is answered. */
+export async function systemOneSetAgents(value: string, options: JsonOption): Promise<void> {
+	if (value !== 'on' && value !== 'off') {
+		fail('Let agents use System One is on or off.', options.json, ExitCode.InvalidUsage);
+	}
+	const report = await applyPatch({ agents: { enabled: value === 'on' } }, options.json);
+	if (options.json) {
+		printReport(report, true);
+		return;
+	}
+	const stored = report.settings.agents.enabled ? 'on' : 'off';
+	console.log(formatSuccess(`Let agents use System One: ${stored}`));
+	console.log(`  ${SYSTEM_ONE_AGENT_USE_DESCRIPTIONS[stored]}`);
+	// On says what agents MAY do. Say so when the setup still stops them.
+	const blocker = stored === 'on' ? systemOneAgentUseBlocker(report) : null;
+	if (blocker) console.log(formatWarning(blocker));
+	console.log('  Switch one agent off with: maestro-cli update-agent <agent-id> --system-one off');
+}
+
+interface SetBudgetOptions extends JsonOption {
+	perAgent?: string;
+}
+
+/** The word that removes the per-agent cap. */
+const NO_CAP_WORD = 'none';
+
+/**
+ * What agents may spend in a local day: `[usd]` across all of them, and
+ * `--per-agent <usd|none>` for each. At least one of the two.
+ */
+export async function systemOneSetBudget(
+	value: string | undefined,
+	options: SetBudgetOptions
+): Promise<void> {
+	const { json } = options;
+	const agents: NonNullable<SystemOneSettingsPatch['agents']> = {};
+	if (value !== undefined) {
+		const parsed = parseSystemOneBudgetText(value);
+		if (!parsed.ok) fail(parsed.message, json, ExitCode.InvalidUsage);
+		agents.dailyBudgetUsd = parsed.usd;
+	}
+	if (options.perAgent !== undefined) {
+		if (options.perAgent.trim().toLowerCase() === NO_CAP_WORD) {
+			agents.perAgentBudgetUsd = null;
+		} else {
+			const parsed = parseSystemOneBudgetText(options.perAgent);
+			if (!parsed.ok) {
+				fail(
+					`--per-agent: ${parsed.message} Use "${NO_CAP_WORD}" to remove the cap.`,
+					json,
+					ExitCode.InvalidUsage
+				);
+			}
+			agents.perAgentBudgetUsd = parsed.usd;
+		}
+	}
+	if (Object.keys(agents).length === 0) {
+		fail(
+			'Give the daily budget in US dollars, --per-agent <usd|none>, or both.',
+			json,
+			ExitCode.InvalidUsage
+		);
+	}
+
+	const report = await applyPatch({ agents }, json);
+	if (json) {
+		printReport(report, true);
+		return;
+	}
+	const stored = report.settings.agents;
+	console.log(
+		formatSuccess(
+			`Agents may spend ${formatSystemOneCost(stored.dailyBudgetUsd)} a day on System One, across all of them`
+		)
+	);
+	console.log(
+		stored.perAgentBudgetUsd === null
+			? '  No agent has a cap of its own.'
+			: `  One agent may spend ${formatSystemOneCost(stored.perAgentBudgetUsd)} a day.`
+	);
+	if (stored.dailyBudgetUsd === 0 || stored.perAgentBudgetUsd === 0) {
+		console.log(formatWarning('A budget of 0 refuses every agent request.'));
+	} else if (report.settings.engine === 'openjev' || report.settings.engine === 'local-judge') {
+		console.log('  The engine in force has no price, so a budget above 0 never binds.');
+	}
+	console.log('  The day starts at local midnight. See the spend with: maestro-cli s1 usage');
 }
 
 interface KeyOptions extends JsonOption {

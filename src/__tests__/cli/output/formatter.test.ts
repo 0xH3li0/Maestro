@@ -1090,6 +1090,16 @@ describe('formatter', () => {
 			expect(result).toContain('unusable target: This agent\'s "high" tier target cannot be used.');
 		});
 
+		it('should show the System One switch only when it is off for the agent', () => {
+			expect(formatAgentDetail(baseAgent)).not.toContain('System One:');
+			expect(formatAgentDetail({ ...baseAgent, systemOneOptOut: false })).not.toContain(
+				'System One:'
+			);
+			expect(formatAgentDetail({ ...baseAgent, systemOneOptOut: true })).toMatch(
+				/System One:\s+off for this agent/
+			);
+		});
+
 		it('should show the background requests target only when one is set or broken', () => {
 			expect(formatAgentDetail(baseAgent)).not.toContain('Background requests:');
 

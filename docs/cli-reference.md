@@ -1127,35 +1127,36 @@ Remove an agent from the Maestro desktop app
 
 Update an existing agent's group, working directory, and per-agent settings
 
-| Option                            | Description                                                                                                     | Default |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                | Move the agent to this group (use "none" to ungroup; supports partial IDs)                                      | -       |
-| `-d, --cwd <path>`                | Change the agent's working directory (resolved to absolute; agent must be stopped)                              | -       |
-| `--ssh-remote <id>`               | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped)                  | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                    | -       |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false)                                       | -       |
-| `--nudge <message>`               | Nudge message appended to every message (empty string clears)                                                   | -       |
-| `--new-session-message <message>` | Message prefixed to the first message of new sessions (empty string clears)                                     | -       |
-| `--custom-path <path>`            | Override the agent binary path (empty string clears)                                                            | -       |
-| `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                                        | -       |
-| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                  | `[]`    |
-| `--clear-env`                     | Clear all per-agent environment variables                                                                       | -       |
-| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                                 | -       |
-| `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app) | -       |
-| `--run-on <target>`               | Run on: provider (clears a target), or &lt;source id>:&lt;model> on a Local Models source                       | -       |
-| `--run-on-context <tokens>`       | Context size for the Run on source (at least 40960). Alone, it changes the current target's context             | -       |
-| `--tier <tier=target>`            | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, low=default clears       | -       |
-| `--background-requests <target>`  | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none (Claude Code on the proxy)        | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                                         | -       |
-| `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                           | -       |
-| `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                              | -       |
-| `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                                            | -       |
-| `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                                        | -       |
-| `--codex-transport <transport>`   | Codex transport: exec \| app-server (experimental, enables steering; Codex only)                                | -       |
-| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                                 | -       |
-| `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)                              | -       |
-| `--force`                         | Confirm a destructive change (required for --provider)                                                          | -       |
-| `--json`                          | Output as JSON (for scripting)                                                                                  | -       |
+| Option                            | Description                                                                                                      | Default |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                | Move the agent to this group (use "none" to ungroup; supports partial IDs)                                       | -       |
+| `-d, --cwd <path>`                | Change the agent's working directory (resolved to absolute; agent must be stopped)                               | -       |
+| `--ssh-remote <id>`               | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped)                   | -       |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                     | -       |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false)                                        | -       |
+| `--nudge <message>`               | Nudge message appended to every message (empty string clears)                                                    | -       |
+| `--new-session-message <message>` | Message prefixed to the first message of new sessions (empty string clears)                                      | -       |
+| `--custom-path <path>`            | Override the agent binary path (empty string clears)                                                             | -       |
+| `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                                         | -       |
+| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                   | `[]`    |
+| `--clear-env`                     | Clear all per-agent environment variables                                                                        | -       |
+| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                                  | -       |
+| `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app)  | -       |
+| `--run-on <target>`               | Run on: provider (clears a target), or &lt;source id>:&lt;model> on a Local Models source                        | -       |
+| `--run-on-context <tokens>`       | Context size for the Run on source (at least 40960). Alone, it changes the current target's context              | -       |
+| `--tier <tier=target>`            | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, low=default clears        | -       |
+| `--background-requests <target>`  | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none (Claude Code on the proxy)         | -       |
+| `--system-one <on\|off>`          | Whether this agent may ask System One with maestro-cli s1: off for this agent only, on follows the global switch | -       |
+| `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                                          | -       |
+| `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                            | -       |
+| `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                               | -       |
+| `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                                             | -       |
+| `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                                         | -       |
+| `--codex-transport <transport>`   | Codex transport: exec \| app-server (experimental, enables steering; Codex only)                                 | -       |
+| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                                  | -       |
+| `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)                               | -       |
+| `--force`                         | Confirm a destructive change (required for --provider)                                                           | -       |
+| `--json`                          | Output as JSON (for scripting)                                                                                   | -       |
 
 ## `maestro-cli agent`
 
@@ -2367,7 +2368,7 @@ System One: ask typed questions about a text (yes, pick, rate, ask, rank, batch)
 
 ## `maestro-cli s1 status`
 
-The engine in force, its address, model and timeout, where each key comes from, and the fail policies (requires the desktop app)
+The engine in force, its address, model and timeout, where each key comes from, the fail policies, and what agents may ask and spend (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2375,7 +2376,7 @@ The engine in force, its address, model and timeout, where each key comes from, 
 
 ## `maestro-cli s1 set`
 
-Change the System One engine, its timeout, a task fail policy, or what the ledger keeps
+Change the System One engine, its timeout, a task fail policy, what the ledger keeps, or what agents may ask and spend
 
 ## `maestro-cli s1 set engine <engine>`
 
@@ -2410,6 +2411,23 @@ Whether a decision record keeps the state and questions it was asked, with secre
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 set agents <on|off>`
+
+Let agents use System One: whether an agent's own s1 yes, pick, rate, ask, rank and batch are answered, and whether its system prompt says so (default on; one agent is switched off with update-agent --system-one off) (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 set budget [usd]`
+
+What agents may spend on System One in a local day, in US dollars across all agents (0 to 1000, default 1; 0 refuses every agent request) (requires the desktop app)
+
+| Option                    | Description                                                                           | Default |
+| ------------------------- | ------------------------------------------------------------------------------------- | ------- |
+| `--per-agent <usd\|none>` | The most one agent may spend in a day, or "none" for no cap of its own (default none) | -       |
+| `--json`                  | Output as JSON (for scripting)                                                        | -       |
 
 ## `maestro-cli s1 key`
 

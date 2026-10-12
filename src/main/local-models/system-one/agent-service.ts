@@ -57,6 +57,7 @@ import {
 	isSystemOneOptedOut,
 	parseSystemOneAgentRequest,
 	systemOneAgentGateMessage,
+	systemOneAgentGateReason,
 	systemOneAgentRequestLimits,
 	systemOneAgentRequestVerb,
 	systemOneAgentSourceId,
@@ -70,6 +71,7 @@ import {
 	type SystemOneAgentBatchRequest,
 	type SystemOneAgentBudget,
 	type SystemOneAgentGate,
+	type SystemOneAgentGateDetail,
 	type SystemOneAgentRankRequest,
 	type SystemOneAgentRefusal,
 	type SystemOneAgentRefusalCode,
@@ -305,17 +307,25 @@ function accessGate(setup: SystemOneForAgents, caller: Caller): SystemOneAgentGa
 	return null;
 }
 
+/** What a gate's sentence is worded from: the engine, why it cannot answer, and the day's count. */
+function gateDetail(
+	setup: SystemOneForAgents,
+	budget: SystemOneAgentBudget
+): SystemOneAgentGateDetail {
+	const { resolved } = setup;
+	return {
+		engineLabel: setup.engineLabel,
+		problem: resolved.id === 'off' ? null : (resolved.refusal?.message ?? null),
+		budget,
+	};
+}
+
 function gateMessage(
 	gate: SystemOneAgentGate,
 	setup: SystemOneForAgents,
 	budget: SystemOneAgentBudget
 ): string {
-	const { resolved } = setup;
-	return systemOneAgentGateMessage(gate, {
-		engineLabel: setup.engineLabel,
-		problem: resolved.id === 'off' ? null : (resolved.refusal?.message ?? null),
-		budget,
-	});
+	return systemOneAgentGateMessage(gate, gateDetail(setup, budget));
 }
 
 /**
@@ -333,6 +343,7 @@ export async function getSystemOneAgentAccess(agentId?: string): Promise<SystemO
 		allowed: gate === null,
 		gate,
 		message: gate ? gateMessage(gate, setup, budget) : null,
+		reason: gate ? systemOneAgentGateReason(gate, gateDetail(setup, budget)) : null,
 		engine: setup.resolved.id,
 		engineLabel: setup.engineLabel,
 		calibrated: setup.resolved.id === 'off' ? null : isSystemOneEngineCalibrated(setup.resolved.id),
