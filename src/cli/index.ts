@@ -52,6 +52,7 @@ import { cueList } from './commands/cue-list';
 import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
+import { cueModel } from './commands/cue-model';
 import {
 	cuePipelineAdd,
 	cuePipelineExport,
@@ -1038,6 +1039,22 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+// Read or change the model one subscription runs on. No setting flag = read.
+// Works with the desktop app closed; the engine's YAML watcher picks it up.
+cue
+	.command('model <subscription-name>')
+	.description(
+		'Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)'
+	)
+	.option('-a, --agent <id-or-name>', 'Scope to one agent (required when the name exists on two)')
+	.option('--tier <level>', 'Model tier: low, medium, high (mapped per provider)')
+	.option('--model <id>', 'Exact model id (instead of --tier)')
+	.option('--effort <level>', 'Effort: low, medium, high (mapped per provider)')
+	.option('--clear-model', "Remove the tier / model and use the agent's own model")
+	.option('--clear-effort', "Remove the effort and use the agent's own effort")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueModel);
 
 cue
 	.command('enable <subscription>')

@@ -258,7 +258,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Toasts and center flashes                          | `notify toast`, `notify flash`                                                                   |
 | Save a pasted chat image (right-click)             | `image save` (`image list` to find it)                                                           |
 | Cue subscriptions and scheduled tasks              | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
-| Pipeline Graph agent node: Model / Effort          | cue.yaml `tier`/`model`/`effort`, `cue schedule --tier --model --effort`; read: `cue list`       |
+| Cue Model / Effort (graph node, Scheduled Tasks)   | `cue model`, `cue schedule --tier --model --effort`; read: `cue model`, `cue list`               |
 | Snooze a tab, list / wake / dismiss what is parked | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history` |
 | Send Feedback modal (open / file / +1)             | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                      |
 | Feedback: screenshots, support package box         | `feedback submit --attach <png...> --support-package`                                            |

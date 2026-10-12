@@ -43,8 +43,7 @@ import {
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
 import type { CueScheduleDay } from '../../shared/cue/contracts';
-import { TIER_LEVELS, asTierLevel } from '../../shared/modelTiers';
-import { formatCueTurnSettings } from '../../shared/cue/turn-settings';
+import { formatCueTurnSettings, parseCueTurnSettingsInput } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
 
 export interface CueScheduleOptions {
@@ -563,22 +562,9 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 		errorOut('--sticky requires --notify', options, 'STICKY_WITHOUT_NOTIFY');
 	}
 
-	const levels = TIER_LEVELS.join(', ');
-	const tier = options.tier !== undefined ? asTierLevel(options.tier) : undefined;
-	if (options.tier !== undefined && !tier) {
-		errorOut(`--tier must be one of: ${levels}`, options, 'BAD_TIER');
-	}
-	const effort = options.effort !== undefined ? asTierLevel(options.effort) : undefined;
-	if (options.effort !== undefined && !effort) {
-		errorOut(`--effort must be one of: ${levels}`, options, 'BAD_EFFORT');
-	}
-	const model = options.model?.trim() || undefined;
-	if (options.model !== undefined && !model) {
-		errorOut('--model needs a model id', options, 'BAD_MODEL');
-	}
-	if (tier && model) {
-		errorOut('pass --tier or --model, not both', options, 'TIER_AND_MODEL');
-	}
+	const turnInput = parseCueTurnSettingsInput(options);
+	if (!turnInput.ok) errorOut(turnInput.error, options, turnInput.code);
+	const { tier, model, effort } = turnInput.settings;
 	if ((tier || model || effort) && !hasPrompt) {
 		errorOut('--tier, --model, and --effort need --prompt', options, 'MODEL_WITHOUT_PROMPT');
 	}

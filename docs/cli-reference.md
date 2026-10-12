@@ -769,6 +769,20 @@ List all Cue subscriptions across agents
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli cue model <subscription-name>`
+
+Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)
+
+| Option                     | Description                                               | Default |
+| -------------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two) | -       |
+| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)       | -       |
+| `--model <id>`             | Exact model id (instead of --tier)                        | -       |
+| `--effort <level>`         | Effort: low, medium, high (mapped per provider)           | -       |
+| `--clear-model`            | Remove the tier / model and use the agent's own model     | -       |
+| `--clear-effort`           | Remove the effort and use the agent's own effort          | -       |
+| `--json`                   | Output as JSON (for scripting)                            | -       |
+
 ## `maestro-cli cue enable <subscription>`
 
 Turn a Cue subscription on (name, or the full id from `cue list --json`)
@@ -823,6 +837,9 @@ Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 | `-l, --label <text>`       | Human-readable label (defaults to truncated prompt)                                                   | -       |
 | `--pipeline <name>`        | Pipeline name (default: Tasks)                                                                        | -       |
 | `--grace-minutes <n>`      | Override the default 360-minute grace window                                                          | -       |
+| `--tier <level>`           | Model tier for the prompt run: low, medium, high (mapped per provider)                                | -       |
+| `--model <id>`             | Exact model id for the prompt run (instead of --tier)                                                 | -       |
+| `--effort <level>`         | Effort for the prompt run: low, medium, high (mapped per provider)                                    | -       |
 | `--keep-on-failure`        | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure) | -       |
 | `--json`                   | Output as JSON (for scripting)                                                                        | -       |
 
