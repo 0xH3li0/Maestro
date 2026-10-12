@@ -61,6 +61,25 @@ export function skipsPermissionPrompts(claudeArgs: readonly string[]): boolean {
 	return false;
 }
 
+/**
+ * Claude's flags with permission prompts bypassed, as maestro-p always runs.
+ *
+ * `claude -p` cannot show a permission dialog, so it never stops on one. The
+ * TUI can, and nothing answers it: the turn sat on the dialog until the idle
+ * watchdog failed it. Bypassing makes a TUI turn run tools the way a print turn
+ * does. An explicit `--permission-mode` is left alone, because `plan` is how a
+ * caller asks for a read-only turn, and bypassing would lift that.
+ */
+export function withPermissionBypass(claudeArgs: readonly string[]): string[] {
+	const args = [...claudeArgs];
+	if (skipsPermissionPrompts(args)) return args;
+	if (args.some((arg) => arg === '--permission-mode' || arg.startsWith('--permission-mode='))) {
+		return args;
+	}
+	args.push('--dangerously-skip-permissions');
+	return args;
+}
+
 function contentBlocks(message: unknown): Record<string, unknown>[] {
 	if (!message || typeof message !== 'object') return [];
 	const content = (message as { content?: unknown }).content;

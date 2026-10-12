@@ -6,7 +6,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { OpenToolCalls, skipsPermissionPrompts } from '../../maestro-p/open-tool-calls';
+import {
+	OpenToolCalls,
+	skipsPermissionPrompts,
+	withPermissionBypass,
+} from '../../maestro-p/open-tool-calls';
 
 const toolUse = (id: string, name = 'Bash') => ({
 	role: 'assistant',
@@ -70,5 +74,42 @@ describe('skipsPermissionPrompts', () => {
 		expect(skipsPermissionPrompts([])).toBe(false);
 		expect(skipsPermissionPrompts(['--permission-mode', 'acceptEdits'])).toBe(false);
 		expect(skipsPermissionPrompts(['--permission-mode', 'default'])).toBe(false);
+	});
+});
+
+describe('withPermissionBypass', () => {
+	// `claude -p` never stops on a permission dialog; the TUI would, with nobody
+	// to answer it.
+	it('adds the bypass flag when the caller set no permission mode', () => {
+		expect(withPermissionBypass(['--model', 'opus'])).toEqual([
+			'--model',
+			'opus',
+			'--dangerously-skip-permissions',
+		]);
+	});
+
+	it('does not add it twice', () => {
+		expect(withPermissionBypass(['--dangerously-skip-permissions'])).toEqual([
+			'--dangerously-skip-permissions',
+		]);
+		expect(withPermissionBypass(['--permission-mode', 'bypassPermissions'])).toEqual([
+			'--permission-mode',
+			'bypassPermissions',
+		]);
+	});
+
+	// `plan` is how a caller asks for a read-only turn; bypassing would let it write.
+	it('keeps an explicit permission mode', () => {
+		expect(withPermissionBypass(['--permission-mode', 'plan'])).toEqual([
+			'--permission-mode',
+			'plan',
+		]);
+		expect(withPermissionBypass(['--permission-mode=plan'])).toEqual(['--permission-mode=plan']);
+	});
+
+	it('does not modify the array it is given', () => {
+		const args = ['--model', 'opus'];
+		withPermissionBypass(args);
+		expect(args).toEqual(['--model', 'opus']);
 	});
 });

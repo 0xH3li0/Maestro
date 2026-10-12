@@ -2370,6 +2370,14 @@ List the provider accounts the Feedback chat can run as, in the order it tries t
 | `--clear`     | Forget the remembered account and pick automatically again                | -       |
 | `--json`      | Output as JSON (for scripting)                                            | -       |
 
+## `maestro-cli feedback diagnose`
+
+Read the live app state the Feedback chat starts from: agents that are busy, errored, limit-paused, retrying, or running Auto Run, plus recent warnings and errors (redacted, read-only)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli feedback search <query>`
 
 Search RunMaestro/Maestro for issues matching a description
