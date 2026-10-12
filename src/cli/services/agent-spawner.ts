@@ -13,6 +13,7 @@ import type {
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
+import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
@@ -878,6 +879,19 @@ async function spawnClaudeAgent(
 		spawnEnv = { ...spawnEnv, ...(applied.customEnvVars ?? {}) };
 	}
 
+	// Claude reports its cost and per-model usage as running SESSION totals; the
+	// session's total as this turn starts turns them into this turn's (see
+	// src/shared/claudeCostTracker.ts). A fresh session starts from nothing.
+	const costBaseline = agentSessionId
+		? readClaudeTurnBaseline({
+				resumeSessionId: agentSessionId,
+				cwd,
+				env: spawnEnv,
+				homeDir: os.homedir(),
+				remote: !!sshRemoteConfig?.enabled,
+			})
+		: null;
+
 	// Used for `detectErrorFromExit` and for in-band failures; Claude's stream
 	// is still read by `processMessage` below because its stream-json shape is
 	// richer than the AgentOutputParser event vocabulary.
@@ -900,6 +914,8 @@ async function spawnClaudeAgent(
 	const progressTools = new Map<string, { tool: string; summary?: string }>();
 	let stopped = false;
 	let stopReason: string | undefined;
+	// The model the main thread last ran on; prices a turn whose baseline is unknown.
+	let lastMainModel: string | undefined;
 
 	// Process a single parsed JSON message from Claude Code's stream-json output
 
@@ -999,9 +1015,24 @@ async function spawnClaudeAgent(
 		// `replaceUsageStats` keeps an occupancy snapshot or resolved window an
 		// earlier message reported when a later one (a trailing usage-only
 		// message, say) carries none.
+		if (
+			msg.type === 'assistant' &&
+			!msg.parent_tool_use_id &&
+			typeof msg.message?.model === 'string' &&
+			msg.message.model !== '<synthetic>'
+		) {
+			lastMainModel = msg.message.model;
+		}
+
 		const absoluteUsage = occupancyTracker.parseJsonObject(msg)?.usage?.absoluteUsage;
 		if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-			const step = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+			// A result's modelUsage and total_cost_usd are the SESSION's running
+			// totals; reduce them to this turn's before anything records them.
+			const turn =
+				msg.type === 'result'
+					? claudeTurnCost(msg, costBaseline, lastMainModel)
+					: { modelUsage: msg.modelUsage, totalCostUsd: msg.total_cost_usd || 0 };
+			const step = aggregateModelUsage(turn.modelUsage, msg.usage || {}, turn.totalCostUsd);
 			usageStats = replaceUsageStats(usageStats, absoluteUsage ? { ...step, absoluteUsage } : step);
 		}
 	};

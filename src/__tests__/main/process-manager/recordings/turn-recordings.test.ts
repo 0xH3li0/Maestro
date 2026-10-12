@@ -47,6 +47,7 @@ import {
 	resetSpawnGenerationsForTest,
 } from '../../../../main/process-manager/generation';
 import { createOutputParser } from '../../../../shared/maestro-lib/parsers/parser-factory';
+import { clearRememberedClaudeSessionCosts } from '../../../../shared/claudeCostTracker';
 import type {
 	ManagedProcess,
 	AgentError,
@@ -318,6 +319,9 @@ describe('in-band failures that exit 0', () => {
 describe('captured turn recordings (real Claude Code and OpenCode output)', () => {
 	beforeEach(() => {
 		resetSpawnGenerationsForTest();
+		// The Claude parser remembers each session's reported running total, so
+		// one test's turn would otherwise become the next test's baseline.
+		clearRememberedClaudeSessionCosts();
 	});
 
 	it('Claude Code normal: session id, the answer, one usage event, no error', async () => {
@@ -335,23 +339,21 @@ describe('captured turn recordings (real Claude Code and OpenCode output)', () =
 		expect(events.exits).toEqual([0]);
 	});
 
-	it('Claude Code resumed: same session id, and the usage event carries the session running total', async () => {
+	it('Claude Code resumed: same session id, and the usage event is this turn alone', async () => {
+		// The resumed turn follows the normal one in the same session. Its result
+		// reports `modelUsage` and `total_cost_usd` for the WHOLE session (normal
+		// turn plus this one), and the parser reduces them by the total that
+		// session reported last (see src/shared/claudeCostTracker.ts).
+		await runRecording(RECORDINGS['captured-claude-code-normal']);
 		const events = await runRecording(RECORDINGS['captured-claude-code-resumed']);
 
 		expect(events.sessionIds).toEqual([CAPTURED_CLAUDE_CODE_SESSION_ID]);
 		expect(events.data.join('')).toBe('Paris');
 		expect(events.agentErrors).toEqual([]);
 
-		// On a resumed turn Claude Code reports `modelUsage` and `total_cost_usd`
-		// for the WHOLE session, while `usage` covers this turn only. Each desktop
-		// turn is a new process started with --resume, and its fresh
-		// UsageAccumulator returns the first event as-is (see `resumed` above), so
-		// this turn's usage event is the normal turn plus this one: 2 + 2 input
-		// tokens, 12 + 5 output tokens, $0.0840728 + $0.11075. absoluteUsage,
-		// taken from the last API call, is this turn alone.
 		expect(events.usages).toHaveLength(1);
-		expect(events.usages[0]).toMatchObject({ inputTokens: 4, outputTokens: 17 });
-		expect(events.usages[0].totalCostUsd).toBeCloseTo(0.1948228, 7);
+		expect(events.usages[0]).toMatchObject({ inputTokens: 2, outputTokens: 5 });
+		expect(events.usages[0].totalCostUsd).toBeCloseTo(0.11075, 7);
 		expect(events.usages[0].absoluteUsage).toMatchObject({ inputTokens: 2, outputTokens: 5 });
 	});
 

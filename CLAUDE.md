@@ -74,6 +74,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Timestamp for a generated file name:** `fileTimestampSlug(dateOrTimestamp?)` in `src/shared/formatters.ts`
 - **Token pricing and Codex token totals:** `resolveModelPricing()` / `calculateModelCost()` in `src/shared/modelPricing.ts`, and `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
+- **Claude's cost and per-model usage for one turn:** `claudeTurnCost()`, `readClaudeTurnBaseline()`, `parseCostStateRow()` in `src/shared/claudeCostTracker.ts`
 
 #### Paths, files, and strings
 
