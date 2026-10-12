@@ -1286,12 +1286,14 @@ export async function spawnAgent(
 }
 
 /**
- * Read a markdown document and count unchecked tasks
+ * Read a markdown document and count unchecked tasks.
+ * `missingPath` is set when the file does not exist, so a caller can name the
+ * document instead of reporting it as one with no tasks.
  */
 export function readDocAndCountTasks(
 	folderPath: string,
 	filename: string
-): { content: string; taskCount: number } {
+): { content: string; taskCount: number; missingPath?: string } {
 	const filePath = `${folderPath}/${filename}.md`;
 
 	try {
@@ -1301,7 +1303,10 @@ export function readDocAndCountTasks(
 			content,
 			taskCount: matches ? matches.length : 0,
 		};
-	} catch {
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return { content: '', taskCount: 0, missingPath: filePath };
+		}
 		return { content: '', taskCount: 0 };
 	}
 }

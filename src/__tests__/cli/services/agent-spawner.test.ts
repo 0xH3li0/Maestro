@@ -243,6 +243,21 @@ describe('agent-spawner', () => {
 
 			expect(result.content).toBe('');
 			expect(result.taskCount).toBe(0);
+			expect(result.missingPath).toBeUndefined();
+		});
+
+		it('names the path it tried when the file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw Object.assign(new Error('no such file'), { code: 'ENOENT' });
+			});
+
+			const result = readDocAndCountTasks('/playbooks', 'sub/missing');
+
+			expect(result).toEqual({
+				content: '',
+				taskCount: 0,
+				missingPath: '/playbooks/sub/missing.md',
+			});
 		});
 
 		it('should handle various checkbox formats', () => {

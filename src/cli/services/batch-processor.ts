@@ -155,8 +155,10 @@ export async function* runPlaybook(
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
 		let preExistingHalt: { document: string; halt: HaltMarker } | null = null;
+		const missingDocuments: string[] = [];
 		for (const doc of playbook.documents) {
-			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
+			const { taskCount, content, missingPath } = readDocAndCountTasks(folderPath, doc.filename);
+			if (missingPath) missingDocuments.push(missingPath);
 			if (debug) {
 				yield {
 					type: 'debug',
@@ -180,6 +182,22 @@ export async function* runPlaybook(
 				category: 'scan',
 				message: `Total unchecked tasks: ${initialTotalTasks}`,
 			};
+		}
+
+		// A missing document is a broken playbook, not one with nothing left to
+		// do. Counting it as zero tasks once reported "No unchecked tasks" for a
+		// playbook whose every document path was wrong.
+		if (missingDocuments.length > 0) {
+			unregisterCliActivity(session.id);
+			yield {
+				type: 'error',
+				timestamp: Date.now(),
+				message:
+					`${missingDocuments.length} of ${playbook.documents.length} playbook document${playbook.documents.length !== 1 ? 's' : ''} not found ` +
+					`(names are relative to the Auto Run folder, without .md): ${missingDocuments.join(', ')}`,
+				code: 'DOCUMENT_NOT_FOUND',
+			};
+			return;
 		}
 
 		if (initialTotalTasks === 0) {
