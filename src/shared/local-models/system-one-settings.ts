@@ -84,6 +84,24 @@ export function systemOneEngineChoiceLabel(
 	return choice === 'off' ? 'Off' : systemOneEngineLabel(choice, detail);
 }
 
+const SYSTEM_ONE_ASSIGNMENT_LABELS: Readonly<Record<SystemOneEngineChoice, string>> = Object.freeze(
+	{
+		off: 'System One (no engine chosen)',
+		'jev-cloud': 'System One (Jev)',
+		openjev: 'System One (OpenJev)',
+		'local-judge': 'System One (local judge)',
+	}
+);
+
+/**
+ * What the `system-one` assignment is called in a task's source picker. The
+ * assignment names no engine, so the label says which one is in force: a task
+ * on "System One (local judge)" is never read as running on Jev.
+ */
+export function systemOneAssignmentLabel(engine: SystemOneEngineChoice): string {
+	return SYSTEM_ONE_ASSIGNMENT_LABELS[engine];
+}
+
 /**
  * The one sentence the picker shows under each choice: where the text of a task
  * goes. The hosted engine's sentence is the disclosure; it is not optional copy.

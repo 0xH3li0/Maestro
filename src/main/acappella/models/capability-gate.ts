@@ -465,7 +465,8 @@ async function resolveSlot(
  * The three a model row can act on keep their meaning (the slot offers the
  * download for the first two). Every endpoint fault but a missing key, and an
  * assignment that names a model this build cannot run, is "the source this slot
- * was pointed at cannot be reached": the sentence beside it says which.
+ * was pointed at cannot be reached": the sentence beside it says which. A System
+ * One engine that is not chosen or not set up is that too.
  */
 const TASK_REASON_TO_SLOT_REASON: Record<LocalModelTaskUnreadyReason, VoiceSlotUnsatisfiedReason> =
 	{
@@ -481,6 +482,8 @@ const TASK_REASON_TO_SLOT_REASON: Record<LocalModelTaskUnreadyReason, VoiceSlotU
 		'endpoint-rejected': 'provider-unreachable',
 		'endpoint-unreachable': 'provider-unreachable',
 		'endpoint-model-missing': 'provider-unreachable',
+		'system-one-off': 'provider-unreachable',
+		'system-one-not-ready': 'provider-unreachable',
 	};
 
 /**

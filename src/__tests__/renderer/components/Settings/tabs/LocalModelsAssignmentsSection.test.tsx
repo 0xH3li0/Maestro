@@ -14,7 +14,12 @@ import { LocalModelsAssignmentsSection } from '../../../../../renderer/component
 import { buildAssignmentOptionGroups } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/assignmentOptions';
 import { useLocalModelEndpoints, useLocalModels } from '../../../../../renderer/hooks/localModels';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
-import { LOCAL_MODEL_TASKS, tasksForSystem } from '../../../../../shared/local-models/tasks';
+import type { SystemOneEngineChoice } from '../../../../../shared/local-models/system-one-settings';
+import {
+	LOCAL_MODEL_TASKS,
+	tasksForSystem,
+	type LocalModelTaskId,
+} from '../../../../../shared/local-models/tasks';
 import {
 	BGE_SMALL_EN_ID,
 	LOCAL_MODEL_CATALOG,
@@ -359,5 +364,131 @@ describe('buildAssignmentOptionGroups', () => {
 			value: 'endpoint:gone:mistral',
 			label: 'mistral (endpoint removed)',
 		});
+	});
+
+	describe('System One as a source', () => {
+		const SYSTEM_ONE = { type: 'system-one' } as const;
+		/** The ungrouped head of a task's picker: Off, the Utility Agent, System One. */
+		const head = (
+			taskId: LocalModelTaskId,
+			engine?: SystemOneEngineChoice,
+			current: { type: 'off' } | { type: 'system-one' } = { type: 'off' }
+		) =>
+			buildAssignmentOptionGroups(LOCAL_MODEL_TASKS[taskId], current, {
+				...sources,
+				...(engine ? { systemOneEngine: engine } : {}),
+			})[0].options;
+
+		it('is offered to a task with typed questions, labeled with the engine in force', () => {
+			expect(head('cue-gate', 'jev-cloud')).toEqual([
+				{ value: 'off', label: 'Off' },
+				{ value: 'system-one', label: 'System One (Jev)' },
+			]);
+			expect(head('cue-gate', 'openjev')).toContainEqual({
+				value: 'system-one',
+				label: 'System One (OpenJev)',
+			});
+			expect(head('cue-gate', 'local-judge')).toContainEqual({
+				value: 'system-one',
+				label: 'System One (local judge)',
+			});
+		});
+
+		it('is not offered while no engine is chosen, or before the engine is known', () => {
+			expect(head('cue-gate', 'off')).toEqual([{ value: 'off', label: 'Off' }]);
+			expect(head('cue-gate')).toEqual([{ value: 'off', label: 'Off' }]);
+		});
+
+		it('is never offered to a task that has no typed questions', () => {
+			for (const task of Object.values(LOCAL_MODEL_TASKS)) {
+				if (task.id === 'cue-gate') continue;
+				expect(head(task.id, 'jev-cloud').map((option) => option.value)).not.toContain(
+					'system-one'
+				);
+			}
+		});
+
+		it('keeps a task left on it after the engine was switched off, and says no engine is chosen', () => {
+			expect(head('cue-gate', 'off', SYSTEM_ONE)).toEqual([
+				{ value: 'off', label: 'Off' },
+				{ value: 'system-one', label: 'System One (no engine chosen)' },
+			]);
+			// With an engine it is an ordinary option, listed once.
+			expect(
+				head('cue-gate', 'jev-cloud', SYSTEM_ONE).filter((option) => option.value === 'system-one')
+			).toHaveLength(1);
+		});
+	});
+});
+
+describe('LocalModelsAssignmentsSection and System One', () => {
+	function SystemOneSection({
+		engine,
+		problem = null,
+	}: {
+		engine?: SystemOneEngineChoice;
+		problem?: string | null;
+	}) {
+		const models = useLocalModels();
+		const endpoints = useLocalModelEndpoints();
+		return (
+			<LocalModelsAssignmentsSection
+				theme={theme}
+				system="one"
+				models={models}
+				endpoints={endpoints}
+				systemOneEngine={engine ? { engine, problem } : undefined}
+			/>
+		);
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		api().list.mockResolvedValue(LOCAL_MODEL_CATALOG.map((entry) => listing(entry.id)));
+		api().footprint.mockResolvedValue({ bytes: 0, models: [] });
+		api().onProgress.mockReturnValue(() => {});
+		api().taskReadiness.mockResolvedValue([]);
+		endpointsApi().listModels.mockResolvedValue({ ok: true, models: [] });
+		useSettingsStore.setState({
+			localModelAssignments: {},
+			localModelEndpoints: [],
+			utilityAgentId: null,
+			utilityModelId: null,
+		});
+	});
+
+	it('offers the engine in force for the Cue gate and saves the pick', async () => {
+		render(<SystemOneSection engine="local-judge" />);
+		expect(optionLabels('Cue gate')).toContain('System One (local judge)');
+		expect(optionLabels('Semantic search')).not.toContain('System One (local judge)');
+
+		fireEvent.change(screen.getByLabelText('Cue gate'), { target: { value: 'system-one' } });
+
+		expect(useSettingsStore.getState().localModelAssignments).toEqual({
+			'cue-gate': { type: 'system-one' },
+		});
+		await waitFor(() =>
+			expect((screen.getByLabelText('Cue gate') as HTMLSelectElement).value).toBe('system-one')
+		);
+	});
+
+	it('asks readiness again when the engine, or what is wrong with it, changes', async () => {
+		const asked = () => api().taskReadiness.mock.calls.length;
+		const { rerender } = render(<SystemOneSection engine="jev-cloud" problem="No API key." />);
+		// The model listing loads after the mount and asks once more; wait it out.
+		await waitFor(() => expect(optionLabels('Semantic search')).toContain(bgeName));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		const base = asked();
+
+		rerender(<SystemOneSection engine="jev-cloud" problem={null} />);
+		await waitFor(() => expect(asked()).toBe(base + 1));
+
+		rerender(<SystemOneSection engine="local-judge" problem={null} />);
+		await waitFor(() => expect(asked()).toBe(base + 2));
+
+		// The same standing asks nothing.
+		rerender(<SystemOneSection engine="local-judge" problem={null} />);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(asked()).toBe(base + 2);
 	});
 });

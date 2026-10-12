@@ -4,6 +4,10 @@
  * every router verdict becomes a gate check. It only ever reports a check; the
  * run-or-skip policy belongs to the dispatch service, so nothing here may
  * decide a run, and nothing may fall back to an agent.
+ *
+ * Assigned to System One, the gate is asked there FIRST and the model path is
+ * never reached: an engine that gives no answer is `unavailable` with what the
+ * fail policy said, not a reason to ask a model.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -18,11 +22,12 @@ vi.mock('../../../main/prompt-manager', () => ({
 
 vi.mock('../../../main/local-models/task-router', () => ({
 	runLocalTask: vi.fn(),
+	runSystemOneTask: vi.fn(),
 }));
 
 import { evaluateCueGate, CUE_GATE_TIMEOUT_MS } from '../../../main/local-models/cue-gate';
-import { runLocalTask } from '../../../main/local-models/task-router';
-import { CUE_GATE_REPLY_SCHEMA } from '../../../shared/cue/gate';
+import { runLocalTask, runSystemOneTask } from '../../../main/local-models/task-router';
+import { CUE_GATE_QUESTION_ID, CUE_GATE_REPLY_SCHEMA } from '../../../shared/cue/gate';
 import type { CueEvent } from '../../../shared/cue';
 
 const SOURCE = { type: 'local', modelId: 'qwen3-1.7b' } as const;
@@ -48,6 +53,8 @@ function ok(json: unknown, text = JSON.stringify(json)) {
 describe('evaluateCueGate', () => {
 	beforeEach(() => {
 		vi.mocked(runLocalTask).mockReset();
+		// Any assignment but System One: the model path below is the whole story.
+		vi.mocked(runSystemOneTask).mockReset().mockResolvedValue({ status: 'not-assigned' });
 	});
 
 	it('asks the cue-gate task with the gate prompt, the reply schema, and a timeout', async () => {
@@ -127,6 +134,120 @@ describe('evaluateCueGate', () => {
 
 	it('lets an unclassified engine failure propagate to its caller', async () => {
 		vi.mocked(runLocalTask).mockRejectedValue(new Error('engine bug'));
+		await expect(evaluateCueGate(REQUEST)).rejects.toThrow('engine bug');
+	});
+});
+
+describe('evaluateCueGate on System One', () => {
+	const JEV = 'Jev (TypeSafe cloud)';
+
+	function answered(probability: number) {
+		return {
+			status: 'ok' as const,
+			engine: 'jev-cloud' as const,
+			engineLabel: JEV,
+			model: 'jev-1.13.0',
+			answers: { [CUE_GATE_QUESTION_ID]: { type: 'noul' as const, probability } },
+			usage: { inputTokens: 120, outputTokens: 1 },
+			costUsd: 0.000005,
+			latencyMs: 240,
+			calibrated: true,
+			redacted: false,
+		};
+	}
+
+	function noAnswer(status: 'failed-open' | 'failed-closed' | 'unavailable') {
+		return {
+			status,
+			engine: 'jev-cloud' as const,
+			engineLabel: JEV,
+			code: 'timeout' as const,
+			reason: `${JEV} did not answer within 1500 ms.`,
+		};
+	}
+
+	beforeEach(() => {
+		vi.mocked(runLocalTask).mockReset();
+		vi.mocked(runSystemOneTask).mockReset();
+	});
+
+	it("hands the engine the gate's condition and event, and never reaches a model", async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.93));
+
+		await evaluateCueGate(REQUEST);
+
+		expect(runSystemOneTask).toHaveBeenCalledTimes(1);
+		expect(runSystemOneTask).toHaveBeenCalledWith(
+			'cue-gate',
+			{ condition: REQUEST.condition, event: EVENT },
+			{}
+		);
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it('passes on a yes and fails on a no, with the engine named in the reason', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.93));
+		await expect(evaluateCueGate(REQUEST)).resolves.toEqual({
+			status: 'pass',
+			reason: `${JEV}: yes, 93% that the run should proceed.`,
+		});
+
+		vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.08));
+		await expect(evaluateCueGate(REQUEST)).resolves.toEqual({
+			status: 'fail',
+			reason: `${JEV}: no, 8% that the run should proceed.`,
+		});
+	});
+
+	it('carries the fail policy on the check when the engine gives no answer, and asks no model', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(noAnswer('failed-open'));
+		await expect(evaluateCueGate(REQUEST)).resolves.toEqual({
+			status: 'unavailable',
+			reason: `${JEV} did not answer within 1500 ms.`,
+			onUnavailable: 'run',
+		});
+
+		vi.mocked(runSystemOneTask).mockResolvedValue(noAnswer('failed-closed'));
+		await expect(evaluateCueGate(REQUEST)).resolves.toEqual({
+			status: 'unavailable',
+			reason: `${JEV} did not answer within 1500 ms.`,
+			onUnavailable: 'skip',
+		});
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it("applies the subscription's own rule in place of the task's fail policy", async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(noAnswer('failed-closed'));
+
+		await evaluateCueGate({ ...REQUEST, onUnavailable: 'skip' });
+		expect(vi.mocked(runSystemOneTask).mock.calls[0][2]).toEqual({ failPolicy: 'closed' });
+
+		await evaluateCueGate({ ...REQUEST, onUnavailable: 'run' });
+		expect(vi.mocked(runSystemOneTask).mock.calls[1][2]).toEqual({ failPolicy: 'open' });
+	});
+
+	it('is unavailable, not a pass or a fail, when the answers hold no yes or no', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue({ ...answered(0.9), answers: {} });
+		await expect(evaluateCueGate(REQUEST)).resolves.toEqual({
+			status: 'unavailable',
+			reason: `${JEV} did not answer the gate's question.`,
+		});
+	});
+
+	it('is unavailable when the engine was stopped before it answered', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue({
+			status: 'cancelled',
+			engine: 'jev-cloud',
+			engineLabel: JEV,
+		});
+		const check = await evaluateCueGate(REQUEST);
+		expect(check.status).toBe('unavailable');
+		expect(check.reason).toContain(JEV);
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it('lets an unclassified engine failure propagate to its caller', async () => {
+		vi.mocked(runSystemOneTask).mockRejectedValue(new Error('engine bug'));
 		await expect(evaluateCueGate(REQUEST)).rejects.toThrow('engine bug');
 	});
 });

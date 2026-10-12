@@ -2771,7 +2771,7 @@ models
 models
 	.command('assign <task-id> <assignment>')
 	.description(
-		'Choose what a task runs on: off | utility-agent | local:<model-id> | endpoint:<endpoint>:<model>'
+		'Choose what a task runs on: off | utility-agent | system-one | local:<model-id> | endpoint:<endpoint>:<model>'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsAssign);

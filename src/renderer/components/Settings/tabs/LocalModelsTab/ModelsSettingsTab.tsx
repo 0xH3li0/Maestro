@@ -196,6 +196,16 @@ export function ModelsSettingsTab({
 								onChange: (taskId, policy) =>
 									void systemOne.set({ failPolicy: { taskId, policy } }),
 							}}
+							// Until the report arrives no engine is known, so System One is
+							// not offered as a source; a task already on it still shows it.
+							systemOneEngine={
+								systemOne.report
+									? {
+											engine: systemOne.report.settings.engine,
+											problem: systemOne.report.problem,
+										}
+									: undefined
+							}
 						/>
 					</div>
 				)}

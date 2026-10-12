@@ -168,6 +168,16 @@ export type SystemOneQuestionType = SystemOneQuestion['type'];
 /** Questions keyed by an id the caller chooses. The id is not sent to the model. */
 export type SystemOneQuestions = Record<string, SystemOneQuestion>;
 
+/**
+ * One request: the state judged and the typed questions about it. What a task
+ * that runs on System One builds from its own input
+ * (`LocalModelTaskDefinition.systemOneQuestions`).
+ */
+export interface SystemOneTaskRequest {
+	state: SystemOneState;
+	questions: SystemOneQuestions;
+}
+
 export const SYSTEM_ONE_MAX_CHOICE_OPTIONS = 255;
 export const SYSTEM_ONE_MIN_SCORE_LEVELS = 2;
 export const SYSTEM_ONE_MAX_SCORE_LEVELS = 10;

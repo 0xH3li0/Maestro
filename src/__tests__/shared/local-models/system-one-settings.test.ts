@@ -31,6 +31,7 @@ import {
 	describeSystemOneKey,
 	parseSystemOneSettings,
 	resolveSystemOneFailPolicy,
+	systemOneAssignmentLabel,
 	systemOneEngineChoiceLabel,
 	systemOneFailPolicyProblem,
 	systemOneFailPolicyRows,
@@ -83,6 +84,15 @@ describe('the engine choice', () => {
 		const judge = systemOneEngineChoiceLabel('local-judge', { model: 'Qwen3 1.7B' });
 		expect(judge).toContain('not calibrated');
 		expect(judge).not.toContain('Jev');
+	});
+
+	it('labels a task assigned to System One with the engine in force', () => {
+		expect(systemOneAssignmentLabel('jev-cloud')).toBe('System One (Jev)');
+		expect(systemOneAssignmentLabel('openjev')).toBe('System One (OpenJev)');
+		expect(systemOneAssignmentLabel('local-judge')).toBe('System One (local judge)');
+		// A task left on System One after the engine was switched off still has a name.
+		expect(systemOneAssignmentLabel('off')).toBe('System One (no engine chosen)');
+		expect(systemOneAssignmentLabel('local-judge')).not.toContain('Jev');
 	});
 });
 

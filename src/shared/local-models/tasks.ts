@@ -17,10 +17,11 @@
  * and validate an assignment by the same rules.
  */
 
+import { cueGateSystemOneRequest, type CueGateInput } from '../cue/gate';
 import type { LocalModelEndpoint } from './endpoints';
 import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
 import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
-import type { SystemOneFailPolicy } from './system-one';
+import type { SystemOneFailPolicy, SystemOneTaskRequest } from './system-one';
 import type { LocalModelKind } from './types';
 
 /** What a task asks its assigned source to do. A subset of {@link LocalModelKind}. */
@@ -43,12 +44,18 @@ export type LocalModelTaskNeed = Extract<
  *   ({@link LocalModelTaskDefinition.allowsUtilityAgent}).
  * - `local`: a catalog model run on this machine.
  * - `endpoint`: a model served by one of the user's `localModelEndpoints`.
+ * - `system-one`: the System One engine in force (Jev, an OpenJev server or the
+ *   local judge; Settings > Models > System One) answers the task's typed
+ *   questions. It names no engine: the engine is one choice for every task, so
+ *   changing it moves them all. Only a task that declares its questions accepts
+ *   it ({@link taskAcceptsSystemOne}), and it runs through `runSystemOneTask`.
  */
 export type LocalModelAssignment =
 	| { type: 'off' }
 	| { type: 'utility-agent' }
 	| { type: 'local'; modelId: string }
-	| { type: 'endpoint'; endpointId: string; model: string };
+	| { type: 'endpoint'; endpointId: string; model: string }
+	| { type: 'system-one' };
 
 export type LocalModelAssignmentType = LocalModelAssignment['type'];
 
@@ -82,12 +89,14 @@ export const LOCAL_MODEL_ASSIGNMENT_TYPES: readonly LocalModelAssignmentType[] =
 	'utility-agent',
 	'local',
 	'endpoint',
+	'system-one',
 ]);
 
 export const OFF_ASSIGNMENT: LocalModelAssignment = Object.freeze({ type: 'off' });
 export const UTILITY_AGENT_ASSIGNMENT: LocalModelAssignment = Object.freeze({
 	type: 'utility-agent',
 });
+export const SYSTEM_ONE_ASSIGNMENT: LocalModelAssignment = Object.freeze({ type: 'system-one' });
 
 export const LOCAL_MODEL_TASK_IDS = [
 	'tab-naming',
@@ -124,6 +133,17 @@ export const LOCAL_JUDGE_TASK_ID = 'local-judge' satisfies LocalModelTaskId;
 export type LocalModelSystem = 'one' | 'two';
 
 export const LOCAL_MODEL_SYSTEMS: readonly LocalModelSystem[] = Object.freeze(['one', 'two']);
+
+/**
+ * What each task that runs on System One hands its question builder, by task
+ * id. A task joins by declaring `systemOneQuestions` in the registry and its
+ * input here, so `runSystemOneTask(taskId, input)` checks the input at the call.
+ */
+export interface SystemOneTaskInputs {
+	'cue-gate': CueGateInput;
+}
+
+export type SystemOneTaskId = keyof SystemOneTaskInputs;
 
 export interface LocalModelTaskDefinition {
 	readonly id: LocalModelTaskId;
@@ -173,11 +193,27 @@ export interface LocalModelTaskDefinition {
 	 * effective value is `resolveSystemOneFailPolicy` in `system-one-settings.ts`.
 	 */
 	readonly failPolicy?: SystemOneFailPolicy;
+	/**
+	 * Turns the task's input into a System One request: the state to judge and
+	 * the typed questions about it. Declaring it is what makes `system-one` a
+	 * valid assignment for the task ({@link taskAcceptsSystemOne}); a System Two
+	 * task cannot, because an engine returns a judgment and never text.
+	 *
+	 * The parameter is `never` so each builder keeps its own input type in one
+	 * registry. {@link buildSystemOneTaskRequest} is the one caller, and
+	 * {@link SystemOneTaskInputs} is where that input type is written down.
+	 */
+	readonly systemOneQuestions?: (input: never) => SystemOneTaskRequest;
 }
 
 function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
 	if (task.defaultAssignment.type === 'utility-agent' && !task.allowsUtilityAgent) {
 		throw new Error(`Task "${task.id}" defaults to the Utility Agent but does not allow it.`);
+	}
+	if (task.systemOneQuestions && task.system !== 'one') {
+		throw new Error(
+			`Task "${task.id}" declares System One questions but is not a System One task.`
+		);
 	}
 	return Object.freeze({
 		...task,
@@ -277,6 +313,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			// A model that is down must not silently stop automation the user
 			// depends on (the same default as `gate_on_unavailable`).
 			failPolicy: 'open',
+			systemOneQuestions: cueGateSystemOneRequest,
 		}),
 		'injection-screen': defineTask({
 			id: 'injection-screen',
@@ -369,6 +406,35 @@ export function isLocalModelTaskId(value: unknown): value is LocalModelTaskId {
 	);
 }
 
+/**
+ * Whether a task can be assigned to System One: it is a System One task and it
+ * declares the typed questions an engine answers for it.
+ */
+export function taskAcceptsSystemOne(
+	task: Pick<LocalModelTaskDefinition, 'system' | 'systemOneQuestions'>
+): boolean {
+	return task.system === 'one' && task.systemOneQuestions !== undefined;
+}
+
+/**
+ * The System One request for one run of a task, built by the task's own
+ * `systemOneQuestions`. Throws for a task that declares none: no assignment can
+ * send such a task here, so reaching this is a caller bug.
+ */
+export function buildSystemOneTaskRequest<T extends SystemOneTaskId>(
+	taskId: T,
+	input: SystemOneTaskInputs[T]
+): SystemOneTaskRequest {
+	const task = LOCAL_MODEL_TASKS[taskId];
+	const build = task.systemOneQuestions as
+		| ((input: SystemOneTaskInputs[T]) => SystemOneTaskRequest)
+		| undefined;
+	if (!build || !taskAcceptsSystemOne(task)) {
+		throw new Error(`${task.label} declares no System One questions.`);
+	}
+	return build(input);
+}
+
 function nonEmptyString(value: unknown): string | null {
 	if (typeof value !== 'string') return null;
 	const trimmed = value.trim();
@@ -402,6 +468,8 @@ export function parseLocalModelAssignment(
 			const model = nonEmptyString(record.model);
 			return endpointId && model ? { type: 'endpoint', endpointId, model } : null;
 		}
+		case 'system-one':
+			return taskAcceptsSystemOne(LOCAL_MODEL_TASKS[taskId]) ? SYSTEM_ONE_ASSIGNMENT : null;
 		default:
 			return null;
 	}
@@ -417,8 +485,9 @@ export function parseLocalModelAssignment(
  *   who set `utilityAgentId` / `utilityModelId` keeps exactly the behavior they
  *   configured: those two settings are still what `utility-agent` means.
  * - Unknown task ids (a task a later build dropped) and unusable entries (a
- *   malformed record, or `utility-agent` on a task that has no agent path) are
- *   dropped, which leaves that task on its default.
+ *   malformed record, `utility-agent` on a task that has no agent path, or
+ *   `system-one` on a task with no typed questions) are dropped, which leaves
+ *   that task on its default.
  * - An entry equal to its task's default is dropped too, so the stored record
  *   stays sparse and a default that moves in a later build still reaches it.
  */
@@ -490,6 +559,13 @@ export function localModelAssignmentProblem(
 		if (type === 'utility-agent') {
 			return `${task.label} has no Utility Agent path. Choose off, a local model, or an endpoint.`;
 		}
+		if (type === 'system-one') {
+			const why =
+				task.system === 'one'
+					? 'it has no typed questions for an engine to answer'
+					: 'it writes text, and System One answers typed questions only';
+			return `${task.label} cannot run on System One: ${why}. Choose ${otherSourceChoices(task)}.`;
+		}
 		if (type === 'local') return 'A local assignment needs a model id.';
 		if (type === 'endpoint') return 'An endpoint assignment needs an endpoint id and a model name.';
 		return `Assignment type must be one of: ${LOCAL_MODEL_ASSIGNMENT_TYPES.join(', ')}.`;
@@ -505,6 +581,15 @@ export function localModelAssignmentProblem(
 		return `${task.label} needs a ${task.needs} model, which an endpoint cannot serve. Choose off or a local model.`;
 	}
 	return null;
+}
+
+/** The sources a task takes besides System One, for a refusal that names them. */
+function otherSourceChoices(task: LocalModelTaskDefinition): string {
+	const choices = ['off'];
+	if (task.allowsUtilityAgent) choices.push('the Utility Agent');
+	choices.push('a local model');
+	if (endpointServesNeed(task.needs)) choices.push('an endpoint');
+	return `${choices.slice(0, -1).join(', ')} or ${choices[choices.length - 1]}`;
 }
 
 /**
@@ -596,7 +681,9 @@ export function tasksUsingEndpoint(
 /**
  * What a person calls the model a `local` or `endpoint` assignment runs on: the
  * catalog display name, or `<model> on <endpoint name>`. `null` for `off` and
- * `utility-agent`, which name no model of their own.
+ * `utility-agent`, which name no model of their own, and for `system-one`,
+ * whose name depends on the engine in force (`systemOneAssignmentLabel` in
+ * `system-one-settings.ts`).
  *
  * A source the build no longer knows (a model dropped from the catalog, an
  * endpoint that was removed) is still named by its id, so a surface never
@@ -623,7 +710,8 @@ export function localModelAssignmentSourceLabel(
 
 /**
  * The one-string spelling of an assignment: `off`, `utility-agent`,
- * `local:<model-id>`, or `endpoint:<endpoint-id>:<model>`. The settings picker
+ * `system-one`, `local:<model-id>`, or `endpoint:<endpoint-id>:<model>`. The
+ * settings picker
  * uses it as an option value and `maestro-cli models assign` takes it as an
  * argument, so the two cannot disagree about what a choice means. Endpoint ids
  * are UUIDs and never contain a colon, so everything after the second colon is
@@ -633,6 +721,7 @@ export function formatLocalModelAssignmentSpec(assignment: LocalModelAssignment)
 	switch (assignment.type) {
 		case 'off':
 		case 'utility-agent':
+		case 'system-one':
 			return assignment.type;
 		case 'local':
 			return `local:${assignment.modelId}`;
@@ -650,6 +739,7 @@ export function parseLocalModelAssignmentSpec(spec: string): LocalModelAssignmen
 	const trimmed = spec.trim();
 	if (trimmed === 'off') return OFF_ASSIGNMENT;
 	if (trimmed === 'utility-agent') return UTILITY_AGENT_ASSIGNMENT;
+	if (trimmed === 'system-one') return SYSTEM_ONE_ASSIGNMENT;
 	if (trimmed.startsWith('local:')) {
 		const modelId = nonEmptyString(trimmed.slice('local:'.length));
 		return modelId ? { type: 'local', modelId } : null;

@@ -45,7 +45,8 @@ interface JsonOption {
 	json?: boolean;
 }
 
-const SPEC_FORMS = 'off, utility-agent, local:<model-id>, or endpoint:<endpoint>:<model>';
+const SPEC_FORMS =
+	'off, utility-agent, system-one, local:<model-id>, or endpoint:<endpoint>:<model>';
 
 function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
 	if (json) console.log(JSON.stringify({ success: false, error: message }));
@@ -133,7 +134,11 @@ export function modelsAssign(taskId: string, spec: string, options: JsonOption):
 	if (!endpointEnabled) {
 		console.log(formatWarning('That endpoint is disabled. Enable it before the task can run.'));
 	}
-	if (assignment.type === 'local' || assignment.type === 'endpoint') {
+	if (assignment.type === 'system-one') {
+		// The assignment names no engine, so say where the engine is chosen.
+		console.log('  It asks the System One engine in force: maestro-cli s1 status');
+	}
+	if (assignment.type !== 'off' && assignment.type !== 'utility-agent') {
 		console.log(`  Check it would run: maestro-cli models status ${taskId}`);
 	}
 }

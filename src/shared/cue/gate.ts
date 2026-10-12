@@ -16,6 +16,12 @@
  * automation the user depends on. `gate_on_unavailable: skip` turns that into
  * fail closed for a subscription whose runs are not worth an unchecked turn.
  *
+ * The task can also be assigned to System One, which answers one typed yes or
+ * no question about the event ({@link cueGateSystemOneRequest}) instead of
+ * writing a reply. Its engine giving no answer is the same `unavailable`, and
+ * the Cue gate task's own fail policy (Settings > Models > System One) decides
+ * for a subscription that states no `gate_on_unavailable`.
+ *
  * Everything here is pure, with no Electron, Node, or DOM dependency: the
  * reply contract, the caps that keep an event inside a small model context,
  * the policy, and the record stamped on the event. The model call is
@@ -24,6 +30,7 @@
  * applied.
  */
 
+import { noul, type SystemOneAnswers, type SystemOneTaskRequest } from '../local-models/system-one';
 import type { CueEvent } from './contracts';
 
 /** What a gate does when its model cannot answer. */
@@ -225,21 +232,76 @@ export function compactCueGateEvent(
 	return `${json.slice(0, caps.maxTotalChars)} ...[${dropped} more characters not shown]`;
 }
 
+/** What a gate is checked against: the condition, and the event it is asked about. */
+export interface CueGateInput {
+	condition: string;
+	event: Pick<CueEvent, 'type' | 'payload'>;
+}
+
+/** The event as the model reads it: its type, then its payload as compact JSON. */
+function formatCueGateEvent(event: CueGateInput['event']): string {
+	return [`Event type: ${event.type}`, 'Event:', compactCueGateEvent(event.payload)].join('\n');
+}
+
 /**
  * The user turn for the `cue-gate` task (the instructions are the
  * `cue-gate-local` prompt, sent as the system turn).
  */
-export function formatCueGateInput(input: {
-	condition: string;
-	event: Pick<CueEvent, 'type' | 'payload'>;
-}): string {
-	return [
-		`Condition: ${input.condition.trim()}`,
-		'',
-		`Event type: ${input.event.type}`,
-		'Event:',
-		compactCueGateEvent(input.event.payload),
-	].join('\n');
+export function formatCueGateInput(input: CueGateInput): string {
+	return [`Condition: ${input.condition.trim()}`, '', formatCueGateEvent(input.event)].join('\n');
+}
+
+/** The id of the one question a gate asks a System One engine. */
+export const CUE_GATE_QUESTION_ID = 'proceed';
+
+/**
+ * P(yes) at or above which a System One answer passes the gate. The midpoint:
+ * a gate is a cost control, and the local model path is told to pass an event
+ * that does not say enough to decide, so an undecided answer passes here too.
+ */
+export const CUE_GATE_PASS_PROBABILITY = 0.5;
+
+/**
+ * The gate as a System One request: the event is the state, and the condition
+ * is one yes or no question about it. The same event text the local model
+ * path reads, under the same caps, so an engine with a small context (the local
+ * judge) is handed no more than a local model is.
+ */
+export function cueGateSystemOneRequest(input: CueGateInput): SystemOneTaskRequest {
+	return {
+		state: formatCueGateEvent(input.event),
+		questions: {
+			[CUE_GATE_QUESTION_ID]: noul(
+				`Should this run proceed? It proceeds when the event in the state meets this condition: ${input.condition.trim()}`,
+				{
+					true: 'The event meets the condition, or the event does not say enough to decide.',
+					false: 'The event shows that it does not meet the condition.',
+				}
+			),
+		},
+	};
+}
+
+/**
+ * Read a System One answer as a gate check. `engineLabel` names the engine that
+ * answered, so the reason kept on the event says who decided. Returns `null`
+ * when the answers hold no yes or no for the gate's question: the caller treats
+ * that as "could not answer", never as a pass or a fail.
+ */
+export function cueGateCheckFromSystemOne(
+	answers: SystemOneAnswers,
+	engineLabel: string
+): CueGateCheck | null {
+	const answer = answers[CUE_GATE_QUESTION_ID];
+	if (answer?.type !== 'noul') return null;
+	const pass = answer.probability >= CUE_GATE_PASS_PROBABILITY;
+	const percent = Math.round(answer.probability * 100);
+	return {
+		status: pass ? 'pass' : 'fail',
+		reason: clampCueGateReason(
+			`${engineLabel}: ${pass ? 'yes' : 'no'}, ${percent}% that the run should proceed.`
+		),
+	};
 }
 
 /**
@@ -250,13 +312,28 @@ export function formatCueGateInput(input: {
 export type CueGateCheck =
 	| { status: 'pass'; reason: string }
 	| { status: 'fail'; reason: string }
-	| { status: 'unavailable'; reason: string };
+	| {
+			status: 'unavailable';
+			reason: string;
+			/**
+			 * What the task's own fail policy says to do, when the evaluator applied
+			 * one (a System One engine gave no answer). It decides only for a
+			 * subscription that states no `gate_on_unavailable`.
+			 */
+			onUnavailable?: CueGateOnUnavailable;
+	  };
 
 /** What a dispatch service asks its gate evaluator. */
 export interface CueGateRequest {
 	condition: string;
 	event: CueEvent;
 	subscriptionName: string;
+	/**
+	 * The subscription's own `gate_on_unavailable`, when it states one. It is the
+	 * more specific rule, so an evaluator that applies a fail policy applies this
+	 * one instead of the task's.
+	 */
+	onUnavailable?: CueGateOnUnavailable;
 }
 
 /** Answers a gate. Must resolve; a throw is treated as `unavailable`. */
@@ -292,12 +369,14 @@ export interface CueGateDecision {
 
 /**
  * Apply the failure policy to a gate check. The one place the policy lives:
- * a verdict is obeyed, and an unavailable gate runs (and warns) unless the
- * subscription set `gate_on_unavailable: skip`.
+ * a verdict is obeyed, and an unavailable gate runs (and warns) unless it is
+ * told to skip. The subscription's `gate_on_unavailable` decides when it is
+ * set; otherwise the policy the check carries (the Cue gate task's fail policy,
+ * from a System One engine that gave no answer); otherwise fail open.
  */
 export function resolveCueGateDecision(
 	check: CueGateCheck,
-	onUnavailable: CueGateOnUnavailable = DEFAULT_CUE_GATE_ON_UNAVAILABLE
+	subscriptionRule?: CueGateOnUnavailable
 ): CueGateDecision {
 	if (check.status === 'pass') {
 		return {
@@ -316,13 +395,17 @@ export function resolveCueGateDecision(
 			},
 		};
 	}
+	const onUnavailable = subscriptionRule ?? check.onUnavailable ?? DEFAULT_CUE_GATE_ON_UNAVAILABLE;
 	if (onUnavailable === 'skip') {
+		const why = subscriptionRule
+			? 'gate_on_unavailable is "skip"'
+			: 'the Cue gate task fails closed';
 		return {
 			run: false,
 			warn: true,
 			record: {
 				outcome: 'gated',
-				reason: `The gate could not be checked, and gate_on_unavailable is "skip". ${check.reason}`,
+				reason: `The gate could not be checked, and ${why}. ${check.reason}`,
 			},
 		};
 	}

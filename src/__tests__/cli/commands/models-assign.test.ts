@@ -151,9 +151,36 @@ describe('models assign / tasks commands', () => {
 			expect(writeLocalModelAssignments).toHaveBeenCalledWith({});
 		});
 
+		it('assigns a task with typed questions to System One, and says where its engine is chosen', () => {
+			modelsAssign('cue-gate', 'system-one', {});
+
+			expect(writeLocalModelAssignments).toHaveBeenCalledWith({
+				'cue-gate': { type: 'system-one' },
+			});
+			const printed = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
+			expect(printed).toMatch(/Cue gate -> system-one/);
+			expect(printed).toMatch(/maestro-cli s1 status/);
+			expect(printed).toMatch(/maestro-cli models status cue-gate/);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('refuses System One for a task with no typed questions, without writing', () => {
+			expect(() => modelsAssign('tab-naming', 'system-one', {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(/Tab naming cannot run on System One/);
+			expect(() => modelsAssign('local-judge', 'system-one', { json: true })).toThrow('__exit__');
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				error: expect.stringContaining('Local judge cannot run on System One'),
+			});
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+			expect(writeLocalModelAssignments).not.toHaveBeenCalled();
+		});
+
 		it('refuses a malformed spec and an unknown task as usage errors', () => {
 			expect(() => modelsAssign('tab-naming', 'ollama/qwen3', {})).toThrow('__exit__');
-			expect(errorSpy.mock.calls[0][0]).toMatch(/Assignment must be off, utility-agent/);
+			expect(errorSpy.mock.calls[0][0]).toMatch(
+				/Assignment must be off, utility-agent, system-one, local:<model-id>, or endpoint/
+			);
 
 			expect(() => modelsAssign('tab-nameing', 'off', {})).toThrow('__exit__');
 			expect(errorSpy.mock.calls[1][0]).toMatch(/Unknown task "tab-nameing"/);

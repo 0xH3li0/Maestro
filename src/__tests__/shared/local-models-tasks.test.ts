@@ -6,8 +6,12 @@
 import { describe, it, expect } from 'vitest';
 import {
 	LOCAL_JUDGE_TASK_ID,
+	LOCAL_MODEL_ASSIGNMENT_TYPES,
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
+	SYSTEM_ONE_ASSIGNMENT,
+	buildSystemOneTaskRequest,
+	taskAcceptsSystemOne,
 	isLocalModelOfferedForTask,
 	isLocalModelTaskId,
 	isSameLocalModelAssignment,
@@ -27,7 +31,12 @@ import {
 	resolveLocalModelAssignments,
 	withLocalModelAssignment,
 	type LocalModelTaskId,
+	type SystemOneTaskId,
 } from '../../shared/local-models/tasks';
+import {
+	systemOneQuestionsProblem,
+	systemOneStateProblem,
+} from '../../shared/local-models/system-one';
 import {
 	BGE_SMALL_EN_ID,
 	KOKORO_82M_ID,
@@ -265,7 +274,9 @@ describe('localModelAssignmentProblem', () => {
 		expect(
 			localModelAssignmentProblem('git-drafts', { type: 'endpoint', endpointId: 'ep' })
 		).toMatch(/endpoint id and a model name/);
-		expect(localModelAssignmentProblem('git-drafts', { type: 'cloud' })).toMatch(/must be one of/);
+		expect(localModelAssignmentProblem('git-drafts', { type: 'cloud' })).toMatch(
+			/must be one of: off, utility-agent, local, endpoint, system-one\./
+		);
 	});
 
 	it('refuses an endpoint for a need no endpoint serves', () => {
@@ -461,6 +472,7 @@ describe('assignment spec', () => {
 		for (const assignment of [
 			{ type: 'off' },
 			{ type: 'utility-agent' },
+			{ type: 'system-one' },
 			{ type: 'local', modelId: BGE_SMALL_EN_ID },
 			{ type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' },
 		] as const) {
@@ -468,6 +480,12 @@ describe('assignment spec', () => {
 				assignment
 			);
 		}
+	});
+
+	it('spells System One as one word, with no engine in it', () => {
+		expect(formatLocalModelAssignmentSpec(SYSTEM_ONE_ASSIGNMENT)).toBe('system-one');
+		expect(parseLocalModelAssignmentSpec(' system-one ')).toEqual(SYSTEM_ONE_ASSIGNMENT);
+		expect(parseLocalModelAssignmentSpec('system-one:jev-cloud')).toBeNull();
 	});
 
 	it('keeps an Ollama tag that contains a colon in the model name', () => {
@@ -482,6 +500,115 @@ describe('assignment spec', () => {
 		for (const spec of ['', 'on', 'local:', 'endpoint:ep-1', 'endpoint::m', 'endpoint:ep-1:']) {
 			expect(parseLocalModelAssignmentSpec(spec)).toBeNull();
 		}
+	});
+});
+
+describe('the system-one assignment', () => {
+	const EVENT = { type: 'github.issue' as const, payload: { title: 'Crash on save' } };
+	const accepting = LOCAL_MODEL_TASK_IDS.filter((taskId) =>
+		taskAcceptsSystemOne(LOCAL_MODEL_TASKS[taskId])
+	);
+	const refusing = LOCAL_MODEL_TASK_IDS.filter((taskId) => !accepting.includes(taskId));
+
+	it('is one of the assignment types', () => {
+		expect(LOCAL_MODEL_ASSIGNMENT_TYPES).toContain('system-one');
+		expect(SYSTEM_ONE_ASSIGNMENT).toEqual({ type: 'system-one' });
+		expect(Object.isFrozen(SYSTEM_ONE_ASSIGNMENT)).toBe(true);
+	});
+
+	it('is accepted only by a System One task that declares its typed questions', () => {
+		expect(accepting).toEqual(['cue-gate']);
+		for (const taskId of accepting) {
+			expect(LOCAL_MODEL_TASKS[taskId].system).toBe('one');
+			expect(LOCAL_MODEL_TASKS[taskId].systemOneQuestions).toBeTypeOf('function');
+		}
+		// The rule needs both halves: a builder on a System Two task is not enough.
+		const build = LOCAL_MODEL_TASKS['cue-gate'].systemOneQuestions;
+		expect(taskAcceptsSystemOne({ system: 'one', systemOneQuestions: build })).toBe(true);
+		expect(taskAcceptsSystemOne({ system: 'two', systemOneQuestions: build })).toBe(false);
+		expect(taskAcceptsSystemOne({ system: 'one' })).toBe(false);
+	});
+
+	it('never lets the local judge run on System One, which would ask itself', () => {
+		expect(refusing).toContain(LOCAL_JUDGE_TASK_ID);
+	});
+
+	it('reads for a task that accepts it, and saves with no problem', () => {
+		expect(parseLocalModelAssignment('cue-gate', { type: 'system-one' })).toEqual(
+			SYSTEM_ONE_ASSIGNMENT
+		);
+		expect(localModelAssignmentProblem('cue-gate', SYSTEM_ONE_ASSIGNMENT)).toBeNull();
+		expect(resolveLocalModelAssignment({ 'cue-gate': SYSTEM_ONE_ASSIGNMENT }, 'cue-gate')).toEqual(
+			SYSTEM_ONE_ASSIGNMENT
+		);
+		expect(parseLocalModelAssignments({ 'cue-gate': { type: 'system-one' } })).toEqual({
+			'cue-gate': SYSTEM_ONE_ASSIGNMENT,
+		});
+	});
+
+	it('is dropped from every other task, which stays on its default', () => {
+		for (const taskId of refusing) {
+			expect(parseLocalModelAssignment(taskId, { type: 'system-one' })).toBeNull();
+			expect(resolveLocalModelAssignment({ [taskId]: SYSTEM_ONE_ASSIGNMENT }, taskId)).toEqual(
+				LOCAL_MODEL_TASKS[taskId].defaultAssignment
+			);
+		}
+		expect(
+			parseLocalModelAssignments({
+				'tab-naming': { type: 'system-one' },
+				dictation: { type: 'system-one' },
+			})
+		).toEqual({});
+	});
+
+	it('is refused at save with the reason and the sources the task does take', () => {
+		// A System Two task writes text, which no engine returns.
+		expect(localModelAssignmentProblem('tab-naming', SYSTEM_ONE_ASSIGNMENT)).toBe(
+			'Tab naming cannot run on System One: it writes text, and System One answers typed questions only. Choose off, the Utility Agent, a local model or an endpoint.'
+		);
+		// A System One task with no questions, and a need no endpoint serves.
+		expect(localModelAssignmentProblem('injection-screen', SYSTEM_ONE_ASSIGNMENT)).toBe(
+			'Prompt-injection screen cannot run on System One: it has no typed questions for an engine to answer. Choose off or a local model.'
+		);
+		expect(localModelAssignmentProblem('semantic-search', SYSTEM_ONE_ASSIGNMENT)).toMatch(
+			/Choose off, a local model or an endpoint\.$/
+		);
+		for (const taskId of refusing) {
+			expect(localModelAssignmentProblem(taskId, SYSTEM_ONE_ASSIGNMENT)).toMatch(
+				/cannot run on System One/
+			);
+		}
+	});
+
+	it('compares, stores and names like any other assignment', () => {
+		expect(isSameLocalModelAssignment(SYSTEM_ONE_ASSIGNMENT, { type: 'system-one' })).toBe(true);
+		expect(isSameLocalModelAssignment(SYSTEM_ONE_ASSIGNMENT, { type: 'off' })).toBe(false);
+		const stored = withLocalModelAssignment({}, 'cue-gate', SYSTEM_ONE_ASSIGNMENT);
+		expect(stored).toEqual({ 'cue-gate': SYSTEM_ONE_ASSIGNMENT });
+		expect(withLocalModelAssignment(stored, 'cue-gate', { type: 'off' })).toEqual({});
+		// It names no model: its label depends on the engine in force.
+		expect(localModelAssignmentSourceLabel(SYSTEM_ONE_ASSIGNMENT, [])).toBeNull();
+		expect(localModelAssignmentCaution('cue-gate', SYSTEM_ONE_ASSIGNMENT)).toBeNull();
+		expect(tasksUsingLocalModel({ 'cue-gate': SYSTEM_ONE_ASSIGNMENT }, QWEN3_1_7B_ID)).toEqual([]);
+	});
+
+	it("builds a task's request through its own questions, as a state and questions an engine accepts", () => {
+		const request = buildSystemOneTaskRequest('cue-gate', {
+			condition: 'the issue reports a bug',
+			event: EVENT,
+		});
+		expect(systemOneStateProblem(request.state)).toBeNull();
+		expect(systemOneQuestionsProblem(request.questions)).toBeNull();
+		expect(Object.values(request.questions).map((question) => question.type)).toEqual(['noul']);
+	});
+
+	it('throws for a task that declares no questions, which no assignment can send there', () => {
+		expect(() =>
+			buildSystemOneTaskRequest('tab-naming' as SystemOneTaskId, {
+				condition: 'x',
+				event: EVENT,
+			})
+		).toThrow('Tab naming declares no System One questions.');
 	});
 });
 

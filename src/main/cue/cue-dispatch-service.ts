@@ -186,7 +186,12 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			};
 		}
 		try {
-			return await deps.evaluateGate({ condition, event, subscriptionName: sub.name });
+			return await deps.evaluateGate({
+				condition,
+				event,
+				subscriptionName: sub.name,
+				...(sub.gate_on_unavailable ? { onUnavailable: sub.gate_on_unavailable } : {}),
+			});
 		} catch (error) {
 			// An unclassified failure inside the model engine is a bug. Report
 			// it, and let the policy decide what happens to the event.

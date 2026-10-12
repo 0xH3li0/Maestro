@@ -39,6 +39,7 @@ import {
 	systemOneEngineLabel,
 	type SystemOneEngineId,
 	type SystemOneErrorCode,
+	type SystemOneFailPolicy,
 	type SystemOneQuestions,
 	type SystemOneRemoteEngine,
 	type SystemOneRemoteEngineId,
@@ -56,6 +57,7 @@ import {
 	TYPESAFE_BASE_URL_ENV_VAR,
 	applySystemOneSettingsPatch,
 	isSystemOneRemoteEngineId,
+	resolveSystemOneFailPolicy,
 	systemOneEngineChoiceLabel,
 	systemOneFailPolicyRows,
 	systemOneKeyProblem,
@@ -71,6 +73,7 @@ import {
 	formatLocalModelAssignmentSpec,
 	localModelAssignmentSourceLabel,
 	resolveLocalModelAssignment,
+	type LocalModelTaskId,
 } from '../../../shared/local-models/tasks';
 import { getSettingsStore } from '../../stores/getters';
 import { logger } from '../../utils/logger';
@@ -312,6 +315,30 @@ async function resolveEngine(settings: SystemOneSettings): Promise<ResolvedSyste
 /** The engine in force, ready to call. Reads the settings and the key; sends nothing. */
 export async function resolveSystemOneEngine(): Promise<ResolvedSystemOneEngine> {
 	return resolveEngine(await readSystemOneSettings(dataDir()));
+}
+
+/** What a task needs before it asks: the engine in force, its name, and the task's fail policy. */
+export interface SystemOneForTask {
+	resolved: ResolvedSystemOneEngine;
+	/** The engine as a person reads it. "Off" when none is chosen. */
+	engineLabel: string;
+	/** What the task does with no answer. Null for a task that has no fail policy. */
+	failPolicy: SystemOneFailPolicy | null;
+}
+
+/**
+ * The engine in force and a task's fail policy, from ONE read of the settings,
+ * so the policy applied is the one stored beside the engine that was asked.
+ * Reads the settings and the key; sends nothing.
+ */
+export async function resolveSystemOneForTask(taskId: LocalModelTaskId): Promise<SystemOneForTask> {
+	const settings = await readSystemOneSettings(dataDir());
+	const resolved = await resolveEngine(settings);
+	return {
+		resolved,
+		engineLabel: engineLabelFor(settings, resolved),
+		failPolicy: resolveSystemOneFailPolicy(settings.failPolicies, taskId),
+	};
 }
 
 /**

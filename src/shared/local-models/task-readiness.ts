@@ -23,7 +23,8 @@ import type { LocalModelAssignment, LocalModelTaskId, LocalModelTaskNeed } from 
 /**
  * Where a task stands.
  *
- * - `ready`         - the assigned local model or endpoint should answer.
+ * - `ready`         - the assigned local model or endpoint should answer, or
+ *                     the System One engine in force is set up to.
  * - `utility-agent` - the task runs on its existing agent path; nothing here
  *                     to check (the router never spawns that agent).
  * - `off`           - the task is switched off. Not a fault.
@@ -58,6 +59,11 @@ export const LOCAL_MODEL_TASK_UNREADY_REASONS = [
 	'endpoint-unreachable',
 	// The server answered but does not list the assigned model.
 	'endpoint-model-missing',
+	// The task is assigned to System One and no engine is chosen.
+	'system-one-off',
+	// The System One engine in force cannot answer as it is set up (no key, no
+	// URL, no model for the local judge).
+	'system-one-not-ready',
 ] as const;
 
 export type LocalModelTaskUnreadyReason = (typeof LOCAL_MODEL_TASK_UNREADY_REASONS)[number];

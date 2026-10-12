@@ -18,6 +18,10 @@
  *     check (never a re-hash), and the runtime is checked WITHOUT loading it,
  *     exactly as the voice gate does. Only an endpoint assignment reaches the
  *     network: one model listing, inside the client's short list budget.
+ *   - **System One is read, never asked.** A task assigned to System One is
+ *     ready when the engine in force is set up to answer (an engine is chosen,
+ *     and it has its key, URL or model). Nothing is sent to find out, so a
+ *     verdict costs no request and tells an engine nothing.
  */
 
 import { getLocalModel } from '../../shared/local-models/model-catalog';
@@ -46,6 +50,7 @@ import type {
 } from '../../shared/local-models/task-readiness';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { NativeRuntimeId } from '../../shared/local-models/native-runtimes';
+import type { SystemOneReport } from '../../shared/local-models/system-one-settings';
 import type { EndpointModel, EndpointModelsResult } from './endpoint-client';
 import {
 	findUsableLocalModelEndpoint,
@@ -61,6 +66,7 @@ import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { isServerEngineInstalled } from './server/engine-store';
 import { isServerModel } from './server/presets';
 import { readLocalModelAssignments } from './sources';
+import { getSystemOneReport } from './system-one/service';
 
 const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
 	'text-gen': 'text-generation',
@@ -89,7 +95,12 @@ export interface ResolveTaskReadinessOptions {
 	listEndpointModels?: (endpoint: LocalModelEndpoint) => Promise<EndpointModelsResult>;
 	/** Whether the Maestro model server's engine is downloaded. Defaults to the engine store. */
 	isServerEngineInstalled?: () => Promise<boolean>;
+	/** The System One engine in force, read from its settings. Defaults to the service's report. */
+	readSystemOne?: () => Promise<SystemOneEngineStanding>;
 }
+
+/** What readiness reads about System One: the engine, its name, and why it cannot answer. */
+export type SystemOneEngineStanding = Pick<SystemOneReport, 'settings' | 'engineLabel' | 'problem'>;
 
 /** One task's readiness against its effective assignment. */
 export async function resolveTaskReadiness(
@@ -114,9 +125,13 @@ export async function resolveAllTaskReadiness(
 	const assignments = options.assignments ?? readLocalModelAssignments();
 	const list = options.listEndpointModels ?? defaultListEndpointModels;
 	const listings = new Map<string, Promise<EndpointModelsResult>>();
+	const readSystemOne = options.readSystemOne ?? getSystemOneReport;
+	let systemOne: Promise<SystemOneEngineStanding> | undefined;
 	const shared: ResolveTaskReadinessOptions = {
 		...options,
 		assignments,
+		// One engine serves every task assigned to it, so it is read once.
+		readSystemOne: () => (systemOne ??= readSystemOne()),
 		listEndpointModels: (endpoint) => {
 			let listing = listings.get(endpoint.id);
 			if (!listing) {
@@ -178,6 +193,8 @@ async function resolveForAssignment(
 				...base,
 				...(await resolveEndpoint(task, assignment.endpointId, assignment.model, options)),
 			};
+		case 'system-one':
+			return { ...base, ...(await resolveSystemOne(task, options)) };
 	}
 }
 
@@ -190,6 +207,25 @@ function unavailable(
 	extra: Partial<Verdict> = {}
 ): Verdict {
 	return { state: 'unavailable', reason, detail, suggestedAction, ...extra };
+}
+
+async function resolveSystemOne(
+	task: LocalModelTaskDefinition,
+	options: ResolveTaskReadinessOptions
+): Promise<Verdict> {
+	const { settings, engineLabel, problem } = await (options.readSystemOne ?? getSystemOneReport)();
+	const where = modelsSettingsLocation('system-one');
+	if (settings.engine === 'off') {
+		return unavailable(
+			'system-one-off',
+			`${task.label} is assigned to System One, and System One is off.`,
+			`Choose an engine in ${where}, or assign another source in ${taskAssignmentLocation(task.id)}.`
+		);
+	}
+	if (problem) {
+		return unavailable('system-one-not-ready', problem, `Set up ${engineLabel} in ${where}.`);
+	}
+	return { state: 'ready', detail: `Asks ${engineLabel}.` };
 }
 
 async function resolveLocal(

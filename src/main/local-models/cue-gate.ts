@@ -18,20 +18,29 @@
  *     the task is off has a gate nothing can check, which is `unavailable`.
  *   - `unavailable`, `cancelled` (the timeout), and a reply that is not a
  *     verdict are all `unavailable`, with the reason a person can act on.
+ *
+ * Assigned to System One, the gate is one typed yes or no question for the
+ * engine in force (`runSystemOneTask`) instead of a prompt for a model. An
+ * engine that gives no answer is `unavailable` as well, and the check carries
+ * what the fail policy said: the subscription's `gate_on_unavailable` when it
+ * states one, else the Cue gate task's own. No model is asked in its place.
  */
 
 import {
 	CUE_GATE_REPLY_SCHEMA,
+	cueGateCheckFromSystemOne,
 	formatCueGateInput,
 	parseCueGateReply,
 	type CueGateCheck,
+	type CueGateOnUnavailable,
 	type CueGateRequest,
 } from '../../shared/cue/gate';
 import { LOCAL_MODEL_TASKS } from '../../shared/local-models/tasks';
 import { taskAssignmentLocation } from '../../shared/local-models/settings-location';
+import type { SystemOneFailPolicy } from '../../shared/local-models/system-one';
 import { getPrompt } from '../prompt-manager';
 import { logger } from '../utils/logger';
-import { runLocalTask } from './task-router';
+import { runLocalTask, runSystemOneTask, type SystemOneTaskResult } from './task-router';
 
 const LOG_CONTEXT = '[CueGate]';
 
@@ -54,6 +63,43 @@ function unavailable(reason: string): CueGateCheck {
 	return { status: 'unavailable', reason };
 }
 
+/** A subscription's `gate_on_unavailable` in System One's words. */
+const FAIL_POLICY_FOR: Record<CueGateOnUnavailable, SystemOneFailPolicy> = {
+	run: 'open',
+	skip: 'closed',
+};
+
+/** A System One verdict as a gate check. Only ever a check: the dispatch service decides the run. */
+function checkFromSystemOne(
+	verdict: Exclude<SystemOneTaskResult, { status: 'not-assigned' }>,
+	subscriptionName: string
+): CueGateCheck {
+	switch (verdict.status) {
+		case 'ok':
+			return (
+				cueGateCheckFromSystemOne(verdict.answers, verdict.engineLabel) ??
+				unavailable(`${verdict.engineLabel} did not answer the gate's question.`)
+			);
+		case 'cancelled':
+			return unavailable(`${verdict.engineLabel} was stopped before it answered.`);
+		case 'failed-open':
+		case 'failed-closed':
+		case 'unavailable':
+			logger.warn('Cue gate not checked: System One gave no answer', LOG_CONTEXT, {
+				subscription: subscriptionName,
+				engine: verdict.engine,
+				code: verdict.code,
+				reason: verdict.reason,
+			});
+			return {
+				status: 'unavailable',
+				reason: verdict.reason,
+				...(verdict.status === 'failed-open' ? { onUnavailable: 'run' as const } : {}),
+				...(verdict.status === 'failed-closed' ? { onUnavailable: 'skip' as const } : {}),
+			};
+	}
+}
+
 /**
  * Check one event against one gate condition.
  *
@@ -64,6 +110,15 @@ function unavailable(reason: string): CueGateCheck {
 export async function evaluateCueGate(request: CueGateRequest): Promise<CueGateCheck> {
 	const task = LOCAL_MODEL_TASKS[TASK_ID];
 	const offReason = `${task.label} is off. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`;
+
+	// System One first: it answers `not-assigned` for any other assignment and
+	// touches nothing, so the model path below runs exactly as it did.
+	const judged = await runSystemOneTask(
+		TASK_ID,
+		{ condition: request.condition, event: request.event },
+		request.onUnavailable ? { failPolicy: FAIL_POLICY_FOR[request.onUnavailable] } : {}
+	);
+	if (judged.status !== 'not-assigned') return checkFromSystemOne(judged, request.subscriptionName);
 
 	const verdict = await runLocalTask(TASK_ID, {
 		system: getPrompt('cue-gate-local'),

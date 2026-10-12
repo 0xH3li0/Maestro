@@ -5,6 +5,9 @@
  * A task is offered only sources that can do its job:
  * - Off, always.
  * - Utility Agent, only when the task has an agent path to fall back on.
+ * - System One, only when the task declares typed questions for an engine
+ *   (`taskAcceptsSystemOne`) and an engine is chosen. Its label names the engine
+ *   in force (`systemOneAssignmentLabel`), so a local judge is never read as Jev.
  * - Installed local models of exactly the kind the task `needs`, except one
  *   the task records as measured-unfit (`unofferedLocalModels`).
  * - Models of enabled endpoints, only when an endpoint can serve that need
@@ -24,10 +27,16 @@ import type { LocalModelListing } from '../../../../../main/local-models/service
 import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
 import { getLocalModel } from '../../../../../shared/local-models/model-catalog';
 import {
+	systemOneAssignmentLabel,
+	type SystemOneEngineChoice,
+} from '../../../../../shared/local-models/system-one-settings';
+import {
 	endpointServesNeed,
 	formatLocalModelAssignmentSpec,
 	isLocalModelOfferedForTask,
 	localModelAssignmentSourceLabel,
+	SYSTEM_ONE_ASSIGNMENT,
+	taskAcceptsSystemOne,
 	type LocalModelAssignment,
 	type LocalModelTaskDefinition,
 } from '../../../../../shared/local-models/tasks';
@@ -50,6 +59,11 @@ export interface AssignmentOptionSources {
 	endpoints: readonly LocalModelEndpoint[];
 	/** Per endpoint id, as `useLocalModelEndpoints` reports it. */
 	endpointModels: Readonly<Record<string, EndpointModelsState>>;
+	/**
+	 * The System One engine in force, from `useSystemOne()`. Absent (a surface
+	 * that does not read it, or a report still loading) reads as no engine.
+	 */
+	systemOneEngine?: SystemOneEngineChoice;
 }
 
 export const LOCAL_MODELS_GROUP_LABEL = 'Local models';
@@ -64,7 +78,8 @@ function listedModelIds(state: EndpointModelsState | undefined): string[] {
 function unlistedLabel(
 	assignment: LocalModelAssignment,
 	endpoints: readonly LocalModelEndpoint[],
-	installedModelIds: ReadonlySet<string>
+	installedModelIds: ReadonlySet<string>,
+	systemOneEngine: SystemOneEngineChoice
 ): string {
 	const source = localModelAssignmentSourceLabel(assignment, endpoints);
 	if (assignment.type === 'local') {
@@ -76,6 +91,9 @@ function unlistedLabel(
 		if (!endpoint) return `${source} (endpoint removed)`;
 		return `${source} (${endpoint.enabled ? 'not listed' : 'disabled'})`;
 	}
+	// System One is offered whenever an engine is chosen, so this is a task left
+	// on it after the engine was switched off. The label says so.
+	if (assignment.type === 'system-one') return systemOneAssignmentLabel(systemOneEngine);
 	// Off and Utility Agent are always offered when they are valid, so this is
 	// only reached for a Utility Agent assignment the task does not accept.
 	return 'Utility Agent (not available for this task)';
@@ -88,6 +106,13 @@ export function buildAssignmentOptionGroups(
 ): AssignmentOptionGroup[] {
 	const head: AssignmentOption[] = [{ value: 'off', label: 'Off' }];
 	if (task.allowsUtilityAgent) head.push({ value: 'utility-agent', label: 'Utility Agent' });
+	const systemOneEngine = sources.systemOneEngine ?? 'off';
+	if (taskAcceptsSystemOne(task) && systemOneEngine !== 'off') {
+		head.push({
+			value: formatLocalModelAssignmentSpec(SYSTEM_ONE_ASSIGNMENT),
+			label: systemOneAssignmentLabel(systemOneEngine),
+		});
+	}
 	const groups: AssignmentOptionGroup[] = [{ label: null, options: head }];
 
 	const installed = sources.listings.filter(
@@ -126,7 +151,7 @@ export function buildAssignmentOptionGroups(
 		const installedIds = new Set(installed.map((listing) => listing.entry.id));
 		head.push({
 			value: currentValue,
-			label: unlistedLabel(current, sources.endpoints, installedIds),
+			label: unlistedLabel(current, sources.endpoints, installedIds, systemOneEngine),
 		});
 	}
 	return groups;

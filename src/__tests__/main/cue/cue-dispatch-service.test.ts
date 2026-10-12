@@ -582,6 +582,51 @@ describe('createCueDispatchService', () => {
 			expect(payloads).toEqual([expect.objectContaining({ type: 'gateUnavailable', ran: false })]);
 		});
 
+		it("hands the evaluator the subscription's own rule, and only when it states one", async () => {
+			const { svc, evaluateGate } = makeGated({ status: 'pass', reason: 'ok' });
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub({ gate_on_unavailable: 'skip' }), event, 'src');
+			svc.dispatchSubscription('owner', gatedSub({ name: 'plain-sub' }), event, 'src');
+			await settle();
+
+			expect(evaluateGate.mock.calls[0][0]).toMatchObject({ onUnavailable: 'skip' });
+			expect(evaluateGate.mock.calls[1][0]).not.toHaveProperty('onUnavailable');
+		});
+
+		it("fails closed on the task's fail policy when the subscription states no rule", async () => {
+			const { svc, executeRun, onGated, payloads } = makeGated({
+				status: 'unavailable',
+				reason: 'Jev (TypeSafe cloud) did not answer.',
+				onUnavailable: 'skip',
+			});
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub(), event, 'src');
+			await settle();
+
+			expect(executeRun).not.toHaveBeenCalled();
+			expect(onGated).toHaveBeenCalledTimes(1);
+			expect(onGated.mock.calls[0][0].record.reason).toContain('the Cue gate task fails closed');
+			expect(payloads).toEqual([expect.objectContaining({ type: 'gateUnavailable', ran: false })]);
+		});
+
+		it("lets gate_on_unavailable: run start a run the task's fail policy would have stopped", async () => {
+			const { svc, executeRun, onGated } = makeGated({
+				status: 'unavailable',
+				reason: 'Jev (TypeSafe cloud) did not answer.',
+				onUnavailable: 'skip',
+			});
+			const event = createCueEvent('github.issue', 'my-sub');
+
+			svc.dispatchSubscription('owner', gatedSub({ gate_on_unavailable: 'run' }), event, 'src');
+			await settle();
+
+			expect(onGated).not.toHaveBeenCalled();
+			expect(executeRun).toHaveBeenCalledTimes(1);
+			expect(readCueGateRecord(executeRun.mock.calls[0][2].payload)?.outcome).toBe('ran-unchecked');
+		});
+
 		it('treats a runner with no evaluator as unavailable, not as ungated', async () => {
 			const { deps, executeRun } = makeDeps();
 			const onGated = vi.fn();

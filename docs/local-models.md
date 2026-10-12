@@ -722,6 +722,7 @@ maestro-cli models assign <task-id> off
 maestro-cli models assign <task-id> utility-agent
 maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
+maestro-cli models assign cue-gate system-one    # ask the System One engine in force (a task with typed questions only)
 maestro-cli models status [task-id]              # would it run, and if not, why and what to do
 maestro-cli models index                         # the semantic index: state, and how much is indexed
 maestro-cli models proxy status                  # the Maestro token proxy: agents, tokens saved, added latency

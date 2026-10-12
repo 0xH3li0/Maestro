@@ -13,12 +13,16 @@ import { describe, it, expect } from 'vitest';
 import {
 	CUE_GATE_EVENT_CAPS,
 	CUE_GATE_MAX_REASON_LENGTH,
+	CUE_GATE_PASS_PROBABILITY,
 	CUE_GATE_PAYLOAD_KEY,
+	CUE_GATE_QUESTION_ID,
 	CUE_GATE_REPLY_SCHEMA,
 	CUE_GATE_MAX_CONDITION_LENGTH,
 	clampCueGateReason,
 	compactCueGateEvent,
+	cueGateCheckFromSystemOne,
 	cueGateConditionProblem,
+	cueGateSystemOneRequest,
 	formatCueGateInput,
 	parseCueGateOnUnavailable,
 	parseCueGateReply,
@@ -219,6 +223,125 @@ describe('resolveCueGateDecision', () => {
 	it('never lets gate_on_unavailable override a real verdict', () => {
 		expect(resolveCueGateDecision({ status: 'pass', reason: 'ok' }, 'skip').run).toBe(true);
 		expect(resolveCueGateDecision({ status: 'fail', reason: 'no' }, 'run').run).toBe(false);
+	});
+
+	it("applies the task's fail policy when the subscription states none, and says whose rule it was", () => {
+		const closed = resolveCueGateDecision({
+			status: 'unavailable',
+			reason: 'Jev did not answer.',
+			onUnavailable: 'skip',
+		});
+		expect(closed.run).toBe(false);
+		expect(closed.warn).toBe(true);
+		expect(closed.record.outcome).toBe('gated');
+		expect(closed.record.reason).toContain('the Cue gate task fails closed');
+		expect(closed.record.reason).not.toContain('gate_on_unavailable');
+		expect(closed.record.reason).toContain('Jev did not answer.');
+
+		const open = resolveCueGateDecision({
+			status: 'unavailable',
+			reason: 'Jev did not answer.',
+			onUnavailable: 'run',
+		});
+		expect(open.run).toBe(true);
+		expect(open.record.outcome).toBe('ran-unchecked');
+	});
+
+	it("lets the subscription's own rule win over the task's fail policy, both ways", () => {
+		const check = { status: 'unavailable', reason: 'No answer.' } as const;
+		const runs = resolveCueGateDecision({ ...check, onUnavailable: 'skip' }, 'run');
+		expect(runs.run).toBe(true);
+		expect(runs.record.outcome).toBe('ran-unchecked');
+
+		const skips = resolveCueGateDecision({ ...check, onUnavailable: 'run' }, 'skip');
+		expect(skips.run).toBe(false);
+		expect(skips.record.reason).toContain('gate_on_unavailable is "skip"');
+	});
+});
+
+describe('the gate as a System One request', () => {
+	const input = {
+		condition: '  the comment reports a bug  ',
+		event: event({ title: 'Crash on save', comments: 'It crashes every time.' }),
+	};
+
+	it('makes the event the state, as the same text a local model reads', () => {
+		const { state } = cueGateSystemOneRequest(input);
+		expect(state).toBe(
+			'Event type: github.issue\nEvent:\n{"title":"Crash on save","comments":"It crashes every time."}'
+		);
+		// The local model's turn is the condition, then exactly that text.
+		expect(formatCueGateInput(input)).toBe(`Condition: the comment reports a bug\n\n${state}`);
+	});
+
+	it('asks one yes or no question that carries the condition, where yes means the run proceeds', () => {
+		const { questions } = cueGateSystemOneRequest(input);
+		expect(Object.keys(questions)).toEqual([CUE_GATE_QUESTION_ID]);
+		const question = questions[CUE_GATE_QUESTION_ID];
+		expect(question.type).toBe('noul');
+		expect(question.instructions).toMatch(/^Should this run proceed\?/);
+		expect(question.instructions).toMatch(/the comment reports a bug$/);
+		// An event that does not say enough passes, as the local model is told.
+		expect(question.criteria).toEqual({
+			true: expect.stringContaining('does not say enough to decide'),
+			false: expect.stringContaining('does not meet the condition'),
+		});
+	});
+
+	it('holds the event to the caps, so a small engine is handed no more than a local model', () => {
+		const { state } = cueGateSystemOneRequest({
+			condition: 'x',
+			event: event({ body: 'a'.repeat(50_000) }),
+		});
+		expect((state as string).length).toBeLessThan(CUE_GATE_EVENT_CAPS.maxTotalChars + 200);
+		expect(state).toContain('more characters not shown');
+	});
+});
+
+describe('cueGateCheckFromSystemOne', () => {
+	const answer = (probability: number) => ({
+		[CUE_GATE_QUESTION_ID]: { type: 'noul' as const, probability },
+	});
+
+	it('passes at or above the midpoint and fails below it, naming the engine that answered', () => {
+		expect(cueGateCheckFromSystemOne(answer(0.93), 'Jev (TypeSafe cloud)')).toEqual({
+			status: 'pass',
+			reason: 'Jev (TypeSafe cloud): yes, 93% that the run should proceed.',
+		});
+		expect(cueGateCheckFromSystemOne(answer(0.12), 'OpenJev at gpu.lan:8000')).toEqual({
+			status: 'fail',
+			reason: 'OpenJev at gpu.lan:8000: no, 12% that the run should proceed.',
+		});
+		expect(cueGateCheckFromSystemOne(answer(CUE_GATE_PASS_PROBABILITY), 'Jev')?.status).toBe(
+			'pass'
+		);
+		expect(cueGateCheckFromSystemOne(answer(0.499), 'Jev')?.status).toBe('fail');
+	});
+
+	it('keeps "not calibrated" in the reason of a local judge answer', () => {
+		const check = cueGateCheckFromSystemOne(
+			answer(0.8),
+			'Local judge (Qwen3.5 4B), not calibrated'
+		);
+		expect(check?.reason).toContain('not calibrated');
+	});
+
+	it('is no verdict when the answers hold no yes or no for the question', () => {
+		expect(cueGateCheckFromSystemOne({}, 'Jev')).toBeNull();
+		expect(
+			cueGateCheckFromSystemOne(
+				{ [CUE_GATE_QUESTION_ID]: { type: 'choice', choice: 'yes' } },
+				'Jev'
+			)
+		).toBeNull();
+		expect(
+			cueGateCheckFromSystemOne({ other: { type: 'noul', probability: 0.9 } }, 'Jev')
+		).toBeNull();
+	});
+
+	it('bounds the reason kept on the event', () => {
+		const check = cueGateCheckFromSystemOne(answer(0.9), 'E'.repeat(400));
+		expect(check?.reason.length).toBeLessThanOrEqual(CUE_GATE_MAX_REASON_LENGTH);
 	});
 });
 

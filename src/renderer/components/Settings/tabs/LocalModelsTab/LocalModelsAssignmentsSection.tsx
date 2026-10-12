@@ -22,6 +22,11 @@
  * that gates something, what it does when its engine gives no answer. The
  * values and the change both belong to the tab's `useSystemOne()`, the same
  * state `maestro-cli s1 set fail-policy` writes.
+ *
+ * A task that declares typed questions is also offered System One as a source,
+ * labeled with the engine in force (`systemOneEngine`). The assignment names no
+ * engine, so a change of engine moves every task on it; readiness is asked again
+ * when it changes.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -45,6 +50,7 @@ import {
 } from '../../../../../shared/local-models/system-one';
 import {
 	SYSTEM_ONE_FAIL_POLICY_DESCRIPTIONS,
+	type SystemOneEngineChoice,
 	type SystemOneFailPolicyRow,
 } from '../../../../../shared/local-models/system-one-settings';
 import type { LocalModelTaskReadiness } from '../../../../../shared/local-models/task-readiness';
@@ -71,6 +77,18 @@ export interface LocalModelsAssignmentsSectionProps {
 	endpoints: LocalModelEndpointsState;
 	/** The fail policy column. Omitted where no task has one (System Two). */
 	failPolicies?: FailPolicyColumn;
+	/**
+	 * The System One engine in force and whether it can answer as set up, from
+	 * the tab's `useSystemOne()`. Omitted where no task can run on it (System Two).
+	 */
+	systemOneEngine?: SystemOneEngineStanding;
+}
+
+/** What a System One source option and its readiness depend on. */
+export interface SystemOneEngineStanding {
+	engine: SystemOneEngineChoice;
+	/** Why the engine cannot answer as set up, or null. A change asks readiness again. */
+	problem: string | null;
 }
 
 /** What the fail policy column shows and how it changes a value. */
@@ -90,6 +108,7 @@ export function LocalModelsAssignmentsSection({
 	models,
 	endpoints,
 	failPolicies,
+	systemOneEngine,
 }: LocalModelsAssignmentsSectionProps) {
 	const tasks = useMemo(() => tasksForSystem(system), [system]);
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
@@ -106,8 +125,16 @@ export function LocalModelsAssignmentsSection({
 				assignments,
 				endpoints.endpoints,
 				models.listings.map((listing) => [listing.entry.id, listing.status.status]),
+				systemOneEngine?.engine ?? null,
+				systemOneEngine?.problem ?? null,
 			]),
-		[assignments, endpoints.endpoints, models.listings]
+		[
+			assignments,
+			endpoints.endpoints,
+			models.listings,
+			systemOneEngine?.engine,
+			systemOneEngine?.problem,
+		]
 	);
 	const readiness = useLocalModelTaskReadiness(revision);
 
@@ -169,6 +196,7 @@ export function LocalModelsAssignmentsSection({
 						assignment={resolveLocalModelAssignment(assignments, task.id)}
 						models={models}
 						endpoints={endpoints}
+						systemOneEngine={systemOneEngine?.engine}
 						readiness={readiness.readiness[task.id]}
 						checking={readiness.loading}
 						problem={problems[task.id]}
@@ -190,6 +218,8 @@ interface TaskAssignmentRowProps {
 	assignment: LocalModelAssignment;
 	models: LocalModelsState;
 	endpoints: LocalModelEndpointsState;
+	/** The System One engine in force, for the label of its source option. */
+	systemOneEngine: SystemOneEngineChoice | undefined;
 	readiness: LocalModelTaskReadiness | undefined;
 	checking: boolean;
 	problem: string | undefined;
@@ -209,6 +239,7 @@ function TaskAssignmentRow({
 	assignment,
 	models,
 	endpoints,
+	systemOneEngine,
 	readiness,
 	checking,
 	problem,
@@ -221,8 +252,9 @@ function TaskAssignmentRow({
 				listings: models.listings,
 				endpoints: endpoints.endpoints,
 				endpointModels: endpoints.models,
+				...(systemOneEngine ? { systemOneEngine } : {}),
 			}),
-		[task, assignment, models.listings, endpoints.endpoints, endpoints.models]
+		[task, assignment, models.listings, endpoints.endpoints, endpoints.models, systemOneEngine]
 	);
 	const selectId = `local-models-task-source-${task.id}`;
 

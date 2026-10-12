@@ -2247,7 +2247,7 @@ Re-hash a downloaded model against the catalog; never deletes or re-downloads (r
 
 ## `maestro-cli models assign <task-id> <assignment>`
 
-Choose what a task runs on: off \| utility-agent \| local:&lt;model-id> \| endpoint:&lt;endpoint>:&lt;model>
+Choose what a task runs on: off \| utility-agent \| system-one \| local:&lt;model-id> \| endpoint:&lt;endpoint>:&lt;model>
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

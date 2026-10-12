@@ -34,14 +34,32 @@
  * does), and {@link isInteractiveLocalTaskRunning} /
  * {@link whenNoInteractiveLocalTask} let background work stand aside while one
  * is in flight instead of competing with it for the same cores.
+ *
+ * One assignment is not a model: `system-one` hands the task's typed questions
+ * to the System One engine in force. It has its own entry,
+ * {@link runSystemOneTask}, which a task that accepts the assignment calls
+ * FIRST: it answers `not-assigned` for any other assignment, and the caller
+ * then runs its model twin as before. With no answer it applies the task's fail
+ * policy; it never asks a different engine, and never falls back to a model.
  */
 
+import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
+import type {
+	SystemOneEngineId,
+	SystemOneErrorCode,
+	SystemOneFailPolicy,
+	SystemOneResult,
+} from '../../shared/local-models/system-one';
+import type { SystemOneEngineChoice } from '../../shared/local-models/system-one-settings';
 import {
+	buildSystemOneTaskRequest,
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASKS,
 	resolveLocalModelAssignment,
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
+	type SystemOneTaskId,
+	type SystemOneTaskInputs,
 } from '../../shared/local-models/tasks';
 import type { LocalModelRun } from '../../shared/stats-types';
 import { getStatsDB } from '../stats/singleton';
@@ -52,9 +70,16 @@ import { captureException } from '../utils/sentry';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
 import { classifyText, type ClassificationResult } from './classifier';
 import { embedTexts, type EmbeddingMode } from './embeddings';
-import { isLocalModelCancelled, isLocalModelEndpointError, isLocalModelError } from './errors';
+import {
+	isLocalModelCancelled,
+	isLocalModelEndpointError,
+	isLocalModelError,
+	isSystemOneError,
+} from './errors';
 import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
 import { transcribeSpeech } from './speech-to-text';
+import { recordSystemOneDecision, type SystemOneDecision } from './system-one/decisions';
+import { askResolvedSystemOne, resolveSystemOneForTask } from './system-one/service';
 import { generateText } from './text-gen';
 
 /** Token budget when a caller names none. Housekeeping output is short. */
@@ -319,6 +344,144 @@ export async function runSpeechToTextTask(
 	};
 }
 
+/** What a caller may tell {@link runSystemOneTask} beyond the task's input. */
+export interface SystemOneTaskOptions {
+	/** In-process callers only. The engine's own budget still applies. */
+	signal?: AbortSignal;
+	/**
+	 * A more specific rule the caller holds for this run (a Cue subscription's
+	 * `gate_on_unavailable`). It replaces the task's fail policy, so the outcome
+	 * recorded is the one that happened.
+	 */
+	failPolicy?: SystemOneFailPolicy;
+}
+
+/** A run the engine did not answer. It names the engine that was asked, never another. */
+export interface SystemOneTaskNoAnswer {
+	/** `off` when the task is assigned to System One and no engine is chosen. */
+	engine: SystemOneEngineChoice;
+	engineLabel: string;
+	/** Why there was no answer. `off` when no engine is chosen. */
+	code: SystemOneErrorCode | 'off';
+	/** Written for a person; names the engine and what to do. */
+	reason: string;
+}
+
+/**
+ * A System One task's verdict.
+ *
+ *   - `not-assigned`  - the task's assignment is not `system-one`. Nothing was
+ *                       asked and nothing was recorded; the caller runs its
+ *                       model twin.
+ *   - `ok`            - the engine answered every question.
+ *   - `failed-open`   - no answer, and the fail policy lets the work go ahead
+ *                       unchecked.
+ *   - `failed-closed` - no answer, and the fail policy stops the work.
+ *   - `unavailable`   - no answer, for a task with no fail policy. The caller
+ *                       decides, as it does for every other twin.
+ *   - `cancelled`     - the caller aborted.
+ */
+export type SystemOneTaskResult =
+	| { status: 'not-assigned' }
+	| ({ status: 'ok'; engineLabel: string } & SystemOneResult)
+	| ({ status: 'failed-open' | 'failed-closed' | 'unavailable' } & SystemOneTaskNoAnswer)
+	| { status: 'cancelled'; engine: SystemOneEngineId; engineLabel: string };
+
+/**
+ * Run a task on System One when that is its assignment.
+ *
+ * The task's own `systemOneQuestions` turns `input` into typed questions, the
+ * engine in force answers them, and the outcome is recorded
+ * (`recordSystemOneDecision`). With no answer the task's fail policy applies:
+ * no other engine and no model is asked instead. A task assigned to System One
+ * while no engine is chosen has nothing to answer it, which is no answer too.
+ *
+ * Throws only for a caller bug (a task that declares no questions) or an
+ * unclassified failure inside an engine, which is a bug and belongs in Sentry.
+ */
+export async function runSystemOneTask<T extends SystemOneTaskId>(
+	taskId: T,
+	input: SystemOneTaskInputs[T],
+	options: SystemOneTaskOptions = {}
+): Promise<SystemOneTaskResult> {
+	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
+	if (assignment.type !== 'system-one') return { status: 'not-assigned' };
+
+	const request = buildSystemOneTaskRequest(taskId, input);
+	const startedAt = Date.now();
+	const span = beginSleepAwareSpan();
+	const { resolved, engineLabel, failPolicy: taskPolicy } = await resolveSystemOneForTask(taskId);
+	const failPolicy = options.failPolicy ?? taskPolicy;
+	const decision = (
+		rest: Omit<SystemOneDecision, 'taskId' | 'engine' | 'questionIds' | 'startedAt'>
+	): void =>
+		recordDecision({
+			taskId,
+			engine: resolved.id,
+			questionIds: Object.keys(request.questions),
+			startedAt,
+			...rest,
+		});
+	const noAnswer = (code: SystemOneErrorCode | 'off', reason: string): SystemOneTaskResult => {
+		const status =
+			failPolicy === 'open'
+				? 'failed-open'
+				: failPolicy === 'closed'
+					? 'failed-closed'
+					: 'unavailable';
+		decision({ outcome: status, code, latencyMs: sleepAwareElapsedMs(span) });
+		return { status, engine: resolved.id, engineLabel, code, reason };
+	};
+
+	if (resolved.id === 'off') {
+		return noAnswer(
+			'off',
+			`${LOCAL_MODEL_TASKS[taskId].label} is assigned to System One, and System One is off. Choose an engine in ${modelsSettingsLocation('system-one')}.`
+		);
+	}
+	try {
+		const result = await askResolvedSystemOne(
+			resolved,
+			request.state,
+			request.questions,
+			options.signal ? { signal: options.signal } : {}
+		);
+		decision({
+			outcome: 'ok',
+			model: result.model,
+			answers: result.answers,
+			latencyMs: result.latencyMs,
+			usage: result.usage,
+			costUsd: result.costUsd,
+		});
+		return { status: 'ok', engineLabel, ...result };
+	} catch (error) {
+		// Anything an engine did not classify is a bug, and stays one.
+		if (!isSystemOneError(error)) throw error;
+		if (error.code === 'cancelled') {
+			decision({ outcome: 'cancelled', code: 'cancelled', latencyMs: sleepAwareElapsedMs(span) });
+			return { status: 'cancelled', engine: resolved.id, engineLabel };
+		}
+		return noAnswer(error.code, error.message);
+	}
+}
+
+/**
+ * Record one System One decision. Best-effort, like {@link recordRun}: a record
+ * that cannot be kept must never turn an answered gate into a failed one.
+ */
+function recordDecision(decision: SystemOneDecision): void {
+	try {
+		recordSystemOneDecision(decision);
+	} catch (error) {
+		logger.warn(`Failed to record System One decision: ${error}`, STATS_LOG_CONTEXT);
+		void captureException(error instanceof Error ? error : new Error(String(error)), {
+			operation: 'systemOne:recordDecision',
+			taskId: decision.taskId,
+		});
+	}
+}
+
 function requireTaskNeed(
 	taskId: LocalModelTaskId,
 	need: LocalModelTaskDefinition['needs'],
@@ -389,6 +552,13 @@ async function runThroughAssignment<T>(
 	background = false
 ): Promise<AssignedVerdict<T>> {
 	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
+	if (assignment.type === 'system-one') {
+		// A caller bug, or a prompt sent by hand (`maestro-cli models run`): an
+		// engine answers the task's typed questions, and no model stands in for it.
+		throw new Error(
+			`${LOCAL_MODEL_TASKS[taskId].label} is assigned to System One, which answers the task's typed questions and takes no prompt (runSystemOneTask runs it).`
+		);
+	}
 	const source = sourceForAssignment(assignment);
 	if (!source) return { status: assignment.type === 'off' ? 'off' : 'use-utility-agent' };
 

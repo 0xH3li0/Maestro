@@ -37,6 +37,7 @@ import {
 import type { ModelStatus } from '../../../main/local-models/model-store';
 import type { NativeRuntimeUnavailable } from '../../../main/local-models/runtime/native-loader';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
+import { DEFAULT_SYSTEM_ONE_SETTINGS } from '../../../shared/local-models/system-one-settings';
 import {
 	BGE_SMALL_EN_ID,
 	KOKORO_82M_ID,
@@ -92,6 +93,25 @@ function healthy(overrides: ResolveTaskReadinessOptions = {}): ResolveTaskReadin
 }
 
 const local = (modelId: string) => ({ type: 'local' as const, modelId });
+const SYSTEM_ONE = { type: 'system-one' as const };
+
+/** The System One engine as readiness reads it: chosen, named, and set up or not. */
+function systemOne(
+	engine: 'off' | 'jev-cloud' | 'local-judge',
+	problem: string | null = null
+): NonNullable<ResolveTaskReadinessOptions['readSystemOne']> {
+	const engineLabel =
+		engine === 'off'
+			? 'Off'
+			: engine === 'jev-cloud'
+				? 'Jev (TypeSafe cloud)'
+				: 'Local judge, not calibrated';
+	return vi.fn(async () => ({
+		settings: { ...DEFAULT_SYSTEM_ONE_SETTINGS, engine },
+		engineLabel,
+		problem,
+	}));
+}
 const endpoint = (model = 'nomic-embed-text') => ({
 	type: 'endpoint' as const,
 	endpointId: ENDPOINT.id,
@@ -241,7 +261,7 @@ describe('resolveTaskReadiness', () => {
 
 	const cases: Array<{
 		reason: LocalModelTaskUnreadyReason;
-		taskId: 'semantic-search' | 'injection-screen';
+		taskId: 'semantic-search' | 'injection-screen' | 'cue-gate';
 		options: ResolveTaskReadinessOptions;
 		detail: RegExp;
 		action: RegExp;
@@ -373,6 +393,26 @@ describe('resolveTaskReadiness', () => {
 			detail: /Ollama does not serve "mxbai-embed-large"/,
 			action: /ollama pull mxbai-embed-large/,
 		},
+		{
+			reason: 'system-one-off',
+			taskId: 'cue-gate',
+			options: healthy({
+				assignments: { 'cue-gate': SYSTEM_ONE },
+				readSystemOne: systemOne('off'),
+			}),
+			detail: /Cue gate is assigned to System One, and System One is off/,
+			action: /^Choose an engine in Settings > Models > System One, or assign another source/,
+		},
+		{
+			reason: 'system-one-not-ready',
+			taskId: 'cue-gate',
+			options: healthy({
+				assignments: { 'cue-gate': SYSTEM_ONE },
+				readSystemOne: systemOne('jev-cloud', 'Jev (TypeSafe cloud) has no API key.'),
+			}),
+			detail: /has no API key/,
+			action: /^Set up Jev \(TypeSafe cloud\) in Settings > Models > System One/,
+		},
 	];
 
 	it.each(cases)(
@@ -461,6 +501,50 @@ describe('an assignment to the built-in Maestro model server', () => {
 		);
 		expect(notDownloaded).toMatchObject({ state: 'unavailable', reason: 'model-not-installed' });
 		expect(notDownloaded.suggestedAction).toMatch(/Download it in/);
+	});
+});
+
+describe('a task assigned to System One', () => {
+	it('is ready when the engine in force is set up, and names that engine', async () => {
+		const options = healthy({
+			assignments: { 'cue-gate': SYSTEM_ONE },
+			readSystemOne: systemOne('local-judge'),
+		});
+		const verdict = await resolveTaskReadiness('cue-gate', options);
+		expect(verdict).toMatchObject({
+			state: 'ready',
+			assignment: SYSTEM_ONE,
+			detail: 'Asks Local judge, not calibrated.',
+		});
+		expect(isTaskRunnable(verdict)).toBe(true);
+	});
+
+	it('reads the engine and asks nothing: no model status, runtime or endpoint is consulted', async () => {
+		const options = healthy({
+			assignments: { 'cue-gate': SYSTEM_ONE },
+			readSystemOne: systemOne('jev-cloud'),
+		});
+		await resolveTaskReadiness('cue-gate', options);
+		expect(options.readSystemOne).toHaveBeenCalledTimes(1);
+		expect(options.readModelStatus).not.toHaveBeenCalled();
+		expect(options.readRuntimeFailure).not.toHaveBeenCalled();
+		expect(options.listEndpointModels).not.toHaveBeenCalled();
+	});
+
+	it('does not read the engine for a task that is not assigned to it', async () => {
+		const options = healthy({ readSystemOne: systemOne('jev-cloud') });
+		await resolveAllTaskReadiness(options);
+		expect(options.readSystemOne).not.toHaveBeenCalled();
+	});
+
+	it('drops the assignment from a task with no typed questions, which stays on its default', async () => {
+		const options = healthy({
+			assignments: { 'semantic-search': SYSTEM_ONE } as LocalModelAssignments,
+			readSystemOne: systemOne('jev-cloud'),
+		});
+		const verdict = await resolveTaskReadiness('semantic-search', options);
+		expect(verdict.state).toBe('off');
+		expect(options.readSystemOne).not.toHaveBeenCalled();
 	});
 });
 
