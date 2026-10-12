@@ -51,7 +51,7 @@ import {
 	type ModelRoutingSkipReason,
 	type RouteTurnResult,
 } from './local-models/model-routing-task';
-import type { RunOnTarget } from './local-models/run-on';
+import { isRunOnSourceTarget, parseRunOnTarget, type RunOnTarget } from './local-models/run-on';
 import { taskAssignmentLocation } from './local-models/settings-location';
 import {
 	LOCAL_MODEL_TASKS,
@@ -66,6 +66,7 @@ import {
 	type TierRouting,
 	type TierTargetAgent,
 } from './modelTiers';
+import type { QueryEvent } from './stats-types';
 import type { EffortLevel, ModelTier } from './tierLevels';
 import type { ToolType } from './types';
 
@@ -555,4 +556,37 @@ export function withAutoModelOption(
 /** How a model value reads in a picker: Auto by its label, every other model as itself. */
 export function modelChoiceLabel(model: string): string {
 	return isAutoModel(model) ? AUTO_MODEL_LABEL : model;
+}
+
+// ---------------------------------------------------------------------------
+// The stats row
+// ---------------------------------------------------------------------------
+
+/** What a turn's `query_events` row says about the model behind it. */
+export type TurnModelStatsFields = Pick<QueryEvent, 'runOnEndpoint' | 'runOnModel' | 'routedTier'>;
+
+/**
+ * Shape where a turn launched, and what Auto's router chose for it, for
+ * `stats.recordQuery`. Both writers of that row call this (the interactive exit
+ * listener and the Auto Run spawn), so a turn is filed the same way whichever
+ * path ran it.
+ *
+ * `runOn` is the target the launch used: the place Auto or a tier decided, else
+ * the agent's own (`turnRunOnTarget`). Only a source is recorded; the provider's
+ * own model is the absence of one. `auto` is the turn's stamp, and its tier is
+ * recorded only when a router decided: `router-off` and `no-decision` chose
+ * nothing. Returns an empty object for a turn on a named model on the provider,
+ * so the caller can spread it unconditionally and the columns stay NULL.
+ */
+export function turnModelStatsFields(turn: {
+	runOn?: unknown;
+	auto?: AutoTurnStamp;
+}): TurnModelStatsFields {
+	const parsed = parseRunOnTarget(turn.runOn);
+	const source = parsed.ok && isRunOnSourceTarget(parsed.target) ? parsed.target : undefined;
+	const route = turn.auto?.route;
+	return {
+		...(source ? { runOnEndpoint: source.endpointId, runOnModel: source.model } : {}),
+		...(isAutoRouteDecision(route) ? { routedTier: route.tier } : {}),
+	};
 }

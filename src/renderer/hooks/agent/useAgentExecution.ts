@@ -2,6 +2,8 @@ import { useCallback, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
 import type { RunOnTarget } from '../../../shared/local-models/run-on';
+import { turnModelStatsFields, type AutoTurnStamp } from '../../../shared/autoTurn';
+import { turnRunOnTarget } from '../../../shared/autorunTurnSettings';
 import {
 	getActiveTab,
 	markTabRunningQueuedItem,
@@ -70,6 +72,12 @@ export interface SpawnAgentOptions {
 	 * Absent means the agent's stored target, which the spawn handler reads.
 	 */
 	runOnOverride?: RunOnTarget;
+	/**
+	 * What Auto's router answered for this spawn, when its model was `auto`. It
+	 * never reaches the agent: it is kept for the turn's stats row
+	 * (`query_events.routed_tier`).
+	 */
+	autoStamp?: AutoTurnStamp;
 }
 
 /**
@@ -346,6 +354,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										tabId: activeTab?.id,
 										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
 										isWorktree: !!session.parentSessionId,
+										// The same place the spawn below is sent to: the override
+										// when a tier chose one, else the agent's own target, both
+										// as they stood when the task started.
+										...turnModelStatsFields({
+											runOn: turnRunOnTarget({ runOn: options?.runOnOverride }, session.runOn),
+											auto: options?.autoStamp,
+										}),
 										// `taskUsageStats` is already scoped to this task -
 										// it is declared inside the per-task closure and only
 										// accumulates that task's usage events - so it is the

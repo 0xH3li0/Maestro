@@ -88,6 +88,8 @@ export interface AskLocalJudgeOptions {
 	 * System One engine runs on.
 	 */
 	taskId?: LocalModelTaskId;
+	/** The agent the request is for, kept on each generation's run record. */
+	agentId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +146,7 @@ export async function askLocalJudge(
 			maxTokens: turn.maxTokens,
 			jsonSchema: localJudgeReplySchema(turn.question),
 			signal,
+			...(options.agentId ? { agentId: options.agentId } : {}),
 		});
 
 		switch (verdict.status) {

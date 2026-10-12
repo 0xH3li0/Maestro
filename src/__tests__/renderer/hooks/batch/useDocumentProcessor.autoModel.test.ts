@@ -98,6 +98,11 @@ describe('useDocumentProcessor - an agent on the Auto model', () => {
 			modelOverride: 'haiku',
 			effortOverride: 'low',
 			runOnOverride: undefined,
+			// What the router answered, for the task's stats row (`routed_tier`).
+			autoStamp: {
+				status: 'routed',
+				route: { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false },
+			},
 		});
 	});
 
@@ -155,6 +160,11 @@ describe('useDocumentProcessor - an agent on the Auto model', () => {
 			modelOverride: undefined,
 			effortOverride: 'high',
 			runOnOverride: undefined,
+			// Still an Auto turn: the stamp says no router decided, so no tier is recorded.
+			autoStamp: {
+				status: 'router-off',
+				route: { skipped: 'off', detail: 'Model routing is off.' },
+			},
 		});
 	});
 
@@ -198,6 +208,8 @@ describe('useDocumentProcessor - an agent on the Auto model', () => {
 
 		expect(routeTurn).not.toHaveBeenCalled();
 		expect(spawned().modelOverride).toBe('opus');
+		// Not an Auto turn, so there is no stamp and its stats row names no tier.
+		expect(spawned()).not.toHaveProperty('autoStamp');
 	});
 
 	it('a run that picks Auto routes an agent on a named model', async () => {

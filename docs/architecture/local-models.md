@@ -891,9 +891,38 @@ sampleRate })` runs `needs: 'stt'` tasks (`dictation`) through `transcribeSpeech
 (`ok` carries `text` and `audioMs`).
 
 Every call that reaches a model is recorded in the stats database as a `local_model_runs` row (stats
-migration v15: task, source type, model, endpoint id, start, sleep-aware duration, `ok` / `error` /
-`cancelled`, error code, tokens), honoring `statsCollectionEnabled`. A stats write that fails is
-reported to Sentry and never fails the task. `off` and `use-utility-agent` record nothing.
+migration v15, rebuilt in v20: task, source type, model, endpoint id, agent id, start, sleep-aware
+duration, `ok` / `error` / `cancelled`, error code, tokens), honoring `statsCollectionEnabled`. A
+stats write that fails is reported to Sentry and never fails the task. `off` and `use-utility-agent`
+record nothing.
+
+The source type is where the model was, one of `LOCAL_MODEL_RUN_SOURCE_TYPES`:
+
+| `source_type` | The run                                                                                                                    | `endpoint_id`     |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `local`       | A catalog model, in-process                                                                                                | NULL              |
+| `server`      | A catalog model on the Maestro model server                                                                                | NULL              |
+| `endpoint`    | A model on a saved endpoint                                                                                                | The endpoint's id |
+| `system-one`  | A request sent to a remote System One engine (written by the ledger, see [The ledger](#the-ledger-s1_decisions), not here) | The engine's id   |
+
+- **The model server is one source however a run reached it.** `localModelRunSourceType()` files a
+  run as `server` when the task is assigned to the server's own endpoint (`maestro-server`), and
+  when it is assigned to a local model the running server already holds, which `generateText` sends
+  to the server and reports as `servedByModelServer`. A failed or cancelled call to the server is
+  `server` too: a local source fails with an endpoint error only when the server was answering for
+  it, because the in-process engine throws `LocalModelError`. So no server work is counted as
+  in-process, and none is counted twice.
+- **A run names its agent when the caller knows one.** Every task input extends
+  `LocalTaskAttribution` (`agentId`), which is written to `agent_id` and never sent to a model. Model
+  routing passes the agent whose turn is routed, the Cue gate and the Cue injection screen pass the
+  subscription's agent, and the local judge passes the agent of the System One request it answers.
+  A caller that knows no agent leaves it out, and the column is NULL.
+- **v20 rebuilt the table.** SQLite cannot alter a CHECK constraint, and until v20 the CHECK allowed
+  `local` and `endpoint` only. `rebuildLocalModelRuns()` creates the table again beside the old one,
+  copies every row by named column, compares the two row counts, drops the old table, renames the
+  new one into place and puts the indexes back, all inside the migration runner's one transaction.
+  A failure at any step leaves the old table as it was (`migration-v20.test.ts` proves it on real
+  SQLite, with a failure injected after the old table is dropped).
 
 Transports: `localModels:runTask` (IPC, `window.maestro.localModels.runTask`) and
 `maestro-cli models run <task-id> --input <text>` (WS bridge message `local_models_run_task`) both
@@ -1576,6 +1605,16 @@ branch stamped 18 still gets the table).
   never fails the run. Turning the setting off does not delete what was kept.
 - **It is a stats writer.** It honors `statsCollectionEnabled` and writes nothing while the database
   is not open. A read then answers with a `notice` that both surfaces print.
+- **A request sent to a remote engine also leaves a run.** The ledger is an audit trail kept thirty
+  days, and the Usage Dashboard counts what each source did over ranges far longer. So
+  `recordSystemOneDecision()` also writes `systemOneDecisionRun(decision)` to `local_model_runs`,
+  which is never pruned: source type `system-one`, the engine's id in `endpoint_id`, the model the
+  engine named (the engine's id when it gave no answer), the agent, the duration and the tokens. No
+  text, no answers and no cost go with it. The three no-answer outcomes are an `error` there, with
+  the decision's code. Three decisions leave no run: one answered from the cache and one with no
+  engine chosen (nothing was sent), and one a local router decided (the local judge, the embedding
+  router), because that model ran through the task router, which already filed the run under the
+  source the model is on.
 - **Thirty days, no timer.** A read never returns an older record whatever `since` asks for, and old
   rows are deleted at most once a day on the next write or read. The test shim over `node:sqlite` can
   return `changes` as a bigint, which the prune handles. `better-sqlite3` itself was not exercised.
@@ -2051,6 +2090,38 @@ unattended turn, and it is kept in the decision ledger. An answer slower than
 `MODEL_ROUTING_TIMEOUT_MS` is flagged (`withinSendTimeout: false`), because a typed send would
 have gone ahead with no decision. `s1 route` exits 0 on a decision, 6 when the router is off, and 7
 when a router was asked and gave none.
+
+#### The stats row
+
+A turn's `query_events` row says where its model ran and what the router chose (stats migration
+v20). All three columns are NULL for a turn on a named model on the provider.
+
+| Column                            | Holds                                                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `run_on_endpoint`, `run_on_model` | The Run on source the turn launched on: the endpoint's id (`maestro-server` for the model server) and the model. Written together |
+| `routed_tier`                     | The tier the router chose, `low`, `medium` or `high`. NULL with no decision (`router-off`, `no-decision`, a named model)          |
+
+`turnModelStatsFields({ runOn, auto })` in `src/shared/autoTurn.ts` shapes them, and both writers of
+the row call it, so one turn is filed one way:
+
+- **An interactive turn** (`useAgentExitListener`) reads the tab's send-time stamps:
+  `AITab.turnRunOnSource`, the source frozen beside the `turnRunOn` label by `codifiedRunOn()`, and
+  `AITab.turnAuto`. It never reads the live agent record. Settings are codified at send, so a Run on
+  target edited while a turn runs does not refile that turn.
+- **An Auto Run task** (`useAgentExecution`) reads what the spawn was sent with:
+  `turnRunOnTarget({ runOn: options.runOnOverride }, session.runOn)` and `options.autoStamp`, which
+  the document processor passes beside the overrides. The stamp is for the row only. It is not sent
+  to the agent.
+
+`routed_tier` is the router's answer, not always the launch. Under rule 1 a session kept on its
+model records the tier the router chose and the place the session stayed, so the tier split counts
+decisions and the source columns count work. `bindQueryEvent()` writes the source whole or not at
+all, and binds a tier only when it is one of the three levels, because the value arrives from a
+renderer.
+
+Not recorded: `query_events` has one writer, the renderer's `stats:record-query`. A turn the main
+process runs with no tab (a Cue run, a headless `maestro-cli send`) writes no row there on any
+model, so its Run on and Auto launch is not in the table.
 
 ### The embedding router: `getEmbeddingRouter().route(source, text)`
 

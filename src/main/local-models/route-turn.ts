@@ -317,20 +317,24 @@ function attemptRoute(
 	signals: AttemptSignals
 ): Promise<Attempt> {
 	if (kind === 'system-one' || !local) return routeOnSystemOne(input, signals);
+	// The agent rides on the run a local router's model leaves (`local_model_runs`).
+	const agentId = input.agent?.id;
 	return kind === EMBEDDING_ROUTER_ENGINE_ID
-		? routeOnEmbeddings(prompt, local, signals)
-		: routeOnLocalJudge(local, signals);
+		? routeOnEmbeddings(prompt, local, signals, agentId)
+		: routeOnLocalJudge(local, signals, agentId);
 }
 
 /** The embedding router: the prompt's nearest labeled prompts vote. */
 async function routeOnEmbeddings(
 	prompt: string,
 	local: LocalRouter,
-	signals: AttemptSignals
+	signals: AttemptSignals,
+	agentId: string | undefined
 ): Promise<Attempt> {
 	const { engine } = local;
 	const verdict = await runEmbeddingRouteTask(TASK_ID, {
 		text: prompt,
+		...(agentId ? { agentId } : {}),
 		// The router has no budget of its own, so the deadline is its signal too.
 		signal: signals.caller ? AbortSignal.any([signals.caller, signals.deadline]) : signals.deadline,
 	});
@@ -370,11 +374,16 @@ function routeFromVote(vote: ModelRouteVote): ModelRoute {
 }
 
 /** A local judge: the task's own text model answers the two questions. */
-async function routeOnLocalJudge(local: LocalRouter, signals: AttemptSignals): Promise<Attempt> {
+async function routeOnLocalJudge(
+	local: LocalRouter,
+	signals: AttemptSignals,
+	agentId: string | undefined
+): Promise<Attempt> {
 	const { engine, request } = local;
 	try {
 		const result = await askLocalJudge(request.state, request.questions, {
 			taskId: TASK_ID,
+			...(agentId ? { agentId } : {}),
 			// The judge keeps its own budget, so a deadline reads as `timeout` and
 			// only the caller's signal reads as `cancelled`.
 			timeoutMs: signals.timeoutMs,

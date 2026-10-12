@@ -22,9 +22,12 @@ import {
 	isSystemOneLedgerTaskId,
 	parseSystemOneLedgerQuery,
 	summarizeSystemOneDecision,
+	systemOneDecisionRun,
 	systemOneLedgerEngineLabel,
 	systemOneLedgerTaskLabel,
+	type SystemOneDecision,
 } from '../../../shared/local-models/system-one-ledger';
+import { LOCAL_MODEL_RUN_SOURCE_TYPES } from '../../../shared/stats-types';
 
 // Built at run time so no secret-shaped literal sits in the source.
 const SECRET = `sk-ant-api03-${'A1b2C3d4'.repeat(6)}`;
@@ -251,5 +254,108 @@ describe('a kept input and the three question types', () => {
 		expect(JSON.parse(formatSystemOneLedgerInput({ state: 'text', questions })).questions).toEqual(
 			questions
 		);
+	});
+});
+
+describe('systemOneDecisionRun: the usage record a decision leaves', () => {
+	const answered: SystemOneDecision = {
+		taskId: 'cue-gate',
+		engine: 'jev-cloud',
+		model: 'jev-1.13.0',
+		questionIds: ['proceed'],
+		answers: { proceed: { type: 'noul', probability: 0.93 } },
+		outcome: 'ok',
+		startedAt: 1_790_000_000_000,
+		latencyMs: 241.6,
+		usage: { inputTokens: 412, outputTokens: 3 },
+		costUsd: 0.0000173,
+		agentId: 'agent-1',
+		tabId: 'tab-2',
+		input: '{"state":"the diff"}',
+	};
+	const unanswered: SystemOneDecision = {
+		taskId: 'model-routing',
+		engine: 'openjev',
+		questionIds: ['tier', 'effort'],
+		outcome: 'failed-open',
+		code: 'timeout',
+		startedAt: 1_790_000_000_500,
+		latencyMs: 400,
+	};
+
+	it('files a request a remote engine answered under the system-one source', () => {
+		expect(LOCAL_MODEL_RUN_SOURCE_TYPES).toContain('system-one');
+		expect(systemOneDecisionRun(answered)).toEqual({
+			taskId: 'cue-gate',
+			sourceType: 'system-one',
+			modelId: 'jev-1.13.0',
+			// The engine's id goes where an endpoint's id goes.
+			endpointId: 'jev-cloud',
+			agentId: 'agent-1',
+			startedAt: 1_790_000_000_000,
+			durationMs: 241.6,
+			outcome: 'ok',
+			tokensIn: 412,
+			tokensOut: 3,
+		});
+	});
+
+	it("carries no text, no answers and no cost: those are the ledger's", () => {
+		const run = systemOneDecisionRun(answered);
+
+		expect(JSON.stringify(run)).not.toContain('the diff');
+		expect(JSON.stringify(run)).not.toContain('proceed');
+		expect(run).not.toHaveProperty('costUsd');
+		expect(run).not.toHaveProperty('tabId');
+	});
+
+	it('names the engine as the model when no answer named one', () => {
+		expect(systemOneDecisionRun(unanswered)).toEqual({
+			taskId: 'model-routing',
+			sourceType: 'system-one',
+			modelId: 'openjev',
+			endpointId: 'openjev',
+			startedAt: 1_790_000_000_500,
+			durationMs: 400,
+			outcome: 'error',
+			errorCode: 'timeout',
+		});
+	});
+
+	it('reads the three no-answer outcomes as an error, and keeps the other two', () => {
+		const outcomeOf = (outcome: SystemOneDecision['outcome']) =>
+			systemOneDecisionRun({ ...unanswered, outcome })?.outcome;
+
+		expect(outcomeOf('failed-open')).toBe('error');
+		expect(outcomeOf('failed-closed')).toBe('error');
+		expect(outcomeOf('unavailable')).toBe('error');
+		expect(outcomeOf('cancelled')).toBe('cancelled');
+		expect(systemOneDecisionRun(answered)?.outcome).toBe('ok');
+		// Every decision outcome maps; none is left to fall through as itself.
+		for (const outcome of SYSTEM_ONE_DECISION_OUTCOMES) {
+			expect(['ok', 'error', 'cancelled']).toContain(outcomeOf(outcome));
+		}
+	});
+
+	it('gives an answered run no error code, whatever the record carries', () => {
+		expect(systemOneDecisionRun({ ...answered, code: 'timeout' })).not.toHaveProperty('errorCode');
+	});
+
+	it("files an agent's own request under its verb", () => {
+		expect(systemOneDecisionRun({ ...answered, taskId: 'agent:rank' })?.taskId).toBe('agent:rank');
+	});
+
+	it('leaves the agent out when the caller knew none', () => {
+		expect(systemOneDecisionRun(unanswered)).not.toHaveProperty('agentId');
+	});
+
+	it('is not a run when a local router decided: the task router filed that model run', () => {
+		expect(systemOneDecisionRun({ ...answered, engine: 'local-judge' })).toBeNull();
+		expect(systemOneDecisionRun({ ...answered, engine: 'embedding-router' })).toBeNull();
+	});
+
+	it('is not a run when nothing was sent', () => {
+		expect(systemOneDecisionRun({ ...unanswered, engine: 'off', code: 'off' })).toBeNull();
+		expect(systemOneDecisionRun({ ...answered, cached: true })).toBeNull();
 	});
 });

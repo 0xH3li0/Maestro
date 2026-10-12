@@ -4,7 +4,8 @@
  *
  * The stats singleton is replaced by the real `s1_decisions` functions over a
  * real in-memory SQLite, so the retention window, the prune and the filters
- * are checked against the schema, not a recorder.
+ * are checked against the schema, not a recorder. The run a decision leaves in
+ * `local_model_runs` is written by the real function into the same database.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -31,9 +32,12 @@ vi.mock('../../../../main/stores/getters', () => ({
 }));
 vi.mock('../../../../main/stats/singleton', async () => {
 	const decisions = await import('../../../../main/stats/s1-decisions');
+	const runs = await import('../../../../main/stats/local-model-runs');
 	return {
 		getStatsDB: () => ({
 			isReady: () => state.ready,
+			recordLocalModelRun: (run: never) =>
+				runs.recordLocalModelRun(state.db as Database.Database, run),
 			recordSystemOneDecision: (decision: never) =>
 				decisions.insertSystemOneDecision(state.db as Database.Database, decision),
 			getSystemOneDecisions: (read: never) =>
@@ -58,6 +62,7 @@ import {
 	resetSystemOneLedgerForTests,
 	systemOneLedgerNotice,
 } from '../../../../main/local-models/system-one/decisions';
+import { clearLocalModelRunsCache } from '../../../../main/stats/local-model-runs';
 import { runMigrations } from '../../../../main/stats/migrations';
 import { clearSystemOneDecisionsCache } from '../../../../main/stats/s1-decisions';
 import { captureException } from '../../../../main/utils/sentry';
@@ -94,9 +99,19 @@ function rowCount(): number {
 	return Number(row.n);
 }
 
+/** Every run in `local_model_runs`, oldest first, without its generated id. */
+function runs(): Array<Record<string, unknown>> {
+	return (
+		(state.db as Database.Database)
+			.prepare('SELECT * FROM local_model_runs ORDER BY started_at')
+			.all() as Array<Record<string, unknown>>
+	).map(({ id: _id, ...row }) => ({ ...row }));
+}
+
 describe.skipIf(!canLoadNodeSqlite())('the System One decision ledger', () => {
 	beforeEach(() => {
 		clearSystemOneDecisionsCache();
+		clearLocalModelRunsCache();
 		resetSystemOneLedgerForTests();
 		const Shim = nodeSqliteBetterSqlite3Mock().default;
 		const db = new Shim(':memory:') as unknown as Database.Database;
@@ -153,6 +168,120 @@ describe.skipIf(!canLoadNodeSqlite())('the System One decision ledger', () => {
 
 			expect(entries[0].input).toBe('{"state":"kept"}');
 			expect(entries[1]).not.toHaveProperty('input');
+		});
+	});
+
+	describe('the run a decision leaves in local_model_runs', () => {
+		it('files a request Jev answered as a system-one run, with its agent and no text', () => {
+			recordSystemOneDecision(
+				decision({ agentId: 'agent-1', startedAt: 1_790_000_000_000, input: '{"state":"kept"}' })
+			);
+
+			expect(runs()).toEqual([
+				{
+					task_id: 'cue-gate',
+					source_type: 'system-one',
+					model_id: 'jev-1.13.0',
+					endpoint_id: 'jev-cloud',
+					started_at: 1_790_000_000_000,
+					duration_ms: 240,
+					outcome: 'ok',
+					error_code: null,
+					tokens_in: 412,
+					tokens_out: 3,
+					agent_id: 'agent-1',
+				},
+			]);
+			// The questions, the answers and a kept input stay in the ledger.
+			expect(JSON.stringify(runs())).not.toContain('kept');
+			expect(JSON.stringify(runs())).not.toContain('proceed');
+		});
+
+		it('files a request with no answer as an error with the decision code, under the engine', () => {
+			recordSystemOneDecision({
+				taskId: 'model-routing',
+				engine: 'openjev',
+				questionIds: ['tier', 'effort'],
+				outcome: 'failed-open',
+				code: 'timeout',
+				startedAt: 1_790_000_000_000,
+				latencyMs: 400,
+			});
+
+			expect(runs()).toEqual([
+				expect.objectContaining({
+					task_id: 'model-routing',
+					source_type: 'system-one',
+					// No answer named a model, so the engine stands where one would.
+					model_id: 'openjev',
+					endpoint_id: 'openjev',
+					outcome: 'error',
+					error_code: 'timeout',
+					tokens_in: null,
+					tokens_out: null,
+					agent_id: null,
+				}),
+			]);
+		});
+
+		it('files a cancelled request as cancelled, and an agent request under its verb', () => {
+			recordSystemOneDecision(
+				decision({
+					taskId: 'agent:rank',
+					outcome: 'cancelled',
+					code: 'cancelled',
+					model: undefined,
+					answers: undefined,
+					usage: undefined,
+					costUsd: undefined,
+				})
+			);
+
+			expect(runs()).toEqual([
+				expect.objectContaining({
+					task_id: 'agent:rank',
+					source_type: 'system-one',
+					outcome: 'cancelled',
+					error_code: 'cancelled',
+				}),
+			]);
+		});
+
+		it('files none for a decision a local router made: its model ran through the task router', () => {
+			recordSystemOneDecision(decision({ engine: 'local-judge', model: 'local:qwen3.5-4b' }));
+			recordSystemOneDecision(decision({ engine: 'embedding-router', model: 'bge-small-en-v1.5' }));
+
+			expect(rowCount()).toBe(2);
+			expect(runs()).toEqual([]);
+		});
+
+		it('files none when nothing was sent: no engine chosen, or an answer from the cache', () => {
+			recordSystemOneDecision(
+				decision({ engine: 'off', outcome: 'failed-closed', code: 'off', model: undefined })
+			);
+			recordSystemOneDecision(decision({ cached: true, costUsd: 0 }));
+
+			expect(rowCount()).toBe(2);
+			expect(runs()).toEqual([]);
+		});
+
+		it('files none while usage statistics are off', () => {
+			state.statsEnabled = false;
+
+			recordSystemOneDecision(decision());
+
+			expect(runs()).toEqual([]);
+		});
+
+		it('outlives the ledger: a pruned decision keeps its run', () => {
+			const now = Date.now();
+			recordSystemOneDecision(decision({ startedAt: now - 31 * DAY_MS }));
+			resetSystemOneLedgerForTests();
+			recordSystemOneDecision(decision({ startedAt: now }));
+
+			// The old decision is past the thirty days and gone; both runs are kept.
+			expect(rowCount()).toBe(1);
+			expect(runs()).toHaveLength(2);
 		});
 	});
 

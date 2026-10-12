@@ -543,6 +543,8 @@ describe('generateText', () => {
 			});
 			expect(result.durationMs).toBeGreaterThanOrEqual(0);
 			expect(result).not.toHaveProperty('json');
+			// The in-process engine answered, and the result does not claim the server did.
+			expect(result).not.toHaveProperty('servedByModelServer');
 			// Deterministic by default.
 			expect(llama.promptCalls[0].options).toMatchObject({ temperature: 0, maxTokens: 16 });
 		});
@@ -629,7 +631,10 @@ describe('generateText', () => {
 
 			expect(result).toMatchObject({
 				text: 'Auth refactor',
+				// The source stays the one that was asked for...
 				source: { type: 'local', modelId: 'm1' },
+				// ...and the result says where the work ran, for the caller that records it.
+				servedByModelServer: true,
 				tokensIn: 21,
 				tokensOut: 3,
 			});
@@ -676,6 +681,7 @@ describe('generateText', () => {
 			});
 
 			expect(result.text).toBe('local reply');
+			expect(result).not.toHaveProperty('servedByModelServer');
 			expect(server.loadedModelServerTarget).toHaveBeenCalledWith('m2');
 			expect(fetchMock).not.toHaveBeenCalled();
 		});
@@ -737,6 +743,8 @@ describe('generateText', () => {
 				tokensIn: 30,
 				tokensOut: 5,
 			});
+			// Set only for a LOCAL source the server answered: an endpoint names its own place.
+			expect(result).not.toHaveProperty('servedByModelServer');
 
 			const [url, init] = fetchMock.mock.calls[0];
 			expect(url).toBe('http://127.0.0.1:1234/v1/chat/completions');

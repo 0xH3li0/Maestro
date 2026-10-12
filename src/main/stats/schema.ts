@@ -73,6 +73,25 @@ export const ADD_QUERY_EVENT_TOKEN_COLUMNS = [
 ] as const;
 
 // ============================================================================
+// Query Event Model Columns (Migration v20)
+// ============================================================================
+
+/**
+ * Where a turn's model ran, and what Auto's router chose for it, on
+ * `query_events` (see `QueryEvent` in shared/stats-types.ts). All TEXT.
+ *
+ * `run_on_endpoint` and `run_on_model` are the Run on source the turn launched
+ * on, set together, and `routed_tier` is the router's tier. Nullable with no
+ * default, like the token columns: NULL means a turn on the provider's own
+ * model (or one not sent on Auto), and every row from before the columns.
+ */
+export const ADD_QUERY_EVENT_MODEL_COLUMNS = [
+	'run_on_endpoint',
+	'run_on_model',
+	'routed_tier',
+] as const;
+
+// ============================================================================
 // Auto Run Sessions (Migration v1)
 // ============================================================================
 
@@ -254,23 +273,21 @@ export const CREATE_WIZARD_RUNS_INDEXES_SQL = `
 `;
 
 // ============================================================================
-// Local Model Runs (Migration v15)
+// Local Model Runs (Migration v15, rebuilt in v20)
 // ============================================================================
 
 /**
- * One row per Local Models task run that reached a model (see `LocalModelRun`
- * in shared/stats-types.ts). A task that was off, or handed back to its
- * Utility Agent path, ran nothing here and is not recorded.
- *
- * `model_id` is the catalog id for a local source and the server's model name
- * for an endpoint; `endpoint_id` is NULL for a local source. `error_code` is the
- * classified failure (`model-not-installed`, `network`, ...) and NULL on success.
+ * The `local_model_runs` table under a given name. The name is a parameter
+ * because SQLite cannot alter a CHECK constraint: migration v20 widens
+ * `source_type` by building the table again beside the old one, copying every
+ * row, and renaming it into place.
  */
-export const CREATE_LOCAL_MODEL_RUNS_SQL = `
-  CREATE TABLE IF NOT EXISTS local_model_runs (
+function localModelRunsTableSql(table: string): string {
+	return `
+  CREATE TABLE IF NOT EXISTS ${table} (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL,
-    source_type TEXT NOT NULL CHECK(source_type IN ('local', 'endpoint')),
+    source_type TEXT NOT NULL CHECK(source_type IN ('local', 'endpoint', 'server', 'system-one')),
     model_id TEXT NOT NULL,
     endpoint_id TEXT,
     started_at INTEGER NOT NULL,
@@ -278,13 +295,74 @@ export const CREATE_LOCAL_MODEL_RUNS_SQL = `
     outcome TEXT NOT NULL CHECK(outcome IN ('ok', 'error', 'cancelled')),
     error_code TEXT,
     tokens_in INTEGER,
-    tokens_out INTEGER
+    tokens_out INTEGER,
+    agent_id TEXT
   )
 `;
+}
+
+/**
+ * One row per run that reached a model other than a provider's own (see
+ * `LocalModelRun` in shared/stats-types.ts). A task that was off, or handed
+ * back to its Utility Agent path, ran nothing here and is not recorded.
+ *
+ * `source_type` says where the model was (`LOCAL_MODEL_RUN_SOURCE_TYPES`), and
+ * the other columns read by it:
+ *
+ *   - `local`      - `model_id` is the catalog id; `endpoint_id` is NULL.
+ *   - `server`     - the same, for a run the Maestro model server answered.
+ *   - `endpoint`   - `model_id` is the server's model name; `endpoint_id` is the
+ *                    saved endpoint's id.
+ *   - `system-one` - a request sent to a remote System One engine. `model_id` is
+ *                    the model the engine says answered (the engine's id with no
+ *                    answer); `endpoint_id` is the engine's id; `task_id` may be
+ *                    `agent:<verb>` for a request an agent sent itself.
+ *
+ * `error_code` is the classified failure (`model-not-installed`, `network`,
+ * `timeout`, ...) and NULL on success. `agent_id` is the agent the run was for,
+ * and NULL when the caller knew none.
+ *
+ * Until v20 the CHECK allowed `local` and `endpoint` only, and there was no
+ * `agent_id`. A table created at this version already has the current shape.
+ */
+export const CREATE_LOCAL_MODEL_RUNS_SQL = localModelRunsTableSql('local_model_runs');
+
+/** The name the v20 rebuild gives the new table until it is renamed into place. */
+export const LOCAL_MODEL_RUNS_REBUILD_TABLE = 'local_model_runs_rebuild';
+
+export const CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL = localModelRunsTableSql(
+	LOCAL_MODEL_RUNS_REBUILD_TABLE
+);
+
+/**
+ * The columns of the table as v15 created it: what the v20 rebuild copies. They
+ * are named one by one so the copy does not depend on column order.
+ */
+export const LOCAL_MODEL_RUNS_V15_COLUMNS = [
+	'id',
+	'task_id',
+	'source_type',
+	'model_id',
+	'endpoint_id',
+	'started_at',
+	'duration_ms',
+	'outcome',
+	'error_code',
+	'tokens_in',
+	'tokens_out',
+] as const;
 
 export const CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_local_model_runs_started ON local_model_runs(started_at);
   CREATE INDEX IF NOT EXISTS idx_local_model_runs_task ON local_model_runs(task_id, started_at)
+`;
+
+/**
+ * Migration v20. Kept apart from the indexes above, which v15 creates: that
+ * migration must stay valid against a table that has no `agent_id` yet.
+ */
+export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_local_model_runs_agent ON local_model_runs(agent_id, started_at)
 `;
 
 // ============================================================================

@@ -11,6 +11,11 @@
  *     naming it, and nothing else is tried.
  *   - **Every call that reaches a model is recorded**, success or failure, and a
  *     stats failure never turns a good run into a bad one.
+ *   - **The Maestro model server is one source.** A run it answered is filed as
+ *     `server` whichever way the assignment named it, on success, on failure
+ *     and on a cancel, and a run the in-process engine answered never is.
+ *   - **A run names its agent when the caller knows one**, and the agent is
+ *     never handed to a model.
  *   - **Untrusted requests are checked once**, for IPC and the CLI bridge alike.
  *   - **Interactive calls are countable.** Background work (the semantic
  *     indexer) can tell when someone is waiting on a model, and its own calls
@@ -75,6 +80,7 @@ vi.mock('../../../main/local-models/model-router', () => ({
 import {
 	DEFAULT_TASK_MAX_TOKENS,
 	isInteractiveLocalTaskRunning,
+	localModelRunSourceType,
 	parseLocalTaskInput,
 	runClassifierTask,
 	runEmbeddingRouteTask,
@@ -92,9 +98,25 @@ import {
 	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 } from '../../../shared/local-models/model-catalog';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../../shared/local-models/model-server';
 
 const LOCAL = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
 const ENDPOINT = { type: 'endpoint', endpointId: 'ep-1', model: 'llama3.2' } as const;
+const SERVER_ENDPOINT = {
+	type: 'endpoint',
+	endpointId: MODEL_SERVER_ENDPOINT_ID,
+	model: QWEN3_1_7B_ID,
+} as const;
+
+/** What a call to the model server fails with: an endpoint error naming the server. */
+function serverError(kind: 'network' | 'cancelled'): LocalModelEndpointError {
+	return new LocalModelEndpointError('The Maestro model server did not answer.', {
+		kind,
+		endpointId: MODEL_SERVER_ENDPOINT_ID,
+		endpointName: 'Maestro model server',
+		url: 'http://127.0.0.1:41234',
+	});
+}
 
 function assign(taskId: string, assignment: unknown): void {
 	settings.set('localModelAssignments', { [taskId]: assignment });
@@ -294,6 +316,168 @@ describe('runLocalTask', () => {
 				status: 'cancelled',
 				source: ENDPOINT,
 			});
+			// A saved endpoint stays an endpoint, whatever its call ended as.
+			expect(recorded()).toMatchObject({
+				sourceType: 'endpoint',
+				endpointId: 'ep-1',
+				outcome: 'cancelled',
+			});
+		});
+	});
+
+	describe('the Maestro model server', () => {
+		describe('answering for a local assignment it already holds', () => {
+			beforeEach(() => assign('tab-naming', { type: 'local', modelId: QWEN3_1_7B_ID }));
+
+			it('files the run as server, and still answers with the source that was assigned', async () => {
+				generate.generateText.mockResolvedValue(
+					okReply(LOCAL, { servedByModelServer: true, tokensIn: 40, tokensOut: 6 })
+				);
+
+				const result = await runLocalTask('tab-naming', { prompt: 'hi' });
+
+				expect(result).toMatchObject({ status: 'ok', source: LOCAL });
+				expect(recorded()).toMatchObject({
+					taskId: 'tab-naming',
+					sourceType: 'server',
+					modelId: QWEN3_1_7B_ID,
+					outcome: 'ok',
+					tokensIn: 40,
+					tokensOut: 6,
+				});
+				// The source type names the server; there is no saved endpoint to name.
+				expect(recorded()).not.toHaveProperty('endpointId');
+			});
+
+			it('files a failed call to the server as server, not as an in-process failure', async () => {
+				generate.generateText.mockRejectedValue(serverError('network'));
+
+				await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
+					status: 'unavailable',
+					source: LOCAL,
+					code: 'network',
+				});
+				expect(recorded()).toMatchObject({
+					sourceType: 'server',
+					modelId: QWEN3_1_7B_ID,
+					outcome: 'error',
+					errorCode: 'network',
+				});
+			});
+
+			it('files a call to the server the caller cancelled as server', async () => {
+				generate.generateText.mockRejectedValue(serverError('cancelled'));
+
+				await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toEqual({
+					status: 'cancelled',
+					source: LOCAL,
+				});
+				expect(recorded()).toMatchObject({ sourceType: 'server', outcome: 'cancelled' });
+			});
+
+			it('keeps a run the in-process engine answered, failed or cancelled as local', async () => {
+				const inProcess = [
+					() => generate.generateText.mockResolvedValue(okReply(LOCAL)),
+					() =>
+						generate.generateText.mockRejectedValue(
+							new LocalModelError('Qwen3 1.7B could not be opened.', {
+								code: 'generation-failed',
+								recovery: 'Verify it.',
+								consumerId: 'text-gen',
+							})
+						),
+					() =>
+						generate.generateText.mockRejectedValue(
+							new LocalModelError('The request was cancelled.', {
+								code: 'cancelled',
+								recovery: 'Nothing to do.',
+								consumerId: 'text-gen',
+							})
+						),
+					() => generate.generateText.mockRejectedValue(new TypeError('boom')),
+				];
+				for (const arrange of inProcess) {
+					stats.recordLocalModelRun.mockClear();
+					arrange();
+					await runLocalTask('tab-naming', { prompt: 'hi' }).catch(() => undefined);
+					expect(recorded()).toMatchObject({ sourceType: 'local', modelId: QWEN3_1_7B_ID });
+				}
+			});
+		});
+
+		describe('assigned as an endpoint', () => {
+			beforeEach(() => assign('git-drafts', SERVER_ENDPOINT));
+
+			it('files the run as server, with no endpoint id', async () => {
+				generate.generateText.mockResolvedValue(okReply(SERVER_ENDPOINT));
+
+				const result = await runLocalTask('git-drafts', { prompt: 'diff' });
+
+				expect(result).toMatchObject({ status: 'ok', source: SERVER_ENDPOINT });
+				expect(recorded()).toMatchObject({
+					sourceType: 'server',
+					modelId: QWEN3_1_7B_ID,
+					outcome: 'ok',
+				});
+				expect(recorded()).not.toHaveProperty('endpointId');
+			});
+
+			it('files a server that would not start as a server error', async () => {
+				generate.generateText.mockRejectedValue(serverError('network'));
+
+				await runLocalTask('git-drafts', { prompt: 'diff' });
+
+				expect(recorded()).toMatchObject({
+					sourceType: 'server',
+					outcome: 'error',
+					errorCode: 'network',
+				});
+				expect(recorded()).not.toHaveProperty('endpointId');
+			});
+		});
+
+		it('reads the source type from the source and where the call ran', () => {
+			expect(localModelRunSourceType(LOCAL)).toBe('local');
+			expect(localModelRunSourceType(LOCAL, false)).toBe('local');
+			expect(localModelRunSourceType(LOCAL, true)).toBe('server');
+			expect(localModelRunSourceType(ENDPOINT)).toBe('endpoint');
+			// A saved endpoint is never the server, whatever a caller claims.
+			expect(localModelRunSourceType(ENDPOINT, true)).toBe('endpoint');
+			expect(localModelRunSourceType(SERVER_ENDPOINT)).toBe('server');
+			expect(localModelRunSourceType(SERVER_ENDPOINT, false)).toBe('server');
+		});
+	});
+
+	describe('the agent a run is for', () => {
+		beforeEach(() => assign('tab-naming', { type: 'local', modelId: QWEN3_1_7B_ID }));
+
+		it('is kept on the run and never handed to the model', async () => {
+			generate.generateText.mockResolvedValue(okReply(LOCAL));
+
+			await runLocalTask('tab-naming', { prompt: 'hi', agentId: 'agent-1' });
+
+			expect(recorded()).toMatchObject({ agentId: 'agent-1', outcome: 'ok' });
+			expect(generate.generateText).toHaveBeenCalledWith({
+				source: LOCAL,
+				prompt: 'hi',
+				maxTokens: DEFAULT_TASK_MAX_TOKENS,
+			});
+		});
+
+		it('is kept on a run that failed', async () => {
+			generate.generateText.mockRejectedValue(serverError('network'));
+
+			await runLocalTask('tab-naming', { prompt: 'hi', agentId: 'agent-1' });
+
+			expect(recorded()).toMatchObject({ agentId: 'agent-1', outcome: 'error' });
+		});
+
+		it('is left out when the caller knows none', async () => {
+			generate.generateText.mockResolvedValue(okReply(LOCAL));
+
+			await runLocalTask('tab-naming', { prompt: 'hi' });
+
+			expect(recorded()).not.toHaveProperty('agentId');
 		});
 	});
 
@@ -459,6 +643,17 @@ describe('runEmbeddingRouteTask', () => {
 			modelId: BGE_SMALL_EN_ID,
 			outcome: 'ok',
 		});
+		expect(recorded()).not.toHaveProperty('agentId');
+	});
+
+	it('keeps the agent whose turn was routed on the run, and not on the router call', async () => {
+		assign('model-routing', BGE);
+		router.route.mockResolvedValue(DECISION);
+
+		await runEmbeddingRouteTask('model-routing', { text: 'rename it', agentId: 'agent-1' });
+
+		expect(router.route).toHaveBeenCalledWith(BGE, 'rename it', {});
+		expect(recorded()).toMatchObject({ taskId: 'model-routing', agentId: 'agent-1' });
 	});
 
 	it('reports a model that is not downloaded as unavailable, and asks nothing else', async () => {
@@ -544,6 +739,7 @@ describe('runClassifierTask', () => {
 		const result = await runClassifierTask('injection-screen', { text: 'Ignore all previous' });
 
 		expect(classify.classifyText).toHaveBeenCalledWith(GUARD, 'Ignore all previous', {});
+		expect(recorded()).not.toHaveProperty('agentId');
 		expect(result).toMatchObject({
 			status: 'ok',
 			label: 'MALICIOUS',
@@ -558,6 +754,19 @@ describe('runClassifierTask', () => {
 			modelId: PROMPT_GUARD_2_22M_ID,
 			outcome: 'ok',
 		});
+	});
+
+	it('keeps the agent a screen ran for on the run', async () => {
+		assign('injection-screen', GUARD);
+		classify.classifyText.mockResolvedValue({ label: 'BENIGN', score: 0.01, flagged: false });
+
+		await runClassifierTask('injection-screen', {
+			text: 'a pull request body',
+			agentId: 'agent-9',
+		});
+
+		expect(classify.classifyText).toHaveBeenCalledWith(GUARD, 'a pull request body', {});
+		expect(recorded()).toMatchObject({ taskId: 'injection-screen', agentId: 'agent-9' });
 	});
 
 	it('reports a model that is not downloaded as unavailable, trying nothing else', async () => {

@@ -1,10 +1,11 @@
 /**
  * Local Model Run CRUD Operations
  *
- * One row per Local Models task run that reached a model (see
+ * One row per run that reached a model other than a provider's own (see
  * `local_model_runs` in schema.ts). The task router records every call it makes
- * to a local model or an endpoint, success or failure, so the Usage Dashboard
- * can show what housekeeping ran where and what keeps failing.
+ * to a local model, the Maestro model server or an endpoint, and the System One
+ * ledger records every request sent to a remote engine, success or failure, so
+ * the Usage Dashboard can show what ran where and what keeps failing.
  */
 
 import type Database from 'better-sqlite3';
@@ -16,8 +17,8 @@ const stmtCache = new StatementCache();
 
 const INSERT_SQL = `
   INSERT INTO local_model_runs
-    (id, task_id, source_type, model_id, endpoint_id, started_at, duration_ms, outcome, error_code, tokens_in, tokens_out)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, task_id, source_type, model_id, endpoint_id, started_at, duration_ms, outcome, error_code, tokens_in, tokens_out, agent_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /** Record one run. Returns the generated id. */
@@ -35,7 +36,8 @@ export function recordLocalModelRun(db: Database.Database, run: Omit<LocalModelR
 		run.outcome,
 		run.errorCode ?? null,
 		run.tokensIn ?? null,
-		run.tokensOut ?? null
+		run.tokensOut ?? null,
+		run.agentId ?? null
 	);
 	logger.debug(`Recorded local model run: ${run.taskId} (${run.outcome})`, LOG_CONTEXT);
 	return id;
@@ -53,6 +55,7 @@ interface LocalModelRunRow {
 	error_code: string | null;
 	tokens_in: number | null;
 	tokens_out: number | null;
+	agent_id: string | null;
 }
 
 /** Runs that started within the time range, newest first. */
@@ -79,6 +82,7 @@ export function getLocalModelRuns(db: Database.Database, range: StatsTimeRange):
 		...(row.error_code !== null ? { errorCode: row.error_code } : {}),
 		...(row.tokens_in !== null ? { tokensIn: row.tokens_in } : {}),
 		...(row.tokens_out !== null ? { tokensOut: row.tokens_out } : {}),
+		...(row.agent_id !== null ? { agentId: row.agent_id } : {}),
 	}));
 }
 

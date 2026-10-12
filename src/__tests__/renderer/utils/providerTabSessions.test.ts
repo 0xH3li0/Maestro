@@ -16,6 +16,7 @@ import {
 	captureQueuedTurnSettings,
 	codifyQueuedTurnSettings,
 	turnRunOnLabel,
+	turnRunOnSource,
 	tabSessionLaunch,
 	settleAutoTurnOnTab,
 	autoTurnLaunch,
@@ -359,6 +360,61 @@ describe('turnRunOn: where a Run on turn ran', () => {
 			codifyQueuedTurnSettings(item, makeTab(), makeSession('claude-code')).turnRunOn
 		).toBeUndefined();
 	});
+
+	describe('turnRunOnSource: the source behind the label, for the stats row', () => {
+		it('is the target itself for an agent on a source, and nothing on its provider', () => {
+			expect(turnRunOnSource({ runOn: QWEN })).toEqual(QWEN);
+			expect(turnRunOnSource({})).toBeUndefined();
+			expect(turnRunOnSource({ runOn: { type: 'provider' } })).toBeUndefined();
+		});
+
+		it('is nothing for a stored target that cannot be read: no turn runs on it', () => {
+			expect(
+				turnRunOnSource({ runOn: { type: 'source', endpointId: OLLAMA.id } as never })
+			).toBeUndefined();
+		});
+
+		it('is frozen at send beside the label, so the two can never name different places', () => {
+			const session = makeSession('claude-code', { customModel: 'opus', runOn: QWEN });
+
+			const codified = codifyTurnSettings(makeTab(), session);
+
+			expect(codified.turnRunOnSource).toEqual(QWEN);
+			expect(codified.turnRunOn).toBe('qwen3:latest');
+		});
+
+		it('is cleared by a turn on the provider, so the turn before it does not leak through', () => {
+			// A tab patch spreads these fields over the tab: a key that is absent
+			// would leave the last turn's source in place.
+			const ranOnSource = { ...makeTab(), turnRunOn: 'qwen3:latest', turnRunOnSource: QWEN };
+
+			const next = {
+				...ranOnSource,
+				...codifyTurnSettings(ranOnSource, makeSession('claude-code')),
+			};
+
+			expect(next.turnRunOnSource).toBeUndefined();
+			expect(next.turnRunOn).toBeUndefined();
+		});
+
+		it('is read when a queued item takes the tab, like the label', () => {
+			const item = { turnSettings: { model: 'haiku', effort: 'low' } };
+
+			expect(
+				codifyQueuedTurnSettings(item, makeTab(), makeSession('claude-code', { runOn: QWEN }))
+					.turnRunOnSource
+			).toEqual(QWEN);
+			expect(
+				codifyQueuedTurnSettings(item, makeTab(), makeSession('claude-code')).turnRunOnSource
+			).toBeUndefined();
+		});
+
+		it("is the agent's own source for a turn on Auto that chose no place", () => {
+			const session = makeSession('claude-code', { customModel: 'auto', runOn: QWEN });
+
+			expect(codifyTurnSettings(makeTab(), session).turnRunOnSource).toEqual(QWEN);
+		});
+	});
 });
 
 describe('a turn sent on the Auto model', () => {
@@ -457,6 +513,7 @@ describe('a turn sent on the Auto model', () => {
 				expect(codifyTurnSettings(tab, AUTO)).toMatchObject({
 					turnModel: 'qwen3:latest',
 					turnRunOn: 'qwen3:latest · Ollama',
+					turnRunOnSource: QWEN,
 					turnAuto: {
 						status: 'pending',
 						hold: { model: 'qwen3:latest', runOn: QWEN },
@@ -550,6 +607,8 @@ describe('a turn sent on the Auto model', () => {
 				expect(settled).toMatchObject({
 					turnModel: 'qwen3:latest',
 					turnRunOn: 'qwen3:latest · Ollama',
+					// The place the router's tier chose, which the stats row names.
+					turnRunOnSource: QWEN,
 					turnAuto: { status: 'routed', runOn: QWEN },
 				});
 				expect(autoTurnLaunch(settled)).toEqual({

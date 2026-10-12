@@ -43,6 +43,11 @@ import {
 	CREATE_S1_DECISIONS_INDEXES_SQL,
 	ADD_S1_DECISION_TAB_ID_COLUMN_SQL,
 	ADD_S1_DECISION_CACHED_COLUMN_SQL,
+	ADD_QUERY_EVENT_MODEL_COLUMNS,
+	CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL,
+	CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL,
+	LOCAL_MODEL_RUNS_REBUILD_TABLE,
+	LOCAL_MODEL_RUNS_V15_COLUMNS,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -178,6 +183,15 @@ function getMigrations(): Migration[] {
 			up: (db) => migrateV19(db),
 			isApplied: (db) =>
 				hasColumn(db, 's1_decisions', 'tab_id') && hasColumn(db, 's1_decisions', 'cached'),
+		},
+		{
+			version: 20,
+			description:
+				'Widen local_model_runs.source_type, add its agent_id, and add Run on and routed tier columns to query_events',
+			up: (db) => migrateV20(db),
+			isApplied: (db) =>
+				localModelRunsIsCurrent(db) &&
+				ADD_QUERY_EVENT_MODEL_COLUMNS.every((column) => hasColumn(db, 'query_events', column)),
 		},
 	];
 }
@@ -515,6 +529,101 @@ function migrateV19(db: Database.Database): void {
 		db.prepare(ADD_S1_DECISION_CACHED_COLUMN_SQL).run();
 	}
 	logger.debug('Added tab_id and cached columns to s1_decisions', LOG_CONTEXT);
+}
+
+/**
+ * Migration v20: what the Usage Dashboard's Models tab needs and nothing
+ * recorded.
+ *
+ *   - `local_model_runs.source_type` gains `server` (a run the Maestro model
+ *     server answered) and `system-one` (a request sent to a remote System One
+ *     engine), and the table gains a nullable `agent_id`.
+ *   - `query_events` gains `run_on_endpoint`, `run_on_model` and `routed_tier`:
+ *     where an agent turn's model ran, and the tier Auto's router chose.
+ *
+ * Every step is guarded, so the body is safe to repeat, and it declares
+ * `isApplied` for the same reason v15 does.
+ */
+function migrateV20(db: Database.Database): void {
+	rebuildLocalModelRuns(db);
+	db.prepare(CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL).run();
+
+	for (const column of ADD_QUERY_EVENT_MODEL_COLUMNS) {
+		if (hasColumn(db, 'query_events', column)) continue;
+		db.prepare(`ALTER TABLE query_events ADD COLUMN ${column} TEXT`).run();
+	}
+
+	logger.debug(
+		'Rebuilt local_model_runs and added model columns to query_events table',
+		LOG_CONTEXT
+	);
+}
+
+/**
+ * Whether `local_model_runs` has the v20 shape: the `agent_id` column, and a
+ * `source_type` CHECK that names `system-one`. A CHECK cannot be read through a
+ * pragma, so the test is on the table's stored definition.
+ */
+function localModelRunsIsCurrent(db: Database.Database): boolean {
+	if (!hasColumn(db, 'local_model_runs', 'agent_id')) return false;
+	const row = db
+		.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = 'local_model_runs'")
+		.get() as { sql: string } | undefined;
+	return !!row?.sql.includes("'system-one'");
+}
+
+/**
+ * Give `local_model_runs` its v20 shape without losing a row.
+ *
+ * SQLite cannot alter a CHECK constraint, so this is the table rebuild its
+ * documentation prescribes: create the new table beside the old one, copy
+ * every row, drop the old table, rename the new one into place, and put the
+ * indexes back (a dropped table takes its indexes with it). The migration
+ * runner holds one transaction around all of it, so a failure at any step
+ * leaves the old table exactly as it was.
+ *
+ * The row counts are compared before the old table is dropped. The copy has no
+ * WHERE clause and every old `source_type` satisfies the wider CHECK, so they
+ * cannot differ; if they ever do, the migration fails rather than drop data.
+ */
+function rebuildLocalModelRuns(db: Database.Database): void {
+	if (!hasTable(db, 'local_model_runs')) {
+		// Stamped past v15 by a build that never created it: there is nothing to copy.
+		runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
+		runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+		return;
+	}
+	if (localModelRunsIsCurrent(db)) return;
+
+	// A table that already carries `agent_id` under the old CHECK keeps its values.
+	const columns = [
+		...LOCAL_MODEL_RUNS_V15_COLUMNS,
+		...(hasColumn(db, 'local_model_runs', 'agent_id') ? ['agent_id'] : []),
+	].join(', ');
+
+	db.prepare(`DROP TABLE IF EXISTS ${LOCAL_MODEL_RUNS_REBUILD_TABLE}`).run();
+	db.prepare(CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL).run();
+	db.prepare(
+		`INSERT INTO ${LOCAL_MODEL_RUNS_REBUILD_TABLE} (${columns}) SELECT ${columns} FROM local_model_runs`
+	).run();
+
+	const before = countRows(db, 'local_model_runs');
+	const after = countRows(db, LOCAL_MODEL_RUNS_REBUILD_TABLE);
+	if (before !== after) {
+		throw new Error(
+			`local_model_runs rebuild copied ${after} of ${before} rows; the table was left as it was.`
+		);
+	}
+
+	db.prepare('DROP TABLE local_model_runs').run();
+	db.prepare(`ALTER TABLE ${LOCAL_MODEL_RUNS_REBUILD_TABLE} RENAME TO local_model_runs`).run();
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+
+	logger.info(`Rebuilt local_model_runs with ${after} row(s) carried over`, LOG_CONTEXT);
+}
+
+function countRows(db: Database.Database, table: string): number {
+	return (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
 }
 
 /**

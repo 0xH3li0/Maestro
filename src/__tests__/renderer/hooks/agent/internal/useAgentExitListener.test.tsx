@@ -184,6 +184,153 @@ describe('useAgentExitListener', () => {
 		});
 	});
 
+	describe('the stats row of a finished turn', () => {
+		const OLLAMA_QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+		const MAESTRO_QWEN = {
+			type: 'source' as const,
+			endpointId: 'maestro-server',
+			model: 'qwen3.5-4b',
+		};
+
+		/** Finish one turn on a tab with these send-time stamps, and return its stats row. */
+		async function recordedRow(
+			tabStamps: Record<string, unknown>,
+			session: Record<string, unknown> = {}
+		): Promise<Record<string, unknown>> {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: 0,
+				logs: [
+					{ id: 'l1', timestamp: 1, source: 'user', text: 'Rename formatDate' },
+					{ id: 'l2', timestamp: 2, source: 'stdout', text: 'Renamed.' },
+				],
+				...tabStamps,
+			} as any);
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'sess-1',
+						aiTabs: [tab],
+						activeTabId: 'tab-1',
+						state: 'busy',
+						busySource: 'ai',
+						thinkingStartTime: 1000,
+						...session,
+					}),
+				],
+				activeSessionId: 'sess-1',
+			} as any);
+
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			const recordQuery = (window as any).maestro.stats.recordQuery;
+			expect(recordQuery).toHaveBeenCalledTimes(1);
+			return recordQuery.mock.calls[0][0];
+		}
+
+		it('names no source and no tier for a turn on a named model on the provider', async () => {
+			const row = await recordedRow({ turnModel: 'opus' });
+
+			expect(row).toMatchObject({ sessionId: 'sess-1', tabId: 'tab-1', source: 'user' });
+			expect(row).not.toHaveProperty('runOnEndpoint');
+			expect(row).not.toHaveProperty('runOnModel');
+			expect(row).not.toHaveProperty('routedTier');
+		});
+
+		it('names the Run on source the turn was sent on', async () => {
+			const row = await recordedRow(
+				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
+				{ runOn: OLLAMA_QWEN }
+			);
+
+			expect(row).toMatchObject({ runOnEndpoint: 'ep-ollama', runOnModel: 'qwen3:latest' });
+			expect(row).not.toHaveProperty('routedTier');
+		});
+
+		it('files the turn where it was SENT, not where the agent points when it ends', async () => {
+			// Settings are codified at send. The agent's target was changed while the
+			// turn ran: once to another source, once back to the provider.
+			const retargeted = await recordedRow(
+				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
+				{ runOn: MAESTRO_QWEN }
+			);
+			expect(retargeted).toMatchObject({ runOnEndpoint: 'ep-ollama', runOnModel: 'qwen3:latest' });
+
+			(window as any).maestro.stats.recordQuery.mockClear();
+			const backOnProvider = await recordedRow(
+				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
+				{ runOn: undefined }
+			);
+			expect(backOnProvider).toMatchObject({
+				runOnEndpoint: 'ep-ollama',
+				runOnModel: 'qwen3:latest',
+			});
+		});
+
+		it('does not file a provider turn under a source the agent was pointed at afterwards', async () => {
+			const row = await recordedRow({ turnModel: 'opus' }, { runOn: OLLAMA_QWEN });
+
+			expect(row).not.toHaveProperty('runOnEndpoint');
+			expect(row).not.toHaveProperty('runOnModel');
+		});
+
+		it("records the tier Auto's router chose, and the source that tier launched on", async () => {
+			const row = await recordedRow({
+				turnModel: 'qwen3.5-4b',
+				turnRunOn: 'qwen3.5-4b · Maestro model server',
+				turnRunOnSource: MAESTRO_QWEN,
+				turnAuto: {
+					status: 'routed',
+					runOn: MAESTRO_QWEN,
+					route: { tier: 'low', effort: 'low', engine: 'Jev (TypeSafe cloud)', calibrated: true },
+				},
+			});
+
+			expect(row).toMatchObject({
+				runOnEndpoint: 'maestro-server',
+				runOnModel: 'qwen3.5-4b',
+				routedTier: 'low',
+			});
+		});
+
+		it('records the tier of a routed turn that stayed on the provider', async () => {
+			const row = await recordedRow({
+				turnModel: 'opus',
+				turnAuto: {
+					status: 'routed',
+					route: { tier: 'high', effort: 'medium', engine: 'Embedding router', calibrated: false },
+				},
+			});
+
+			expect(row).toMatchObject({ routedTier: 'high' });
+			expect(row).not.toHaveProperty('runOnEndpoint');
+		});
+
+		it('records no tier for an Auto turn no router decided', async () => {
+			const off = await recordedRow({
+				turnAuto: {
+					status: 'router-off',
+					route: { skipped: 'off', detail: 'Model routing is off.' },
+				},
+			});
+			expect(off).not.toHaveProperty('routedTier');
+
+			(window as any).maestro.stats.recordQuery.mockClear();
+			const slow = await recordedRow({
+				turnAuto: {
+					status: 'no-decision',
+					route: { skipped: 'timeout', detail: 'No decision within 400 ms.' },
+				},
+			});
+			expect(slow).not.toHaveProperty('routedTier');
+		});
+	});
+
 	describe('on a web-desktop client', () => {
 		// Every process:* event is fanned out to every connected browser, so a
 		// web-desktop client must render the exit (tab idle) but never run the

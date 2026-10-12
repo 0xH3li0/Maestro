@@ -256,12 +256,25 @@ describe('routeTurn on an embedding model', () => {
 
 		expect(mocks.runEmbeddingRouteTask).toHaveBeenCalledWith('model-routing', {
 			text: PROMPT,
+			// The agent rides on the run the router's model leaves, not in its input.
+			agentId: 'agent-7',
 			signal: expect.any(AbortSignal),
 		});
 		expect(JSON.stringify(mocks.runEmbeddingRouteTask.mock.calls)).not.toContain('Where is');
 		// No other router is asked beside it.
 		expect(mocks.askLocalJudge).not.toHaveBeenCalled();
 		expect(mocks.runSystemOneTask).not.toHaveBeenCalled();
+	});
+
+	it('names no agent on the run when the turn has none', async () => {
+		mocks.runEmbeddingRouteTask.mockResolvedValue(voted());
+
+		await routeTurn({ prompt: PROMPT });
+
+		expect(mocks.runEmbeddingRouteTask).toHaveBeenCalledWith('model-routing', {
+			text: PROMPT,
+			signal: expect.any(AbortSignal),
+		});
 	});
 
 	it('files the decision in the ledger in the shape an engine decision has', async () => {
@@ -505,6 +518,8 @@ describe('routeTurn on a text model (a local judge)', () => {
 
 		expect(mocks.askLocalJudge).toHaveBeenCalledWith(request.state, request.questions, {
 			taskId: 'model-routing',
+			// Kept on each generation's run record (`local_model_runs.agent_id`).
+			agentId: 'agent-7',
 			timeoutMs: MODEL_ROUTING_TIMEOUT_MS,
 		});
 		expect(result).toEqual({
@@ -536,6 +551,7 @@ describe('routeTurn on a text model (a local judge)', () => {
 
 		expect(mocks.askLocalJudge.mock.calls[0][2]).toEqual({
 			taskId: 'model-routing',
+			agentId: 'agent-7',
 			timeoutMs: 900,
 			signal: caller.signal,
 		});

@@ -43,7 +43,12 @@ import {
 	systemOneAgentSourceVerb,
 	type SystemOneAgentSourceId,
 } from './system-one-agent';
-import { systemOneEngineChoiceLabel, type SystemOneEngineChoice } from './system-one-settings';
+import type { LocalModelRun } from '../stats-types';
+import {
+	isSystemOneRemoteEngineId,
+	systemOneEngineChoiceLabel,
+	type SystemOneEngineChoice,
+} from './system-one-settings';
 import { LOCAL_MODEL_TASKS, isLocalModelTaskId, type LocalModelTaskId } from './tasks';
 
 // ---------------------------------------------------------------------------
@@ -149,6 +154,50 @@ export interface SystemOneDecision {
 	 * was on.
 	 */
 	input?: string;
+}
+
+/**
+ * The usage record a decision leaves in `local_model_runs`, or `null` when it
+ * leaves none.
+ *
+ * The ledger is an audit trail kept for {@link SYSTEM_ONE_LEDGER_RETENTION_DAYS}
+ * days; the Usage Dashboard counts what every source did over ranges far longer
+ * than that. So a request sent to a remote engine (Jev, OpenJev) is also filed
+ * as a run, with the source `system-one`, the engine's id where an endpoint's
+ * id goes, and no text and no answers.
+ *
+ * Three kinds of decision are not a run of their own:
+ *
+ *   - one answered from the answer cache: nothing was sent;
+ *   - one with no engine chosen (`off`): there was nothing to send it to;
+ *   - one a local router decided (the local judge, the embedding router): its
+ *     model ran through the task router, which filed that run under the source
+ *     the model is really on. A second row here would count the work twice.
+ *
+ * A run has three outcomes where a decision has five: what the fail policy did
+ * with a missing answer (`failed-open`, `failed-closed`, `unavailable`) is the
+ * ledger's to keep, and all three are an `error` with the decision's code.
+ */
+export function systemOneDecisionRun(
+	decision: SystemOneDecision
+): Omit<LocalModelRun, 'id'> | null {
+	if (decision.cached || !isSystemOneRemoteEngineId(decision.engine)) return null;
+	const outcome =
+		decision.outcome === 'ok' || decision.outcome === 'cancelled' ? decision.outcome : 'error';
+	return {
+		taskId: decision.taskId,
+		sourceType: 'system-one',
+		modelId: decision.model ?? decision.engine,
+		endpointId: decision.engine,
+		...(decision.agentId ? { agentId: decision.agentId } : {}),
+		startedAt: decision.startedAt,
+		durationMs: decision.latencyMs,
+		outcome,
+		...(outcome !== 'ok' && decision.code ? { errorCode: decision.code } : {}),
+		...(decision.usage
+			? { tokensIn: decision.usage.inputTokens, tokensOut: decision.usage.outputTokens }
+			: {}),
+	};
 }
 
 /** A decision as the ledger holds it. */

@@ -113,6 +113,7 @@ export async function scoreCueInjectionText(
 	const verdict = await runClassifierTask(TASK_ID, {
 		text: request.text,
 		signal: AbortSignal.timeout(CUE_INJECTION_SCREEN_TIMEOUT_MS),
+		...(request.agentId ? { agentId: request.agentId } : {}),
 	});
 
 	switch (verdict.status) {

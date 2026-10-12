@@ -31,8 +31,10 @@ import {
 } from '../../shared/autoTurn';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import {
+	isRunOnSourceTarget,
 	parseRunOnTarget,
 	runOnPillLabel,
+	type RunOnSourceTarget,
 	type RunOnTarget,
 } from '../../shared/local-models/run-on';
 import type { TierRouting } from '../../shared/modelTiers';
@@ -102,7 +104,7 @@ export function resolveTurnProvider(tab: AITab | undefined, session: Session): T
 /** The tab fields a send freezes: who owns the turn and what it runs under. */
 export type CodifiedTurn = Pick<
 	AITab,
-	'turnProvider' | 'turnModel' | 'turnEffort' | 'turnRunOn' | 'turnAuto'
+	'turnProvider' | 'turnModel' | 'turnEffort' | 'turnRunOn' | 'turnRunOnSource' | 'turnAuto'
 >;
 
 /**
@@ -118,7 +120,9 @@ export type CodifiedTurn = Pick<
  * `turnRunOn` is where the turn ran when the agent's Run on target is a source
  * (`qwen3:latest · Ollama`). It is a label for the transcript, kept apart from
  * `turnModel` on purpose: `turnModel` is handed to the spawn as the agent's
- * model, and the launch replaces it with the target's own.
+ * model, and the launch replaces it with the target's own. `turnRunOnSource` is
+ * the source that label names, frozen beside it for the turn's stats row
+ * ({@link codifiedRunOn}).
  *
  * A turn on the Auto model is codified in two steps, because a send does not
  * wait for the router. Here, the moment the turn takes the tab, rule 1 is
@@ -142,7 +146,7 @@ export function codifyTurnSettings(
 		turnProvider: session.toolType,
 		turnModel: model,
 		turnEffort: effort,
-		turnRunOn: turnRunOnLabel(session),
+		...codifiedRunOn(session),
 		turnAuto: undefined,
 	};
 }
@@ -195,7 +199,7 @@ function codifiedAutoTurn(
 		turnProvider: session.toolType,
 		turnModel: turn.model,
 		turnEffort: turn.effort,
-		turnRunOn: turnRunOnLabel({ runOn: turn.runOn ?? session.runOn }),
+		...codifiedRunOn({ runOn: turn.runOn ?? session.runOn }),
 		turnAuto: turn.stamp,
 	};
 }
@@ -273,22 +277,40 @@ export function autoTurnLaunch(tab: AITab | undefined): AutoTurnLaunch | null {
 }
 
 /**
- * Where a turn of this agent runs, for its pill: undefined on the provider's
- * own model. A stored target that cannot be read names nothing, because its
- * launch is refused and no turn runs on it. `endpoints` defaults to the saved
- * sources, which are read only for an agent that has a target.
+ * The source a turn of this agent runs on: undefined on the provider's own
+ * model. A stored target that cannot be read names nothing, because its launch
+ * is refused and no turn runs on it.
+ */
+export function turnRunOnSource(session: Pick<Session, 'runOn'>): RunOnSourceTarget | undefined {
+	if (!session.runOn) return undefined;
+	const parsed = parseRunOnTarget(session.runOn);
+	return parsed.ok && isRunOnSourceTarget(parsed.target) ? parsed.target : undefined;
+}
+
+/**
+ * Where a turn of this agent runs, for its pill: {@link turnRunOnSource} as a
+ * label. `endpoints` defaults to the saved sources, which are read only for an
+ * agent that has a target.
  */
 export function turnRunOnLabel(
 	session: Pick<Session, 'runOn'>,
 	endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[]
 ): string | undefined {
-	if (!session.runOn) return undefined;
-	const parsed = parseRunOnTarget(session.runOn);
-	if (!parsed.ok || parsed.target.type !== 'source') return undefined;
-	return runOnPillLabel(
-		parsed.target,
-		endpoints ?? useSettingsStore.getState().localModelEndpoints ?? []
-	);
+	const source = turnRunOnSource(session);
+	if (!source) return undefined;
+	return runOnPillLabel(source, endpoints ?? useSettingsStore.getState().localModelEndpoints ?? []);
+}
+
+/**
+ * The place a turn runs, as the two tab fields that freeze it: the label its
+ * pill shows and the source its stats row names. One call for both, so they can
+ * never name different places. Both are always returned, `undefined` on the
+ * provider's own model, so a turn there clears what the turn before it left.
+ */
+function codifiedRunOn(
+	session: Pick<Session, 'runOn'>
+): Pick<CodifiedTurn, 'turnRunOn' | 'turnRunOnSource'> {
+	return { turnRunOn: turnRunOnLabel(session), turnRunOnSource: turnRunOnSource(session) };
 }
 
 /**
@@ -365,7 +387,7 @@ export function codifyQueuedTurnSettings(
 		turnProvider: session.toolType,
 		turnModel: model,
 		turnEffort: effort,
-		turnRunOn: turnRunOnLabel(session),
+		...codifiedRunOn(session),
 		turnAuto: undefined,
 	};
 }

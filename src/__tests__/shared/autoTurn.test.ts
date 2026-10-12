@@ -30,6 +30,7 @@ import {
 	promptCacheLifetimeMs,
 	queuedAutoTurnStamp,
 	resolveAutoTurn,
+	turnModelStatsFields,
 	unreachableAutoRoute,
 	withAutoModelOption,
 	type AutoRouteStamp,
@@ -566,5 +567,84 @@ describe('whether Auto is offered', () => {
 		expect(modelChoiceLabel('auto')).toBe('Auto');
 		expect(modelChoiceLabel('AUTO')).toBe('Auto');
 		expect(modelChoiceLabel('claude-opus-5-5')).toBe('claude-opus-5-5');
+	});
+});
+
+describe("turnModelStatsFields: what a turn's stats row says about its model", () => {
+	it('says nothing for a turn on a named model on the provider', () => {
+		expect(turnModelStatsFields({})).toEqual({});
+		expect(turnModelStatsFields({ runOn: undefined, auto: undefined })).toEqual({});
+		expect(turnModelStatsFields({ runOn: { type: 'provider' } })).toEqual({});
+	});
+
+	it('names the source a turn launched on: its id and the model it serves', () => {
+		expect(turnModelStatsFields({ runOn: LOCAL })).toEqual({
+			runOnEndpoint: 'ep-maestro',
+			runOnModel: 'qwen3.5-4b',
+		});
+	});
+
+	it('keeps the context size out of the row: it is not where the turn ran', () => {
+		expect(turnModelStatsFields({ runOn: { ...LOCAL, contextTokens: 65_536 } })).toEqual({
+			runOnEndpoint: 'ep-maestro',
+			runOnModel: 'qwen3.5-4b',
+		});
+	});
+
+	it('names no source for a target that cannot be read, whole or in part', () => {
+		expect(turnModelStatsFields({ runOn: { type: 'source', endpointId: 'ep-x' } })).toEqual({});
+		expect(turnModelStatsFields({ runOn: { type: 'source', model: 'qwen3' } })).toEqual({});
+		expect(turnModelStatsFields({ runOn: 'ep-x:qwen3' })).toEqual({});
+		expect(turnModelStatsFields({ runOn: { type: 'elsewhere' } })).toEqual({});
+	});
+
+	it("records the router's tier when a router decided", () => {
+		expect(
+			turnModelStatsFields({ auto: { status: 'routed', route: routed('low', 'high') } })
+		).toEqual({ routedTier: 'low' });
+	});
+
+	it('records no tier when no router decided', () => {
+		expect(turnModelStatsFields({ auto: { status: 'pending' } })).toEqual({});
+		expect(turnModelStatsFields({ auto: { status: 'router-off', route: OFF } })).toEqual({});
+		expect(turnModelStatsFields({ auto: { status: 'no-decision', route: TIMEOUT } })).toEqual({});
+		expect(
+			turnModelStatsFields({ auto: { status: 'no-decision', route: unreachableAutoRoute('x') } })
+		).toEqual({});
+	});
+
+	it('records both for a tier that launched on a source', () => {
+		const turn = resolveAutoTurn({
+			toolType: 'claude-code',
+			route: routed('low', 'low'),
+			routing: { tierTargets: { low: LOCAL } },
+		});
+
+		expect(turnModelStatsFields({ runOn: turn.runOn, auto: turn.stamp })).toEqual({
+			runOnEndpoint: 'ep-maestro',
+			runOnModel: 'qwen3.5-4b',
+			routedTier: 'low',
+		});
+	});
+
+	it("records the router's tier for a held session, with the place the session kept", () => {
+		// Rule 1: the tier is the router's answer and is not applied. The row says
+		// both, so the tier split counts the decision and the source counts the work.
+		const hold = autoModelHold(
+			'claude-code',
+			{ model: 'qwen3.5-4b', runOn: LOCAL, lastActiveAt: NOW - 1000 },
+			NOW
+		);
+		const turn = resolveAutoTurn({
+			toolType: 'claude-code',
+			route: routed('high', 'low'),
+			...(hold ? { hold } : {}),
+		});
+
+		expect(turnModelStatsFields({ runOn: turn.runOn, auto: turn.stamp })).toEqual({
+			runOnEndpoint: 'ep-maestro',
+			runOnModel: 'qwen3.5-4b',
+			routedTier: 'high',
+		});
 	});
 });

@@ -31,7 +31,7 @@ import {
 	type ResolvedTurnSettings,
 } from '../../../shared/autorunTurnSettings';
 import { isAutoModel } from '../../../shared/autoModel';
-import { autoTurnNeedsRoute, resolveAutoTurn } from '../../../shared/autoTurn';
+import { autoTurnNeedsRoute, resolveAutoTurn, type AutoTurnStamp } from '../../../shared/autoTurn';
 import { MODEL_ROUTING_UNATTENDED_TIMEOUT_MS } from '../../../shared/local-models/model-routing-task';
 import { autoRunRoutingPrompt } from '../../../shared/markdownTaskScan';
 import { requestTurnRoute } from '../../services/autoTurn';
@@ -221,7 +221,7 @@ export interface DocumentReadResult {
  */
 export type AutoRunTurnOverrides = Pick<
 	SpawnAgentOptions,
-	'modelOverride' | 'effortOverride' | 'runOnOverride'
+	'modelOverride' | 'effortOverride' | 'runOnOverride' | 'autoStamp'
 >;
 
 /**
@@ -483,6 +483,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// sets, and one that sets both leaves the router nothing to ask. Each
 			// task starts a fresh provider session, so there is no model to keep.
 			let turnSettings: ResolvedTurnSettings;
+			// What Auto did with this dispatch, for its stats row. Undefined on a named model.
+			let autoStamp: AutoTurnStamp | undefined;
 			if (isAutoModel(baselineModel)) {
 				const route = autoTurnNeedsRoute(modelHint)
 					? await requestTurnRoute({
@@ -494,13 +496,15 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 							timeoutMs: MODEL_ROUTING_UNATTENDED_TIMEOUT_MS,
 						})
 					: undefined;
-				turnSettings = resolveAutoTurn({
+				const autoTurn = resolveAutoTurn({
 					toolType: session.toolType,
 					...(route ? { route } : {}),
 					agentEffort: baselineEffort,
 					routing: tierRouting,
 					marker: modelHint,
 				});
+				turnSettings = autoTurn;
+				autoStamp = autoTurn.stamp;
 				const note = describeTurnSettings({ ...turnSettings, warnings: [] });
 				if (note) logger.info(`[DocumentProcessor] ${note}`, undefined, { document: filename });
 			} else {
@@ -562,6 +566,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 							modelOverride: turnSettings.model,
 							effortOverride: turnSettings.effort,
 							runOnOverride: turnSettings.runOn,
+							...(autoStamp ? { autoStamp } : {}),
 						}
 					);
 

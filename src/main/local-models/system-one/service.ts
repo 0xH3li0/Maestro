@@ -383,7 +383,7 @@ export async function askResolvedSystemOne(
 	resolved: Exclude<ResolvedSystemOneEngine, { id: 'off' }>,
 	state: SystemOneState,
 	questions: SystemOneQuestions,
-	options: { signal?: AbortSignal; timeoutMs?: number } = {}
+	options: { signal?: AbortSignal; timeoutMs?: number; agentId?: string } = {}
 ): Promise<SystemOneResult> {
 	if (resolved.refusal) {
 		throw new SystemOneError(resolved.refusal.message, {
@@ -392,7 +392,13 @@ export async function askResolvedSystemOne(
 		});
 	}
 	const call = { timeoutMs: options.timeoutMs ?? resolved.timeoutMs, signal: options.signal };
-	if (resolved.id === 'local-judge') return askLocalJudge(state, questions, call);
+	if (resolved.id === 'local-judge') {
+		// The judge's generations are runs of their own; they carry the agent.
+		return askLocalJudge(state, questions, {
+			...call,
+			...(options.agentId ? { agentId: options.agentId } : {}),
+		});
+	}
 	return askSystemOne(resolved.engine, state, questions, {
 		...call,
 		...(resolved.model ? { model: resolved.model } : {}),

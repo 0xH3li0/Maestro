@@ -66,7 +66,7 @@ import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { AutoRouteStamp, AutoTurnStamp } from '../../shared/autoTurn';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { BackgroundRequests } from '../../shared/local-models/background-requests';
-import type { RunOnTarget } from '../../shared/local-models/run-on';
+import type { RunOnSourceTarget, RunOnTarget } from '../../shared/local-models/run-on';
 import type { TierTargets } from '../../shared/modelTiers';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
@@ -991,6 +991,14 @@ export interface AITab {
 	 * turn on the provider's own model.
 	 */
 	turnRunOn?: string;
+	/**
+	 * The source behind `turnRunOn`, frozen with it: the agent's Run on target as
+	 * it stood at send, or the place Auto chose. It is what the turn's stats row
+	 * names (`query_events.run_on_endpoint` / `run_on_model`), so a target edited
+	 * while the turn is in flight does not refile it. Undefined for a turn on the
+	 * provider's own model.
+	 */
+	turnRunOnSource?: RunOnSourceTarget;
 	/**
 	 * Set when the most recent turn was sent on the Auto model: what the router
 	 * answered and what the turn did with it (`shared/autoTurn.ts`). `pending`

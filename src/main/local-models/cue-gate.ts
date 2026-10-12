@@ -129,6 +129,7 @@ export async function evaluateCueGate(request: CueGateRequest): Promise<CueGateC
 		maxTokens: CUE_GATE_MAX_TOKENS,
 		jsonSchema: CUE_GATE_REPLY_SCHEMA,
 		signal: AbortSignal.timeout(CUE_GATE_TIMEOUT_MS),
+		...(request.agentId ? { agentId: request.agentId } : {}),
 	});
 
 	switch (verdict.status) {

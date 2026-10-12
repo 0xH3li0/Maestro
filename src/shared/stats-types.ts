@@ -5,6 +5,7 @@
  */
 
 import type { DurationPercentiles } from './percentiles';
+import type { ModelTier } from './tierLevels';
 
 /**
  * A single AI query event - represents one user/auto message -> AI response cycle
@@ -46,6 +47,21 @@ export interface QueryEvent {
 	cacheCreationTokens?: number;
 	/** Cost in USD for this turn, when the provider reports one. */
 	costUsd?: number;
+	/**
+	 * The Run on source this turn launched on (`RunOnSourceTarget`): the
+	 * endpoint's id (`maestro-server` for the Maestro model server) and the model
+	 * name that source serves. Set together. Both absent for a turn on the
+	 * provider's own model, and for rows recorded before the columns existed.
+	 */
+	runOnEndpoint?: string;
+	runOnModel?: string;
+	/**
+	 * The tier the Auto router chose for this turn. Absent when the turn was not
+	 * sent on Auto, and when no router decided. It is the router's answer, not
+	 * always the launch: a session kept on its model while its cache is warm
+	 * records the tier and still runs where `runOnEndpoint` says.
+	 */
+	routedTier?: ModelTier;
 }
 
 /**
@@ -303,20 +319,45 @@ export interface WizardRun {
 }
 
 /**
- * One Local Models task run that reached a model: the task router called a
- * local model or an endpoint for it (see `src/main/local-models/task-router.ts`).
- * A task that was off, or handed back to its Utility Agent path, is not a run.
+ * Where a recorded run's model was:
+ *
+ *   - `local`      - a catalog model, in-process on this machine;
+ *   - `server`     - a catalog model on the Maestro model server;
+ *   - `endpoint`   - a model on a user-run endpoint (Ollama, LM Studio, a cloud API);
+ *   - `system-one` - a System One engine reached over the Jev API (Jev, OpenJev).
+ */
+export const LOCAL_MODEL_RUN_SOURCE_TYPES = ['local', 'endpoint', 'server', 'system-one'] as const;
+
+export type LocalModelRunSourceType = (typeof LOCAL_MODEL_RUN_SOURCE_TYPES)[number];
+
+/**
+ * One run that reached a model other than a provider's own: the task router
+ * called a local model, the Maestro model server or an endpoint for a task (see
+ * `src/main/local-models/task-router.ts`), or a System One request was sent to
+ * a remote engine (see `src/main/local-models/system-one/decisions.ts`). A task
+ * that was off, or handed back to its Utility Agent path, is not a run.
  */
 export interface LocalModelRun {
 	id: string;
-	/** The task id from `LOCAL_MODEL_TASKS` ('tab-naming', 'cue-gate', ...). */
+	/**
+	 * The task id from `LOCAL_MODEL_TASKS` ('tab-naming', 'cue-gate', ...), or
+	 * `agent:<verb>` for a System One request an agent sent through `maestro-cli s1`.
+	 */
 	taskId: string;
-	/** Where it ran: a catalog model on this machine, or a user-run endpoint. */
-	sourceType: 'local' | 'endpoint';
-	/** The catalog model id (local) or the server's model name (endpoint). */
+	sourceType: LocalModelRunSourceType;
+	/**
+	 * The catalog model id (`local`, `server`), the server's model name
+	 * (`endpoint`), or the model the engine says answered (`system-one`; the
+	 * engine's id when it gave no answer and so named none).
+	 */
 	modelId: string;
-	/** The saved endpoint's id. Absent for a local source. */
+	/**
+	 * The saved endpoint's id for `endpoint`, and the engine's id (`jev-cloud`,
+	 * `openjev`) for `system-one`. Absent for `local` and `server`.
+	 */
 	endpointId?: string;
+	/** The agent the run was for, when its caller knew one. */
+	agentId?: string;
 	/** Epoch ms the run started. */
 	startedAt: number;
 	/** Duration with machine sleep removed. Includes a cold model load. */
@@ -445,4 +486,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 19;
+export const STATS_DB_VERSION = 20;

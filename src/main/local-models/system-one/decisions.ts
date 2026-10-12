@@ -10,6 +10,10 @@
  * ledger` both read through {@link readSystemOneLedger}, so they show the same
  * records.
  *
+ * A request that was sent to a remote engine is also filed as a run in
+ * `local_model_runs` (`systemOneDecisionRun`), which is never pruned: that row
+ * is what the Usage Dashboard counts, and the ledger is the audit trail.
+ *
  * The records live in `stats.db` (`s1_decisions`), on the same contract as the
  * other stats writers:
  *
@@ -33,6 +37,7 @@ import {
 	SYSTEM_ONE_LEDGER_RETENTION_MS,
 	formatSystemOneLedgerInput,
 	parseSystemOneLedgerQuery,
+	systemOneDecisionRun,
 	type SystemOneDecision,
 	type SystemOneLedgerPage,
 } from '../../../shared/local-models/system-one-ledger';
@@ -71,7 +76,8 @@ function pruneIfDue(db: ReturnType<typeof getStatsDB>, now: number): void {
 }
 
 /**
- * Record one decision: a line in the system log, and a row in the ledger.
+ * Record one decision: a line in the system log, a row in the ledger, and, for
+ * a request sent to a remote engine, a run in `local_model_runs`.
  *
  * It may throw when the row cannot be written. A producer calls
  * {@link keepSystemOneDecision}, which reports that and goes on, because a
@@ -96,6 +102,8 @@ export function recordSystemOneDecision(decision: SystemOneDecision): void {
 	if (!db.isReady()) return;
 	pruneIfDue(db, Date.now());
 	db.recordSystemOneDecision(decision);
+	const run = systemOneDecisionRun(decision);
+	if (run) db.recordLocalModelRun(run);
 }
 
 /**

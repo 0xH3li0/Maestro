@@ -14,6 +14,7 @@
  */
 
 import type { QueryEvent } from '../../shared/stats-types';
+import { asTierLevel } from '../../shared/tierLevels';
 import { normalizePath } from './utils';
 
 /** Columns written by every insert path, in bind order. */
@@ -34,6 +35,9 @@ const QUERY_EVENT_COLUMNS = [
 	'cache_read_tokens',
 	'cache_creation_tokens',
 	'cost_usd',
+	'run_on_endpoint',
+	'run_on_model',
+	'routed_tier',
 ] as const;
 
 /** `INSERT INTO query_events (...) VALUES (?, ?, ...)` for the columns above. */
@@ -49,11 +53,18 @@ export const INSERT_QUERY_EVENT_SQL = `
  * distinction carries meaning - a turn whose provider reported no usage is not
  * a turn that cost nothing - and the aggregation relies on it to count priced
  * queries separately.
+ *
+ * The Run on source is one fact in two columns, so it is written whole or not
+ * at all: an endpoint with no model (or the reverse) names no place a turn
+ * could have run. `routed_tier` is bound only when it is one of the three
+ * levels, because the value arrives from a renderer and the column is grouped
+ * on as-is.
  */
 export function bindQueryEvent(
 	id: string,
 	event: Omit<QueryEvent, 'id'>
 ): Array<string | number | null> {
+	const ranOnSource = !!event.runOnEndpoint && !!event.runOnModel;
 	return [
 		id,
 		event.sessionId,
@@ -71,5 +82,8 @@ export function bindQueryEvent(
 		event.cacheReadTokens ?? null,
 		event.cacheCreationTokens ?? null,
 		event.costUsd ?? null,
+		ranOnSource ? (event.runOnEndpoint ?? null) : null,
+		ranOnSource ? (event.runOnModel ?? null) : null,
+		asTierLevel(event.routedTier) ?? null,
 	];
 }

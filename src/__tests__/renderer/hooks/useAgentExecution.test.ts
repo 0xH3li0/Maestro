@@ -645,6 +645,109 @@ describe('useAgentExecution', () => {
 			await plainTask;
 		});
 
+		describe('the stats row of an Auto Run task', () => {
+			const ollama = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			const local = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+
+			/** Run one task to its exit and return the row it recorded. */
+			const recordedRow = async (
+				session: Session,
+				options: Record<string, unknown>
+			): Promise<Record<string, unknown>> => {
+				const recordQuery = vi.mocked(window.maestro.stats.recordQuery);
+				recordQuery.mockClear();
+				const spawnsBefore = mockProcess.spawn.mock.calls.length;
+				const { result } = renderExecution(session);
+
+				const task = result.current.spawnAgentForSession(session.id, 'Task', undefined, {
+					isAutoRun: true,
+					...options,
+				});
+				await waitFor(() => {
+					expect(mockProcess.spawn).toHaveBeenCalledTimes(spawnsBefore + 1);
+				});
+				act(() => {
+					onExitHandler?.(mockProcess.spawn.mock.calls[spawnsBefore][0].sessionId as string);
+				});
+				await task;
+
+				expect(recordQuery).toHaveBeenCalledTimes(1);
+				return recordQuery.mock.calls[0][0] as unknown as Record<string, unknown>;
+			};
+
+			const sessionWith = (overrides: Partial<Session> = {}) =>
+				createMockSession({
+					state: 'busy',
+					aiTabs: [createMockTab({ state: 'busy' })],
+					...overrides,
+				});
+
+			it('names no source and no tier for a task on the provider', async () => {
+				const row = await recordedRow(sessionWith(), { modelOverride: 'opus' });
+
+				expect(row).toMatchObject({ source: 'auto' });
+				expect(row).not.toHaveProperty('runOnEndpoint');
+				expect(row).not.toHaveProperty('runOnModel');
+				expect(row).not.toHaveProperty('routedTier');
+			});
+
+			it("names the agent's own Run on source when the task names no place", async () => {
+				const row = await recordedRow(sessionWith({ runOn: ollama }), {});
+
+				expect(row).toMatchObject({ runOnEndpoint: 'ep-ollama', runOnModel: 'qwen3:latest' });
+			});
+
+			it("names the tier's source when a tier chose the place, over the agent's own", async () => {
+				const row = await recordedRow(sessionWith({ runOn: ollama }), {
+					modelOverride: local.model,
+					runOnOverride: local,
+				});
+
+				expect(row).toMatchObject({ runOnEndpoint: 'maestro-server', runOnModel: 'qwen3.5-4b' });
+			});
+
+			it('names no source when a tier sends an agent on a source back to the provider', async () => {
+				const row = await recordedRow(sessionWith({ runOn: ollama }), {
+					modelOverride: 'opus',
+					runOnOverride: { type: 'provider' },
+				});
+
+				expect(row).not.toHaveProperty('runOnEndpoint');
+				expect(row).not.toHaveProperty('runOnModel');
+			});
+
+			it("records the tier Auto's router chose for the task, and never sends the stamp to the agent", async () => {
+				const row = await recordedRow(sessionWith(), {
+					modelOverride: local.model,
+					runOnOverride: local,
+					autoStamp: {
+						status: 'routed',
+						runOn: local,
+						route: { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false },
+					},
+				});
+
+				expect(row).toMatchObject({
+					runOnEndpoint: 'maestro-server',
+					runOnModel: 'qwen3.5-4b',
+					routedTier: 'low',
+				});
+				const spawnConfig = mockProcess.spawn.mock.calls.at(-1)?.[0];
+				expect(spawnConfig).not.toHaveProperty('autoStamp');
+			});
+
+			it('records no tier for a task whose router was off', async () => {
+				const row = await recordedRow(sessionWith(), {
+					autoStamp: {
+						status: 'router-off',
+						route: { skipped: 'off', detail: 'Model routing is off.' },
+					},
+				});
+
+				expect(row).not.toHaveProperty('routedTier');
+			});
+		});
+
 		it('keeps the session values when no overrides are supplied', async () => {
 			const session = createMockSession({
 				state: 'busy',

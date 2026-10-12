@@ -531,6 +531,7 @@ async function answerRequest(
 		const result = await askResolvedSystemOne(engine, state, questions, {
 			timeoutMs: requestTimeoutMs(engine, Object.keys(questions).length),
 			...(context.signal ? { signal: context.signal } : {}),
+			...(caller.agentId ? { agentId: caller.agentId } : {}),
 		});
 		addSpend(caller, result.costUsd);
 		await storeCachedSystemOneAnswer(systemOneDataDir(), key, {

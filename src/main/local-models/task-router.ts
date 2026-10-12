@@ -29,6 +29,9 @@
  *
  * Every call that reaches a model is recorded in the stats database
  * (`local_model_runs`), success or failure, honoring `statsCollectionEnabled`.
+ * A run the Maestro model server answered is filed as `server`, whichever way
+ * the assignment named it ({@link localModelRunSourceType}), and a caller that
+ * knows which agent a run is for says so ({@link LocalTaskAttribution}).
  *
  * The router also knows when someone is WAITING on a model. A call is
  * interactive unless its caller marks it `background` (the semantic indexer
@@ -44,6 +47,7 @@
  * policy; it never asks a different engine, and never falls back to a model.
  */
 
+import { MODEL_SERVER_ENDPOINT_ID } from '../../shared/local-models/model-server';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import type {
 	SystemOneEngineId,
@@ -63,7 +67,7 @@ import {
 	type SystemOneTaskId,
 	type SystemOneTaskInputs,
 } from '../../shared/local-models/tasks';
-import type { LocalModelRun } from '../../shared/stats-types';
+import type { LocalModelRun, LocalModelRunSourceType } from '../../shared/stats-types';
 import { getStatsDB } from '../stats/singleton';
 import { isStatsCollectionEnabled, LOG_CONTEXT as STATS_LOG_CONTEXT } from '../stats/utils';
 import { getSettingsStore } from '../stores/getters';
@@ -91,8 +95,17 @@ export const DEFAULT_TASK_MAX_TOKENS = 512;
 /** The most a caller may ask for. A housekeeping task never needs more. */
 export const MAX_TASK_MAX_TOKENS = 8192;
 
+/**
+ * Who a run is for. It is recorded with the run (`local_model_runs.agent_id`)
+ * and never sent to a model. Every task input carries it; a caller that knows
+ * no agent leaves it out.
+ */
+export interface LocalTaskAttribution {
+	agentId?: string;
+}
+
 /** What a text-generation task hands the router. */
-export interface LocalTaskInput {
+export interface LocalTaskInput extends LocalTaskAttribution {
 	prompt: string;
 	system?: string;
 	/** Defaults to {@link DEFAULT_TASK_MAX_TOKENS}. */
@@ -133,7 +146,7 @@ export interface LocalTaskUnavailable {
 export type LocalTaskStatus = LocalTaskResult['status'];
 
 /** What an embedding task hands the router. */
-export interface EmbeddingTaskInput {
+export interface EmbeddingTaskInput extends LocalTaskAttribution {
 	texts: readonly string[];
 	/** Which side of a search the texts are on (see `embedTexts`). */
 	mode: EmbeddingMode;
@@ -163,7 +176,7 @@ export type EmbeddingTaskResult =
 	| { status: 'cancelled'; source: LocalModelSource };
 
 /** What a classifier task hands the router. */
-export interface ClassifierTaskInput {
+export interface ClassifierTaskInput extends LocalTaskAttribution {
 	/** The untrusted text to score. Read in full, however long (see `classifyText`). */
 	text: string;
 	signal?: AbortSignal;
@@ -184,7 +197,7 @@ export type ClassifierTaskResult =
 	| { status: 'cancelled'; source: LocalModelSource };
 
 /** What a speech-to-text task hands the router. */
-export interface SpeechToTextTaskInput {
+export interface SpeechToTextTaskInput extends LocalTaskAttribution {
 	/** One whole clip of mono audio, normalised to -1..1. */
 	audio: Float32Array;
 	/** The rate `audio` was captured at. Resampled to 16 kHz by the service. */
@@ -233,11 +246,15 @@ export async function runLocalTask(
 				...(input.jsonSchema ? { jsonSchema: input.jsonSchema } : {}),
 				...(input.signal ? { signal: input.signal } : {}),
 			}),
-		(result) => ({
-			durationMs: result.durationMs,
-			tokensIn: result.tokensIn,
-			tokensOut: result.tokensOut,
-		})
+		{
+			agentId: input.agentId,
+			metrics: (result) => ({
+				durationMs: result.durationMs,
+				tokensIn: result.tokensIn,
+				tokensOut: result.tokensOut,
+				onModelServer: result.servedByModelServer === true,
+			}),
+		}
 	);
 	if (verdict.status !== 'ok') return verdict;
 	const { value: result, source, durationMs } = verdict;
@@ -270,8 +287,7 @@ export async function runEmbeddingTask(
 				mode: input.mode,
 				...(input.signal ? { signal: input.signal } : {}),
 			}),
-		undefined,
-		input.background === true
+		{ agentId: input.agentId, background: input.background === true }
 	);
 	if (verdict.status === 'use-utility-agent') {
 		// The registry refuses this assignment for every embedding task.
@@ -298,8 +314,10 @@ export async function runClassifierTask(
 	input: ClassifierTaskInput
 ): Promise<ClassifierTaskResult> {
 	requireTaskNeed(taskId, 'classifier', 'runClassifierTask');
-	const verdict = await runThroughAssignment(taskId, (source) =>
-		classifyText(source, input.text, input.signal ? { signal: input.signal } : {})
+	const verdict = await runThroughAssignment(
+		taskId,
+		(source) => classifyText(source, input.text, input.signal ? { signal: input.signal } : {}),
+		{ agentId: input.agentId }
 	);
 	if (verdict.status === 'use-utility-agent') {
 		// The registry refuses this assignment for every classifier task.
@@ -325,13 +343,16 @@ export async function runSpeechToTextTask(
 	input: SpeechToTextTaskInput
 ): Promise<SpeechToTextTaskResult> {
 	requireTaskNeed(taskId, 'stt', 'runSpeechToTextTask');
-	const verdict = await runThroughAssignment(taskId, (source) =>
-		transcribeSpeech(
-			source,
-			input.audio,
-			input.sampleRate,
-			input.signal ? { signal: input.signal } : {}
-		)
+	const verdict = await runThroughAssignment(
+		taskId,
+		(source) =>
+			transcribeSpeech(
+				source,
+				input.audio,
+				input.sampleRate,
+				input.signal ? { signal: input.signal } : {}
+			),
+		{ agentId: input.agentId }
 	);
 	if (verdict.status === 'use-utility-agent') {
 		// The registry refuses this assignment for every speech-to-text task.
@@ -348,7 +369,7 @@ export async function runSpeechToTextTask(
 }
 
 /** What the embedding router is handed. */
-export interface EmbeddingRouteTaskInput {
+export interface EmbeddingRouteTaskInput extends LocalTaskAttribution {
 	/** The prompt to route. The router normalizes it (`normalizeModelRoutingText`). */
 	text: string;
 	/** Stops the caller's wait. It never stops the build of the example vectors. */
@@ -391,8 +412,11 @@ export async function runEmbeddingRouteTask(
 	if (!taskAcceptsLocalKind(task, 'embedding')) {
 		throw new Error(`${task.label} takes no embedding model; runEmbeddingRouteTask cannot run it.`);
 	}
-	const verdict = await runThroughAssignment(taskId, (source) =>
-		getEmbeddingRouter().route(source, input.text, input.signal ? { signal: input.signal } : {})
+	const verdict = await runThroughAssignment(
+		taskId,
+		(source) =>
+			getEmbeddingRouter().route(source, input.text, input.signal ? { signal: input.signal } : {}),
+		{ agentId: input.agentId }
 	);
 	if (verdict.status === 'use-utility-agent') {
 		// The registry refuses this assignment for every such task.
@@ -530,6 +554,7 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 		const result = await askResolvedSystemOne(resolved, request.state, request.questions, {
 			...(options.signal ? { signal: options.signal } : {}),
 			...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+			...(options.agentId ? { agentId: options.agentId } : {}),
 		});
 		decision({
 			outcome: 'ok',
@@ -567,6 +592,20 @@ interface RunMetrics {
 	durationMs?: number;
 	tokensIn?: number;
 	tokensOut?: number;
+	/** The Maestro model server answered a call that named a local model. */
+	onModelServer?: boolean;
+}
+
+/** What {@link runThroughAssignment} is told beyond the call itself. */
+interface AssignedRunOptions<T> extends LocalTaskAttribution {
+	/**
+	 * For a service that measures its own call (text generation does): the
+	 * duration, the token counts, and whether the model server answered. Without
+	 * it the router's own sleep-aware span is the duration.
+	 */
+	metrics?: (value: T) => RunMetrics;
+	/** Keeps the call out of the interactive count. */
+	background?: boolean;
 }
 
 type AssignedVerdict<T> =
@@ -609,17 +648,13 @@ function endInteractiveCall(): void {
  * The part every task kind shares: read the assignment, run the call on its
  * source, classify a failure, and record the run. There is no fallback branch:
  * a source that fails is reported as itself.
- *
- * `metrics` lets a service that measures its own call (text generation does)
- * supply the duration and token counts; otherwise the router's own sleep-aware
- * span is used. `background` keeps the call out of the interactive count.
  */
 async function runThroughAssignment<T>(
 	taskId: LocalModelTaskId,
 	call: (source: LocalModelSource) => Promise<T>,
-	metrics: (value: T) => RunMetrics = () => ({}),
-	background = false
+	options: AssignedRunOptions<T> = {}
 ): Promise<AssignedVerdict<T>> {
+	const { metrics, background = false, agentId } = options;
 	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), taskId);
 	if (assignment.type === 'system-one') {
 		// A caller bug, or a prompt sent by hand (`maestro-cli models run`): an
@@ -633,24 +668,33 @@ async function runThroughAssignment<T>(
 
 	const startedAt = Date.now();
 	const span = beginSleepAwareSpan();
+	const record = (
+		durationMs: number,
+		outcome: LocalModelRun['outcome'],
+		extra: RunRecordExtra
+	): void => recordRun(taskId, source, startedAt, durationMs, outcome, { ...extra, agentId });
 	if (!background) interactiveInFlight++;
 	try {
 		const value = await call(source);
-		const measured = metrics(value);
+		const measured = metrics?.(value) ?? {};
 		const durationMs = measured.durationMs ?? sleepAwareElapsedMs(span);
-		recordRun(taskId, source, startedAt, durationMs, 'ok', {
+		record(durationMs, 'ok', {
 			tokensIn: measured.tokensIn,
 			tokensOut: measured.tokensOut,
+			onModelServer: measured.onModelServer,
 		});
 		return { status: 'ok', value, source, durationMs };
 	} catch (error) {
 		const durationMs = sleepAwareElapsedMs(span);
+		// A local model fails with an endpoint error only when the model server
+		// was answering for it: the in-process engine throws `LocalModelError`.
+		const onModelServer = isLocalModelEndpointError(error);
 		if (isLocalModelCancelled(error)) {
-			recordRun(taskId, source, startedAt, durationMs, 'cancelled', { errorCode: 'cancelled' });
+			record(durationMs, 'cancelled', { errorCode: 'cancelled', onModelServer });
 			return { status: 'cancelled', source };
 		}
 		if (isLocalModelError(error)) {
-			recordRun(taskId, source, startedAt, durationMs, 'error', { errorCode: error.code });
+			record(durationMs, 'error', { errorCode: error.code });
 			return {
 				status: 'unavailable',
 				source,
@@ -659,10 +703,10 @@ async function runThroughAssignment<T>(
 			};
 		}
 		if (isLocalModelEndpointError(error)) {
-			recordRun(taskId, source, startedAt, durationMs, 'error', { errorCode: error.kind });
+			record(durationMs, 'error', { errorCode: error.kind, onModelServer });
 			return { status: 'unavailable', source, reason: error.message, code: error.kind };
 		}
-		recordRun(taskId, source, startedAt, durationMs, 'error', { errorCode: 'unexpected' });
+		record(durationMs, 'error', { errorCode: 'unexpected' });
 		throw error;
 	} finally {
 		if (!background) endInteractiveCall();
@@ -729,6 +773,34 @@ export function parseLocalTaskInput(value: unknown): LocalTaskInput {
 	return input;
 }
 
+/** What one run adds to the fields every run has. */
+interface RunRecordExtra extends LocalTaskAttribution {
+	errorCode?: string;
+	tokensIn?: number;
+	tokensOut?: number;
+	/** The Maestro model server answered a call that named a local model. */
+	onModelServer?: boolean;
+}
+
+/**
+ * Where a run is filed (`local_model_runs.source_type`).
+ *
+ * The Maestro model server is one place however a run reached it: a task
+ * assigned to the server's own endpoint, or a task assigned to a local model
+ * the running server already holds (`generateText` sends that call to the
+ * server instead of opening a second copy). Both are `server`, so the Usage
+ * Dashboard counts the server's work once and counts none of it as in-process.
+ */
+export function localModelRunSourceType(
+	source: LocalModelSource,
+	onModelServer = false
+): LocalModelRunSourceType {
+	if (source.type === 'endpoint') {
+		return source.endpointId === MODEL_SERVER_ENDPOINT_ID ? 'server' : 'endpoint';
+	}
+	return onModelServer ? 'server' : 'local';
+}
+
 /**
  * Record one run. Best-effort: a stats write that fails must never turn a task
  * that worked into one that did not, so an unexpected failure is reported to
@@ -740,17 +812,22 @@ function recordRun(
 	startedAt: number,
 	durationMs: number,
 	outcome: LocalModelRun['outcome'],
-	extra: { errorCode?: string; tokensIn?: number; tokensOut?: number }
+	extra: RunRecordExtra
 ): void {
 	try {
 		if (!isStatsCollectionEnabled(getSettingsStore())) return;
 		const db = getStatsDB();
 		if (!db.isReady()) return;
+		const sourceType = localModelRunSourceType(source, extra.onModelServer);
 		db.recordLocalModelRun({
 			taskId,
-			sourceType: source.type,
+			sourceType,
 			modelId: source.type === 'local' ? source.modelId : source.model,
-			...(source.type === 'endpoint' ? { endpointId: source.endpointId } : {}),
+			// The server is named by its source type; only a saved endpoint has an id to keep.
+			...(source.type === 'endpoint' && sourceType === 'endpoint'
+				? { endpointId: source.endpointId }
+				: {}),
+			...(extra.agentId ? { agentId: extra.agentId } : {}),
 			startedAt,
 			durationMs,
 			outcome,

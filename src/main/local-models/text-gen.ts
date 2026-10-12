@@ -89,6 +89,12 @@ export interface GenerateTextResult {
 	 */
 	json?: unknown;
 	source: TextGenSource;
+	/**
+	 * Set when the Maestro model server answered for a local source, because it
+	 * already held the model. The source stays the one that was asked for; this
+	 * is where the work ran, for a caller that records it.
+	 */
+	servedByModelServer?: true;
 	/** Wall time of the call with machine sleep removed. Includes a cold load. */
 	durationMs: number;
 	tokensIn?: number;
@@ -119,9 +125,11 @@ export async function generateText(request: GenerateTextRequest): Promise<Genera
 	};
 
 	let reply: LocalTextReply;
+	let servedByModelServer = false;
 	if (source.type === 'local') {
 		const served = await loadedModelServerTarget(source.modelId);
 		if (served) {
+			servedByModelServer = true;
 			// The server's copy is the one to use; an in-process copy is the second.
 			void getLocalTextEngine().unload(source.modelId);
 			reply = chatReply(
@@ -154,6 +162,7 @@ export async function generateText(request: GenerateTextRequest): Promise<Genera
 		text: reply.text,
 		...(json !== undefined ? { json } : {}),
 		source,
+		...(servedByModelServer ? { servedByModelServer: true as const } : {}),
 		durationMs: sleepAwareElapsedMs(span),
 		...(reply.tokensIn !== undefined ? { tokensIn: reply.tokensIn } : {}),
 		...(reply.tokensOut !== undefined ? { tokensOut: reply.tokensOut } : {}),
