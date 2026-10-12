@@ -20,6 +20,7 @@
 import type { LocalModelEndpoint } from './endpoints';
 import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
 import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
+import type { SystemOneFailPolicy } from './system-one';
 import type { LocalModelKind } from './types';
 
 /** What a task asks its assigned source to do. A subset of {@link LocalModelKind}. */
@@ -164,6 +165,14 @@ export interface LocalModelTaskDefinition {
 	 * entry removes an invitation, it does not break a choice.
 	 */
 	readonly unofferedLocalModels?: Readonly<Record<string, string>>;
+	/**
+	 * What the task does when a System One engine gives it no answer, until the
+	 * user changes it: `open` lets the work go ahead unchecked, `closed` stops
+	 * it. Only a task that GATES something has one; a task whose output is a
+	 * vector or a transcript has nothing to let through or hold back. The
+	 * effective value is `resolveSystemOneFailPolicy` in `system-one-settings.ts`.
+	 */
+	readonly failPolicy?: SystemOneFailPolicy;
 }
 
 function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
@@ -265,6 +274,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
+			// A model that is down must not silently stop automation the user
+			// depends on (the same default as `gate_on_unavailable`).
+			failPolicy: 'open',
 		}),
 		'injection-screen': defineTask({
 			id: 'injection-screen',
@@ -274,6 +286,8 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'classifier',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
+			// The screen exists to keep unscreened text out of a run.
+			failPolicy: 'closed',
 		}),
 		'secret-screen': defineTask({
 			id: 'secret-screen',

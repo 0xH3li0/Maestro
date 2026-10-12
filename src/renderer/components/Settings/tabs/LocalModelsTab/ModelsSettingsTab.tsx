@@ -6,8 +6,10 @@
  *   disk use, and the Maestro model server that serves them over HTTP.
  * - Sources: where models come from besides the Library (model servers and
  *   user endpoints).
- * - System One: the tasks whose output is a judgment (a decision, label,
- *   score, vector or transcript), with their assignments.
+ * - System One: the engine that answers typed questions (Jev, OpenJev, or a
+ *   local judge) with its key and Test, then the tasks whose output is a
+ *   judgment (a decision, label, score, vector or transcript), with their
+ *   assignments and fail policies.
  * - System Two: the tasks whose output is text for someone to read or run,
  *   with their assignments, the Utility Agent, and the harness tier defaults
  *   (which model a low, medium or high task launches on).
@@ -23,9 +25,10 @@
  * reads what is on disk and downloads nothing. Every download, detection, and
  * test is an explicit click inside a section.
  *
- * The tab owns the ONE `useLocalModels()` and `useLocalModelEndpoints()`
- * instance and hands it to each panel, so a download started in Library or a
- * model list refreshed in Sources is what the assignment pickers offer.
+ * The tab owns the ONE `useLocalModels()`, `useLocalModelEndpoints()` and
+ * `useSystemOne()` instance and hands it to each panel, so a download started
+ * in Library or a model list refreshed in Sources is what the assignment
+ * pickers offer, and the engine card and the fail policy column read one report.
  */
 
 import { useEffect } from 'react';
@@ -48,6 +51,7 @@ import {
 	useLocalModelEndpoints,
 	useLocalModels,
 	useLocalRuntimes,
+	useSystemOne,
 } from '../../../../hooks/localModels';
 import { usePersistedChoice } from '../../../../hooks/ui/usePersistedChoice';
 import type { Theme } from '../../../../types';
@@ -60,6 +64,7 @@ import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
+import { SystemOneEngineSection } from './SystemOneEngineCard';
 import { TierDefaultsSection } from './TierDefaultsSection';
 import { UtilityAgentSettings } from './UtilityAgentSettings';
 
@@ -98,6 +103,7 @@ export function ModelsSettingsTab({
 	const models = useLocalModels();
 	const endpoints = useLocalModelEndpoints();
 	const runtimes = useLocalRuntimes();
+	const systemOne = useSystemOne();
 	const { value: panel, setValue: setPanel } = usePersistedChoice<ModelsSettingsPanel>(
 		MODELS_SETTINGS_PANEL_STORAGE_KEY,
 		MODELS_SETTINGS_PANELS,
@@ -166,6 +172,8 @@ export function ModelsSettingsTab({
 					</div>
 				)}
 
+				{panel === 'system-one' && <SystemOneEngineSection theme={theme} systemOne={systemOne} />}
+
 				{panel === 'system-one' && (
 					<div data-setting-id="local-models-system-one">
 						<SettingsSectionHeading
@@ -179,6 +187,15 @@ export function ModelsSettingsTab({
 							system="one"
 							models={models}
 							endpoints={endpoints}
+							// The column is there from the first paint (a settings search can
+							// land on it); its values wait for the report, so a row never shows
+							// a default in place of the user's choice.
+							failPolicies={{
+								rows: systemOne.report?.failPolicies ?? [],
+								disabled: systemOne.busy !== null,
+								onChange: (taskId, policy) =>
+									void systemOne.set({ failPolicy: { taskId, policy } }),
+							}}
 						/>
 					</div>
 				)}

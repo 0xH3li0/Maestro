@@ -172,6 +172,7 @@ import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
 import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
 import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
+import { configureSystemOne } from './local-models/system-one/service';
 import { configureAgentRunOn } from './local-models/run-on';
 import { configureRunOnTest } from './local-models/run-on-test';
 import { configureHarnessTierOptions } from './local-models/tier-options';
@@ -3710,6 +3711,10 @@ app
 		// The model server never starts itself: only Start, or a feature the user
 		// turned on that needs it. Wiring it starts nothing; app quit stops it.
 		configureModelServer({ safeSend });
+
+		// System One is off until the user chooses an engine. Wiring it reads no
+		// key and sends nothing: only a task assigned to it, or Test, asks.
+		configureSystemOne({ safeSend });
 
 		// An agent's Run on target is resolved at each launch from these stores.
 		// Wiring it reads nothing and starts nothing: the model server starts

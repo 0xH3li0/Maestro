@@ -239,6 +239,35 @@ import {
 	updateModelServerConfigRequest,
 } from '../../../../main/local-models/server/service';
 
+vi.mock('../../../../main/local-models/system-one/service', () => {
+	const report = {
+		settings: { engine: 'jev-cloud' },
+		engineLabel: 'Jev (TypeSafe cloud)',
+		keys: { 'jev-cloud': { source: 'stored', storage: 'os' }, openjev: { source: 'none' } },
+		problem: null,
+	};
+	return {
+		getSystemOneReport: vi.fn(async () => report),
+		updateSystemOneSettingsRequest: vi.fn(async () => report),
+		setSystemOneKeyRequest: vi.fn(async () => report),
+		clearSystemOneKeyRequest: vi.fn(async () => report),
+		testSystemOne: vi.fn(async () => ({
+			ok: true,
+			engine: 'jev-cloud',
+			engineLabel: 'Jev (TypeSafe cloud)',
+			probability: 0.97,
+			latencyMs: 212,
+		})),
+	};
+});
+import {
+	clearSystemOneKeyRequest,
+	getSystemOneReport,
+	setSystemOneKeyRequest,
+	testSystemOne,
+	updateSystemOneSettingsRequest,
+} from '../../../../main/local-models/system-one/service';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -6280,6 +6309,84 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ro-3'));
 			expect(lastResponse()).toMatchObject({ success: false });
 			expect(testAgentRunOn).not.toHaveBeenCalled();
+		});
+
+		it('system_one_status answers with the report, and asks the engine nothing', async () => {
+			handler.handleMessage(client, { type: 'system_one_status', requestId: 's1-1' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_status_result'));
+			expect(getSystemOneReport).toHaveBeenCalled();
+			expect(testSystemOne).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-1',
+				report: { engineLabel: 'Jev (TypeSafe cloud)' },
+			});
+		});
+
+		it('system_one_set hands the patch to the service, and reports a refusal with its reason', async () => {
+			const patch = { engine: 'openjev', openJevUrl: 'https://gpu.lan:8000' };
+			handler.handleMessage(client, { type: 'system_one_set', patch, requestId: 's1-2' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_set_result'));
+			expect(updateSystemOneSettingsRequest).toHaveBeenCalledWith(patch);
+			expect(lastResponse()).toMatchObject({ success: true, requestId: 's1-2' });
+
+			vi.mocked(updateSystemOneSettingsRequest).mockRejectedValueOnce(
+				new Error('"gpt" is not an engine.')
+			);
+			handler.handleMessage(client, {
+				type: 'system_one_set',
+				patch: { engine: 'gpt' },
+				requestId: 's1-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-3'));
+			expect(lastResponse()).toMatchObject({ success: false, error: '"gpt" is not an engine.' });
+		});
+
+		it('system_one_key_set stores the key and never sends it back', async () => {
+			const key = 'sk-bridge-test-0123456789abcdef';
+			handler.handleMessage(client, {
+				type: 'system_one_key_set',
+				engine: 'jev-cloud',
+				key,
+				requestId: 's1-4',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_key_set_result'));
+			expect(setSystemOneKeyRequest).toHaveBeenCalledWith({ engine: 'jev-cloud', key });
+			expect(JSON.stringify(lastResponse())).not.toContain(key);
+		});
+
+		it('system_one_key_clear forgets the key of the engine named, or of the one in force', async () => {
+			handler.handleMessage(client, { type: 'system_one_key_clear', requestId: 's1-5' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_key_clear_result'));
+			expect(clearSystemOneKeyRequest).toHaveBeenCalledWith({ engine: undefined });
+
+			handler.handleMessage(client, {
+				type: 'system_one_key_clear',
+				engine: 'openjev',
+				requestId: 's1-6',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-6'));
+			expect(clearSystemOneKeyRequest).toHaveBeenLastCalledWith({ engine: 'openjev' });
+		});
+
+		it('system_one_test answers with the verdict, a failed one included', async () => {
+			handler.handleMessage(client, { type: 'system_one_test', requestId: 's1-7' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_test_result'));
+			expect(lastResponse()).toMatchObject({ success: true, result: { ok: true, latencyMs: 212 } });
+
+			vi.mocked(testSystemOne).mockResolvedValueOnce({
+				ok: false,
+				engine: 'jev-cloud',
+				engineLabel: 'Jev (TypeSafe cloud)',
+				code: 'timeout',
+				error: 'Jev (TypeSafe cloud) did not answer within 1500 ms.',
+			});
+			handler.handleMessage(client, { type: 'system_one_test', requestId: 's1-8' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-8'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { ok: false, code: 'timeout' },
+			});
 		});
 
 		it('local_models_tier_options answers with what the harness can launch a tier on', async () => {

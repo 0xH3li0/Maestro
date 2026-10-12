@@ -22,17 +22,15 @@
  * store was reset, the file came from another machine) is refused by name, and
  * rotating makes a new one.
  *
- * A file that is not JSON is moved aside (`corruptStorePath`) rather than
- * overwritten, so the port and key it held can still be found. Every change goes
- * through one queue and an atomic rename, and the file is readable by its owner
- * only.
+ * A file that is not JSON is moved aside rather than overwritten, so the port
+ * and key it held can still be found. Every change goes through one queue and an
+ * atomic rename, and the file is readable by its owner only. The file and the
+ * sealing are `createPrivateStateFile` and `sealSecret` / `unsealSecret` in
+ * `utils/sealed-state-file.ts`; this module is what the file means.
  */
 
 import { randomBytes } from 'crypto';
-import * as fs from 'fs/promises';
-import * as path from 'path';
 
-import { assertSerializedJsonIsSafe, parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	DEFAULT_MODEL_SERVER_BIND,
 	DEFAULT_MODEL_SERVER_MAX_MODELS,
@@ -44,10 +42,16 @@ import {
 	type ModelServerBind,
 	type ModelServerKeyStorage,
 } from '../../../shared/local-models/model-server';
-import { corruptStorePath } from '../../stores/corrupt-store-recovery';
-import { atomicWriteFile, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
-import { obscuringSeal, type SealProvider } from '../../utils/safe-storage-seal';
+import type { SealProvider } from '../../utils/safe-storage-seal';
+import {
+	createPrivateStateFile,
+	isSealedSecretError,
+	isStoredSecret,
+	sealSecret,
+	unsealSecret,
+	type StoredSecret,
+} from '../../utils/sealed-state-file';
 import { isTcpPort, pickFreePort } from '../../utils/tcp-port';
 import { ModelServerError } from '../errors';
 
@@ -81,31 +85,11 @@ export interface ModelServerKey {
 	storage: ModelServerKeyStorage;
 }
 
-interface StoredKey {
-	sealed: string;
-	storage: ModelServerKeyStorage;
-}
-
 interface StoredState {
 	port?: number;
 	bind?: ModelServerBind;
 	maxModels?: number;
-	key?: StoredKey;
-}
-
-const writes = createKeyedWriteQueue();
-
-function statePath(dataDir: string): string {
-	return path.join(dataDir, MODEL_SERVER_STATE_FILE);
-}
-
-function isStoredKey(value: unknown): value is StoredKey {
-	const record = value as Partial<StoredKey> | null;
-	return (
-		typeof record?.sealed === 'string' &&
-		record.sealed.length > 0 &&
-		(record.storage === 'os' || record.storage === 'obscured')
-	);
+	key?: StoredSecret;
 }
 
 /** Keep the fields that are usable; a field that is not is dropped with a warning. */
@@ -120,43 +104,17 @@ function normalizeState(parsed: unknown): StoredState {
 	else if (record.maxModels !== undefined) {
 		logger.warn('Ignoring an unusable model count', LOG_CONTEXT);
 	}
-	if (isStoredKey(record.key)) state.key = record.key;
+	if (isStoredSecret(record.key)) state.key = record.key;
 	else if (record.key !== undefined) logger.warn('Ignoring an unusable sealed key', LOG_CONTEXT);
 	return state;
 }
 
-async function readState(dataDir: string): Promise<StoredState> {
-	const file = statePath(dataDir);
-	let text: string;
-	try {
-		text = await fs.readFile(file, 'utf-8');
-	} catch (error) {
-		// No file is the state of a server that was never started.
-		if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return {};
-		throw error;
-	}
-	try {
-		return normalizeState(parseJsonWithBom(text));
-	} catch {
-		const sidecar = corruptStorePath(file);
-		await fs.rename(file, sidecar);
-		logger.warn(
-			`${MODEL_SERVER_STATE_FILE} was not JSON. It was moved to ${path.basename(sidecar)}, and the server starts with a new port and key.`,
-			LOG_CONTEXT
-		);
-		return {};
-	}
-}
-
-async function writeState(dataDir: string, state: StoredState): Promise<void> {
-	const file = statePath(dataDir);
-	const serialized = JSON.stringify(state, null, 2);
-	assertSerializedJsonIsSafe(serialized, file);
-	await fs.mkdir(dataDir, { recursive: true });
-	// A temp file left by a crash would keep its old mode through the write.
-	await fs.rm(`${file}.tmp`, { force: true });
-	await atomicWriteFile(file, serialized, { mode: 0o600 });
-}
+const stateFile = createPrivateStateFile<StoredState>({
+	fileName: MODEL_SERVER_STATE_FILE,
+	normalize: normalizeState,
+	logContext: LOG_CONTEXT,
+	whenCorrupt: 'the server starts with a new port and key',
+});
 
 function configOf(state: StoredState): ModelServerConfig {
 	return {
@@ -167,13 +125,8 @@ function configOf(state: StoredState): ModelServerConfig {
 	};
 }
 
-/** Run a read-modify-write of the file, one at a time. */
-function mutate<T>(dataDir: string, fn: (state: StoredState) => Promise<T>): Promise<T> {
-	return writes.enqueue(statePath(dataDir), async () => fn(await readState(dataDir)));
-}
-
-export function readModelServerConfig(dataDir: string): Promise<ModelServerConfig> {
-	return writes.enqueue(statePath(dataDir), async () => configOf(await readState(dataDir)));
+export async function readModelServerConfig(dataDir: string): Promise<ModelServerConfig> {
+	return configOf(await stateFile.read(dataDir));
 }
 
 /**
@@ -181,10 +134,10 @@ export function readModelServerConfig(dataDir: string): Promise<ModelServerConfi
  * that chooses one: call it when the server starts, not before.
  */
 export function ensureModelServerPort(dataDir: string): Promise<number> {
-	return mutate(dataDir, async (state) => {
+	return stateFile.update(dataDir, async (state, save) => {
 		if (state.port !== undefined) return state.port;
 		const port = await pickFreePort(MODEL_SERVER_LOOPBACK_HOST);
-		await writeState(dataDir, { ...state, port });
+		await save({ ...state, port });
 		logger.info(`The ${MODEL_SERVER_NAME} will use port ${port}`, LOG_CONTEXT);
 		return port;
 	});
@@ -212,39 +165,31 @@ export async function writeModelServerSettings(
 			'invalid-setting'
 		);
 	}
-	return mutate(dataDir, async (state) => {
+	return stateFile.update(dataDir, async (state, save) => {
 		const next: StoredState = {
 			...state,
 			...(patch.bind !== undefined ? { bind: patch.bind } : {}),
 			...(patch.maxModels !== undefined ? { maxModels: patch.maxModels } : {}),
 		};
-		await writeState(dataDir, next);
+		await save(next);
 		return configOf(next);
 	});
-}
-
-/**
- * The seal a new key is made with: the OS's when it has one, else the obscuring
- * seal, which is still never readable text.
- */
-function sealFor(storage: ModelServerKeyStorage, osSeal: SealProvider): SealProvider {
-	return storage === 'os' ? osSeal : obscuringSeal();
 }
 
 function newKey(): string {
 	return MODEL_SERVER_KEY_PREFIX + randomBytes(KEY_BYTES).toString('base64url');
 }
 
+/** Make a key, seal it and save it: by the OS's key store when it has one, else obscured. */
 async function storeNewKey(
-	dataDir: string,
 	state: StoredState,
+	save: (next: StoredState) => Promise<void>,
 	osSeal: SealProvider
 ): Promise<ModelServerKey> {
-	const storage: ModelServerKeyStorage = osSeal.available() ? 'os' : 'obscured';
 	const key = newKey();
-	let sealed: string;
+	let stored: StoredSecret;
 	try {
-		sealed = sealFor(storage, osSeal).seal(key).toString('base64');
+		stored = sealSecret(key, osSeal);
 	} catch (error) {
 		throw new ModelServerError(
 			`The ${MODEL_SERVER_NAME} could not seal a new key: ${error instanceof Error ? error.message : String(error)}.`,
@@ -252,14 +197,14 @@ async function storeNewKey(
 			error
 		);
 	}
-	await writeState(dataDir, { ...state, key: { sealed, storage } });
-	if (storage === 'obscured') {
+	await save({ ...state, key: stored });
+	if (stored.storage === 'obscured') {
 		logger.warn(
 			`This system offers no encryption for stored secrets, so the ${MODEL_SERVER_NAME} key is stored obscured, not encrypted`,
 			LOG_CONTEXT
 		);
 	}
-	return { key, storage };
+	return { key, storage: stored.storage };
 }
 
 /**
@@ -270,21 +215,17 @@ export function ensureModelServerKey(
 	dataDir: string,
 	osSeal: SealProvider
 ): Promise<ModelServerKey> {
-	return mutate(dataDir, async (state) => {
-		if (!state.key) return storeNewKey(dataDir, state, osSeal);
-		const { sealed, storage } = state.key;
-		const seal = sealFor(storage, osSeal);
-		if (storage === 'os' && !seal.available()) {
-			throw new ModelServerError(
-				`The ${MODEL_SERVER_NAME} key is sealed with this system's key store, which is not available now. Rotate the key to make a new one; anything set up with the old key then needs the new one.`,
-				'key-unavailable'
-			);
-		}
+	return stateFile.update(dataDir, async (state, save) => {
+		if (!state.key) return storeNewKey(state, save, osSeal);
 		try {
-			return { key: seal.unseal(Buffer.from(sealed, 'base64')), storage };
+			return { key: unsealSecret(state.key, osSeal), storage: state.key.storage };
 		} catch (error) {
+			const why =
+				isSealedSecretError(error) && error.kind === 'store-unavailable'
+					? `The ${MODEL_SERVER_NAME} key is sealed with this system's key store, which is not available now.`
+					: `The ${MODEL_SERVER_NAME} key could not be unsealed.`;
 			throw new ModelServerError(
-				`The ${MODEL_SERVER_NAME} key could not be unsealed. Rotate the key to make a new one; anything set up with the old key then needs the new one.`,
+				`${why} Rotate the key to make a new one; anything set up with the old key then needs the new one.`,
 				'key-unavailable',
 				error
 			);
@@ -297,5 +238,5 @@ export function rotateModelServerKey(
 	dataDir: string,
 	osSeal: SealProvider
 ): Promise<ModelServerKey> {
-	return mutate(dataDir, (state) => storeNewKey(dataDir, state, osSeal));
+	return stateFile.update(dataDir, (state, save) => storeNewKey(state, save, osSeal));
 }

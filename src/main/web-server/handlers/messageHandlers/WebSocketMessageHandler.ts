@@ -120,6 +120,11 @@ import {
 	handleLocalModelsServerStop,
 	handleLocalModelsSearch,
 	handleLocalModelsTabCleanup,
+	handleSystemOneKeyClear,
+	handleSystemOneKeySet,
+	handleSystemOneSet,
+	handleSystemOneStatus,
+	handleSystemOneTest,
 	handleLocalModelsTaskReadiness,
 	handleLocalModelsVerify,
 	handleNotifySpeak,
@@ -872,6 +877,26 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_tier_options':
 				void handleLocalModelsTierOptions(this.ctx, client, message);
+				break;
+
+			case 'system_one_status':
+				void handleSystemOneStatus(this.ctx, client, message);
+				break;
+
+			case 'system_one_set':
+				void handleSystemOneSet(this.ctx, client, message);
+				break;
+
+			case 'system_one_key_set':
+				void handleSystemOneKeySet(this.ctx, client, message);
+				break;
+
+			case 'system_one_key_clear':
+				void handleSystemOneKeyClear(this.ctx, client, message);
+				break;
+
+			case 'system_one_test':
+				void handleSystemOneTest(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':

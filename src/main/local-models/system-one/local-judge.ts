@@ -381,12 +381,14 @@ function describeJudge(source: LocalModelSource): string {
 	});
 }
 
-function noModelError(): SystemOneError {
+/** Why the judge cannot answer with no model assigned. Also what `s1 status` reports. */
+export function localJudgeNoModelMessage(): string {
 	const task = LOCAL_MODEL_TASKS[LOCAL_JUDGE_TASK_ID];
-	return judgeError(
-		'unavailable',
-		`${systemOneEngineLabel(ENGINE_ID)}: no model is assigned. Assign ${task.label} a local model or an endpoint in ${taskAssignmentLocation(LOCAL_JUDGE_TASK_ID)}.`
-	);
+	return `${systemOneEngineLabel(ENGINE_ID)}: no model is assigned. Assign ${task.label} a local model or an endpoint in ${taskAssignmentLocation(LOCAL_JUDGE_TASK_ID)}.`;
+}
+
+function noModelError(): SystemOneError {
+	return judgeError('unavailable', localJudgeNoModelMessage());
 }
 
 /**

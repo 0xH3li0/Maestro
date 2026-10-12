@@ -146,6 +146,15 @@ import {
 	modelsServerStatus,
 	modelsServerStop,
 } from './commands/models-server';
+import {
+	systemOneKeyClear,
+	systemOneKeySet,
+	systemOneSetEngine,
+	systemOneSetFailPolicy,
+	systemOneSetTimeout,
+	systemOneStatus,
+	systemOneTest,
+} from './commands/system-one';
 import { modelsStatus } from './commands/models-status';
 import {
 	voiceWakeAdd,
@@ -2881,6 +2890,83 @@ modelServer
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsServerKey);
+
+// System One: the engine that answers typed questions (yes or no, pick one,
+// rate on a rubric). Every verb runs in the desktop app.
+const systemOne = program
+	.command('s1')
+	.description(
+		'System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, and a test'
+	);
+
+systemOne
+	.command('status')
+	.description(
+		'The engine in force, its address, model and timeout, where each key comes from, and the fail policies (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneStatus);
+
+const systemOneSet = systemOne
+	.command('set')
+	.description('Change the System One engine, its timeout, or a task fail policy');
+
+systemOneSet
+	.command('engine <engine>')
+	.description(
+		'Choose the engine: off | jev-cloud (sends task text to TypeSafe) | openjev (your server) | local-judge (a local model, not calibrated) (requires the desktop app)'
+	)
+	.option('--url <url>', 'The OpenJev server (openjev only)')
+	.option(
+		'--model <model>',
+		'jev-cloud, openjev: pin this model, or "default" to remove the pin. local-judge: the source it answers on, local:<model-id> or endpoint:<endpoint>:<model>'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetEngine);
+
+systemOneSet
+	.command('timeout <ms>')
+	.description(
+		'The request budget for Jev and OpenJev, in milliseconds (100 to 60000, default 1500) (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetTimeout);
+
+systemOneSet
+	.command('fail-policy <task> <policy>')
+	.description(
+		'What a task does when the engine gives no answer: open (the work goes ahead) | closed (it stops) | default (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetFailPolicy);
+
+const systemOneKey = systemOne
+	.command('key')
+	.description('The API key Maestro stores, sealed, for Jev or OpenJev. No verb prints a key');
+
+systemOneKey
+	.command('set')
+	.description(
+		'Store a key read from standard input, never from an argument: pbpaste | maestro-cli s1 key set (requires the desktop app)'
+	)
+	.option('--engine <engine>', 'jev-cloud | openjev (default: the engine in force)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneKeySet);
+
+systemOneKey
+	.command('clear')
+	.description('Forget the stored key (requires the desktop app)')
+	.option('--engine <engine>', 'jev-cloud | openjev (default: the engine in force)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneKeyClear);
+
+systemOne
+	.command('test')
+	.description(
+		'Ask the engine one fixed question and print the answer, the latency and the engine; exits non-zero with no answer (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneTest);
 
 const modelTiers = models
 	.command('tiers')

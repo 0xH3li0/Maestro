@@ -12,7 +12,9 @@
  * local_models_runtime_install, local_models_server_status,
  * local_models_server_start, local_models_server_stop, local_models_server_set,
  * local_models_server_key, local_models_server_ensure,
- * local_models_run_on_test, local_models_tier_options, notify_speak.
+ * local_models_run_on_test, local_models_tier_options, system_one_status,
+ * system_one_set, system_one_key_set, system_one_key_clear, system_one_test,
+ * notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -70,6 +72,13 @@ import {
 	updateModelServerConfigRequest,
 } from '../../../local-models/server/service';
 import { modelServerForHarness } from '../../../local-models/server/server-endpoint';
+import {
+	clearSystemOneKeyRequest,
+	getSystemOneReport,
+	setSystemOneKeyRequest,
+	testSystemOne,
+	updateSystemOneSettingsRequest,
+} from '../../../local-models/system-one/service';
 import { testAgentRunOn } from '../../../local-models/run-on-test';
 import { listHarnessTierOptionsRequest } from '../../../local-models/tier-options';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -548,6 +557,81 @@ export function handleLocalModelsTierOptions(
 			harness: message.harness,
 			refresh: message.refresh,
 		}),
+	}));
+}
+
+/**
+ * Handle system_one_status - the System One engine in force, where each key
+ * comes from, and the fail policies (`maestro-cli s1 status`). The same report
+ * the System One card reads through `localModels:systemOne:report`. It carries
+ * no key and sends nothing to an engine.
+ */
+export function handleSystemOneStatus(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_status_result', async () => ({
+		report: await getSystemOneReport(),
+	}));
+}
+
+/**
+ * Handle system_one_set - change the engine, the OpenJev URL, a pinned model,
+ * the timeout or one task's fail policy (`maestro-cli s1 set`), through the
+ * function the card's controls call. A change that is refused comes back as an
+ * error and writes nothing.
+ */
+export function handleSystemOneSet(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_set_result', async () => ({
+		report: await updateSystemOneSettingsRequest(message.patch),
+	}));
+}
+
+/**
+ * Handle system_one_key_set - seal and store a key for a remote engine
+ * (`maestro-cli s1 key set`, which reads it from standard input). The key is
+ * written and never read back: the answer is the report, which says where the
+ * key comes from and nothing more.
+ */
+export function handleSystemOneKeySet(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_key_set_result', async () => ({
+		report: await setSystemOneKeyRequest({ engine: message.engine, key: message.key }),
+	}));
+}
+
+/** Handle system_one_key_clear - forget the key stored for a remote engine (`maestro-cli s1 key clear`). */
+export function handleSystemOneKeyClear(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_key_clear_result', async () => ({
+		report: await clearSystemOneKeyRequest({ engine: message.engine }),
+	}));
+}
+
+/**
+ * Handle system_one_test - ask the engine in force one fixed question
+ * (`maestro-cli s1 test`), by the function the card's Test button calls. An
+ * engine that gives no answer is a successful round trip with the verdict in
+ * `result`, which names the engine that was asked.
+ */
+export function handleSystemOneTest(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_test_result', async () => ({
+		result: await testSystemOne(),
 	}));
 }
 

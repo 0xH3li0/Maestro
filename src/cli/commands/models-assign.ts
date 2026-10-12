@@ -34,6 +34,7 @@ import {
 	resolveLocalModelAssignments,
 	withLocalModelAssignment,
 	type LocalModelAssignment,
+	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 
@@ -52,18 +53,23 @@ function fail(message: string, json: boolean | undefined, code = ExitCode.Genera
 	return exitWith(code);
 }
 
-export function modelsAssign(taskId: string, spec: string, options: JsonOption): void {
-	if (!isLocalModelTaskId(taskId)) {
-		fail(
-			`Unknown task "${taskId}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`,
-			options.json,
-			ExitCode.InvalidUsage
-		);
-	}
+/** A spelled assignment, checked against a task and ready to store. */
+export type ResolvedAssignmentSpec =
+	| { ok: true; assignment: LocalModelAssignment; endpointEnabled: boolean }
+	| { ok: false; message: string };
+
+/**
+ * Read an assignment spelling for a task and check that it fits, without
+ * storing it. Every verb that takes a spelling goes through this (`models
+ * assign`, and `s1 set engine local-judge --model`), so they accept the same
+ * forms and refuse the same mistakes.
+ */
+export function resolveAssignmentSpec(
+	taskId: LocalModelTaskId,
+	spec: string
+): ResolvedAssignmentSpec {
 	const parsed = parseLocalModelAssignmentSpec(spec);
-	if (!parsed) {
-		fail(`Assignment must be ${SPEC_FORMS}. Got "${spec}".`, options.json, ExitCode.InvalidUsage);
-	}
+	if (!parsed) return { ok: false, message: `Assignment must be ${SPEC_FORMS}. Got "${spec}".` };
 
 	// The picker only offers saved endpoints, so the CLI only accepts one. It
 	// also takes an endpoint the way the endpoint verbs do (id prefix or name)
@@ -72,17 +78,38 @@ export function modelsAssign(taskId: string, spec: string, options: JsonOption):
 	let endpointEnabled = true;
 	if (parsed.type === 'endpoint') {
 		const lookup = findLocalModelEndpoint(readLocalModelEndpoints(), parsed.endpointId);
-		if (!lookup.ok) fail(lookup.message, options.json, ExitCode.InvalidUsage);
+		if (!lookup.ok) return { ok: false, message: lookup.message };
 		assignment = { ...parsed, endpointId: lookup.endpoint.id };
 		endpointEnabled = lookup.endpoint.enabled;
 	}
 
 	const problem = localModelAssignmentProblem(taskId, assignment);
-	if (problem) fail(problem, options.json, ExitCode.InvalidUsage);
+	if (problem) return { ok: false, message: problem };
+	return { ok: true, assignment, endpointEnabled };
+}
 
+/** Store a task's assignment in the settings file. Check it with {@link resolveAssignmentSpec} first. */
+export function storeTaskAssignment(
+	taskId: LocalModelTaskId,
+	assignment: LocalModelAssignment
+): void {
 	writeLocalModelAssignments(
 		withLocalModelAssignment(readLocalModelAssignments(), taskId, assignment)
 	);
+}
+
+export function modelsAssign(taskId: string, spec: string, options: JsonOption): void {
+	if (!isLocalModelTaskId(taskId)) {
+		fail(
+			`Unknown task "${taskId}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`,
+			options.json,
+			ExitCode.InvalidUsage
+		);
+	}
+	const resolved = resolveAssignmentSpec(taskId, spec);
+	if (!resolved.ok) fail(resolved.message, options.json, ExitCode.InvalidUsage);
+	const { assignment, endpointEnabled } = resolved;
+	storeTaskAssignment(taskId, assignment);
 
 	const task = LOCAL_MODEL_TASKS[taskId];
 	const stored = formatLocalModelAssignmentSpec(assignment);

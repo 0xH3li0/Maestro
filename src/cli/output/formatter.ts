@@ -8,6 +8,15 @@ import {
 	type ModelServerReport,
 } from '../../shared/local-models/model-server';
 import { serverAcceleratorProblemMessage } from '../../shared/local-models/server-accelerator';
+import { JEV_DEFAULT_MODEL } from '../../shared/local-models/system-one';
+import {
+	SYSTEM_ONE_REMOTE_ENGINE_IDS,
+	describeSystemOneKey,
+	systemOneEngineChoiceLabel,
+	type SystemOneKeyInfo,
+	type SystemOneReport,
+	type SystemOneTestResult,
+} from '../../shared/local-models/system-one-settings';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
 import {
 	EMBEDDING_SOURCE_TYPES,
@@ -1660,6 +1669,107 @@ export function formatDirectorNotesHistory(
 		);
 	}
 
+	return lines.join('\n');
+}
+
+/** A key's source as one phrase. Yellow when it is weaker than a sealed key, or cannot be used. */
+function formatSystemOneKey(info: SystemOneKeyInfo): string {
+	const text = describeSystemOneKey(info);
+	if (info.source === 'none') return dim(text);
+	const weak =
+		info.source === 'stored' && (info.problem !== undefined || info.storage === 'obscured');
+	return weak ? c('yellow', text) : text;
+}
+
+/**
+ * `maestro-cli s1 status`: the engine in force, where it is called, the model,
+ * the budget, where each key comes from, and the fail policies. No key is in
+ * the report, so none can be printed.
+ */
+export function formatSystemOneReport(report: SystemOneReport): string {
+	const { settings } = report;
+	const off = settings.engine === 'off';
+	const lines = [
+		`${bold(c('cyan', 'SYSTEM ONE'))}  ${off ? c('gray', report.engineLabel) : report.engineLabel}`,
+	];
+	if (report.problem) lines.push(`  ${c('yellow', report.problem)}`);
+
+	const row = (label: string, value: string) => `  ${c('white', label.padEnd(9))}  ${value}`;
+	lines.push('');
+	lines.push(
+		row(
+			'Engine',
+			off
+				? dim('off')
+				: `${settings.engine}  ${dim(report.calibrated ? 'calibrated' : 'not calibrated')}`
+		)
+	);
+	if (report.baseUrl) lines.push(row('Address', report.baseUrl));
+	if (!off) {
+		const fallback =
+			settings.engine === 'jev-cloud'
+				? `${JEV_DEFAULT_MODEL} ${dim('(the newest release; not pinned)')}`
+				: settings.engine === 'openjev'
+					? dim('the one the server was started with (not pinned)')
+					: c('yellow', 'none assigned');
+		lines.push(
+			row(
+				'Model',
+				report.model === null
+					? fallback
+					: report.modelLabel && report.modelLabel !== report.model
+						? `${report.modelLabel}  ${dim(report.model)}`
+						: report.model
+			)
+		);
+	}
+	if (report.timeoutMs !== null) lines.push(row('Timeout', `${report.timeoutMs} ms`));
+	lines.push(row('Sends', report.disclosure));
+
+	lines.push('', `  ${c('white', 'Keys')}`);
+	for (const engine of SYSTEM_ONE_REMOTE_ENGINE_IDS) {
+		lines.push(`    ${engine.padEnd(9)}  ${formatSystemOneKey(report.keys[engine])}`);
+	}
+
+	if (report.failPolicies.length > 0) {
+		const width = Math.max(...report.failPolicies.map((policy) => policy.taskId.length));
+		lines.push(
+			'',
+			`  ${c('white', 'Fail policies')} ${dim('(what a task does when the engine gives no answer)')}`
+		);
+		for (const policy of report.failPolicies) {
+			const note = policy.policy === policy.defaultPolicy ? dim('  default') : '';
+			lines.push(`    ${policy.taskId.padEnd(width)}  ${policy.policy}${note}`);
+		}
+	}
+
+	if (off) {
+		lines.push(
+			'',
+			dim('  -> Choose an engine: maestro-cli s1 set engine jev-cloud|openjev|local-judge')
+		);
+	} else if (!report.problem) {
+		lines.push('', dim('  -> Check that it answers: maestro-cli s1 test'));
+	}
+	return lines.join('\n');
+}
+
+/** `maestro-cli s1 test`: the answer, the latency, and which engine gave it. */
+export function formatSystemOneTestResult(result: SystemOneTestResult): string {
+	if (!result.ok) {
+		const engine = result.engine === 'off' ? systemOneEngineChoiceLabel('off') : result.engineLabel;
+		return `${c('red', '✗')} ${engine}: no answer ${dim(`(${result.code})`)}\n  ${result.error}`;
+	}
+	const said = result.probability >= 0.5 ? 'yes' : 'no';
+	const lines = [
+		`${c('green', '✓')} ${result.engineLabel} answered in ${result.latencyMs} ms`,
+		`  Answer   ${said}, P(yes) ${result.probability.toFixed(2)}  ${dim(result.calibrated ? 'calibrated' : 'not calibrated')}`,
+		`  Model    ${result.model}`,
+		`  Tokens   ${result.usage.inputTokens} in, ${result.usage.outputTokens} out`,
+	];
+	if (said === 'no') {
+		lines.push(c('yellow', '  The right answer to the test question is yes.'));
+	}
 	return lines.join('\n');
 }
 

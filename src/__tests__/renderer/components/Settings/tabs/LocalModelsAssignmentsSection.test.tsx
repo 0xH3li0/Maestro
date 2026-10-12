@@ -247,6 +247,84 @@ describe('buildAssignmentOptionGroups', () => {
 		]);
 	});
 
+	describe('the fail policy column', () => {
+		const rows = [
+			{ taskId: 'cue-gate', label: 'Cue gate', policy: 'open', defaultPolicy: 'open' },
+			{
+				taskId: 'injection-screen',
+				label: 'Prompt-injection screen',
+				policy: 'closed',
+				defaultPolicy: 'closed',
+			},
+		] as const;
+
+		function SystemOne({
+			onChange = vi.fn(),
+			disabled = false,
+			policies = rows,
+		}: {
+			onChange?: (taskId: string, policy: string) => void;
+			disabled?: boolean;
+			policies?: typeof rows | readonly [];
+		}) {
+			const models = useLocalModels();
+			const endpoints = useLocalModelEndpoints();
+			return (
+				<LocalModelsAssignmentsSection
+					theme={theme}
+					system="one"
+					models={models}
+					endpoints={endpoints}
+					failPolicies={{ rows: policies, disabled, onChange }}
+				/>
+			);
+		}
+
+		const policySelect = (taskId: string) =>
+			screen.queryByTestId(`local-models-task-fail-policy-${taskId}`) as HTMLSelectElement | null;
+
+		it('shows a policy only for a task that gates something, with its default marked', () => {
+			render(<SystemOne />);
+			expect(screen.getByTestId('local-models-assignments-columns')).toHaveTextContent(
+				'If no answer'
+			);
+			expect(policySelect('cue-gate')!.value).toBe('open');
+			expect(policySelect('injection-screen')!.value).toBe('closed');
+			expect(
+				within(policySelect('cue-gate')!)
+					.getAllByRole('option')
+					.map((option) => option.textContent)
+			).toEqual(['Fail open (default)', 'Fail closed']);
+			for (const task of tasksForSystem('one')) {
+				if (task.failPolicy === undefined) expect(policySelect(task.id)).toBeNull();
+			}
+		});
+
+		it('sends the task and the policy picked', () => {
+			const onChange = vi.fn();
+			render(<SystemOne onChange={onChange} />);
+			fireEvent.change(policySelect('cue-gate')!, { target: { value: 'closed' } });
+			expect(onChange).toHaveBeenCalledWith('cue-gate', 'closed');
+		});
+
+		it('keeps the column and shows no value until the report arrives', () => {
+			render(<SystemOne policies={[]} />);
+			expect(screen.getByTestId('local-models-assignments-columns')).toBeInTheDocument();
+			expect(policySelect('cue-gate')).toBeNull();
+		});
+
+		it('disables the picker while a change is being stored', () => {
+			render(<SystemOne disabled />);
+			expect(policySelect('cue-gate')).toBeDisabled();
+		});
+
+		it('is absent where no task has a fail policy', () => {
+			render(<Section />);
+			expect(screen.queryByTestId('local-models-assignments-columns')).toBeNull();
+			expect(policySelect('cue-gate')).toBeNull();
+		});
+	});
+
 	it('does not offer a model the task records as measured-unfit', () => {
 		const qwen = `local:${QWEN3_1_7B_ID}`;
 		const values = (taskId: 'tab-naming' | 'voice-routing') =>

@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, Download, FileText, Play, RefreshCw, Server, Square } from 'lucide-react';
+import { Download, FileText, Play, RefreshCw, Server, Square } from 'lucide-react';
 
 import { formatSize } from '../../../../../shared/formatters';
 import {
@@ -38,6 +38,7 @@ import { MiniBadge } from '../../../ui/MiniBadge';
 import { ProgressBar } from '../../../ui/ProgressBar';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
+import { CardRowTitle, CardWarning } from './CardParts';
 
 const STATE_LABELS: Readonly<Record<ModelServerState, string>> = Object.freeze({
 	stopped: 'Stopped',
@@ -103,23 +104,6 @@ function CardButton({ theme, onClick, disabled, primary, children, testId }: Car
 	);
 }
 
-function Warning({ theme, children }: { theme: Theme; children: React.ReactNode }) {
-	return (
-		<div className="flex items-start gap-1.5 text-xs" style={{ color: theme.colors.warning }}>
-			<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-			<span>{children}</span>
-		</div>
-	);
-}
-
-function RowTitle({ theme, children }: { theme: Theme; children: React.ReactNode }) {
-	return (
-		<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-			{children}
-		</div>
-	);
-}
-
 export interface LocalModelsServerCardProps {
 	theme: Theme;
 	/** The card's state. The section passes its own `useModelServer()`; tests pass a fake. */
@@ -167,7 +151,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 			{/* State, Start / Stop, log */}
 			<div className="space-y-2" data-testid="model-server-status">
 				<div className="flex items-center gap-2">
-					<RowTitle theme={theme}>Maestro model server</RowTitle>
+					<CardRowTitle theme={theme}>Maestro model server</CardRowTitle>
 					<MiniBadge
 						theme={theme}
 						label={STATE_LABELS[status.state]}
@@ -226,7 +210,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 
 			{/* Engine and build */}
 			<div className="space-y-2" data-testid="model-server-engine">
-				<RowTitle theme={theme}>Engine</RowTitle>
+				<CardRowTitle theme={theme}>Engine</CardRowTitle>
 				<p className="text-xs opacity-70">
 					{engine.installed
 						? `${engine.label} build of llama-server ${engine.release}, ${formatSize(engine.bytes)} on disk. Runs on: ${engine.accelerator?.label ?? 'not checked'}.`
@@ -235,13 +219,13 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 							: 'No llama-server build is published for this platform, so the model server cannot run here.'}
 				</p>
 				{engine.stale && (
-					<Warning theme={theme}>
+					<CardWarning theme={theme}>
 						This build is older than the one Maestro expects. Install it again to update it.
-					</Warning>
+					</CardWarning>
 				)}
 				{acceleratorProblem && (
 					<div className="space-y-2" data-testid="model-server-accelerator-problem">
-						<Warning theme={theme}>{acceleratorProblem}</Warning>
+						<CardWarning theme={theme}>{acceleratorProblem}</CardWarning>
 						{engine.accelerator?.offerCpuBuild && cpuBuild && engine.choice !== 'cpu' && (
 							<CardButton
 								theme={theme}
@@ -311,7 +295,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 
 			{/* Address */}
 			<div className="space-y-1" data-testid="model-server-address">
-				<RowTitle theme={theme}>Address</RowTitle>
+				<CardRowTitle theme={theme}>Address</CardRowTitle>
 				{status.baseUrl ? (
 					<div className="flex items-center gap-1">
 						<code className="text-xs select-text">{status.baseUrl}</code>
@@ -332,7 +316,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 
 			{/* Who can reach it */}
 			<div className="space-y-2" data-testid="model-server-bind">
-				<RowTitle theme={theme}>Who can reach it</RowTitle>
+				<CardRowTitle theme={theme}>Who can reach it</CardRowTitle>
 				<p className="text-xs opacity-70">
 					{status.bind === 'network'
 						? `Listening on every interface (${MODEL_SERVER_BIND_HOSTS.network}).`
@@ -340,10 +324,10 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 					Every request must send the key, in both modes.
 				</p>
 				{status.bind === 'network' && (
-					<Warning theme={theme}>
+					<CardWarning theme={theme}>
 						Other machines on your network can reach the server. Anyone with the key can use your
 						models.
-					</Warning>
+					</CardWarning>
 				)}
 				<ToggleButtonGroup<ModelServerBind>
 					theme={theme}
@@ -361,7 +345,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 
 			{/* Models loaded at once */}
 			<div className="space-y-2">
-				<RowTitle theme={theme}>Models loaded at once</RowTitle>
+				<CardRowTitle theme={theme}>Models loaded at once</CardRowTitle>
 				<p className="text-xs opacity-70">
 					Loading one more unloads the least recently used. Each loaded model holds its weights in
 					memory.
@@ -387,7 +371,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 
 			{/* API key */}
 			<div className="space-y-2" data-testid="model-server-key">
-				<RowTitle theme={theme}>API key</RowTitle>
+				<CardRowTitle theme={theme}>API key</CardRowTitle>
 				<p className="text-xs opacity-70">
 					A harness sends it as <code>Authorization: Bearer</code> or <code>x-api-key</code>.{' '}
 					{status.keyStorage === 'os'
@@ -397,14 +381,14 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 							: ''}
 				</p>
 				{status.keyStorage === 'obscured' && (
-					<Warning theme={theme}>
+					<CardWarning theme={theme}>
 						This system has no key store, so the key is stored obscured, not encrypted.
-					</Warning>
+					</CardWarning>
 				)}
 				{confirmingRotate && (
-					<Warning theme={theme}>
+					<CardWarning theme={theme}>
 						Rotating makes the current key stop working. Anything set up with it needs the new key.
-					</Warning>
+					</CardWarning>
 				)}
 				<div className="flex items-center gap-2">
 					<code className="text-xs opacity-70 flex-1">{MODEL_SERVER_KEY_PLACEHOLDER}</code>
@@ -446,7 +430,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 			{/* Loaded models */}
 			{status.state === 'running' && (
 				<div className="space-y-1" data-testid="model-server-loaded">
-					<RowTitle theme={theme}>Loaded</RowTitle>
+					<CardRowTitle theme={theme}>Loaded</CardRowTitle>
 					{loaded.length === 0 ? (
 						<p className="text-xs opacity-70">
 							No model is loaded. A model loads when a request names it

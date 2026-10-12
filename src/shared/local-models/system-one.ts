@@ -383,6 +383,28 @@ export const SYSTEM_ONE_ERROR_CODES = [
 
 export type SystemOneErrorCode = (typeof SYSTEM_ONE_ERROR_CODES)[number];
 
+/**
+ * What a task does when its engine gives no answer (any `SystemOneErrorCode`
+ * but `cancelled`).
+ *
+ *   - `open`   - the work goes ahead, unchecked.
+ *   - `closed` - the work stops.
+ *
+ * A task that gates something declares its default
+ * (`LocalModelTaskDefinition.failPolicy`): the Cue gate fails open, because a
+ * model that is down must not silently stop automation the user depends on, and
+ * the prompt-injection screen fails closed, because it exists to keep unscreened
+ * text out of a run. The user can change either per task; see
+ * `resolveSystemOneFailPolicy` in `system-one-settings.ts`.
+ */
+export const SYSTEM_ONE_FAIL_POLICIES = ['open', 'closed'] as const;
+
+export type SystemOneFailPolicy = (typeof SYSTEM_ONE_FAIL_POLICIES)[number];
+
+export function isSystemOneFailPolicy(value: unknown): value is SystemOneFailPolicy {
+	return (SYSTEM_ONE_FAIL_POLICIES as readonly unknown[]).includes(value);
+}
+
 // ---------------------------------------------------------------------------
 // Redaction
 // ---------------------------------------------------------------------------

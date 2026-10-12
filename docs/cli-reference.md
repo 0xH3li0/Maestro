@@ -2361,6 +2361,78 @@ Put a harness back on the built-in tier table, or one tier with --tier
 | `--tier <tier>` | Only this tier: low \| medium \| high | -       |
 | `--json`        | Output as JSON (for scripting)        | -       |
 
+## `maestro-cli s1`
+
+System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, and a test
+
+## `maestro-cli s1 status`
+
+The engine in force, its address, model and timeout, where each key comes from, and the fail policies (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 set`
+
+Change the System One engine, its timeout, or a task fail policy
+
+## `maestro-cli s1 set engine <engine>`
+
+Choose the engine: off | jev-cloud (sends task text to TypeSafe) | openjev (your server) | local-judge (a local model, not calibrated) (requires the desktop app)
+
+| Option            | Description                                                                                                                                                | Default |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--url <url>`     | The OpenJev server (openjev only)                                                                                                                          | -       |
+| `--model <model>` | jev-cloud, openjev: pin this model, or "default" to remove the pin. local-judge: the source it answers on, local:<model-id> or endpoint:<endpoint>:<model> | -       |
+| `--json`          | Output as JSON (for scripting)                                                                                                                             | -       |
+
+## `maestro-cli s1 set timeout <ms>`
+
+The request budget for Jev and OpenJev, in milliseconds (100 to 60000, default 1500) (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 set fail-policy <task> <policy>`
+
+What a task does when the engine gives no answer: open (the work goes ahead) | closed (it stops) | default (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 key`
+
+The API key Maestro stores, sealed, for Jev or OpenJev. No verb prints a key
+
+## `maestro-cli s1 key set`
+
+Store a key read from standard input, never from an argument: pbpaste | maestro-cli s1 key set (requires the desktop app)
+
+| Option              | Description                                         | Default |
+| ------------------- | --------------------------------------------------- | ------- |
+| `--engine <engine>` | jev-cloud \| openjev (default: the engine in force) | -       |
+| `--json`            | Output as JSON (for scripting)                      | -       |
+
+## `maestro-cli s1 key clear`
+
+Forget the stored key (requires the desktop app)
+
+| Option              | Description                                         | Default |
+| ------------------- | --------------------------------------------------- | ------- |
+| `--engine <engine>` | jev-cloud \| openjev (default: the engine in force) | -       |
+| `--json`            | Output as JSON (for scripting)                      | -       |
+
+## `maestro-cli s1 test`
+
+Ask the engine one fixed question and print the answer, the latency and the engine; exits non-zero with no answer (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli models config`
 
 Local Models configuration: where model files are downloaded from

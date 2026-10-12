@@ -217,6 +217,17 @@ vi.mock('../../../../main/local-models/run-on-test', () => ({
 	})),
 }));
 
+vi.mock('../../../../main/local-models/system-one/service', () => {
+	const report = { settings: { engine: 'jev-cloud' }, engineLabel: 'Jev (TypeSafe cloud)' };
+	return {
+		getSystemOneReport: vi.fn(async () => report),
+		updateSystemOneSettingsRequest: vi.fn(async () => report),
+		setSystemOneKeyRequest: vi.fn(async () => report),
+		clearSystemOneKeyRequest: vi.fn(async () => report),
+		testSystemOne: vi.fn(async () => ({ ok: true, engine: 'jev-cloud', probability: 0.97 })),
+	};
+});
+
 vi.mock('../../../../main/local-models/tier-options', () => ({
 	listHarnessTierOptionsRequest: vi.fn(async () => [
 		{
@@ -282,6 +293,13 @@ import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../../shared/local-mod
 import { remove, removeAll, verify } from '../../../../main/local-models/model-store';
 import { installNativeRuntime } from '../../../../main/local-models/runtime/runtime-installer';
 import { testAgentRunOn } from '../../../../main/local-models/run-on-test';
+import {
+	clearSystemOneKeyRequest,
+	getSystemOneReport,
+	setSystemOneKeyRequest,
+	testSystemOne,
+	updateSystemOneSettingsRequest,
+} from '../../../../main/local-models/system-one/service';
 import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
 import {
 	artifactForThisPlatform,
@@ -655,6 +673,37 @@ describe('task router channel', () => {
 			message: 'The source "Ollama" is disabled.',
 		});
 		expect(testAgentRunOn).toHaveBeenCalledWith(request);
+	});
+
+	it('reads the System One report without asking the engine', async () => {
+		await expect(handlerFor('localModels:systemOne:report')({})).resolves.toMatchObject({
+			engineLabel: 'Jev (TypeSafe cloud)',
+		});
+		expect(getSystemOneReport).toHaveBeenCalled();
+		expect(testSystemOne).not.toHaveBeenCalled();
+	});
+
+	it('hands a System One change, a key and a clear to the service untouched', async () => {
+		const patch = { engine: 'openjev', openJevUrl: 'https://gpu.lan:8000' };
+		await handlerFor('localModels:systemOne:set')({}, patch);
+		expect(updateSystemOneSettingsRequest).toHaveBeenCalledWith(patch);
+
+		const key = { engine: 'jev-cloud', key: 'sk-ipc-test-0123456789abcdef' };
+		const stored = await handlerFor('localModels:systemOne:setKey')({}, key);
+		expect(setSystemOneKeyRequest).toHaveBeenCalledWith(key);
+		// The answer is the report. No channel returns a key.
+		expect(JSON.stringify(stored)).not.toContain(key.key);
+
+		await handlerFor('localModels:systemOne:clearKey')({}, { engine: 'openjev' });
+		expect(clearSystemOneKeyRequest).toHaveBeenCalledWith({ engine: 'openjev' });
+	});
+
+	it('runs the System One test and returns its verdict', async () => {
+		await expect(handlerFor('localModels:systemOne:test')({})).resolves.toMatchObject({
+			ok: true,
+			probability: 0.97,
+		});
+		expect(testSystemOne).toHaveBeenCalledTimes(1);
 	});
 
 	it('hands a tier options request to the service and returns its rows', async () => {

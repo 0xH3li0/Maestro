@@ -826,6 +826,40 @@ const mockMaestro = {
 			onChanged: vi.fn().mockReturnValue(() => {}),
 			onProgress: vi.fn().mockReturnValue(() => {}),
 		},
+		systemOne: {
+			report: vi.fn().mockResolvedValue({
+				settings: {
+					engine: 'off',
+					openJevUrl: null,
+					timeoutMs: 1500,
+					models: {},
+					failPolicies: {},
+				},
+				engineLabel: 'Off',
+				disclosure: 'System One is off. No task text is sent to an engine.',
+				baseUrl: null,
+				model: null,
+				modelLabel: null,
+				timeoutMs: null,
+				calibrated: null,
+				keys: { 'jev-cloud': { source: 'none' }, openjev: { source: 'none' } },
+				problem: null,
+				failPolicies: [
+					{ taskId: 'cue-gate', label: 'Cue gate', policy: 'open', defaultPolicy: 'open' },
+					{
+						taskId: 'injection-screen',
+						label: 'Prompt-injection screen',
+						policy: 'closed',
+						defaultPolicy: 'closed',
+					},
+				],
+			}),
+			set: vi.fn(),
+			setKey: vi.fn(),
+			clearKey: vi.fn(),
+			test: vi.fn(),
+			onChanged: vi.fn().mockReturnValue(() => {}),
+		},
 		semanticIndex: {
 			status: vi.fn().mockResolvedValue({
 				state: 'off',

@@ -87,6 +87,30 @@ describe('ModelsSettingsTab', () => {
 		expect(document.querySelector('[data-setting-id="local-models-utility-agent"]')).toBeNull();
 	});
 
+	it('puts the engine card above the System One tasks, and on no other inner tab', async () => {
+		const { container } = render(<ModelsSettingsTab theme={theme} />);
+		const engine = () =>
+			container.querySelector('[data-setting-id="local-models-system-one-engine"]');
+		expect(engine()).toBeNull();
+
+		openPanel('System One');
+		expect(engine()).not.toBeNull();
+		const tasks = container.querySelector('[data-setting-id="local-models-system-one"]')!;
+		expect(
+			engine()!.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		// Opening the tab reads the report. It asks the engine nothing.
+		expect(window.maestro.localModels.systemOne.report).toHaveBeenCalled();
+		expect(window.maestro.localModels.systemOne.test).not.toHaveBeenCalled();
+
+		// The fail policy column fills in from that one report.
+		expect(await screen.findByTestId('local-models-task-fail-policy-cue-gate')).toHaveValue('open');
+
+		openPanel('System Two');
+		expect(engine()).toBeNull();
+		expect(screen.queryByTestId('local-models-assignments-columns')).toBeNull();
+	});
+
 	it('lists only System Two tasks on System Two, with the Utility Agent under them', () => {
 		render(<ModelsSettingsTab theme={theme} />);
 		openPanel('System Two');

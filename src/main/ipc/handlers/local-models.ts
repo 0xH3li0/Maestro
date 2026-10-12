@@ -87,6 +87,17 @@ import {
 	onModelServerEngineProgress,
 	updateModelServerConfigRequest,
 } from '../../local-models/server/service';
+import {
+	clearSystemOneKeyRequest,
+	getSystemOneReport,
+	setSystemOneKeyRequest,
+	testSystemOne,
+	updateSystemOneSettingsRequest,
+} from '../../local-models/system-one/service';
+import type {
+	SystemOneReport,
+	SystemOneTestResult,
+} from '../../../shared/local-models/system-one-settings';
 import type {
 	ModelServerEngineProgress,
 	ModelServerReport,
@@ -516,6 +527,44 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('server:installEngine'),
 			async (choice: unknown): Promise<ModelServerReport> => installModelServerEngine(choice)
+		)
+	);
+
+	// System One: the engine, its key and the Test. `report` reads; no channel
+	// returns a key, and `test` is the only one that sends anything anywhere.
+	ipcMain.handle(
+		'localModels:systemOne:report',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:report'),
+			async (): Promise<SystemOneReport> => getSystemOneReport()
+		)
+	);
+	ipcMain.handle(
+		'localModels:systemOne:set',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:set'),
+			async (patch: unknown): Promise<SystemOneReport> => updateSystemOneSettingsRequest(patch)
+		)
+	);
+	ipcMain.handle(
+		'localModels:systemOne:setKey',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:setKey'),
+			async (request: unknown): Promise<SystemOneReport> => setSystemOneKeyRequest(request)
+		)
+	);
+	ipcMain.handle(
+		'localModels:systemOne:clearKey',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:clearKey'),
+			async (request: unknown): Promise<SystemOneReport> => clearSystemOneKeyRequest(request)
+		)
+	);
+	ipcMain.handle(
+		'localModels:systemOne:test',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:test'),
+			async (): Promise<SystemOneTestResult> => testSystemOne()
 		)
 	);
 

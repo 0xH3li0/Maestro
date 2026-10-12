@@ -17,6 +17,11 @@
  * A choice is validated with `localModelAssignmentProblem` before it is saved
  * and written through `withLocalModelAssignment`, so the stored record stays
  * sparse and cannot hold a pick the router would refuse.
+ *
+ * System One also shows a fail policy column (`failPolicies`): for each task
+ * that gates something, what it does when its engine gives no answer. The
+ * values and the change both belong to the tab's `useSystemOne()`, the same
+ * state `maestro-cli s1 set fail-policy` writes.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -34,6 +39,14 @@ import {
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 } from '../../../../../shared/local-models/tasks';
+import {
+	SYSTEM_ONE_FAIL_POLICIES,
+	type SystemOneFailPolicy,
+} from '../../../../../shared/local-models/system-one';
+import {
+	SYSTEM_ONE_FAIL_POLICY_DESCRIPTIONS,
+	type SystemOneFailPolicyRow,
+} from '../../../../../shared/local-models/system-one-settings';
 import type { LocalModelTaskReadiness } from '../../../../../shared/local-models/task-readiness';
 import {
 	useLocalModelTaskReadiness,
@@ -56,13 +69,27 @@ export interface LocalModelsAssignmentsSectionProps {
 	models: LocalModelsState;
 	/** The tab's one `useLocalModelEndpoints()` instance. */
 	endpoints: LocalModelEndpointsState;
+	/** The fail policy column. Omitted where no task has one (System Two). */
+	failPolicies?: FailPolicyColumn;
 }
+
+/** What the fail policy column shows and how it changes a value. */
+export interface FailPolicyColumn {
+	/** One row per task that has a fail policy. A task not listed shows none. */
+	rows: readonly SystemOneFailPolicyRow[];
+	disabled: boolean;
+	onChange: (taskId: LocalModelTaskId, policy: SystemOneFailPolicy) => void;
+}
+
+const FAIL_POLICY_COLUMN_CLASS = 'w-32 flex-shrink-0';
+const SOURCE_COLUMN_CLASS = 'w-56 flex-shrink-0';
 
 export function LocalModelsAssignmentsSection({
 	theme,
 	system,
 	models,
 	endpoints,
+	failPolicies,
 }: LocalModelsAssignmentsSectionProps) {
 	const tasks = useMemo(() => tasksForSystem(system), [system]);
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
@@ -117,11 +144,28 @@ export function LocalModelsAssignmentsSection({
 						<span>Could not check task readiness: {readiness.error}</span>
 					</div>
 				)}
+				{failPolicies && (
+					<div
+						className="flex items-end justify-end gap-3 text-xs opacity-70"
+						data-testid="local-models-assignments-columns"
+						data-setting-id="local-models-system-one-fail-policy"
+					>
+						<span
+							className={FAIL_POLICY_COLUMN_CLASS}
+							title="What the task does when its System One engine gives no answer."
+						>
+							If no answer
+						</span>
+						<span className={SOURCE_COLUMN_CLASS}>Source</span>
+					</div>
+				)}
 				{tasks.map((task) => (
 					<TaskAssignmentRow
 						key={task.id}
 						theme={theme}
 						task={task}
+						failPolicy={failPolicies?.rows.find((row) => row.taskId === task.id)}
+						failPolicyColumn={failPolicies}
 						assignment={resolveLocalModelAssignment(assignments, task.id)}
 						models={models}
 						endpoints={endpoints}
@@ -151,11 +195,17 @@ interface TaskAssignmentRowProps {
 	problem: string | undefined;
 	onChoose: (spec: string) => void;
 	onRecheck: () => Promise<void>;
+	/** This task's fail policy, when it has one. */
+	failPolicy: SystemOneFailPolicyRow | undefined;
+	/** The column itself. Present for every row of a section that shows it, so the rows line up. */
+	failPolicyColumn: FailPolicyColumn | undefined;
 }
 
 function TaskAssignmentRow({
 	theme,
 	task,
+	failPolicy,
+	failPolicyColumn,
 	assignment,
 	models,
 	endpoints,
@@ -189,15 +239,40 @@ function TaskAssignmentRow({
 					</label>
 					<p className="text-xs opacity-70 mt-0.5">{task.description}</p>
 				</div>
-				<select
-					id={selectId}
-					value={formatLocalModelAssignmentSpec(assignment)}
-					onChange={(e) => onChoose(e.target.value)}
-					className="w-56 flex-shrink-0 p-1.5 rounded border bg-transparent outline-none text-xs"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-				>
-					<AssignmentOptionElements groups={groups} />
-				</select>
+				<div className="flex items-start gap-3 flex-shrink-0">
+					{failPolicyColumn &&
+						(failPolicy ? (
+							<select
+								aria-label={`${task.label}: if the engine gives no answer`}
+								title={SYSTEM_ONE_FAIL_POLICY_DESCRIPTIONS[failPolicy.policy]}
+								value={failPolicy.policy}
+								onChange={(e) =>
+									failPolicyColumn.onChange(task.id, e.target.value as SystemOneFailPolicy)
+								}
+								disabled={failPolicyColumn.disabled}
+								className={`${FAIL_POLICY_COLUMN_CLASS} p-1.5 rounded border bg-transparent outline-none text-xs`}
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								data-testid={`local-models-task-fail-policy-${task.id}`}
+							>
+								{SYSTEM_ONE_FAIL_POLICIES.map((policy) => (
+									<option key={policy} value={policy}>
+										{`Fail ${policy}${policy === failPolicy.defaultPolicy ? ' (default)' : ''}`}
+									</option>
+								))}
+							</select>
+						) : (
+							<span className={FAIL_POLICY_COLUMN_CLASS} aria-hidden />
+						))}
+					<select
+						id={selectId}
+						value={formatLocalModelAssignmentSpec(assignment)}
+						onChange={(e) => onChoose(e.target.value)}
+						className={`${SOURCE_COLUMN_CLASS} p-1.5 rounded border bg-transparent outline-none text-xs`}
+						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					>
+						<AssignmentOptionElements groups={groups} />
+					</select>
+				</div>
 			</div>
 			{problem && (
 				<p className="text-xs select-text" style={{ color: theme.colors.error }}>

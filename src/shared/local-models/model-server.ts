@@ -10,6 +10,7 @@
  * The supervisor is `src/main/local-models/server/supervisor.ts`.
  */
 
+import type { SecretStorage } from '../secretStorage';
 import type { LocalModelEndpoint } from './endpoints';
 import type { ServerAcceleratorReport } from './server-accelerator';
 import type { ServerBuildChoice, ServerBuildKind } from './server-engine';
@@ -84,7 +85,7 @@ export type ModelServerState =
  * (`os`), or, on a machine with no OS key store (Linux with no keyring), under a
  * key built into the app (`obscured`). The card says which.
  */
-export type ModelServerKeyStorage = 'os' | 'obscured';
+export type ModelServerKeyStorage = SecretStorage;
 
 export interface ModelServerStatus {
 	state: ModelServerState;
