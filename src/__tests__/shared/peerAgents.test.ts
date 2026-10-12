@@ -13,6 +13,7 @@ import {
 	normalizePeerAgents,
 	peerAccessLabel,
 	hasAnyPeerAccess,
+	hasPeerGrant,
 	mergePeerAccess,
 	resolvePeerRoster,
 } from '../../shared/peerAgents';
@@ -120,6 +121,46 @@ describe('hasAnyPeerAccess', () => {
 		expect(hasAnyPeerAccess(R)).toBe(true);
 		expect(hasAnyPeerAccess(W)).toBe(true);
 		expect(hasAnyPeerAccess(NONE)).toBe(false);
+	});
+});
+
+describe('hasPeerGrant', () => {
+	it('is false for an agent with no peer configuration at all', () => {
+		expect(hasPeerGrant({ id: 'me' })).toBe(false);
+		expect(hasPeerGrant({ id: 'me', peerAgents: [] })).toBe(false);
+	});
+
+	it('is true for an explicit row that grants access', () => {
+		expect(hasPeerGrant({ id: 'me', peerAgents: [{ sessionId: 'a', ...R }] })).toBe(true);
+		expect(hasPeerGrant({ id: 'me', peerAgents: [{ sessionId: 'a', ...W }] })).toBe(true);
+	});
+
+	it('is true for a group grant or a worktree grant that grants access', () => {
+		expect(hasPeerGrant({ id: 'me', groupPeerAccess: R })).toBe(true);
+		expect(hasPeerGrant({ id: 'me', worktreePeerAccess: W })).toBe(true);
+	});
+
+	it('is false when every source grants nothing', () => {
+		expect(
+			hasPeerGrant({
+				id: 'me',
+				peerAgents: [{ sessionId: 'a', ...NONE }],
+				groupPeerAccess: NONE,
+				worktreePeerAccess: NONE,
+			})
+		).toBe(false);
+	});
+
+	it('is true for an exclusion row beside a grant, because the grant still reaches others', () => {
+		expect(
+			hasPeerGrant({ id: 'me', peerAgents: [{ sessionId: 'a', ...NONE }], groupPeerAccess: R })
+		).toBe(true);
+	});
+
+	it('agrees with resolvePeerRoster: no grant means an empty roster', () => {
+		const me = agent('me', 'Me', { groupId: 'g1', peerAgents: [{ sessionId: 'a', ...NONE }] });
+		expect(hasPeerGrant(me)).toBe(false);
+		expect(resolvePeerRoster(me, [me, agent('a', 'Alpha', { groupId: 'g1' })])).toEqual([]);
 	});
 });
 

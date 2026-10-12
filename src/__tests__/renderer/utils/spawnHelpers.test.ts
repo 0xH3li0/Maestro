@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../helpers/mockSession';
 import {
 	SYSTEM_ONE_GATES,
 	refusedSystemOneAccess,
@@ -333,6 +335,97 @@ describe('prepareMaestroSystemPrompt', () => {
 					'S1 J',
 					'HIST',
 				]);
+			});
+		});
+
+		describe('Peer Agents', () => {
+			const R = { read: true, write: false };
+			const RW = { read: true, write: true };
+			const me = { ...baseSession, name: 'Me' };
+			let savedSessions: ReturnType<typeof useSessionStore.getState>['sessions'];
+
+			const setFleet = (...others: Array<{ id: string; name: string; groupId?: string }>) =>
+				useSessionStore.setState({
+					sessions: [createMockSession(me), ...others.map((other) => createMockSession(other))],
+				});
+
+			beforeEach(() => {
+				prompts['maestro-system-prompt'] = 'BASE\n\n{{PEER_AGENTS}}';
+				savedSessions = useSessionStore.getState().sessions;
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: false },
+				});
+				setFleet(
+					{ id: 'peer-a', name: 'Alpha', groupId: 'group-1' },
+					{ id: 'peer-b', name: 'Bravo', groupId: 'group-2' }
+				);
+			});
+
+			afterEach(() => {
+				prompts['maestro-system-prompt'] = 'BASE';
+				useSessionStore.setState({ sessions: savedSessions });
+				vi.restoreAllMocks();
+			});
+
+			it('renders nothing, and never reads the fleet, for an agent with no peer configuration', async () => {
+				const getState = vi.spyOn(useSessionStore, 'getState');
+				const result = await prepareMaestroSystemPrompt({ session: me });
+				expect(result).toBe('BASE\n\n');
+				expect(getState).not.toHaveBeenCalled();
+			});
+
+			it('does not read the fleet for a row that grants nothing and has no grant to exclude from', async () => {
+				const getState = vi.spyOn(useSessionStore, 'getState');
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...me, peerAgents: [{ sessionId: 'peer-a', read: false, write: false }] },
+				});
+				expect(result).toBe('BASE\n\n');
+				expect(getState).not.toHaveBeenCalled();
+			});
+
+			it('renders an explicit peer with its live name and its id', async () => {
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...me, peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }] },
+				});
+				expect(result).toContain('## Peer Agents');
+				expect(result).toContain('| Bravo | `peer-b` | Consult only | docs |');
+				expect(result).not.toContain('Alpha');
+			});
+
+			it('resolves a group grant against the whole fleet, leaving out the agent itself', async () => {
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...me, groupPeerAccess: RW },
+				});
+				expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate |');
+				expect(result).not.toContain('Bravo');
+				expect(result).not.toContain('| Me |');
+			});
+
+			it('puts the spawning agent in the delegate command', async () => {
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...me, groupPeerAccess: RW },
+				});
+				expect(result).toContain('--new-tab --notify-on-complete session-1`');
+				expect(result).not.toContain('{{');
+			});
+
+			it('reads the fleet at spawn time, so a peer added since the last spawn shows up', async () => {
+				const session = { ...me, groupPeerAccess: R };
+				expect(await prepareMaestroSystemPrompt({ session })).not.toContain('Charlie');
+				setFleet(
+					{ id: 'peer-a', name: 'Alpha', groupId: 'group-1' },
+					{ id: 'peer-c', name: 'Charlie', groupId: 'group-1' }
+				);
+				expect(await prepareMaestroSystemPrompt({ session })).toContain(
+					'| Charlie | `peer-c` | Consult only |'
+				);
+			});
+
+			it('renders nothing when every configured peer has been deleted', async () => {
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...me, peerAgents: [{ sessionId: 'gone', ...RW }] },
+				});
+				expect(result).toBe('BASE\n\n');
 			});
 		});
 

@@ -20,7 +20,7 @@
  *      by the group and worktree grants.
  *   3. `resolvePeerRoster` - who an agent's peers are right now. The one place
  *      the precedence between explicit rows, the group grant, and the worktree
- *      grant lives.
+ *      grant lives. `hasPeerGrant` is its cheap pre-check.
  *   4. `formatPeerAgentsForPrompt` - the markdown block substituted into
  *      `{{PEER_AGENTS}}` in the Maestro system prompt: the roster plus the
  *      shell commands that reach it. A roster with no instructions is inert.
@@ -117,6 +117,31 @@ export interface PeerRosterInput {
 }
 
 /**
+ * The agent a roster is resolved FOR. Its own name is never read (a roster
+ * never lists the agent itself), so a caller holding a partial record of the
+ * agent being spawned can pass it as it is.
+ */
+export type PeerRosterSubject = Omit<PeerRosterInput, 'name'>;
+
+/**
+ * Whether any of an agent's three sources could put a peer in its roster: an
+ * explicit row with access, or a group or worktree grant with access. A row
+ * with neither bit set does not count by itself, because an exclusion with no
+ * grant to exclude from yields nobody.
+ *
+ * The prompt builders ask this BEFORE they fetch the agent list, so an agent
+ * with no peer configuration (most of them) costs one check per spawn and not
+ * a fleet read. `resolvePeerRoster` asks it too, so the two cannot disagree.
+ */
+export function hasPeerGrant(session: PeerRosterSubject): boolean {
+	return (
+		!!session.peerAgents?.some(hasAnyPeerAccess) ||
+		(!!session.groupPeerAccess && hasAnyPeerAccess(session.groupPeerAccess)) ||
+		(!!session.worktreePeerAccess && hasAnyPeerAccess(session.worktreePeerAccess))
+	);
+}
+
+/**
  * Resolve the peers an agent may reach right now, from its three stored
  * sources and the live agent list. Nothing here is persisted: the roster is
  * rebuilt each time, so moving an agent into a group, renaming it, or deleting
@@ -143,9 +168,11 @@ export interface PeerRosterInput {
  * agents listed beside this one, and a nested group is a separate team.
  */
 export function resolvePeerRoster(
-	session: PeerRosterInput,
+	session: PeerRosterSubject,
 	allSessions: readonly PeerRosterInput[]
 ): ResolvedPeer[] {
+	if (!hasPeerGrant(session)) return [];
+
 	const roster = new Map<string, ResolvedPeer>();
 	const others = allSessions.filter((other) => other.id !== session.id);
 
