@@ -76,7 +76,7 @@ export function TabBehaviorSection({
 						ariaLabel="Automatically name tabs based on first message"
 					/>
 				</div>
-				<div className="text-xs opacity-70 -mt-1.5">
+				<div className="text-xs opacity-70">
 					Which model names them is chosen in{' '}
 					<button
 						type="button"
