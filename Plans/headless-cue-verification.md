@@ -289,10 +289,12 @@ User docs (`docs/maestro-cue-events.md`, `docs/maestro-cue-server.md`,
 `CLI-HEADLESS.md`) were read against the three fixes and agree with them and
 with each other; no change was needed.
 
-### Merge of `origin/rc` at `6d3512c37`, 2026-10-12
+### Merge of `origin/rc` at `8b194665a`, 2026-10-12
 
 `origin/rc` (13 commits since `4751ef9aa`) was merged into `feat/cue-server`
-with a normal merge commit. The one conflict, `cue-process-lifecycle.ts`, was
+in `eb090bff9`, a normal merge commit. Its subject names `6d3512c37` as the rc
+commit merged; that is this branch's own parent, and the rc tip merged is
+`8b194665a`. The one conflict, `cue-process-lifecycle.ts`, was
 only the import block: rc's copy of the file was already on `startTurn`, so
 rc's SSH Stop fix (`7b1665fa5`) merged onto this branch's run path as written.
 Both sides' imports were kept.
