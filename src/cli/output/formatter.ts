@@ -28,6 +28,11 @@ import {
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
 import type { ProxyRequestTotals } from '../../shared/stats-types';
+import {
+	TIER_NOT_MAPPED_LABEL,
+	TIER_TARGET_SOURCE_LABELS,
+	type TierTargetSource,
+} from '../../shared/modelTiers';
 import { formatSnoozeTarget } from '../../shared/snooze';
 import {
 	describeTabCleanupCoverage,
@@ -556,6 +561,16 @@ export interface AgentDetailDisplay {
 	runOn?: unknown;
 	runOnLabel?: string | null;
 	runOnProblem?: string | null;
+	/** Each tier with its target's spelling and the layer it came from. */
+	tiers?: Array<{
+		tier: string;
+		spec: string | null;
+		source: TierTargetSource | null;
+		problem?: string;
+		note?: string;
+	}>;
+	backgroundRequestsLabel?: string | null;
+	backgroundRequestsProblem?: string | null;
 	customModel?: string | null;
 	customEffort?: string | null;
 	customContextWindow?: number | null;
@@ -663,6 +678,26 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 				? `${agent.runOnLabel} ${dim(`(context ${contextTokens} tokens)`)}`
 				: agent.runOnLabel
 		);
+	}
+	// Every tier of a harness that has tiers, with the layer that answered: the
+	// value an agent did not set is still the value its next task launches on.
+	for (const tier of agent.tiers ?? []) {
+		const layer = tier.source ? TIER_TARGET_SOURCE_LABELS[tier.source] : TIER_NOT_MAPPED_LABEL;
+		addConfig(
+			`Tier ${tier.tier}`,
+			tier.problem
+				? c('red', `unusable target: ${tier.problem}`)
+				: `${tier.spec ?? '-'} ${dim(`(${layer})`)}`
+		);
+	}
+	// Shown only when set or broken: off is the default.
+	if (agent.backgroundRequestsProblem) {
+		addConfig(
+			'Background requests',
+			c('red', `unusable target: ${agent.backgroundRequestsProblem}`)
+		);
+	} else if (agent.backgroundRequestsLabel) {
+		addConfig('Background requests', agent.backgroundRequestsLabel);
 	}
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);

@@ -635,44 +635,73 @@ export function tierHarnessProblem(harness: string): string | null {
 	return null;
 }
 
-/** One tier of a harness, as the layers below the agent give it. */
-export interface HarnessTierRow {
+/** What a layer badge reads for a tier no layer maps. */
+export const TIER_NOT_MAPPED_LABEL = 'Not mapped';
+
+/** One tier of an agent, as a launch would resolve it. */
+export interface AgentTierRow {
 	tier: ModelTier;
-	/** Where the tier launches. Null when no layer maps it, or the stored default cannot be used. */
+	/** Where the tier launches. Null when no layer maps it, or the target cannot be used. */
 	target: TierTarget | null;
 	/** The layer that answered, or null when none did. */
-	source: Exclude<TierTargetSource, 'agent'> | null;
+	source: TierTargetSource | null;
 	/** The built-in table's model for the tier: what Reset goes back to. */
 	builtIn: string | null;
-	/** Why the stored default cannot be used. A launch on this tier is refused with it. */
+	/** Why the layer's target cannot be used. A launch on this tier is refused with it. */
 	problem?: string;
+	/** Why the tier does not apply here. The launch runs on the agent's own model and says so. */
+	note?: string;
+}
+
+/**
+ * Each tier of an agent with its value and the layer it came from, for the
+ * agent's Tiers block and `maestro-cli show agent`. It is
+ * {@link resolveTierTarget} per tier, so no surface can show a value a launch
+ * would not use.
+ */
+export function agentTierRows(
+	agent: TierTargetAgent,
+	harnessDefaults?: HarnessTierDefaults | null
+): AgentTierRow[] {
+	const ownTargets = readTierTargets(agent.tierTargets);
+	return TIER_LEVELS.map((tier): AgentTierRow => {
+		const builtIn = resolveTierModel(agent.toolType, tier) ?? null;
+		const resolved = resolveTierTarget(agent, tier, harnessDefaults);
+		if (resolved.kind === 'resolved') {
+			return { tier, target: resolved.target, source: resolved.source, builtIn };
+		}
+		if (!resolved.blocksLaunch) {
+			return { tier, target: null, source: null, builtIn, note: resolved.message };
+		}
+		// A refusal that blocks comes from the first layer that sets the tier.
+		const source: TierTargetSource = ownTargets[tier] !== undefined ? 'agent' : 'harness-default';
+		return { tier, target: null, source, builtIn, problem: resolved.message };
+	});
+}
+
+/** One tier of a harness, as the layers below the agent give it. */
+export interface HarnessTierRow extends Omit<AgentTierRow, 'source' | 'note'> {
+	/** The layer that answered, or null when none did. */
+	source: Exclude<TierTargetSource, 'agent'> | null;
 }
 
 /**
  * Each tier of a harness with its value and the layer it came from, for the
  * Tier defaults table and `maestro-cli models tiers list`. It is
- * {@link resolveTierTarget} for an agent that sets no tier of its own, so the
+ * {@link agentTierRows} for an agent that sets no tier of its own, so the
  * table cannot show a value a launch would not use.
  */
 export function harnessTierRows(
 	harness: ToolType,
 	harnessDefaults?: HarnessTierDefaults | null
 ): HarnessTierRow[] {
-	return TIER_LEVELS.map((tier): HarnessTierRow => {
-		const builtIn = resolveTierModel(harness, tier) ?? null;
-		const resolved = resolveTierTarget({ toolType: harness }, tier, harnessDefaults);
-		if (resolved.kind === 'resolved') {
-			return {
-				tier,
-				target: resolved.target,
-				source: resolved.source === 'built-in' ? 'built-in' : 'harness-default',
-				builtIn,
-			};
-		}
-		return resolved.blocksLaunch
-			? { tier, target: null, source: 'harness-default', builtIn, problem: resolved.message }
-			: { tier, target: null, source: null, builtIn };
-	});
+	return agentTierRows({ toolType: harness }, harnessDefaults).map(
+		({ note: _note, source, ...row }): HarnessTierRow => ({
+			...row,
+			// No agent layer was passed, so none can have answered.
+			source: source === 'agent' ? null : source,
+		})
+	);
 }
 
 /** How a tier on the provider with no model of its own reads. */
@@ -685,6 +714,41 @@ export function tierTargetLabel(
 ): string {
 	if (target.type === 'source') return runOnTargetLabel(target, endpoints);
 	return (target.type === 'provider-model' ? target.model : undefined) ?? TIER_AGENT_MODEL_LABEL;
+}
+
+/** One tier as a command prints it and as `--json` carries it. */
+export interface TierRowRecord {
+	tier: ModelTier;
+	target: TierTarget | null;
+	/** The target in the spelling a tier writer takes, so a read can be written back. */
+	spec: string | null;
+	/** The target for a person. */
+	label: string | null;
+	source: TierTargetSource | null;
+	builtIn: string | null;
+	problem?: string;
+	note?: string;
+}
+
+/**
+ * A tier row ({@link agentTierRows}, {@link harnessTierRows}) with its target
+ * spelled and named, for `maestro-cli show agent` and `models tiers list`.
+ */
+export function tierRowRecord(
+	row: AgentTierRow | HarnessTierRow,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
+): TierRowRecord {
+	const note = 'note' in row ? row.note : undefined;
+	return {
+		tier: row.tier,
+		target: row.target,
+		spec: row.target ? formatTierTargetSpec(row.target) : null,
+		label: row.target ? tierTargetLabel(row.target, endpoints) : null,
+		source: row.source,
+		builtIn: row.builtIn,
+		...(row.problem ? { problem: row.problem } : {}),
+		...(note ? { note } : {}),
+	};
 }
 
 /** The spelling that clears a tier: it falls through to the next layer. */
@@ -760,6 +824,77 @@ export function parseTierTargetEdit(
 		};
 	}
 	return parseRunOnEdit(toolType, parsed.target, endpoints);
+}
+
+/** What a writer stores for an agent's tiers: the record, or `undefined` for none set. */
+export type TierTargetsEdit =
+	| { ok: true; tierTargets: TierTargets | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Check the tiers someone is about to store on an agent or a harness row: the
+ * Edit Agent dialog, the Tier defaults table, `update-agent --tier`, and the
+ * bridge that applies it. `value` holds a target per tier; `null` clears one.
+ * Each target goes through {@link parseTierTargetEdit}, and a refusal names the
+ * tier.
+ *
+ * With `base`, `value` is a PATCH: a tier it does not name keeps what `base`
+ * holds (kept as stored, the way hydration keeps it). Without, `value` is the
+ * whole record. `null` for `value` clears every tier. The result is
+ * `undefined` when no tier is set, which is the absence of the field.
+ */
+export function parseTierTargetsEdit(
+	toolType: string,
+	value: unknown,
+	options: {
+		base?: TierTargets | null;
+		endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[];
+	} = {}
+): TierTargetsEdit {
+	if (value === undefined || value === null) return { ok: true, tierTargets: undefined };
+	if (!isPlainObject(value)) {
+		return { ok: false, error: 'Tier targets are an object with a target per tier.' };
+	}
+	const next: TierTargets = { ...readTierTargets(options.base) };
+	const unknown = Object.keys(value).find((key) => !asTierLevel(key));
+	if (unknown !== undefined) {
+		return { ok: false, error: `"${unknown}" is not a tier. Tiers: ${TIER_LEVELS.join(', ')}.` };
+	}
+	// In tier order, so the first refusal reported does not depend on key order.
+	for (const tier of TIER_LEVELS) {
+		if (!(tier in value)) continue;
+		const edit = parseTierTargetEdit(toolType, value[tier], options.endpoints);
+		if (!edit.ok) return { ok: false, error: `${tier}: ${edit.error}` };
+		if (edit.target) next[tier] = edit.target;
+		else delete next[tier];
+	}
+	return { ok: true, tierTargets: Object.keys(next).length > 0 ? next : undefined };
+}
+
+/** How one tier's target is typed on a command line: `--tier <this>`. */
+export const TIER_ASSIGNMENT_FORM = `<${TIER_LEVELS.join('|')}>=<target>`;
+
+/**
+ * Read one `<tier>=<target>` assignment (`low=maestro-server:qwen3.5-4b`,
+ * `high=provider:opus`, `low=default`). The tier ends at the FIRST `=`, and
+ * the target is read by {@link parseTierTargetSpec}. `target` is `undefined`
+ * for `default`, which clears the tier.
+ */
+export function parseTierAssignment(
+	entry: string
+): { ok: true; tier: ModelTier; target: TierTarget | undefined } | { ok: false; error: string } {
+	const separator = entry.indexOf('=');
+	const tier =
+		separator > 0 ? asTierLevel(entry.slice(0, separator).trim().toLowerCase()) : undefined;
+	if (!tier) {
+		return {
+			ok: false,
+			error: `"${entry}" is not ${TIER_ASSIGNMENT_FORM}, where the target is ${TIER_TARGET_SPEC_FORMS}.`,
+		};
+	}
+	const spec = parseTierTargetSpec(entry.slice(separator + 1));
+	if (!spec.ok) return { ok: false, error: `${tier}: ${spec.error}` };
+	return { ok: true, tier, target: spec.target };
 }
 
 /**

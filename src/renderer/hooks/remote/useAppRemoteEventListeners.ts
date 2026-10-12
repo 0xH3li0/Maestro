@@ -14,6 +14,8 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import { parseTierTargetsEdit } from '../../../shared/modelTiers';
+import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
 import {
@@ -54,7 +56,11 @@ import {
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
-import { setAgentTokenProxyMode } from '../../services/agentGateway';
+import {
+	OFF_TOKEN_PROXY_FIELDS,
+	setAgentBackgroundRequests,
+	setAgentTokenProxyMode,
+} from '../../services/agentGateway';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
@@ -1859,9 +1865,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customPath: undefined,
 				customArgs: undefined,
 				customEnvVars: undefined,
-				// A gateway speaks one provider's API, so it does not carry across.
+				// A gateway speaks one provider's API, so it does not carry across,
+				// and what the proxy held for the agent leaves with it.
 				gatewayUrl: undefined,
-				tokenProxyMode: undefined,
+				...OFF_TOKEN_PROXY_FIELDS,
+				// A tier names a model, and a provider's models are its own (the
+				// Edit Agent dialog's rule).
+				tierTargets: undefined,
 				// A Run on target names a source and a model, not a provider, so it
 				// carries across when the new harness has a recipe for one and is
 				// dropped when it has none (the Edit Agent dialog's rule): kept
@@ -2010,6 +2020,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'gatewayUrl',
 			// Run on target (`update-agent --run-on`). Validated below as well.
 			'runOn',
+			// Tier targets (`update-agent --tier`): a PATCH, one target per tier
+			// named, merged onto the agent's own below.
+			'tierTargets',
+			// Where the token proxy sends background requests
+			// (`update-agent --background-requests`). Written by its service below.
+			'backgroundRequests',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -2072,7 +2088,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// A proxy mode belongs to the gateway it was chosen for: a different
 		// gateway starts from the default, the same rule `setAgentGatewayUrl` has.
 		if ('gatewayUrl' in patch && (updated.gatewayUrl ?? undefined) !== session.gatewayUrl) {
-			updated.tokenProxyMode = undefined;
+			Object.assign(updated, OFF_TOKEN_PROXY_FIELDS);
 		}
 
 		// A Run on target goes through the check the Edit Agent dialog saves with,
@@ -2094,6 +2110,45 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			updated.runOn = edit.target;
+		}
+
+		// Tier targets arrive as a patch: each tier named is checked with the
+		// function the Edit Agent dialog saves with (plus the saved sources, since
+		// this caller typed the source's id) and merged onto the agent's own. A
+		// `null` tier clears it back to the harness default; `null` for the whole
+		// field clears every tier.
+		if ('tierTargets' in patch) {
+			const edit = parseTierTargetsEdit(session.toolType, patch.tierTargets, {
+				base: session.tierTargets,
+				endpoints: useSettingsStore.getState().localModelEndpoints ?? [],
+			});
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.tierTargets = edit.tierTargets;
+		}
+
+		// A background requests target needs the proxy. Taking the agent off the
+		// proxy (mode off, or a gateway of the caller's own) and naming a target in
+		// one patch is refused before either is acted on, so the caller is not
+		// left with half of what it asked for.
+		if (
+			'backgroundRequests' in patch &&
+			(patch.tokenProxyMode === 'off' || 'gatewayUrl' in patch)
+		) {
+			const wanted = parseBackgroundRequests(patch.backgroundRequests);
+			if (!wanted.ok || wanted.backgroundRequests) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error:
+						'Background requests are routed by the token proxy, so a target cannot be set in the change that turns the proxy off or sets another gateway.',
+				});
+				return;
+			}
 		}
 
 		// A gateway is not applied to an agent on a source, and the dialog disables
@@ -2144,6 +2199,27 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			updated.gatewayUrl = modeResult.gatewayUrl;
 			updated.tokenProxyMode = modeResult.mode === 'off' ? undefined : modeResult.mode;
+			// Off took the background requests target with it; the write below
+			// starts from the record as it was before, so it is told as well.
+			if (modeResult.mode === 'off') updated.backgroundRequests = undefined;
+		}
+
+		// Where the token proxy sends this agent's background requests. Like the
+		// mode it is a proxy setting, so it goes through the service the Models
+		// tab's picker calls: checked against the provider and the saved sources,
+		// refused for an agent that is not on the proxy, and flushed to main. It
+		// runs after the mode above, so one patch can turn the proxy on and name
+		// the target. `null` (the CLI's `none`) turns it off.
+		if ('backgroundRequests' in patch) {
+			const result = await setAgentBackgroundRequests(sessionId, patch.backgroundRequests);
+			if (!result.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: result.error,
+				});
+				return;
+			}
+			updated.backgroundRequests = result.backgroundRequests;
 		}
 
 		// Clearing the window clears its provenance too, even when the caller sent

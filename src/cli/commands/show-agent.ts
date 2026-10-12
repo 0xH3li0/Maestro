@@ -3,6 +3,7 @@
 
 import {
 	getSessionById,
+	readHarnessTierDefaults,
 	readHistory,
 	readGroups,
 	readLocalModelEndpoints,
@@ -15,6 +16,11 @@ import {
 	parseRunOnTarget,
 	runOnTargetLabel,
 } from '../../shared/local-models/run-on';
+import {
+	formatBackgroundRequestsSpec,
+	parseBackgroundRequests,
+} from '../../shared/local-models/background-requests';
+import { agentTierRows, tierHarnessProblem, tierRowRecord } from '../../shared/modelTiers';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -80,6 +86,25 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 		// stored, with the reason: every launch of that agent is refused for it.
 		const runOn = parseRunOnTarget(agent.runOn);
 		const runOnSource = runOn.ok && runOn.target.type === 'source' ? runOn.target : undefined;
+		const endpoints = readLocalModelEndpoints();
+
+		// Where a low, medium or high task of this agent launches (the Models tab's
+		// Tiers block), each with the layer the value comes from: the agent's own
+		// target, the harness default, or the built-in table. It is the resolution
+		// a launch runs, so a tier a launch would refuse carries the refusal. Empty
+		// for a harness that cannot be told which model to run.
+		const tiers = tierHarnessProblem(agent.toolType)
+			? []
+			: agentTierRows(
+					{ toolType: agent.toolType, tierTargets: agent.tierTargets, runOn: agent.runOn },
+					readHarnessTierDefaults()
+				).map((row) => tierRowRecord(row, endpoints));
+
+		// Where the token proxy sends this agent's side requests. No stored target
+		// is a value (`none`: every request goes to the provider). A stored value
+		// that cannot be read fails every background request, and is reported so.
+		const background = parseBackgroundRequests(agent.backgroundRequests);
+		const backgroundTarget = background.ok ? background.backgroundRequests?.target : undefined;
 
 		const output = {
 			id: agent.id,
@@ -114,8 +139,23 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 			// back; `runOnLabel` is the target as the desktop names it.
 			runOn: runOn.ok ? runOn.target : (agent.runOn ?? null),
 			runOnSpec: runOn.ok ? formatRunOnSpec(runOn.target) : null,
-			runOnLabel: runOnSource ? runOnTargetLabel(runOnSource, readLocalModelEndpoints()) : null,
+			runOnLabel: runOnSource ? runOnTargetLabel(runOnSource, endpoints) : null,
 			runOnProblem: runOn.ok ? null : runOn.error,
+			// Tier targets (settable with `update-agent --tier <tier>=<target>`).
+			// `spec` is the spelling `--tier` takes; `source` is the layer that
+			// answered: agent, harness-default, built-in, or null for not mapped.
+			tiers,
+			// Background requests (settable with `update-agent --background-requests`).
+			backgroundRequests: background.ok
+				? (background.backgroundRequests ?? null)
+				: (agent.backgroundRequests ?? null),
+			backgroundRequestsSpec: background.ok
+				? formatBackgroundRequestsSpec(background.backgroundRequests)
+				: null,
+			backgroundRequestsLabel: backgroundTarget
+				? runOnTargetLabel(backgroundTarget, endpoints)
+				: null,
+			backgroundRequestsProblem: background.ok ? null : background.error,
 			customModel: agent.customModel ?? null,
 			customEffort: agent.customEffort ?? null,
 			customContextWindow: agent.customContextWindow ?? null,

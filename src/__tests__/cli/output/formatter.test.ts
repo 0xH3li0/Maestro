@@ -1058,6 +1058,54 @@ describe('formatter', () => {
 			expect(result).toContain('unusable target: A Run on target names a source.');
 		});
 
+		it('should show every tier with the layer its value came from', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				tiers: [
+					{ tier: 'low', spec: 'ep-ollama:qwen3', source: 'agent' },
+					{ tier: 'medium', spec: 'provider:sonnet', source: 'built-in' },
+					{ tier: 'high', spec: null, source: null, note: 'No "high" tier model is mapped.' },
+				],
+			});
+
+			expect(result).toMatch(/Tier low:\s+ep-ollama:qwen3 .*\(Agent\)/);
+			expect(result).toMatch(/Tier medium:\s+provider:sonnet .*\(Built-in\)/);
+			expect(result).toMatch(/Tier high:\s+- .*\(Not mapped\)/);
+		});
+
+		it('should say why a tier target cannot be used', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				tiers: [
+					{
+						tier: 'high',
+						spec: null,
+						source: 'agent',
+						problem: 'This agent\'s "high" tier target cannot be used.',
+					},
+				],
+			});
+
+			expect(result).toContain('Tier high:');
+			expect(result).toContain('unusable target: This agent\'s "high" tier target cannot be used.');
+		});
+
+		it('should show the background requests target only when one is set or broken', () => {
+			expect(formatAgentDetail(baseAgent)).not.toContain('Background requests:');
+
+			const set = formatAgentDetail({
+				...baseAgent,
+				backgroundRequestsLabel: 'qwen3:4b on Ollama',
+			});
+			expect(set).toMatch(/Background requests:\s+qwen3:4b on Ollama/);
+
+			const broken = formatAgentDetail({
+				...baseAgent,
+				backgroundRequestsProblem: 'A Run on target names a model.',
+			});
+			expect(broken).toContain('unusable target: A Run on target names a model.');
+		});
+
 		it('should show auto run folder when provided', () => {
 			const agent: AgentDetailDisplay = {
 				...baseAgent,

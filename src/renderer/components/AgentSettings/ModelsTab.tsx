@@ -2,10 +2,11 @@
  * ModelsTab - where the agent's model runs, and what its requests pass
  * through on the way.
  *
- * Both sections are slots the modal fills: `runOn` (the model target picker,
- * empty until the Run on phase) and `gateway` (`GatewayUrlField`, plus the
- * Maestro token proxy mode where the modal offers it). A modal with neither
- * gets a quiet empty state rather than a blank panel.
+ * Each section is a slot the modal fills: `runOn` (the model target picker),
+ * `tiers` (where a `low`, `medium` or `high` task launches, for a modal that
+ * edits an existing agent) and `gateway` (`GatewayUrlField`, plus the Maestro
+ * token proxy mode and its Background requests picker where the modal offers
+ * them). A modal with none gets a quiet empty state rather than a blank panel.
  */
 
 import type { ReactNode } from 'react';
@@ -15,11 +16,12 @@ import { AgentSettingsPanel, type AgentSettingsPanelBaseProps } from './AgentSet
 
 export interface ModelsTabProps extends AgentSettingsPanelBaseProps {
 	runOn?: ReactNode;
+	tiers?: ReactNode;
 	gateway?: ReactNode;
 }
 
-export function ModelsTab({ theme, idPrefix, runOn, gateway }: ModelsTabProps) {
-	const empty = !runOn && !gateway;
+export function ModelsTab({ theme, idPrefix, runOn, tiers, gateway }: ModelsTabProps) {
+	const empty = !runOn && !tiers && !gateway;
 	return (
 		<AgentSettingsPanel
 			theme={theme}
@@ -28,6 +30,7 @@ export function ModelsTab({ theme, idPrefix, runOn, gateway }: ModelsTabProps) {
 			intro="Where this agent's model runs, and what its requests pass through."
 		>
 			{runOn}
+			{tiers}
 			{gateway}
 			{empty && (
 				<EmptyStatePlaceholder

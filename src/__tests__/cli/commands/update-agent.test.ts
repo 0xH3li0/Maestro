@@ -14,13 +14,21 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	resolveGroupId: vi.fn(),
 	getSessionById: vi.fn(),
-	// The saved sources `--run-on` is checked against.
+	// The saved sources `--run-on`, `--tier` and `--background-requests` are
+	// checked against.
 	readLocalModelEndpoints: vi.fn(() => [
 		{
 			id: 'ep-ollama',
 			name: 'Ollama',
 			kind: 'ollama',
 			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+		{
+			id: 'ep-cloud',
+			name: 'OpenRouter',
+			kind: 'openai-compatible',
+			baseUrl: 'https://openrouter.ai/api/v1',
 			enabled: true,
 		},
 	]),
@@ -901,6 +909,173 @@ describe('update-agent command', () => {
 			agentId: 'full-session-id',
 			group: 'full-group-id',
 			cwd: path.resolve('/tmp/foo'),
+		});
+	});
+
+	describe('--tier and --background-requests', () => {
+		const LOCAL = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		function mockAgent(agent: Record<string, unknown> = {}) {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+				...agent,
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		const sentPatch = (sendCommand: ReturnType<typeof vi.fn>) =>
+			sendCommand.mock.calls[0][0].configPatch;
+
+		/** Run a call that must be refused before it reaches the app. */
+		async function refused(flags: Parameters<typeof updateAgent>[1]) {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(updateAgent('agent-1', flags)).rejects.toThrow('process.exit');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+
+		it('sends one entry per tier named: a patch, not the whole record', async () => {
+			// The agent already holds a medium tier; the patch does not restate it.
+			const sendCommand = mockAgent({ tierTargets: { medium: LOCAL } });
+
+			await updateAgent('agent-1', {
+				tier: ['low=ep-ollama:qwen3:latest', 'high=provider:opus'],
+			});
+
+			expect(sentPatch(sendCommand)).toEqual({
+				tierTargets: { low: LOCAL, high: { type: 'provider-model', model: 'opus' } },
+			});
+			expect(consoleSpy).toHaveBeenCalledWith('  Tier low: ep-ollama:qwen3:latest');
+			expect(consoleSpy).toHaveBeenCalledWith('  Tier high: provider:opus');
+		});
+
+		it('sends null for default: the tier follows its harness default again', async () => {
+			const sendCommand = mockAgent({ tierTargets: { low: LOCAL } });
+
+			await updateAgent('agent-1', { tier: ['low=default'] });
+
+			expect(sentPatch(sendCommand)).toEqual({ tierTargets: { low: null } });
+			expect(consoleSpy).toHaveBeenCalledWith('  Tier low: default');
+		});
+
+		it("reads provider as the provider on the agent's own model", async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { tier: ['medium=provider'] });
+
+			expect(sentPatch(sendCommand)).toEqual({
+				tierTargets: { medium: { type: 'provider-model' } },
+			});
+		});
+
+		it.each([
+			['a word that is not tier=target', ['low'], '<low|medium|high>=<target>'],
+			['a tier that does not exist', ['turbo=provider:opus'], '<low|medium|high>=<target>'],
+			['a target that is not one', ['low=opus'], 'low: A tier target is'],
+			['a tier set twice', ['low=provider', 'low=default'], 'set more than once'],
+			['a source that does not exist', ['low=ep-gone:m'], 'low: No source has the id "ep-gone"'],
+		])('refuses %s before it reaches the app', async (_what, tier, message) => {
+			mockAgent();
+
+			await refused({ tier });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining(message));
+		});
+
+		it('refuses a source tier on a harness with no Run on recipe', async () => {
+			mockAgent({ toolType: 'factory-droid' });
+
+			await refused({ tier: ['high=ep-ollama:qwen3:latest'] });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringMatching(/^--tier high: /));
+		});
+
+		it('sends the background requests target with no context size', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { backgroundRequests: 'ep-ollama:qwen3:4b' });
+
+			expect(sentPatch(sendCommand)).toEqual({
+				backgroundRequests: {
+					target: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:4b' },
+				},
+			});
+			expect(consoleSpy).toHaveBeenCalledWith('  Background requests: ep-ollama:qwen3:4b');
+		});
+
+		it.each(['none', 'NONE'])('turns background requests off for %j', async (value) => {
+			// Off is sent for any provider: it is how a stale target is removed.
+			const sendCommand = mockAgent({ toolType: 'codex' });
+
+			await updateAgent('agent-1', { backgroundRequests: value });
+
+			expect(sentPatch(sendCommand)).toEqual({ backgroundRequests: null });
+			expect(consoleSpy).toHaveBeenCalledWith('  Background requests: none');
+		});
+
+		it('refuses a background target on a provider the proxy cannot route for', async () => {
+			mockAgent({ toolType: 'codex' });
+
+			await refused({ backgroundRequests: 'ep-ollama:qwen3:4b' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Claude Code agents only'));
+		});
+
+		it('refuses a source not known to serve the Anthropic Messages route', async () => {
+			mockAgent();
+
+			await refused({ backgroundRequests: 'ep-cloud:some/model' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('/v1/messages'));
+		});
+
+		it('refuses a word that is neither none nor a source and a model', async () => {
+			mockAgent();
+
+			await refused({ backgroundRequests: 'qwen' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('"none" or <source id>:<model>')
+			);
+		});
+
+		it.each([
+			['--proxy-mode off', { proxyMode: 'off' }],
+			['--gateway-url', { gatewayUrl: 'http://127.0.0.1:8787' }],
+		])('refuses a background target beside %s: it needs the proxy', async (_what, rest) => {
+			mockAgent();
+
+			await refused({ backgroundRequests: 'ep-ollama:qwen3:4b', ...rest });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('routed by the token proxy')
+			);
+		});
+
+		it('turns the proxy on and names the target in one call', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', {
+				proxyMode: 'passthrough',
+				backgroundRequests: 'ep-ollama:qwen3:4b',
+			});
+
+			expect(sentPatch(sendCommand)).toMatchObject({
+				tokenProxyMode: 'passthrough',
+				backgroundRequests: {
+					target: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:4b' },
+				},
+			});
 		});
 	});
 

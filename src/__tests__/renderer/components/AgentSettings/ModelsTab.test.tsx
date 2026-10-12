@@ -1,6 +1,6 @@
 /**
- * @fileoverview Tests for ModelsTab: the intro line, the Run on and gateway
- * slots, and the empty state when a modal fills neither.
+ * @fileoverview Tests for ModelsTab: the intro line, the Run on, tiers and
+ * gateway slots, and the empty state when a modal fills none.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -27,6 +27,35 @@ describe('ModelsTab', () => {
 		const runOn = screen.getByTestId('run-on-slot');
 		const gateway = screen.getByTestId('gateway-slot');
 		expect(runOn.compareDocumentPosition(gateway) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(screen.queryByText('Nothing to set here yet.')).not.toBeInTheDocument();
+	});
+
+	it('renders the tiers between Run on and the gateway', () => {
+		render(
+			<ModelsTab
+				theme={theme}
+				idPrefix="edit-agent"
+				runOn={<div data-testid="run-on-slot" />}
+				tiers={<div data-testid="tiers-slot" />}
+				gateway={<div data-testid="gateway-slot" />}
+			/>
+		);
+
+		const tiers = screen.getByTestId('tiers-slot');
+		expect(
+			screen.getByTestId('run-on-slot').compareDocumentPosition(tiers) &
+				Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		expect(
+			tiers.compareDocumentPosition(screen.getByTestId('gateway-slot')) &
+				Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+	});
+
+	it('is not empty when a modal fills the tiers slot alone', () => {
+		render(
+			<ModelsTab theme={theme} idPrefix="edit-agent" tiers={<div data-testid="tiers-slot" />} />
+		);
 		expect(screen.queryByText('Nothing to set here yet.')).not.toBeInTheDocument();
 	});
 

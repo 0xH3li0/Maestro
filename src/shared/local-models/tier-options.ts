@@ -29,7 +29,11 @@ import type { AgentId } from '../agentIds';
 import {
 	formatTierTargetSpec,
 	TIER_AGENT_MODEL_LABEL,
+	TIER_NOT_MAPPED_LABEL,
 	TIER_TARGET_DEFAULT_SPEC,
+	TIER_TARGET_SOURCE_LABELS,
+	tierTargetLabel,
+	type AgentTierRow,
 	type HarnessCatalogModel,
 	type TierTarget,
 } from '../modelTiers';
@@ -124,4 +128,23 @@ export function buildTierTargetOptionGroups(input: TierTargetOptionInput): RunOn
 		}
 	}
 	return groups;
+}
+
+/**
+ * The first choice of an AGENT's tier picker: what the tier follows when the
+ * agent sets no target of its own, with the value the layers below give it
+ * ("Harness default (haiku)"). `fallthrough` is the tier's row for the agent
+ * with no tier of its own (`agentTierRows`), so the label names what a launch
+ * would use. The layer that value comes from is the badge beside the picker.
+ */
+export function agentTierFallthroughLabel(
+	fallthrough: Pick<AgentTierRow, 'target' | 'problem'>,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
+): string {
+	const value = fallthrough.target
+		? tierTargetLabel(fallthrough.target, endpoints)
+		: fallthrough.problem
+			? 'cannot be used'
+			: TIER_NOT_MAPPED_LABEL.toLowerCase();
+	return `${TIER_TARGET_SOURCE_LABELS['harness-default']} (${value})`;
 }

@@ -12,6 +12,7 @@ import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
 import { RUN_ON_MIN_CONTEXT_TOKENS } from '../../../../shared/local-models/run-on';
+import type { HarnessTierOptions } from '../../../../shared/local-models/tier-options';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -86,6 +87,7 @@ const SAVE_ARG = {
 	codexTransport: 22,
 	gatewayUrl: 23,
 	runOn: 24,
+	tierTargets: 25,
 } as const;
 
 /** Show one tab of the form. Only the active tab's fields are rendered. */
@@ -548,7 +550,8 @@ describe('EditAgentModal', () => {
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: no Local Models gateway set
-				undefined // runOn: the provider's own model
+				undefined, // runOn: the provider's own model
+				undefined // tierTargets: every tier follows its harness default
 			);
 		});
 
@@ -653,7 +656,8 @@ describe('EditAgentModal', () => {
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
-			undefined // runOn: the provider's own model
+			undefined, // runOn: the provider's own model
+			undefined // tierTargets: every tier follows its harness default
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -893,7 +897,8 @@ describe('EditAgentModal', () => {
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
-			undefined // runOn: the provider's own model
+			undefined, // runOn: the provider's own model
+			undefined // tierTargets: every tier follows its harness default
 		);
 	});
 
@@ -973,7 +978,8 @@ describe('EditAgentModal', () => {
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
-			undefined // runOn: the provider's own model
+			undefined, // runOn: the provider's own model
+			undefined // tierTargets: every tier follows its harness default
 		);
 	});
 
@@ -1060,7 +1066,8 @@ describe('EditAgentModal', () => {
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
-			undefined // runOn: the provider's own model
+			undefined, // runOn: the provider's own model
+			undefined // tierTargets: every tier follows its harness default
 		);
 	});
 
@@ -2190,6 +2197,311 @@ describe('EditAgentModal', () => {
 			expect(modeSelect()).toBeDisabled();
 		});
 	});
+	describe('Background requests', () => {
+		const PROXY_PORT = 48123;
+		const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/anthropic`;
+		const proxy = () => window.maestro.localModels.proxy;
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:4b' };
+		let savedEndpoints: LocalModelEndpoint[];
+
+		const reportWithPort = (port: number | null) => ({
+			status: { port, running: port !== null, agentIds: [], lastError: null, gatewayUrls: null },
+			agents: [],
+			usage: null,
+			recentCompressions: [],
+		});
+
+		function renderOnModels(session: Session) {
+			// The picker writes to, and is drawn from, the live store entry.
+			useSessionStore.setState({ sessions: [session] } as never);
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const picker = () =>
+			screen.getByTestId('edit-agent-background-requests-select') as HTMLSelectElement;
+		const queryPicker = () => screen.queryByTestId('edit-agent-background-requests-select');
+		const modeSelect = () => screen.getByTestId('edit-agent-proxy-mode') as HTMLSelectElement;
+		const stored = () => useSessionStore.getState().sessions[0];
+		const listed = () =>
+			waitFor(() =>
+				expect(
+					Array.from(picker().options).some((option) => option.value === 'ep-ollama:qwen3:4b')
+				).toBe(true)
+			);
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			vi.mocked(proxy().report).mockReset().mockResolvedValue(reportWithPort(PROXY_PORT));
+			vi.mocked(proxy().ensurePort).mockReset().mockResolvedValue(PROXY_PORT);
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:4b' }] }
+			);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(null));
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+				ok: true,
+				models: [],
+			});
+		});
+
+		it('is not offered while the agent is off the proxy', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			expect(modeSelect()).toHaveValue('off');
+			expect(queryPicker()).not.toBeInTheDocument();
+		});
+
+		it('is not offered to a provider the proxy cannot route for', async () => {
+			renderOnModels(createSession({ toolType: 'codex', gatewayUrl: proxyUrl }));
+
+			await waitFor(() => expect(modeSelect()).toHaveValue('passthrough'));
+			expect(queryPicker()).not.toBeInTheDocument();
+		});
+
+		it('is offered to a Claude Code agent on the proxy, reading Off with the reason it exists', async () => {
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'passthrough' }));
+
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			expect(picker()).toHaveValue('none');
+			expect(screen.getByTestId('edit-agent-background-requests')).toHaveTextContent(
+				'side requests'
+			);
+		});
+
+		it('applies a choice at once: the agent holds the target before Save', async () => {
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'passthrough' }));
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			await listed();
+
+			fireEvent.change(picker(), { target: { value: 'ep-ollama:qwen3:4b' } });
+
+			await waitFor(() => expect(stored().backgroundRequests).toEqual({ target: QWEN }));
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ backgroundRequests: { target: QWEN } })],
+				[]
+			);
+			await waitFor(() => expect(picker()).toHaveValue('ep-ollama:qwen3:4b'));
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows the stored target, and turning the proxy off takes it away', async () => {
+			renderOnModels(
+				createSession({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				})
+			);
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			await listed();
+			expect(picker()).toHaveValue('ep-ollama:qwen3:4b');
+
+			fireEvent.change(modeSelect(), { target: { value: 'off' } });
+
+			await waitFor(() => expect(stored().backgroundRequests).toBeUndefined());
+			await waitFor(() => expect(queryPicker()).not.toBeInTheDocument());
+		});
+
+		it('says so when the stored target cannot be read', async () => {
+			renderOnModels(
+				createSession({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: { type: 'source' } } as never,
+				})
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-background-requests-error')).toHaveTextContent(
+					'The stored Background requests target cannot be used'
+				)
+			);
+			expect(picker()).toHaveValue('none');
+		});
+	});
+
+	describe('Tiers', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const LOCAL = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:latest' };
+		const row = (harness: 'claude-code' | 'codex'): HarnessTierOptions => ({
+			harness,
+			name: harness === 'codex' ? 'Codex' : 'Claude Code',
+			installed: true,
+			catalog:
+				harness === 'codex'
+					? [{ id: 'gpt-6-luna' }]
+					: [{ id: 'haiku' }, { id: 'sonnet' }, { id: 'opus' }],
+			runOn: { supported: true },
+			sources: [{ endpointId: OLLAMA.id, name: 'Ollama', models: ['qwen3:latest'] }],
+			problems: [],
+		});
+		let savedEndpoints: LocalModelEndpoint[];
+
+		const tierOptions = () => vi.mocked(window.maestro.localModels.tiers.options);
+		const picker = (tier: string) =>
+			screen.getByTestId(`edit-agent-tier-targets-${tier}`) as HTMLSelectElement;
+		const layer = (tier: string) =>
+			screen.getByTestId(`edit-agent-tier-targets-${tier}-source`).textContent;
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			tierOptions().mockImplementation(async (request) => [
+				row(request?.harness === 'codex' ? 'codex' : 'claude-code'),
+			]);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			tierOptions().mockReset().mockResolvedValue([]);
+		});
+
+		async function renderOnModels(session: Session) {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			await waitFor(() => screen.getByTestId('edit-agent-tier-targets-low'));
+		}
+
+		it('sits on the Models tab between Run on and the gateway', async () => {
+			await renderOnModels(createSession());
+
+			const runOn = screen.getByTestId('edit-agent-run-on');
+			const tiers = screen.getByTestId('edit-agent-tiers');
+			const gateway = screen.getByTestId('edit-agent-gateway');
+			expect(runOn.compareDocumentPosition(tiers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+			expect(
+				tiers.compareDocumentPosition(gateway) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('reads Harness default for an agent with no tier, and saves none', async () => {
+			await renderOnModels(createSession());
+
+			expect(picker('low').value).toBe('default');
+			expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (haiku)');
+			expect(layer('low')).toBe('Built-in');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toBeUndefined();
+		});
+
+		it("shows the agent's stored tiers and saves them unchanged", async () => {
+			const tierTargets = {
+				low: LOCAL,
+				high: { type: 'provider-model' as const, model: 'sonnet' },
+			};
+			await renderOnModels(createSession({ tierTargets }));
+
+			expect(picker('low').value).toBe('ep-ollama:qwen3:latest');
+			expect(layer('low')).toBe('Agent');
+			expect(picker('high').value).toBe('provider:sonnet');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual(tierTargets);
+		});
+
+		it('saves a tier that was set and drops one put back on Harness default', async () => {
+			await renderOnModels(createSession({ tierTargets: { high: LOCAL } }));
+
+			fireEvent.change(picker('low'), { target: { value: 'provider:haiku' } });
+			fireEvent.change(picker('high'), { target: { value: 'default' } });
+			expect(layer('low')).toBe('Agent');
+			expect(layer('high')).toBe('Built-in');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual({
+				low: { type: 'provider-model', model: 'haiku' },
+			});
+		});
+
+		it('reads the built-in table as not applying once Run on is a source', async () => {
+			await renderOnModels(createSession({ runOn: { ...LOCAL, contextTokens: 65_536 } }));
+
+			expect(layer('low')).toBe('Not mapped');
+			expect(screen.getByTestId('edit-agent-tier-targets-low-note')).toHaveTextContent(
+				'runs on a Local Models source'
+			);
+		});
+
+		it('refuses to save a stored tier a launch would refuse, and names the tier', async () => {
+			await renderOnModels(createSession({ tierTargets: { high: { type: 'source' } } as never }));
+
+			expect(screen.getByTestId('edit-agent-tier-targets-high-problem')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-tier-targets-error')).toHaveTextContent(/^high: /);
+
+			// Picking a target again clears the refusal and saves.
+			fireEvent.change(picker('high'), { target: { value: 'provider:opus' } });
+			expect(screen.queryByTestId('edit-agent-tier-targets-error')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual({
+				high: { type: 'provider-model', model: 'opus' },
+			});
+		});
+
+		it('starts the tiers over on a provider switch: a tier names a model', async () => {
+			await renderOnModels(createSession({ tierTargets: { low: LOCAL } }));
+
+			openTab('Provider');
+			fireEvent.change(screen.getByDisplayValue('Claude Code'), { target: { value: 'codex' } });
+			openTab('Models');
+			await waitFor(() =>
+				expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (gpt-6-luna)')
+			);
+			expect(picker('low').value).toBe('default');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toBeUndefined();
+		});
+	});
+
 	describe('Run on', () => {
 		const OLLAMA: LocalModelEndpoint = {
 			id: 'ep-ollama',

@@ -14,11 +14,24 @@
  * agent's gateway to the proxy's address, and turning it off is clearing that
  * gateway, so the mode and the URL are written together and flushed together.
  * The server reads the mode from the main-process store on every request.
+ *
+ * `setAgentBackgroundRequests` is the third write of that kind: where the proxy
+ * sends the agent's side requests. It belongs to the proxy the way the mode
+ * does, so it is refused for an agent that is not on the proxy and it leaves
+ * with the proxy (`OFF_TOKEN_PROXY_FIELDS`): a setting nobody can see must not
+ * come back into force when the proxy is switched on again somewhere else.
  */
 
+import { canonicalJson } from '../../shared/canonicalJson';
+import {
+	BACKGROUND_REQUESTS_NEEDS_PROXY,
+	parseBackgroundRequestsEdit,
+	type BackgroundRequests,
+} from '../../shared/local-models/background-requests';
 import { agentGatewaySupport, parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 import {
 	gatewayPointsAtTokenProxy,
+	resolveTokenProxyMode,
 	TOKEN_PROXY_NAME,
 	tokenProxyGatewayUrl,
 	tokenProxyRouteForAgent,
@@ -29,6 +42,14 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import type { Session } from '../types';
 import { logger } from '../utils/logger';
+
+/**
+ * What an agent's record holds once it is off the Maestro token proxy: no
+ * mode, and no background requests target. Every writer that moves an agent's
+ * gateway away from the proxy spreads this, so the two cannot drift apart.
+ */
+export const OFF_TOKEN_PROXY_FIELDS: Pick<Session, 'tokenProxyMode' | 'backgroundRequests'> =
+	Object.freeze({ tokenProxyMode: undefined, backgroundRequests: undefined });
 
 export type SetAgentGatewayResult =
 	| { ok: true; gatewayUrl: string | undefined }
@@ -69,8 +90,8 @@ export async function setAgentGatewayUrl(
 
 	// A proxy mode describes the gateway it was chosen for. A different gateway
 	// starts from the default, so compression is never carried onto a URL the
-	// user typed afterwards.
-	updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, tokenProxyMode: undefined }));
+	// user typed afterwards. Background requests leave with it.
+	updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, ...OFF_TOKEN_PROXY_FIELDS }));
 	await flushAgentToStore(sessionId);
 	return { ok: true, gatewayUrl };
 }
@@ -96,8 +117,9 @@ async function agentEffectiveEnv(session: Session): Promise<Record<string, strin
 /**
  * Set how the Maestro token proxy carries one agent's requests.
  *
- * - `off` clears the agent's gateway when it is the proxy. A gateway that
- *   points somewhere else (Headroom, LiteLLM) is left alone: it is already off.
+ * - `off` clears the agent's gateway when it is the proxy, and its background
+ *   requests target with it. A gateway that points somewhere else (Headroom,
+ *   LiteLLM) is left alone: it is already off.
  * - `passthrough` and `compress` point the agent's gateway at the proxy (on the
  *   route its provider and credential need) unless it is there already, and
  *   store the mode. They are refused for a provider that cannot use a gateway
@@ -120,8 +142,12 @@ export async function setAgentTokenProxyMode(
 		const port = (await proxy.report()).status.port;
 		const onProxy = port !== null && gatewayPointsAtTokenProxy(session.gatewayUrl, port);
 		const gatewayUrl = onProxy ? undefined : session.gatewayUrl;
-		if (gatewayUrl !== session.gatewayUrl || session.tokenProxyMode !== undefined) {
-			updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, tokenProxyMode: undefined }));
+		if (
+			gatewayUrl !== session.gatewayUrl ||
+			session.tokenProxyMode !== undefined ||
+			session.backgroundRequests !== undefined
+		) {
+			updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, ...OFF_TOKEN_PROXY_FIELDS }));
 			await flushAgentToStore(sessionId);
 		}
 		return { ok: true, mode, gatewayUrl };
@@ -148,4 +174,57 @@ export async function setAgentTokenProxyMode(
 		await flushAgentToStore(sessionId);
 	}
 	return { ok: true, mode, gatewayUrl };
+}
+
+export type SetAgentBackgroundRequestsResult =
+	| { ok: true; backgroundRequests: BackgroundRequests | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Set where the Maestro token proxy sends one agent's background requests, or
+ * turn that off with `undefined` / `null`.
+ *
+ * A target is checked the way every writer checks it
+ * (`parseBackgroundRequestsEdit`: the provider, the saved sources, the route
+ * the source serves) and is refused for an agent that is not on the proxy,
+ * which would store a setting that does nothing. Turning it off is always
+ * allowed.
+ *
+ * Resolves once main holds the new value: the proxy reads it from the
+ * main-process store on every request.
+ */
+export async function setAgentBackgroundRequests(
+	sessionId: string,
+	value: unknown
+): Promise<SetAgentBackgroundRequestsResult> {
+	const session: Session | undefined = useSessionStore
+		.getState()
+		.sessions.find((s) => s.id === sessionId);
+	if (!session) return { ok: false, error: 'Agent not found' };
+
+	const edit = parseBackgroundRequestsEdit(
+		session.toolType,
+		value,
+		useSettingsStore.getState().localModelEndpoints ?? []
+	);
+	if (!edit.ok) return edit;
+	const { backgroundRequests } = edit;
+
+	if (backgroundRequests) {
+		const port = (await window.maestro.localModels.proxy.report()).status.port;
+		const mode = resolveTokenProxyMode({
+			gatewayUrl: session.gatewayUrl,
+			storedMode: session.tokenProxyMode,
+			port,
+		});
+		if (mode === 'off') return { ok: false, error: BACKGROUND_REQUESTS_NEEDS_PROXY };
+	}
+
+	if (
+		canonicalJson(session.backgroundRequests ?? null) !== canonicalJson(backgroundRequests ?? null)
+	) {
+		updateSessionWith(sessionId, (s) => ({ ...s, backgroundRequests }));
+		await flushAgentToStore(sessionId);
+	}
+	return { ok: true, backgroundRequests };
 }

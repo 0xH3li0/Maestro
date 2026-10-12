@@ -469,6 +469,128 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		describe('Tier targets', () => {
+			const LOCAL = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			const OPUS = { type: 'provider-model' as const, model: 'opus' };
+
+			const saveWithTiers = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				tierTargets: Record<string, unknown> | undefined,
+				gatewayUrl?: string
+			) => {
+				// `tierTargets` is the 26th argument, after `runOn`; everything between
+				// is left unset, bar the gateway a case wants kept.
+				const args = new Array(26).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[23] = gatewayUrl;
+				args[25] = tierTargets;
+				return (save as (...all: unknown[]) => void)(...args);
+			};
+
+			it('stores the tiers and flushes the agent to main at once', async () => {
+				// The CLI's Auto Run resolves a tier from main's store. Left to the
+				// debounced persistence, a run started straight after the save would
+				// launch a tier on the model the user just moved it off.
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithTiers(result.current.handleSaveEditAgent, { low: LOCAL, high: OPUS });
+				});
+
+				expect(useSessionStore.getState().sessions[0].tierTargets).toEqual({
+					low: LOCAL,
+					high: OPUS,
+				});
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'session-1', tierTargets: { low: LOCAL, high: OPUS } })],
+					[]
+				);
+			});
+
+			it('clears the tiers and flushes that too', async () => {
+				const session = createMockSession({ id: 'session-1', tierTargets: { low: LOCAL } });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithTiers(result.current.handleSaveEditAgent, undefined);
+				});
+
+				expect(useSessionStore.getState().sessions[0].tierTargets).toBeUndefined();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not flush a save that left the tiers alone', async () => {
+				const session = createMockSession({ id: 'session-1', tierTargets: { low: LOCAL } });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					// An equal record in another object, as the dialog hands it back.
+					saveWithTiers(result.current.handleSaveEditAgent, { low: { ...LOCAL } });
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('Background requests', () => {
+			const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:4b' };
+			const onProxy = 'http://127.0.0.1:48123/anthropic';
+
+			const saveWithGateway = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				gatewayUrl: string | undefined
+			) => {
+				const args = new Array(24).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[23] = gatewayUrl;
+				return (save as (...all: unknown[]) => void)(...args);
+			};
+
+			it('keeps the target when the save leaves the gateway alone: Save is not its writer', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: onProxy,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, onProxy);
+				});
+
+				expect(useSessionStore.getState().sessions[0].backgroundRequests).toEqual({
+					target: QWEN,
+				});
+			});
+
+			it('drops the target with the proxy mode when the save changes the gateway', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					gatewayUrl: onProxy,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithGateway(result.current.handleSaveEditAgent, undefined);
+				});
+
+				const saved = useSessionStore.getState().sessions[0];
+				expect(saved.tokenProxyMode).toBeUndefined();
+				expect(saved.backgroundRequests).toBeUndefined();
+			});
+		});
+
 		describe('Run on', () => {
 			const QWEN = {
 				type: 'source' as const,

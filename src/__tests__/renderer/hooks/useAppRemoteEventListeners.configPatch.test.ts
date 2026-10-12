@@ -15,10 +15,15 @@ import type { Session } from '../../../renderer/types';
 
 // The mode switch is its own suite (agentGateway.test.ts). Here it is the one
 // call a `tokenProxyMode` patch must make, and whose answer it must carry.
+// The background requests target is the same kind of call. What the record
+// holds once it is off the proxy is the service's own constant, restated here
+// because the module is mocked whole.
 const gatewayService = vi.hoisted(() => ({
 	setAgentTokenProxyMode: vi.fn(),
+	setAgentBackgroundRequests: vi.fn(),
 	flushAgentToStore: vi.fn(async () => {}),
 	setAgentGatewayUrl: vi.fn(),
+	OFF_TOKEN_PROXY_FIELDS: { tokenProxyMode: undefined, backgroundRequests: undefined },
 }));
 vi.mock('../../../renderer/services/agentGateway', () => gatewayService);
 
@@ -81,6 +86,7 @@ async function applyPatch(
 
 beforeEach(() => {
 	gatewayService.setAgentTokenProxyMode.mockReset();
+	gatewayService.setAgentBackgroundRequests.mockReset();
 	vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
 	// Not part of the shared preload mock in setup.ts, so stub it here rather
 	// than widening the global surface for one branch.
@@ -390,6 +396,218 @@ describe('remoteUpdateSessionConfig - Run on target', () => {
 			expect(updated.runOn).toEqual(QWEN);
 			expect(updated.gatewayUrl).toBe('http://127.0.0.1:8787');
 		});
+	});
+});
+
+describe('remoteUpdateSessionConfig - tier targets', () => {
+	const OLLAMA = {
+		id: 'ep-ollama',
+		name: 'Ollama',
+		kind: 'ollama' as const,
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const LOCAL = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:latest' };
+	const OPUS = { type: 'provider-model' as const, model: 'opus' };
+
+	beforeEach(() => {
+		useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+		vi.mocked(window.maestro.sessions.setMany).mockClear();
+	});
+	afterEach(() => {
+		useSettingsStore.setState({ localModelEndpoints: [] });
+	});
+
+	it('stores each tier named in its stored form and flushes it to main', async () => {
+		const session = makeSession();
+		const updated = await applyPatch(session, {
+			tierTargets: { low: { ...LOCAL, stray: true }, high: { type: 'provider' } },
+		});
+
+		const tierTargets = { low: LOCAL, high: { type: 'provider-model' } };
+		expect(updated.tierTargets).toEqual(tierTargets);
+		// The CLI's Auto Run reads the tiers from main's store.
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: session.id, tierTargets })],
+			[]
+		);
+	});
+
+	it('is a patch: a tier it does not name keeps what the agent holds', async () => {
+		const updated = await applyPatch(makeSession({ tierTargets: { low: LOCAL, medium: OPUS } }), {
+			tierTargets: { high: OPUS, medium: null },
+		});
+
+		expect(updated.tierTargets).toEqual({ low: LOCAL, high: OPUS });
+	});
+
+	it('stores the absence of the field when the last tier is cleared', async () => {
+		const updated = await applyPatch(makeSession({ tierTargets: { low: LOCAL } }), {
+			tierTargets: { low: null },
+		});
+
+		expect('tierTargets' in updated).toBe(true);
+		expect(updated.tierTargets).toBeUndefined();
+	});
+
+	it('clears every tier on null', async () => {
+		const updated = await applyPatch(makeSession({ tierTargets: { low: LOCAL, high: OPUS } }), {
+			tierTargets: null,
+		});
+
+		expect(updated.tierTargets).toBeUndefined();
+	});
+
+	it('refuses a source that does not exist, naming the tier, and writes nothing', async () => {
+		const reply = await refusePatch(makeSession(), {
+			tierTargets: { low: { type: 'source', endpointId: 'ep-gone', model: 'm' } },
+			customModel: 'opus',
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toMatch(/^low: No source has the id "ep-gone"/);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('refuses a source on a harness with no Run on recipe', async () => {
+		const reply = await refusePatch(makeSession({ toolType: 'factory-droid' }), {
+			tierTargets: { high: LOCAL },
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toMatch(/^high: /);
+	});
+
+	it('refuses a key that is not a tier', async () => {
+		const reply = await refusePatch(makeSession(), { tierTargets: { turbo: OPUS } });
+
+		expect(reply).toEqual({ success: false, error: expect.stringContaining('"turbo"') });
+	});
+});
+
+describe('remoteUpdateSessionConfig - background requests', () => {
+	const onProxy = 'http://127.0.0.1:48123/anthropic';
+	const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:4b' };
+
+	beforeEach(() => {
+		vi.mocked(window.maestro.sessions.setMany).mockClear();
+	});
+
+	it('sets the target through the service and carries what it stored', async () => {
+		gatewayService.setAgentBackgroundRequests.mockResolvedValue({
+			ok: true,
+			backgroundRequests: { target: QWEN },
+		});
+		const session = makeSession({ gatewayUrl: onProxy, tokenProxyMode: 'passthrough' });
+
+		const updated = await applyPatch(session, {
+			backgroundRequests: { target: { ...QWEN, contextTokens: 65_536 } },
+		});
+
+		expect(gatewayService.setAgentBackgroundRequests).toHaveBeenCalledWith(session.id, {
+			target: { ...QWEN, contextTokens: 65_536 },
+		});
+		// The service's form is what the write below carries, not the caller's.
+		expect(updated.backgroundRequests).toEqual({ target: QWEN });
+	});
+
+	it('turns it off on null', async () => {
+		gatewayService.setAgentBackgroundRequests.mockResolvedValue({
+			ok: true,
+			backgroundRequests: undefined,
+		});
+
+		const updated = await applyPatch(
+			makeSession({ gatewayUrl: onProxy, backgroundRequests: { target: QWEN } }),
+			{ backgroundRequests: null }
+		);
+
+		expect(gatewayService.setAgentBackgroundRequests).toHaveBeenCalledWith('session-1', null);
+		expect('backgroundRequests' in updated).toBe(true);
+		expect(updated.backgroundRequests).toBeUndefined();
+	});
+
+	it('reports the reason the service refused, and writes nothing', async () => {
+		gatewayService.setAgentBackgroundRequests.mockResolvedValue({
+			ok: false,
+			error: 'this agent does not use the proxy',
+		});
+
+		const reply = await refusePatch(makeSession(), { backgroundRequests: { target: QWEN } });
+
+		expect(reply).toEqual({ success: false, error: 'this agent does not use the proxy' });
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('turns the proxy on and names the target in one patch, mode first', async () => {
+		const order: string[] = [];
+		gatewayService.setAgentTokenProxyMode.mockImplementation(async () => {
+			order.push('mode');
+			return { ok: true, mode: 'passthrough', gatewayUrl: onProxy };
+		});
+		gatewayService.setAgentBackgroundRequests.mockImplementation(async () => {
+			order.push('background');
+			return { ok: true, backgroundRequests: { target: QWEN } };
+		});
+
+		const updated = await applyPatch(makeSession(), {
+			backgroundRequests: { target: QWEN },
+			tokenProxyMode: 'passthrough',
+		});
+
+		expect(order).toEqual(['mode', 'background']);
+		expect(updated).toMatchObject({
+			gatewayUrl: onProxy,
+			tokenProxyMode: 'passthrough',
+			backgroundRequests: { target: QWEN },
+		});
+	});
+
+	it.each([
+		['the proxy mode off', { tokenProxyMode: 'off' }],
+		['a gateway of its own', { gatewayUrl: 'http://127.0.0.1:8787' }],
+	])('refuses a target beside %s, before either is acted on', async (_what, rest) => {
+		const reply = await refusePatch(makeSession({ gatewayUrl: onProxy }), {
+			backgroundRequests: { target: QWEN },
+			...rest,
+		});
+
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('routed by the token proxy');
+		expect(gatewayService.setAgentTokenProxyMode).not.toHaveBeenCalled();
+		expect(gatewayService.setAgentBackgroundRequests).not.toHaveBeenCalled();
+	});
+
+	it('drops the target when the mode goes off: the write starts from the record before it', async () => {
+		gatewayService.setAgentTokenProxyMode.mockResolvedValue({
+			ok: true,
+			mode: 'off',
+			gatewayUrl: undefined,
+		});
+
+		const updated = await applyPatch(
+			makeSession({
+				gatewayUrl: onProxy,
+				tokenProxyMode: 'passthrough',
+				backgroundRequests: { target: QWEN },
+			}),
+			{ tokenProxyMode: 'off' }
+		);
+
+		expect('backgroundRequests' in updated).toBe(true);
+		expect(updated.backgroundRequests).toBeUndefined();
+	});
+
+	it('drops the target when a patch changes the gateway, and keeps it when it does not', async () => {
+		const session = () =>
+			makeSession({ gatewayUrl: onProxy, backgroundRequests: { target: QWEN } });
+
+		const moved = await applyPatch(session(), { gatewayUrl: 'http://127.0.0.1:8787' });
+		expect(moved.backgroundRequests).toBeUndefined();
+		cleanup();
+
+		const same = await applyPatch(session(), { gatewayUrl: `${onProxy}/` });
+		expect(same.backgroundRequests).toEqual({ target: QWEN });
 	});
 });
 

@@ -28,6 +28,20 @@ import {
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
 import { readRunOnFlags } from '../services/run-on';
+import {
+	formatBackgroundRequestsSpec,
+	parseBackgroundRequestsEdit,
+	parseBackgroundRequestsSpec,
+	type BackgroundRequests,
+} from '../../shared/local-models/background-requests';
+import {
+	formatTierTargetSpec,
+	parseTierAssignment,
+	parseTierTargetsEdit,
+	TIER_LEVELS,
+	type TierTarget,
+} from '../../shared/modelTiers';
+import { readLocalModelEndpoints } from '../services/storage';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -53,6 +67,8 @@ interface UpdateAgentOptions {
 	proxyMode?: string;
 	runOn?: string;
 	runOnContext?: string;
+	tier?: string[];
+	backgroundRequests?: string;
 	model?: string;
 	effort?: string;
 	contextWindow?: string;
@@ -144,6 +160,33 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 		patch.tokenProxyMode = mode;
 	}
 
+	// `--tier <tier>=<target>` (repeatable): a patch with one entry per tier
+	// named, `null` for `default`. Only the spelling is read here; each target
+	// is checked against the agent's provider and the saved sources once the
+	// agent has been read (see updateAgent), and the app merges the patch onto
+	// the tiers the agent already holds.
+	if (options.tier && options.tier.length > 0) {
+		const tiers: Record<string, TierTarget | null> = {};
+		for (const entry of options.tier) {
+			const assignment = parseTierAssignment(entry);
+			if (!assignment.ok) throw new Error(`--tier: ${assignment.error}`);
+			if (assignment.tier in tiers) {
+				throw new Error(`--tier: the "${assignment.tier}" tier is set more than once.`);
+			}
+			tiers[assignment.tier] = assignment.target ?? null;
+		}
+		patch.tierTargets = tiers;
+	}
+
+	// `--background-requests <source id>:<model>|none`: where the token proxy
+	// sends this agent's side requests. `none` turns it off (`null` on the
+	// wire). Checked against the agent once it has been read.
+	if (options.backgroundRequests !== undefined) {
+		const parsed = parseBackgroundRequestsSpec(options.backgroundRequests);
+		if (!parsed.ok) throw new Error(`--background-requests: ${parsed.error}`);
+		patch.backgroundRequests = parsed.backgroundRequests ?? null;
+	}
+
 	if (options.contextWindow !== undefined) {
 		const raw = options.contextWindow.trim().toLowerCase();
 		if (raw === '' || raw === 'none' || raw === '0') {
@@ -221,7 +264,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -304,6 +347,40 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		if (gatewayProblem) {
 			emitError(
 				`${configPatch.tokenProxyMode !== undefined ? '--proxy-mode' : '--gateway-url'}: ${gatewayProblem}`,
+				options
+			);
+		}
+	}
+
+	// `--tier`: each target is checked with the function the Edit Agent dialog
+	// saves with, against this agent's provider and the saved sources, so the CLI
+	// cannot store a tier every launch on it would refuse. The patch is sent as
+	// typed; the app runs the same check against the tiers it holds.
+	if (configPatch?.tierTargets !== undefined && currentToolType !== undefined) {
+		const edit = parseTierTargetsEdit(currentToolType, configPatch.tierTargets, {
+			base: session?.tierTargets,
+			endpoints: readLocalModelEndpoints(),
+		});
+		if (!edit.ok) emitError(`--tier ${edit.error}`, options);
+	}
+
+	// `--background-requests`: the provider, the saved sources and the route the
+	// source serves are checked here. Whether the agent is on the token proxy
+	// needs the proxy's port, which the app checks before it writes.
+	if (
+		configPatch?.backgroundRequests !== undefined &&
+		configPatch.backgroundRequests !== null &&
+		currentToolType !== undefined
+	) {
+		const edit = parseBackgroundRequestsEdit(
+			currentToolType,
+			configPatch.backgroundRequests,
+			readLocalModelEndpoints()
+		);
+		if (!edit.ok) emitError(`--background-requests: ${edit.error}`, options);
+		if (configPatch.tokenProxyMode === 'off' || configPatch.gatewayUrl !== undefined) {
+			emitError(
+				'--background-requests: background requests are routed by the token proxy, so a target cannot be set in the call that turns the proxy off or sets another gateway.',
 				options
 			);
 		}
@@ -546,6 +623,8 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			gatewayUrl: 'Gateway URL',
 			tokenProxyMode: 'Token proxy mode',
 			runOn: 'Run on',
+			tierTargets: 'Tiers',
+			backgroundRequests: 'Background requests',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',
@@ -571,6 +650,17 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 							? `${formatRunOnSpec(target)} (context ${target.contextTokens} tokens)`
 							: RUN_ON_PROVIDER_SPEC
 					}`
+				);
+			} else if (key === 'tierTargets') {
+				// One line per tier named, in the spelling `--tier` takes.
+				const tiers = value as Record<string, TierTarget | null>;
+				for (const tier of TIER_LEVELS) {
+					if (tier in tiers) console.log(`  Tier ${tier}: ${formatTierTargetSpec(tiers[tier])}`);
+				}
+			} else if (key === 'backgroundRequests') {
+				// Off is not "unset", it is every request going to the provider.
+				console.log(
+					`  ${label}: ${formatBackgroundRequestsSpec(value as BackgroundRequests | null)}`
 				);
 			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);

@@ -50,10 +50,11 @@ import {
 	staleTierModels,
 	suggestHarnessTierDefaults,
 	TIER_LEVELS,
+	TIER_NOT_MAPPED_LABEL,
 	TIER_TARGET_SOURCE_LABELS,
 	tierHarnessIds,
 	tierHarnessProblem,
-	tierTargetLabel,
+	tierRowRecord,
 	withHarnessTierDefault,
 	withHarnessTierTargets,
 	type HarnessTierDefaults,
@@ -64,9 +65,6 @@ import {
 
 /** A listing runs a harness's own `models` command and asks each saved source. */
 const OPTIONS_TIMEOUT_MS = 60_000;
-
-/** What `list` prints beside a tier no layer maps. */
-const NOT_MAPPED = 'Not mapped';
 
 interface JsonOption {
 	json?: boolean;
@@ -96,15 +94,7 @@ function requireTier(tier: string, json: boolean | undefined): ModelTier {
 /** Each tier of one harness as stored now: value, spelling, layer. */
 function tierRecords(harness: AgentId, defaults: HarnessTierDefaults) {
 	const endpoints = readLocalModelEndpoints();
-	return harnessTierRows(harness, defaults).map((row) => ({
-		tier: row.tier,
-		target: row.target,
-		spec: row.target ? formatTierTargetSpec(row.target) : null,
-		label: row.target ? tierTargetLabel(row.target, endpoints) : null,
-		source: row.source,
-		builtIn: row.builtIn,
-		...(row.problem ? { problem: row.problem } : {}),
-	}));
+	return harnessTierRows(harness, defaults).map((row) => tierRowRecord(row, endpoints));
 }
 
 export function modelsTiersList(options: JsonOption & { harness?: string }): void {
@@ -128,7 +118,7 @@ export function modelsTiersList(options: JsonOption & { harness?: string }): voi
 		tiers: row.tiers.map((tier) => ({
 			tier: tier.tier,
 			spec: tier.spec,
-			note: tier.source ? TIER_TARGET_SOURCE_LABELS[tier.source] : NOT_MAPPED,
+			note: tier.source ? TIER_TARGET_SOURCE_LABELS[tier.source] : TIER_NOT_MAPPED_LABEL,
 			...(tier.problem ? { problem: tier.problem } : {}),
 		})),
 	}));
@@ -330,7 +320,7 @@ function report(harness: AgentId, tiers: readonly ModelTier[], json: boolean | u
 	}
 	const name = getAgentDisplayName(harness);
 	for (const record of records) {
-		const layer = record.source ? TIER_TARGET_SOURCE_LABELS[record.source] : NOT_MAPPED;
+		const layer = record.source ? TIER_TARGET_SOURCE_LABELS[record.source] : TIER_NOT_MAPPED_LABEL;
 		console.log(formatSuccess(`${name} ${record.tier} -> ${record.spec ?? '-'} (${layer})`));
 		if (record.problem) console.log(formatWarning(record.problem));
 	}

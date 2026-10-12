@@ -192,6 +192,48 @@ describe('maestro:remoteUpdateSessionConfig provider switch and Run on', () => {
 	});
 });
 
+describe('maestro:remoteUpdateSessionConfig provider switch, tiers and the proxy', () => {
+	const QWEN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it("starts the tiers over: a tier names a model, and a provider's models are its own", async () => {
+		const sessions = [
+			createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				tierTargets: { low: QWEN, high: { type: 'provider-model', model: 'opus' } },
+			}),
+		];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].tierTargets).toBeUndefined();
+		expect(setMany.mock.calls[0][0][0].tierTargets).toBeUndefined();
+	});
+
+	it('drops the background requests target with the gateway and the proxy mode', async () => {
+		const sessions = [
+			createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+				tokenProxyMode: 'passthrough',
+				backgroundRequests: { target: QWEN },
+			}),
+		];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.gatewayUrl).toBeUndefined();
+		expect(updated.tokenProxyMode).toBeUndefined();
+		expect(updated.backgroundRequests).toBeUndefined();
+	});
+});
+
 describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
 	it('writes the app-server opt-in and flushes it before acking', async () => {
 		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];

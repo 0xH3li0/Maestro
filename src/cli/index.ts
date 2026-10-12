@@ -1637,6 +1637,16 @@ program
 		'--proxy-mode <mode>',
 		'Maestro token proxy for this agent: off | passthrough | compress | compress-early. Any mode but off points the gateway at the proxy; off clears it. compress shortens a tool result after the model has read it once; compress-early shortens it before, which is cheaper and means the model works from the shortened output (requires the desktop app)'
 	)
+	.option(
+		'--tier <tier=target>',
+		"Where a low, medium or high task of this agent launches (repeatable): low=<source id>:<model>, high=provider:<model>, medium=provider (the provider, on the agent's own model), or low=default to follow the harness default again. Read them with show agent",
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option(
+		'--background-requests <target>',
+		"Where the Maestro token proxy sends this agent's side requests (titles, summaries): <source id>:<model> for a model on a source that serves the Anthropic Messages route, or none. Claude Code agents on the token proxy only"
+	)
 	.option('--model <model>', 'Model override (e.g. sonnet, opus; empty string clears)')
 	.option('--effort <level>', 'Effort/reasoning level override (empty string clears)')
 	.option('--context-window <size>', 'Context window size in tokens (0 or "none" clears)')

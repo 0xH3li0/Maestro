@@ -12,10 +12,11 @@ import {
 	MODEL_SERVER_NAME,
 } from '../../../shared/local-models/model-server';
 import {
+	agentTierFallthroughLabel,
 	buildTierTargetOptionGroups,
 	type HarnessTierOptions,
 } from '../../../shared/local-models/tier-options';
-import { TIER_AGENT_MODEL_LABEL, type TierTarget } from '../../../shared/modelTiers';
+import { agentTierRows, TIER_AGENT_MODEL_LABEL, type TierTarget } from '../../../shared/modelTiers';
 
 const OLLAMA: LocalModelEndpoint = {
 	id: 'ep-ollama',
@@ -124,5 +125,32 @@ describe('buildTierTargetOptionGroups', () => {
 			model: 'qwen3:latest',
 		});
 		expect(source[0].options).toHaveLength(2);
+	});
+});
+
+describe('agentTierFallthroughLabel', () => {
+	const LOCAL: TierTarget = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' };
+
+	it('names the value the layers below give the tier', () => {
+		const [low] = agentTierRows({ toolType: 'claude-code' });
+		expect(agentTierFallthroughLabel(low)).toBe('Harness default (haiku)');
+
+		const [onSource] = agentTierRows(
+			{ toolType: 'claude-code' },
+			{ 'claude-code': { low: LOCAL } }
+		);
+		expect(agentTierFallthroughLabel(onSource, [OLLAMA])).toBe(
+			'Harness default (qwen3:latest on Ollama)'
+		);
+	});
+
+	it('says so when no layer maps the tier', () => {
+		const [low] = agentTierRows({ toolType: 'opencode' });
+		expect(agentTierFallthroughLabel(low)).toBe('Harness default (not mapped)');
+	});
+
+	it('says so when the harness default cannot be used', () => {
+		const [low] = agentTierRows({ toolType: 'factory-droid' }, { 'factory-droid': { low: LOCAL } });
+		expect(agentTierFallthroughLabel(low)).toBe('Harness default (cannot be used)');
 	});
 });

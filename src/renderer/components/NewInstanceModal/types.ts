@@ -3,6 +3,7 @@ import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from 
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { TierTargets } from '../../../shared/modelTiers';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -112,7 +113,9 @@ export interface EditAgentModalProps {
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string,
 		/** Run on target, already validated; `undefined` means the provider's model. */
-		runOn?: RunOnSourceTarget
+		runOn?: RunOnSourceTarget,
+		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+		tierTargets?: TierTargets
 	) => void;
 	theme: Theme;
 	session: Session | null;

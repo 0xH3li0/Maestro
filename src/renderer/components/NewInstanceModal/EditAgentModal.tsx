@@ -26,6 +26,7 @@ import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
 import { RunOnField } from '../shared/RunOnField';
+import { TierTargetsField } from '../shared/TierTargetsField';
 import {
 	AGENT_FORM_TAB_IDS,
 	buildAgentSettingsTabs,
@@ -48,6 +49,7 @@ import {
 	type RunOnSourceTarget,
 	type RunOnTarget,
 } from '../../../shared/local-models/run-on';
+import { parseTierTargetsEdit, type TierTargets } from '../../../shared/modelTiers';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
@@ -106,6 +108,10 @@ export function EditAgentModal({
 	// Where the agent's model runs, and the reason the last save refused it.
 	const [runOn, setRunOn] = useState<RunOnTarget>({ type: 'provider' });
 	const [runOnError, setRunOnError] = useState<string | undefined>(undefined);
+	// Where each tier launches for this agent, and the reason the last save
+	// refused it. A tier the record does not hold follows the harness default.
+	const [tierTargets, setTierTargets] = useState<TierTargets>({});
+	const [tierTargetsError, setTierTargetsError] = useState<string | undefined>(undefined);
 	// A save was refused: an empty name now says so instead of blocking silently.
 	const [saveAttempted, setSaveAttempted] = useState(false);
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
@@ -362,6 +368,10 @@ export function EditAgentModal({
 				setRunOn({ type: 'provider' });
 				setRunOnError(undefined);
 			}
+			// A tier names a model, and a provider's models are its own, so the
+			// tiers start over with the provider's other model settings.
+			setTierTargets({});
+			setTierTargetsError(undefined);
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -382,6 +392,10 @@ export function EditAgentModal({
 					? undefined
 					: `The stored Run on target cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
 			);
+			// Kept as stored: a target a launch would refuse is shown with the
+			// launch's own words beside its picker, where it can be replaced.
+			setTierTargets({ ...session.tierTargets });
+			setTierTargetsError(undefined);
 			// Preserve the tri-state (undefined stays undefined) so an unconfigured
 			// SSH agent keeps its "unset" signal instead of looking like explicit API.
 			setEnableMaestroP(session.enableMaestroP);
@@ -581,6 +595,15 @@ export function EditAgentModal({
 			return;
 		}
 
+		// The tiers go through the check every tier writer shares, so a target a
+		// launch would refuse is refused here, with the tier named.
+		const tiersEdit = parseTierTargetsEdit(selectedToolType, tierTargets);
+		if (!tiersEdit.ok) {
+			setTierTargetsError(tiersEdit.error);
+			setActiveTab('models');
+			return;
+		}
+
 		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
 		const modelValue = agentConfig.model?.trim() ?? undefined;
@@ -656,7 +679,9 @@ export function EditAgentModal({
 			codexTransport,
 			gatewayEdit.gatewayUrl ?? undefined,
 			// Provider is the absence of a target on the agent record.
-			runOnEdit.target
+			runOnEdit.target,
+			// No tier set is the absence of the field: every tier follows its harness default.
+			tiersEdit.tierTargets
 		);
 		onClose();
 	}, [
@@ -676,6 +701,7 @@ export function EditAgentModal({
 		customEnvVarsDisabled,
 		gatewayUrl,
 		runOn,
+		tierTargets,
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
@@ -751,6 +777,7 @@ export function EditAgentModal({
 		if (workingDirError) fields.push('workingDir');
 		if (gatewayUrlError) fields.push('gatewayUrl');
 		if (runOnError) fields.push('runOn');
+		if (tierTargetsError) fields.push('tierTargets');
 		return fields;
 	}, [
 		nameError,
@@ -759,6 +786,7 @@ export function EditAgentModal({
 		workingDirError,
 		gatewayUrlError,
 		runOnError,
+		tierTargetsError,
 	]);
 	const tabs = useMemo(
 		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
@@ -1200,10 +1228,27 @@ export function EditAgentModal({
 								/>
 							</div>
 						}
+						tiers={
+							<div data-testid="edit-agent-tiers">
+								<TierTargetsField
+									theme={theme}
+									toolType={selectedToolType}
+									value={tierTargets}
+									onChange={(next) => {
+										setTierTargets(next);
+										setTierTargetsError(undefined);
+									}}
+									runOn={runOn}
+									error={tierTargetsError}
+									testId="edit-agent-tier-targets"
+								/>
+							</div>
+						}
 						gateway={
 							<>
-								{/* Maestro token proxy mode. Applies at once; the gateway draft
-								    below follows it. */}
+								{/* Maestro token proxy mode, and under it where the proxy sends
+								    background requests. Both apply at once; the gateway draft
+								    below follows the mode. */}
 								<AgentTokenProxyModeControl
 									theme={theme}
 									agentId={session.id}
@@ -1211,6 +1256,7 @@ export function EditAgentModal({
 									toolType={selectedToolType}
 									gatewayUrl={gatewayUrl}
 									storedMode={(liveSession ?? session).tokenProxyMode}
+									storedBackgroundRequests={(liveSession ?? session).backgroundRequests}
 									sshRemoteName={sshRemoteName}
 									pendingReason={
 										gatewaySkippedReason ??

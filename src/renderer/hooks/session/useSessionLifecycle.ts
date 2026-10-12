@@ -42,9 +42,10 @@ import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { TierTargets } from '../../../shared/modelTiers';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
-import { flushAgentToStore } from '../../services/agentGateway';
+import { flushAgentToStore, OFF_TOKEN_PROXY_FIELDS } from '../../services/agentGateway';
 import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -107,7 +108,9 @@ export interface SessionLifecycleReturn {
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string,
 		/** Run on target, already validated; `undefined` means the provider's model. */
-		runOn?: RunOnSourceTarget
+		runOn?: RunOnSourceTarget,
+		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+		tierTargets?: TierTargets
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -204,7 +207,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** Local Models gateway URL, already validated; `undefined` clears it. */
 			gatewayUrl?: string,
 			/** Run on target, already validated; `undefined` means the provider's model. */
-			runOn?: RunOnSourceTarget
+			runOn?: RunOnSourceTarget,
+			/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+			tierTargets?: TierTargets
 		) => {
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
@@ -239,10 +244,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// model, not a provider, so (unlike the gateway) the dialog keeps
 					// it across a provider switch when the new harness can use one.
 					runOn,
-					// A proxy mode belongs to the gateway it was chosen for.
-					...((current?.gatewayUrl ?? undefined) !== gatewayUrl
-						? { tokenProxyMode: undefined }
-						: {}),
+					// A proxy mode, and the background requests target beside it,
+					// belong to the gateway they were chosen for.
+					...((current?.gatewayUrl ?? undefined) !== gatewayUrl ? OFF_TOKEN_PROXY_FIELDS : {}),
+					// Where each tier launches. A tier names a model, so the dialog
+					// starts the tiers over on a provider switch, as it does the model.
+					tierTargets,
 					customModel,
 					customEffort,
 					customContextWindow,
@@ -321,9 +328,11 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// said it should.
 			// The same holds for the Run on target, and a miss there sends a turn to
 			// the provider's cloud model the user just turned away from.
+			// And for the tier targets: the CLI's Auto Run reads them from the store.
 			if (
 				(current?.gatewayUrl ?? undefined) !== gatewayUrl ||
-				canonicalJson(current?.runOn ?? null) !== canonicalJson(runOn ?? null)
+				canonicalJson(current?.runOn ?? null) !== canonicalJson(runOn ?? null) ||
+				canonicalJson(current?.tierTargets ?? null) !== canonicalJson(tierTargets ?? null)
 			) {
 				void flushAgentToStore(sessionId);
 			}

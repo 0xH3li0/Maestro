@@ -37,11 +37,12 @@ import {
 import {
 	formatTierTargetSpec,
 	harnessTierRows,
-	parseTierTargetEdit,
+	parseTierTargetsEdit,
 	parseTierTargetSpec,
 	staleTierModels,
 	suggestHarnessTierDefaults,
 	TIER_LEVELS,
+	TIER_NOT_MAPPED_LABEL,
 	TIER_TARGET_SOURCE_LABELS,
 	tierTargetLabel,
 	withHarnessTierTargets,
@@ -58,9 +59,6 @@ import { MiniBadge } from '../../../ui/MiniBadge';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { AssignmentOptionElements } from './AssignmentOptionElements';
 import { CardButton } from './CardButton';
-
-/** What the source badge reads for a tier no layer maps. */
-export const TIER_NOT_MAPPED_LABEL = 'Not mapped';
 
 /** A per-harness record with one harness taken out. */
 function without<T>(
@@ -102,19 +100,15 @@ export function TierDefaultsSection({ theme, endpoints }: TierDefaultsSectionPro
 
 	const save = useCallback(
 		(harness: AgentId, row: TierTargets) => {
-			const checked: TierTargets = {};
-			for (const tier of TIER_LEVELS) {
-				// The saved sources are not passed: the pickers cannot produce an id
-				// that names nothing, and a row whose source was removed must still
-				// be able to save its other tiers.
-				const edit = parseTierTargetEdit(harness, row[tier]);
-				if (!edit.ok) {
-					setRefusals((current) => ({ ...current, [harness]: `${tier}: ${edit.error}` }));
-					return;
-				}
-				if (edit.target) checked[tier] = edit.target;
+			// The saved sources are not passed: the pickers cannot produce an id
+			// that names nothing, and a row whose source was removed must still
+			// be able to save its other tiers.
+			const edit = parseTierTargetsEdit(harness, row);
+			if (!edit.ok) {
+				setRefusals((current) => ({ ...current, [harness]: edit.error }));
+				return;
 			}
-			setHarnessTierDefaults(withHarnessTierTargets(saved, harness, checked));
+			setHarnessTierDefaults(withHarnessTierTargets(saved, harness, edit.tierTargets ?? {}));
 			setDraft(harness, undefined);
 		},
 		[saved, setHarnessTierDefaults, setDraft]

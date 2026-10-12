@@ -14,6 +14,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { TierTargets } from '../../../shared/modelTiers';
 
 /**
  * Props for the AppSessionModals component
@@ -104,7 +105,9 @@ export interface AppSessionModalsProps {
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string,
 		/** Run on target, already validated; `undefined` means the provider's model. */
-		runOn?: RunOnSourceTarget
+		runOn?: RunOnSourceTarget,
+		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+		tierTargets?: TierTargets
 	) => void;
 	editAgentSession: Session | null;
 

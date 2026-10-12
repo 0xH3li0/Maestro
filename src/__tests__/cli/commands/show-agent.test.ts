@@ -18,6 +18,8 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	readHistory: vi.fn(),
 	readGroups: vi.fn(),
+	// The harness tier defaults a tier is resolved against, below the agent's own.
+	readHarnessTierDefaults: vi.fn(() => ({})),
 	// The saved sources a Run on target is labeled from.
 	readLocalModelEndpoints: vi.fn(() => [
 		{
@@ -37,7 +39,12 @@ vi.mock('../../../cli/output/formatter', () => ({
 }));
 
 import { showAgent } from '../../../cli/commands/show-agent';
-import { getSessionById, readHistory, readGroups } from '../../../cli/services/storage';
+import {
+	getSessionById,
+	readHarnessTierDefaults,
+	readHistory,
+	readGroups,
+} from '../../../cli/services/storage';
 import { formatAgentDetail, formatError } from '../../../cli/output/formatter';
 
 describe('show-agent command', () => {
@@ -461,6 +468,125 @@ describe('show-agent command', () => {
 				runOnSpec: null,
 				runOnLabel: null,
 				runOnProblem: 'A Run on target names a model.',
+			});
+		});
+
+		it("reports each tier's value and the layer it came from, the read for update-agent --tier", () => {
+			const local = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ tierTargets: { low: local } }));
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				'claude-code': { medium: { type: 'provider-model', model: 'opus' } },
+			});
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tiers).toEqual([
+				{
+					tier: 'low',
+					target: local,
+					// The spelling `--tier` takes, so the read can be written back.
+					spec: 'ep-ollama:qwen3:latest',
+					label: 'qwen3:latest on Ollama',
+					source: 'agent',
+					builtIn: 'haiku',
+				},
+				{
+					tier: 'medium',
+					target: { type: 'provider-model', model: 'opus' },
+					spec: 'provider:opus',
+					label: 'opus',
+					source: 'harness-default',
+					builtIn: 'sonnet',
+				},
+				{
+					tier: 'high',
+					target: { type: 'provider-model', model: 'opus' },
+					spec: 'provider:opus',
+					label: 'opus',
+					source: 'built-in',
+					builtIn: 'opus',
+				},
+			]);
+		});
+
+		it('reports a tier a launch would refuse with the refusal, and one that does not apply with the reason', () => {
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({
+					runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' },
+					tierTargets: { high: { type: 'source' } } as never,
+				})
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const [low, , high] = JSON.parse(consoleSpy.mock.calls[0][0]).tiers;
+			// Only the built-in table maps low, and this agent runs on a source.
+			expect(low).toMatchObject({ target: null, spec: null, source: null });
+			expect(low.note).toMatch(/Local Models source/);
+			expect(high).toMatchObject({ target: null, source: 'agent' });
+			expect(high.problem).toMatch(/cannot be used/);
+		});
+
+		it('reports no tiers for a harness that cannot be told which model to run', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ toolType: 'terminal' }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tiers).toEqual([]);
+		});
+
+		it("reports the agent's background requests target, the read for update-agent --background-requests", () => {
+			const target = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:4b' };
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ backgroundRequests: { target } }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				backgroundRequests: { target },
+				backgroundRequestsSpec: 'ep-ollama:qwen3:4b',
+				backgroundRequestsLabel: 'qwen3:4b on Ollama',
+				backgroundRequestsProblem: null,
+			});
+		});
+
+		it('reports none for an agent with no background target: a value, not an unset field', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				backgroundRequests: null,
+				backgroundRequestsSpec: 'none',
+				backgroundRequestsLabel: null,
+				backgroundRequestsProblem: null,
+			});
+		});
+
+		it('reports a stored background target that cannot be read, with the reason', () => {
+			const stored = { target: { type: 'source', endpointId: 'ep-ollama' } };
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ backgroundRequests: stored as never })
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				backgroundRequests: stored,
+				backgroundRequestsSpec: null,
+				backgroundRequestsProblem: 'A Run on target names a model.',
 			});
 		});
 

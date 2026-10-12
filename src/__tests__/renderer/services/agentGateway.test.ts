@@ -3,14 +3,19 @@
  * gateway and getting it to the main process before the next spawn reads it.
  * Also the Maestro token proxy mode switch, which is the same kind of write:
  * the mode and the gateway URL it implies are stored and flushed together.
+ * And the background requests target, which belongs to the proxy: refused for
+ * an agent that is not on it, and gone when the agent leaves it.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	flushAgentToStore,
+	setAgentBackgroundRequests,
 	setAgentGatewayUrl,
 	setAgentTokenProxyMode,
 } from '../../../renderer/services/agentGateway';
+import { BACKGROUND_REQUESTS_NEEDS_PROXY } from '../../../shared/local-models/background-requests';
+import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session } from '../../../renderer/types';
@@ -44,6 +49,22 @@ function proxyReport(port: number | null) {
 	};
 }
 
+const OLLAMA: LocalModelEndpoint = {
+	id: 'ep-ollama',
+	name: 'Ollama',
+	kind: 'ollama',
+	baseUrl: 'http://127.0.0.1:11434',
+	enabled: true,
+};
+const CLOUD: LocalModelEndpoint = {
+	id: 'ep-cloud',
+	name: 'OpenRouter',
+	kind: 'openai-compatible',
+	baseUrl: 'https://openrouter.ai/api/v1',
+	enabled: true,
+};
+const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:4b' };
+
 beforeEach(() => {
 	vi.mocked(window.maestro.sessions.setMany).mockReset();
 	vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
@@ -54,7 +75,7 @@ beforeEach(() => {
 	vi.mocked(proxy.report).mockResolvedValue(proxyReport(PROXY_PORT) as never);
 	vi.mocked(window.maestro.agents.getCustomEnvVars).mockReset();
 	vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValue(null);
-	useSettingsStore.setState({ shellEnvVars: {} });
+	useSettingsStore.setState({ shellEnvVars: {}, localModelEndpoints: [OLLAMA, CLOUD] });
 });
 
 describe('setAgentGatewayUrl', () => {
@@ -289,5 +310,152 @@ describe('setAgentGatewayUrl and the proxy mode', () => {
 		await setAgentGatewayUrl('agent-1', 'http://127.0.0.1:8787');
 
 		expect(stored().tokenProxyMode).toBeUndefined();
+	});
+});
+
+describe('setAgentBackgroundRequests', () => {
+	const onProxy = (overrides: Partial<Session> = {}) =>
+		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'passthrough', ...overrides });
+
+	it('stores the target in its one form and flushes the agent to main', async () => {
+		onProxy();
+
+		const result = await setAgentBackgroundRequests('agent-1', {
+			target: { ...QWEN, contextTokens: 65_536, stray: true },
+		});
+
+		expect(result).toEqual({ ok: true, backgroundRequests: { target: QWEN } });
+		expect(stored().backgroundRequests).toEqual({ target: QWEN });
+		// The proxy reads the target from main's store on every request.
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'agent-1', backgroundRequests: { target: QWEN } })],
+			[]
+		);
+	});
+
+	it('counts a gateway pointed at the proxy by hand: no stored mode is passthrough', async () => {
+		seed({ gatewayUrl: proxyUrl('/anthropic') });
+
+		expect((await setAgentBackgroundRequests('agent-1', { target: QWEN })).ok).toBe(true);
+	});
+
+	it('refuses an agent that is not on the proxy, and stores nothing', async () => {
+		seed({ gatewayUrl: 'http://127.0.0.1:8787' });
+
+		const result = await setAgentBackgroundRequests('agent-1', { target: QWEN });
+
+		expect(result).toEqual({ ok: false, error: BACKGROUND_REQUESTS_NEEDS_PROXY });
+		expect(stored().backgroundRequests).toBeUndefined();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('refuses before the proxy has a port: nothing can be on it yet', async () => {
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(
+			proxyReport(null) as never
+		);
+		onProxy();
+
+		const result = await setAgentBackgroundRequests('agent-1', { target: QWEN });
+
+		expect(result).toEqual({ ok: false, error: BACKGROUND_REQUESTS_NEEDS_PROXY });
+	});
+
+	it('refuses a provider the proxy cannot route for', async () => {
+		onProxy({ toolType: 'codex' } as Partial<Session>);
+
+		const result = await setAgentBackgroundRequests('agent-1', { target: QWEN });
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error).toContain('Claude Code agents only');
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('refuses a source that names nothing, and one not known to serve the route', async () => {
+		onProxy();
+
+		const gone = await setAgentBackgroundRequests('agent-1', {
+			target: { type: 'source', endpointId: 'ep-gone', model: 'm' },
+		});
+		const cloud = await setAgentBackgroundRequests('agent-1', {
+			target: { type: 'source', endpointId: CLOUD.id, model: 'm' },
+		});
+
+		expect(gone).toEqual({ ok: false, error: expect.stringContaining('ep-gone') });
+		expect(cloud).toEqual({ ok: false, error: expect.stringContaining('/v1/messages') });
+		expect(stored().backgroundRequests).toBeUndefined();
+	});
+
+	it.each([undefined, null])('turns it off for %j, without asking the proxy', async (value) => {
+		// Off is always allowed, on the proxy or not.
+		seed({ backgroundRequests: { target: QWEN } });
+
+		const result = await setAgentBackgroundRequests('agent-1', value);
+
+		expect(result).toEqual({ ok: true, backgroundRequests: undefined });
+		expect(stored().backgroundRequests).toBeUndefined();
+		expect(window.maestro.localModels.proxy.report).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+	});
+
+	it('writes nothing when the value did not change', async () => {
+		onProxy({ backgroundRequests: { target: QWEN } });
+
+		const result = await setAgentBackgroundRequests('agent-1', { target: QWEN });
+
+		expect(result.ok).toBe(true);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('reports an agent that does not exist', async () => {
+		seed();
+		expect(await setAgentBackgroundRequests('missing', { target: QWEN })).toEqual({
+			ok: false,
+			error: 'Agent not found',
+		});
+	});
+});
+
+describe('background requests leave with the proxy', () => {
+	it('is dropped when the proxy is turned off', async () => {
+		seed({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'passthrough',
+			backgroundRequests: { target: QWEN },
+		});
+
+		await setAgentTokenProxyMode('agent-1', 'off');
+
+		expect(stored().backgroundRequests).toBeUndefined();
+		expect(stored().gatewayUrl).toBeUndefined();
+	});
+
+	it('is dropped by off even when only the target is left to clear', async () => {
+		// A record with no gateway and no mode still holds a target nobody can see.
+		seed({ backgroundRequests: { target: QWEN } });
+
+		await setAgentTokenProxyMode('agent-1', 'off');
+
+		expect(stored().backgroundRequests).toBeUndefined();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+	});
+
+	it('is dropped when the gateway is set to another address', async () => {
+		seed({ gatewayUrl: proxyUrl('/anthropic'), backgroundRequests: { target: QWEN } });
+
+		await setAgentGatewayUrl('agent-1', 'http://127.0.0.1:8787');
+
+		expect(stored().backgroundRequests).toBeUndefined();
+	});
+
+	it('is kept when the mode changes and the agent stays on the proxy', async () => {
+		seed({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'passthrough',
+			backgroundRequests: { target: QWEN },
+		});
+
+		await setAgentTokenProxyMode('agent-1', 'compress');
+
+		expect(stored().backgroundRequests).toEqual({ target: QWEN });
 	});
 });

@@ -1144,6 +1144,8 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app) | -       |
 | `--run-on <target>`               | Run on: provider (clears a target), or &lt;source id>:&lt;model> on a Local Models source                       | -       |
 | `--run-on-context <tokens>`       | Context size for the Run on source (at least 40960). Alone, it changes the current target's context             | -       |
+| `--tier <tier=target>`            | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, low=default clears       | -       |
+| `--background-requests <target>`  | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none (Claude Code on the proxy)        | -       |
 | `--model <model>`                 | Model override (e.g. sonnet, opus; empty string clears)                                                         | -       |
 | `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                           | -       |
 | `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                              | -       |

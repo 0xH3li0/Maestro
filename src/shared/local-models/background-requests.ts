@@ -21,9 +21,24 @@
  *    serves it (`endpointServesAnthropicMessages`).
  */
 
-import type { LocalModelEndpoint } from './endpoints';
-import { MODEL_SERVER_NAME } from './model-server';
-import { parseRunOnTarget, runOnTargetLabel, type RunOnSourceTarget } from './run-on';
+import { getAgentDisplayName } from '../agentMetadata';
+import { endpointServesAnthropicMessages, type LocalModelEndpoint } from './endpoints';
+import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
+import {
+	formatRunOnSpec,
+	parseRunOnEdit,
+	parseRunOnSpec,
+	parseRunOnTarget,
+	RUN_ON_PROVIDER_SPEC,
+	runOnTargetLabel,
+	type RunOnSourceTarget,
+} from './run-on';
+import {
+	buildRunOnOptionGroups,
+	type RunOnOptionGroup,
+	type RunOnPickerSource,
+} from './run-on-picker';
+import { TOKEN_PROXY_NAME } from './token-proxy';
 
 /** The agent setting. Absent on the agent record means every request goes to the provider. */
 export interface BackgroundRequests {
@@ -59,6 +74,133 @@ export function parseBackgroundRequests(value: unknown): BackgroundRequestsParse
 	if (parsed.target.type === 'provider') return { ok: true, backgroundRequests: undefined };
 	const { endpointId, model } = parsed.target;
 	return { ok: true, backgroundRequests: { target: { type: 'source', endpointId, model } } };
+}
+
+/** The provider whose side requests the proxy can route: the Anthropic Messages route alone. */
+const BACKGROUND_REQUESTS_PROVIDER = 'claude-code';
+
+/** The sentence beside the picker: what is routed, and what never is. */
+export const BACKGROUND_REQUESTS_DESCRIPTION = `${getAgentDisplayName(BACKGROUND_REQUESTS_PROVIDER)} sends side requests, such as tab titles and summaries, on its small model. The ${TOKEN_PROXY_NAME} can send those to a local model. The agent's own turns always go to the provider, and a request the local model cannot serve fails: it is not sent to the provider instead.`;
+
+/** Why the setting needs the proxy first. Said by the picker's host and by every writer. */
+export const BACKGROUND_REQUESTS_NEEDS_PROXY = `Background requests are routed by the ${TOKEN_PROXY_NAME}, and this agent does not use it. Set its proxy mode to Passthrough or Compress first.`;
+
+/**
+ * Whether an agent on this provider can have its background requests routed.
+ * Only Claude Code: the proxy routes the Anthropic Messages route, and the
+ * small-model rule that tells a side request from a turn is known for it alone.
+ */
+export function backgroundRequestsSupport(
+	toolType: string
+): { supported: true } | { supported: false; reason: string } {
+	if (toolType === BACKGROUND_REQUESTS_PROVIDER) return { supported: true };
+	return {
+		supported: false,
+		reason: `Background requests apply to ${getAgentDisplayName(BACKGROUND_REQUESTS_PROVIDER)} agents only: the ${TOKEN_PROXY_NAME} routes the Anthropic Messages route, which no other provider uses.`,
+	};
+}
+
+/** How "not routed" is spelled on a command line. `provider` reads the same. */
+export const BACKGROUND_REQUESTS_OFF_SPEC = 'none';
+
+/** The setting as one word: `none`, or the Run on spelling `<source id>:<model>`. */
+export function formatBackgroundRequestsSpec(
+	backgroundRequests: BackgroundRequests | null | undefined
+): string {
+	return backgroundRequests
+		? formatRunOnSpec(backgroundRequests.target)
+		: BACKGROUND_REQUESTS_OFF_SPEC;
+}
+
+/**
+ * Read a spelling written by {@link formatBackgroundRequestsSpec}, as typed on
+ * `update-agent --background-requests` or chosen in the picker. Blank, `none`
+ * and `provider` all mean "not routed".
+ */
+export function parseBackgroundRequestsSpec(spec: string): BackgroundRequestsParse {
+	const trimmed = spec.trim();
+	if (trimmed === '' || trimmed.toLowerCase() === BACKGROUND_REQUESTS_OFF_SPEC) {
+		return { ok: true, backgroundRequests: undefined };
+	}
+	const parsed = parseRunOnSpec(trimmed);
+	if (!parsed.ok) {
+		return {
+			ok: false,
+			error: `Background requests take "${BACKGROUND_REQUESTS_OFF_SPEC}" or <source id>:<model>.`,
+		};
+	}
+	return parseBackgroundRequests({ target: parsed.target });
+}
+
+/**
+ * Check a setting someone is about to store on an agent: the Models tab's
+ * picker, `update-agent --background-requests`, and the bridge that applies
+ * it. On top of {@link parseBackgroundRequests} it refuses a provider the proxy
+ * cannot route for, and (when `endpoints` is passed) a source id that names
+ * nothing or a source not known to serve the Anthropic Messages route, so no
+ * writer can store a target every background request would then fail on.
+ *
+ * Whether the agent uses the proxy needs the proxy's port, which the caller
+ * that holds it checks ({@link BACKGROUND_REQUESTS_NEEDS_PROXY}). Whether the
+ * source serves the model is not asked: that needs the network.
+ */
+export function parseBackgroundRequestsEdit(
+	toolType: string,
+	value: unknown,
+	endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name' | 'kind'>[]
+): BackgroundRequestsParse {
+	const parsed = parseBackgroundRequests(value);
+	if (!parsed.ok || !parsed.backgroundRequests) return parsed;
+	const support = backgroundRequestsSupport(toolType);
+	if (!support.supported) return { ok: false, error: support.reason };
+
+	const { target } = parsed.backgroundRequests;
+	const known = parseRunOnEdit(toolType, target, endpoints);
+	if (!known.ok) return known;
+	const endpoint = endpoints?.find((candidate) => candidate.id === target.endpointId);
+	if (endpoint && !endpointServesAnthropicMessages(endpoint)) {
+		return {
+			ok: false,
+			error: `Maestro cannot tell that the source "${endpoint.name}" serves the Anthropic Messages route (/v1/messages), which a background request uses. Pick a model on the ${MODEL_SERVER_NAME}, Ollama or LM Studio.`,
+		};
+	}
+	return parsed;
+}
+
+/** How the picker's first choice reads: every request goes to the provider. */
+export const BACKGROUND_REQUESTS_OFF_LABEL = 'Off (send them to the provider)';
+
+/**
+ * The choices the Background requests picker offers: Off, then every model of
+ * each source that serves the Anthropic Messages route, from the Run on
+ * picker's own builder so a model reads the same in both. A source that does
+ * not serve the route is left out, because choosing it would be refused. The
+ * current target is listed even when nothing lists it, with the reason.
+ * Option values are the shared spelling ({@link formatBackgroundRequestsSpec}).
+ */
+export function buildBackgroundRequestsOptionGroups(input: {
+	current: BackgroundRequests | undefined;
+	sources: readonly RunOnPickerSource[];
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name' | 'kind' | 'enabled'>[];
+}): RunOnOptionGroup[] {
+	const serves = (endpointId: string) => {
+		if (endpointId === MODEL_SERVER_ENDPOINT_ID) return true;
+		const endpoint = input.endpoints.find((candidate) => candidate.id === endpointId);
+		return endpoint !== undefined && endpointServesAnthropicMessages(endpoint);
+	};
+	return buildRunOnOptionGroups({
+		toolType: BACKGROUND_REQUESTS_PROVIDER,
+		current: input.current?.target ?? { type: 'provider' },
+		sources: input.sources.filter((source) => serves(source.endpointId)),
+		endpoints: input.endpoints,
+	}).map((group) => ({
+		...group,
+		options: group.options.map((option) =>
+			option.value === RUN_ON_PROVIDER_SPEC
+				? { value: BACKGROUND_REQUESTS_OFF_SPEC, label: BACKGROUND_REQUESTS_OFF_LABEL }
+				: option
+		),
+	}));
 }
 
 /**
