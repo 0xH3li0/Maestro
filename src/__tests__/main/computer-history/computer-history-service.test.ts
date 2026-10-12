@@ -496,13 +496,55 @@ describe('clear', () => {
 });
 
 describe('requestAccessibility', () => {
-	it('macOS prompts only when not trusted', async () => {
+	it('macOS prompts and opens the Accessibility pane only when not trusted', async () => {
 		const trusted = vi.fn((prompt: boolean) => !prompt && false);
-		const service = makeService({ isMacAccessibilityTrusted: trusted });
-		expect((await service.requestAccessibility()).outcome).toBe('prompted');
+		const openPane = vi.fn(async () => {});
+		const service = makeService({
+			isMacAccessibilityTrusted: trusted,
+			openMacAccessibilitySettings: openPane,
+		});
+		const prompted = await service.requestAccessibility();
+		expect(prompted.outcome).toBe('prompted');
+		expect(prompted.detail).toContain('Privacy & Security > Accessibility');
 		expect(trusted).toHaveBeenCalledWith(true);
-		const granted = makeService({ isMacAccessibilityTrusted: () => true });
-		expect((await granted.requestAccessibility()).outcome).toBe('granted');
+		expect(openPane).toHaveBeenCalledTimes(1);
+
+		const grantedPane = vi.fn(async () => {});
+		const granted = makeService({
+			isMacAccessibilityTrusted: () => true,
+			openMacAccessibilitySettings: grantedPane,
+		});
+		const result = await granted.requestAccessibility();
+		expect(result.outcome).toBe('granted');
+		// Every outcome carries a message, so the button never reads as dead.
+		expect(result.detail).toBeTruthy();
+		expect(grantedPane).not.toHaveBeenCalled();
+	});
+
+	it('macOS still returns the instructions when the settings pane cannot open', async () => {
+		const log = vi.fn();
+		const service = makeService({
+			isMacAccessibilityTrusted: () => false,
+			openMacAccessibilitySettings: async () => {
+				throw new Error('no handler');
+			},
+			log,
+		});
+		const result = await service.requestAccessibility();
+		expect(result.outcome).toBe('prompted');
+		expect(result.detail).toContain('Privacy & Security > Accessibility');
+		expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('no handler'));
+	});
+
+	it("status reports Maestro's own macOS trust even with no helper", () => {
+		let trusted = false;
+		const service = makeService({ isMacAccessibilityTrusted: () => trusted });
+		expect(service.status().helperStatus).toBeNull();
+		expect(service.status().appAccessibility).toBe('denied');
+		trusted = true;
+		expect(service.status().appAccessibility).toBe('granted');
+		const linux = makeService({ platform: 'linux', isMacAccessibilityTrusted: () => true });
+		expect(linux.status().appAccessibility).toBeNull();
 	});
 
 	it('Linux asks the running helper; Windows needs nothing', async () => {

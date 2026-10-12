@@ -17,6 +17,7 @@ import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 import { ActionButton } from './ActionButton';
 import { CaptureRulesEditor } from '../../../../ComputerHistory/CaptureRulesEditor';
 import { useComputerHistoryStatus } from '../../../../../hooks/computerHistory/useComputerHistoryStatus';
+import { useEventListener } from '../../../../../hooks/utils/useEventListener';
 import { useSessionStore } from '../../../../../stores/sessionStore';
 import { useModalStore } from '../../../../../stores/modalStore';
 import { notifyToast } from '../../../../../stores/notificationStore';
@@ -58,6 +59,10 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 		[sessions]
 	);
 	const api = window.maestro?.computerHistory;
+	// Coming back from System Settings: re-read so a fresh grant shows at once.
+	useEventListener('focus', refresh, {
+		enabled: status?.platform === 'macos' && status.appAccessibility === 'denied',
+	});
 
 	const applyConfig = useCallback((next: ComputerHistoryConfig) => {
 		setConfig(next);
@@ -158,7 +163,11 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 		color: theme.colors.textMain,
 	};
 
-	const needsMacPermission = platform === 'macos' && helper?.permission === 'denied';
+	// The helper inherits Maestro's grant, so Maestro's own answer stands in
+	// until a helper reports (or when none can run at all).
+	const macPermission =
+		platform === 'macos' ? (helper?.permission ?? status?.appAccessibility ?? null) : null;
+	const needsMacPermission = macPermission !== 'granted';
 	const needsLinuxBus =
 		platform === 'linux' &&
 		(helper?.accessibilityBus === 'disabled' || helper?.state === 'blocked');
@@ -241,11 +250,11 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 					{platform === 'macos' && (
 						<div className="space-y-2">
 							<p className="text-xs opacity-70">
-								{helper?.permission === 'granted'
+								{macPermission === 'granted'
 									? 'Accessibility access is granted.'
 									: 'macOS needs Accessibility access for Maestro (System Settings > Privacy & Security > Accessibility). Development and signed builds each need their own grant.'}
 							</p>
-							{(needsMacPermission || !helper) && enabled && (
+							{needsMacPermission && enabled && (
 								<ActionButton
 									theme={theme}
 									label="Request Accessibility access"
