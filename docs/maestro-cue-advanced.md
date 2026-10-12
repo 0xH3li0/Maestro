@@ -191,7 +191,7 @@ A "no" starts nothing. The event is recorded as **gated** in the Cue modal's Act
 
 The point is cost. Most events a busy subscription sees do not need an agent turn, and a small model on your own machine can tell which ones do.
 
-**Setup.** The gate runs on the **Cue gate** task in Settings > Local Models > Assignments. Assign it a local model or an endpoint (Ollama, LM Studio). The task is off by default.
+**Setup.** The gate runs on the **Cue gate** task in Settings > Models > System One. Assign it a local model or an endpoint (Ollama, LM Studio). The task is off by default.
 
 **Where to set it.** You do not have to edit YAML:
 
@@ -245,7 +245,7 @@ Some triggers carry text that other people wrote: a GitHub comment, an issue or 
 
 A score at or above the threshold starts nothing. The event is recorded as **blocked** in the Cue modal's Activity Log, with the variable and the score, and you get a red notice that stays until you dismiss it. A blocked run counts as a failure for the pipeline, appears in History, and does not fire downstream chain steps.
 
-**Setup.** The screen runs on the **Prompt-injection screen** task in Settings > Local Models > Assignments. Assign it a classifier model from the catalog. The task is off by default.
+**Setup.** The screen runs on the **Prompt-injection screen** task in Settings > Models > System One. Assign it a classifier model from the catalog. The task is off by default.
 
 **What is screened.** Only the untrusted variables your prompt or command uses, and only the ones the event filled:
 

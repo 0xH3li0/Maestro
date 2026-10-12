@@ -6,7 +6,7 @@ icon: hard-drive
 
 Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio.
 
-Open it from **Settings -> Local Models**, or run **Open Local Models Settings** from the command palette. It is a core part of Maestro, not an Encore Feature, and it starts empty.
+Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `library`, `sources`, `system-two`, `gateway`) lands on one of its inner tabs. The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty.
 
 <Note>
 	**Nothing downloads on its own.** Opening the tab, or enabling anything else in Maestro, fetches
@@ -15,11 +15,29 @@ Open it from **Settings -> Local Models**, or run **Open Local Models Settings**
 	there, and every new task starts **Off**.
 </Note>
 
-The tab has three sections: **Models**, **Endpoints**, and **Assignments**.
+The tab has five inner tabs. Maestro remembers the one you used last.
+
+| Inner tab      | What lives there                                                                                                                                    |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Library**    | The [models](#models) Maestro downloads, the [engines](#engines) that run them, and the disk they use.                                              |
+| **Sources**    | Where models come from besides the Library: the [endpoints](#endpoints) (Ollama, LM Studio, any OpenAI-compatible server) you have added.           |
+| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two). |
+| **System Two** | The tasks that write text for someone to read or run, plus the Utility Agent settings.                                                              |
+| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                   |
+
+### System One and System Two
+
+One rule sorts every task. If its output is a **judgment** (a decision, label, score, vector, or transcript), it is **System One**: fast, small, and cheap to run often. If its output is **text written for someone to read or run**, it is **System Two**.
+
+| System One                                                                                                           | System Two                                                                      |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Cue gate, Prompt-injection screen, Secret screen, Voice routing, Tab cleanup suggestions, Semantic search, Dictation | Tab naming, Summaries, AI command mode, Git drafts, Spoken notices, Token proxy |
+
+A task's assignment row sits on the inner tab of its system. Every message in Maestro that says where to pick a model for a task names that inner tab, for example "Settings > Models > System One".
 
 ## Models
 
-Models are files Maestro downloads, checks, and runs on this machine. The top of the section shows how much disk the installed models use, how many are installed, and how many need attention. Below that is the catalog, grouped by kind:
+Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. The top of the tab shows how much disk the installed models use, how many are installed, and how many need attention. Below that is the catalog, grouped by kind:
 
 | Kind            | Model                          | Size     | License                   |
 | --------------- | ------------------------------ | -------- | ------------------------- |
@@ -48,7 +66,7 @@ Every file comes from a pinned revision and is checked against a SHA-256 recorde
 - **Not offered for AI command mode.** In testing it wrote a wrong command for one request, and a command that kills a process for a request to find it.
 - **Not offered for voice routing.** It sent requests that named an agent to the Conductor instead of to that agent.
 
-The Assignments picker leaves it out of those two tasks. For them, use an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
+The assignment picker leaves it out of those two tasks. For them, use an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
 
 ### The neural voice
 
@@ -66,7 +84,7 @@ The speech and wake word models are the same files A Cappella uses. Installing t
 
 ## Endpoints
 
-An endpoint is a model server you run yourself. Maestro sends it requests and downloads nothing. If you already run one, it is the fastest way to a working text model. Three kinds are supported:
+An endpoint is a model server you run yourself. Endpoints live in **Models -> Sources**. Maestro sends it requests and downloads nothing. If you already run one, it is the fastest way to a working text model. Three kinds are supported:
 
 | Kind              | Default address          | Notes                                     |
 | ----------------- | ------------------------ | ----------------------------------------- |
@@ -82,12 +100,12 @@ An endpoint is a model server you run yourself. Maestro sends it requests and do
 
 ## Assignments
 
-Assignments choose what each task runs on. There is one row per task, each with a source picker and a readiness line.
+Assignments choose what each task runs on. There is one row per task, each with a source picker and a readiness line. The rows are on **Models -> System One** and **Models -> System Two**, each tab listing only its own tasks.
 
 The picker only offers sources that can do the job:
 
 - **Off**: the feature does not use a model.
-- **Utility Agent**: the task's existing agent path, for tasks that had one. This section also holds the Utility Agent settings themselves (which agent and model), which used to live in the General tab.
+- **Utility Agent**: the task's existing agent path, for tasks that had one. The Utility Agent settings themselves (which agent and model) sit under the table on **System Two**. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
 - **An installed model** of the kind the task needs.
 - **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation and embeddings).
 
@@ -95,21 +113,21 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 
 ### The tasks
 
-| Task                    | Needs                              | Default       | What it does                                                                                                            |
-| ----------------------- | ---------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Tab naming              | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                                   |
-| Summaries               | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                               |
-| AI command mode         | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.                       |
-| Tab cleanup suggestions | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                              |
-| Git drafts              | Text generation                    | Off           | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits. |
-| Semantic search         | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                           |
-| Cue gate                | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                                    |
-| Prompt-injection screen | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                            |
-| Secret screen           | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.            |
-| Dictation               | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                  |
-| Spoken notices          | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).     |
-| Voice routing           | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                               |
-| Token proxy             | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                          |
+| Task                    | System | Needs                              | Default       | What it does                                                                                                            |
+| ----------------------- | ------ | ---------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Tab naming              | Two    | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                                   |
+| Summaries               | Two    | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                               |
+| AI command mode         | Two    | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.                       |
+| Tab cleanup suggestions | One    | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                              |
+| Git drafts              | Two    | Text generation                    | Off           | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits. |
+| Semantic search         | One    | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                           |
+| Cue gate                | One    | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                                    |
+| Prompt-injection screen | One    | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                            |
+| Secret screen           | One    | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.            |
+| Dictation               | One    | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                  |
+| Spoken notices          | Two    | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).     |
+| Voice routing           | One    | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                               |
+| Token proxy             | Two    | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                          |
 
 For AI command mode, **Utility Agent** means the tab's own provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
 
@@ -117,7 +135,7 @@ For AI command mode, **Utility Agent** means the tab's own provider at its curre
 
 **Tab cleanup suggestions** opens from the menu at the top of the Left Bar (**Tab Cleanup**) or the command palette (**Tab Cleanup Suggestions**) once it is assigned a source. It gives the model one line about each open and snoozed tab across every agent (its name, when it was last active, how many messages it holds, and what was last asked in it) and lists the tabs the model would close, snooze, or bring back from snooze, each with a one-line reason. It is a list of suggestions and nothing else: every row starts unticked, and no tab changes until you tick the rows you agree with and press **Apply**. A tab that is busy, starred, or holding an unsent draft is never suggested, whatever the model says, and a tab that becomes busy while the list is open is greyed out. A closed tab can still be brought back with Reopen Closed Tab. Snoozed tabs in one batch share the wake time you pick beside the Apply button.
 
-**Semantic search** builds its index in the background once it is assigned a source. It reads History entries, Director's Notes, and the tab transcripts Maestro keeps, and it waits whenever another task is using the model. The **Semantic index** card under Assignments shows how much is indexed. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** there. Setting the task back to Off stops indexing.
+**Semantic search** builds its index in the background once it is assigned a source. It reads History entries, Director's Notes, and the tab transcripts Maestro keeps, and it waits whenever another task is using the model. The **Semantic index** card under the Semantic search row on System One shows how much is indexed. Cue runs are most of History and mostly repeat, so they are left out unless you turn on **Index Cue runs** there. Setting the task back to Off stops indexing.
 
 Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle icon): the [History panel's filter](./history#by-meaning) and [Search Messages (All Agent Tabs)](./general-usage#searching-message-history). With it on, you describe what you are looking for and each result shows how close it is (a percentage) and the passage that matched. The toggle is not shown while the task is off or its model is not ready. From the command line, `maestro-cli search "<query>" --semantic` runs the same search across every agent.
 
@@ -190,7 +208,7 @@ The check is a safety net. It does not find every secret, and a clean result is 
 
 A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
 
-A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
+The gateway table is on **Models -> Gateway**. A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
 
 | Provider    | How it is pointed at the gateway                                           |
 | ----------- | -------------------------------------------------------------------------- |
@@ -245,7 +263,7 @@ What both compress modes do, and do not do:
 - **The same text always shortens to the same bytes.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working.
 - **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine.
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
-- **A local model is optional.** Rules do most of the work (minified JSON, repeated log lines folded, long lines cut). Assign the **Token proxy** task a model in Assignments to also summarize results that are still very large.
+- **A local model is optional.** Rules do most of the work (minified JSON, repeated log lines folded, long lines cut). Assign the **Token proxy** task a model on **Models -> System Two** to also summarize results that are still very large.
 
 Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. Tokens saved is an estimate at 4 characters per token. On output full of paths, digits and stack traces the real saving can be about twice the figure shown. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
 

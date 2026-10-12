@@ -69,15 +69,16 @@ flowchart TD
 
 ### Shared (`src/shared/local-models/`)
 
-| File                    | Responsibility                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `types.ts`              | `LocalModelEntry`, `LocalModelFile`, `LocalModelKind` (`wake-word`, `stt`, `tts`, `text-gen`, `embedding`, `classifier`)       |
-| `model-catalog.ts`      | `LOCAL_MODEL_CATALOG`: id, kind, `runtime`, pinned revision, per-file URL + SHA-256 + size, license; `localModelsForRuntime()` |
-| `native-runtimes.ts`    | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                     |
-| `runtime-artifacts.ts`  | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                          |
-| `llama-dependencies.ts` | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload          |
-| `tasks.ts`              | `LOCAL_MODEL_TASKS` (the housekeeping jobs), `LocalModelAssignment`, and the `localModelAssignments` reader and validator      |
-| `embedding-index.ts`    | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)      |
+| File                    | Responsibility                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`              | `LocalModelEntry`, `LocalModelFile`, `LocalModelKind` (`wake-word`, `stt`, `tts`, `text-gen`, `embedding`, `classifier`)                                            |
+| `model-catalog.ts`      | `LOCAL_MODEL_CATALOG`: id, kind, `runtime`, pinned revision, per-file URL + SHA-256 + size, license; `localModelsForRuntime()`                                      |
+| `native-runtimes.ts`    | `NativeRuntimeId` (`llama`, `onnx`), `NATIVE_RUNTIMES`, per-platform prebuild availability                                                                          |
+| `runtime-artifacts.ts`  | The pinned runtime tarballs, their hashes, and every package the payload `require()`s                                                                               |
+| `llama-dependencies.ts` | `node-llama-cpp` 3.20.0 and its 115-package production closure, pinned and hashed, installed beside the llama payload                                               |
+| `tasks.ts`              | `LOCAL_MODEL_TASKS` (the housekeeping jobs, each with a `system`), `tasksForSystem()`, `LocalModelAssignment`, and the `localModelAssignments` reader and validator |
+| `settings-location.ts`  | `MODELS_SETTINGS_PANELS`, `modelsSettingsLocation()`, `taskAssignmentLocation()`: the one source for the Models inner tabs and every sentence that names one        |
+| `embedding-index.ts`    | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)                                           |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
@@ -527,7 +528,7 @@ thread.
 Progress is `SemanticIndexProgress` (`src/shared/local-models/embedding-index.ts`): a state
 (`off`, `idle`, `indexing`, `paused`, `unavailable`) and `indexed / total` counted in SOURCES, per
 type and overall. It is read over `localModels:semanticIndex:status`, pushed on
-`localModels:semanticIndex:progress`, drawn by `SemanticIndexSettings` in Settings -> Local Models,
+`localModels:semanticIndex:progress`, drawn by `SemanticIndexSettings` in Settings -> Models -> System One,
 and printed by `maestro-cli models index`.
 
 Known limits: voice (A Cappella) does not run through the task router, so the indexer does not
@@ -621,8 +622,8 @@ Result, 2026-10-10, darwin-arm64 (Apple Silicon), Prompt Guard 2 22M (quantized)
 
 A **task** is a named job (`tab-naming`, `git-drafts`, `semantic-search`, ...), never a model.
 `LOCAL_MODEL_TASKS` in `src/shared/local-models/tasks.ts` lists each one with the kind of model it
-`needs`, whether it has an existing agent path (`allowsUtilityAgent`), and its `defaultAssignment`.
-The user's choice per task is a `LocalModelAssignment`:
+`needs`, whether it has an existing agent path (`allowsUtilityAgent`), its `defaultAssignment`, and
+its `system`. The user's choice per task is a `LocalModelAssignment`:
 
 | Assignment                                | Meaning                                                                                              |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
@@ -640,6 +641,27 @@ set) behaves exactly as before; every task new with Local Models defaults to `of
 catalog no longer knows is KEPT, so the router can name it as unavailable instead of the task
 quietly changing source. Save-time checks (catalog membership, matching kind) are
 `localModelAssignmentProblem()`.
+
+### System One and System Two
+
+Every task carries a required `system: 'one' | 'two'` (`LocalModelSystem`). One rule sets it: a task
+whose output is a judgment (a decision, label, score, vector, or transcript) is `one`; a task whose
+output is text written for someone to read or run is `two`. `defineTask` in `tasks.ts` is the only
+constructor, so a new task cannot skip the choice, and `local-models-tasks.test.ts` fails if one has
+no `system` or if the System One and System Two lists drift from the exact sets.
+
+| System One                                                                                                      | System Two                                                                               |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `cue-gate`, `injection-screen`, `secret-screen`, `voice-routing`, `tab-cleanup`, `semantic-search`, `dictation` | `tab-naming`, `tab-summary`, `ai-command`, `git-drafts`, `spoken-notices`, `token-proxy` |
+
+`tasksForSystem(system)` returns one system's definitions in registry order. The Settings Models tab
+uses it to draw each assignment table (`LocalModelsAssignmentsSection` takes a `system` prop), and
+`taskAssignmentPanel(taskId)` / `taskAssignmentLocation(taskId)` in `settings-location.ts` use the same
+field to say which inner tab holds a task, so a task that changes system moves its row and every
+"assign it in Settings > Models > System One" sentence together. The Models tab's five inner tabs
+(`library`, `sources`, `system-one`, `system-two`, `gateway`) are `MODELS_SETTINGS_PANELS`; the Settings
+tab id is `models` with `local-models` kept as an alias, and `maestro-cli open settings --tab models
+--sub-tab <panel>` reaches a panel through `resolveUiSurfaceTarget()` in `src/shared/uiSurfaces.ts`.
 
 ## The task router
 
@@ -1334,7 +1356,7 @@ Rules a change here must keep:
   inspect the URL to decide whether the server is on this machine: the transcript leaves this
   process either way, and the user named where it goes.
 - **No local model is offered in the picker.** `buildBrainOptionGroups()` lists a local model only
-  when it is already the assignment, so a choice made in Settings > Local Models or with
+  when it is already the assignment, so a choice made in Settings > Models or with
   `maestro-cli models assign voice-routing local:<id>` is shown as what it is.
 
 ## Spoken notices: `announceAgentFinished()`
@@ -1689,7 +1711,7 @@ and per agent) and the 25 newest compressions (`getRecentProxyCompressions`).
 
 | Surface                                 | Reads                                                               |
 | --------------------------------------- | ------------------------------------------------------------------- |
-| Settings > Local Models > Gateway       | `window.maestro.localModels.proxy.report()` (`useTokenProxyReport`) |
+| Settings > Models > Gateway             | `window.maestro.localModels.proxy.report()` (`useTokenProxyReport`) |
 | `maestro-cli models proxy status`       | `local_models_proxy_status`                                         |
 | A row of "Recent compressions"          | `window.maestro.localModels.proxy.block(hash)`                      |
 | `maestro-cli models proxy block <hash>` | `local_models_proxy_block`                                          |

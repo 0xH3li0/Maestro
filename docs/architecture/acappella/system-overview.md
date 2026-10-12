@@ -90,11 +90,11 @@ Three consequences follow, and each one is a rule for code in this folder:
    is a table in `voice-models.ts` keyed by model id. Do not add a voice field to the catalog.
 3. **The Encore gate is on the voice channels only.** `models:*` and `runtimes:*` (Voice Setup)
    delegate to the same service functions as the ungated `localModels:*` channels, so a model
-   downloaded from Voice Setup and one downloaded from Settings -> Local Models are one install in
+   downloaded from Voice Setup and one downloaded from Settings -> Models are one install in
    one store. Reclaiming voice's disk passes `isVoiceReclaimableModelDir`, so it spares the models
    another consumer runs.
 
-Voice Setup and Settings -> Local Models draw the same model rows over that one store.
+Voice Setup and Settings -> Models draw the same model rows over that one store.
 
 ## Surveyed precedent
 

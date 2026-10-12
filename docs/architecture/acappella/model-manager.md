@@ -81,7 +81,7 @@ default local trio downloads: the voice is the operating system's own and the ro
 phoneme front end shipped; see [[local-models]], "The Kokoro voice"), but the system voice already
 does, so its download is a choice made in the Text-to-Speech picker. Qwen3 loads and does the
 housekeeping tasks, but as a Conductor Brain it does not route a named agent, so voice offers no
-local model for routing. Both are downloaded from Settings -> Local Models.
+local model for routing. Both are downloaded from Settings -> Models -> Library.
 
 ## Install layout
 

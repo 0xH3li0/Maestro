@@ -72,7 +72,7 @@ Hosted providers need an API key, entered in **Voice Providers**. Keys are store
 
 <Note>
 	The Conductor Brain can also be a model on one of your own model servers (Ollama, LM Studio, any
-	OpenAI-compatible endpoint). Add the server in **Settings > Local Models**, and its models appear
+	OpenAI-compatible endpoint). Add the server in **Settings > Models > Sources**, and its models appear
 	in the **Conductor Brain** picker. Picking one assigns it to the Local Models **Voice routing**
 	task, so the picker and that task always show the same choice. Your transcripts are then sent to
 	that server, and the line at the top of Voice Providers names it. See
