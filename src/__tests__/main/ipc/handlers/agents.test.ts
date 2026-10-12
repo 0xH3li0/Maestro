@@ -12,6 +12,11 @@ import {
 	AgentsHandlerDependencies,
 } from '../../../../main/ipc/handlers/agents';
 import * as agentCapabilities from '../../../../main/agents';
+import { discoverCodexSkills } from '../../../../main/agents/codex-skills';
+
+vi.mock('../../../../main/agents/codex-skills', () => ({
+	discoverCodexSkills: vi.fn().mockRejectedValue(new Error('Unsupported skills/list')),
+}));
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -1946,6 +1951,68 @@ describe('agents IPC handlers', () => {
 		// renderer to substitute before sending.
 
 		const codexAgent = { id: 'codex', available: true, path: '/usr/bin/codex' };
+
+		it('offers plugin and system skills reported by Codex, even outside the legacy skill dirs', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			const skills = [
+				{
+					name: 'mattpocock-skills:code-review',
+					description: 'Review changes',
+					prompt: '$mattpocock-skills:code-review',
+				},
+				{ name: 'skill-creator', description: 'Create skills', prompt: '$skill-creator' },
+			];
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce(skills);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+
+			const result = await handlers.get('agents:discoverSlashCommands')!(
+				{} as any,
+				'codex',
+				'/test'
+			);
+
+			expect(result).toEqual(skills);
+		});
+
+		it('uses the session profile and custom binary for Codex skill discovery', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			mockAgentConfigsStore.get.mockReturnValue({
+				codex: { customEnvVars: { CODEX_HOME: '/provider' } },
+			});
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			await handlers.get('agents:discoverSlashCommands')!(
+				{} as any,
+				'codex',
+				'/test',
+				'/custom/codex',
+				undefined,
+				{ CODEX_HOME: '/session' }
+			);
+			expect(discoverCodexSkills).toHaveBeenCalledWith(
+				'/custom/codex',
+				'/test',
+				expect.objectContaining({ CODEX_HOME: '/session' })
+			);
+		});
+
+		it('does not reintroduce disk skills disabled in the native skill list', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(discoverCodexSkills).mockResolvedValueOnce([]);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			expect(
+				await handlers.get('agents:discoverSlashCommands')!({} as any, 'codex', '/test')
+			).toEqual([]);
+			expect(fs.promises.readdir).not.toHaveBeenCalledWith(expect.anything(), {
+				withFileTypes: true,
+			});
+		});
 		const enoentError = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
 		/** Build a readdir/readFile pair backed by a virtual path -> content map. */

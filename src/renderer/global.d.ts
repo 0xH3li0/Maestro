@@ -1881,7 +1881,8 @@ interface MaestroAPI {
 			agentId: string,
 			cwd: string,
 			customPath?: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			customEnvVars?: Record<string, string>
 		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 
 		// Capability snapshots - persisted per-agent readiness + version info.
