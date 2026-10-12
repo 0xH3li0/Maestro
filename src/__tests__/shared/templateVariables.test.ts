@@ -13,6 +13,7 @@ import {
 	TemplateContext,
 	TemplateSessionInfo,
 } from '../../shared/templateVariables';
+import type { ResolvedPeer } from '../../shared/peerAgents';
 
 // Helper to create a minimal session for testing
 function createTestSession(overrides: Partial<TemplateSessionInfo> = {}): TemplateSessionInfo {
@@ -425,6 +426,58 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('Worktrees: {{WORKTREE_BASE_PATH}}', context);
 			expect(result).toBe('Worktrees: ');
+		});
+	});
+
+	describe('Peer Agents Variable', () => {
+		const roster: ResolvedPeer[] = [
+			{ sessionId: 'peer-1', name: 'Docs', read: true, write: true, source: 'explicit' },
+		];
+
+		it('should list {{PEER_AGENTS}} as a general variable', () => {
+			expect(TEMPLATE_VARIABLES_GENERAL.map((v) => v.variable)).toContain('{{PEER_AGENTS}}');
+		});
+
+		it('should replace {{PEER_AGENTS}} with nothing when the builder passed no roster', () => {
+			// What every call site other than the two system prompt builders gets:
+			// no heading and no table, not a section that looks half loaded.
+			const result = substituteTemplateVariables('BEFORE\n{{PEER_AGENTS}}\nAFTER', {
+				session: createTestSession(),
+			});
+			expect(result).toBe('BEFORE\n\nAFTER');
+		});
+
+		it('should replace {{PEER_AGENTS}} with nothing when the roster is empty', () => {
+			const context = createTestContext({ peerRoster: [] });
+			expect(substituteTemplateVariables('{{PEER_AGENTS}}', context)).toBe('');
+		});
+
+		it('should render the roster with the peer id', () => {
+			const context = createTestContext({ peerRoster: roster });
+			const result = substituteTemplateVariables('{{PEER_AGENTS}}', context);
+			expect(result).toContain('## Peer Agents');
+			expect(result).toContain('| Docs | `peer-1` | Consult + Delegate |');
+		});
+
+		it("should write the agent's own id into the delegate command", () => {
+			// The block cannot leave an {{AGENT_ID}} for the loop to expand: that key
+			// is replaced before PEER_AGENTS.
+			const context = createTestContext({ peerRoster: roster });
+			const result = substituteTemplateVariables('{{PEER_AGENTS}}', context);
+			expect(result).toContain('--notify-on-complete test-session-123');
+			expect(result).not.toContain('{{');
+		});
+
+		it('should teach the same CLI command {{MAESTRO_CLI_PATH}} resolves to', () => {
+			const context = createTestContext({
+				peerRoster: roster,
+				maestroCliPath: '/opt/maestro/maestro-cli.js',
+			});
+			const result = substituteTemplateVariables('{{MAESTRO_CLI_PATH}}\n{{PEER_AGENTS}}', context);
+			const cli = 'node "/opt/maestro/maestro-cli.js"';
+			expect(result.split('\n')[0]).toBe(cli);
+			expect(result).toContain(`\`${cli} ask <agent-id> "<question>"\``);
+			expect(result).toContain(`\`${cli} dispatch <agent-id> "<task>" --new-tab`);
 		});
 	});
 

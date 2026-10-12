@@ -1,5 +1,6 @@
 import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
+import { formatPeerAgentsForPrompt, type ResolvedPeer } from './peerAgents';
 import type { AdditionalDirectory } from './types';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
 import type { SystemOnePromptVariables } from './local-models/system-one-prompt';
@@ -27,6 +28,7 @@ import type { SystemOnePromptVariables } from './local-models/system-one-prompt'
  *   {{CWD}}               - Current working directory
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
  *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
+ *   {{PEER_AGENTS}}       - Markdown block of authorized peer agents and how to reach them (empty when none)
  *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
  *   {{COMPUTER_HISTORY_DIR}} - Computer History store on this machine (empty for SSH-remote agents)
  *   {{MAESTRO_RUN_PATH}}  - The MaestroRun launcher on this Mac (empty until it is installed and granted)
@@ -242,6 +244,14 @@ export interface TemplateContext {
 	 * back to `getMaestroCLIPath()`.
 	 */
 	maestroCliPath?: string;
+	/**
+	 * The agent's peer roster (`resolvePeerRoster` in `src/shared/peerAgents.ts`),
+	 * rendered as {{PEER_AGENTS}}. It is resolved by the two system prompt
+	 * builders and by nothing else, because a group grant needs the whole fleet
+	 * and the session object does not carry it. An absent value renders nothing,
+	 * which is what every other call site gets.
+	 */
+	peerRoster?: ResolvedPeer[];
 	/**
 	 * What the System One system-prompt section says about the engine and the
 	 * budget (`systemOnePromptVariables`). A builder sets it only while a System
@@ -546,6 +556,10 @@ export const TEMPLATE_VARIABLES = [
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
 	{
+		variable: '{{PEER_AGENTS}}',
+		description: 'Authorized peer agents with consult/delegate access (empty when none)',
+	},
+	{
 		variable: '{{SYSTEM_ONE_BUDGET}}',
 		description: 'System One daily budget and roughly how much is left (system prompt only)',
 	},
@@ -726,6 +740,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		conductorProfile,
 	} = context;
 	const now = new Date();
+	// How this agent invokes the CLI. Resolved once: it is {{MAESTRO_CLI_PATH}},
+	// and the {{PEER_AGENTS}} block writes it into the commands it teaches.
+	const maestroCliCommand = context.maestroCliPath
+		? `node "${context.maestroCliPath}"`
+		: getMaestroCLIPath();
 
 	// Build replacements map
 	const replacements: Record<string, string> = {
@@ -752,6 +771,14 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		// Renders the whole "## Additional Directories" section, or '' when the
 		// agent has no grants - an empty heading reads like a failed load.
 		ADDITIONAL_DIRECTORIES: formatAdditionalDirectoriesForPrompt(session.additionalDirectories),
+		// Renders the whole "## Peer Agents" section, or '' when the builder
+		// passed no roster. The block is given the agent's id and CLI command as
+		// plain text: {{AGENT_ID}} is replaced before this key, so a placeholder
+		// emitted here would reach the agent unexpanded.
+		PEER_AGENTS: formatPeerAgentsForPrompt(context.peerRoster ?? [], {
+			agentId: session.id,
+			cliCommand: maestroCliCommand,
+		}),
 		AUTORUN_FOLDER:
 			autoRunFolder ||
 			session.autoRunFolderPath ||
@@ -813,9 +840,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CONTEXT_USAGE: String(session.contextUsage || 0),
 
 		// Maestro variables
-		MAESTRO_CLI_PATH: context.maestroCliPath
-			? `node "${context.maestroCliPath}"`
-			: getMaestroCLIPath(),
+		MAESTRO_CLI_PATH: maestroCliCommand,
 
 		// System One variables (set by a system prompt builder; empty otherwise)
 		SYSTEM_ONE_ENGINE: context.systemOne?.engine || '',
