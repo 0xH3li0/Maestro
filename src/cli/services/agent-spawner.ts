@@ -1683,7 +1683,6 @@ async function spawnJsonLineAgent(
 	} finally {
 		promptFileArgs?.cleanup();
 	}
-
 }
 
 /**
