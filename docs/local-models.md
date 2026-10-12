@@ -204,6 +204,65 @@ The **Secret screen** task adds a model pass on top of the pattern check. It is 
 
 The check is a safety net. It does not find every secret, and a clean result is not a guarantee. Read what you publish.
 
+## Model server
+
+The Maestro model server shares the models in your Library over HTTP, so an agent harness such as Claude Code, Codex, or OpenCode can use them. It is llama.cpp's own `llama-server`, which Maestro downloads as an [engine](#engines), starts, and watches. It speaks the three protocols a harness uses: OpenAI Chat Completions (`/v1/chat/completions`), OpenAI Responses (`/v1/responses`), and Anthropic Messages (`/v1/messages`). It serves text generation models only.
+
+The card is on **Models -> Library**, below the models. It shows the state, the build in use and its accelerator (**Metal**, **Vulkan (NVIDIA ...)**, or **CPU**), the address, the key, and the models loaded now with the memory their weights take.
+
+- **It never starts on its own.** Press **Start**. It also starts when something you turned on needs it, such as a task you assigned to it. It stops when you press **Stop** and when Maestro quits.
+- **Install the engine first.** The card has an **Install** button and a build choice. The default build is Metal on a Mac and Vulkan on Windows and Linux, which runs on any GPU vendor. **Advanced** offers the CPU build, and on Windows and Linux x64 the CUDA and ROCm builds. Those are large downloads and need a matching driver. If the accelerator check finds no GPU, or finds the Vulkan loader missing, the card says so and offers the CPU build. Maestro never swaps a build without telling you.
+- **The port is chosen once and kept.** An address you gave a harness keeps working across restarts. If another program holds the port, the start fails and names the address; the server does not move.
+- **One model is loaded at a time.** The server loads a model the first time a request names it and unloads the least recently used one when another arrives. A second copy of a 20 GB model is a real cost, so the default is one. **Models loaded at once** raises it.
+- **Context is at least 40,960 tokens.** An agent's first prompt is about 14,000 tokens, and a smaller context fails with "Prompt is too long". Maestro sets this for each model.
+
+### Local only or Network
+
+| Mode           | Listens on  | Who can reach it                         |
+| -------------- | ----------- | ---------------------------------------- |
+| **Local only** | `127.0.0.1` | This machine                             |
+| **Network**    | `0.0.0.0`   | Any machine that can reach this computer |
+
+**Both modes require the key.** Local only uses it too, so another program on this machine, or a web page your browser has open, cannot use your models without it. Maestro generates the key, stores it sealed with the operating system's key store, and never writes it to a log. **Copy** puts it on the clipboard and **Rotate** makes a new one (every harness you set up by hand then needs the new key). Network mode refuses to start without a key, and the card warns that anyone on the network who has the key can use the models and the memory they take.
+
+Choose Network only on a network you trust. The key travels in clear text over plain HTTP.
+
+### Point a harness at it by hand
+
+Maestro does not yet set an agent up for you. Until it does, read the address with `maestro-cli models server status` and the key with `maestro-cli models server key`, then use the model's catalog id (for example `qwen3-1.7b-instruct-q4km`) as the model name.
+
+```bash
+# Claude Code
+ANTHROPIC_BASE_URL=http://127.0.0.1:<port> \
+ANTHROPIC_AUTH_TOKEN=<key> \
+ANTHROPIC_DEFAULT_HAIKU_MODEL=<model-id> \
+CLAUDE_CODE_MAX_CONTEXT_TOKENS=40960 \
+claude --model <model-id>
+
+# Codex (the key is read from the environment variable named by env_key)
+MAESTRO_LOCAL_KEY=<key> codex \
+  -c 'model_providers.maestro={name="Maestro", base_url="http://127.0.0.1:<port>/v1", env_key="MAESTRO_LOCAL_KEY", wire_api="responses"}' \
+  -c 'model_provider="maestro"' exec -m <model-id> "your prompt"
+```
+
+Both were tested with Claude Code 2.1.296 and Codex CLI 0.162.1. A small model follows an agent's tools less well than a hosted one, so expect a short turn to work and a long one to wander.
+
+### Using the server for housekeeping tasks
+
+The server is also an endpoint named **Maestro model server**. It is built in: it cannot be edited or removed, and only this card controls it. Pick it in an [assignment](#assignments) to run a task on it. Assigning a task to it starts the server and loads the model when the task runs.
+
+You never pay for a second copy. If the server is running with a model loaded, a task assigned to that same local model goes to the server instead of loading the model inside Maestro.
+
+From the command line:
+
+```bash
+maestro-cli models server status [--json]       # state, build, accelerator, address, loaded models
+maestro-cli models server start
+maestro-cli models server stop
+maestro-cli models server set --bind local      # or network; --max-models <n>; --rotate-key; --build default|cpu|cuda|rocm
+maestro-cli models server key                   # prints only the key, for $(...)
+```
+
 ## Gateway
 
 A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
@@ -321,6 +380,11 @@ maestro-cli models endpoints update <endpoint> [--name <name>] [--url <url>] [--
 maestro-cli models endpoints models <endpoint>   # the models the server lists now, for `assign endpoint:...`
 maestro-cli models endpoints test <endpoint> [--model <model>]
 maestro-cli models endpoints remove <endpoint>
+
+maestro-cli models server status [--json]        # the Maestro model server (see "Model server")
+maestro-cli models server start|stop
+maestro-cli models server set [--bind local|network] [--max-models <n>] [--rotate-key] [--build default|cpu|cuda|rocm]
+maestro-cli models server key                    # prints only the key
 
 maestro-cli models tasks                         # every task, its assignment, and readiness
 maestro-cli models assign <task-id> off

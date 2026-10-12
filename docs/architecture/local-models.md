@@ -2245,7 +2245,113 @@ know those calls reach the provider direct. The user docs say which is which.
 ## Model server
 
 The Maestro model server is llama.cpp's own `llama-server`, downloaded as an engine and run in
-router mode by `src/main/local-models/server/`.
+router mode by `src/main/local-models/server/`. Maestro supervises the binary; it does not
+implement a protocol. The binary speaks OpenAI Chat Completions, OpenAI Responses and Anthropic
+Messages itself, which is what Claude Code, Codex and OpenCode need.
+
+```mermaid
+flowchart LR
+	card["Model server card / maestro-cli models server"] --> svc["service.ts"]
+	svc --> sup["supervisor.ts"]
+	svc --> eng["engine-installer.ts / engine-store.ts"]
+	sup --> cfg["config-store.ts: port, bind, maxModels, sealed key"]
+	sup --> pre["presets.ts: presets.ini"]
+	sup --> bin["llama-server (router mode)"]
+	bin --> m1["child per loaded model"]
+	ep["server-endpoint.ts: built-in endpoint"] --> sup
+	tg["text-gen.ts / endpoint-service.ts / task-readiness.ts"] --> ep
+```
+
+| File                            | Responsibility                                                                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared/.../server-engine.ts`   | `LLAMA_SERVER_RELEASE` (`b11559`), `SERVER_ENGINE_BUILDS` with a pinned sha256 per asset, `selectServerBuild(platform, arch, choice)` |
+| `shared/.../server-accelerator` | `parseListDevices()`, `classifyAcceleratorProbe()`, `acceleratorLabel()`: Metal, Vulkan (device), CPU, or a named problem             |
+| `shared/.../model-server.ts`    | Bind modes, status shape, error codes, defaults (`MODEL_SERVER_ENDPOINT_ID`, `MODEL_SERVER_AGENT_MIN_CONTEXT`), report types          |
+| `server/engine-installer.ts`    | `installServerEngine()`: download, verify, extract (`tar.x` or `extractZipTo`), `chmod 0o755`, accelerator check, then promote        |
+| `server/engine-store.ts`        | Manifest at `userData/runtimes/llama-server/`; installed only when the manifest AND the binary exist                                  |
+| `server/accelerator.ts`         | `checkServerAccelerator()`: runs `llama-server --list-devices` with no shell and a 30 s timeout, never throws                         |
+| `server/config-store.ts`        | `userData/model-server.json`: port, bind, `maxModels`, sealed key                                                                     |
+| `server/presets.ts`             | `userData/model-server/presets.ini` from the installed catalog text models                                                            |
+| `server/supervisor.ts`          | `startModelServer()`, `stopModelServer()`, `getModelServerStatus()`, `ensureModelServerFor()`: process lifecycle                      |
+| `server/service.ts`             | `getModelServerReport()`, `installModelServerEngine()`, `updateModelServerConfigRequest()`: what the card, IPC, WS and the CLI call   |
+| `server/server-endpoint.ts`     | The built-in `maestro-server` endpoint: call target, model listing, test, and the reroute for an in-process task                      |
+
+### Descriptor
+
+`server-engine.ts` is its own pure module and is not in `NativeRuntimeId`. That registry models npm
+packages loaded in-process: four platforms, one payload each. `llama-server` is a supervised
+executable from GitHub releases, with six platforms and several builds per platform. Every asset
+of `b11559` is pinned by sha256 (taken from the release API once, never fetched at run time). The
+choices are `default` (Metal on Apple silicon, CPU on Intel Mac, Vulkan on Windows and Linux),
+`cpu`, and `cuda` and `rocm` on x64 where a build exists. A choice with no build returns `null`
+and the installer throws `ServerBuildUnavailableError` naming platform and choice: nothing is
+substituted. The CUDA build installs its `cudart` companion asset into the same directory. The
+CUDA and ROCm zips expand past the zip reader's default bomb cap, so those assets carry
+`maxExpandedBytes` and `extractZipTo` takes `{ maxOriginalSize, maxEntries }`.
+
+### Supervisor
+
+- **Port.** Chosen once with `pickFreePort` and kept in `model-server.json`. At each start
+  `probePort` binds it for a moment, so a port another program holds fails as `port-in-use` and
+  names the address. The server never moves.
+- **Bind and key.** `local` is `127.0.0.1`, `network` is `0.0.0.0`. Both pass `--api-key-file`.
+  The key is `sk-maestro-` plus 32 random bytes, stored sealed with `safeStorageSeal` (or
+  `obscuringSeal` where the OS has no key store, reported as `keyStorage: 'obscured'`). The key
+  file `userData/model-server/api-key` (0600, created with `wx`) exists only while the server
+  starts: `b11559` reads it once during argument parsing, so it is deleted as soon as the server
+  answers. An empty key is refused as `key-required`; a key that will not unseal is
+  `key-unavailable`, and rotating fixes it.
+- **Presets.** One INI section per installed catalog text model, named by its catalog id, with
+  `model`, `c` (context) and `jinja = true`. Router mode makes the section name the model id and
+  forces the child's `--alias` to it, so the alias equals the catalog id. The format has no
+  quoting, so a path or id containing `;` or `#` is refused by name rather than written truncated.
+  With `-np` on auto, `n_ctx_seq = n_ctx`, so the context is per request and is not divided by
+  slot.
+- **Arguments.** `--host --port --models-preset --models-max --api-key-file --no-webui --offline`.
+  `--models-max` is 1 by default. The environment drops every `LLAMA_*` variable (`LLAMA_ARG_MODEL`
+  would leave router mode, `LLAMA_API_KEY` would add a key), and `LLAMA_CACHE` points at an empty
+  directory because router mode also lists cached Hugging Face models.
+- **Ready.** `/health` returns 200 and an authenticated `GET /models` also succeeds, so another
+  server on the port is never taken for ours. `ensureModelServerFor(modelId)` starts the server if
+  needed, adds a model installed since through `GET /models?reload=1`, sends `POST /models/load`,
+  waits for `loaded`, and returns `{ ok, baseUrl, model }` or `{ ok: false, code, error }`. It
+  never falls back to another source.
+- **Watching.** `/health` every 15 s; 3 misses in a row is a hang, so the server is stopped through
+  `stopProcess` and treated as a crash. A crash restarts after 1, 2, then 4 s, at most 3 times in a
+  row (the count resets after 60 s up); the next crash leaves it `failed`, with a red toast and a
+  Sentry message. stdout and stderr go to `userData/logs/model-server.log` through
+  `openCappedLogFile` (5 MiB, one `.1` file).
+- **Lifecycle.** It never starts itself. `stopModelServerNow()` runs on app quit, killing the whole
+  process tree.
+
+### The server as a source
+
+`MODEL_SERVER_ENDPOINT_ID = 'maestro-server'` is a built-in `openai-compatible` endpoint. It is
+never saved: `parseLocalModelEndpoints` drops a stored record with that id, and add, update and
+remove refuse it by name. The endpoint service hands every reference to it to
+`server-endpoint.ts`, so callers need no branch. A call goes through `modelServerCallTarget(model)`,
+which calls `ensureModelServerFor` (a task assigned to the server is something the user turned on,
+so the call may start it) and sends the sealed key per call (`EndpointCallOptions.apiKey`). Listing
+reads the installed text models from disk and never starts it. Embeddings and speech-to-text are
+refused: it serves text generation only.
+
+`text-gen.ts` uses `loadedModelServerTarget(modelId)` for a `local` source: when the server is
+running with that model loaded, the call goes to `/v1/chat/completions` on the server and any
+in-process copy is unloaded, so there is never a second copy in memory. A local assignment never
+starts the server, and a failing server call fails the task; there is no fallback to in-process.
+The request sets `chat_template_kwargs.enable_thinking: false` to match the in-process engine.
+
+### Known limits
+
+- The router runs each loaded model in a child on a random loopback port with no key (upstream
+  strips the key from child arguments). Another local program that finds that port can reach the
+  model. Network mode never exposes those ports.
+- `llama-server` opens the key and presets files with `std::ifstream` on a UTF-8 string, so a
+  Windows profile path with non-ASCII characters may fail to open. Not verified.
+- A `llama-server` orphaned by a Maestro crash keeps the port; the next start fails `port-in-use`
+  and says so.
+- The Windows CUDA and cudart zips were assumed flat and were not run. `readZipArchive` inflates a
+  zip in memory, so a Windows CUDA install briefly holds the expanded archive in RAM.
 
 ### Model server on real hardware
 
