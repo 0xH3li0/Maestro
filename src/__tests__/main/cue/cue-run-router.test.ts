@@ -263,3 +263,85 @@ describe('executeCueRunAction with a stopped run', () => {
 		expect(deps.executeCueCli).toHaveBeenCalledWith(expect.objectContaining({ signal }));
 	});
 });
+
+describe('executeCueRunAction turn settings', () => {
+	/** A deps bundle whose only agent is SESSION with the given overrides. */
+	function depsForAgent(agent: Partial<CueRunSessionRecord>) {
+		const record = { ...SESSION, ...agent };
+		return makeDeps({
+			findSession: vi.fn((id: string) => (id === record.id ? record : undefined)),
+		});
+	}
+
+	function promptCall(deps: ReturnType<typeof makeDeps>) {
+		return deps.executeCuePrompt.mock.calls[0][0] as Record<string, any>;
+	}
+
+	function modelLines(deps: ReturnType<typeof makeDeps>) {
+		return deps.onLog.mock.calls.filter(([, message]) =>
+			String(message).includes('"nightly" model:')
+		);
+	}
+
+	it('resolves a tier to a model over the agent model, and logs the choice', async () => {
+		const deps = makeDeps();
+		await executeCueRunAction(deps, params({ turnSettings: { tier: 'low' } }));
+
+		expect(promptCall(deps).customModel).toBe('haiku');
+		expect(modelLines(deps)).toEqual([['cue', expect.stringContaining('(subscription)')]]);
+	});
+
+	it('hands an exact model through verbatim over the agent model', async () => {
+		const deps = makeDeps();
+		await executeCueRunAction(deps, params({ turnSettings: { model: 'claude-sonnet-4-5' } }));
+
+		expect(promptCall(deps).customModel).toBe('claude-sonnet-4-5');
+	});
+
+	it('applies effort over the agent effort and keeps the agent model', async () => {
+		const deps = depsForAgent({ customEffort: 'low' });
+		await executeCueRunAction(deps, params({ turnSettings: { effort: 'high' } }));
+
+		const call = promptCall(deps);
+		expect(call.customEffort).toBe('max');
+		expect(call.customModel).toBe('opus');
+	});
+
+	it('keeps the agent model and effort when the subscription sets none', async () => {
+		const deps = depsForAgent({ customEffort: 'medium' });
+		await executeCueRunAction(deps, params());
+
+		const call = promptCall(deps);
+		expect(call.customModel).toBe('opus');
+		expect(call.customEffort).toBe('medium');
+		expect(modelLines(deps)).toEqual([]);
+	});
+
+	it('falls back to the agent model and warns when the provider has no tier table', async () => {
+		const deps = depsForAgent({ toolType: 'codex', customModel: 'gpt-5' });
+		await executeCueRunAction(deps, params({ turnSettings: { tier: 'high' } }));
+
+		expect(promptCall(deps).customModel).toBe('gpt-5');
+		expect(deps.onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringMatching(/codex has no model tier mapping/)
+		);
+	});
+
+	it('resolves the output-prompt phase the same way as the main run', async () => {
+		const deps = makeDeps();
+		await executeCueRunAction(
+			deps,
+			params({
+				subscriptionName: 'nightly:output',
+				event: {
+					type: 'time.heartbeat',
+					payload: { outputPromptPhase: true },
+				} as unknown as OnCueRunParams['event'],
+				turnSettings: { tier: 'low' },
+			})
+		);
+
+		expect(promptCall(deps).customModel).toBe('haiku');
+	});
+});
