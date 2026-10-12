@@ -247,6 +247,9 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
+	// For user messages - tracks if message was steered into a turn that was
+	// already running, rather than starting a turn of its own (see chatSteering.ts)
+	steered?: boolean;
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
