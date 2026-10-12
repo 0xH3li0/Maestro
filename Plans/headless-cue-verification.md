@@ -308,8 +308,6 @@ is the latest live run.
 
 ### Open items
 
-- `file.changed` misses a folder created after the engine starts (pre-existing,
-  desktop too). Workaround: create it first, or restart.
 - `bundle export` accepts a config that `bundle validate` rejects.
 - GitHub triggers (`github.pull_request`, `github.issue`, `github.label`) not
   exercised live.
@@ -532,9 +530,10 @@ processes.
    included. Reproduction outside Maestro: `chokidar.watch('inbox/*.txt', { cwd: root, ignoreInitial: true })`
    on a `root` with no `inbox/`; after `ready`, create `inbox/` and write
    `inbox/a.txt` twice. No event, no error; `getWatched()` shows only the
-   root. With `inbox/` present before the watch, `add` fires. Not fixed: outside
-   today's work. Workaround: create the folder before the engine starts (or
-   restart it).
+   root. With `inbox/` present before the watch, `add` fires. Fixed on
+   2026-10-12: `createCueFileWatcher` also watches the folder chain down to the
+   glob's static folder and re-attaches when it appears or is recreated
+   (`cue-file-watcher-missing-base.test.ts`). No workaround needed.
 2. **A pause longer than an interval fires that interval twice at resume.**
    From 247b04bb0 (today). Reproduction: a `time.heartbeat` subscription of 2
    minutes, `kill -STOP` the engine for 150 s, `kill -CONT`. The heartbeat tick
