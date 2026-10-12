@@ -13,6 +13,7 @@ import type {
 } from '../../shared/types';
 import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
+import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
 import { checkCustomPath } from '../../main/agents/path-prober';
@@ -632,6 +633,19 @@ async function spawnClaudeAgent(
 		spawnEnv = env;
 	}
 
+	// Claude reports its cost and per-model usage as running SESSION totals; the
+	// session's total as this turn starts turns them into this turn's (see
+	// src/shared/claudeCostTracker.ts). A fresh session starts from nothing.
+	const costBaseline = agentSessionId
+		? readClaudeTurnBaseline({
+				resumeSessionId: agentSessionId,
+				cwd,
+				env: spawnEnv,
+				homeDir: os.homedir(),
+				remote: !!sshRemoteConfig?.enabled,
+			})
+		: null;
+
 	return new Promise((resolve) => {
 		const options: SpawnOptions = {
 			cwd: spawnCwd,
@@ -646,6 +660,8 @@ async function spawnClaudeAgent(
 		let assistantText = ''; // Accumulate text from assistant messages as fallback
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
+		// The model the main thread last ran on; prices a turn whose baseline is unknown.
+		let lastMainModel: string | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
 
@@ -681,9 +697,22 @@ async function spawnClaudeAgent(
 				sessionId = msg.session_id;
 			}
 
+			if (
+				msg.type === 'assistant' &&
+				!msg.parent_tool_use_id &&
+				typeof msg.message?.model === 'string' &&
+				msg.message.model !== '<synthetic>'
+			) {
+				lastMainModel = msg.message.model;
+			}
+
 			// Extract usage statistics using shared aggregator
 			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+				const turn =
+					msg.type === 'result'
+						? claudeTurnCost(msg, costBaseline, lastMainModel)
+						: { modelUsage: msg.modelUsage, totalCostUsd: msg.total_cost_usd || 0 };
+				usageStats = aggregateModelUsage(turn.modelUsage, msg.usage || {}, turn.totalCostUsd);
 			}
 		};
 

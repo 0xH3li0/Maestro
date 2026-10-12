@@ -1198,6 +1198,56 @@ Some text with [x] in it that's not a checkbox
 			expect(result.usageStats?.outputTokens).toBe(100);
 		});
 
+		// claude reports cost and modelUsage as the SESSION's running totals; a
+		// resumed turn reports its share, using the cost-state row the transcript
+		// held when it spawned.
+		it('reports a resumed turn its share of the session totals', async () => {
+			const realFs = await vi.importActual<typeof import('fs')>('fs');
+			const configDir = realFs.mkdtempSync(
+				path.join(realFs.realpathSync(os.tmpdir()), 'cli-cost-')
+			);
+			const projectDir = path.join(configDir, 'projects', '-project');
+			realFs.mkdirSync(projectDir, { recursive: true });
+			realFs.writeFileSync(
+				path.join(projectDir, 'sid-resume.jsonl'),
+				JSON.stringify({
+					type: 'cost-state',
+					totalCostUSD: 0.1,
+					modelUsage: { 'claude-x': { inputTokens: 10, outputTokens: 5, costUSD: 0.1 } },
+				}) + '\n'
+			);
+			const previous = process.env.CLAUDE_CONFIG_DIR;
+			process.env.CLAUDE_CONFIG_DIR = configDir;
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt', 'sid-resume');
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						JSON.stringify({
+							type: 'result',
+							result: 'Done',
+							session_id: 'sid-resume',
+							total_cost_usd: 0.25,
+							modelUsage: { 'claude-x': { inputTokens: 30, outputTokens: 12, costUSD: 0.25 } },
+						}) + '\n'
+					)
+				);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+
+				expect(result.usageStats?.totalCostUsd).toBeCloseTo(0.15, 9);
+				expect(result.usageStats?.inputTokens).toBe(20);
+				expect(result.usageStats?.outputTokens).toBe(7);
+			} finally {
+				if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+				else process.env.CLAUDE_CONFIG_DIR = previous;
+				realFs.rmSync(configDir, { recursive: true, force: true });
+			}
+		});
+
 		it('should aggregate usage from multiple models', async () => {
 			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 

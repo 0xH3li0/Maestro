@@ -43,7 +43,12 @@ import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
 import { OpenToolCalls, skipsPermissionPrompts, withPermissionBypass } from './open-tool-calls';
-import { parseCostStateRow, type CostState } from './cost-state';
+import {
+	addToCostState,
+	parseCostStateRow,
+	readLastClaudeCostState,
+	type ClaudeCostState,
+} from '../shared/claudeCostTracker';
 import { TurnUsage } from './turn-usage';
 import { hasBlockOfType, SubagentStream, SubagentWatcher } from './subagent-watcher';
 import { initModelFromEntry, lastModelAttachment, resolveInitModel } from './init-model';
@@ -372,7 +377,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	const reply = new ReplyText();
 	const turnUsage = new TurnUsage();
 	// claude's own spend tracker, from the cost-state row it writes on exit.
-	let costState: CostState | null = null;
+	let costState: ClaudeCostState | null = null;
+	// The session's tracker before this turn, from a resumed transcript. Only
+	// the no-cost-state fallback needs it, to report a running total as claude does.
+	let costBaseline: ClaudeCostState | null = null;
 	// Follows the session's subagent transcripts once the session is known.
 	let subagents: SubagentWatcher | null = null;
 	// Set once the session id is known. init then waits for the first row that
@@ -513,14 +521,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				resultOpts.usage = turnUsage.totals();
 			}
 			// Spend is reported on every path, as `claude -p` does: a turn that
-			// failed still cost what it ran. claude's own tracker when it wrote
-			// one, otherwise this turn's main thread priced from the rate table.
-			const modelUsage = costState?.modelUsage ?? turnUsage.estimatedModelUsage();
-			if (Object.keys(modelUsage).length > 0) {
-				resultOpts.modelUsage = modelUsage;
-				resultOpts.totalCostUsd =
-					costState?.totalCostUSD ??
-					Object.values(modelUsage).reduce((sum, entry) => sum + entry.costUSD, 0);
+			// failed still cost what it ran. Like `claude -p`, it is the SESSION's
+			// running total (see src/shared/claudeCostTracker.ts): claude's own
+			// tracker when it wrote one, otherwise this turn's main thread priced
+			// from the rate table and added to the tracker the turn started from.
+			const estimate = turnUsage.estimatedModelUsage();
+			const reported =
+				costState ??
+				(Object.keys(estimate).length > 0 ? addToCostState(costBaseline, estimate) : null);
+			if (reported && Object.keys(reported.modelUsage).length > 0) {
+				resultOpts.modelUsage = reported.modelUsage;
+				resultOpts.totalCostUsd = reported.totalCostUSD;
 			}
 			try {
 				emitter.emitResult(resultOpts);
@@ -950,6 +961,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		await waitForEvent(driver, 'ready');
 		if (finalized) return settled();
 		resumedModel = lastModelAttachment(jsonlPath);
+		costBaseline = readLastClaudeCostState(jsonlPath) ?? null;
 		watchSubagents(jsonlPath);
 		armInit(resumeSessionId);
 		watchRotatedSession(resumeSessionId, Date.now());

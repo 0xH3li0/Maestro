@@ -7,6 +7,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+import * as nodeFs from 'fs';
+import * as nodeOs from 'os';
+import * as nodePath from 'path';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -1132,6 +1135,78 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.agentSessionId).toBeUndefined();
+		});
+	});
+
+	// Claude reports its cost as a running SESSION total; the spawn hands the
+	// parser the total the resumed transcript held, so it can report the turn's.
+	describe('Claude session cost baseline', () => {
+		const primedParser = () => {
+			const primeResumedSession = vi.fn();
+			vi.mocked(createOutputParser).mockReturnValueOnce({
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn(),
+				extractUsage: vi.fn(),
+				extractSessionId: vi.fn(),
+				extractSlashCommands: vi.fn(),
+				isResultMessage: vi.fn(),
+				detectErrorFromLine: vi.fn(),
+				detectErrorFromExit: vi.fn(() => null),
+				primeResumedSession,
+			} as any);
+			return primeResumedSession;
+		};
+
+		it("primes a resumed turn with the transcript's last cost-state row", () => {
+			const root = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'spawner-cost-'));
+			try {
+				const cwd = nodePath.join(root, 'proj');
+				const projectDir = nodePath.join(
+					root,
+					'cfg',
+					'projects',
+					cwd.replace(/[^a-zA-Z0-9]/g, '-')
+				);
+				nodeFs.mkdirSync(projectDir, { recursive: true });
+				nodeFs.writeFileSync(
+					nodePath.join(projectDir, 'sid-1.jsonl'),
+					JSON.stringify({ type: 'cost-state', totalCostUSD: 0.5, modelUsage: {} }) + '\n'
+				);
+				vi.mocked(buildChildProcessEnv).mockReturnValueOnce({
+					PATH: '/usr/bin',
+					CLAUDE_CONFIG_DIR: nodePath.join(root, 'cfg'),
+				});
+				const prime = primedParser();
+				const { spawner } = createTestContext();
+
+				spawner.spawn(
+					createBaseConfig({ cwd, args: ['--print', '--resume', 'sid-1'], prompt: 'next' })
+				);
+
+				expect(prime).toHaveBeenCalledWith('sid-1', { totalCostUSD: 0.5, modelUsage: {} });
+			} finally {
+				nodeFs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it('primes a remote resumed turn with an unknown baseline', () => {
+			const prime = primedParser();
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({ agentSessionId: 'sid-2', sshRemoteId: 'remote-1', prompt: 'next' })
+			);
+
+			expect(prime).toHaveBeenCalledWith('sid-2', undefined);
+		});
+
+		it('does not prime a fresh session', () => {
+			const prime = primedParser();
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ args: ['--print', '--session-id', 'new'], prompt: 'hi' }));
+
+			expect(prime).not.toHaveBeenCalled();
 		});
 	});
 });

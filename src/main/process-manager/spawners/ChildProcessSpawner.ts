@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -15,6 +16,7 @@ import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
+import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
@@ -412,6 +414,24 @@ export class ChildProcessSpawner {
 			// to isolate mutable state like tool name tracking across concurrent sessions
 			const outputParser = createOutputParser(toolType) || undefined;
 
+			// Claude reports its cost and per-model usage as running SESSION totals.
+			// Hand its parser the session's total as this turn starts, read from
+			// the transcript it resumes, so the usage it emits is this turn's
+			// alone (see src/shared/claudeCostTracker.ts).
+			const resumeSessionId = config.agentSessionId ?? resumeIdFromArgs(args);
+			if (toolType === 'claude-code' && resumeSessionId && outputParser?.primeResumedSession) {
+				outputParser.primeResumedSession(
+					resumeSessionId,
+					readClaudeTurnBaseline({
+						resumeSessionId,
+						cwd,
+						env,
+						homeDir: os.homedir(),
+						remote: !!config.sshRemoteId,
+					})
+				);
+			}
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
@@ -711,4 +731,14 @@ export class ChildProcessSpawner {
 			return { pid: -1, success: false };
 		}
 	}
+}
+
+/** The session id a `--resume <id>` (or `--resume=<id>`) argument names, if any. */
+function resumeIdFromArgs(args: readonly string[]): string | undefined {
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === '--resume') return args[i + 1] || undefined;
+		if (arg.startsWith('--resume=')) return arg.slice('--resume='.length) || undefined;
+	}
+	return undefined;
 }
