@@ -170,6 +170,125 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
 
+## Update, 2026-10-12
+
+On `feat/cue-server`, local commits on top of `046a276da`, not pushed:
+
+| Commit      | What                                                                                               | Verified by                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `a1a206775` | `file.changed` fires for a watched folder created after start, or deleted and created again        | Tests only (real chokidar)                                   |
+| `e1a800935` | Run router tests for a subscription's `tier`, `model` and `effort`                                 | Tests; live check below                                      |
+| `5f21b4e3c` | A `cue.yaml` reload keeps an unchanged heartbeat's schedule. **Desktop behaviour change**          | Tests only                                                   |
+| `fc1db36a3` | `file.changed`: a folder created in a different case than the glob spells it, on Windows and macOS | Tests only; the test runs on Windows and macOS, not on Linux |
+
+The VM ran a build of `046a276da` today, so none of the three fixes above has
+run live. Raw notes for the VM work are outside the repository.
+
+### Findings from the VM, 2026-10-12
+
+| Finding                                                                                                                                        | State                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| With no network, `install.sh` sat in `npm install` (the agent CLIs step) for over 9 minutes with no output and no timeout, instead of failing  | **Known issue**, installer unchanged         |
+| The record said the VM was left "enabled and stopped". An enabled unit starts on every boot, so the engine had been running since each VM boot | Corrected in [Upgrade check](#upgrade-check) |
+| The old failed rows in `cue.db` most likely come from an old engine (build of `40767c62f`) running without network after those boots           | Not part of any run's figures                |
+| Turn settings (`tier`, `model`, `effort` on a subscription): all five cases behave as documented, confirmed against each provider's own record | Pass, see below                              |
+| `cue trigger <name>` fired all five siblings of the same pipeline and trigger (the known open item)                                            | **Open** (docs only), unchanged              |
+
+**`install.sh` without network.** The host's restart dropped the two
+`DOCKER-USER` ACCEPT rules for the incus bridge (they are not persistent), so
+Docker's `FORWARD` DROP left the VM with DNS but no IPv4 egress. The
+installer's `npm install @anthropic-ai/claude-code opencode-ai` printed
+nothing for over 9 minutes; once the rules were back it finished on its own,
+exit 0, and restarted the engine on the new version. Check first, from the
+machine being installed, before running `install.sh`:
+
+```bash
+curl -4 -sS -m 10 -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/
+```
+
+Anything but `200` (a timeout prints `000`) means the install will hang at
+that step. The installer was not changed.
+
+**The service is enabled.** The VM booted three times on 2026-10-12, each
+after a host restart, and the engine started each time (`NRestarts=0`,
+`LimitCORE=0`). The journal shows one `Marked N run(s) left running by an
+engine that exited unexpectedly as failed` warning per unclean VM stop. Those
+engines ran without egress until the firewall rules were restored, so agent
+turns failed; that, plus the unclean stops, is the likely source of the older
+failed rows in `cue.db` (whole history at the start of today's run: 442
+completed, 23 failed, 1 stopped). None falls inside a run's window.
+
+### Turn settings, live
+
+Temporary `cli.trigger` subscriptions in a `TurnCheck` pipeline, owned by the
+VM's Claude Code agent (configured model `haiku`) and OpenCode agent
+(configured model `opencode/big-pickle`), on the build of `046a276da`.
+Removed afterwards by restoring each `cue.yaml` (sha256 identical to before),
+and the engine restarted so the stability run started on an engine that never
+loaded them. The provider's own record is the Claude Code session JSONL
+(assistant `message.model`, `effort`, `perTurnEffort`) and OpenCode's
+database opened read-only (`session.model`, the messages' provider and model).
+
+| Case                     | Subscription                            | Maestro log line                                                                                                  | Model the provider recorded                                                    | Result                                   |
+| ------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------- |
+| Claude Code, tier        | `tier: medium`                          | info, `tier="medium" (subscription) -> model sonnet`; argv `--model sonnet`                                       | `claude-sonnet-5-5`; effort `medium` (Claude Code's default, no flag)          | Pass                                     |
+| Claude Code, exact model | `model: claude-sonnet-4-5-20250929`     | info, `model="claude-sonnet-4-5-20250929" (subscription)`; argv the same                                          | `claude-sonnet-4-5-20250929`                                                   | Pass                                     |
+| Claude Code, effort      | `effort: low`                           | info, `effort="low" (subscription) -> low`                                                                        | `claude-haiku-5-5` (the agent's own model); `effort` and `perTurnEffort` `low` | Pass                                     |
+| OpenCode, exact model    | `model: opencode/nemotron-3-ultra-free` | info, `model="opencode/nemotron-3-ultra-free" (subscription)`; argv the same                                      | `opencode` / `nemotron-3-ultra-free`                                           | Pass                                     |
+| OpenCode, tier           | `tier: medium`                          | **warn**, `opencode has no model tier mapping, so tier="medium" was ignored; using the agent's configured model.` | `opencode` / `big-pickle` (the agent's configured model)                       | Pass (warned and fell back, as designed) |
+
+Claude's `sonnet` and `haiku` aliases are resolved by the provider: Maestro
+passes the alias. The `argv` was read from `/proc/<pid>/cmdline` for three of
+the five spawns (the poll ended when the first run finished).
+
+### Engine notes from today's review (unchanged, no fix)
+
+- `CueEngine.startReason` stays `'system-boot'` for the whole run, and
+  `refreshSession` passes `startReason ?? 'refresh'`, so a `cue.yaml` reload
+  usually arrives as `'system-boot'`, not `'refresh'`. `5f21b4e3c` does not
+  rely on the reason for that reason (CLAUDE-CUE.md gotcha 14).
+- `'discovery'` in `SessionInitReason` (`cue-session-runtime-service.ts`) is
+  never passed by any caller.
+
+### Stability run
+
+A second stability run, on the build of `046a276da`, started 2026-10-12
+16:53:37 UTC and is due to end at about 21:28:37 UTC. The first 10 samples
+were clean (one MainPID, `NRestarts` 0, probes 200, `quick_check` ok, no
+gap). Results are recorded after it ends.
+
+### Windows review, 2026-10-12
+
+Read from `git diff 046a276da..HEAD`; nothing was run on a Windows host.
+
+| Area                                                                               | Finding                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `staticWatchBase()` on a glob                                                      | Safe. Globs are written with forward slashes (as documented); `picomatch.scan` and `path.posix.dirname` read them the same on every platform, and the result is split on `/`, never on `path.sep`                                                                                                                                                                                                              |
+| Joining each folder level, drive letters, backslash project roots                  | Safe. Every level is `path.resolve(root, ...segments)`, so Windows gets backslashes and the root's own drive letter. chokidar reports paths built from the same root string, and every comparison runs both sides through `path.resolve`, which also turns chokidar's forward-slash form back into backslashes                                                                                                 |
+| A folder created in a different case than the glob (`Inbox/*.txt`, folder `inbox`) | **Risk, fixed in `fc1db36a3`.** On a case-insensitive volume the glob watcher works once the folder exists, but the chain watcher compared exact strings, so it filtered out `inbox` and never re-attached. Chain paths are now compared case-folded on Windows and macOS, and the match is confirmed with `fs.existsSync` on the glob's spelling. Linux is unchanged. New test, run on Windows and macOS only |
+| A watched folder held pending-delete on removal                                    | Safe. The chain watcher's `depth` stops one level above the static folder, so it never holds a handle on it; on `unlinkDir` the glob watcher, the only holder, is closed. A parent held by the chain watcher is released by chokidar itself on its own `unlinkDir`                                                                                                                                             |
+| New watcher tests: temp folder teardown                                            | **Risk, fixed in `fc1db36a3`.** A handle Windows had not released yet failed `afterEach` after `rmSync`'s retries; on Windows that is now tolerated (a leftover temp folder says nothing about the watcher). Elsewhere it still throws                                                                                                                                                                         |
+| New watcher tests: real chokidar timing                                            | **Risk, fixed in `fc1db36a3`.** A test can wait up to 8 s for an event on top of up to four 400 ms pauses, against the suite's 10 s default; the suite now allows 30 s. Folder creation and removal already retry, and each test waits for the event rather than a fixed time. Paths are built with `path.join` from a `realpathSync` of `os.tmpdir()`                                                         |
+| `cue-heartbeat-reload.test.ts`, `cue-session-lifecycle.test.ts`                    | Safe. Fake timers and `vi.setSystemTime` only, no real sleeps. The `/projects/...` roots are opaque keys handed to a mocked config loader, never resolved                                                                                                                                                                                                                                                      |
+| `cue-run-router.test.ts` (`e1a800935`)                                             | Safe. No paths, no timers                                                                                                                                                                                                                                                                                                                                                                                      |
+| Heartbeat carry (`5f21b4e3c`) in production                                        | Safe. Keyed on the subscription name and `triggerGroupKey`, no paths; times are `Date.now()` values                                                                                                                                                                                                                                                                                                            |
+
+### Gates, 2026-10-12
+
+Run on the code of `fc1db36a3`, on Linux:
+
+| Gate                                                        | Result                                                                       |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `npm run test` (full suite)                                 | Pass: 2208 files passed, 1 skipped; 50628 tests passed, 91 skipped, 0 failed |
+| `npm run lint`, `npm run lint:eslint` (with the dash check) | Pass                                                                         |
+| `npm run docs:verify`                                       | Pass: 785 asserted paths, 0 findings                                         |
+| `prettier --check` on the changed files                     | Pass                                                                         |
+
+The new case test is skipped on Linux; windows-latest in CI is its first run.
+User docs (`docs/maestro-cue-events.md`, `docs/maestro-cue-server.md`,
+`CLI-HEADLESS.md`) were read against the three fixes and agree with them and
+with each other; no change was needed.
+
 ## Current state, 2026-10-09
 
 Where the work stands on `feat/cue-server` at `40767c62f`: eleven local
@@ -190,25 +309,25 @@ target passed.
 
 ### Findings
 
-| Finding                                                                                                                      | Where it came from                            | State                                                                                                                            |
-| ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| ReFS reports `FILE_INVALID_FILE_ID` as every inode, so two workspace folders matched                                         | `3392fcd76` (2026-10-08)                      | Fixed, `611fd1cf5`                                                                                                               |
-| Import-restart test teardown can hit EBUSY / EPERM on Windows                                                                | `bb1d1084d` (2026-10-08, test)                | Fixed, `611fd1cf5`                                                                                                               |
-| A pause longer than an interval ran that interval twice at resume                                                            | `247b04bb0` (2026-10-08)                      | Fixed, `57a536438`; live rerun                                                                                                   |
-| No 503 during a drain                                                                                                        | Pre-existing                                  | Fixed, `26d24ae1e`; live again today under systemd (S6) and Compose (D2)                                                         |
-| Non-JSON text on stdout under `--log-format json`                                                                            | Pre-existing                                  | Fixed, `2cb5a8f37`; engine journal and container logs all JSON today                                                             |
-| `bundle export` accepts a `cue.yaml` that `bundle validate` rejects                                                          | Pre-existing (Stage A)                        | Fixed for the config rules, `7346b7c5a`, **tests only**; an owner the bundle leaves out still exports (open)                     |
-| `install.sh` exited 100 when apt failed, not the documented 0, 1 or 3                                                        | Stage B                                       | Fixed, `e8362fc51`, **tests only** (the exit trap runs in `sh` in the test)                                                      |
-| The unit allowed core dumps (`LimitCORE=infinity`); a watchdog SIGABRT could write the engine's memory, secrets included     | Stage B (S4)                                  | Fixed, `e8362fc51`; **verified live**: after an upgrade `LimitCORE=0` and the engine's own core limit 0                          |
-| `docker compose up -d --build` installs Claude Code only                                                                     | Container                                     | Fixed, `e8362fc51` (build args), **tests only**                                                                                  |
-| Compose names miss the docs' `docker` commands; a wrong volume name is created empty with no warning                         | Container                                     | Docs `d275e09a2`, then fixed names in `e8362fc51`, **tests only**                                                                |
-| A GitHub PR or issue trigger whose first poll is empty seeds, rather than fires, the first real item                         | Pre-existing (since `f3e8d093f`), desktop too | Fixed, `f491decce`, **tests only**. **Desktop behaviour change.** Today's live run seeded the repository first to work around it |
-| An agent exported from a workspace it does not own is refused by every import (`unknown-agent` owner)                        | Pre-existing                                  | Fixed, `a0de9a0f3`, **tests only**                                                                                               |
-| `server-packaging.test.ts` fails on a Windows checkout with CRLF                                                             | Windows review of today's diff                | Fixed, `b187db7c7` (reproduced against a CRLF copy)                                                                              |
-| Docs: not-ready start loops, crash kills the run's children, Compose secret mode, `docker stop` timeout, unhealthy, and more | Stage B, container, GitHub                    | Fixed, see [Docs fixes](#docs-fixes-from-the-live-runs)                                                                          |
-| `file.changed` misses a watched folder created after the engine started                                                      | Pre-existing, desktop too                     | **Open**                                                                                                                         |
-| `cue trigger <name>` also fires same-pipeline siblings with the same trigger                                                 | Pre-existing, by design                       | **Open** (docs only)                                                                                                             |
-| A `cue.yaml` reload fires that workspace's `time.heartbeat` subscriptions again ("initial")                                  | Pre-existing; seen again today; desktop too   | Fixed: an unchanged heartbeat keeps its schedule across a reload, **tests only**. **Desktop behaviour change**                   |
+| Finding                                                                                                                      | Where it came from                            | State                                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| ReFS reports `FILE_INVALID_FILE_ID` as every inode, so two workspace folders matched                                         | `3392fcd76` (2026-10-08)                      | Fixed, `611fd1cf5`                                                                                                                       |
+| Import-restart test teardown can hit EBUSY / EPERM on Windows                                                                | `bb1d1084d` (2026-10-08, test)                | Fixed, `611fd1cf5`                                                                                                                       |
+| A pause longer than an interval ran that interval twice at resume                                                            | `247b04bb0` (2026-10-08)                      | Fixed, `57a536438`; live rerun                                                                                                           |
+| No 503 during a drain                                                                                                        | Pre-existing                                  | Fixed, `26d24ae1e`; live again today under systemd (S6) and Compose (D2)                                                                 |
+| Non-JSON text on stdout under `--log-format json`                                                                            | Pre-existing                                  | Fixed, `2cb5a8f37`; engine journal and container logs all JSON today                                                                     |
+| `bundle export` accepts a `cue.yaml` that `bundle validate` rejects                                                          | Pre-existing (Stage A)                        | Fixed for the config rules, `7346b7c5a`, **tests only**; an owner the bundle leaves out still exports (open)                             |
+| `install.sh` exited 100 when apt failed, not the documented 0, 1 or 3                                                        | Stage B                                       | Fixed, `e8362fc51`, **tests only** (the exit trap runs in `sh` in the test)                                                              |
+| The unit allowed core dumps (`LimitCORE=infinity`); a watchdog SIGABRT could write the engine's memory, secrets included     | Stage B (S4)                                  | Fixed, `e8362fc51`; **verified live**: after an upgrade `LimitCORE=0` and the engine's own core limit 0                                  |
+| `docker compose up -d --build` installs Claude Code only                                                                     | Container                                     | Fixed, `e8362fc51` (build args), **tests only**                                                                                          |
+| Compose names miss the docs' `docker` commands; a wrong volume name is created empty with no warning                         | Container                                     | Docs `d275e09a2`, then fixed names in `e8362fc51`, **tests only**                                                                        |
+| A GitHub PR or issue trigger whose first poll is empty seeds, rather than fires, the first real item                         | Pre-existing (since `f3e8d093f`), desktop too | Fixed, `f491decce`, **tests only**. **Desktop behaviour change.** Today's live run seeded the repository first to work around it         |
+| An agent exported from a workspace it does not own is refused by every import (`unknown-agent` owner)                        | Pre-existing                                  | Fixed, `a0de9a0f3`, **tests only**                                                                                                       |
+| `server-packaging.test.ts` fails on a Windows checkout with CRLF                                                             | Windows review of today's diff                | Fixed, `b187db7c7` (reproduced against a CRLF copy)                                                                                      |
+| Docs: not-ready start loops, crash kills the run's children, Compose secret mode, `docker stop` timeout, unhealthy, and more | Stage B, container, GitHub                    | Fixed, see [Docs fixes](#docs-fixes-from-the-live-runs)                                                                                  |
+| `file.changed` misses a watched folder created after the engine started                                                      | Pre-existing, desktop too                     | Fixed, `a1a206775` (2026-10-12), **tests only**                                                                                          |
+| `cue trigger <name>` also fires same-pipeline siblings with the same trigger                                                 | Pre-existing, by design                       | **Open** (docs only)                                                                                                                     |
+| A `cue.yaml` reload fires that workspace's `time.heartbeat` subscriptions again ("initial")                                  | Pre-existing; seen again today; desktop too   | Fixed, `5f21b4e3c` (2026-10-12): an unchanged heartbeat keeps its schedule across a reload, **tests only**. **Desktop behaviour change** |
 
 ### Checks, latest result
 
@@ -216,7 +335,7 @@ target passed.
 | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | `prettier --check` (changed files), `lint`, `lint:eslint`, `lint:doc-refs`, `docs:verify`                    | Pass on HEAD (`docs:verify` 694 paths)                                                                           | [Gates](#gates-2026-10-09)                                    |
 | Targeted Vitest for today's changes                                                                          | Pass: 14 files, 332 tests; `server-packaging.test.ts` 26 after `b187db7c7`                                       | [Gates](#gates-2026-10-09)                                    |
-| Full suite (`npm run test`)                                                                                  | **Not run today.** Last pass on `26d24ae1e` (2026-10-08)                                                         | Regression pass on HEAD                                       |
+| Full suite (`npm run test`)                                                                                  | Pass on `fc1db36a3` (2026-10-12)                                                                                 | [Gates, 2026-10-12](#gates-2026-10-12)                        |
 | Windows review of today's diff                                                                               | Read only; one fix, `b187db7c7`                                                                                  | [Windows review](#windows-review-2026-10-09)                  |
 | Packaged install on a fresh Debian 12 VM (`install.sh`), sign-in, export, import of a pipeline and an agent  | Pass on `6fa5ca2d7`                                                                                              | [Stage B](#stage-b-packaged-install-on-a-debian-12-vm)        |
 | Upgrade by rerunning `install.sh`                                                                            | Pass on `40767c62f`: exit 0, `LimitCORE=0`, healthy after start                                                  | [Upgrade check](#upgrade-check)                               |
@@ -241,8 +360,8 @@ target passed.
 
 ### Open items
 
-- `file.changed` misses a folder created after the engine starts (pre-existing, desktop too).
 - `cue trigger <name>` also fires same-pipeline siblings with the same trigger; the `cli.trigger` docs do not say so.
+- `install.sh` has no timeout on `npm install`: with no network it waits silently (over 9 minutes on 2026-10-12). Check registry access first; see [Update, 2026-10-12](#update-2026-10-12).
 - No committed container end-to-end test (the plan's automated test); today's container runs were manual.
 - No real host suspend run (SIGSTOP and fake-timer tests only).
 - No Windows host run; the Windows reviews were by reading, and windows-latest in CI is the first real run.
@@ -928,6 +1047,10 @@ service and starts an enabled one only with `--enable`, as documented). After:
 `Ready: ... no gaps`, the engine's own core file limit 0, `/healthz` and
 `/readyz` 200, the start's chain completed, 0 warn or error lines. Stopped
 again with a clean drain.
+
+Correction, 2026-10-12: the unit is **enabled**, so "stopped" held only until
+the next VM boot. The engine started again on every boot after this (three
+boots on 2026-10-12 alone); see [Update, 2026-10-12](#update-2026-10-12).
 
 ## Today's fixes, docs fixes and gates
 
