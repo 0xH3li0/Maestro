@@ -172,6 +172,7 @@ import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
 import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
 import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
+import { configureAgentSystemOne } from './local-models/system-one/agent-service';
 import { configureSystemOne } from './local-models/system-one/service';
 import { configureAgentRunOn } from './local-models/run-on';
 import { configureRunOnTest } from './local-models/run-on-test';
@@ -3715,6 +3716,16 @@ app
 		// System One is off until the user chooses an engine. Wiring it reads no
 		// key and sends nothing: only a task assigned to it, or Test, asks.
 		configureSystemOne({ safeSend });
+
+		// An agent's own System One requests (`maestro-cli s1`) read one thing
+		// from the stores: whether that agent is switched off in its settings.
+		// Wiring it asks nothing; a request is answered only when one arrives.
+		configureAgentSystemOne({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+		});
 
 		// An agent's Run on target is resolved at each launch from these stores.
 		// Wiring it reads nothing and starts nothing: the model server starts

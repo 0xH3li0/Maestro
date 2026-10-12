@@ -10,6 +10,8 @@
  *     the settings.
  *   - **A key that will not open is reported as that and left in place.**
  *   - **A refused change writes nothing.**
+ *   - **A Test pass belongs to one engine and one key**: a settings change keeps
+ *     it, a key change for that engine drops it, and no settings read returns it.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -28,10 +30,14 @@ vi.mock('../../../../main/utils/sentry', () => ({
 import {
 	SYSTEM_ONE_STATE_FILE,
 	clearSystemOneKey,
+	clearSystemOneTestPass,
 	readSystemOneSettings,
+	readSystemOneSetup,
 	readSystemOneStoredKey,
 	storeSystemOneKey,
+	storeSystemOneTestPass,
 	updateSystemOneSettings,
+	type SystemOneTestPass,
 } from '../../../../main/local-models/system-one/config-store';
 import type { SealProvider } from '../../../../main/utils/safe-storage-seal';
 import { DEFAULT_SYSTEM_ONE_SETTINGS } from '../../../../shared/local-models/system-one-settings';
@@ -209,5 +215,75 @@ describe('keys', () => {
 	it.skipIf(process.platform === 'win32')('keeps the file readable by its owner only', async () => {
 		await storeSystemOneKey(dir, 'jev-cloud', JEV_KEY, osSeal());
 		expect((await fs.stat(stateFile())).mode & 0o777).toBe(0o600);
+	});
+});
+
+describe('the Test pass', () => {
+	const jevPass: SystemOneTestPass = { engine: 'jev-cloud', signature: 'setup-a', at: 1_000 };
+	const openPass: SystemOneTestPass = { engine: 'openjev', signature: 'setup-b', at: 2_000 };
+	const stored = async () => (await readSystemOneSetup(dir)).testPass;
+
+	it('is absent until a Test passes, and writes nothing to say so', async () => {
+		expect(await readSystemOneSetup(dir)).toEqual({
+			settings: DEFAULT_SYSTEM_ONE_SETTINGS,
+			testPass: null,
+		});
+		await expect(fs.access(stateFile())).rejects.toThrow();
+	});
+
+	it('is stored, read back with the settings, and replaced by the next pass', async () => {
+		await storeSystemOneTestPass(dir, jevPass);
+		expect(await stored()).toEqual(jevPass);
+
+		await storeSystemOneTestPass(dir, openPass);
+		expect(await stored()).toEqual(openPass);
+	});
+
+	it('is not part of the settings, and survives a change to them', async () => {
+		await storeSystemOneTestPass(dir, jevPass);
+
+		const next = await updateSystemOneSettings(dir, (current) => ({ ...current, timeoutMs: 900 }));
+
+		expect(next).not.toHaveProperty('testPass');
+		expect(await readSystemOneSettings(dir)).not.toHaveProperty('testPass');
+		expect(await stored()).toEqual(jevPass);
+	});
+
+	it("is dropped when that engine's key is stored or cleared, and kept for another engine's", async () => {
+		await storeSystemOneTestPass(dir, jevPass);
+		await storeSystemOneKey(dir, 'openjev', OPEN_KEY, osSeal());
+		expect(await stored()).toEqual(jevPass);
+
+		await storeSystemOneKey(dir, 'jev-cloud', JEV_KEY, osSeal());
+		expect(await stored()).toBeNull();
+
+		await storeSystemOneTestPass(dir, jevPass);
+		await clearSystemOneKey(dir, 'openjev');
+		expect(await stored()).toEqual(jevPass);
+		await clearSystemOneKey(dir, 'jev-cloud');
+		expect(await stored()).toBeNull();
+	});
+
+	it('is forgotten only for the engine whose Test failed, and says whether there was one', async () => {
+		await storeSystemOneTestPass(dir, jevPass);
+
+		expect(await clearSystemOneTestPass(dir, 'local-judge')).toBe(false);
+		expect(await stored()).toEqual(jevPass);
+		expect(await clearSystemOneTestPass(dir, 'jev-cloud')).toBe(true);
+		expect(await stored()).toBeNull();
+		expect(await clearSystemOneTestPass(dir, 'jev-cloud')).toBe(false);
+	});
+
+	it('reads a pass it cannot use as no pass', async () => {
+		for (const testPass of [
+			'yes',
+			{ engine: 'gpt', signature: 's', at: 1 },
+			{ engine: 'jev-cloud', signature: 7, at: 1 },
+			{ engine: 'jev-cloud', signature: 's', at: 'today' },
+			{ engine: 'off', signature: 's', at: 1 },
+		]) {
+			await fs.writeFile(stateFile(), JSON.stringify({ engine: 'jev-cloud', testPass }));
+			expect(await stored()).toBeNull();
+		}
 	});
 });

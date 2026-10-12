@@ -25,6 +25,7 @@ import {
 	SYSTEM_ONE_LEDGER_RETENTION_DAYS,
 	isSystemOneLedgerOutcomeFilter,
 	summarizeSystemOneDecision,
+	systemOneLedgerTaskLabel,
 	type SystemOneLedgerEntry,
 } from '../../../../../shared/local-models/system-one-ledger';
 import {
@@ -271,9 +272,7 @@ function LedgerRow({ theme, entry, agentName }: LedgerRowProps) {
 				aria-expanded={open}
 			>
 				<span className="opacity-70 w-16 flex-shrink-0">{formatRelativeTime(entry.startedAt)}</span>
-				<span className="font-medium">
-					{LOCAL_MODEL_TASKS[entry.taskId]?.label ?? entry.taskId}
-				</span>
+				<span className="font-medium">{systemOneLedgerTaskLabel(entry.taskId)}</span>
 				<span className="opacity-70">{systemOneEngineChoiceLabel(entry.engine)}</span>
 				<span style={{ color: outcomeColor(theme, entry) }}>
 					{SYSTEM_ONE_LEDGER_OUTCOME_LABELS[entry.outcome]}

@@ -19,8 +19,10 @@ import {
 	formatSystemOneLedgerInput,
 	isSystemOneDecisionOutcome,
 	isSystemOneLedgerOutcomeFilter,
+	isSystemOneLedgerTaskId,
 	parseSystemOneLedgerQuery,
 	summarizeSystemOneDecision,
+	systemOneLedgerTaskLabel,
 } from '../../../shared/local-models/system-one-ledger';
 
 // Built at run time so no secret-shaped literal sits in the source.
@@ -71,6 +73,13 @@ describe('parseSystemOneLedgerQuery', () => {
 		});
 	});
 
+	it("keeps an agent's verb as the source to filter by", () => {
+		expect(parseSystemOneLedgerQuery({ taskId: 'agent:rank' })).toEqual({
+			ok: true,
+			query: { taskId: 'agent:rank' },
+		});
+	});
+
 	it('drops a field it does not know, so a newer caller cannot smuggle one in', () => {
 		expect(parseSystemOneLedgerQuery({ limit: 5, orderBy: 'input' })).toEqual({
 			ok: true,
@@ -82,6 +91,8 @@ describe('parseSystemOneLedgerQuery', () => {
 		['a string', 'cue-gate', /must be an object/],
 		['an array', [], /must be an object/],
 		['an unknown task', { taskId: 'no-such-task' }, /is not a task/],
+		['an agent verb that does not exist', { taskId: 'agent:guess' }, /is not a task/],
+		['the agent prefix alone', { taskId: 'agent:' }, /is not a task/],
 		['an unknown outcome', { outcome: 'sideways' }, /is not an outcome/],
 		['a start that is not a number', { since: '1d' }, /epoch milliseconds/],
 		['a negative start', { since: -1 }, /epoch milliseconds/],
@@ -92,6 +103,26 @@ describe('parseSystemOneLedgerQuery', () => {
 		const result = parseSystemOneLedgerQuery(raw);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.message).toMatch(message);
+	});
+});
+
+describe('what a record is filed under', () => {
+	it('is a task, or an agent verb spelled agent:<verb>', () => {
+		expect(isSystemOneLedgerTaskId('cue-gate')).toBe(true);
+		expect(isSystemOneLedgerTaskId('agent:yes')).toBe(true);
+		expect(isSystemOneLedgerTaskId('agent:batch')).toBe(true);
+		for (const other of ['agent', 'agent:', 'agent:guide', 'yes', '', 7, null, undefined]) {
+			expect(isSystemOneLedgerTaskId(other)).toBe(false);
+		}
+	});
+
+	it("is called by the task's label, or by the verb the agent typed", () => {
+		expect(systemOneLedgerTaskLabel('cue-gate')).toBe('Cue gate');
+		expect(systemOneLedgerTaskLabel('agent:rank')).toBe('Agent: rank');
+	});
+
+	it('reads a stored task a later build no longer has as its id, never as a throw', () => {
+		expect(systemOneLedgerTaskLabel('retired-task' as never)).toBe('retired-task');
 	});
 });
 

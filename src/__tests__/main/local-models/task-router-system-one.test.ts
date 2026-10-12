@@ -35,8 +35,15 @@ vi.mock('../../../main/stores/getters', () => ({
 		get: (key: string, fallback?: unknown) => (settings.has(key) ? settings.get(key) : fallback),
 	}),
 }));
+// The ledger itself is real (`decisions.ts`); what it writes lands on this
+// stand-in for the statistics database, which is where the tests read it back.
 vi.mock('../../../main/stats/singleton', () => ({
-	getStatsDB: () => ({ isReady: () => true, recordLocalModelRun: vi.fn(() => 'id') }),
+	getStatsDB: () => ({
+		isReady: () => true,
+		recordLocalModelRun: vi.fn(() => 'id'),
+		recordSystemOneDecision: decisions.recordSystemOneDecision,
+		pruneSystemOneDecisions: vi.fn(() => 0),
+	}),
 }));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -55,9 +62,6 @@ vi.mock('../../../main/local-models/text-gen', async (importOriginal) => ({
 vi.mock('../../../main/local-models/embeddings', () => ({ embedTexts: vi.fn() }));
 vi.mock('../../../main/local-models/classifier', () => ({ classifyText: vi.fn() }));
 vi.mock('../../../main/local-models/speech-to-text', () => ({ transcribeSpeech: vi.fn() }));
-vi.mock('../../../main/local-models/system-one/decisions', () => ({
-	recordSystemOneDecision: decisions.recordSystemOneDecision,
-}));
 
 import {
 	configureSystemOne,

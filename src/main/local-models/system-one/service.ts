@@ -22,6 +22,11 @@
  *      that, and the engine has no key; it does not reach for the variable or
  *      the file instead. An engine that cannot answer is never replaced by
  *      another one.
+ *   4. **A Test pass belongs to the setup that passed.** `testSystemOne` records
+ *      which engine answered and how it was set up; a changed address, model or
+ *      key reads as not tested. Agents may ask only after a pass
+ *      (`agent-service.ts`), so a setup nobody ever saw answer is never handed
+ *      to them.
  */
 
 import { safeStorage } from 'electron';
@@ -30,10 +35,12 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { isBlankEnvValue } from '../../../shared/agentEnvironment';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import { normalizeEndpointBaseUrl } from '../../../shared/local-models/endpoints';
 import { modelsSettingsLocation } from '../../../shared/local-models/settings-location';
 import {
 	JEV_CLOUD_BASE_URL,
+	JEV_DEFAULT_MODEL,
 	isSystemOneEngineCalibrated,
 	systemOneEngineHost,
 	systemOneEngineLabel,
@@ -63,6 +70,7 @@ import {
 	systemOneKeyProblem,
 	systemOneRequestTimeoutMs,
 	systemOneUrlProblem,
+	type SystemOneAgentSettings,
 	type SystemOneKeyInfo,
 	type SystemOneReport,
 	type SystemOneSettings,
@@ -85,10 +93,14 @@ import { localModelsDataDir } from '../paths';
 import { readLocalModelAssignments } from '../sources';
 import {
 	clearSystemOneKey,
+	clearSystemOneTestPass,
 	readSystemOneSettings,
+	readSystemOneSetup,
 	readSystemOneStoredKey,
 	storeSystemOneKey,
+	storeSystemOneTestPass,
 	updateSystemOneSettings,
+	type SystemOneTestPass,
 } from './config-store';
 import { askSystemOne } from './jev-client';
 import { askLocalJudge, localJudgeNoModelMessage } from './local-judge';
@@ -126,6 +138,11 @@ export function configureSystemOne(next: SystemOneDeps): void {
 
 function dataDir(): string {
 	return (deps.dataDir ?? localModelsDataDir)();
+}
+
+/** The data folder System One keeps its files in: the settings, and the answer cache. */
+export function systemOneDataDir(): string {
+	return dataDir();
 }
 
 function osSeal(): SealProvider {
@@ -348,12 +365,16 @@ export async function resolveSystemOneForTask(taskId: LocalModelTaskId): Promise
  * Ask the engine in force. Rejects with a `SystemOneError` that names that
  * engine; it never asks another. `off` is not an engine: a caller decides what
  * no engine means for it before calling this.
+ *
+ * `timeoutMs` replaces the engine's stored budget for this one request. The
+ * stored budget is sized for a gate (one question, about a second); a caller
+ * that packs hundreds of questions into a request states its own.
  */
 export async function askResolvedSystemOne(
 	resolved: Exclude<ResolvedSystemOneEngine, { id: 'off' }>,
 	state: SystemOneState,
 	questions: SystemOneQuestions,
-	options: { signal?: AbortSignal } = {}
+	options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<SystemOneResult> {
 	if (resolved.refusal) {
 		throw new SystemOneError(resolved.refusal.message, {
@@ -361,7 +382,7 @@ export async function askResolvedSystemOne(
 			engine: resolved.id,
 		});
 	}
-	const call = { timeoutMs: resolved.timeoutMs, signal: options.signal };
+	const call = { timeoutMs: options.timeoutMs ?? resolved.timeoutMs, signal: options.signal };
 	if (resolved.id === 'local-judge') return askLocalJudge(state, questions, call);
 	return askSystemOne(resolved.engine, state, questions, {
 		...call,
@@ -395,7 +416,76 @@ function engineLabelFor(settings: SystemOneSettings, resolved: ResolvedSystemOne
 	});
 }
 
-async function buildReport(settings: SystemOneSettings): Promise<SystemOneReport> {
+/**
+ * How an engine is set up, as one comparable string: which engine, where it is
+ * called, and which model answers. No key is in it and nothing is derived from
+ * one; a key that changes drops the pass in the config store instead.
+ */
+function setupSignature(resolved: Exclude<ResolvedSystemOneEngine, { id: 'off' }>): string {
+	const remote = remoteOf(resolved);
+	return canonicalJson({
+		engine: resolved.id,
+		baseUrl: remote?.engine.baseUrl ?? null,
+		model: remote ? (remote.model ?? null) : (judgeModel()?.spec ?? null),
+	});
+}
+
+/** When the engine in force passed its Test as it is set up now, or null. */
+function testPassedAt(
+	resolved: ResolvedSystemOneEngine,
+	pass: SystemOneTestPass | null
+): number | null {
+	if (resolved.id === 'off' || !pass || pass.engine !== resolved.id) return null;
+	return pass.signature === setupSignature(resolved) ? pass.at : null;
+}
+
+/** What the agent service needs before it answers an agent: one read of the file. */
+export interface SystemOneForAgents {
+	resolved: ResolvedSystemOneEngine;
+	/** The engine as a person reads it. "Off" when none is chosen. */
+	engineLabel: string;
+	/** "Let agents use System One", and the daily budgets. */
+	agents: SystemOneAgentSettings;
+	/** "Keep inputs in the ledger". */
+	keepInputs: boolean;
+	/** When the engine in force passed its Test as it is set up now, or null. */
+	testPassedAt: number | null;
+	/**
+	 * What separates one engine's cached answers from another's, beside the
+	 * request itself: where the engine is called, and the model that is ASKED
+	 * (the pin, the hosted engine's moving alias, or the local judge's source).
+	 */
+	cacheScope: { baseUrl: string | null; model: string | null };
+}
+
+/**
+ * The engine in force, what agents may do with it, and whether it has passed
+ * its Test, from ONE read of the settings. Reads the settings and the key;
+ * sends nothing.
+ */
+export async function resolveSystemOneForAgents(): Promise<SystemOneForAgents> {
+	const { settings, testPass } = await readSystemOneSetup(dataDir());
+	const resolved = await resolveEngine(settings);
+	const remote = remoteOf(resolved);
+	const model = remote
+		? (remote.model ?? (remote.id === 'jev-cloud' ? JEV_DEFAULT_MODEL : null))
+		: resolved.id === 'local-judge'
+			? (judgeModel()?.spec ?? null)
+			: null;
+	return {
+		resolved,
+		engineLabel: engineLabelFor(settings, resolved),
+		agents: settings.agents,
+		keepInputs: settings.keepInputs,
+		testPassedAt: testPassedAt(resolved, testPass),
+		cacheScope: { baseUrl: remote?.engine.baseUrl ?? null, model },
+	};
+}
+
+async function buildReport(
+	settings: SystemOneSettings,
+	testPass: SystemOneTestPass | null
+): Promise<SystemOneReport> {
 	const resolved = await resolveEngine(settings);
 	const remote = remoteOf(resolved);
 	const keys = {} as Record<SystemOneRemoteEngineId, SystemOneKeyInfo>;
@@ -417,13 +507,15 @@ async function buildReport(settings: SystemOneSettings): Promise<SystemOneReport
 		calibrated: resolved.id === 'off' ? null : isSystemOneEngineCalibrated(resolved.id),
 		keys,
 		problem: resolved.id === 'off' ? null : (resolved.refusal?.message ?? null),
+		testPassedAt: testPassedAt(resolved, testPass),
 		failPolicies: systemOneFailPolicyRows(settings.failPolicies),
 	};
 }
 
 /** Everything a surface shows about System One. It carries no key and sends nothing. */
 export async function getSystemOneReport(): Promise<SystemOneReport> {
-	return buildReport(await readSystemOneSettings(dataDir()));
+	const { settings, testPass } = await readSystemOneSetup(dataDir());
+	return buildReport(settings, testPass);
 }
 
 // ---------------------------------------------------------------------------
@@ -432,18 +524,18 @@ export async function getSystemOneReport(): Promise<SystemOneReport> {
 
 /**
  * Change the engine, the OpenJev URL, a pinned model, the timeout, one task's
- * fail policy or "Keep inputs in the ledger": what the card's controls, the
- * ledger's toggle and `maestro-cli s1 set` send. A change
+ * fail policy, "Keep inputs in the ledger" or what agents may do: what the
+ * card's controls, the ledger's toggle and `maestro-cli s1 set` send. A change
  * that is refused rejects with the reason and writes nothing.
  */
 export async function updateSystemOneSettingsRequest(raw: unknown): Promise<SystemOneReport> {
-	const settings = await updateSystemOneSettings(dataDir(), (current) => {
+	await updateSystemOneSettings(dataDir(), (current) => {
 		const change = applySystemOneSettingsPatch(current, raw);
 		if (!change.ok) throw new Error(change.message);
 		return change.settings;
 	});
 	announceChange();
-	return buildReport(settings);
+	return getSystemOneReport();
 }
 
 /** The engine a key request is for: the one it names, else the one in force. */
@@ -502,6 +594,9 @@ export async function clearSystemOneKeyRequest(raw: unknown): Promise<SystemOneR
  * Ask the engine in force one fixed question and report the answer, the latency
  * and which engine gave it. The state is fixed text, so a test sends nothing of
  * the user's. An engine that gives no answer is a result, not a thrown error.
+ *
+ * The verdict is kept: an answer records the setup as having passed, and no
+ * answer forgets an earlier pass. That record is what lets agents ask.
  */
 export async function testSystemOne(): Promise<SystemOneTestResult> {
 	const settings = await readSystemOneSettings(dataDir());
@@ -530,6 +625,12 @@ export async function testSystemOne(): Promise<SystemOneTestResult> {
 				engine,
 			});
 		}
+		await storeSystemOneTestPass(dataDir(), {
+			engine,
+			signature: setupSignature(resolved),
+			at: Date.now(),
+		});
+		announceChange();
 		return {
 			ok: true,
 			engine: result.engine,
@@ -543,6 +644,10 @@ export async function testSystemOne(): Promise<SystemOneTestResult> {
 		};
 	} catch (error) {
 		if (!isSystemOneError(error)) throw error;
+		// A Test that was cancelled says nothing about the engine.
+		if (error.code !== 'cancelled' && (await clearSystemOneTestPass(dataDir(), engine))) {
+			announceChange();
+		}
 		return { ok: false, engine, engineLabel, code: error.code, error: error.message };
 	}
 }

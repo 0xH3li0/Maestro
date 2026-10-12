@@ -49,9 +49,7 @@ import type {
 	SystemOneErrorCode,
 	SystemOneFailPolicy,
 	SystemOneResult,
-	SystemOneTaskRequest,
 } from '../../shared/local-models/system-one';
-import { formatSystemOneLedgerInput } from '../../shared/local-models/system-one-ledger';
 import type { SystemOneEngineChoice } from '../../shared/local-models/system-one-settings';
 import {
 	buildSystemOneTaskRequest,
@@ -80,7 +78,7 @@ import {
 } from './errors';
 import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
 import { transcribeSpeech } from './speech-to-text';
-import { recordSystemOneDecision, type SystemOneDecision } from './system-one/decisions';
+import { keepSystemOneDecision, type SystemOneDecision } from './system-one/decisions';
 import { askResolvedSystemOne, resolveSystemOneForTask } from './system-one/service';
 import { generateText } from './text-gen';
 
@@ -427,7 +425,7 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 			'taskId' | 'engine' | 'questionIds' | 'startedAt' | 'agentId' | 'input'
 		>
 	): void =>
-		recordDecision(
+		keepSystemOneDecision(
 			{
 				taskId,
 				engine: resolved.id,
@@ -479,27 +477,6 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 			return { status: 'cancelled', engine: resolved.id, engineLabel };
 		}
 		return noAnswer(error.code, error.message);
-	}
-}
-
-/**
- * Record one System One decision. Best-effort, like {@link recordRun}: a record
- * that cannot be kept must never turn an answered gate into a failed one. `kept`
- * is the request, when "Keep inputs in the ledger" is on.
- */
-function recordDecision(decision: SystemOneDecision, kept: SystemOneTaskRequest | null): void {
-	try {
-		recordSystemOneDecision(
-			// The text is redacted here, inside the guard: it is the user's content,
-			// and it is built only for a run whose record keeps it.
-			kept ? { ...decision, input: formatSystemOneLedgerInput(kept) } : decision
-		);
-	} catch (error) {
-		logger.warn(`Failed to record System One decision: ${error}`, STATS_LOG_CONTEXT);
-		void captureException(error instanceof Error ? error : new Error(String(error)), {
-			operation: 'systemOne:recordDecision',
-			taskId: decision.taskId,
-		});
 	}
 }
 

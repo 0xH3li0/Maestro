@@ -20,6 +20,10 @@ const state = vi.hoisted(() => ({
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(async () => {}),
+	captureMessage: vi.fn(),
+}));
 vi.mock('../../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({
 		get: (key: string) => (key === 'statsCollectionEnabled' ? state.statsEnabled : undefined),
@@ -34,6 +38,8 @@ vi.mock('../../../../main/stats/singleton', async () => {
 				decisions.insertSystemOneDecision(state.db as Database.Database, decision),
 			getSystemOneDecisions: (read: never) =>
 				decisions.getSystemOneDecisions(state.db as Database.Database, read),
+			getSystemOneAgentSpend: (since: number) =>
+				decisions.getSystemOneAgentSpend(state.db as Database.Database, since),
 			pruneSystemOneDecisions: (cutoffMs: number) => {
 				state.pruneCalls.push(cutoffMs);
 				return decisions.pruneSystemOneDecisions(state.db as Database.Database, cutoffMs);
@@ -45,12 +51,16 @@ vi.mock('../../../../main/stats/singleton', async () => {
 import {
 	SYSTEM_ONE_LEDGER_STATS_OFF_NOTICE,
 	SYSTEM_ONE_LEDGER_UNAVAILABLE_NOTICE,
+	keepSystemOneDecision,
+	readSystemOneAgentSpend,
 	readSystemOneLedger,
 	recordSystemOneDecision,
 	resetSystemOneLedgerForTests,
 } from '../../../../main/local-models/system-one/decisions';
 import { runMigrations } from '../../../../main/stats/migrations';
 import { clearSystemOneDecisionsCache } from '../../../../main/stats/s1-decisions';
+import { captureException } from '../../../../main/utils/sentry';
+import { noul } from '../../../../shared/local-models/system-one';
 import {
 	SYSTEM_ONE_LEDGER_DEFAULT_LIMIT,
 	SYSTEM_ONE_LEDGER_RETENTION_MS,
@@ -256,6 +266,99 @@ describe.skipIf(!canLoadNodeSqlite())('the System One decision ledger', () => {
 			expect(() => readSystemOneLedger({ outcome: 'sideways' })).toThrow(/is not an outcome/);
 			expect(() => readSystemOneLedger({ taskId: 'no-such-task' })).toThrow(/is not a task/);
 			expect(() => readSystemOneLedger({ limit: 0 })).toThrow(/limit/);
+		});
+
+		it("returns an agent's own requests with the tab and the cached mark, filtered by verb", () => {
+			recordSystemOneDecision(decision());
+			recordSystemOneDecision(
+				decision({ taskId: 'agent:rank', agentId: 'agent-1', tabId: 'tab-7', cached: true })
+			);
+
+			const page = readSystemOneLedger({ taskId: 'agent:rank' });
+
+			expect(page.total).toBe(1);
+			expect(page.entries[0]).toMatchObject({
+				taskId: 'agent:rank',
+				agentId: 'agent-1',
+				tabId: 'tab-7',
+				cached: true,
+			});
+		});
+	});
+
+	describe('keepSystemOneDecision', () => {
+		// Built at run time so no secret-shaped literal sits in the source.
+		const secret = `sk-ant-api03-${'A1b2C3d4'.repeat(6)}`;
+		const request = {
+			state: `The deploy log holds ${secret}.`,
+			questions: { failed: noul('Did the deploy fail?') },
+		};
+
+		beforeEach(() => {
+			vi.mocked(captureException).mockClear();
+		});
+
+		it('keeps the decision, and no input unless it is handed the request', () => {
+			keepSystemOneDecision(decision(), null);
+
+			expect(readSystemOneLedger(undefined).entries[0]).not.toHaveProperty('input');
+		});
+
+		it('keeps the request it is handed, redacted', () => {
+			keepSystemOneDecision(decision(), request);
+
+			const kept = readSystemOneLedger(undefined).entries[0].input ?? '';
+			expect(kept).toContain('deploy log');
+			expect(kept).toContain('Did the deploy fail?');
+			expect(kept).not.toContain(secret);
+		});
+
+		it('never throws for a record that cannot be kept, and reports it', () => {
+			expect(() =>
+				keepSystemOneDecision(decision({ outcome: 'timeout' as never }), request)
+			).not.toThrow();
+
+			expect(rowCount()).toBe(0);
+			expect(captureException).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(captureException).mock.calls[0][1]).toMatchObject({
+				operation: 'systemOne:recordDecision',
+			});
+		});
+	});
+
+	describe('readSystemOneAgentSpend', () => {
+		const spent = (overrides: Partial<SystemOneDecision>): SystemOneDecision =>
+			decision({ taskId: 'agent:yes', agentId: 'agent-1', costUsd: 0.25, ...overrides });
+
+		it("sums agents' own requests since a time, per agent", () => {
+			const now = Date.now();
+			recordSystemOneDecision(spent({ startedAt: now }));
+			recordSystemOneDecision(spent({ startedAt: now, taskId: 'agent:rank' }));
+			recordSystemOneDecision(spent({ startedAt: now, agentId: 'agent-2', costUsd: 1 }));
+			recordSystemOneDecision(spent({ startedAt: now - 2 * DAY_MS, costUsd: 9 }));
+			// A task's run is Maestro's spend, whatever agent it names.
+			recordSystemOneDecision(decision({ startedAt: now, agentId: 'agent-1', costUsd: 9 }));
+
+			const rows = readSystemOneAgentSpend(now - DAY_MS);
+
+			expect(rows?.map((row) => [row.agentId, row.requests, row.costUsd])).toEqual([
+				['agent-2', 1, 1],
+				['agent-1', 2, 0.5],
+			]);
+		});
+
+		it('reads what is there while usage statistics are off: money already spent still counts', () => {
+			recordSystemOneDecision(spent({}));
+			state.statsEnabled = false;
+
+			expect(readSystemOneAgentSpend(0)).toHaveLength(1);
+		});
+
+		it('answers null, not zero, while the database is not open', () => {
+			recordSystemOneDecision(spent({}));
+			state.ready = false;
+
+			expect(readSystemOneAgentSpend(0)).toBeNull();
 		});
 	});
 });

@@ -47,6 +47,7 @@ import {
 	SYSTEM_ONE_LEDGER_MAX_LIMIT,
 	SYSTEM_ONE_LEDGER_OUTCOME_FILTERS,
 	isSystemOneLedgerOutcomeFilter,
+	isSystemOneLedgerTaskId,
 	type SystemOneLedgerPage,
 	type SystemOneLedgerQuery,
 } from '../../shared/local-models/system-one-ledger';
@@ -65,11 +66,7 @@ import {
 	type SystemOneSettingsPatch,
 	type SystemOneTestResult,
 } from '../../shared/local-models/system-one-settings';
-import {
-	LOCAL_JUDGE_TASK_ID,
-	isLocalModelTaskId,
-	localModelAssignmentCaution,
-} from '../../shared/local-models/tasks';
+import { LOCAL_JUDGE_TASK_ID, localModelAssignmentCaution } from '../../shared/local-models/tasks';
 import { resolveAssignmentSpec, storeTaskAssignment } from './models-assign';
 
 /** A status read or a settings write: one small file and no network. */
@@ -410,9 +407,9 @@ export async function systemOneLedger(options: LedgerOptions): Promise<void> {
 	const { json } = options;
 	const query: SystemOneLedgerQuery = {};
 	if (options.task !== undefined) {
-		if (!isLocalModelTaskId(options.task)) {
+		if (!isSystemOneLedgerTaskId(options.task)) {
 			fail(
-				`"${options.task}" is not a task. List them with: maestro-cli models tasks`,
+				`"${options.task}" is not a task. List them with: maestro-cli models tasks. An agent's own requests are filed under agent:<verb>, for example agent:rank.`,
 				json,
 				ExitCode.InvalidUsage
 			);

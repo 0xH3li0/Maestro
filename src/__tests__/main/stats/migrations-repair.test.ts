@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 18;
+const RC_TARGET_VERSION = 19;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -96,6 +96,7 @@ function crossBranchDb(
 		proxyRequests?: boolean;
 		proxyRoutedTo?: boolean;
 		s1Decisions?: boolean;
+		s1AgentColumns?: boolean;
 	}
 ): Database.Database {
 	const db = openDb();
@@ -113,6 +114,10 @@ function crossBranchDb(
 	if (missing.proxyRequests) db.exec('DROP TABLE proxy_requests');
 	if (missing.proxyRoutedTo) db.exec('ALTER TABLE proxy_requests DROP COLUMN routed_to');
 	if (missing.s1Decisions) db.exec('DROP TABLE s1_decisions');
+	if (missing.s1AgentColumns) {
+		db.exec('ALTER TABLE s1_decisions DROP COLUMN tab_id');
+		db.exec('ALTER TABLE s1_decisions DROP COLUMN cached');
+	}
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -265,7 +270,40 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		runMigrations(db);
 
 		expect(hasTable(db, 's1_decisions')).toBe(true);
+		// The table v18 creates already has v19's columns, so v19 has nothing to repair.
+		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
 		expect(logger.warn).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v18');
+	});
+
+	it('adds tab_id and cached to an s1_decisions table created before the columns existed', () => {
+		const db = crossBranchDb(18, { s1AgentColumns: true });
+		expect(columnNames(db, 's1_decisions')).not.toContain('tab_id');
+		db.exec(
+			`INSERT INTO s1_decisions (id, started_at, task_id, engine, question_ids, outcome, latency_ms)
+			 VALUES ('d-1', 1, 'cue-gate', 'jev-cloud', '["proceed"]', 'ok', 200)`
+		);
+
+		runMigrations(db);
+
+		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+		// A row written before the columns reads as not cached, from no tab.
+		expect(db.prepare('SELECT tab_id, cached FROM s1_decisions').get()).toEqual({
+			tab_id: null,
+			cached: 0,
+		});
+		// An ordinary upgrade, not a repair.
+		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('adds the s1_decisions agent columns back to a database stamped v19 without them', () => {
+		const db = crossBranchDb(RC_TARGET_VERSION, { s1AgentColumns: true });
+
+		runMigrations(db);
+
+		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v19');
 	});
 });

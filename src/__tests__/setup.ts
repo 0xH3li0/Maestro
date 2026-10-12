@@ -835,6 +835,7 @@ const mockMaestro = {
 					models: {},
 					failPolicies: {},
 					keepInputs: false,
+					agents: { enabled: true, dailyBudgetUsd: 1, perAgentBudgetUsd: null },
 				},
 				engineLabel: 'Off',
 				disclosure: 'System One is off. No task text is sent to an engine.',
@@ -845,6 +846,7 @@ const mockMaestro = {
 				calibrated: null,
 				keys: { 'jev-cloud': { source: 'none' }, openjev: { source: 'none' } },
 				problem: null,
+				testPassedAt: null,
 				failPolicies: [
 					{ taskId: 'cue-gate', label: 'Cue gate', policy: 'open', defaultPolicy: 'open' },
 					{

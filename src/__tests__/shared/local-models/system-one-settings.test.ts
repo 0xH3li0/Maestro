@@ -10,6 +10,8 @@
  *   - **Fail policies are sparse**: only a choice that differs from the task's
  *     default is stored, and only a task that gates something has one.
  *   - **A key's description never contains a key.**
+ *   - **Agents ask under a budget**: the switch is on by default, a day's spend
+ *     is capped at a dollar, and a per-agent cap exists only when it is set.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -20,9 +22,12 @@ import {
 	SYSTEM_ONE_DEFAULT_TIMEOUT_MS,
 } from '../../../shared/local-models/system-one';
 import {
+	DEFAULT_SYSTEM_ONE_AGENT_SETTINGS,
 	DEFAULT_SYSTEM_ONE_SETTINGS,
+	SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD,
 	SYSTEM_ONE_ENGINE_CHOICES,
 	SYSTEM_ONE_ENGINE_DISCLOSURES,
+	SYSTEM_ONE_MAX_DAILY_BUDGET_USD,
 	SYSTEM_ONE_MAX_TIMEOUT_MS,
 	SYSTEM_ONE_MIN_TIMEOUT_MS,
 	SYSTEM_ONE_TEST_QUESTIONS,
@@ -32,6 +37,7 @@ import {
 	parseSystemOneSettings,
 	resolveSystemOneFailPolicy,
 	systemOneAssignmentLabel,
+	systemOneBudgetProblem,
 	systemOneEngineChoiceLabel,
 	systemOneFailPolicyProblem,
 	systemOneFailPolicyRows,
@@ -121,6 +127,7 @@ describe('parseSystemOneSettings', () => {
 			// The screen's own default is not written down; dictation has no policy.
 			failPolicies: { 'cue-gate': 'closed' },
 			keepInputs: true,
+			agents: DEFAULT_SYSTEM_ONE_AGENT_SETTINGS,
 		});
 
 		expect(
@@ -218,6 +225,75 @@ describe('applySystemOneSettingsPatch', () => {
 		const change = applySystemOneSettingsPatch(base, { engine: 'jev-cloud', timeoutMs: 1 });
 		expect(change.ok).toBe(false);
 		expect(base.engine).toBe('off');
+	});
+});
+
+describe('what agents may do', () => {
+	const base = DEFAULT_SYSTEM_ONE_SETTINGS;
+
+	it('lets agents ask by default, under a dollar a day and no cap of their own', () => {
+		expect(base.agents).toEqual({
+			enabled: true,
+			dailyBudgetUsd: SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD,
+			perAgentBudgetUsd: null,
+		});
+		expect(SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD).toBe(1);
+	});
+
+	it('changes one field of the three and leaves the others as they are', () => {
+		const off = apply(base, { agents: { enabled: false } });
+		expect(off.agents).toEqual({ ...base.agents, enabled: false });
+		const capped = apply(off, { agents: { dailyBudgetUsd: 2.5, perAgentBudgetUsd: 0.25 } });
+		expect(capped.agents).toEqual({ enabled: false, dailyBudgetUsd: 2.5, perAgentBudgetUsd: 0.25 });
+		// Null removes the per-agent cap; the daily budget has no "none".
+		expect(apply(capped, { agents: { perAgentBudgetUsd: null } }).agents.perAgentBudgetUsd).toBe(
+			null
+		);
+		// Another change leaves all three alone.
+		expect(apply(capped, { engine: 'jev-cloud' }).agents).toEqual(capped.agents);
+		// The stored settings are never edited in place.
+		expect(base.agents.enabled).toBe(true);
+	});
+
+	it('takes a budget of zero, which refuses every request', () => {
+		expect(apply(base, { agents: { dailyBudgetUsd: 0 } }).agents.dailyBudgetUsd).toBe(0);
+		expect(systemOneBudgetProblem(0)).toBeNull();
+		expect(systemOneBudgetProblem(SYSTEM_ONE_MAX_DAILY_BUDGET_USD)).toBeNull();
+	});
+
+	it('refuses what is not a switch or a budget, and changes nothing', () => {
+		expect(refusal(base, { agents: 'on' })).toContain('must be an object');
+		expect(refusal(base, { agents: { enabled: 'yes' } })).toContain('on or off');
+		for (const budget of [-1, SYSTEM_ONE_MAX_DAILY_BUDGET_USD + 1, Number.NaN, '1', null]) {
+			expect(refusal(base, { agents: { dailyBudgetUsd: budget } })).toContain('US dollars a day');
+		}
+		expect(refusal(base, { agents: { perAgentBudgetUsd: -0.5 } })).toContain('US dollars a day');
+		// One bad field refuses the whole change.
+		const change = applySystemOneSettingsPatch(base, {
+			agents: { enabled: false, dailyBudgetUsd: -1 },
+		});
+		expect(change.ok).toBe(false);
+		expect(base.agents.enabled).toBe(true);
+	});
+
+	it('reads stored agent settings field by field, a bad one as its default', () => {
+		expect(
+			parseSystemOneSettings({
+				agents: { enabled: false, dailyBudgetUsd: 3, perAgentBudgetUsd: 0.5 },
+			}).agents
+		).toEqual({ enabled: false, dailyBudgetUsd: 3, perAgentBudgetUsd: 0.5 });
+		expect(
+			parseSystemOneSettings({
+				agents: { enabled: 'no', dailyBudgetUsd: -4, perAgentBudgetUsd: 'lots' },
+			}).agents
+		).toEqual(DEFAULT_SYSTEM_ONE_AGENT_SETTINGS);
+		// Only an explicit false switches agents off: a file from before the switch keeps it on.
+		for (const other of [undefined, null, 0, 'false']) {
+			expect(parseSystemOneSettings({ agents: { enabled: other } }).agents.enabled).toBe(true);
+		}
+		expect(parseSystemOneSettings({ agents: [] }).agents).toEqual(
+			DEFAULT_SYSTEM_ONE_AGENT_SETTINGS
+		);
 	});
 });
 

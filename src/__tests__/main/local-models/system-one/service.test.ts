@@ -17,6 +17,8 @@
  *     another engine.
  *   - **Off sends nothing.**
  *   - **A change is announced**, so every window and the CLI read one state.
+ *   - **A Test pass belongs to the setup that passed.** A changed address,
+ *     model or key reads as not tested, and a failed Test forgets the pass.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -56,11 +58,13 @@ vi.mock('../../../../main/local-models/speech-to-text', () => ({ transcribeSpeec
 import { SYSTEM_ONE_STATE_FILE } from '../../../../main/local-models/system-one/config-store';
 import {
 	SYSTEM_ONE_CHANGED_CHANNEL,
+	askResolvedSystemOne,
 	clearSystemOneKeyRequest,
 	configureSystemOne,
 	getSystemOneReport,
 	resetSystemOneServiceForTests,
 	resolveSystemOneEngine,
+	resolveSystemOneForAgents,
 	resolveSystemOneKey,
 	setSystemOneKeyRequest,
 	testSystemOne,
@@ -70,9 +74,12 @@ import type { SealProvider } from '../../../../main/utils/safe-storage-seal';
 import { QWEN3_1_7B_ID, getLocalModel } from '../../../../shared/local-models/model-catalog';
 import {
 	JEV_CLOUD_BASE_URL,
+	JEV_DEFAULT_MODEL,
 	LOCAL_JUDGE_DEFAULT_TIMEOUT_MS,
+	noul,
 } from '../../../../shared/local-models/system-one';
 import {
+	DEFAULT_SYSTEM_ONE_AGENT_SETTINGS,
 	SYSTEM_ONE_TEST_STATE,
 	TYPESAFE_API_KEY_ENV_VAR,
 	TYPESAFE_API_KEY_FILE,
@@ -410,6 +417,208 @@ describe('resolveSystemOneEngine', () => {
 			key: { source: 'stored', storage: 'os' },
 			refusal: null,
 		});
+	});
+});
+
+describe('askResolvedSystemOne', () => {
+	it('holds a request to the stored budget, unless its caller states one for that request', async () => {
+		const jev = await hostedAt();
+		jev.setDelayMs(300);
+		processEnv[TYPESAFE_API_KEY_ENV_VAR] = PROCESS_ENV_KEY;
+		await updateSystemOneSettingsRequest({ engine: 'jev-cloud', timeoutMs: 100 });
+		const engine = await resolveSystemOneEngine();
+		if (engine.id === 'off') throw new Error('expected an engine');
+		const questions = { q: noul('Is it Thursday?') };
+
+		await expect(
+			askResolvedSystemOne(engine, SYSTEM_ONE_TEST_STATE, questions)
+		).rejects.toMatchObject({ code: 'timeout' });
+		const result = await askResolvedSystemOne(engine, SYSTEM_ONE_TEST_STATE, questions, {
+			timeoutMs: 5_000,
+		});
+		expect(result.answers.q).toMatchObject({ type: 'noul' });
+	});
+});
+
+describe('resolveSystemOneForAgents', () => {
+	it('is off, with the default agent settings and no pass, before the user chooses', async () => {
+		expect(await resolveSystemOneForAgents()).toEqual({
+			resolved: { id: 'off' },
+			engineLabel: 'Off',
+			agents: DEFAULT_SYSTEM_ONE_AGENT_SETTINGS,
+			keepInputs: false,
+			testPassedAt: null,
+			cacheScope: { baseUrl: null, model: null },
+		});
+	});
+
+	it('scopes the cache by where the engine is called and the model that is asked', async () => {
+		const jev = await hostedAt();
+		processEnv[TYPESAFE_API_KEY_ENV_VAR] = PROCESS_ENV_KEY;
+		await updateSystemOneSettingsRequest({ engine: 'jev-cloud' });
+		// With no pin the hosted engine is asked for its moving alias.
+		expect((await resolveSystemOneForAgents()).cacheScope).toEqual({
+			baseUrl: jev.baseUrl,
+			model: JEV_DEFAULT_MODEL,
+		});
+		await updateSystemOneSettingsRequest({ model: 'jev-1.13.0' });
+		expect((await resolveSystemOneForAgents()).cacheScope.model).toBe('jev-1.13.0');
+
+		// An OpenJev serves the one model it was started with: none is asked for.
+		await updateSystemOneSettingsRequest({ engine: 'openjev', openJevUrl: 'https://gpu.lan:8000' });
+		expect((await resolveSystemOneForAgents()).cacheScope).toEqual({
+			baseUrl: 'https://gpu.lan:8000',
+			model: null,
+		});
+
+		settings.set('localModelAssignments', {
+			[LOCAL_JUDGE_TASK_ID]: { type: 'local', modelId: QWEN3_1_7B_ID },
+		});
+		await updateSystemOneSettingsRequest({ engine: 'local-judge' });
+		expect((await resolveSystemOneForAgents()).cacheScope).toEqual({
+			baseUrl: null,
+			model: `local:${QWEN3_1_7B_ID}`,
+		});
+	});
+
+	it('carries what agents may do and whether inputs are kept', async () => {
+		await updateSystemOneSettingsRequest({
+			keepInputs: true,
+			agents: { enabled: false, dailyBudgetUsd: 2, perAgentBudgetUsd: 0.5 },
+		});
+
+		expect(await resolveSystemOneForAgents()).toMatchObject({
+			keepInputs: true,
+			agents: { enabled: false, dailyBudgetUsd: 2, perAgentBudgetUsd: 0.5 },
+		});
+	});
+});
+
+describe('the Test pass', () => {
+	const passedAt = async () => (await getSystemOneReport()).testPassedAt;
+
+	async function hostedReady(): Promise<MockJevServer> {
+		const jev = await hostedAt(STORED_KEY);
+		await setSystemOneKeyRequest({ engine: 'jev-cloud', key: STORED_KEY });
+		await updateSystemOneSettingsRequest({ engine: 'jev-cloud' });
+		return jev;
+	}
+
+	it('is absent until the engine in force has answered its Test, and is announced when it does', async () => {
+		await hostedReady();
+		expect(await passedAt()).toBeNull();
+		safeSend.mockClear();
+		const before = Date.now();
+
+		expect((await testSystemOne()).ok).toBe(true);
+
+		expect(await passedAt()).toBeGreaterThanOrEqual(before);
+		expect((await resolveSystemOneForAgents()).testPassedAt).toBe(await passedAt());
+		expect(safeSend).toHaveBeenCalledWith(SYSTEM_ONE_CHANGED_CHANNEL);
+	});
+
+	it('stays null while System One is off', async () => {
+		expect(await passedAt()).toBeNull();
+		await testSystemOne();
+		expect(await passedAt()).toBeNull();
+	});
+
+	it('is forgotten when the Test fails, and announced', async () => {
+		const jev = await hostedReady();
+		await testSystemOne();
+		expect(await passedAt()).not.toBeNull();
+		safeSend.mockClear();
+		jev.replyOnce({ status: 503, body: { error: { message: 'Overloaded.' } } });
+
+		expect((await testSystemOne()).ok).toBe(false);
+
+		expect(await passedAt()).toBeNull();
+		expect(safeSend).toHaveBeenCalledWith(SYSTEM_ONE_CHANGED_CHANNEL);
+	});
+
+	it('belongs to the setup that passed: another model or address reads as not tested', async () => {
+		await hostedReady();
+		await testSystemOne();
+		const passed = await passedAt();
+
+		await updateSystemOneSettingsRequest({ model: 'jev-1.12.0' });
+		expect(await passedAt()).toBeNull();
+		// Back to the setup that passed, which nobody has changed since.
+		await updateSystemOneSettingsRequest({ model: null });
+		expect(await passedAt()).toBe(passed);
+
+		// A setting that is not part of how the engine is reached keeps the pass.
+		await updateSystemOneSettingsRequest({ timeoutMs: 900, keepInputs: true });
+		expect(await passedAt()).toBe(passed);
+
+		const elsewhere = await startMockJevServer({ apiKey: STORED_KEY });
+		try {
+			shellEnv[TYPESAFE_BASE_URL_ENV_VAR] = elsewhere.baseUrl;
+			expect(await passedAt()).toBeNull();
+		} finally {
+			await elsewhere.close();
+		}
+	});
+
+	it('does not carry over to another engine, and the first engine keeps its own', async () => {
+		await hostedReady();
+		await testSystemOne();
+		const passed = await passedAt();
+
+		await updateSystemOneSettingsRequest({ engine: 'local-judge' });
+		expect(await passedAt()).toBeNull();
+		// The judge has no model, so its Test fails: that forgets nothing of Jev's.
+		expect((await testSystemOne()).ok).toBe(false);
+
+		await updateSystemOneSettingsRequest({ engine: 'jev-cloud' });
+		expect(await passedAt()).toBe(passed);
+	});
+
+	it('is dropped when the key of the engine that passed is replaced or cleared', async () => {
+		await hostedReady();
+		await testSystemOne();
+		expect(await passedAt()).not.toBeNull();
+
+		await setSystemOneKeyRequest({ engine: 'jev-cloud', key: STORED_KEY });
+		expect(await passedAt()).toBeNull();
+
+		await testSystemOne();
+		expect(await passedAt()).not.toBeNull();
+		await clearSystemOneKeyRequest({ engine: 'jev-cloud' });
+		expect(await passedAt()).toBeNull();
+	});
+
+	it("follows the local judge's model: another assignment reads as not tested", async () => {
+		settings.set('localModelAssignments', {
+			[LOCAL_JUDGE_TASK_ID]: { type: 'local', modelId: QWEN3_1_7B_ID },
+		});
+		generate.generateText.mockImplementation(async (request: { source: unknown }) => ({
+			text: '{"answer":"yes","confidence":0.8}',
+			json: { answer: 'yes', confidence: 0.8 },
+			source: request.source,
+			durationMs: 30,
+		}));
+		await updateSystemOneSettingsRequest({ engine: 'local-judge' });
+		await testSystemOne();
+		expect(await passedAt()).not.toBeNull();
+
+		settings.set('localModelAssignments', {
+			[LOCAL_JUDGE_TASK_ID]: { type: 'endpoint', endpointId: 'lab', model: 'qwen3:8b' },
+		});
+
+		expect(await passedAt()).toBeNull();
+	});
+
+	it('never appears in the stored settings a surface reads, and holds no key', async () => {
+		await hostedReady();
+		await testSystemOne();
+
+		const report = await getSystemOneReport();
+
+		expect(report.settings).not.toHaveProperty('testPass');
+		const stored = JSON.parse(await rawState()) as { testPass: Record<string, unknown> };
+		expect(Object.keys(stored.testPass).sort()).toEqual(['at', 'engine', 'signature']);
+		expect(JSON.stringify(stored.testPass)).not.toContain(STORED_KEY);
 	});
 });
 

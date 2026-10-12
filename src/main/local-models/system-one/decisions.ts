@@ -2,9 +2,11 @@
  * The System One decision ledger in the main process: where a decision is
  * kept, and where every surface reads them back.
  *
- * `runSystemOneTask` (the task router) is the only producer: it hands every run
- * that reached the System One path to {@link recordSystemOneDecision}, answered
- * or not. The ledger in Settings > Models > System One and `maestro-cli s1
+ * There are two producers, and both go through {@link keepSystemOneDecision}:
+ * `runSystemOneTask` (the task router) hands over every task run that reached
+ * the System One path, answered or not, and `runAgentSystemOneRequest` (the
+ * agent service) hands over every request an agent's `maestro-cli s1` verb
+ * made. The ledger in Settings > Models > System One and `maestro-cli s1
  * ledger` both read through {@link readSystemOneLedger}, so they show the same
  * records.
  *
@@ -24,18 +26,22 @@
  * `src/shared/local-models/system-one-ledger.ts`.
  */
 
+import type { SystemOneTaskRequest } from '../../../shared/local-models/system-one';
 import {
 	SYSTEM_ONE_LEDGER_DEFAULT_LIMIT,
 	SYSTEM_ONE_LEDGER_RETENTION_DAYS,
 	SYSTEM_ONE_LEDGER_RETENTION_MS,
+	formatSystemOneLedgerInput,
 	parseSystemOneLedgerQuery,
 	type SystemOneDecision,
 	type SystemOneLedgerPage,
 } from '../../../shared/local-models/system-one-ledger';
+import type { SystemOneAgentSpendRow } from '../../stats/s1-decisions';
 import { getStatsDB } from '../../stats/singleton';
-import { isStatsCollectionEnabled } from '../../stats/utils';
+import { isStatsCollectionEnabled, LOG_CONTEXT as STATS_LOG_CONTEXT } from '../../stats/utils';
 import { getSettingsStore } from '../../stores/getters';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 
 export type {
 	SystemOneDecision,
@@ -67,9 +73,9 @@ function pruneIfDue(db: ReturnType<typeof getStatsDB>, now: number): void {
 /**
  * Record one decision: a line in the system log, and a row in the ledger.
  *
- * It may throw when the row cannot be written. Its one caller (the task router)
- * reports that and goes on, because a record that cannot be kept must never
- * fail the run it describes.
+ * It may throw when the row cannot be written. A producer calls
+ * {@link keepSystemOneDecision}, which reports that and goes on, because a
+ * record that cannot be kept must never fail the run it describes.
  */
 export function recordSystemOneDecision(decision: SystemOneDecision): void {
 	const summary = {
@@ -90,6 +96,42 @@ export function recordSystemOneDecision(decision: SystemOneDecision): void {
 	if (!db.isReady()) return;
 	pruneIfDue(db, Date.now());
 	db.recordSystemOneDecision(decision);
+}
+
+/**
+ * Record one decision, best-effort: what both producers call. A record that
+ * cannot be kept must never turn an answered request into a failed one, so a
+ * failure here is logged and reported and the caller goes on. `kept` is the
+ * request, when "Keep inputs in the ledger" is on.
+ */
+export function keepSystemOneDecision(
+	decision: SystemOneDecision,
+	kept: SystemOneTaskRequest | null
+): void {
+	try {
+		recordSystemOneDecision(
+			// The text is redacted here, inside the guard: it is the user's content,
+			// and it is built only for a run whose record keeps it.
+			kept ? { ...decision, input: formatSystemOneLedgerInput(kept) } : decision
+		);
+	} catch (error) {
+		logger.warn(`Failed to record System One decision: ${error}`, STATS_LOG_CONTEXT);
+		void captureException(error instanceof Error ? error : new Error(String(error)), {
+			operation: 'systemOne:recordDecision',
+			taskId: decision.taskId,
+		});
+	}
+}
+
+/**
+ * What agents' own requests came to since a time, per agent, or `null` when the
+ * statistics database is not open. It reads whatever rows exist, so spend
+ * recorded before usage statistics were switched off still counts.
+ */
+export function readSystemOneAgentSpend(since: number): SystemOneAgentSpendRow[] | null {
+	const db = getStatsDB();
+	if (!db.isReady()) return null;
+	return db.getSystemOneAgentSpend(since);
 }
 
 /**

@@ -332,6 +332,13 @@ export interface SessionInfo {
 	 * `shared/local-models/background-requests.ts`).
 	 */
 	backgroundRequests?: BackgroundRequests;
+	/**
+	 * System One opt-out: true switches `maestro-cli s1` off for this agent while
+	 * it stays on for the others. Absent means the agent follows "Let agents use
+	 * System One". Read by `isSystemOneOptedOut` (see
+	 * `shared/local-models/system-one-agent.ts`).
+	 */
+	systemOneOptOut?: boolean;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

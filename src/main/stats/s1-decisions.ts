@@ -1,11 +1,12 @@
 /**
  * System One Decision CRUD Operations
  *
- * One row per task run that was handed to a System One engine (see
- * `s1_decisions` in schema.ts). The task router records every such run,
- * answered or not, so the ledger in Settings > Models > System One and
- * `maestro-cli s1 ledger` can show what was decided and what happened when no
- * answer came. Rows are pruned after the ledger's retention window.
+ * One row per request that was handed to a System One engine (see
+ * `s1_decisions` in schema.ts). The task router records every task run,
+ * answered or not, and the agent service records every request an agent's
+ * `maestro-cli s1` verb made, so the ledger in Settings > Models > System One
+ * and `maestro-cli s1 ledger` can show what was decided and what happened when
+ * no answer came. Rows are pruned after the ledger's retention window.
  */
 
 import type Database from 'better-sqlite3';
@@ -15,6 +16,7 @@ import type {
 	SystemOneLedgerQuery,
 } from '../../shared/local-models/system-one-ledger';
 import type { SystemOneAnswers } from '../../shared/local-models/system-one';
+import { SYSTEM_ONE_AGENT_SOURCE_PREFIX } from '../../shared/local-models/system-one-agent';
 import { generateId, LOG_CONTEXT, StatementCache } from './utils';
 import { logger } from '../utils/logger';
 
@@ -23,8 +25,8 @@ const stmtCache = new StatementCache();
 const INSERT_SQL = `
   INSERT INTO s1_decisions
     (id, started_at, task_id, engine, model, question_ids, answers, outcome, error_code,
-     latency_ms, tokens_in, tokens_out, cost_usd, agent_id, input)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     latency_ms, tokens_in, tokens_out, cost_usd, agent_id, input, tab_id, cached)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /** Record one decision. Returns the generated id. */
@@ -50,7 +52,9 @@ export function insertSystemOneDecision(
 			decision.usage ? decision.usage.outputTokens : null,
 			decision.costUsd ?? null,
 			decision.agentId ?? null,
-			decision.input ?? null
+			decision.input ?? null,
+			decision.tabId ?? null,
+			decision.cached ? 1 : 0
 		);
 	logger.debug(
 		`Recorded System One decision: ${decision.taskId} (${decision.outcome})`,
@@ -75,6 +79,8 @@ interface DecisionRow {
 	cost_usd: number | null;
 	agent_id: string | null;
 	input: string | null;
+	tab_id: string | null;
+	cached: number;
 }
 
 /** A JSON column. One that does not parse reads as absent, never as a throw. */
@@ -110,6 +116,8 @@ function toEntry(row: DecisionRow): SystemOneLedgerEntry {
 			: {}),
 		...(row.cost_usd !== null ? { costUsd: row.cost_usd } : {}),
 		...(row.agent_id !== null ? { agentId: row.agent_id } : {}),
+		...(row.tab_id !== null ? { tabId: row.tab_id } : {}),
+		...(row.cached ? { cached: true } : {}),
 		...(row.input !== null ? { input: row.input } : {}),
 	};
 }
@@ -151,6 +159,57 @@ export function getSystemOneDecisions(
 		.get(db, `SELECT COUNT(*) AS total FROM s1_decisions WHERE ${clause}`)
 		.get(...params) as { total: number } | undefined;
 	return { entries: rows.map(toEntry), total: count?.total ?? 0 };
+}
+
+/** What one agent's own requests came to since a time. `agentId` is null for requests that named none. */
+export interface SystemOneAgentSpendRow {
+	agentId: string | null;
+	requests: number;
+	/** Requests answered from the cache: nothing was sent for them. */
+	cachedRequests: number;
+	tokensIn: number;
+	tokensOut: number;
+	costUsd: number;
+	/** Mean round trip of the requests that were sent and answered. 0 when there were none. */
+	averageLatencyMs: number;
+}
+
+/**
+ * What agents' own requests (`agent:<verb>` rows) came to since a time, per
+ * agent. Task runs are not counted: a Cue gate carries an agent id too, and it
+ * is Maestro's spend, not the agent's.
+ */
+export function getSystemOneAgentSpend(
+	db: Database.Database,
+	since: number
+): SystemOneAgentSpendRow[] {
+	const rows = stmtCache
+		.get(
+			db,
+			`SELECT agent_id AS agentId,
+			        COUNT(*) AS requests,
+			        COALESCE(SUM(cached), 0) AS cachedRequests,
+			        COALESCE(SUM(tokens_in), 0) AS tokensIn,
+			        COALESCE(SUM(tokens_out), 0) AS tokensOut,
+			        COALESCE(SUM(cost_usd), 0) AS costUsd,
+			        COALESCE(AVG(CASE WHEN cached = 0 AND outcome = 'ok' THEN latency_ms END), 0)
+			          AS averageLatencyMs
+			   FROM s1_decisions
+			  WHERE started_at >= ? AND task_id LIKE ?
+			  GROUP BY agent_id
+			  ORDER BY costUsd DESC, requests DESC`
+		)
+		.all(since, `${SYSTEM_ONE_AGENT_SOURCE_PREFIX}%`) as SystemOneAgentSpendRow[];
+	// node:sqlite and better-sqlite3 disagree on integer types for an aggregate.
+	return rows.map((row) => ({
+		agentId: row.agentId,
+		requests: Number(row.requests),
+		cachedRequests: Number(row.cachedRequests),
+		tokensIn: Number(row.tokensIn),
+		tokensOut: Number(row.tokensOut),
+		costUsd: Number(row.costUsd),
+		averageLatencyMs: Math.round(Number(row.averageLatencyMs)),
+	}));
 }
 
 /** Delete decisions that started before the cutoff. Returns how many were deleted. */

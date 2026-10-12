@@ -41,6 +41,8 @@ import {
 	ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL,
 	CREATE_S1_DECISIONS_SQL,
 	CREATE_S1_DECISIONS_INDEXES_SQL,
+	ADD_S1_DECISION_TAB_ID_COLUMN_SQL,
+	ADD_S1_DECISION_CACHED_COLUMN_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -169,6 +171,13 @@ function getMigrations(): Migration[] {
 			description: 'Add s1_decisions table for the System One decision ledger',
 			up: (db) => migrateV18(db),
 			isApplied: (db) => hasTable(db, 's1_decisions'),
+		},
+		{
+			version: 19,
+			description: 'Add tab_id and cached columns to s1_decisions for agent requests',
+			up: (db) => migrateV19(db),
+			isApplied: (db) =>
+				hasColumn(db, 's1_decisions', 'tab_id') && hasColumn(db, 's1_decisions', 'cached'),
 		},
 	];
 }
@@ -490,6 +499,22 @@ function migrateV18(db: Database.Database): void {
 	runStatements(db, CREATE_S1_DECISIONS_SQL);
 	runStatements(db, CREATE_S1_DECISIONS_INDEXES_SQL);
 	logger.debug('Created s1_decisions table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v19: s1_decisions.tab_id and s1_decisions.cached - the AI tab an
+ * agent's own request came from, and whether it was answered from the answer
+ * cache. A table created by v18 at this version already has both, so each is
+ * guarded; it declares `isApplied` for the same reason v17 does.
+ */
+function migrateV19(db: Database.Database): void {
+	if (!hasColumn(db, 's1_decisions', 'tab_id')) {
+		db.prepare(ADD_S1_DECISION_TAB_ID_COLUMN_SQL).run();
+	}
+	if (!hasColumn(db, 's1_decisions', 'cached')) {
+		db.prepare(ADD_S1_DECISION_CACHED_COLUMN_SQL).run();
+	}
+	logger.debug('Added tab_id and cached columns to s1_decisions', LOG_CONTEXT);
 }
 
 /**

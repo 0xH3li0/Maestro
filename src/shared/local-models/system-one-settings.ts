@@ -26,6 +26,11 @@
  *   5. **The ledger keeps no input unless the user says so.** A decision record
  *      holds question ids and answers. The state and the question text are kept
  *      only while `keepInputs` is on, and then redacted (`system-one-ledger.ts`).
+ *   6. **Agents ask under a budget.** "Let agents use System One" is on by
+ *      default and means nothing until the engine has passed its Test. What
+ *      agents spend in a day is capped, across all of them and optionally per
+ *      agent ({@link SystemOneAgentSettings}). The requests themselves are
+ *      `system-one-agent.ts`.
  *
  * Everything here is pure and bundle-safe.
  */
@@ -154,7 +159,41 @@ export interface SystemOneSettings {
 	 * keeping new inputs; the ones already kept stay until their records are pruned.
 	 */
 	keepInputs: boolean;
+	/** What agents may do with System One, and how much they may spend. */
+	agents: SystemOneAgentSettings;
 }
+
+/**
+ * What agents may do with System One (`maestro-cli s1 yes | pick | rate | ask |
+ * rank | batch`).
+ *
+ * `enabled` is "Let agents use System One". It is on by default, and it means
+ * nothing until an engine is chosen and has passed its Test: the switch is what
+ * the user turns OFF, not a consent that turns anything on by itself.
+ *
+ * The budgets are US dollars per local day. Only the hosted Jev has a price, so
+ * on an OpenJev server or the local judge a budget above zero never binds. A
+ * budget of zero refuses every agent request.
+ */
+export interface SystemOneAgentSettings {
+	enabled: boolean;
+	/** The most all agents together may spend in a day. */
+	dailyBudgetUsd: number;
+	/** The most one agent may spend in a day, or null for no cap of its own. */
+	perAgentBudgetUsd: number | null;
+}
+
+/** A dollar a day buys about 23 million input tokens on the hosted Jev. */
+export const SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD = 1;
+
+/** The largest budget accepted. A guard against a mistyped number, not a recommendation. */
+export const SYSTEM_ONE_MAX_DAILY_BUDGET_USD = 1_000;
+
+export const DEFAULT_SYSTEM_ONE_AGENT_SETTINGS: SystemOneAgentSettings = Object.freeze({
+	enabled: true,
+	dailyBudgetUsd: SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD,
+	perAgentBudgetUsd: null,
+});
 
 export const DEFAULT_SYSTEM_ONE_SETTINGS: SystemOneSettings = Object.freeze({
 	engine: 'off',
@@ -163,7 +202,37 @@ export const DEFAULT_SYSTEM_ONE_SETTINGS: SystemOneSettings = Object.freeze({
 	models: Object.freeze({}),
 	failPolicies: Object.freeze({}),
 	keepInputs: false,
+	agents: DEFAULT_SYSTEM_ONE_AGENT_SETTINGS,
 });
+
+/** Why a value is not a usable daily budget, or `null` when it is. */
+export function systemOneBudgetProblem(value: unknown): string | null {
+	if (
+		typeof value !== 'number' ||
+		!Number.isFinite(value) ||
+		value < 0 ||
+		value > SYSTEM_ONE_MAX_DAILY_BUDGET_USD
+	) {
+		return `A budget is a number of US dollars a day, from 0 to ${SYSTEM_ONE_MAX_DAILY_BUDGET_USD}.`;
+	}
+	return null;
+}
+
+/** Read stored agent settings. An unusable field reads as its default. */
+function parseSystemOneAgentSettings(value: unknown): SystemOneAgentSettings {
+	const record = isPlainObject(value) ? value : {};
+	return {
+		enabled: record.enabled !== false,
+		dailyBudgetUsd:
+			systemOneBudgetProblem(record.dailyBudgetUsd) === null
+				? (record.dailyBudgetUsd as number)
+				: SYSTEM_ONE_DEFAULT_DAILY_BUDGET_USD,
+		perAgentBudgetUsd:
+			systemOneBudgetProblem(record.perAgentBudgetUsd) === null
+				? (record.perAgentBudgetUsd as number)
+				: null,
+	};
+}
 
 /** Why a value is not a usable request budget, or `null` when it is. */
 export function systemOneTimeoutProblem(value: unknown): string | null {
@@ -243,6 +312,7 @@ export function parseSystemOneSettings(value: unknown): SystemOneSettings {
 		models,
 		failPolicies: parseSystemOneFailPolicies(record.failPolicies),
 		keepInputs: record.keepInputs === true,
+		agents: parseSystemOneAgentSettings(record.agents),
 	};
 }
 
@@ -269,6 +339,15 @@ export interface SystemOneSettingsPatch {
 	failPolicy?: { taskId: string; policy: SystemOneFailPolicy | 'default' };
 	/** "Keep inputs in the ledger". */
 	keepInputs?: boolean;
+	/**
+	 * What agents may do. Each field is optional and left as it is when absent;
+	 * `perAgentBudgetUsd: null` removes the per-agent cap.
+	 */
+	agents?: {
+		enabled?: boolean;
+		dailyBudgetUsd?: number;
+		perAgentBudgetUsd?: number | null;
+	};
 }
 
 export type SystemOneSettingsChange =
@@ -291,6 +370,7 @@ export function applySystemOneSettingsPatch(
 		...current,
 		models: { ...current.models },
 		failPolicies: { ...current.failPolicies },
+		agents: { ...current.agents },
 	};
 
 	if (raw.engine !== undefined) {
@@ -354,6 +434,33 @@ export function applySystemOneSettingsPatch(
 			return { ok: false, message: 'Keep inputs in the ledger is on or off.' };
 		}
 		next.keepInputs = raw.keepInputs;
+	}
+
+	if (raw.agents !== undefined) {
+		if (!isPlainObject(raw.agents)) {
+			return { ok: false, message: 'A change to what agents may do must be an object.' };
+		}
+		const { enabled, dailyBudgetUsd, perAgentBudgetUsd } = raw.agents;
+		if (enabled !== undefined) {
+			if (typeof enabled !== 'boolean') {
+				return { ok: false, message: 'Let agents use System One is on or off.' };
+			}
+			next.agents.enabled = enabled;
+		}
+		if (dailyBudgetUsd !== undefined) {
+			const problem = systemOneBudgetProblem(dailyBudgetUsd);
+			if (problem) return { ok: false, message: problem };
+			next.agents.dailyBudgetUsd = dailyBudgetUsd as number;
+		}
+		if (perAgentBudgetUsd !== undefined) {
+			if (perAgentBudgetUsd === null) {
+				next.agents.perAgentBudgetUsd = null;
+			} else {
+				const problem = systemOneBudgetProblem(perAgentBudgetUsd);
+				if (problem) return { ok: false, message: problem };
+				next.agents.perAgentBudgetUsd = perAgentBudgetUsd as number;
+			}
+		}
 	}
 
 	return { ok: true, settings: next };
@@ -557,6 +664,12 @@ export interface SystemOneReport {
 	 * the settings alone: nothing is sent to find out.
 	 */
 	problem: string | null;
+	/**
+	 * When the engine in force last passed its Test AS IT IS SET UP NOW (epoch
+	 * ms), or null: off, never tested, tested and failed, or changed since (the
+	 * engine, its URL, its model or its key). Agents may ask only after a pass.
+	 */
+	testPassedAt: number | null;
 	failPolicies: SystemOneFailPolicyRow[];
 }
 

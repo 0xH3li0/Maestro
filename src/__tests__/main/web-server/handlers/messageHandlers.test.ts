@@ -289,6 +289,25 @@ vi.mock('../../../../main/local-models/system-one/decisions', () => ({
 }));
 import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
 
+vi.mock('../../../../main/local-models/system-one/agent-service', () => ({
+	runAgentSystemOneRequest: vi.fn(async () => ({
+		ok: true,
+		kind: 'ask',
+		verb: 'yes',
+		answers: { q: { type: 'noul', probability: 0.93 } },
+		engine: 'jev-cloud',
+		engineLabel: 'Jev (TypeSafe cloud)',
+		calibrated: true,
+		model: 'jev-1.13.0',
+		cached: false,
+		latencyMs: 180,
+		tokens: { inputTokens: 120, outputTokens: 1 },
+		costUsd: 0.000005,
+		redacted: false,
+	})),
+}));
+import { runAgentSystemOneRequest } from '../../../../main/local-models/system-one/agent-service';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -6433,6 +6452,83 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				success: false,
 				error: '"sideways" is not an outcome.',
 			});
+		});
+
+		it('system_one_agent_request hands the request and the caller to the service, and answers with its response', async () => {
+			const request = { kind: 'ask', verb: 'yes', state: 'The build is red.', questions: {} };
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request,
+				fromSessionId: 'agent-1',
+				fromTabId: 'tab-7',
+				// A caller cannot name the key, the engine or the budget: none of these is read.
+				apiKey: 'sk-mine',
+				engine: 'openjev',
+				requestId: 's1-agent-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_agent_result'));
+
+			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith(request, {
+				agentId: 'agent-1',
+				tabId: 'tab-7',
+			});
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 's1-agent-1',
+				response: { ok: true, engine: 'jev-cloud', calibrated: true, cached: false },
+			});
+		});
+
+		it('system_one_agent_request passes on a caller with no tab, and one that names nobody', async () => {
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: { kind: 'rank' },
+				fromSessionId: '  agent-2  ',
+				requestId: 's1-agent-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-2'));
+			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith(
+				{ kind: 'rank' },
+				{ agentId: 'agent-2' }
+			);
+
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: { kind: 'batch' },
+				// A tab with no agent names nobody.
+				fromTabId: 'tab-9',
+				requestId: 's1-agent-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-3'));
+			expect(runAgentSystemOneRequest).toHaveBeenLastCalledWith({ kind: 'batch' }, undefined);
+		});
+
+		it('system_one_agent_request carries a refusal as a successful round trip, and a bug as a failed one', async () => {
+			vi.mocked(runAgentSystemOneRequest).mockResolvedValueOnce({
+				ok: false,
+				code: 'budget',
+				gate: 'budget-day',
+				message: "System One's budget for today is spent. Continue without System One.",
+			});
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: {},
+				requestId: 's1-agent-4',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-4'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				response: { ok: false, code: 'budget', gate: 'budget-day' },
+			});
+
+			vi.mocked(runAgentSystemOneRequest).mockRejectedValueOnce(new Error('engine bug'));
+			handler.handleMessage(client, {
+				type: 'system_one_agent_request',
+				request: {},
+				requestId: 's1-agent-5',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-agent-5'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'engine bug' });
 		});
 
 		it('local_models_tier_options answers with what the harness can launch a tier on', async () => {

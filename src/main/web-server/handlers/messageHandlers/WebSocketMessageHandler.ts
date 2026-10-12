@@ -120,6 +120,7 @@ import {
 	handleLocalModelsServerStop,
 	handleLocalModelsSearch,
 	handleLocalModelsTabCleanup,
+	handleSystemOneAgentRequest,
 	handleSystemOneKeyClear,
 	handleSystemOneKeySet,
 	handleSystemOneLedger,
@@ -902,6 +903,10 @@ export class WebSocketMessageHandler {
 
 			case 'system_one_ledger':
 				void handleSystemOneLedger(this.ctx, client, message);
+				break;
+
+			case 'system_one_agent_request':
+				void handleSystemOneAgentRequest(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':

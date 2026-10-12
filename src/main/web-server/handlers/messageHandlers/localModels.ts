@@ -14,7 +14,7 @@
  * local_models_server_key, local_models_server_ensure,
  * local_models_run_on_test, local_models_tier_options, system_one_status,
  * system_one_set, system_one_key_set, system_one_key_clear, system_one_test,
- * system_one_ledger, notify_speak.
+ * system_one_ledger, system_one_agent_request, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -30,6 +30,7 @@
  * store, the network, or Settings -> Environment run in the app.
  */
 
+import { readCallerMessageFields } from '../../../../shared/agentDelegation';
 import {
 	detectNewLocalModelEndpoints,
 	listLocalModelEndpointModels,
@@ -79,6 +80,7 @@ import {
 	testSystemOne,
 	updateSystemOneSettingsRequest,
 } from '../../../local-models/system-one/service';
+import { runAgentSystemOneRequest } from '../../../local-models/system-one/agent-service';
 import { readSystemOneLedger } from '../../../local-models/system-one/decisions';
 import { testAgentRunOn } from '../../../local-models/run-on-test';
 import { listHarnessTierOptionsRequest } from '../../../local-models/tier-options';
@@ -634,6 +636,35 @@ export function handleSystemOneTest(
 	return respond(ctx, client, message, 'system_one_test_result', async () => ({
 		result: await testSystemOne(),
 	}));
+}
+
+/**
+ * Handle system_one_agent_request - one request from an agent's `maestro-cli
+ * s1 yes | pick | rate | ask | rank | batch`, answered by the same service
+ * function whatever sends it. The engine's key stays in this process: the
+ * answer carries typed answers, the engine's name and the spend, never a key.
+ *
+ * The caller is what the CLI read from its own environment and forwarded as
+ * `fromSessionId` / `fromTabId`, the fields `dispatch` and `ask` already use.
+ * A refusal (off, over budget, no answer from the engine) is a successful round
+ * trip that carries it: only a failure no engine classified is a failed one.
+ */
+export function handleSystemOneAgentRequest(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'system_one_agent_result', async () => {
+		const from = readCallerMessageFields(message);
+		return {
+			response: await runAgentSystemOneRequest(
+				message.request,
+				from
+					? { agentId: from.fromSessionId, ...(from.fromTabId ? { tabId: from.fromTabId } : {}) }
+					: undefined
+			),
+		};
+	});
 }
 
 /**

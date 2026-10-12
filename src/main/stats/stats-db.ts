@@ -75,8 +75,10 @@ import {
 import {
 	insertSystemOneDecision,
 	getSystemOneDecisions,
+	getSystemOneAgentSpend,
 	pruneSystemOneDecisions,
 	clearSystemOneDecisionsCache,
+	type SystemOneAgentSpendRow,
 	type SystemOneDecisionsRead,
 } from './s1-decisions';
 import type {
@@ -916,6 +918,10 @@ export class StatsDB {
 		total: number;
 	} {
 		return getSystemOneDecisions(this.database, read);
+	}
+
+	getSystemOneAgentSpend(since: number): SystemOneAgentSpendRow[] {
+		return getSystemOneAgentSpend(this.database, since);
 	}
 
 	pruneSystemOneDecisions(cutoffMs: number): number {

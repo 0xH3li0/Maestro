@@ -1649,6 +1649,10 @@ export interface Session {
 	// requests (its CLI's small-model requests) when gatewayUrl points at the
 	// proxy. Absent means the provider. See shared/local-models/background-requests.ts.
 	backgroundRequests?: BackgroundRequests;
+	// System One opt-out: true switches `maestro-cli s1` off for this agent while
+	// it stays on for the others. Absent means the agent follows "Let agents use
+	// System One". See isSystemOneOptedOut in shared/local-models/system-one-agent.ts.
+	systemOneOptOut?: boolean;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

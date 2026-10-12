@@ -513,9 +513,9 @@ export function estimateSystemOneRequest(
 	state: SystemOneState,
 	questions: SystemOneQuestions
 ): SystemOneRequestEstimate {
-	const stateTokens = estimateJevTokens(state);
+	const stateTokens = estimateSystemOneTokens(state);
 	const perQuestion = Object.values(questions).map((question) =>
-		estimateJevTokens(question as unknown as SystemOneJson)
+		estimateSystemOneTokens(question as unknown as SystemOneJson)
 	);
 	const questionTokens = perQuestion.reduce((sum, tokens) => sum + tokens, 0);
 	const largestQuestionTokens = perQuestion.reduce((max, tokens) => Math.max(max, tokens), 0);
@@ -532,9 +532,34 @@ export function estimateSystemOneRequest(
 	};
 }
 
-function estimateJevTokens(value: SystemOneJson): number {
+/**
+ * The tokens one value (a state, a question) is estimated to cost, at Jev's
+ * measured rate. What a caller that packs several questions into a request
+ * sizes each of them with.
+ */
+export function estimateSystemOneTokens(value: SystemOneJson): number {
 	const text = typeof value === 'string' ? value : JSON.stringify(value);
 	return text ? Math.ceil(text.length / JEV_CHARS_PER_TOKEN) : 0;
+}
+
+/** How deep a state or a question may nest. Far past any real request; it stops a hostile one. */
+export const SYSTEM_ONE_MAX_JSON_DEPTH = 64;
+
+/**
+ * True for a value JSON can carry as it is: text, a finite number, a boolean,
+ * null, and arrays and plain objects of those. A request from the CLI bridge
+ * has already been through JSON; one from inside the process has not, and a
+ * `Date` or a `Map` there must be refused, not sent as `{}`.
+ */
+export function isSystemOneJson(value: unknown, depth = 0): value is SystemOneJson {
+	if (depth > SYSTEM_ONE_MAX_JSON_DEPTH) return false;
+	if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+	if (typeof value === 'number') return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every((entry) => isSystemOneJson(entry, depth + 1));
+	if (typeof value !== 'object') return false;
+	const prototype = Object.getPrototypeOf(value);
+	if (prototype !== Object.prototype && prototype !== null) return false;
+	return Object.values(value).every((entry) => isSystemOneJson(entry, depth + 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +575,8 @@ function isReadonlyArray(value: unknown): value is readonly string[] {
 	return Array.isArray(value);
 }
 
-function isSystemOneText(value: unknown): value is SystemOneText {
+/** True for instructions or a criteria entry that says something: text that is not blank, or JSON. */
+export function isSystemOneText(value: unknown): value is SystemOneText {
 	if (typeof value === 'string') return value.trim() !== '';
 	return Array.isArray(value) ? value.length > 0 : isPlainObject(value);
 }

@@ -14,9 +14,13 @@ import {
 	JEV_MAX_STATE_AND_QUESTION_TOKENS,
 	SYSTEM_ONE_ENGINE_IDS,
 	choice,
+	SYSTEM_ONE_MAX_JSON_DEPTH,
 	estimateSystemOneRequest,
+	estimateSystemOneTokens,
 	isSystemOneEngineCalibrated,
 	isSystemOneEngineId,
+	isSystemOneJson,
+	isSystemOneText,
 	jevCloudEngine,
 	noul,
 	redactSystemOneRequest,
@@ -259,5 +263,68 @@ describe('tokens and cost', () => {
 			Math.ceil((JEV_MAX_STATE_AND_QUESTION_TOKENS + 1) * JEV_CHARS_PER_TOKEN)
 		);
 		expect(estimateSystemOneRequest('jev-cloud', over, { q: noul('Is it?') }).fits).toBe(false);
+	});
+
+	it('sizes one value the way a whole request is sized', () => {
+		expect(estimateSystemOneTokens('x'.repeat(332))).toBe(100);
+		expect(estimateSystemOneTokens('')).toBe(0);
+		const question = noul('Is it?');
+		expect(estimateSystemOneTokens(question as never)).toBe(
+			estimateSystemOneRequest('jev-cloud', 'x', { q: question }).questionTokens
+		);
+	});
+});
+
+describe('what a request may carry', () => {
+	it('takes text, finite numbers, booleans, null, and lists and plain objects of them', () => {
+		for (const value of [
+			'text',
+			'',
+			0,
+			-1.5,
+			true,
+			null,
+			[],
+			{},
+			[1, 'a', [null]],
+			{ a: { b: [2] } },
+		]) {
+			expect(isSystemOneJson(value)).toBe(true);
+		}
+		expect(isSystemOneJson(Object.create(null))).toBe(true);
+	});
+
+	it('refuses what JSON would change or drop on the way out', () => {
+		for (const value of [
+			undefined,
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			10n,
+			() => 1,
+			Symbol('s'),
+			new Date(0),
+			new Map(),
+			[undefined],
+			{ a: undefined },
+			{ when: new Date(0) },
+		]) {
+			expect(isSystemOneJson(value)).toBe(false);
+		}
+	});
+
+	it('refuses a value nested past the limit instead of walking it', () => {
+		let nested: unknown = 'leaf';
+		for (let depth = 0; depth < SYSTEM_ONE_MAX_JSON_DEPTH; depth++) nested = [nested];
+		expect(isSystemOneJson(nested)).toBe(true);
+		expect(isSystemOneJson([nested])).toBe(false);
+	});
+
+	it('reads instructions as text that says something, or JSON', () => {
+		expect(isSystemOneText('Is it?')).toBe(true);
+		expect(isSystemOneText({ what: 'a bug' })).toBe(true);
+		expect(isSystemOneText(['a', 'b'])).toBe(true);
+		for (const blank of ['', '   ', [], null, undefined, 7]) {
+			expect(isSystemOneText(blank)).toBe(false);
+		}
 	});
 });

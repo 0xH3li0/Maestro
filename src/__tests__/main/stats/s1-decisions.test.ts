@@ -16,6 +16,7 @@ vi.mock('../../../main/utils/logger', () => ({
 import { getCurrentVersion, getTargetVersion, runMigrations } from '../../../main/stats/migrations';
 import {
 	clearSystemOneDecisionsCache,
+	getSystemOneAgentSpend,
 	getSystemOneDecisions,
 	insertSystemOneDecision,
 	pruneSystemOneDecisions,
@@ -76,7 +77,7 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 		runMigrations(db);
 	});
 
-	describe('migration v18', () => {
+	describe('migrations v18 and v19', () => {
 		it('creates the table with the ledger columns and brings the database to the target version', () => {
 			expect(columnNames(db, 's1_decisions')).toEqual([
 				'id',
@@ -94,10 +95,12 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 				'cost_usd',
 				'agent_id',
 				'input',
+				'tab_id',
+				'cached',
 			]);
-			expect(getCurrentVersion(db)).toBe(18);
-			expect(getTargetVersion()).toBe(18);
-			expect(STATS_DB_VERSION).toBe(18);
+			expect(getCurrentVersion(db)).toBe(19);
+			expect(getTargetVersion()).toBe(19);
+			expect(STATS_DB_VERSION).toBe(19);
 		});
 
 		it('indexes the two columns a read filters on', () => {
@@ -127,7 +130,7 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 
 			runMigrations(older);
 
-			expect(getCurrentVersion(older)).toBe(18);
+			expect(getCurrentVersion(older)).toBe(19);
 			expect(columnNames(older, 's1_decisions')).toContain('outcome');
 			expect(older.prepare('SELECT COUNT(*) AS n FROM local_model_runs').get()).toEqual({ n: 1 });
 		});
@@ -155,9 +158,62 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 			const [entry] = getSystemOneDecisions(db, everything).entries;
 
 			expect(entry).toEqual({ ...noAnswer(), id });
-			for (const absent of ['model', 'answers', 'usage', 'costUsd', 'agentId', 'input']) {
+			for (const absent of [
+				'model',
+				'answers',
+				'usage',
+				'costUsd',
+				'agentId',
+				'tabId',
+				'cached',
+				'input',
+			]) {
 				expect(entry).not.toHaveProperty(absent);
 			}
+		});
+
+		it("round-trips an agent's request: its verb as the source, the tab, and the cached mark", () => {
+			const asked = answered({
+				taskId: 'agent:rank',
+				agentId: 'agent-1',
+				tabId: 'tab-7',
+				questionIds: ['c0', 'c1'],
+				answers: {
+					c0: { type: 'noul', probability: 0.9 },
+					c1: { type: 'noul', probability: 0.1 },
+				},
+			});
+			const fromCache = answered({
+				taskId: 'agent:yes',
+				agentId: 'agent-1',
+				startedAt: NOW - 1,
+				latencyMs: 0,
+				usage: { inputTokens: 0, outputTokens: 0 },
+				costUsd: 0,
+				cached: true,
+			});
+			const first = insertSystemOneDecision(db, asked);
+			const second = insertSystemOneDecision(db, fromCache);
+
+			const { entries } = getSystemOneDecisions(db, everything);
+
+			expect(entries).toEqual([
+				{ ...asked, id: first, latencyMs: 242 },
+				{ ...fromCache, id: second },
+			]);
+			// Not cached is the absence of the mark, never `cached: false`.
+			expect(entries[0]).not.toHaveProperty('cached');
+		});
+
+		it("filters by an agent's verb the way it filters by a task", () => {
+			insertSystemOneDecision(db, answered());
+			insertSystemOneDecision(db, answered({ taskId: 'agent:rank' }));
+			insertSystemOneDecision(db, answered({ taskId: 'agent:batch' }));
+
+			const { entries, total } = getSystemOneDecisions(db, { ...everything, taskId: 'agent:rank' });
+
+			expect(total).toBe(1);
+			expect(entries[0].taskId).toBe('agent:rank');
 		});
 
 		it('keeps an input only on the record that carries one', () => {
@@ -252,6 +308,92 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 			expect(entry.id).toBe(id);
 			expect(entry.questionIds).toEqual([]);
 			expect(entry).not.toHaveProperty('answers');
+		});
+	});
+
+	describe('getSystemOneAgentSpend', () => {
+		const spent = (overrides: Partial<SystemOneDecision>): SystemOneDecision =>
+			answered({ taskId: 'agent:rank', agentId: 'agent-1', costUsd: 0.01, ...overrides });
+
+		it('sums each agent since the floor: requests, cache hits, tokens, cost and mean latency', () => {
+			insertSystemOneDecision(db, spent({ latencyMs: 100 }));
+			insertSystemOneDecision(db, spent({ taskId: 'agent:yes', latencyMs: 300, costUsd: 0.02 }));
+			insertSystemOneDecision(
+				db,
+				spent({
+					latencyMs: 0,
+					usage: { inputTokens: 0, outputTokens: 0 },
+					costUsd: 0,
+					cached: true,
+				})
+			);
+			insertSystemOneDecision(db, spent({ agentId: 'agent-2', costUsd: 0.5 }));
+
+			expect(getSystemOneAgentSpend(db, NOW - DAY_MS)).toEqual([
+				{
+					agentId: 'agent-2',
+					requests: 1,
+					cachedRequests: 0,
+					tokensIn: 412,
+					tokensOut: 3,
+					costUsd: 0.5,
+					averageLatencyMs: 242,
+				},
+				{
+					agentId: 'agent-1',
+					requests: 3,
+					cachedRequests: 1,
+					tokensIn: 824,
+					tokensOut: 6,
+					costUsd: expect.closeTo(0.03, 10),
+					// The cached request sent nothing, so it is not in the mean.
+					averageLatencyMs: 200,
+				},
+			]);
+		});
+
+		it("leaves out a task's run, which is Maestro's spend even when it names an agent", () => {
+			insertSystemOneDecision(db, answered({ taskId: 'cue-gate', agentId: 'agent-1', costUsd: 9 }));
+			insertSystemOneDecision(db, spent({}));
+
+			const rows = getSystemOneAgentSpend(db, 0);
+
+			expect(rows).toHaveLength(1);
+			expect(rows[0].costUsd).toBeCloseTo(0.01, 10);
+		});
+
+		it('leaves out what started before the floor, and keeps a request that named no agent', () => {
+			insertSystemOneDecision(db, spent({ startedAt: NOW - 2 * DAY_MS, costUsd: 5 }));
+			insertSystemOneDecision(db, spent({ agentId: undefined, costUsd: 0.25 }));
+
+			expect(getSystemOneAgentSpend(db, NOW - DAY_MS)).toEqual([
+				expect.objectContaining({ agentId: null, requests: 1, costUsd: 0.25 }),
+			]);
+		});
+
+		it('counts a request with no answer, at no cost and outside the mean latency', () => {
+			insertSystemOneDecision(
+				db,
+				noAnswer({ taskId: 'agent:batch', agentId: 'agent-1', outcome: 'unavailable' })
+			);
+
+			expect(getSystemOneAgentSpend(db, 0)).toEqual([
+				{
+					agentId: 'agent-1',
+					requests: 1,
+					cachedRequests: 0,
+					tokensIn: 0,
+					tokensOut: 0,
+					costUsd: 0,
+					averageLatencyMs: 0,
+				},
+			]);
+		});
+
+		it('answers with nothing when no agent has asked', () => {
+			insertSystemOneDecision(db, answered());
+
+			expect(getSystemOneAgentSpend(db, 0)).toEqual([]);
 		});
 	});
 

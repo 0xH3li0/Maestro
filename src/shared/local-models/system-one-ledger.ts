@@ -1,13 +1,16 @@
 /**
- * The System One decision ledger: one record per task run that was handed to
- * an engine, and the words every surface uses to read them.
+ * The System One decision ledger: one record per request that was handed to an
+ * engine, and the words every surface uses to read them.
  *
- * `runSystemOneTask` (the task router) is the only producer. It records every
- * run that reached the System One path, answered or not, with the outcome the
- * task's fail policy gave it, so "what did System One decide, and what happened
- * when it could not" has one answer. The records are kept in `stats.db`
- * (`s1_decisions`) for {@link SYSTEM_ONE_LEDGER_RETENTION_DAYS} days and read
- * by the ledger in Settings > Models > System One and `maestro-cli s1 ledger`.
+ * There are two producers. `runSystemOneTask` (the task router) records every
+ * task run that reached the System One path, answered or not, with the outcome
+ * the task's fail policy gave it, so "what did System One decide, and what
+ * happened when it could not" has one answer. `runAgentSystemOneRequest` (the
+ * agent service) records every request an agent's `maestro-cli s1` verb sent to
+ * an engine or was answered from the cache, filed under `agent:<verb>` with the
+ * agent and tab that asked. The records are kept in `stats.db` (`s1_decisions`)
+ * for {@link SYSTEM_ONE_LEDGER_RETENTION_DAYS} days and read by the ledger in
+ * Settings > Models > System One and `maestro-cli s1 ledger`.
  *
  * Two rules are written down here so no surface restates them differently:
  *
@@ -31,8 +34,13 @@ import {
 	type SystemOneTaskRequest,
 	type SystemOneUsage,
 } from './system-one';
+import {
+	isSystemOneAgentSourceId,
+	systemOneAgentSourceVerb,
+	type SystemOneAgentSourceId,
+} from './system-one-agent';
 import type { SystemOneEngineChoice } from './system-one-settings';
-import { isLocalModelTaskId, type LocalModelTaskId } from './tasks';
+import { LOCAL_MODEL_TASKS, isLocalModelTaskId, type LocalModelTaskId } from './tasks';
 
 // ---------------------------------------------------------------------------
 // A decision
@@ -70,8 +78,27 @@ export function isSystemOneDecisionOutcome(value: unknown): value is SystemOneDe
 /** Why a run had no answer. `off` when the task was assigned and no engine was chosen. */
 export type SystemOneDecisionCode = SystemOneErrorCode | 'off';
 
+/**
+ * What a record is filed under: the task that ran, or `agent:<verb>` for a
+ * request an agent sent through `maestro-cli s1`.
+ */
+export type SystemOneLedgerTaskId = LocalModelTaskId | SystemOneAgentSourceId;
+
+export function isSystemOneLedgerTaskId(value: unknown): value is SystemOneLedgerTaskId {
+	return isLocalModelTaskId(value) || isSystemOneAgentSourceId(value);
+}
+
+/**
+ * What a record's source is called: the task's label, or "Agent: rank". A
+ * stored record can name a task a later build no longer has; it reads as its id.
+ */
+export function systemOneLedgerTaskLabel(taskId: SystemOneLedgerTaskId): string {
+	if (isSystemOneAgentSourceId(taskId)) return `Agent: ${systemOneAgentSourceVerb(taskId)}`;
+	return (LOCAL_MODEL_TASKS as Partial<typeof LOCAL_MODEL_TASKS>)[taskId]?.label ?? taskId;
+}
+
 export interface SystemOneDecision {
-	taskId: LocalModelTaskId;
+	taskId: SystemOneLedgerTaskId;
 	/** The engine that was asked. `off` when the task was assigned and no engine was chosen. */
 	engine: SystemOneEngineChoice;
 	/** The model the engine says answered. Absent with no answer. */
@@ -91,6 +118,13 @@ export interface SystemOneDecision {
 	costUsd?: number;
 	/** The agent the run was for, when its caller knows one. */
 	agentId?: string;
+	/** The AI tab of that agent whose turn asked, for an agent's own request. */
+	tabId?: string;
+	/**
+	 * True when the answers came from the answer cache: nothing was sent, and the
+	 * record carries no tokens and no cost. Only an agent's request is cached.
+	 */
+	cached?: boolean;
 	/**
 	 * The state and the questions, redacted, as {@link formatSystemOneLedgerInput}
 	 * writes them. Present only for a run made while "Keep inputs in the ledger"
@@ -166,7 +200,7 @@ export const SYSTEM_ONE_LEDGER_DEFAULT_LIMIT = 100;
 export const SYSTEM_ONE_LEDGER_MAX_LIMIT = 1_000;
 
 export interface SystemOneLedgerQuery {
-	taskId?: LocalModelTaskId;
+	taskId?: SystemOneLedgerTaskId;
 	outcome?: SystemOneLedgerOutcomeFilter;
 	/** Epoch ms. Only runs that started at or after it. */
 	since?: number;
@@ -191,8 +225,11 @@ export function parseSystemOneLedgerQuery(raw: unknown): SystemOneLedgerQueryRes
 	const query: SystemOneLedgerQuery = {};
 
 	if (record.taskId !== undefined) {
-		if (!isLocalModelTaskId(record.taskId)) {
-			return { ok: false, message: `"${String(record.taskId)}" is not a task.` };
+		if (!isSystemOneLedgerTaskId(record.taskId)) {
+			return {
+				ok: false,
+				message: `"${String(record.taskId)}" is not a task, or an agent verb spelled agent:<verb>.`,
+			};
 		}
 		query.taskId = record.taskId;
 	}

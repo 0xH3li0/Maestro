@@ -342,14 +342,19 @@ export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
 `;
 
 // ============================================================================
-// System One Decisions (Migration v18)
+// System One Decisions (Migration v18, columns added in v19)
 // ============================================================================
 
 /**
- * One row per task run that was handed to a System One engine (see
+ * One row per request that was handed to a System One engine (see
  * `SystemOneDecision` in shared/local-models/system-one-ledger.ts), answered or
  * not. A task whose assignment is not System One ran nothing here and is not
  * recorded.
+ *
+ * `task_id` is the task that ran, or `agent:<verb>` for a request an agent sent
+ * through `maestro-cli s1`; the prefix is what a day's agent spend is summed
+ * by. `tab_id` is that agent's AI tab, and `cached` is 1 for a request answered
+ * from the answer cache (nothing sent, no tokens, no cost). Both came in v19.
  *
  * `engine` is the engine that was asked, or `off` for a task assigned to System
  * One while no engine was chosen. `outcome` is what the task's fail policy did
@@ -376,8 +381,19 @@ export const CREATE_S1_DECISIONS_SQL = `
     tokens_out INTEGER,
     cost_usd REAL,
     agent_id TEXT,
-    input TEXT
+    input TEXT,
+    tab_id TEXT,
+    cached INTEGER NOT NULL DEFAULT 0
   )
+`;
+
+/** Migration v19, for an `s1_decisions` table created before the columns existed. */
+export const ADD_S1_DECISION_TAB_ID_COLUMN_SQL = `
+  ALTER TABLE s1_decisions ADD COLUMN tab_id TEXT
+`;
+
+export const ADD_S1_DECISION_CACHED_COLUMN_SQL = `
+  ALTER TABLE s1_decisions ADD COLUMN cached INTEGER NOT NULL DEFAULT 0
 `;
 
 export const CREATE_S1_DECISIONS_INDEXES_SQL = `
