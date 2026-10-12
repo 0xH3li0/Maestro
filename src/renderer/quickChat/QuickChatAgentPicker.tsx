@@ -121,9 +121,11 @@ export function QuickChatAgentPicker({
 	);
 
 	const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-		// Every key typed here is the picker's. Escape especially: the window's
-		// own Escape hides Quick Chat, and backing out of a picker must not.
-		e.stopPropagation();
+		// Every plain key typed here is the picker's. Escape especially: the
+		// window's own Escape hides Quick Chat, and backing out of a picker must
+		// not. Cmd/Ctrl chords (Cmd+K to close, Cmd+B, Cmd+P) still reach the
+		// window, which ignores any chord it does not own.
+		if (!(e.metaKey || e.ctrlKey)) e.stopPropagation();
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			onClose();

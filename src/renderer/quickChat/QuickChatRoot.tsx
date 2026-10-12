@@ -48,6 +48,9 @@ const COMPOSER_MAX_HEIGHT = 120;
 const DRAG_REGION = { WebkitAppRegion: 'drag' } as React.CSSProperties;
 const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 
+/** The window's in-window chords: Cmd (Ctrl off macOS) plus this letter. */
+const QUICK_CHAT_KEYS = { newChat: 'n', picker: 'k', keep: 'b', pin: 'p' } as const;
+
 /**
  * The grip the whole window is dragged by. The composer-only shape is all
  * input and buttons, so without it there is nothing to grab there.
@@ -273,31 +276,47 @@ export function QuickChatRoot() {
 		},
 		[run, snapshot.agentId]
 	);
-	const pickerShortcut = formatShortcutKeys(['Meta', 'k']);
+	const pickerShortcut = formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.picker]);
 	const newChat = useCallback(() => {
 		setDraft('');
 		void run({ type: 'new' }).then(() => textareaRef.current?.focus());
 	}, [run]);
+	const togglePersistent = useCallback(
+		() => void run({ type: 'setPersistent', persistent: !snapshot.persistent }),
+		[run, snapshot.persistent]
+	);
+	const togglePicker = useCallback(() => {
+		if (pickerOpen) closePicker();
+		else setPickerOpen(true);
+	}, [pickerOpen, closePicker]);
 
 	useEffect(() => {
+		// Cmd (Ctrl off macOS) + letter. Shift is left free for the composer.
+		const chords: Record<string, () => void> = {
+			[QUICK_CHAT_KEYS.newChat]: newChat,
+			[QUICK_CHAT_KEYS.picker]: togglePicker,
+			[QUICK_CHAT_KEYS.keep]: togglePersistent,
+			[QUICK_CHAT_KEYS.pin]: togglePinned,
+		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				// Escape backs out of the picker first; only a second press hides.
 				if (pickerOpen) closePicker();
 				else hide();
-			} else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'n') {
-				e.preventDefault();
-				newChat();
-			} else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'k') {
-				e.preventDefault();
-				if (pickerOpen) closePicker();
-				else setPickerOpen(true);
+				return;
 			}
+			if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+			const action = chords[e.key.toLowerCase()];
+			if (!action) return;
+			e.preventDefault();
+			// A held chord auto-repeats; acting on each repeat flips a toggle back.
+			if (e.repeat) return;
+			action();
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [hide, newChat, pickerOpen, closePicker]);
+	}, [hide, newChat, pickerOpen, closePicker, togglePicker, togglePersistent, togglePinned]);
 
 	const proseStyles = useMemo(
 		() => generateTerminalProseStyles(theme, '.quick-chat-messages'),
@@ -313,7 +332,7 @@ export function QuickChatRoot() {
 	const agentButton = (
 		<button
 			type="button"
-			onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+			onClick={togglePicker}
 			title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
 			aria-label="Switch agent"
 			aria-expanded={pickerOpen}
@@ -372,7 +391,8 @@ export function QuickChatRoot() {
 							? `This chat stays as a tab on ${agentName} after you start a new one. Click to make it temporary again.`
 							: `Temporary: this chat is deleted when you start a new one. Click to keep it as a tab on ${agentName}.`
 					}
-					onClick={() => void run({ type: 'setPersistent', persistent: !snapshot.persistent })}
+					shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.keep])}
+					onClick={togglePersistent}
 				>
 					{snapshot.persistent ? (
 						<BookmarkCheck className="w-4 h-4" style={{ color: c.accent }} />
@@ -388,6 +408,7 @@ export function QuickChatRoot() {
 							? 'Floats above other windows. Click to let it fall behind them.'
 							: 'Falls behind other windows when you click away. Click to float it on top.'
 					}
+					shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.pin])}
 					onClick={togglePinned}
 				>
 					{pinned ? (
@@ -448,7 +469,7 @@ export function QuickChatRoot() {
 					<IconButton
 						theme={theme}
 						label="New chat"
-						shortcut={formatShortcutKeys(['Meta', 'n'])}
+						shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.newChat])}
 						onClick={newChat}
 					>
 						<PenSquare className="w-4 h-4" />
