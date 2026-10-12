@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 17;
+const RC_TARGET_VERSION = 18;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -95,6 +95,7 @@ function crossBranchDb(
 		localModelRuns?: boolean;
 		proxyRequests?: boolean;
 		proxyRoutedTo?: boolean;
+		s1Decisions?: boolean;
 	}
 ): Database.Database {
 	const db = openDb();
@@ -111,6 +112,7 @@ function crossBranchDb(
 	if (missing.localModelRuns) db.exec('DROP TABLE local_model_runs');
 	if (missing.proxyRequests) db.exec('DROP TABLE proxy_requests');
 	if (missing.proxyRoutedTo) db.exec('ALTER TABLE proxy_requests DROP COLUMN routed_to');
+	if (missing.s1Decisions) db.exec('DROP TABLE s1_decisions');
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -252,5 +254,18 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
 		expect(logger.warn).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v17');
+	});
+
+	it('creates s1_decisions for a database stamped v18 without it', () => {
+		// v18 declares isApplied, so if rc ships a different v18 first, an install
+		// stamped 18 by that build still gets the System One ledger's table.
+		const db = crossBranchDb(RC_TARGET_VERSION, { s1Decisions: true });
+		expect(hasTable(db, 's1_decisions')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 's1_decisions')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v18');
 	});
 });

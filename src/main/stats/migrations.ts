@@ -39,6 +39,8 @@ import {
 	CREATE_PROXY_REQUESTS_SQL,
 	CREATE_PROXY_REQUESTS_INDEXES_SQL,
 	ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL,
+	CREATE_S1_DECISIONS_SQL,
+	CREATE_S1_DECISIONS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -161,6 +163,12 @@ function getMigrations(): Migration[] {
 			description: 'Add routed_to column to proxy_requests for background request routing',
 			up: (db) => migrateV17(db),
 			isApplied: (db) => hasColumn(db, 'proxy_requests', 'routed_to'),
+		},
+		{
+			version: 18,
+			description: 'Add s1_decisions table for the System One decision ledger',
+			up: (db) => migrateV18(db),
+			isApplied: (db) => hasTable(db, 's1_decisions'),
 		},
 	];
 }
@@ -471,6 +479,17 @@ function migrateV17(db: Database.Database): void {
 		db.prepare(ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL).run();
 	}
 	logger.debug('Added routed_to column to proxy_requests', LOG_CONTEXT);
+}
+
+/**
+ * Migration v18: s1_decisions - one row per task run that was handed to a
+ * System One engine, so the ledger can show what was decided and what happened
+ * when no answer came. Declares `isApplied` for the same reason v15 does.
+ */
+function migrateV18(db: Database.Database): void {
+	runStatements(db, CREATE_S1_DECISIONS_SQL);
+	runStatements(db, CREATE_S1_DECISIONS_INDEXES_SQL);
+	logger.debug('Created s1_decisions table', LOG_CONTEXT);
 }
 
 /**

@@ -1,6 +1,6 @@
-// `maestro-cli s1 status|set|key|test` - the System One engine from the command
-// line: which engine answers typed questions, where its key comes from, and
-// whether it answers.
+// `maestro-cli s1 status|set|key|test|ledger` - the System One engine from the
+// command line: which engine answers typed questions, where its key comes from,
+// whether it answers, and what it decided.
 //
 // Every verb runs in the desktop over the WS bridge, through the same service
 // functions the System One card in Settings > Models calls, so an engine chosen
@@ -13,10 +13,13 @@
 //                     local judge, the source it answers on)
 //   set timeout       the request budget for Jev and OpenJev, in milliseconds
 //   set fail-policy   what one task does when the engine gives no answer
+//   set keep-inputs   whether a decision record keeps what was asked, redacted
 //   key set           store a key, read from STANDARD INPUT. It is never an
 //                     argument, so it is never in shell history or a process list
 //   key clear         forget the stored key
 //   test              ask one fixed question; print the answer, latency, engine
+//   ledger            the decisions of the last 30 days, newest first, by task,
+//                     outcome and time
 //
 // No verb prints a key, and no reply from the app carries one.
 //
@@ -30,16 +33,26 @@ import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import {
 	formatSuccess,
+	formatSystemOneLedger,
 	formatSystemOneReport,
 	formatSystemOneTestResult,
 	formatWarning,
 } from '../output/formatter';
+import { parseTimeInput } from '../../shared/computer-history/timeRange';
 import {
 	LOCAL_JUDGE_DEFAULT_TIMEOUT_MS,
 	type SystemOneRemoteEngineId,
 } from '../../shared/local-models/system-one';
 import {
+	SYSTEM_ONE_LEDGER_MAX_LIMIT,
+	SYSTEM_ONE_LEDGER_OUTCOME_FILTERS,
+	isSystemOneLedgerOutcomeFilter,
+	type SystemOneLedgerPage,
+	type SystemOneLedgerQuery,
+} from '../../shared/local-models/system-one-ledger';
+import {
 	SYSTEM_ONE_ENGINE_CHOICES,
+	SYSTEM_ONE_KEEP_INPUTS_DESCRIPTIONS,
 	SYSTEM_ONE_REMOTE_ENGINE_IDS,
 	isSystemOneEngineChoice,
 	isSystemOneRemoteEngineId,
@@ -52,7 +65,11 @@ import {
 	type SystemOneSettingsPatch,
 	type SystemOneTestResult,
 } from '../../shared/local-models/system-one-settings';
-import { LOCAL_JUDGE_TASK_ID, localModelAssignmentCaution } from '../../shared/local-models/tasks';
+import {
+	LOCAL_JUDGE_TASK_ID,
+	isLocalModelTaskId,
+	localModelAssignmentCaution,
+} from '../../shared/local-models/tasks';
 import { resolveAssignmentSpec, storeTaskAssignment } from './models-assign';
 
 /** A status read or a settings write: one small file and no network. */
@@ -260,6 +277,23 @@ export async function systemOneSetFailPolicy(
 	);
 }
 
+export async function systemOneSetKeepInputs(value: string, options: JsonOption): Promise<void> {
+	if (value !== 'on' && value !== 'off') {
+		fail('Keep inputs in the ledger is on or off.', options.json, ExitCode.InvalidUsage);
+	}
+	const report = await applyPatch({ keepInputs: value === 'on' }, options.json);
+	if (options.json) {
+		printReport(report, true);
+		return;
+	}
+	const stored = report.settings.keepInputs ? 'on' : 'off';
+	console.log(formatSuccess(`Keep inputs in the ledger: ${stored}`));
+	console.log(`  ${SYSTEM_ONE_KEEP_INPUTS_DESCRIPTIONS[stored]}`);
+	if (stored === 'off') {
+		console.log('  Inputs already kept stay until their records are 30 days old.');
+	}
+}
+
 interface KeyOptions extends JsonOption {
 	engine?: string;
 }
@@ -363,4 +397,67 @@ export async function systemOneTest(options: JsonOption): Promise<void> {
 	if (options.json) console.log(JSON.stringify({ success: result.ok, ...result }));
 	else console.log(formatSystemOneTestResult(result));
 	if (!result.ok) exitWith(ExitCode.GeneralError);
+}
+
+interface LedgerOptions extends JsonOption {
+	task?: string;
+	outcome?: string;
+	since?: string;
+	limit?: string;
+}
+
+export async function systemOneLedger(options: LedgerOptions): Promise<void> {
+	const { json } = options;
+	const query: SystemOneLedgerQuery = {};
+	if (options.task !== undefined) {
+		if (!isLocalModelTaskId(options.task)) {
+			fail(
+				`"${options.task}" is not a task. List them with: maestro-cli models tasks`,
+				json,
+				ExitCode.InvalidUsage
+			);
+		}
+		query.taskId = options.task;
+	}
+	if (options.outcome !== undefined) {
+		if (!isSystemOneLedgerOutcomeFilter(options.outcome)) {
+			fail(
+				`"${options.outcome}" is not an outcome. Use ${SYSTEM_ONE_LEDGER_OUTCOME_FILTERS.join(', ')}.`,
+				json,
+				ExitCode.InvalidUsage
+			);
+		}
+		query.outcome = options.outcome;
+	}
+	if (options.since !== undefined) {
+		const since = parseTimeInput(options.since, Date.now());
+		if (since === null) {
+			fail(
+				`"${options.since}" is not a time. Use 30m, 2h, 1d, 1w, ISO-8601, or epoch.`,
+				json,
+				ExitCode.InvalidUsage
+			);
+		}
+		query.since = since;
+	}
+	if (options.limit !== undefined) {
+		const limit = Number(options.limit);
+		if (!Number.isInteger(limit) || limit < 1 || limit > SYSTEM_ONE_LEDGER_MAX_LIMIT) {
+			fail(
+				`The limit must be a whole number from 1 to ${SYSTEM_ONE_LEDGER_MAX_LIMIT}.`,
+				json,
+				ExitCode.InvalidUsage
+			);
+		}
+		query.limit = limit;
+	}
+
+	const reply = await send<{ success: boolean; error?: string; page?: SystemOneLedgerPage }>(
+		{ type: 'system_one_ledger', query },
+		'system_one_ledger_result',
+		json
+	);
+	if (!reply.page) fail('The desktop app sent no ledger.', json);
+	if (json) console.log(JSON.stringify({ success: true, ...reply.page }));
+	else console.log(formatSystemOneLedger(reply.page));
 }

@@ -116,7 +116,10 @@ export async function evaluateCueGate(request: CueGateRequest): Promise<CueGateC
 	const judged = await runSystemOneTask(
 		TASK_ID,
 		{ condition: request.condition, event: request.event },
-		request.onUnavailable ? { failPolicy: FAIL_POLICY_FOR[request.onUnavailable] } : {}
+		{
+			...(request.onUnavailable ? { failPolicy: FAIL_POLICY_FOR[request.onUnavailable] } : {}),
+			...(request.agentId ? { agentId: request.agentId } : {}),
+		}
 	);
 	if (judged.status !== 'not-assigned') return checkFromSystemOne(judged, request.subscriptionName);
 

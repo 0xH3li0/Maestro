@@ -149,8 +149,10 @@ import {
 import {
 	systemOneKeyClear,
 	systemOneKeySet,
+	systemOneLedger,
 	systemOneSetEngine,
 	systemOneSetFailPolicy,
+	systemOneSetKeepInputs,
 	systemOneSetTimeout,
 	systemOneStatus,
 	systemOneTest,
@@ -2896,7 +2898,7 @@ modelServer
 const systemOne = program
 	.command('s1')
 	.description(
-		'System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, and a test'
+		'System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, a test, and the decision ledger'
 	);
 
 systemOne
@@ -2909,7 +2911,9 @@ systemOne
 
 const systemOneSet = systemOne
 	.command('set')
-	.description('Change the System One engine, its timeout, or a task fail policy');
+	.description(
+		'Change the System One engine, its timeout, a task fail policy, or what the ledger keeps'
+	);
 
 systemOneSet
 	.command('engine <engine>')
@@ -2940,6 +2944,14 @@ systemOneSet
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(systemOneSetFailPolicy);
 
+systemOneSet
+	.command('keep-inputs <on|off>')
+	.description(
+		'Whether a decision record keeps the state and questions it was asked, with secrets redacted (default off) (requires the desktop app)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneSetKeepInputs);
+
 const systemOneKey = systemOne
 	.command('key')
 	.description('The API key Maestro stores, sealed, for Jev or OpenJev. No verb prints a key');
@@ -2967,6 +2979,21 @@ systemOne
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(systemOneTest);
+
+systemOne
+	.command('ledger')
+	.description(
+		'The decision ledger: what each System One run decided, or what its fail policy did with no answer, newest first, kept 30 days (requires the desktop app)'
+	)
+	.option('--task <task>', 'Only this task (list them with: models tasks)')
+	.option(
+		'--outcome <outcome>',
+		'ok | failed-open | failed-closed | unavailable | cancelled | timeout'
+	)
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default: 30 days)')
+	.option('--limit <n>', 'At most this many decisions, 1 to 1000 (default 100)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(systemOneLedger);
 
 const modelTiers = models
 	.command('tiers')

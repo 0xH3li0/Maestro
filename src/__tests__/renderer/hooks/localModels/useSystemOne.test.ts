@@ -18,7 +18,14 @@ const api = () =>
 
 function report(engine: SystemOneReport['settings']['engine'], timeoutMs = 1500): SystemOneReport {
 	return {
-		settings: { engine, openJevUrl: null, timeoutMs, models: {}, failPolicies: {} },
+		settings: {
+			engine,
+			openJevUrl: null,
+			timeoutMs,
+			models: {},
+			failPolicies: {},
+			keepInputs: false,
+		},
 		engineLabel: engine,
 		disclosure: '',
 		baseUrl: null,
@@ -124,7 +131,7 @@ describe('useSystemOne', () => {
 		expect(api().clearKey).toHaveBeenCalledWith({ engine: 'jev-cloud' });
 	});
 
-	it('keeps the last Test until the engine changes, and across a fail policy change', async () => {
+	it('keeps the last Test until the engine changes, and across a fail policy or Keep inputs change', async () => {
 		api().test.mockResolvedValue(TEST_OK);
 		api().set.mockResolvedValue(report('jev-cloud'));
 		const { result } = renderHook(() => useSystemOne());
@@ -137,6 +144,12 @@ describe('useSystemOne', () => {
 
 		await act(async () => {
 			await result.current.set({ failPolicy: { taskId: 'cue-gate', policy: 'closed' } });
+		});
+		expect(result.current.test).toEqual(TEST_OK);
+
+		// What the ledger keeps is not part of the engine the Test asked either.
+		await act(async () => {
+			await result.current.set({ keepInputs: true });
 		});
 		expect(result.current.test).toEqual(TEST_OK);
 

@@ -334,6 +334,8 @@ export interface CueGateRequest {
 	 * one instead of the task's.
 	 */
 	onUnavailable?: CueGateOnUnavailable;
+	/** The agent that owns the subscription, for the record an evaluator keeps of its decision. */
+	agentId?: string;
 }
 
 /** Answers a gate. Must resolve; a throw is treated as `unavailable`. */

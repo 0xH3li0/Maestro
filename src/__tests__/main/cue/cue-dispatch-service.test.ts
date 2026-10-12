@@ -502,6 +502,8 @@ describe('createCueDispatchService', () => {
 				condition: 'the comment reports a bug',
 				event,
 				subscriptionName: 'my-sub',
+				// The owner agent, for the record a System One gate keeps of its decision.
+				agentId: 'owner',
 			});
 			expect(executeRun).toHaveBeenCalledTimes(1);
 			expect(onGated).not.toHaveBeenCalled();

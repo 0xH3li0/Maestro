@@ -268,6 +268,27 @@ import {
 	updateSystemOneSettingsRequest,
 } from '../../../../main/local-models/system-one/service';
 
+vi.mock('../../../../main/local-models/system-one/decisions', () => ({
+	readSystemOneLedger: vi.fn(() => ({
+		entries: [
+			{
+				id: 'decision-1',
+				taskId: 'cue-gate',
+				engine: 'jev-cloud',
+				questionIds: ['proceed'],
+				outcome: 'failed-open',
+				code: 'timeout',
+				startedAt: 1_800_000_000_000,
+				latencyMs: 1500,
+			},
+		],
+		total: 1,
+		retentionDays: 30,
+		notice: null,
+	})),
+}));
+import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -6386,6 +6407,31 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(lastResponse()).toMatchObject({
 				success: true,
 				result: { ok: false, code: 'timeout' },
+			});
+		});
+
+		it('system_one_ledger answers with the page for the query, and reports a bad query', async () => {
+			const query = { taskId: 'cue-gate', outcome: 'timeout', limit: 10 };
+			handler.handleMessage(client, { type: 'system_one_ledger', query, requestId: 's1-9' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('system_one_ledger_result'));
+			expect(readSystemOneLedger).toHaveBeenLastCalledWith(query);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				page: { total: 1, entries: [{ id: 'decision-1', code: 'timeout' }] },
+			});
+
+			vi.mocked(readSystemOneLedger).mockImplementationOnce(() => {
+				throw new Error('"sideways" is not an outcome.');
+			});
+			handler.handleMessage(client, {
+				type: 'system_one_ledger',
+				query: { outcome: 'sideways' },
+				requestId: 's1-10',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-10'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: '"sideways" is not an outcome.',
 			});
 		});
 

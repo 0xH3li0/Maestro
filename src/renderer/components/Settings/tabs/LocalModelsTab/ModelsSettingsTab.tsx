@@ -65,6 +65,7 @@ import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
 import { SystemOneEngineSection } from './SystemOneEngineCard';
+import { SystemOneLedgerSection } from './SystemOneLedgerSection';
 import { TierDefaultsSection } from './TierDefaultsSection';
 import { UtilityAgentSettings } from './UtilityAgentSettings';
 
@@ -209,6 +210,8 @@ export function ModelsSettingsTab({
 						/>
 					</div>
 				)}
+
+				{panel === 'system-one' && <SystemOneLedgerSection theme={theme} systemOne={systemOne} />}
 
 				{panel === 'system-two' && (
 					<>

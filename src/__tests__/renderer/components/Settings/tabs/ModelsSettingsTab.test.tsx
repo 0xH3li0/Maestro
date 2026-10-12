@@ -87,6 +87,29 @@ describe('ModelsSettingsTab', () => {
 		expect(document.querySelector('[data-setting-id="local-models-utility-agent"]')).toBeNull();
 	});
 
+	it('puts the decision ledger under the System One tasks, and on no other inner tab', async () => {
+		vi.mocked(window.maestro.localModels.systemOne.ledger).mockClear();
+		const { container } = render(<ModelsSettingsTab theme={theme} />);
+		const ledger = () =>
+			container.querySelector('[data-setting-id="local-models-system-one-ledger"]');
+		expect(ledger()).toBeNull();
+		expect(window.maestro.localModels.systemOne.ledger).not.toHaveBeenCalled();
+
+		openPanel('System One');
+		expect(ledger()).not.toBeNull();
+		const tasks = container.querySelector('[data-setting-id="local-models-system-one"]')!;
+		expect(
+			tasks.compareDocumentPosition(ledger()!) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		// Opening the tab reads the ledger. It asks the engine nothing.
+		expect(window.maestro.localModels.systemOne.ledger).toHaveBeenCalledWith({});
+		expect(window.maestro.localModels.systemOne.test).not.toHaveBeenCalled();
+		expect(await screen.findByTestId('system-one-ledger-empty')).toBeInTheDocument();
+
+		openPanel('System Two');
+		expect(ledger()).toBeNull();
+	});
+
 	it('puts the engine card above the System One tasks, and on no other inner tab', async () => {
 		const { container } = render(<ModelsSettingsTab theme={theme} />);
 		const engine = () =>

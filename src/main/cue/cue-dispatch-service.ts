@@ -176,6 +176,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 	 */
 	async function checkGate(
 		condition: string,
+		ownerSessionId: string,
 		sub: CueSubscription,
 		event: CueEvent
 	): Promise<CueGateCheck> {
@@ -191,6 +192,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				event,
 				subscriptionName: sub.name,
 				...(sub.gate_on_unavailable ? { onUnavailable: sub.gate_on_unavailable } : {}),
+				agentId: ownerSessionId,
 			});
 		} catch (error) {
 			// An unclassified failure inside the model engine is a bug. Report
@@ -221,7 +223,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 		chainRootId?: string,
 		parentEventId?: string
 	): Promise<CueEvent | null> {
-		const check = await checkGate(condition, sub, event);
+		const check = await checkGate(condition, ownerSessionId, sub, event);
 		const decision = resolveCueGateDecision(check, sub.gate_on_unavailable);
 
 		if (deps.isActive && !deps.isActive()) {

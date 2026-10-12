@@ -342,6 +342,50 @@ export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// System One Decisions (Migration v18)
+// ============================================================================
+
+/**
+ * One row per task run that was handed to a System One engine (see
+ * `SystemOneDecision` in shared/local-models/system-one-ledger.ts), answered or
+ * not. A task whose assignment is not System One ran nothing here and is not
+ * recorded.
+ *
+ * `engine` is the engine that was asked, or `off` for a task assigned to System
+ * One while no engine was chosen. `outcome` is what the task's fail policy did
+ * and `error_code` is why there was no answer (NULL on `ok`), so a timeout is
+ * `failed-open` or `failed-closed` with the code `timeout`. `question_ids` and
+ * `answers` are JSON; `model`, `answers`, the token counts and `cost_usd` are
+ * NULL with no answer. `agent_id` is NULL when the caller knows no agent.
+ * `input` is the redacted state and questions, and NULL unless "Keep inputs in
+ * the ledger" was on for the run. Rows are pruned after 30 days.
+ */
+export const CREATE_S1_DECISIONS_SQL = `
+  CREATE TABLE IF NOT EXISTS s1_decisions (
+    id TEXT PRIMARY KEY,
+    started_at INTEGER NOT NULL,
+    task_id TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    model TEXT,
+    question_ids TEXT NOT NULL,
+    answers TEXT,
+    outcome TEXT NOT NULL CHECK(outcome IN ('ok', 'failed-open', 'failed-closed', 'unavailable', 'cancelled')),
+    error_code TEXT,
+    latency_ms INTEGER NOT NULL,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    cost_usd REAL,
+    agent_id TEXT,
+    input TEXT
+  )
+`;
+
+export const CREATE_S1_DECISIONS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_s1_decisions_started ON s1_decisions(started_at);
+  CREATE INDEX IF NOT EXISTS idx_s1_decisions_task ON s1_decisions(task_id, started_at)
+`;
+
+// ============================================================================
 // Compound Indexes (Migration v4)
 // ============================================================================
 

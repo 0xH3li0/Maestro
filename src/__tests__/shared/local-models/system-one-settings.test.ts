@@ -111,6 +111,7 @@ describe('parseSystemOneSettings', () => {
 				timeoutMs: 900,
 				models: { 'jev-cloud': ' jev-1.13.0 ', openjev: '', 'local-judge': 'nope' },
 				failPolicies: { 'cue-gate': 'closed', 'injection-screen': 'closed', dictation: 'open' },
+				keepInputs: true,
 			})
 		).toEqual({
 			engine: 'openjev',
@@ -119,6 +120,7 @@ describe('parseSystemOneSettings', () => {
 			models: { 'jev-cloud': 'jev-1.13.0' },
 			// The screen's own default is not written down; dictation has no policy.
 			failPolicies: { 'cue-gate': 'closed' },
+			keepInputs: true,
 		});
 
 		expect(
@@ -193,6 +195,23 @@ describe('applySystemOneSettingsPatch', () => {
 			'open, closed or default'
 		);
 		expect(refusal(base, { failPolicy: 'closed' })).toContain('is not a task');
+	});
+
+	it('keeps no inputs until the user says so, and turns it on and off', () => {
+		expect(base.keepInputs).toBe(false);
+		const on = apply(base, { keepInputs: true });
+		expect(on).toEqual({ ...base, keepInputs: true });
+		// Another change leaves the choice alone.
+		expect(apply(on, { engine: 'jev-cloud' }).keepInputs).toBe(true);
+		expect(apply(on, { keepInputs: false }).keepInputs).toBe(false);
+		expect(refusal(base, { keepInputs: 'yes' })).toContain('on or off');
+	});
+
+	it('reads a stored keepInputs only when it is exactly true', () => {
+		expect(parseSystemOneSettings({ keepInputs: true }).keepInputs).toBe(true);
+		for (const other of [false, 'true', 1, null, undefined]) {
+			expect(parseSystemOneSettings({ keepInputs: other }).keepInputs).toBe(false);
+		}
 	});
 
 	it('applies a valid field only when every field is valid', () => {

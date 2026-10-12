@@ -226,6 +226,14 @@ describe('evaluateCueGate on System One', () => {
 		expect(vi.mocked(runSystemOneTask).mock.calls[1][2]).toEqual({ failPolicy: 'open' });
 	});
 
+	it('names the agent that owns the subscription, for the decision record', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.93));
+
+		await evaluateCueGate({ ...REQUEST, agentId: 'agent-1' });
+
+		expect(vi.mocked(runSystemOneTask).mock.calls[0][2]).toEqual({ agentId: 'agent-1' });
+	});
+
 	it('is unavailable, not a pass or a fail, when the answers hold no yes or no', async () => {
 		vi.mocked(runSystemOneTask).mockResolvedValue({ ...answered(0.9), answers: {} });
 		await expect(evaluateCueGate(REQUEST)).resolves.toEqual({

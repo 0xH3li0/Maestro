@@ -212,6 +212,55 @@ describe('runSystemOneTask', () => {
 		);
 		expect(JSON.stringify(decision)).not.toContain('Crash on save');
 		expect(JSON.stringify(decision)).not.toContain('reports a bug');
+		expect(decision).not.toHaveProperty('input');
+		expect(decision).not.toHaveProperty('agentId');
+	});
+
+	it('records the agent the run was for, when the caller names one', async () => {
+		await gateOnJev();
+
+		await runSystemOneTask('cue-gate', INPUT, { agentId: 'agent-7' });
+
+		expect(recorded().agentId).toBe('agent-7');
+	});
+
+	it('keeps the redacted state and questions on the record only while Keep inputs is on', async () => {
+		// Built at run time so no secret-shaped literal sits in the source.
+		const secret = `sk-ant-api03-${'A1b2C3d4'.repeat(6)}`;
+		const input = {
+			...INPUT,
+			event: {
+				...INPUT.event,
+				payload: { ...INPUT.event.payload, comments: `It crashes. My key is ${secret}` },
+			},
+		};
+		await gateOnJev();
+		await updateSystemOneSettingsRequest({ keepInputs: true });
+
+		await runSystemOneTask('cue-gate', input);
+
+		const kept = recorded().input as string;
+		expect(kept).toContain('Crash on save');
+		expect(kept).toContain('the comment reports a bug');
+		expect(kept).not.toContain(secret);
+		expect(Object.keys(JSON.parse(kept))).toEqual(['state', 'questions']);
+
+		decisions.recordSystemOneDecision.mockReset();
+		await updateSystemOneSettingsRequest({ keepInputs: false });
+		await runSystemOneTask('cue-gate', input);
+
+		expect(recorded()).not.toHaveProperty('input');
+	});
+
+	it('keeps the input of a run that got no answer too, so a failed gate can be read', async () => {
+		assign('cue-gate', SYSTEM_ONE);
+		await updateSystemOneSettingsRequest({ keepInputs: true });
+
+		const result = await runSystemOneTask('cue-gate', INPUT);
+
+		expect(result.status).toBe('failed-open');
+		expect(recorded()).toMatchObject({ engine: 'off', code: 'off' });
+		expect(recorded().input).toContain('Crash on save');
 	});
 
 	it('fails open by default when the engine gives no answer, and asks nothing else', async () => {

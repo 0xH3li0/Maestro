@@ -23,6 +23,9 @@
  *   4. **The request budget is for the remote engines.** The local judge loads a
  *      model on its first answer after an idle spell, which takes seconds, so
  *      it keeps its own budget ({@link systemOneRequestTimeoutMs}).
+ *   5. **The ledger keeps no input unless the user says so.** A decision record
+ *      holds question ids and answers. The state and the question text are kept
+ *      only while `keepInputs` is on, and then redacted (`system-one-ledger.ts`).
  *
  * Everything here is pure and bundle-safe.
  */
@@ -145,6 +148,12 @@ export interface SystemOneSettings {
 	/** The pinned model of each remote engine. An engine not listed has none. */
 	models: Partial<Record<SystemOneRemoteEngineId, string>>;
 	failPolicies: SystemOneFailPolicies;
+	/**
+	 * "Keep inputs in the ledger": whether a decision record keeps the state and
+	 * the questions it was asked, redacted. Off by default. Switching it off stops
+	 * keeping new inputs; the ones already kept stay until their records are pruned.
+	 */
+	keepInputs: boolean;
 }
 
 export const DEFAULT_SYSTEM_ONE_SETTINGS: SystemOneSettings = Object.freeze({
@@ -153,6 +162,7 @@ export const DEFAULT_SYSTEM_ONE_SETTINGS: SystemOneSettings = Object.freeze({
 	timeoutMs: SYSTEM_ONE_DEFAULT_TIMEOUT_MS,
 	models: Object.freeze({}),
 	failPolicies: Object.freeze({}),
+	keepInputs: false,
 });
 
 /** Why a value is not a usable request budget, or `null` when it is. */
@@ -232,6 +242,7 @@ export function parseSystemOneSettings(value: unknown): SystemOneSettings {
 				: SYSTEM_ONE_DEFAULT_TIMEOUT_MS,
 		models,
 		failPolicies: parseSystemOneFailPolicies(record.failPolicies),
+		keepInputs: record.keepInputs === true,
 	};
 }
 
@@ -256,6 +267,8 @@ export interface SystemOneSettingsPatch {
 	timeoutMs?: number;
 	/** `default` removes the user's choice, so the task's own default applies. */
 	failPolicy?: { taskId: string; policy: SystemOneFailPolicy | 'default' };
+	/** "Keep inputs in the ledger". */
+	keepInputs?: boolean;
 }
 
 export type SystemOneSettingsChange =
@@ -334,6 +347,13 @@ export function applySystemOneSettingsPatch(
 			change.taskId as LocalModelTaskId,
 			change.policy as SystemOneFailPolicy | 'default'
 		);
+	}
+
+	if (raw.keepInputs !== undefined) {
+		if (typeof raw.keepInputs !== 'boolean') {
+			return { ok: false, message: 'Keep inputs in the ledger is on or off.' };
+		}
+		next.keepInputs = raw.keepInputs;
 	}
 
 	return { ok: true, settings: next };
@@ -444,6 +464,17 @@ export const SYSTEM_ONE_FAIL_POLICY_DESCRIPTIONS: Readonly<Record<SystemOneFailP
 	Object.freeze({
 		open: 'Fail open: with no answer, the work goes ahead unchecked.',
 		closed: 'Fail closed: with no answer, the work stops.',
+	});
+
+// ---------------------------------------------------------------------------
+// Kept inputs
+// ---------------------------------------------------------------------------
+
+/** What "Keep inputs in the ledger" means in each position, for the toggle and the CLI. */
+export const SYSTEM_ONE_KEEP_INPUTS_DESCRIPTIONS: Readonly<Record<'on' | 'off', string>> =
+	Object.freeze({
+		on: 'Each decision record keeps the state and the questions it was asked, with secrets redacted.',
+		off: 'A decision record keeps question ids and answers, never the text that was judged.',
 	});
 
 // ---------------------------------------------------------------------------

@@ -42,7 +42,14 @@ const KEY = 'sk-card-test-0123456789abcdef';
 function report(overrides: Partial<SystemOneReport> = {}): SystemOneReport {
 	const engine = overrides.settings?.engine ?? 'jev-cloud';
 	return {
-		settings: { engine, openJevUrl: null, timeoutMs: 1500, models: {}, failPolicies: {} },
+		settings: {
+			engine,
+			openJevUrl: null,
+			timeoutMs: 1500,
+			models: {},
+			failPolicies: {},
+			keepInputs: false,
+		},
 		engineLabel: 'Jev (TypeSafe cloud)',
 		disclosure: SYSTEM_ONE_ENGINE_DISCLOSURES[engine],
 		baseUrl: 'https://api.typesafe.ai',
@@ -69,6 +76,7 @@ function withEngine(
 			timeoutMs: 1500,
 			models: {},
 			failPolicies: {},
+			keepInputs: false,
 			...overrides.settings,
 		},
 	});

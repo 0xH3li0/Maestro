@@ -94,6 +94,8 @@ import {
 	testSystemOne,
 	updateSystemOneSettingsRequest,
 } from '../../local-models/system-one/service';
+import { readSystemOneLedger } from '../../local-models/system-one/decisions';
+import type { SystemOneLedgerPage } from '../../../shared/local-models/system-one-ledger';
 import type {
 	SystemOneReport,
 	SystemOneTestResult,
@@ -565,6 +567,16 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('systemOne:test'),
 			async (): Promise<SystemOneTestResult> => testSystemOne()
+		)
+	);
+
+	// The decision ledger: what System One decided and what happened when it
+	// could not. Reads `stats.db`; sends nothing and changes no setting.
+	ipcMain.handle(
+		'localModels:systemOne:ledger',
+		withIpcErrorLogging(
+			handlerOpts('systemOne:ledger'),
+			async (query: unknown): Promise<SystemOneLedgerPage> => readSystemOneLedger(query)
 		)
 	);
 

@@ -228,6 +228,10 @@ vi.mock('../../../../main/local-models/system-one/service', () => {
 	};
 });
 
+vi.mock('../../../../main/local-models/system-one/decisions', () => ({
+	readSystemOneLedger: vi.fn(() => ({ entries: [], total: 0, retentionDays: 30, notice: null })),
+}));
+
 vi.mock('../../../../main/local-models/tier-options', () => ({
 	listHarnessTierOptionsRequest: vi.fn(async () => [
 		{
@@ -300,6 +304,7 @@ import {
 	testSystemOne,
 	updateSystemOneSettingsRequest,
 } from '../../../../main/local-models/system-one/service';
+import { readSystemOneLedger } from '../../../../main/local-models/system-one/decisions';
 import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
 import {
 	artifactForThisPlatform,
@@ -704,6 +709,21 @@ describe('task router channel', () => {
 			probability: 0.97,
 		});
 		expect(testSystemOne).toHaveBeenCalledTimes(1);
+	});
+
+	it('reads the System One ledger with the query it was handed, and asks the engine nothing', async () => {
+		vi.mocked(testSystemOne).mockClear();
+		const query = { taskId: 'cue-gate', outcome: 'timeout' };
+
+		await expect(handlerFor('localModels:systemOne:ledger')({}, query)).resolves.toEqual({
+			entries: [],
+			total: 0,
+			retentionDays: 30,
+			notice: null,
+		});
+
+		expect(readSystemOneLedger).toHaveBeenCalledWith(query);
+		expect(testSystemOne).not.toHaveBeenCalled();
 	});
 
 	it('hands a tier options request to the service and returns its rows', async () => {

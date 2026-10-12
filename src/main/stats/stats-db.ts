@@ -72,6 +72,17 @@ import {
 	getRecentProxyCompressions,
 	clearProxyRequestsCache,
 } from './proxy-requests';
+import {
+	insertSystemOneDecision,
+	getSystemOneDecisions,
+	pruneSystemOneDecisions,
+	clearSystemOneDecisionsCache,
+	type SystemOneDecisionsRead,
+} from './s1-decisions';
+import type {
+	SystemOneDecision,
+	SystemOneLedgerEntry,
+} from '../../shared/local-models/system-one-ledger';
 import { getAggregatedStats } from './aggregations';
 import {
 	getQuerySourceTotals,
@@ -229,6 +240,7 @@ export class StatsDB {
 			clearWizardRunsCache();
 			clearLocalModelRunsCache();
 			clearProxyRequestsCache();
+			clearSystemOneDecisionsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
@@ -889,6 +901,25 @@ export class StatsDB {
 
 	getRecentProxyCompressions(limit: number): ProxyCompressionEntry[] {
 		return getRecentProxyCompressions(this.database, limit);
+	}
+
+	// ============================================================================
+	// System One Decisions (delegated)
+	// ============================================================================
+
+	recordSystemOneDecision(decision: SystemOneDecision): string {
+		return insertSystemOneDecision(this.database, decision);
+	}
+
+	getSystemOneDecisions(read: SystemOneDecisionsRead): {
+		entries: SystemOneLedgerEntry[];
+		total: number;
+	} {
+		return getSystemOneDecisions(this.database, read);
+	}
+
+	pruneSystemOneDecisions(cutoffMs: number): number {
+		return pruneSystemOneDecisions(this.database, cutoffMs);
 	}
 
 	// ============================================================================

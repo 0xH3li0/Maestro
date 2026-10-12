@@ -10,6 +10,12 @@ import {
 import { serverAcceleratorProblemMessage } from '../../shared/local-models/server-accelerator';
 import { JEV_DEFAULT_MODEL } from '../../shared/local-models/system-one';
 import {
+	SYSTEM_ONE_LEDGER_OUTCOME_LABELS,
+	summarizeSystemOneDecision,
+	type SystemOneLedgerEntry,
+	type SystemOneLedgerPage,
+} from '../../shared/local-models/system-one-ledger';
+import {
 	SYSTEM_ONE_REMOTE_ENGINE_IDS,
 	describeSystemOneKey,
 	systemOneEngineChoiceLabel,
@@ -1743,6 +1749,11 @@ export function formatSystemOneReport(report: SystemOneReport): string {
 		}
 	}
 
+	lines.push(
+		'',
+		`  ${c('white', 'Ledger')}  ${settings.keepInputs ? c('yellow', 'keeps inputs, redacted') : 'keeps question ids and answers, not inputs'}  ${dim('maestro-cli s1 ledger')}`
+	);
+
 	if (off) {
 		lines.push(
 			'',
@@ -1769,6 +1780,49 @@ export function formatSystemOneTestResult(result: SystemOneTestResult): string {
 	];
 	if (said === 'no') {
 		lines.push(c('yellow', '  The right answer to the test question is yes.'));
+	}
+	return lines.join('\n');
+}
+
+/** A ledger row's time in the reader's zone, to the second: "2026-10-12 14:03:09". */
+function formatLedgerTime(at: number): string {
+	const date = new Date(at);
+	const two = (value: number) => String(value).padStart(2, '0');
+	return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+}
+
+function ledgerOutcomeColor(entry: SystemOneLedgerEntry): Parameters<typeof c>[0] {
+	if (entry.outcome === 'ok') return 'green';
+	if (entry.outcome === 'cancelled') return 'gray';
+	return entry.outcome === 'failed-closed' ? 'red' : 'yellow';
+}
+
+/**
+ * `maestro-cli s1 ledger`: one line per decision, newest first, with what was
+ * answered or why there was no answer. A kept input is printed under its row.
+ */
+export function formatSystemOneLedger(page: SystemOneLedgerPage): string {
+	const lines = [
+		`${bold(c('cyan', 'SYSTEM ONE LEDGER'))}  ${dim(`${page.entries.length} of ${page.total}, kept ${page.retentionDays} days`)}`,
+	];
+	if (page.notice) lines.push(`  ${c('yellow', page.notice)}`);
+	if (page.entries.length === 0) {
+		lines.push('', dim('  No decisions match.'));
+		return lines.join('\n');
+	}
+
+	const taskWidth = Math.max(...page.entries.map((entry) => entry.taskId.length));
+	const engineWidth = Math.max(...page.entries.map((entry) => entry.engine.length));
+	const outcomeWidth = Math.max(
+		...page.entries.map((entry) => SYSTEM_ONE_LEDGER_OUTCOME_LABELS[entry.outcome].length)
+	);
+	lines.push('');
+	for (const entry of page.entries) {
+		const outcome = SYSTEM_ONE_LEDGER_OUTCOME_LABELS[entry.outcome].padEnd(outcomeWidth);
+		lines.push(
+			`  ${dim(formatLedgerTime(entry.startedAt))}  ${c('white', entry.taskId.padEnd(taskWidth))}  ${entry.engine.padEnd(engineWidth)}  ${c(ledgerOutcomeColor(entry), outcome)}  ${summarizeSystemOneDecision(entry)}  ${dim(`${entry.latencyMs} ms`)}`
+		);
+		if (entry.input !== undefined) lines.push(`    ${dim(entry.input)}`);
 	}
 	return lines.join('\n');
 }

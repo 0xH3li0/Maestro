@@ -324,6 +324,8 @@ export interface SystemOneForTask {
 	engineLabel: string;
 	/** What the task does with no answer. Null for a task that has no fail policy. */
 	failPolicy: SystemOneFailPolicy | null;
+	/** "Keep inputs in the ledger": whether the run's record keeps what was asked. */
+	keepInputs: boolean;
 }
 
 /**
@@ -338,6 +340,7 @@ export async function resolveSystemOneForTask(taskId: LocalModelTaskId): Promise
 		resolved,
 		engineLabel: engineLabelFor(settings, resolved),
 		failPolicy: resolveSystemOneFailPolicy(settings.failPolicies, taskId),
+		keepInputs: settings.keepInputs,
 	};
 }
 
@@ -428,8 +431,9 @@ export async function getSystemOneReport(): Promise<SystemOneReport> {
 // ---------------------------------------------------------------------------
 
 /**
- * Change the engine, the OpenJev URL, a pinned model, the timeout or one task's
- * fail policy: what the card's controls and `maestro-cli s1 set` send. A change
+ * Change the engine, the OpenJev URL, a pinned model, the timeout, one task's
+ * fail policy or "Keep inputs in the ledger": what the card's controls, the
+ * ledger's toggle and `maestro-cli s1 set` send. A change
  * that is refused rejects with the reason and writes nothing.
  */
 export async function updateSystemOneSettingsRequest(raw: unknown): Promise<SystemOneReport> {

@@ -208,6 +208,26 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'local-models-system-one-ledger',
+		...inPanel('system-one'),
+		label: 'Decision ledger',
+		description:
+			'What each System One run decided and what its fail policy did with no answer, kept 30 days, with the choice to keep inputs',
+		keywords: [
+			'ledger',
+			'decision ledger',
+			'decisions',
+			'audit',
+			'history',
+			'keep inputs',
+			'outcome',
+			'failed open',
+			'failed closed',
+			'timed out',
+			'system one',
+		],
+	},
+	{
 		id: 'local-models-system-one',
 		...inPanel('system-one'),
 		label: 'System One tasks',

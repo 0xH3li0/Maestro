@@ -117,8 +117,9 @@ export function useSystemOne(): SystemOneHookState {
 				change(
 					'set',
 					() => systemOne().set(patch),
-					// A fail policy is what a task does with no answer, not part of the engine.
-					Object.keys(patch).every((field) => field === 'failPolicy')
+					// A fail policy is what a task does with no answer, and Keep inputs is
+					// what the ledger holds: neither is part of the engine the Test asked.
+					Object.keys(patch).every((field) => field === 'failPolicy' || field === 'keepInputs')
 				),
 			[change]
 		),

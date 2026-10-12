@@ -320,6 +320,8 @@ describe('searchableSettings', () => {
 			['openjev', 'local-models-system-one-engine'],
 			['local judge', 'local-models-system-one-engine'],
 			['fail closed', 'local-models-system-one-fail-policy'],
+			['decision ledger', 'local-models-system-one-ledger'],
+			['keep inputs', 'local-models-system-one-ledger'],
 			['index cue runs', 'local-models-semantic-index'],
 			['search by meaning', 'local-models-semantic-index'],
 		])('should find "%s" and return id %s', (query, expectedId) => {
@@ -355,6 +357,7 @@ describe('searchableSettings', () => {
 				'local-models-endpoints': 'sources',
 				'local-models-system-one-engine': 'system-one',
 				'local-models-system-one-fail-policy': 'system-one',
+				'local-models-system-one-ledger': 'system-one',
 				'local-models-system-one': 'system-one',
 				'local-models-semantic-index': 'system-one',
 				'local-models-system-two': 'system-two',

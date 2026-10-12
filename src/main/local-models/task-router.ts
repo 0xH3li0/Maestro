@@ -49,7 +49,9 @@ import type {
 	SystemOneErrorCode,
 	SystemOneFailPolicy,
 	SystemOneResult,
+	SystemOneTaskRequest,
 } from '../../shared/local-models/system-one';
+import { formatSystemOneLedgerInput } from '../../shared/local-models/system-one-ledger';
 import type { SystemOneEngineChoice } from '../../shared/local-models/system-one-settings';
 import {
 	buildSystemOneTaskRequest,
@@ -354,6 +356,8 @@ export interface SystemOneTaskOptions {
 	 * recorded is the one that happened.
 	 */
 	failPolicy?: SystemOneFailPolicy;
+	/** The agent this run is for, when the caller knows one. Kept on the decision record. */
+	agentId?: string;
 }
 
 /** A run the engine did not answer. It names the engine that was asked, never another. */
@@ -410,18 +414,30 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 	const request = buildSystemOneTaskRequest(taskId, input);
 	const startedAt = Date.now();
 	const span = beginSleepAwareSpan();
-	const { resolved, engineLabel, failPolicy: taskPolicy } = await resolveSystemOneForTask(taskId);
+	const {
+		resolved,
+		engineLabel,
+		failPolicy: taskPolicy,
+		keepInputs,
+	} = await resolveSystemOneForTask(taskId);
 	const failPolicy = options.failPolicy ?? taskPolicy;
 	const decision = (
-		rest: Omit<SystemOneDecision, 'taskId' | 'engine' | 'questionIds' | 'startedAt'>
+		rest: Omit<
+			SystemOneDecision,
+			'taskId' | 'engine' | 'questionIds' | 'startedAt' | 'agentId' | 'input'
+		>
 	): void =>
-		recordDecision({
-			taskId,
-			engine: resolved.id,
-			questionIds: Object.keys(request.questions),
-			startedAt,
-			...rest,
-		});
+		recordDecision(
+			{
+				taskId,
+				engine: resolved.id,
+				questionIds: Object.keys(request.questions),
+				startedAt,
+				...(options.agentId ? { agentId: options.agentId } : {}),
+				...rest,
+			},
+			keepInputs ? request : null
+		);
 	const noAnswer = (code: SystemOneErrorCode | 'off', reason: string): SystemOneTaskResult => {
 		const status =
 			failPolicy === 'open'
@@ -468,11 +484,16 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 
 /**
  * Record one System One decision. Best-effort, like {@link recordRun}: a record
- * that cannot be kept must never turn an answered gate into a failed one.
+ * that cannot be kept must never turn an answered gate into a failed one. `kept`
+ * is the request, when "Keep inputs in the ledger" is on.
  */
-function recordDecision(decision: SystemOneDecision): void {
+function recordDecision(decision: SystemOneDecision, kept: SystemOneTaskRequest | null): void {
 	try {
-		recordSystemOneDecision(decision);
+		recordSystemOneDecision(
+			// The text is redacted here, inside the guard: it is the user's content,
+			// and it is built only for a run whose record keeps it.
+			kept ? { ...decision, input: formatSystemOneLedgerInput(kept) } : decision
+		);
 	} catch (error) {
 		logger.warn(`Failed to record System One decision: ${error}`, STATS_LOG_CONTEXT);
 		void captureException(error instanceof Error ? error : new Error(String(error)), {

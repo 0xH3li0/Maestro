@@ -2363,7 +2363,7 @@ Put a harness back on the built-in tier table, or one tier with --tier
 
 ## `maestro-cli s1`
 
-System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, and a test
+System One: the engine that answers typed questions (Jev, OpenJev, or a local judge), its key, a test, and the decision ledger
 
 ## `maestro-cli s1 status`
 
@@ -2375,7 +2375,7 @@ The engine in force, its address, model and timeout, where each key comes from, 
 
 ## `maestro-cli s1 set`
 
-Change the System One engine, its timeout, or a task fail policy
+Change the System One engine, its timeout, a task fail policy, or what the ledger keeps
 
 ## `maestro-cli s1 set engine <engine>`
 
@@ -2398,6 +2398,14 @@ The request budget for Jev and OpenJev, in milliseconds (100 to 60000, default 1
 ## `maestro-cli s1 set fail-policy <task> <policy>`
 
 What a task does when the engine gives no answer: open (the work goes ahead) | closed (it stops) | default (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 set keep-inputs <on|off>`
+
+Whether a decision record keeps the state and questions it was asked, with secrets redacted (default off) (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -2432,6 +2440,18 @@ Ask the engine one fixed question and print the answer, the latency and the engi
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 ledger`
+
+The decision ledger: what each System One run decided, or what its fail policy did with no answer, newest first, kept 30 days (requires the desktop app)
+
+| Option                | Description                                                               | Default |
+| --------------------- | ------------------------------------------------------------------------- | ------- |
+| `--task <task>`       | Only this task (list them with: models tasks)                             | -       |
+| `--outcome <outcome>` | ok \| failed-open \| failed-closed \| unavailable \| cancelled \| timeout | -       |
+| `--since <time>`      | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default: 30 days)             | -       |
+| `--limit <n>`         | At most this many decisions, 1 to 1000 (default 100)                      | -       |
+| `--json`              | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli models config`
 

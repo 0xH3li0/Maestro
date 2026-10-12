@@ -1,6 +1,6 @@
 /**
  * @file system-one.test.ts
- * @description Tests for `maestro-cli s1 status|set|key|test`: each request
+ * @description Tests for `maestro-cli s1 status|set|key|test|ledger`: each request
  * crosses the WS bridge in the shape the desktop handler expects, a bad value
  * is refused before anything is sent, the key is read from standard input and
  * is never printed, and the exit code tells a script whether the engine can
@@ -37,8 +37,10 @@ vi.mock('fs', async (importOriginal) => {
 import {
 	systemOneKeyClear,
 	systemOneKeySet,
+	systemOneLedger,
 	systemOneSetEngine,
 	systemOneSetFailPolicy,
+	systemOneSetKeepInputs,
 	systemOneSetTimeout,
 	systemOneStatus,
 	systemOneTest,
@@ -46,6 +48,7 @@ import {
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import { QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
+import type { SystemOneLedgerPage } from '../../../shared/local-models/system-one-ledger';
 import type {
 	SystemOneReport,
 	SystemOneTestResult,
@@ -81,6 +84,7 @@ function report(overrides: Partial<SystemOneReport> = {}): SystemOneReport {
 			timeoutMs: 1500,
 			models: {},
 			failPolicies: {},
+			keepInputs: false,
 		},
 		engineLabel: 'Jev (TypeSafe cloud)',
 		disclosure:
@@ -106,7 +110,14 @@ function report(overrides: Partial<SystemOneReport> = {}): SystemOneReport {
 }
 
 const OFF = report({
-	settings: { engine: 'off', openJevUrl: null, timeoutMs: 1500, models: {}, failPolicies: {} },
+	settings: {
+		engine: 'off',
+		openJevUrl: null,
+		timeoutMs: 1500,
+		models: {},
+		failPolicies: {},
+		keepInputs: false,
+	},
 	engineLabel: 'Off',
 	disclosure: 'System One is off. No task text is sent to an engine.',
 	baseUrl: null,
@@ -159,6 +170,17 @@ describe('s1 status', () => {
 		expect(out).toContain('TypeSafe (api.typesafe.ai)');
 		expect(out).toMatch(/cue-gate\s+open/);
 		expect(out).toMatch(/injection-screen\s+closed/);
+		expect(out).toContain('keeps question ids and answers, not inputs');
+	});
+
+	it('says when the ledger keeps inputs', async () => {
+		mockBridge(() => ({
+			success: true,
+			report: report({ settings: { ...report().settings, keepInputs: true } }),
+		}));
+		await systemOneStatus({});
+
+		expect(printed()).toContain('keeps inputs, redacted');
 	});
 
 	it('prints the whole report as JSON, which carries no key', async () => {
@@ -333,6 +355,41 @@ describe('s1 set timeout and fail-policy', () => {
 	});
 });
 
+describe('s1 set keep-inputs', () => {
+	it('sends on and off as a boolean, and says what the ledger now keeps', async () => {
+		const sent = mockBridge((payload) => ({
+			success: true,
+			report: report({
+				settings: {
+					...report().settings,
+					keepInputs: (payload.patch as { keepInputs: boolean }).keepInputs,
+				},
+			}),
+		}));
+
+		await systemOneSetKeepInputs('on', {});
+		expect(sent[0]).toEqual({
+			payload: { type: 'system_one_set', patch: { keepInputs: true } },
+			responseType: 'system_one_set_result',
+		});
+		expect(printed()).toContain('Keep inputs in the ledger: on');
+		expect(printed()).toContain('with secrets redacted');
+
+		await systemOneSetKeepInputs('off', {});
+		expect(sent[1].payload).toEqual({ type: 'system_one_set', patch: { keepInputs: false } });
+		expect(printed()).toContain('Keep inputs in the ledger: off');
+		expect(printed()).toContain('stay until their records are 30 days old');
+	});
+
+	it('refuses anything but on or off before anything is sent', async () => {
+		const sent = mockBridge(() => ({ success: true, report: report() }));
+		for (const value of ['yes', 'true', '']) {
+			expect(await exitCode(() => systemOneSetKeepInputs(value, {}))).toBe(ExitCode.InvalidUsage);
+		}
+		expect(sent).toHaveLength(0);
+	});
+});
+
 describe('s1 key', () => {
 	it('reads the key from standard input, sends it, and never prints it', async () => {
 		const sent = mockBridge(() => ({ success: true, report: report() }));
@@ -478,5 +535,130 @@ describe('s1 test', () => {
 		mockBridge(() => ({ success: true, result: OK }));
 		await systemOneTest({ json: true });
 		expect(jsonOut()).toMatchObject({ success: true, ok: true, probability: 0.97 });
+	});
+});
+
+describe('s1 ledger', () => {
+	const NOW = 1_800_000_000_000;
+	const page = (overrides: Partial<SystemOneLedgerPage> = {}): SystemOneLedgerPage => ({
+		entries: [
+			{
+				id: 'decision-2',
+				taskId: 'cue-gate',
+				engine: 'jev-cloud',
+				model: 'jev-1.13.0',
+				questionIds: ['proceed'],
+				answers: { proceed: { type: 'noul', probability: 0.93 } },
+				outcome: 'ok',
+				startedAt: NOW,
+				latencyMs: 241,
+				usage: { inputTokens: 412, outputTokens: 3 },
+				costUsd: 0.0000173,
+			},
+			{
+				id: 'decision-1',
+				taskId: 'injection-screen',
+				engine: 'jev-cloud',
+				questionIds: ['injected'],
+				outcome: 'failed-closed',
+				code: 'timeout',
+				startedAt: NOW - 60_000,
+				latencyMs: 1500,
+			},
+		],
+		total: 2,
+		retentionDays: 30,
+		notice: null,
+		...overrides,
+	});
+
+	it('asks for every decision with no flag, and prints one line each', async () => {
+		const sent = mockBridge(() => ({ success: true, page: page() }));
+		await systemOneLedger({});
+
+		expect(sent).toEqual([
+			{
+				payload: { type: 'system_one_ledger', query: {} },
+				responseType: 'system_one_ledger_result',
+			},
+		]);
+		const out = printed();
+		expect(out).toContain('2 of 2, kept 30 days');
+		expect(out).toMatch(/cue-gate\s+jev-cloud\s+Answered\s+yes \(0\.93\)\s+241 ms/);
+		expect(out).toMatch(/injection-screen\s+jev-cloud\s+Failed closed\s+timeout\s+1500 ms/);
+	});
+
+	it('sends the task, the outcome, the limit and --since as a time', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(NOW);
+		try {
+			const sent = mockBridge(() => ({ success: true, page: page() }));
+			await systemOneLedger({ task: 'cue-gate', outcome: 'timeout', since: '2h', limit: '5' });
+
+			expect(sent[0].payload).toEqual({
+				type: 'system_one_ledger',
+				query: { taskId: 'cue-gate', outcome: 'timeout', since: NOW - 2 * 3_600_000, limit: 5 },
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('refuses a bad flag before anything is sent', async () => {
+		const sent = mockBridge(() => ({ success: true, page: page() }));
+		for (const options of [
+			{ task: 'no-such-task' },
+			{ outcome: 'sideways' },
+			{ since: 'yesterday-ish' },
+			{ limit: '0' },
+			{ limit: 'many' },
+			{ limit: '5000' },
+		]) {
+			expect(await exitCode(() => systemOneLedger(options))).toBe(ExitCode.InvalidUsage);
+		}
+		expect(sent).toHaveLength(0);
+		expect(errors()).toContain('ok, failed-open, failed-closed, unavailable, cancelled, timeout');
+	});
+
+	it('prints a kept input under its row, and the notice when decisions are not kept', async () => {
+		const kept = page();
+		kept.entries[0].input = '{"state":"A comment.","questions":{}}';
+		mockBridge(() => ({
+			success: true,
+			page: {
+				...kept,
+				notice: 'Usage statistics are switched off, so new decisions are not kept.',
+			},
+		}));
+		await systemOneLedger({});
+
+		expect(printed()).toContain('{"state":"A comment.","questions":{}}');
+		expect(printed()).toContain('Usage statistics are switched off');
+	});
+
+	it('says so when nothing matches', async () => {
+		mockBridge(() => ({ success: true, page: page({ entries: [], total: 0 }) }));
+		await systemOneLedger({ outcome: 'cancelled' });
+
+		expect(printed()).toContain('No decisions match.');
+	});
+
+	it('prints the page as JSON', async () => {
+		mockBridge(() => ({ success: true, page: page() }));
+		await systemOneLedger({ json: true });
+
+		expect(jsonOut()).toMatchObject({
+			success: true,
+			total: 2,
+			retentionDays: 30,
+			entries: [{ id: 'decision-2' }, { id: 'decision-1', code: 'timeout' }],
+		});
+	});
+
+	it('reports a refusal from the app', async () => {
+		mockBridge(() => ({ success: false, error: 'The statistics database is not open.' }));
+
+		expect(await exitCode(() => systemOneLedger({}))).toBe(ExitCode.GeneralError);
+		expect(errors()).toContain('The statistics database is not open.');
 	});
 });

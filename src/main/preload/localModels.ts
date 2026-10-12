@@ -65,6 +65,10 @@ import type {
 import type { ServerBuildChoice } from '../../shared/local-models/server-engine';
 import type { SystemOneRemoteEngineId } from '../../shared/local-models/system-one';
 import type {
+	SystemOneLedgerPage,
+	SystemOneLedgerQuery,
+} from '../../shared/local-models/system-one-ledger';
+import type {
 	SystemOneReport,
 	SystemOneSettingsPatch,
 	SystemOneTestResult,
@@ -278,16 +282,19 @@ function createModelServerApi() {
 
 /**
  * `window.maestro.localModels.systemOne.*` - the System One engine: which one
- * answers, where its key comes from, and the Test. No call here returns a key:
- * `setKey` is write-only, and the report says only where a key comes from.
- * `test()` is the one call that sends a request to the engine.
+ * answers, where its key comes from, the Test, and the decision ledger. No call
+ * here returns a key: `setKey` is write-only, and the report says only where a
+ * key comes from. `test()` is the one call that sends a request to the engine.
  */
 function createSystemOneApi() {
 	return {
 		/** The engine in force, its key sources and the fail policies. Reads only. */
 		report: (): Promise<SystemOneReport> => ipcRenderer.invoke('localModels:systemOne:report'),
 
-		/** Change the engine, the OpenJev URL, a pinned model, the timeout or a fail policy. */
+		/**
+		 * Change the engine, the OpenJev URL, a pinned model, the timeout, a fail
+		 * policy or "Keep inputs in the ledger".
+		 */
 		set: (patch: SystemOneSettingsPatch): Promise<SystemOneReport> =>
 			ipcRenderer.invoke('localModels:systemOne:set', patch),
 
@@ -301,6 +308,13 @@ function createSystemOneApi() {
 
 		/** Ask the engine in force one fixed question. A failure is a result, not a rejection. */
 		test: (): Promise<SystemOneTestResult> => ipcRenderer.invoke('localModels:systemOne:test'),
+
+		/**
+		 * The decision ledger, newest first: what each System One run decided, or
+		 * what its fail policy did with no answer. Reads only.
+		 */
+		ledger: (query?: SystemOneLedgerQuery): Promise<SystemOneLedgerPage> =>
+			ipcRenderer.invoke('localModels:systemOne:ledger', query),
 
 		/** The settings or a key changed, here or from the CLI. Read `report()` for the rest. */
 		onChanged: (handler: () => void): (() => void) =>

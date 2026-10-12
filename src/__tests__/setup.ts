@@ -834,6 +834,7 @@ const mockMaestro = {
 					timeoutMs: 1500,
 					models: {},
 					failPolicies: {},
+					keepInputs: false,
 				},
 				engineLabel: 'Off',
 				disclosure: 'System One is off. No task text is sent to an engine.',
@@ -858,6 +859,12 @@ const mockMaestro = {
 			setKey: vi.fn(),
 			clearKey: vi.fn(),
 			test: vi.fn(),
+			ledger: vi.fn().mockResolvedValue({
+				entries: [],
+				total: 0,
+				retentionDays: 30,
+				notice: null,
+			}),
 			onChanged: vi.fn().mockReturnValue(() => {}),
 		},
 		semanticIndex: {
