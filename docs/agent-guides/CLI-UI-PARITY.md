@@ -302,12 +302,15 @@ of taking a second round trip or trusting a value the caller guessed.
 | MaestroRun tile (macOS): setup status, Check again                                                     | `maestro-run status [--check-latest]`                                                                                                                                  |
 | MaestroRun tile (macOS): Install MaestroRun / Update to <version>                                      | `maestro-run install`, read with `maestro-run status`                                                                                                                  |
 | MaestroRun tile (macOS): Open Full Disk Access / Reveal in Finder                                      | `maestro-run grant [--reveal]`, read with `maestro-run status`                                                                                                         |
-| Lite: list / edit / save / delete connection profiles                                                  | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes`                                                     |
-| Lite: forget validated host identity                                                                   | `lite profile reset-identity <id> --yes`                                                                                                                               |
-| Lite: connect / reconnect / disconnect / status                                                        | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                                                                                |
-| Lite: connections / commands / dismiss / close                                                         | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                                                                        |
 
 ### Isolated Lite connection controls
+
+| Point-and-click action                                | CLI                                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Lite: list / edit / save / delete connection profiles | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes` |
+| Lite: forget validated host identity                  | `lite profile reset-identity <id> --yes`                                                                           |
+| Lite: connect / reconnect / disconnect / status       | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                            |
+| Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
 
 `maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
 server. It calls the same native dispatcher used by Lite's trusted connection UI
