@@ -571,6 +571,18 @@ export function useIsHeldRetryItem(itemId: string): boolean {
 }
 
 /**
+ * The same question outside React. For a service deciding whether a queued item
+ * is WAITING (it has not run) or HELD (it ran, failed, and a recovery parked it
+ * at the head of its tab's queue until the resend). The two look alike in the
+ * queue and are not alike: taking a held item out of the queue does not stop
+ * its resend, which fires from the recovery's own snapshot.
+ */
+export function isHeldByRecovery(itemId: string | null | undefined): boolean {
+	if (!itemId) return false;
+	return Object.values(useRetryStore.getState().retries).some((e) => e.heldItemId === itemId);
+}
+
+/**
  * Whether the given agent+error should be auto-retried, honoring the per-agent
  * resilience toggles. Returns the strategy, or null to fall back to the modal.
  */
@@ -1164,10 +1176,15 @@ function abandonContextCompaction(key: string, reason?: string): void {
  *
  * A recovery already past its compaction is an ordinary turn in flight, and the
  * interrupt that follows this call ends it like any other.
+ *
+ * `tabId` narrows it to one tab's recovery, for a caller that stopped a single
+ * turn rather than the whole agent (see `cancelRecoveryForTab`).
  */
-export function cancelContextCompaction(sessionId: string): void {
+export function cancelContextCompaction(sessionId: string, tabId?: string): void {
 	for (const entry of Object.values(useRetryStore.getState().retries)) {
 		if (entry.sessionId !== sessionId || !entry.compaction || entry.compaction.compacted) continue;
+		// A caller that stopped ONE tab's turn leaves the agent's other tabs alone.
+		if (tabId && entry.tabId !== tabId) continue;
 		logger.info('[retry] Stop pressed; cancelling context compaction', undefined, {
 			key: entry.key,
 		});
@@ -1370,6 +1387,25 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		// A dispatch-time throw is handled inside dispatchReplay (it settles the
 		// tab); it must not abort the replay of the remaining tabs.
 		dispatchReplay(sessionId, { ...snapshot.item, tabId }, snapshot.deps, key);
+	}
+}
+
+/**
+ * End whatever automatic recovery ONE tab has pending, because the turn it would
+ * resend was withdrawn by the user (Quick Chat's Stop). A context compaction
+ * that has not finished is cancelled quietly, as Stop does for the whole agent;
+ * anything else is an outage retry, cancelled the way its card's button does.
+ *
+ * Without this a withdrawn turn comes back: the recovery resends from its own
+ * snapshot, whatever happened to the queue item it parked.
+ */
+export function cancelRecoveryForTab(sessionId: string, tabId: string): void {
+	const entry = useRetryStore.getState().retries[keyFor(sessionId, tabId)];
+	if (!entry) return;
+	if (entry.compaction && !entry.compaction.compacted) {
+		cancelContextCompaction(sessionId, tabId);
+	} else {
+		cancelRetry(sessionId, tabId);
 	}
 }
 

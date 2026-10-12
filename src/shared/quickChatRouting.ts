@@ -200,7 +200,20 @@ function clip(text: string, max: number): string {
 	return flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;
 }
 
-/** The numbered list of conversations the model chooses from. */
+/**
+ * One piece of user or agent text on its way into the prompt: one line, clipped,
+ * and with its angle brackets escaped so it cannot close the tag it sits in or
+ * open one of its own. A tab title or a History summary can say anything,
+ * including a line dressed up as another conversation.
+ */
+function promptField(text: string, max: number): string {
+	return clip(text, max).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * The conversations the model chooses from, each in its own tag. The number and
+ * the facts are ours; only the title and the excerpt are text someone wrote.
+ */
 export function describeRouteCandidates(shortlist: readonly RouteCandidate[]): string {
 	return shortlist
 		.map((candidate, index) => {
@@ -209,10 +222,14 @@ export function describeRouteCandidates(shortlist: readonly RouteCandidate[]): s
 				candidate.kind === 'open' ? 'open tab' : 'closed tab',
 				`last active ${formatRelativeTime(candidate.lastActiveAt)}`,
 			].filter(Boolean);
-			const title = candidate.title ? clip(candidate.title, PROMPT_TITLE_CHARS) : '(untitled)';
-			return `[${index + 1}] ${title} (${facts.join(', ')})\n${clip(candidate.text, PROMPT_EXCERPT_CHARS) || '(no messages)'}`;
+			return [
+				`<conversation number="${index + 1}" facts="${facts.join(', ')}">`,
+				`<title>${promptField(candidate.title, PROMPT_TITLE_CHARS) || '(untitled)'}</title>`,
+				`<excerpt>${promptField(candidate.text, PROMPT_EXCERPT_CHARS) || '(no messages)'}</excerpt>`,
+				'</conversation>',
+			].join('\n');
 		})
-		.join('\n\n');
+		.join('\n');
 }
 
 /**
@@ -227,7 +244,7 @@ export function buildRoutePrompt(
 ): string {
 	const values: Record<string, string> = {
 		CONVERSATIONS: describeRouteCandidates(shortlist),
-		MESSAGE: clip(message, PROMPT_MESSAGE_CHARS),
+		MESSAGE: promptField(message, PROMPT_MESSAGE_CHARS),
 	};
 	return template.replace(/\{\{([A-Z_]+)\}\}/g, (match, token: string) =>
 		token in values ? values[token] : match
@@ -239,8 +256,9 @@ export function buildRoutePrompt(
  * `'new'`, or null when the answer is neither.
  *
  * Strict on purpose. The conversations the model read may hold text written to
- * steer it, so anything but a bare number in range or the word NEW is treated
- * as no answer, and the caller falls back rather than guess.
+ * steer it (which is also why each one is fenced in a tag it cannot close), so
+ * anything but a bare number in range or the word NEW is treated as no answer,
+ * and the caller falls back rather than guess.
  */
 export function parseRouteAnswer(response: string, count: number): number | 'new' | null {
 	const answer = response

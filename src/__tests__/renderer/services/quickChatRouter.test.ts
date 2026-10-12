@@ -202,7 +202,8 @@ describe('routeQuickChatMessage', () => {
 			const [projectRoot, agentType, prompt, options] = groomContext.mock.calls[0];
 			expect(projectRoot).toBe('/test/project');
 			expect(agentType).toBe('claude-code');
-			expect(prompt).toContain('[1] Amazon Delivery (CURRENT, open tab');
+			expect(prompt).toContain('<conversation number="1" facts="CURRENT, open tab');
+			expect(prompt).toContain('<title>Amazon Delivery</title>');
 			expect(prompt).toContain('and when does it arrive?');
 			expect(options).toMatchObject({
 				cheapTurn: true,
@@ -320,6 +321,18 @@ describe('reopenClosedConversation', () => {
 			'already'
 		);
 		expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(2);
+	});
+
+	it('does not reopen a conversation still replying in a tab that was closed', async () => {
+		// Reopened, used, and closed mid-reply while this one was being read. A
+		// second tab would send a second turn into the same conversation at once.
+		agentWith([buildTab()], {
+			orphanedThinkingTabs: [tab('orphan', { agentSessionId: 's-tax', state: 'busy' })],
+		});
+		expect(
+			await reopenClosedConversation('agent', { agentSessionId: 's-tax', name: null })
+		).toBeNull();
+		expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(1);
 	});
 
 	it('gives up when the transcript has no messages left', async () => {

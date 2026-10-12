@@ -33,11 +33,12 @@ import {
 } from '../../shared/quickChat';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
-import { hasPendingRetry } from '../stores/retryStore';
+import { cancelRecoveryForTab, hasPendingRetry, isHeldByRecovery } from '../stores/retryStore';
 import type { AITab, Session } from '../types';
 import { closeTab, createTab, getTabDisplayName, revealAiTab } from '../utils/tabHelpers';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
+import { nextRunnableQueueItem } from '../utils/executionQueue';
 import { leftBarAgentOrder } from '../utils/leftBarOrder';
 import { generateId } from '../utils/ids';
 import { captureException } from '../utils/sentry';
@@ -225,7 +226,15 @@ function turnView(
 	const tab = findTab(session, turn.tabId);
 	if (tab) turn.tabName = pillName(tab, turn.origin);
 	if (session?.executionQueue?.some((item) => item.id === turn.queuedItemId)) {
-		return { route: route('queued', tab), reply: [] };
+		// In the queue for one of two reasons. Waiting: it has not run. Or held:
+		// it ran, the provider refused it, and an automatic recovery parked it
+		// here until the resend. That one is still the agent's turn.
+		return isHeldByRecovery(turn.queuedItemId)
+			? {
+					route: route('running', tab, tab && session ? tabBusySince(session, tab) : null),
+					reply: [],
+				}
+			: { route: route('queued', tab), reply: [] };
 	}
 	if (!session || !tab) return { route: route('done'), reply: turn.reply };
 
@@ -403,33 +412,43 @@ function setChatPersistence(persistent: boolean): string | null {
  * End the current chat. A tab it created that is still hidden is deleted with
  * it, along with anything of the chat's still queued for that tab. Messages
  * queued for the user's own tabs stay queued: they are that tab's business now.
+ *
+ * The chat is detached NOW and its tabs are cleaned up after. Cleanup awaits an
+ * interrupt, and commands do not wait for each other: a message sent during
+ * that wait belongs to the NEXT chat, and a reset that ran after the wait would
+ * erase it. So everything that changes what the next command sees happens
+ * before this returns, and only the returned cleanup is awaited.
  */
-async function endChat(): Promise<void> {
+function detachChat(): () => Promise<void> {
 	const session = findSession(chat.sessionId);
+	const hiddenTabs = ownedTabs(session).filter(isAiTabHidden);
 	// A tab still being found for a message must not receive it after this.
 	for (const turn of chat.turns) {
 		if (turn.phase === 'searching') turn.phase = 'cancelled';
-	}
-	for (const tab of ownedTabs(session).filter(isAiTabHidden)) {
-		if (!session) break;
-		if (tab.state === 'busy') {
-			await window.maestro.process.interrupt(`${session.id}-ai-${tab.id}`).catch(() => false);
-		}
-		updateSessionWith(session.id, (s) => {
-			// Skip the closed-tab undo stack: a hidden tab reopened by Cmd+Shift+T
-			// would come back as a chip the user never saw.
-			const result = closeTab(s, tab.id, undefined, { skipHistory: true });
-			const next = result ? result.session : s;
-			return {
-				...next,
-				executionQueue: (next.executionQueue ?? []).filter((item) => item.tabId !== tab.id),
-			};
-		});
 	}
 	chat.sessionId = null;
 	chat.persistent = null;
 	chat.turns = [];
 	chat.ownedTabIds = new Set();
+
+	return async () => {
+		if (!session) return;
+		for (const tab of hiddenTabs) {
+			if (tab.state === 'busy') {
+				await window.maestro.process.interrupt(`${session.id}-ai-${tab.id}`).catch(() => false);
+			}
+			updateSessionWith(session.id, (s) => {
+				// Skip the closed-tab undo stack: a hidden tab reopened by Cmd+Shift+T
+				// would come back as a chip the user never saw.
+				const result = closeTab(s, tab.id, undefined, { skipHistory: true });
+				const next = result ? result.session : s;
+				return {
+					...next,
+					executionQueue: (next.executionQueue ?? []).filter((item) => item.tabId !== tab.id),
+				};
+			});
+		}
+	};
 }
 
 function fail(turn: Turn, error: string): string {
@@ -440,9 +459,8 @@ function fail(turn: Turn, error: string): string {
 
 /**
  * Put a turn's message into its tab's queue, and run it at once when the tab is
- * free. "Free" is more than idle: a tab with a message already waiting for it,
- * or with an Agent Resilience retry counting down, has to take this one in
- * order, so it stays queued and the queue runs it when its turn comes.
+ * free (see isTabFreeFor). Otherwise it stays queued, and runs when the tab
+ * comes free (see runFreedTurns).
  */
 function deliverToTab(
 	turn: Turn,
@@ -466,16 +484,53 @@ function deliverToTab(
 	turn.started = false;
 	turn.reply = [];
 
-	const session = findSession(sessionId);
-	const tab = findTab(session, tabId);
-	const free =
-		!!session &&
-		!!tab &&
-		tab.state !== 'busy' &&
-		!hasPendingRetry(sessionId, tabId) &&
-		!session.executionQueue.some((other) => other.tabId === tabId && other.id !== item.id);
-	if (free) sendQueuedItemNow(sessionId, item.id);
+	if (isTabFreeFor(findSession(sessionId), tabId, item.id)) sendQueuedItemNow(sessionId, item.id);
 	return null;
+}
+
+/**
+ * Whether a tab can take this queued item right now.
+ *
+ * More than idle. The item has to be the first one waiting for that tab, so
+ * messages reach a tab in the order they were sent, and it has to be one the
+ * queue itself would run: not paused, not held for a consult or a connection.
+ * A tab with an Agent Resilience retry counting down is not free either, and an
+ * agent stopped on an error a human has to clear takes nothing.
+ */
+function isTabFreeFor(session: Session | null, tabId: string, itemId: string): boolean {
+	const tab = session?.aiTabs.find((t) => t.id === tabId);
+	if (!session || !tab || tab.state === 'busy') return false;
+	if (session.state === 'error' && session.agentError) return false;
+	if (hasPendingRetry(session.id, tabId)) return false;
+	const queue = session.executionQueue ?? [];
+	if (queue.some((item) => item.waitingForConnection)) return false;
+	const forTab = queue.filter((item) => item.tabId === tabId);
+	return forTab[0]?.id === itemId && nextRunnableQueueItem(forTab)?.id === itemId;
+}
+
+/**
+ * Run the chat's queued messages whose tab has come free.
+ *
+ * The agent's queue is one line for the whole agent: a message that writes
+ * waits while ANY other tab is mid-turn. That is right for the composer, and it
+ * would leave a Quick Chat message waiting on tabs it has nothing to do with.
+ * This chat's rule is per tab: a message waits only for the tab it belongs in.
+ * So when that tab finishes and the queue still holds the message back, it is
+ * run from here, beside the other tabs, the same way a message for a free tab
+ * is run when it is sent.
+ *
+ * One per pass. Running it changes the store, which brings this back for the
+ * next.
+ */
+function runFreedTurns(): void {
+	const session = findSession(chat.sessionId);
+	if (!session) return;
+	for (const turn of chat.turns) {
+		if (turn.phase !== 'delivered' || !turn.tabId || !turn.queuedItemId) continue;
+		if (!isTabFreeFor(session, turn.tabId, turn.queuedItemId)) continue;
+		sendQueuedItemNow(session.id, turn.queuedItemId);
+		return;
+	}
 }
 
 /** Find a tab for a turn, then send it there. Runs after `send` has returned. */
@@ -554,6 +609,11 @@ function send(text: string): string | null {
  * Stop the chat's work: interrupt every reply in progress, and withdraw every
  * message that has not started. A tab that is busy with a turn this chat did
  * NOT send (the one a queued message is waiting behind) is left alone.
+ *
+ * A turn the provider refused may have an automatic recovery waiting to resend
+ * it. That recovery resends from its own copy of the prompt, so taking the
+ * message out of the queue is not enough: the recovery is ended too, for that
+ * tab only.
  */
 async function stop(): Promise<void> {
 	const session = findSession(chat.sessionId);
@@ -564,17 +624,28 @@ async function stop(): Promise<void> {
 			turn.phase = 'cancelled';
 			continue;
 		}
-		if (turn.phase !== 'delivered' || !turn.queuedItemId) continue;
-		if (removeQueuedItem(session.id, turn.queuedItemId)) {
-			turn.phase = 'cancelled';
+		if (turn.phase !== 'delivered' || !turn.queuedItemId || !turn.tabId) continue;
+		const { status } = turnView(session, turn).route;
+		if (status === 'queued') {
+			// False means the queue started it in the meantime: it is running now.
+			if (removeQueuedItem(session.id, turn.queuedItemId)) turn.phase = 'cancelled';
+			else interrupt.add(turn.tabId);
 			continue;
 		}
-		if (turnView(session, turn).route.status === 'running' && turn.tabId) {
-			interrupt.add(turn.tabId);
+		if (status !== 'running') continue;
+		if (hasPendingRetry(session.id, turn.tabId)) {
+			cancelRecoveryForTab(session.id, turn.tabId);
+			// What the recovery parked in the queue, if it did, goes with it.
+			if (removeQueuedItem(session.id, turn.queuedItemId)) turn.phase = 'cancelled';
 		}
+		interrupt.add(turn.tabId);
 	}
+	// A reply that finished on its own a moment ago has no process left to
+	// interrupt. That is the outcome asked for, not a failed Stop.
 	await Promise.all(
-		[...interrupt].map((tabId) => window.maestro.process.interrupt(`${session.id}-ai-${tabId}`))
+		[...interrupt].map((tabId) =>
+			window.maestro.process.interrupt(`${session.id}-ai-${tabId}`).catch(() => false)
+		)
 	);
 }
 
@@ -587,6 +658,11 @@ function moveToNewTab(messageId: string | undefined): string | null {
 		: [...chat.turns].reverse().find(queued);
 	if (!session || !turn) {
 		return messageId ? 'That message is not in this chat' : 'No message is waiting in the queue';
+	}
+	// A message an automatic recovery is holding already ran once and will be
+	// resent where it is: moving it would run it in both tabs.
+	if (isHeldByRecovery(turn.queuedItemId)) {
+		return 'That message is being retried automatically, so it cannot be moved';
 	}
 	// One store update decides it: only a message still in the queue is moved,
 	// so it can never run in both tabs.
@@ -627,7 +703,7 @@ export async function runQuickChatCommand(
 			error = command.text.trim() ? send(command.text) : 'Message cannot be empty';
 			break;
 		case 'new':
-			await endChat();
+			await detachChat()();
 			break;
 		case 'setPersistent':
 			error = setChatPersistence(command.persistent);
@@ -638,9 +714,12 @@ export async function runQuickChatCommand(
 				error = `Agent not found: ${command.agentId}`;
 				break;
 			}
-			await endChat();
+			// The agent is switched before the old chat's cleanup is awaited, so a
+			// message sent during that wait goes to the agent that was just chosen.
+			const cleanUp = detachChat();
 			const settings = useSettingsStore.getState();
 			settings.setQuickChatSettings({ ...settings.quickChatSettings, agentId: target.id });
+			await cleanUp();
 			break;
 		}
 		case 'reveal':
@@ -732,6 +811,7 @@ export function startQuickChatEngine(): () => void {
 	// The picker follows the Left Bar (see leftBarAgentOrder), so anything that
 	// reorders or hides a row there is news too: groups, the active agent (whose
 	// hidden group is exempt), Show Hidden, and the Groups+ / Pianola features.
+	let freedCheck = false;
 	const offSessions = useSessionStore.subscribe((state, previous) => {
 		if (
 			state.sessions !== previous.sessions ||
@@ -739,6 +819,15 @@ export function startQuickChatEngine(): () => void {
 			state.activeSessionId !== previous.activeSessionId
 		) {
 			push();
+		}
+		// A tab finishing its reply is a session change. Checked after the update
+		// that announced it has settled, never from inside it.
+		if (state.sessions !== previous.sessions && chat.turns.length > 0 && !freedCheck) {
+			freedCheck = true;
+			queueMicrotask(() => {
+				freedCheck = false;
+				runFreedTurns();
+			});
 		}
 	});
 	const offSettings = useSettingsStore.subscribe((state, previous) => {

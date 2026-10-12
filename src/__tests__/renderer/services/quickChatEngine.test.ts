@@ -15,7 +15,11 @@ import { createMockAITab, createMockSession } from '../../helpers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
-import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
+import {
+	registerDispatchDepsProvider,
+	useRetryStore,
+	type RetryEntry,
+} from '../../../renderer/stores/retryStore';
 import {
 	QUICK_CHAT_TAB_NAME,
 	buildQuickChatSnapshot,
@@ -135,7 +139,44 @@ beforeEach(() => {
 
 afterEach(() => {
 	registerDispatchDepsProvider(null);
+	useRetryStore.setState({ retries: {}, outages: {} });
 });
+
+/**
+ * Put a turn that already ran into an outage: the provider refused it, and an
+ * automatic recovery parked its prompt at the head of the tab's queue until the
+ * resend. `itemId` is the id its card in the tab carries.
+ */
+function holdForRetry(tabId: string, itemId: string): void {
+	useSessionStore.setState({
+		sessions: useSessionStore.getState().sessions.map((s) =>
+			s.id === 'b'
+				? {
+						...s,
+						executionQueue: [
+							{ id: itemId, timestamp: 1, tabId, type: 'message' as const, text: 'hi' },
+						],
+					}
+				: s
+		),
+	});
+	patchTab('b', tabId, () => ({ state: 'idle' }));
+	const entry: RetryEntry = {
+		sessionId: 'b',
+		tabId,
+		key: `b:${tabId}`,
+		outageId: 'outage-1',
+		strategy: 'availability',
+		mode: 'resend',
+		status: 'scheduled',
+		attempt: 0,
+		startedAt: 1,
+		nextRetryAt: Date.now() + 60_000,
+		lastMessage: 'Overloaded',
+		heldItemId: itemId,
+	};
+	useRetryStore.setState({ retries: { [entry.key]: entry } });
+}
 
 describe('agent resolution', () => {
 	it('uses the configured agent', () => {
@@ -406,6 +447,75 @@ describe('send', () => {
 	});
 });
 
+describe('a queued message runs when its own tab is free', () => {
+	/** Agent b with a second tab that stays busy with unrelated work. */
+	function withAnotherBusyTab() {
+		const other = createMockAITab({ id: 'b-other', state: 'busy' });
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) => (s.id === 'b' ? { ...s, aiTabs: [...s.aiTabs, other] } : s)),
+		});
+	}
+
+	async function queueBehindBusyMain() {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		patchTab('b', 'b-main', () => ({ state: 'busy' }));
+		return send('one more thing');
+	}
+
+	it("does not wait for the agent's other tabs, which the queue alone would", async () => {
+		const stop = startQuickChatEngine();
+		withAnotherBusyTab();
+		await queueBehindBusyMain();
+
+		// Its tab finishes. Another tab is still busy, so the agent's queue holds
+		// every write-mode item; the chat's rule is per tab.
+		patchTab('b', 'b-main', () => ({ state: 'idle' }));
+		await vi.waitFor(() => expect(sent()[0].route?.status).toBe('running'));
+
+		expect(session('b').executionQueue).toEqual([]);
+		expect(tab('b', 'b-main').logs.at(-1)).toMatchObject({
+			text: 'one more thing',
+			forceParallel: true,
+		});
+		expect(tab('b', 'b-other').state).toBe('busy');
+		stop();
+	});
+
+	it('still waits while its own tab is busy', async () => {
+		const stop = startQuickChatEngine();
+		withAnotherBusyTab();
+		await queueBehindBusyMain();
+
+		// Something else about the agent changes; its tab is still mid-reply.
+		patchTab('b', 'b-other', () => ({ name: 'Renamed' }));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(sent()[0].route?.status).toBe('queued');
+		expect(useAgentStore.getState().processQueuedItem).not.toHaveBeenCalled();
+		stop();
+	});
+
+	it('leaves a message the user paused in the queue', async () => {
+		const stop = startQuickChatEngine();
+		await queueBehindBusyMain();
+		useSessionStore.setState({
+			sessions: useSessionStore
+				.getState()
+				.sessions.map((s) =>
+					s.id === 'b'
+						? { ...s, executionQueue: s.executionQueue.map((i) => ({ ...i, paused: true })) }
+						: s
+				),
+		});
+		patchTab('b', 'b-main', () => ({ state: 'idle' }));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(session('b').executionQueue).toHaveLength(1);
+		expect(useAgentStore.getState().processQueuedItem).not.toHaveBeenCalled();
+		stop();
+	});
+});
+
 describe('move to a new tab', () => {
 	async function queueBehindBusyMain() {
 		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
@@ -443,6 +553,19 @@ describe('move to a new tab', () => {
 	it('refuses when nothing is queued', async () => {
 		expect((await runQuickChatCommand({ type: 'moveToNewTab' })).ok).toBe(false);
 	});
+
+	it('refuses a message an automatic retry is holding, which would run it twice', async () => {
+		const { message } = await send('hi');
+		const tabId = message.route!.tabId!;
+		holdForRetry(tabId, tab('b', tabId).logs[0].queuedItemId!);
+
+		// It sits in the queue, but it is not waiting: it already ran once.
+		expect(sent()[0].route?.status).toBe('running');
+		const result = await runQuickChatCommand({ type: 'moveToNewTab', messageId: message.id });
+		expect(result.ok).toBe(false);
+		expect(session('b').executionQueue).toHaveLength(1);
+		expect(session('b').aiTabs).toHaveLength(2);
+	});
 });
 
 describe('new chat', () => {
@@ -474,6 +597,26 @@ describe('new chat', () => {
 		await runQuickChatCommand({ type: 'setPersistent', persistent: true });
 		const result = await runQuickChatCommand({ type: 'new' });
 		expect(result.snapshot.persistent).toBe(false);
+	});
+
+	it('keeps a message sent while the old chat is still being cleaned up', async () => {
+		const old = await send('old');
+		// The old chat's tab is mid-reply, so ending it waits on an interrupt.
+		let finishInterrupt: (ok: boolean) => void = () => {};
+		vi.mocked(window.maestro.process.interrupt).mockReturnValue(
+			new Promise((resolve) => (finishInterrupt = resolve))
+		);
+		const ending = runQuickChatCommand({ type: 'new' });
+		await runQuickChatCommand({ type: 'send', text: 'fresh' });
+		finishInterrupt(true);
+		await ending;
+
+		await vi.waitFor(() => expect(sent().at(-1)?.route?.status).toBe('running'));
+		expect(sent().map((m) => m.text)).toEqual(['fresh']);
+		// The old chat's tab is gone; the new chat's tab is not.
+		const tabs = session('b').aiTabs.map((t) => t.id);
+		expect(tabs).not.toContain(old.message.route!.tabId);
+		expect(tabs).toContain(sent()[0].route!.tabId);
 	});
 
 	it('drops a message whose tab was still being found', async () => {
@@ -575,6 +718,14 @@ describe('stop', () => {
 		expect(window.maestro.process.interrupt).toHaveBeenCalledWith(`b-ai-${message.route!.tabId}`);
 	});
 
+	it('still reports the chat when a reply had already ended by itself', async () => {
+		await send('hi');
+		vi.mocked(window.maestro.process.interrupt).mockRejectedValue(new Error('no such process'));
+		const result = await runQuickChatCommand({ type: 'stop' });
+		expect(result.ok).toBe(true);
+		expect(sent(result.snapshot.messages)).toHaveLength(1);
+	});
+
 	it('withdraws a queued message and leaves the reply it waited on alone', async () => {
 		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
 		patchTab('b', 'b-main', () => ({ state: 'busy' }));
@@ -586,6 +737,18 @@ describe('stop', () => {
 		expect(result.snapshot.busy).toBe(false);
 		// That tab is busy with a turn this chat did not send.
 		expect(window.maestro.process.interrupt).not.toHaveBeenCalled();
+	});
+
+	it('ends the automatic retry of a refused message, so it is not resent later', async () => {
+		const { message } = await send('hi');
+		const tabId = message.route!.tabId!;
+		holdForRetry(tabId, tab('b', tabId).logs[0].queuedItemId!);
+
+		const result = await runQuickChatCommand({ type: 'stop' });
+		expect(useRetryStore.getState().retries).toEqual({});
+		expect(session('b').executionQueue).toEqual([]);
+		expect(sent(result.snapshot.messages)[0].route?.status).toBe('cancelled');
+		expect(result.snapshot.busy).toBe(false);
 	});
 
 	it('does not interrupt a tab whose reply to the chat already finished', async () => {
@@ -613,6 +776,22 @@ describe('setAgent', () => {
 
 	it('rejects an unknown agent', async () => {
 		expect((await runQuickChatCommand({ type: 'setAgent', agentId: 'nope' })).ok).toBe(false);
+	});
+
+	it('sends a message typed during the switch to the agent just chosen', async () => {
+		await send('old');
+		let finishInterrupt: (ok: boolean) => void = () => {};
+		vi.mocked(window.maestro.process.interrupt).mockReturnValue(
+			new Promise((resolve) => (finishInterrupt = resolve))
+		);
+		const switching = runQuickChatCommand({ type: 'setAgent', agentId: 'a' });
+		await runQuickChatCommand({ type: 'send', text: 'fresh' });
+		finishInterrupt(true);
+		await switching;
+
+		await vi.waitFor(() => expect(sent().at(-1)?.route?.status).toBe('running'));
+		expect(buildQuickChatSnapshot().agentId).toBe('a');
+		expect(session('a').aiTabs).toHaveLength(2);
 	});
 });
 

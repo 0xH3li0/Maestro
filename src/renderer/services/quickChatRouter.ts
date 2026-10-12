@@ -244,9 +244,9 @@ export async function routeQuickChatMessage(
  * Bring a closed conversation back as a background tab, ready for a prompt. The
  * view does not move: the user is in Quick Chat, not in the main window.
  *
- * @returns The tab's id, or null when the conversation cannot be read anymore
- * (its transcript aged out or was removed), in which case the caller starts a
- * new tab instead.
+ * @returns The tab's id, or null when the conversation cannot be joined: its
+ * transcript aged out or was removed, or it is still replying in a tab that was
+ * closed. The caller starts a new tab instead.
  */
 export async function reopenClosedConversation(
 	sessionId: string,
@@ -282,6 +282,12 @@ export async function reopenClosedConversation(
 		const existing = s.aiTabs.find((tab) => tab.agentSessionId === agentSessionId);
 		if (existing) {
 			tabId = existing.id;
+			return s;
+		}
+		// Reopened, used, and closed mid-reply while we were reading: it is still
+		// answering in the background, and a second tab would send a second turn
+		// into the same conversation at once. The caller starts a new tab instead.
+		if (s.orphanedThinkingTabs?.some((tab) => tab.agentSessionId === agentSessionId)) {
 			return s;
 		}
 		const created = createTab(s, {

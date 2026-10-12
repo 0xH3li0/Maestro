@@ -269,6 +269,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description:
 			'Quick Chat routing: picks which existing conversation a new message continues, or that it starts a new one',
 		category: 'system',
+		encoreFlag: 'quickChat',
 	},
 	{
 		id: 'director-notes',

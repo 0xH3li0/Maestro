@@ -12,10 +12,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Clock, History, Loader2, MessagesSquare, Plus } from 'lucide-react';
+import { Clock, History, MessagesSquare, Plus } from 'lucide-react';
 import { formatDurationHuman } from '../../shared/duration';
 import type { QuickChatRoute, QuickChatRouteOrigin } from '../../shared/quickChat';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
+import { Spinner } from '../components/ui/Spinner';
 import type { Theme } from '../types';
 
 const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
@@ -100,7 +101,8 @@ export function QuickChatRouteLine({
 	if (route.status === 'searching') {
 		return (
 			<div className={lineClass} style={{ color: c.textDim }} data-testid="quick-chat-route">
-				<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
+				{/* The text beside it already says what is happening. */}
+				<Spinner size={14} decorative />
 				<span>Searching tabs…</span>
 			</div>
 		);

@@ -281,6 +281,9 @@ describe('where a message went', () => {
 		);
 		expect(screen.getByText('Searching tabs…')).toBeTruthy();
 		expect(screen.queryByTestId('quick-chat-route-pill')).toBeNull();
+		// The spin is on a wrapper: a spinning <svg> repaints the window every frame.
+		expect(document.querySelector('svg.animate-spin')).toBeNull();
+		expect(document.querySelector('span.animate-spin svg')).not.toBeNull();
 	});
 
 	it('names the tab in a pill that opens that tab in Maestro', async () => {
