@@ -6,10 +6,6 @@
 
 import type { SettingValue } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
-import {
-	currentComputerHistoryFlag,
-	settingsWriteChangesComputerHistory,
-} from '../bridgePathGuard';
 import { isRemoteSettingWritable } from '../bridgeDenyList';
 
 /**
@@ -68,9 +64,12 @@ export function handleSetSetting(
 		return;
 	}
 
+	// Only the CLI-secret-authenticated connection may control Encore features.
+	const cliEncoreControl = client.cli === true && key === 'encoreFeatures';
 	if (
-		!Object.prototype.hasOwnProperty.call(ALLOWED_SETTING_KEYS, key) ||
-		!isRemoteSettingWritable(key)
+		!cliEncoreControl &&
+		(!Object.prototype.hasOwnProperty.call(ALLOWED_SETTING_KEYS, key) ||
+			!isRemoteSettingWritable(key))
 	) {
 		ctx.sendError(client, `Setting key '${key}' is not modifiable from the web interface`);
 		return;
@@ -78,20 +77,6 @@ export function handleSetSetting(
 
 	if (value === undefined) {
 		ctx.sendError(client, 'Missing setting value');
-		return;
-	}
-
-	// A browser may not turn Computer History on or off (it records the
-	// user's screen). maestro-cli (`client.cli`) may: `encore enable` uses this
-	// message. Same rule as the bridge guard for `settings:set`.
-	if (
-		!client.cli &&
-		settingsWriteChangesComputerHistory(key, value, currentComputerHistoryFlag())
-	) {
-		ctx.sendError(
-			client,
-			'Computer History can only be turned on or off from the Maestro desktop app or maestro-cli'
-		);
 		return;
 	}
 

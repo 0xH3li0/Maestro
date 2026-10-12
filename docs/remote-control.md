@@ -182,6 +182,11 @@ The failed read leaves saved agents untouched and keeps persistence disabled
 until loading succeeds. An uncertain submission must be checked on the host
 before it is submitted again.
 
+A failed process start does not create a running capture. Host administration
+settings, including Encore feature controls, remain unavailable to browser/Lite
+clients; Encore controls through maestro-cli require its CLI-secret-authenticated
+connection.
+
 Lite is a runtime mode in the existing Electron distribution. It is not a separate
 small installer and has no offline execution fallback.
 

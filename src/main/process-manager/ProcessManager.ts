@@ -258,7 +258,7 @@ export class ProcessManager extends EventEmitter {
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
 			// the two would otherwise see every turn here end without a start.
-			this.emitSpawn(config);
+			if (serveResult.success) this.emitSpawn(config);
 			return serveResult;
 		}
 
@@ -306,7 +306,7 @@ export class ProcessManager extends EventEmitter {
 			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 
-		this.emitSpawn(config);
+		if (result.success) this.emitSpawn(config);
 
 		return result;
 	}

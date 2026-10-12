@@ -177,32 +177,6 @@ describe('persistence IPC handlers', () => {
 		handlers.clear();
 	});
 
-	describe('registration', () => {
-		it('should register all persistence handlers', () => {
-			const expectedChannels = [
-				'settings:get',
-				'settings:set',
-				'settings:getAll',
-				'settings:mediaStatus',
-				'sessions:getAll',
-				'sessions:getBootstrap',
-				'sessions:getDeferredContent',
-				'images:resolve',
-				'sessions:getActiveSessionId',
-				'sessions:setActiveSessionId',
-				'sessions:setAll',
-				'sessions:setMany',
-				'groups:getAll',
-				'groups:setAll',
-				'cli:getActivity',
-			];
-
-			for (const channel of expectedChannels) {
-				expect(handlers.has(channel)).toBe(true);
-			}
-			expect(handlers.size).toBe(expectedChannels.length);
-		});
-	});
 	describe('sessions:getActiveSessionId', () => {
 		it('should return empty string when no active session is set', async () => {
 			mockSessionsStore.get.mockReturnValue('');

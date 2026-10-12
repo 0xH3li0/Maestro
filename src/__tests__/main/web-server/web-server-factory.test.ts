@@ -2466,9 +2466,9 @@ describe('web-server/web-server-factory', () => {
 				.mocked(secondaryWebContents.send)
 				.mock.calls.find((call) => call[0] === 'remote:closeTab')?.[3] as string;
 			const closeReply = vi
-				.mocked(ipcMain.once)
+				.mocked(ipcMain.on)
 				.mock.calls.find((call) => call[0] === closeChannel)?.[1];
-			closeReply?.({} as never, true);
+			closeReply?.({ sender: secondaryWebContents } as never, true);
 			await expect(closePromise).resolves.toBe(true);
 			expect(secondaryWebContents.send).toHaveBeenCalledWith(
 				'remote:closeTab',

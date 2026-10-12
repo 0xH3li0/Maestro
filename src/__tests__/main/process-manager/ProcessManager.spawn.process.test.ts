@@ -159,7 +159,7 @@ describe('ProcessManager.spawn against a real process', () => {
 			{ chunks: [], close: { code: 0, signal: null } },
 			{ command: path.join(scratch.dir, 'no-such-provider') }
 		);
-		expect(result.success).toBe(true);
+		expect(result.success).toBe(false);
 
 		await untilExit(heard);
 		// Node follows ENOENT's `error` with a `close`; the turn still settles once.

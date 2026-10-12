@@ -3,6 +3,7 @@ import { ipcMain } from 'electron';
 
 vi.mock('electron', () => ({
 	ipcMain: {
+		on: vi.fn(),
 		once: vi.fn(),
 		removeListener: vi.fn(),
 	},
@@ -85,11 +86,11 @@ function respond(
 	result: unknown
 ) {
 	const responseChannel = webContents.send.mock.calls[callIndex].at(-1);
-	const handler = vi
-		.mocked(ipcMain.once)
-		.mock.calls.find(([channel]) => channel === responseChannel)?.[1];
+	const handler = [...vi.mocked(ipcMain.on).mock.calls, ...vi.mocked(ipcMain.once).mock.calls].find(
+		([channel]) => channel === responseChannel
+	)?.[1];
 	if (!handler) throw new Error(`No response listener for ${String(responseChannel)}`);
-	handler({} as never, result as never);
+	handler({ sender: webContents } as never, result as never);
 	return responseChannel;
 }
 
