@@ -18,7 +18,9 @@ describe('QuickChatSection', () => {
 	it('puts the hotkey capture beside its heading, not centered below it', () => {
 		renderSection();
 		const row = document.querySelector('[data-setting-id="encore-quick-chat-hotkey"]')!;
-		expect(row.className).toContain('flex');
+		// A horizontal row: exactly `flex`, never stacked with `flex-col`.
+		expect(row.classList.contains('flex')).toBe(true);
+		expect(row.classList.contains('flex-col')).toBe(false);
 		// Heading block first, then the capture button in its own trailing column.
 		expect(row.children).toHaveLength(2);
 		expect(row.children[0].textContent).toContain('Hotkey');
