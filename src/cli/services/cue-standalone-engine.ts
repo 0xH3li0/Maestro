@@ -60,8 +60,14 @@ import type { SshRemoteSettingsStore } from '../../main/utils/ssh-remote-resolve
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { CueRunResult } from '../../shared/cue/contracts';
-import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
-import { describeTurnSettings, turnRunOnTarget } from '../../shared/autorunTurnSettings';
+import {
+	cueAutoMarker,
+	cueRunIsAutoRouted,
+	cueTurnLaunch,
+	resolveCueTurnSettings,
+} from '../../shared/cue/turn-settings';
+import { describeTurnSettings, type ResolvedTurnSettings } from '../../shared/autorunTurnSettings';
+import { resolveCliAutoTurn } from './auto-turn';
 import {
 	readSessions,
 	readSshRemotes,
@@ -272,13 +278,20 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 				harnessDefaults: readHarnessTierDefaults(),
 			}
 		);
-		const turnNote = describeTurnSettings(turn);
-		if (turnNote) {
+		const logCueTurn = (resolvedTurn: ResolvedTurnSettings) => {
+			const turnNote = describeTurnSettings(resolvedTurn);
+			if (!turnNote) return;
 			onLog(
-				turn.warnings.length > 0 ? 'warn' : 'cue',
+				resolvedTurn.warnings.length > 0 ? 'warn' : 'cue',
 				`[CUE] "${subscriptionName}" model: ${turnNote}`
 			);
-		}
+		};
+		// A subscription on the Auto model (`model: auto`) is routed once its
+		// prompt is known, by the hook below (the desktop host does the same).
+		// The router is the desktop app's: with none to ask, the run launches on
+		// `turn`, the agent's default.
+		const routed = cueRunIsAutoRouted(turnSettings);
+		if (!routed) logCueTurn(turn);
 
 		const result = await executeCuePrompt({
 			runId,
@@ -297,10 +310,21 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			customArgs: storedSession.customArgs,
 			customEnvVars: storedSession.customEnvVars,
 			gatewayUrl: storedSession.gatewayUrl,
-			runOn: turnRunOnTarget(turn, storedSession.runOn),
-			launchRefusal: turn.refusal?.message,
-			customModel: turn.model,
-			customEffort: turn.effort,
+			...cueTurnLaunch(turn, storedSession.runOn),
+			...(routed
+				? {
+						resolveLateTurn: async (routedPrompt: string) => {
+							const autoTurn = await resolveCliAutoTurn({
+								agent: storedSession,
+								prompt: routedPrompt,
+								agentEffort: storedSession.customEffort,
+								marker: cueAutoMarker(turnSettings),
+							});
+							logCueTurn(autoTurn);
+							return cueTurnLaunch(autoTurn, storedSession.runOn);
+						},
+					}
+				: {}),
 			enableMaestroP: storedSession.enableMaestroP,
 			maestroPMode: storedSession.maestroPMode,
 			maestroPPath: storedSession.maestroPPath,

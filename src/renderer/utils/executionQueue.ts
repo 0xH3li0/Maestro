@@ -45,6 +45,11 @@ import {
  * settings it was displaying, so clearing a picker back to "Default" has to
  * clear the stored field rather than leave the previous value behind.
  *
+ * The model router's answer (`turnSettings.route`, on an item queued on the
+ * Auto model) is an answer about the item's TEXT. When the text changed it is
+ * dropped, so the edited message is routed for what it now says when it is
+ * dispatched, and never launched on a decision made about other words.
+ *
  * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
  * the caller from the EDITED text. It is a parameter rather than something this
  * function works out for itself because deriving it needs `planCrossAgentMentions`,
@@ -58,17 +63,21 @@ export function applyQueuedItemEdit(
 	patch: QueuedItemEditPatch,
 	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
 ): QueuedItem[] {
-	return queue.map((item) =>
-		item.id === itemId
-			? {
-					...item,
-					text: patch.text,
-					images: patch.images,
-					turnSettings: patch.turnSettings,
-					...(crossAgent ?? {}),
-				}
-			: item
-	);
+	return queue.map((item) => {
+		if (item.id !== itemId) return item;
+		let turnSettings = patch.turnSettings;
+		if (turnSettings?.route && item.text !== patch.text) {
+			const { route: _staleRoute, ...withoutRoute } = turnSettings;
+			turnSettings = withoutRoute;
+		}
+		return {
+			...item,
+			text: patch.text,
+			images: patch.images,
+			turnSettings,
+			...(crossAgent ?? {}),
+		};
+	});
 }
 
 /**

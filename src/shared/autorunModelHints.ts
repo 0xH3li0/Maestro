@@ -87,9 +87,11 @@ export type HintDirective = ModelTier | typeof INHERIT_KEYWORD;
  * Which scope supplied a value, for reporting where a setting came from.
  * `'subscription'` is a Cue subscription's static `tier` / `effort`, which
  * rides the same resolver (see `src/shared/cue/turn-settings.ts`); markers
- * never produce it.
+ * never produce it. `'auto'` is a level the model router chose for a turn sent
+ * on the Auto model (see `src/shared/autoTurn.ts`); markers never produce it
+ * either.
  */
-export type HintScope = 'document' | 'task' | 'subscription';
+export type HintScope = 'document' | 'task' | 'subscription' | 'auto';
 
 export interface ModelHint {
 	tier?: HintDirective;

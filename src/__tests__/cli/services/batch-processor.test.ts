@@ -59,6 +59,16 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 	getCliTaskSelectionBlock: vi.fn().mockResolvedValue('SELECTION BLOCK'),
 }));
 
+// The desktop app is the model router's home. A test must never reach the
+// real one, so the bridge to it is replaced: each test says what it answers.
+const desktopRouter = vi.hoisted(() => ({ sendCommand: vi.fn() }));
+vi.mock('../../../cli/services/maestro-client', () => ({
+	MaestroClient: class {},
+	withMaestroClient: vi.fn(async (action: (client: unknown) => Promise<unknown>) =>
+		action({ sendCommand: desktopRouter.sendCommand })
+	),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
@@ -2268,6 +2278,131 @@ describe('batch-processor', () => {
 			expect(synopses).toHaveLength(2);
 			expect(synopses[0]?.runOn).toEqual(low);
 			expect(synopses[1]?.runOn).toEqual({ type: 'provider' });
+		});
+
+		// An agent set to the Auto model: every dispatch is routed by the desktop
+		// app's model router, and a marker wins on the axes it sets.
+		describe('an agent on the Auto model', () => {
+			const routedTo = (tier: string, effort: string) =>
+				desktopRouter.sendCommand.mockResolvedValue({
+					success: true,
+					result: {
+						tier,
+						effort,
+						engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+						latencyMs: 20,
+					},
+				});
+			const autoSession = (overrides: Partial<SessionInfo> = {}) =>
+				mockSession({
+					toolType: 'claude-code',
+					customModel: 'auto',
+					customEffort: 'high',
+					...overrides,
+				});
+			const run = (session: SessionInfo, options: Record<string, unknown> = {}) =>
+				collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true, ...options })
+				);
+			const taskSpawn = () => vi.mocked(spawnAgent).mock.calls[0][4];
+
+			beforeEach(() => {
+				desktopRouter.sendCommand.mockReset();
+				routedTo('low', 'low');
+			});
+
+			it('routes the task text and spawns on the tier and effort the router chose', async () => {
+				singleTaskDocument('- [ ] Rename the helper\n  - three callers');
+
+				const events = await run(autoSession());
+
+				expect(desktopRouter.sendCommand).toHaveBeenCalledTimes(1);
+				expect(desktopRouter.sendCommand.mock.calls[0][0]).toMatchObject({
+					type: 'model_route_turn',
+					request: { prompt: 'Rename the helper\n  - three callers', agentId: 'session-123' },
+				});
+				expect(taskSpawn()).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+				const resolution = events.find((e) => e.type === 'model_resolution');
+				expect(resolution?.model).toBe('haiku');
+				expect(resolution?.notes?.[0]).toBe('Auto: Embedding router chose tier low, effort low.');
+			});
+
+			it('a marker that sets the tier wins it, and the router still decides the effort', async () => {
+				routedTo('low', 'medium');
+				singleTaskDocument('- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" -->');
+
+				await run(autoSession());
+
+				expect(desktopRouter.sendCommand).toHaveBeenCalledTimes(1);
+				expect(taskSpawn()).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+			});
+
+			it('a marker that sets both axes is not routed at all', async () => {
+				singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="low" -->\n- [ ] Task one');
+
+				await run(autoSession());
+
+				expect(desktopRouter.sendCommand).not.toHaveBeenCalled();
+				expect(taskSpawn()).toMatchObject({ customModel: 'opus', customEffort: 'low' });
+			});
+
+			it("with no desktop to ask, the task runs on the agent's default and is not failed", async () => {
+				desktopRouter.sendCommand.mockRejectedValue(new Error('Maestro is not running'));
+				singleTaskDocument('- [ ] Rename the helper');
+
+				const events = await run(autoSession());
+
+				expect(taskSpawn()?.customModel).toBeUndefined();
+				expect(taskSpawn()?.customEffort).toBe('high');
+				expect(events.find((e) => e.type === 'model_resolution')?.notes?.[0]).toMatch(
+					/^Auto \(no decision\)/
+				);
+				expect(events.find((e) => e.type === 'complete')?.totalTasksCompleted).toBe(1);
+			});
+
+			it('launches a tier the agent maps to a source on that source', async () => {
+				const local = { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+				singleTaskDocument('- [ ] Rename the helper');
+
+				await run(autoSession({ tierTargets: { low: local } } as never));
+
+				expect(taskSpawn()).toMatchObject({ customModel: 'qwen3.5-4b', runOn: local });
+			});
+
+			it('fails the task by name, without a spawn, when the routed tier cannot be used', async () => {
+				singleTaskDocument('- [ ] Rename the helper');
+
+				await run(
+					autoSession({
+						toolType: 'factory-droid',
+						tierTargets: { low: { type: 'source', endpointId: 'ep-x', model: 'qwen3' } },
+					} as never)
+				);
+
+				expect(spawnAgent).not.toHaveBeenCalled();
+			});
+
+			it('a run that names a model is not routed, and one that names auto is', async () => {
+				singleTaskDocument('- [ ] Rename the helper');
+				await run(autoSession(), { model: 'sonnet' });
+				expect(desktopRouter.sendCommand).not.toHaveBeenCalled();
+				expect(taskSpawn()?.customModel).toBe('sonnet');
+
+				vi.mocked(spawnAgent).mockClear();
+				singleTaskDocument('- [ ] Rename the helper');
+				await run(mockSession({ toolType: 'claude-code', customModel: 'opus' }), { model: 'auto' });
+				expect(desktopRouter.sendCommand).toHaveBeenCalledTimes(1);
+				expect(taskSpawn()?.customModel).toBe('haiku');
+			});
+
+			it('routes nothing for an agent on a named model', async () => {
+				singleTaskDocument('- [ ] Rename the helper');
+
+				await run(mockSession({ toolType: 'claude-code', customModel: 'opus' }));
+
+				expect(desktopRouter.sendCommand).not.toHaveBeenCalled();
+				expect(taskSpawn()?.customModel).toBe('opus');
+			});
 		});
 
 		it("keeps the agent's own Run on target for a tier that names no place", async () => {

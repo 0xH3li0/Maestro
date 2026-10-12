@@ -20,7 +20,9 @@ import {
 	MODEL_ROUTING_SKIP_REASONS,
 	MODEL_ROUTING_TASK_ID,
 	MODEL_ROUTING_TIER_DESCRIPTIONS,
+	MODEL_ROUTING_MAX_TIMEOUT_MS,
 	MODEL_ROUTING_TIMEOUT_MS,
+	MODEL_ROUTING_UNATTENDED_TIMEOUT_MS,
 	clipModelRoutingRecent,
 	embeddingRouterLabel,
 	isModelRouteSkipped,
@@ -30,6 +32,7 @@ import {
 	modelRouterKind,
 	modelRouterSourceNote,
 	modelRoutingSystemOneRequest,
+	parseRouteTurnRequest,
 } from '../../../shared/local-models/model-routing-task';
 import {
 	systemOneQuestionsProblem,
@@ -328,5 +331,71 @@ describe('the result of one routing', () => {
 				latencyMs: 240,
 			})
 		).toBe(false);
+	});
+});
+
+describe('a routing asked from another process', () => {
+	it('lets a turn nobody is typing at wait longer than a send, inside the cap', () => {
+		expect(MODEL_ROUTING_UNATTENDED_TIMEOUT_MS).toBeGreaterThan(MODEL_ROUTING_TIMEOUT_MS);
+		expect(MODEL_ROUTING_UNATTENDED_TIMEOUT_MS).toBeLessThanOrEqual(MODEL_ROUTING_MAX_TIMEOUT_MS);
+	});
+
+	it('reads the prompt, the recent exchange and who the turn is for', () => {
+		expect(
+			parseRouteTurnRequest({
+				prompt: 'rename the helper',
+				recent: { user: 'what does it do?', assistant: 'It formats a date.' },
+				agentId: 'agent-1',
+				tabId: 'tab-1',
+				timeoutMs: 5000,
+				extra: 'dropped',
+			})
+		).toEqual({
+			ok: true,
+			request: {
+				prompt: 'rename the helper',
+				recent: { user: 'what does it do?', assistant: 'It formats a date.' },
+				agentId: 'agent-1',
+				tabId: 'tab-1',
+				timeoutMs: 5000,
+			},
+		});
+	});
+
+	it('does not cut or trim the texts: they are redacted first, where they are used', () => {
+		const prompt = `  ${'x'.repeat(MODEL_ROUTING_TEXT_MAX_CHARS * 3)}  `;
+		const parsed = parseRouteTurnRequest({ prompt });
+		expect(parsed).toEqual({ ok: true, request: { prompt } });
+	});
+
+	it('keeps a blank prompt for routeTurn to answer, and drops blank optional fields', () => {
+		expect(
+			parseRouteTurnRequest({ prompt: '', recent: { user: '  ' }, agentId: '', tabId: null })
+		).toEqual({ ok: true, request: { prompt: '' } });
+	});
+
+	it('caps a timeout at the most a routing may wait', () => {
+		const parsed = parseRouteTurnRequest({ prompt: 'p', timeoutMs: 10 * 60 * 1000 });
+		expect(parsed).toEqual({
+			ok: true,
+			request: { prompt: 'p', timeoutMs: MODEL_ROUTING_MAX_TIMEOUT_MS },
+		});
+	});
+
+	it.each([
+		{ value: 'not an object' },
+		{ value: null },
+		{ value: ['prompt'] },
+		{ value: { prompt: 7 } },
+		{ value: { prompt: 'p', recent: 'earlier' } },
+		{ value: { prompt: 'p', recent: ['a'] } },
+		{ value: { prompt: 'p', timeoutMs: 0 } },
+		{ value: { prompt: 'p', timeoutMs: -5 } },
+		{ value: { prompt: 'p', timeoutMs: 'soon' } },
+		{ value: { prompt: 'p', timeoutMs: Number.NaN } },
+	])('refuses $value', ({ value }) => {
+		const parsed = parseRouteTurnRequest(value);
+		expect(parsed.ok).toBe(false);
+		if (!parsed.ok) expect(parsed.error).toMatch(/routing request/);
 	});
 });

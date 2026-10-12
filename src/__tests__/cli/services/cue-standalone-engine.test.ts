@@ -27,6 +27,10 @@ vi.mock('../../../main/cue/cue-cli-executor', () => ({
 vi.mock('../../../main/cue/cue-notify-executor', () => ({ executeCueNotify: vi.fn() }));
 vi.mock('../../../main/cue/cue-auth-detector', () => ({ detectCueAuthFailure: vi.fn(() => null) }));
 const RUN_ON = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+// The model router is the desktop app's. A test never reaches it: what a
+// routed run resolves to is what this stand-in answers.
+const resolveCliAutoTurn = vi.hoisted(() => vi.fn());
+vi.mock('../../../cli/services/auto-turn', () => ({ resolveCliAutoTurn }));
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => [
 		{ id: 'agent-1', name: 'alpha', toolType: 'claude-code', cwd: '/p', projectRoot: '/p' },
@@ -50,6 +54,16 @@ vi.mock('../../../cli/services/storage', () => ({
 				low: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
 				medium: { type: 'source' },
 			},
+		},
+		{
+			// Set to the Auto model. Its Cue runs route only when a subscription opts in.
+			id: 'agent-4',
+			name: 'delta',
+			toolType: 'claude-code',
+			cwd: '/p',
+			projectRoot: '/p',
+			customModel: 'auto',
+			customEffort: 'low',
 		},
 	],
 	readSshRemotes: () => [],
@@ -206,6 +220,102 @@ describe('buildStandaloneCueEngineDeps', () => {
 		it('hands the run a refusal for a tier target that cannot be used', async () => {
 			const config = await runTier('agent-3', 'medium');
 			expect(config.launchRefusal).toContain('"medium" tier target cannot be used');
+		});
+	});
+
+	// `model: auto` on a subscription opts its runs into model routing. The
+	// prompt only exists once the executor has substituted its variables, so the
+	// run is handed a hook that decides its settings then.
+	describe('a subscription on the Auto model', () => {
+		const runWith = async (sessionId: string, turnSettings: unknown, onLog = vi.fn()) => {
+			executeCuePrompt.mockReset();
+			executeCuePrompt.mockResolvedValue({ status: 'completed' } as CueRunResult);
+			const deps = buildStandaloneCueEngineDeps({ onLog });
+			await deps.onCueRun({
+				runId: 'run-auto',
+				sessionId,
+				prompt: 'Review {{CUE_FILE_PATH}}',
+				subscriptionName: 'review',
+				event,
+				timeoutMs: 1000,
+				turnSettings,
+			} as Parameters<typeof deps.onCueRun>[0]);
+			return executeCuePrompt.mock.calls[0][0];
+		};
+
+		beforeEach(() => {
+			resolveCliAutoTurn.mockReset();
+			resolveCliAutoTurn.mockResolvedValue({
+				model: 'haiku',
+				effort: 'low',
+				notes: ['Auto: Embedding router chose tier low, effort low.'],
+				warnings: [],
+				stamp: { status: 'routed' },
+			});
+		});
+
+		it('hands the run its fallback settings and a hook that routes the substituted prompt', async () => {
+			const onLog = vi.fn();
+			const config = await runWith('agent-3', { model: 'auto', effort: 'high' }, onLog);
+
+			// What the run launches with if the router gives no decision: the
+			// agent's own model, and the subscription's effort. Never the word.
+			expect(config).toMatchObject({ customModel: 'sonnet', customEffort: 'max' });
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+
+			const launch = await config.resolveLateTurn('Review src/app.ts');
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledWith({
+				agent: expect.objectContaining({ id: 'agent-3' }),
+				prompt: 'Review src/app.ts',
+				agentEffort: undefined,
+				marker: { line: 0, effort: 'high', scopes: { effort: 'subscription' } },
+			});
+			expect(launch).toEqual({ customModel: 'haiku', customEffort: 'low', runOn: undefined });
+			expect(onLog).toHaveBeenCalledWith(
+				'cue',
+				'[CUE] "review" model: Auto: Embedding router chose tier low, effort low.'
+			);
+		});
+
+		it("carries the routed tier's place, and a refusal as the message the run fails with", async () => {
+			const local = { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+			const config = await runWith('agent-2', { model: 'auto' });
+
+			resolveCliAutoTurn.mockResolvedValueOnce({
+				model: 'qwen3.5-4b',
+				runOn: local,
+				notes: [],
+				warnings: [],
+			});
+			expect(await config.resolveLateTurn('p')).toMatchObject({ runOn: local });
+
+			// With no place of its own the turn stays on the agent's Run on target.
+			resolveCliAutoTurn.mockResolvedValueOnce({ model: 'haiku', notes: [], warnings: [] });
+			expect(await config.resolveLateTurn('p')).toMatchObject({ runOn: RUN_ON });
+
+			resolveCliAutoTurn.mockResolvedValueOnce({
+				notes: [],
+				warnings: ['The "low" tier target cannot run.'],
+				refusal: { code: 'tier-invalid-target', message: 'The "low" tier target cannot run.' },
+			});
+			expect((await config.resolveLateTurn('p')).launchRefusal).toBe(
+				'The "low" tier target cannot run.'
+			);
+		});
+
+		it('does not route a run whose subscription did not opt in, even for an agent set to Auto', async () => {
+			const config = await runWith('agent-4', undefined);
+
+			expect(config.resolveLateTurn).toBeUndefined();
+			expect(config.customModel).toBeUndefined();
+			expect(config.customEffort).toBe('low');
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+		});
+
+		it('does not route a subscription that pins a model or a tier', async () => {
+			expect((await runWith('agent-4', { model: 'opus' })).resolveLateTurn).toBeUndefined();
+			expect((await runWith('agent-4', { tier: 'high' })).resolveLateTurn).toBeUndefined();
 		});
 	});
 });

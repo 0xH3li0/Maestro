@@ -776,6 +776,13 @@ const mockMaestro = {
 		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
 		search: vi.fn().mockResolvedValue({ status: 'off' }),
+		// Model routing is off unless a test assigns it a router: a turn on the
+		// Auto model then gets no decision and runs on the agent's default.
+		routeTurn: vi.fn().mockResolvedValue({
+			skipped: 'off',
+			detail: 'Model routing is off.',
+			latencyMs: 0,
+		}),
 		proxy: {
 			report: vi.fn().mockResolvedValue({
 				status: { port: null, running: false, agentIds: [], lastError: null, gatewayUrls: null },

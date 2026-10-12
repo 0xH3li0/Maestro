@@ -124,6 +124,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)                              |
 | `model-router.ts`              | `EmbeddingRouter`: a tier and an effort from a prompt's nearest labeled examples (below)                                 |
 | `route-turn.ts`                | `routeTurn()`: one turn's tier and effort from the assigned router, inside the hard timeout, recorded in the ledger      |
+| `auto-turn.ts`                 | `resolveAgentAutoTurn()`: a turn on the Auto model with no tab behind it (a Cue run that opts in, a headless send)       |
 | `model-routing-corrections.ts` | `ModelRoutingCorrectionStore` over `userData/model-routing-corrections.json`: the user's routing corrections             |
 | `system-one/`                  | The System One engines, key, settings, and ledger: see [System One](#system-one-engines-the-router-entry-and-the-ledger) |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`                           |
@@ -1869,8 +1870,113 @@ start can be a `timeout` once, while the build runs on for the next. `startModel
 wires it to the settings store, and the settings watcher calls it for a change another process
 wrote (`maestro-cli models assign model-routing ...`).
 
-Not built yet: nothing calls `routeTurn` at a send. The Auto model choice, its pills and
-`maestro-cli s1 route` are the next parts.
+`routeTurn` runs in the main process, which owns the models and the ledger. Another process asks
+through `routeTurnRequest(request)`, which checks the shape of the request
+(`parseRouteTurnRequest()`) and nothing else: the texts are redacted and cut where they are used,
+so nothing upstream may cut them first.
+
+| Caller       | Route                                                                     |
+| ------------ | ------------------------------------------------------------------------- |
+| The renderer | `window.maestro.localModels.routeTurn(request)` (`localModels:routeTurn`) |
+| The CLI      | The WS message `model_route_turn`, answered as `model_route_turn_result`  |
+
+A request may carry `timeoutMs`, capped at `MODEL_ROUTING_MAX_TIMEOUT_MS` (30 s). A send keeps the
+400 ms default. A turn nobody is typing at (an Auto Run task, a Cue run, a `maestro-cli send`)
+passes `MODEL_ROUTING_UNATTENDED_TIMEOUT_MS` (5 s): a router that is still loading its model is
+worth the wait there, and past it the turn runs at the agent's default like any other.
+
+Not built yet: the Auto choice in the pickers, its pills and `maestro-cli s1 route`.
+
+### Auto: a turn sent on the model `auto`
+
+`auto` (`AUTO_MODEL` in `src/shared/autoModel.ts`) is a value stored where a model name goes: an
+agent's or a tab's `customModel`, a queued item's `turnSettings.model`, an Auto Run's run model, a
+Cue subscription's `model`. A turn sent on it asks `routeTurn` and launches on what the answer
+resolves to. No harness is ever handed the word: `applyAgentConfigOverrides()` is the one place a
+model name becomes a launch argument, and it drops `auto`, so a surface with no Auto path runs the
+agent on its default instead of failing on `--model auto`.
+
+`resolveAutoTurn(input)` in `src/shared/autoTurn.ts` is the resolution, pure and shared by every
+surface. It returns what `resolveTurnSettings()` returns (model, effort, the place, a refusal,
+notes, warnings) plus an `AutoTurnStamp`. A tier resolves through `resolveTurnSettings()`, so
+`medium` chosen by the router launches where `tier="medium"` launches in a playbook: the agent's
+own tier target, then the harness default, then the built-in table.
+
+**The three rules.**
+
+| Rule                                                    | What the code does                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. The model is kept while the provider's cache is warm | `autoModelHold(toolType, session, now)` returns the launch a turn keeps: the model and the place of the provider session it RESUMES, when that session was active inside `promptCacheLifetimeMs(toolType)` (5 minutes). Under a hold the router's tier is recorded and not applied; its effort is. A session start, and a session idle past the lifetime, take the tier |
+| 2. A send never waits and never fails on the router     | `routeTurn` owns the timeout. With no decision (`off`, `timeout`, `unavailable`, a router that could not be reached) the turn runs on the agent's default: no model is named, so the provider-level setting and then the harness's own default apply, with the agent's own effort. A held model is still kept                                                           |
+| 3. The choice is locked at send                         | What the router answered is frozen in an `AutoRouteStamp` (the two levels and the router's name, or the skip and its reason). What the turn did with it is the `AutoTurnStamp` on the tab (`AITab.turnAuto`): `routed`, `router-off` or `no-decision`, the hold, the place, a refusal                                                                                   |
+
+"The agent's default" in rule 2 is not a tier. An agent whose model is `auto` names no model, so
+its default is what a launch with no session model uses.
+
+**Two steps, because a send does not wait.** The tab is marked busy at once, and the router is asked
+in the async stretch every spawn already has.
+
+```
+send -> codifyTurnSettings(tab, session)            the turn takes the tab
+          rule 1 decided from tabSessionLaunch(tab)    (what the session last ran, and when)
+          turnAuto = { status: 'pending', hold? }      turnModel = what the session keeps, or none
+     -> settleAutoTurn({ sessionId, tabId, prompt }) beside prepareMaestroSystemPrompt()
+          routeTurn -> resolveAutoTurn under that hold -> tab fields final
+          returns { model, effort, runOn? }            -> process.spawn (runOnOverride when Auto chose the place)
+```
+
+Rule 1 is decided in the first step on purpose. The busy-write appends the user's message and marks
+the tab busy, so anything that looked at the tab again in the second step would read a cold session
+as warm.
+
+| Surface                                    | Where it is routed                                                                                                                                                                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A message typed into an idle agent         | `settleAutoTurn()` in `useInputProcessing`, before the spawn                                                                                                                                          |
+| A message queued behind a busy agent       | `routeQueuedAutoItem()` WHEN IT IS QUEUED. The answer is written onto the item (`turnSettings.route`), and the drain asks nothing: `codifyQueuedTurnSettings()` makes the stamp final at once         |
+| A prompt queued from outside the composer  | The same, in `enqueuePromptForTab()` and the remote enqueue                                                                                                                                           |
+| A queue item with no answer yet            | `settleAutoTurn()` in `agentStore.processQueuedItem`. It waits on a routing still in flight for that item instead of asking twice. A slash command is always routed here, on the prompt it expands to |
+| A command from the CLI or the web          | `settleAutoTurn()` in `useRemoteHandlers`                                                                                                                                                             |
+| An Auto Run task (desktop and CLI engines) | Per dispatch, on `autoRunRoutingPrompt()`: the text of the tasks the dispatch will work, not the playbook's instructions. Each task starts a session, so there is no hold                             |
+| A Cue run                                  | Only when the subscription says `model: auto`. The executor calls `resolveLateTurn(prompt)` once the prompt's variables are substituted                                                               |
+| `maestro-cli send` through the desktop     | `resolveAgentAutoTurn()` in the headless runner (`plugin-headless-agent-runner.ts`)                                                                                                                   |
+| `maestro-cli send` the CLI spawns itself   | `resolveCliAutoTurn()`, which asks the desktop over `model_route_turn`. No desktop is no decision                                                                                                     |
+
+Rules that are easy to break:
+
+- **A queued item keeps the word.** `captureQueuedTurnSettings()` stores `model: 'auto'`, never a
+  resolution of it. What is frozen at queue time is the SETTING and the router's ANSWER. Rule 1 and
+  the tier's target are read when the turn takes the tab, the same split the Run on label already
+  follows: the launch reads the agent's target when the turn spawns.
+- **An edit to a queued message drops its answer.** The answer is about the item's text.
+  `applyQueuedItemEdit()` removes `route` when the text changed, and the dispatch routes the new
+  words.
+- **A resend keeps its answer.** `retryStore`'s `replayItem()` re-reads the model and effort the
+  agent carries now, on purpose. It hands the snapshot's `route` back to
+  `captureQueuedTurnSettings()`, which keeps it only while the model is still `auto`: the words
+  resent are the words that were routed.
+- **A marker outranks the router, per axis.** `resolveAutoTurn({ marker })` takes an Auto Run
+  `MAESTRO:MODEL` hint or a Cue subscription's `effort`. An axis the marker sets is the marker's;
+  an axis it leaves to the agent (absent, or `default`) is the router's. `autoTurnNeedsRoute()` is
+  false when the marker sets both, and the router is not asked.
+- **A tier target that cannot be used is refused by name.** The stamp carries `refusal`,
+  `settleAutoTurn()` throws it inside the spawn's own `try`, and the turn fails the way a spawn that
+  was refused fails. It is never launched on another model.
+- **A turn on a named model clears the stamp.** `codifyTurnSettings()` always returns `turnAuto`,
+  `undefined` for a named model, so the place an Auto turn chose cannot leak into the next turn's
+  rule 1.
+- **A subscription that does not opt in is never routed.** An agent set to `auto` runs its Cue
+  turns on its default (`ownModel()` strips the word before it reaches `resolveCueTurnSettings()`).
+
+**A headless session has one record.** A turn with no tab cannot read what its session last ran
+from a tab. `noteAutoSessionLaunch()` (`src/main/local-models/auto-turn.ts`) remembers it in the
+main process when the turn ends, keyed by provider and provider session id, and
+`resolveAgentAutoTurn()` reads it for a send that resumes the session. The memory is gone at a
+restart, which reads as a cold session. A turn the CLI spawns itself has no record at all, so a
+resumed one takes the router's tier.
+
+How a stamp reads is `autoTurnLabel(stamp, target)`: `Auto → medium · sonnet`,
+`Auto → low · qwen3.5-4b · Maestro`, `Auto → haiku (kept)`, `Auto (router off)`,
+`Auto (no decision)`.
 
 ### The embedding router: `getEmbeddingRouter().route(source, text)`
 

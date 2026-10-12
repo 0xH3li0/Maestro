@@ -34,7 +34,10 @@ import {
 	resolveTurnSettings,
 	describeTurnSettings,
 	turnRunOnTarget,
+	type ResolvedTurnSettings,
 } from '../../shared/autorunTurnSettings';
+import { isAutoModel } from '../../shared/autoModel';
+import { resolveCliAutoTurn } from './auto-turn';
 import type { TierRouting } from '../../shared/modelTiers';
 
 // Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
@@ -48,7 +51,7 @@ import {
 	findPendingHitlGate,
 	type HaltMarker,
 } from '../../shared/autorunMarkers';
-import { countMarkdownTasks } from '../../shared/markdownTaskScan';
+import { autoRunRoutingPrompt, countMarkdownTasks } from '../../shared/markdownTaskScan';
 import {
 	MAX_CONSECUTIVE_NO_CHANGES,
 	describeStall,
@@ -629,13 +632,32 @@ export async function* runPlaybook(
 					// --effort goes in as the baseline the hint overrides, matching the
 					// desktop engine's precedence: document hint, then run override, then
 					// the agent's own value.
-					const turnSettings = resolveTurnSettings(
-						session.toolType,
-						ignoreModelHints ? null : findActiveModelHint(expandedDocContent),
-						runModel ?? session.customModel,
-						runEffort ?? session.customEffort,
-						tierRouting
-					);
+					// On the Auto model the dispatch is ROUTED instead: the desktop's
+					// model router reads the tasks this dispatch will work (not the
+					// playbook's instructions, which are the same words for every
+					// task), and its tier and effort apply. A marker always wins on the
+					// axes it sets, and one that sets both leaves the router nothing to
+					// ask. Same rule as the desktop engine (useDocumentProcessor).
+					const baselineModel = runModel ?? session.customModel;
+					const baselineEffort = runEffort ?? session.customEffort;
+					const modelHint = ignoreModelHints ? null : findActiveModelHint(expandedDocContent);
+					const turnSettings: ResolvedTurnSettings = isAutoModel(baselineModel)
+						? await resolveCliAutoTurn({
+								agent: session,
+								prompt: autoRunRoutingPrompt(
+									expandedDocContent,
+									playbook.taskSelectionMode === 'document' ? hintSegment?.count : 1
+								),
+								agentEffort: baselineEffort,
+								marker: modelHint,
+							})
+						: resolveTurnSettings(
+								session.toolType,
+								modelHint,
+								baselineModel,
+								baselineEffort,
+								tierRouting
+							);
 					// Its own event type rather than `verbose`: a hint that could not be
 					// honored has to reach the operator whether or not they passed
 					// --verbose, and a distinct type lets consumers filter for it.

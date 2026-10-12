@@ -20,6 +20,7 @@ import {
 import { focusAiTabWithSnooze, type FocusAiTabOutcome } from '../../utils/snoozeHelpers';
 import { logger } from '../../utils/logger';
 import { buildQueuedMessageItem, enqueuePromptForTab } from '../../services/queuedPrompt';
+import { routeQueuedAutoItem } from '../../services/autoTurn';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
@@ -1184,6 +1185,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						...s,
 						executionQueue: [...s.executionQueue, queuedItem],
 					}));
+					// Routed as it is queued when the agent is set to the Auto model,
+					// like a message the composer queues. A no-op on a named model.
+					routeQueuedAutoItem(sessionId, queuedItem);
 
 					reply({
 						success: true,

@@ -505,6 +505,84 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		// A command that lands on an agent set to the Auto model: the tab takes
+		// the turn, the model router is asked, and the spawn launches on what it
+		// answers, exactly as a message typed in the composer does.
+		describe('an agent on the Auto model', () => {
+			const routeTurn = vi.fn();
+			const send = async (session: Session, command: string) => {
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+				(window as any).maestro.localModels = { routeTurn };
+				const deps = createMockDeps({ sessionsRef: { current: [session] } });
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: { sessionId: session.id, command, inputMode: 'ai' },
+						})
+					);
+				});
+				return (window.maestro.process.spawn as any).mock.calls[0]?.[0];
+			};
+
+			beforeEach(() => {
+				routeTurn.mockReset();
+				routeTurn.mockResolvedValue({
+					tier: 'high',
+					effort: 'medium',
+					engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+					latencyMs: 25,
+				});
+			});
+
+			it('spawns on the tier and effort the router chose', async () => {
+				const spawned = await send(
+					createMockSession({ inputMode: 'ai', customModel: 'auto' }),
+					'design the migration'
+				);
+
+				expect(routeTurn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: 'design the migration',
+						agentId: 'session-1',
+						tabId: 'tab-1',
+					})
+				);
+				expect(spawned.sessionCustomModel).toBe('opus');
+				expect(spawned.sessionCustomEffort).toBe('high');
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].turnAuto?.status).toBe('routed');
+			});
+
+			it('runs on the agent default when the router gives no decision', async () => {
+				routeTurn.mockResolvedValue({ skipped: 'timeout', detail: 'slow', latencyMs: 400 });
+
+				const spawned = await send(
+					createMockSession({ inputMode: 'ai', customModel: 'auto', customEffort: 'low' }),
+					'design the migration'
+				);
+
+				expect(spawned.sessionCustomModel).toBeUndefined();
+				expect(spawned.sessionCustomEffort).toBe('low');
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].turnAuto?.status).toBe(
+					'no-decision'
+				);
+			});
+
+			it('asks the router nothing, and passes what it always passed, on a named model', async () => {
+				const spawned = await send(
+					createMockSession({ inputMode: 'ai', customModel: 'sonnet', customEffort: 'low' }),
+					'design the migration'
+				);
+
+				expect(routeTurn).not.toHaveBeenCalled();
+				expect(spawned.sessionCustomModel).toBe('sonnet');
+				expect('sessionCustomEffort' in spawned).toBe(false);
+			});
+		});
+
 		it('consults the mentioned agent instead of spawning when the prompt leads with @mention', async () => {
 			// A CLI-dispatched "@Reviewer look at this" is addressed at Reviewer
 			// only: no local turn, but the consult MUST fire (it used to be inert -

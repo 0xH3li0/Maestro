@@ -55,6 +55,8 @@ import {
 } from '../../local-models/dictation';
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
 import { testAgentRunOn } from '../../local-models/run-on-test';
+import { routeTurnRequest } from '../../local-models/route-turn';
+import type { RouteTurnResult } from '../../../shared/local-models/model-routing-task';
 import type { RunOnTestResult } from '../../../shared/local-models/run-on';
 import { listHarnessTierOptionsRequest } from '../../local-models/tier-options';
 import type { HarnessTierOptions } from '../../../shared/local-models/tier-options';
@@ -632,6 +634,18 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('search'),
 			async (request: unknown): Promise<WorkSearchResult> => searchPastWorkRequest(request)
+		)
+	);
+
+	// How much model and effort one turn needs: what a send on the Auto model
+	// asks before it launches. The same function `maestro-cli` reaches over
+	// `model_route_turn`. A routing answers within its timeout and never rejects;
+	// only a request that cannot be read does.
+	ipcMain.handle(
+		'localModels:routeTurn',
+		withIpcErrorLogging(
+			handlerOpts('routeTurn'),
+			async (request: unknown): Promise<RouteTurnResult> => routeTurnRequest(request)
 		)
 	);
 

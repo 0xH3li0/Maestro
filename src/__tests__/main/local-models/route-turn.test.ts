@@ -70,6 +70,7 @@ import {
 	refreshModelRouting,
 	resetModelRoutingForTests,
 	routeTurn,
+	routeTurnRequest,
 	startModelRouting,
 } from '../../../main/local-models/route-turn';
 import { captureException } from '../../../main/utils/sentry';
@@ -761,6 +762,66 @@ describe('routeTurn on System One', () => {
 		expect(captureException).toHaveBeenCalledTimes(1);
 		await flush();
 		expect(mocks.keepSystemOneDecision).not.toHaveBeenCalled();
+	});
+});
+
+describe('routeTurnRequest: a routing asked from the renderer or the CLI', () => {
+	it('routes the prompt for the agent and tab it names, and files the decision under them', async () => {
+		assign(BGE);
+		mocks.runEmbeddingRouteTask.mockResolvedValue(voted('high', 'medium'));
+
+		const result = await routeTurnRequest({
+			prompt: PROMPT,
+			recent: TURN.recent,
+			agentId: 'agent-7',
+			tabId: 'tab-3',
+		});
+
+		expect(result).toMatchObject({ tier: 'high', effort: 'medium', engine: EMBEDDING_ENGINE });
+		const { decision } = await recorded();
+		expect(decision).toMatchObject({ taskId: 'model-routing', agentId: 'agent-7', tabId: 'tab-3' });
+	});
+
+	it('hands the recent exchange to a router that reads text', async () => {
+		assign(SYSTEM_ONE);
+		mocks.runSystemOneTask.mockResolvedValue({
+			status: 'ok',
+			engine: 'jev-cloud',
+			engineLabel: JEV_LABEL,
+			answers: answered(0, 0, 0.9),
+		});
+
+		await routeTurnRequest({ prompt: PROMPT, recent: TURN.recent, agentId: 'agent-7' });
+
+		expect(mocks.runSystemOneTask).toHaveBeenCalledWith(
+			'model-routing',
+			{ prompt: PROMPT, recent: TURN.recent },
+			expect.objectContaining({ agentId: 'agent-7', timeoutMs: MODEL_ROUTING_TIMEOUT_MS })
+		);
+	});
+
+	it('waits as long as the caller asks, for a turn nobody is typing at', async () => {
+		assign(QWEN);
+		mocks.askLocalJudge.mockResolvedValue({ answers: answered(1, 1) });
+
+		await routeTurnRequest({ prompt: PROMPT, timeoutMs: 5000 });
+
+		expect(mocks.askLocalJudge.mock.calls[0][2]).toMatchObject({ timeoutMs: 5000 });
+	});
+
+	it('answers a skip like any routing: off is a result, not an error', async () => {
+		const result = skippedOf(await routeTurnRequest({ prompt: PROMPT }));
+		expect(result.skipped).toBe('off');
+	});
+
+	it('rejects a request it cannot read, and asks no router', async () => {
+		assign(BGE);
+
+		await expect(routeTurnRequest({ prompt: 7 })).rejects.toThrow(/prompt is text/);
+		await expect(routeTurnRequest(null)).rejects.toThrow(/routing request/);
+		await expect(routeTurnRequest({ prompt: 'p', timeoutMs: -1 })).rejects.toThrow(/timeout/);
+
+		expect(mocks.runEmbeddingRouteTask).not.toHaveBeenCalled();
 	});
 });
 

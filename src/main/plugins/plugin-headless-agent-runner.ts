@@ -5,6 +5,9 @@ import type { HeadlessAgentRunner } from './plugin-manager-singleton';
 import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-tool-run-identity';
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
+import { isAutoModel } from '../../shared/autoModel';
+import type { AutoTurn } from '../../shared/autoTurn';
+import type { AgentAutoTurnRequest } from '../local-models/auto-turn';
 import { logger } from '../utils/logger';
 
 import {
@@ -30,6 +33,21 @@ export interface PluginHeadlessRunnerDeps {
 	revokeRunToken: (token: string) => void;
 	cliScriptPath: () => string;
 	audit: (agentId: string, resumed: boolean) => void;
+	/**
+	 * Decide and resolve a turn for an agent set to the Auto model
+	 * (`resolveAgentAutoTurn`). Never rejects on a routing: no decision resolves
+	 * to the agent's default.
+	 */
+	resolveAutoTurn: (request: AgentAutoTurnRequest) => Promise<AutoTurn>;
+	/**
+	 * Remember what a provider session launched on, so a send that resumes it
+	 * keeps its model while the provider's cache is warm (`noteAutoSessionLaunch`).
+	 */
+	noteAutoSessionLaunch: (
+		toolType: SessionInfo['toolType'],
+		providerSessionId: string,
+		turn: Pick<AutoTurn, 'model' | 'runOn'>
+	) => void;
 }
 
 export function createPluginHeadlessAgentRunner(
@@ -88,9 +106,33 @@ export function createPluginHeadlessAgentRunner(
 					error: 'Agent run timed out or was cancelled',
 				};
 			}
+			// An agent set to the Auto model has no model of its own to pass: the
+			// router decides this turn's model and effort, and the place when the
+			// tier names one. A tier target that cannot be used fails the send by
+			// name; the turn is never launched on some other model in its place.
+			const autoTurn = isAutoModel(agent.customModel)
+				? await deps.resolveAutoTurn({
+						agent,
+						prompt,
+						...(providerSessionId ? { providerSessionId } : {}),
+						...(signal ? { signal } : {}),
+					})
+				: undefined;
+			if (autoTurn?.refusal) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: autoTurn.refusal.message,
+				};
+			}
+			for (const line of autoTurn ? [...autoTurn.notes, ...autoTurn.warnings] : []) {
+				logger.info(`agents.send -> agent ${agent.id}: ${line}`, '[ModelRouting]');
+			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
-				customModel: agent.customModel,
-				customEffort: agent.customEffort,
+				customModel: autoTurn ? autoTurn.model : agent.customModel,
+				customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
+				...(autoTurn?.runOn ? { runOn: autoTurn.runOn } : {}),
 				customArgs: agent.customArgs,
 				customEnvVars: agent.customEnvVars,
 				additionalDirectories: agent.additionalDirectories,
@@ -106,6 +148,12 @@ export function createPluginHeadlessAgentRunner(
 				signal,
 				onProgress,
 			});
+			// The session's last activity is now, and a session this turn started
+			// has only just been named: record what it ran on for the send that
+			// resumes it.
+			if (autoTurn && result.agentSessionId) {
+				deps.noteAutoSessionLaunch(agent.toolType, result.agentSessionId, autoTurn);
+			}
 			const receiptsOverflowed =
 				!!receiptToolId && !!runToken && deps.hasRunReceiptOverflow!(runToken);
 			const success =

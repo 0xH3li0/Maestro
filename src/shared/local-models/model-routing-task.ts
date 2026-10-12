@@ -50,6 +50,15 @@ export const MODEL_ROUTING_TASK_ID = 'model-routing';
  */
 export const MODEL_ROUTING_TIMEOUT_MS = 400;
 
+/**
+ * How long a turn nobody is typing at may wait for a decision: an Auto Run
+ * task, a Cue run, a `maestro-cli send`. A person at the composer feels 400 ms;
+ * an unattended turn that runs for minutes does not feel five seconds, and a
+ * router that is still loading its model is worth the wait there. Still a hard
+ * bound: past it the turn runs at the agent's default like any other.
+ */
+export const MODEL_ROUTING_UNATTENDED_TIMEOUT_MS = 5_000;
+
 /** The most of each recent message a router is shown. */
 export const MODEL_ROUTING_RECENT_MAX_CHARS = 600;
 
@@ -356,4 +365,89 @@ export type RouteTurnResult = ModelRouteDecision | ModelRouteSkipped;
 
 export function isModelRouteSkipped(result: RouteTurnResult): result is ModelRouteSkipped {
 	return 'skipped' in result;
+}
+
+// ---------------------------------------------------------------------------
+// Asking for a routing from another process
+// ---------------------------------------------------------------------------
+
+/**
+ * The most a caller may ask a routing to wait. A send keeps the default (a slow
+ * router costs it the decision); a dry run that only prints the answer may be
+ * more patient, up to this.
+ */
+export const MODEL_ROUTING_MAX_TIMEOUT_MS = 30_000;
+
+/**
+ * One routing as the renderer and the CLI ask the main process for it, where
+ * `routeTurn` runs. `agentId` and `tabId` are who the turn is for, kept on the
+ * decision record.
+ */
+export interface RouteTurnRequest extends ModelRoutingInput {
+	agentId?: string;
+	tabId?: string;
+	/** How long to wait, in ms. Defaults to {@link MODEL_ROUTING_TIMEOUT_MS}. */
+	timeoutMs?: number;
+}
+
+export type RouteTurnRequestParse =
+	| { ok: true; request: RouteTurnRequest }
+	| { ok: false; error: string };
+
+function optionalText(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * Read a routing request that crossed a process boundary. Only the shape is
+ * checked: the texts are redacted and cut where they are used
+ * (`normalizeModelRoutingText`, `clipModelRoutingRecent`), in that order, so
+ * nothing here may cut them first. A blank prompt is not refused; `routeTurn`
+ * answers it with `no-prompt`.
+ */
+export function parseRouteTurnRequest(value: unknown): RouteTurnRequestParse {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		return { ok: false, error: 'A routing request is an object with a prompt.' };
+	}
+	const raw = value as Record<string, unknown>;
+	if (typeof raw.prompt !== 'string') {
+		return { ok: false, error: "A routing request's prompt is text." };
+	}
+	const request: RouteTurnRequest = { prompt: raw.prompt };
+
+	if (raw.recent !== undefined && raw.recent !== null) {
+		if (typeof raw.recent !== 'object' || Array.isArray(raw.recent)) {
+			return {
+				ok: false,
+				error:
+					"A routing request's recent exchange is an object with a user and an assistant message.",
+			};
+		}
+		const recent = raw.recent as Record<string, unknown>;
+		const user = optionalText(recent.user);
+		const assistant = optionalText(recent.assistant);
+		if (user || assistant) {
+			request.recent = { ...(user ? { user } : {}), ...(assistant ? { assistant } : {}) };
+		}
+	}
+
+	const agentId = optionalText(raw.agentId);
+	if (agentId) request.agentId = agentId;
+	const tabId = optionalText(raw.tabId);
+	if (tabId) request.tabId = tabId;
+
+	if (raw.timeoutMs !== undefined && raw.timeoutMs !== null) {
+		if (
+			typeof raw.timeoutMs !== 'number' ||
+			!Number.isFinite(raw.timeoutMs) ||
+			raw.timeoutMs <= 0
+		) {
+			return {
+				ok: false,
+				error: "A routing request's timeout is a number of milliseconds above 0.",
+			};
+		}
+		request.timeoutMs = Math.min(Math.round(raw.timeoutMs), MODEL_ROUTING_MAX_TIMEOUT_MS);
+	}
+	return { ok: true, request };
 }

@@ -16,7 +16,11 @@ import {
 	captureQueuedTurnSettings,
 	codifyQueuedTurnSettings,
 	turnRunOnLabel,
+	tabSessionLaunch,
+	settleAutoTurnOnTab,
+	autoTurnLaunch,
 } from '../../../renderer/utils/providerTabSessions';
+import { promptCacheLifetimeMs, type AutoRouteStamp } from '../../../shared/autoTurn';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AITab, Session } from '../../../renderer/types';
 import type { ToolType } from '../../../shared/types';
@@ -353,5 +357,305 @@ describe('turnRunOn: where a Run on turn ran', () => {
 		expect(
 			codifyQueuedTurnSettings(item, makeTab(), makeSession('claude-code')).turnRunOn
 		).toBeUndefined();
+	});
+});
+
+describe('a turn sent on the Auto model', () => {
+	const OLLAMA = {
+		id: 'ep-ollama',
+		name: 'Ollama',
+		kind: 'ollama' as const,
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:latest' };
+
+	const route = (
+		tier: 'low' | 'medium' | 'high',
+		effort: 'low' | 'medium' | 'high'
+	): AutoRouteStamp => ({ tier, effort, engine: 'Embedding router', calibrated: false });
+	const OFF: AutoRouteStamp = { skipped: 'off', detail: 'Model routing is off.' };
+
+	/** A tab whose provider session last answered `idleMs` ago, on `turnModel`. */
+	const liveTab = (idleMs: number, overrides: Partial<AITab> = {}): AITab =>
+		makeTab({
+			agentSessionId: 'claude-abc',
+			turnProvider: 'claude-code',
+			turnModel: 'haiku',
+			logs: [{ id: 'l1', timestamp: Date.now() - idleMs, source: 'stdout', text: 'done' }] as any,
+			...overrides,
+		});
+	const AUTO = makeSession('claude-code', { customModel: 'auto', customEffort: 'high' });
+	const COLD = promptCacheLifetimeMs('claude-code') + 60_000;
+
+	describe('tabSessionLaunch: what the session a turn would resume last ran on', () => {
+		it('is nothing for a tab with no provider session: the turn starts one', () => {
+			expect(tabSessionLaunch(makeTab({ turnModel: 'opus' }), AUTO)).toBeUndefined();
+			expect(tabSessionLaunch(undefined, AUTO)).toBeUndefined();
+		});
+
+		it('is the last turn model, the place a tier sent it, and the newest entry time', () => {
+			const tab = liveTab(1000, { turnAuto: { status: 'routed', runOn: QWEN } });
+			expect(tabSessionLaunch(tab, AUTO)).toEqual({
+				model: 'haiku',
+				runOn: QWEN,
+				lastActiveAt: tab.logs[0].timestamp,
+			});
+		});
+
+		it('counts a busy tab as active now', () => {
+			const tab = liveTab(COLD, { state: 'busy' });
+			expect(tabSessionLaunch(tab, AUTO, 5000)?.lastActiveAt).toBe(5000);
+		});
+
+		it('is nothing when the last turn ran under another provider', () => {
+			expect(tabSessionLaunch(liveTab(1000, { turnProvider: 'codex' }), AUTO)).toBeUndefined();
+		});
+
+		it('has no last activity for a session with an empty transcript, which reads as cold', () => {
+			const launch = tabSessionLaunch(liveTab(0, { logs: [] }), AUTO);
+			expect(launch).toEqual({ model: 'haiku' });
+		});
+	});
+
+	describe('codifyTurnSettings: the turn takes the tab before the router answers', () => {
+		it('never freezes the word auto as the model, and marks the turn pending', () => {
+			expect(codifyTurnSettings(makeTab(), AUTO)).toEqual({
+				turnProvider: 'claude-code',
+				turnModel: undefined,
+				turnEffort: 'high',
+				turnRunOn: undefined,
+				turnAuto: { status: 'pending' },
+			});
+		});
+
+		it('reads the tab override first, like any model choice', () => {
+			const session = makeSession('claude-code', { customModel: 'opus' });
+			expect(codifyTurnSettings(makeTab({ customModel: 'auto' }), session).turnAuto).toEqual({
+				status: 'pending',
+			});
+			expect(codifyTurnSettings(makeTab({ customModel: 'opus' }), AUTO).turnAuto).toBeUndefined();
+		});
+
+		it('rule 1: holds the model of a session whose cache is warm', () => {
+			expect(codifyTurnSettings(liveTab(30_000), AUTO)).toMatchObject({
+				turnModel: 'haiku',
+				turnEffort: 'high',
+				turnAuto: { status: 'pending', hold: { model: 'haiku' } },
+			});
+		});
+
+		it('rule 1: holds the place a tier sent the session, and labels it', () => {
+			const saved = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			try {
+				const tab = liveTab(30_000, {
+					turnModel: 'qwen3:latest',
+					turnAuto: { status: 'routed', runOn: QWEN },
+				});
+				expect(codifyTurnSettings(tab, AUTO)).toMatchObject({
+					turnModel: 'qwen3:latest',
+					turnRunOn: 'qwen3:latest · Ollama',
+					turnAuto: {
+						status: 'pending',
+						hold: { model: 'qwen3:latest', runOn: QWEN },
+						runOn: QWEN,
+					},
+				});
+			} finally {
+				useSettingsStore.setState({ localModelEndpoints: saved });
+			}
+		});
+
+		it('rule 1: holds nothing once the session has been idle past the cache lifetime', () => {
+			expect(codifyTurnSettings(liveTab(COLD), AUTO)).toMatchObject({
+				turnModel: undefined,
+				turnAuto: { status: 'pending' },
+			});
+			expect(codifyTurnSettings(liveTab(COLD), AUTO).turnAuto?.hold).toBeUndefined();
+		});
+
+		it('a turn on a named model clears the stamp the Auto turn before it left', () => {
+			const tab = liveTab(1000, { turnAuto: { status: 'routed', runOn: QWEN } });
+			const codified = codifyTurnSettings(tab, makeSession('claude-code', { customModel: 'opus' }));
+			expect('turnAuto' in codified).toBe(true);
+			expect({ ...tab, ...codified }.turnAuto).toBeUndefined();
+		});
+
+		it('with the answer in hand the stamp is final at once', () => {
+			expect(codifyTurnSettings(makeTab(), AUTO, route('medium', 'low'))).toEqual({
+				turnProvider: 'claude-code',
+				turnModel: 'sonnet',
+				turnEffort: 'low',
+				turnRunOn: undefined,
+				turnAuto: { status: 'routed', route: route('medium', 'low') },
+			});
+		});
+	});
+
+	describe('settleAutoTurnOnTab: the router answered', () => {
+		const pending = (tab: AITab): AITab => ({ ...tab, ...codifyTurnSettings(tab, AUTO) });
+
+		it('a session start takes the tier and the effort', () => {
+			const settled = settleAutoTurnOnTab(pending(makeTab()), AUTO, route('high', 'low'));
+			expect(settled).toMatchObject({
+				turnModel: 'opus',
+				turnEffort: 'low',
+				turnAuto: { status: 'routed', route: route('high', 'low') },
+			});
+			expect(settled.turnAuto?.hold).toBeUndefined();
+		});
+
+		it('rule 1: a warm session keeps its model and changes only its effort', () => {
+			const settled = settleAutoTurnOnTab(pending(liveTab(30_000)), AUTO, route('high', 'low'));
+			expect(settled).toMatchObject({
+				turnModel: 'haiku',
+				turnEffort: 'low',
+				turnAuto: { status: 'routed', hold: { model: 'haiku' } },
+			});
+		});
+
+		it('rule 1 is decided when the turn took the tab, not when the answer lands', () => {
+			// The busy-write appends the user bubble and marks the tab busy, which
+			// would make a cold session look warm to anything that looked again.
+			const cold = pending(liveTab(COLD));
+			const busy: AITab = {
+				...cold,
+				state: 'busy',
+				logs: [...cold.logs, { id: 'u', timestamp: Date.now(), source: 'user', text: 'go' }] as any,
+			};
+			expect(settleAutoTurnOnTab(busy, AUTO, route('high', 'low')).turnModel).toBe('opus');
+		});
+
+		it('rule 2: no decision leaves the agent default, and its own effort', () => {
+			const settled = settleAutoTurnOnTab(pending(makeTab()), AUTO, OFF);
+			expect(settled).toMatchObject({
+				turnModel: undefined,
+				turnEffort: 'high',
+				turnAuto: { status: 'router-off', route: OFF },
+			});
+		});
+
+		it('launches a tier the agent maps to a source on that source', () => {
+			const saved = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			try {
+				const session = makeSession('claude-code', {
+					customModel: 'auto',
+					tierTargets: { low: QWEN },
+				});
+				const tab = { ...makeTab(), ...codifyTurnSettings(makeTab(), session) };
+				const settled = settleAutoTurnOnTab(tab, session, route('low', 'low'));
+				expect(settled).toMatchObject({
+					turnModel: 'qwen3:latest',
+					turnRunOn: 'qwen3:latest · Ollama',
+					turnAuto: { status: 'routed', runOn: QWEN },
+				});
+				expect(autoTurnLaunch(settled)).toEqual({
+					model: 'qwen3:latest',
+					effort: 'low',
+					runOn: QWEN,
+					route: route('low', 'low'),
+				});
+			} finally {
+				useSettingsStore.setState({ localModelEndpoints: saved });
+			}
+		});
+
+		it('leaves a turn that is not pending alone: a late answer rewrites nothing', () => {
+			const settled = settleAutoTurnOnTab(pending(makeTab()), AUTO, route('high', 'low'));
+			expect(settleAutoTurnOnTab(settled, AUTO, route('low', 'high'))).toBe(settled);
+			const named = makeTab({ turnModel: 'opus' });
+			expect(settleAutoTurnOnTab(named, AUTO, route('low', 'high'))).toBe(named);
+		});
+	});
+
+	describe('autoTurnLaunch: what the spawn is handed', () => {
+		it('is nothing for a turn on a named model, and for one still pending', () => {
+			expect(autoTurnLaunch(makeTab({ turnModel: 'opus' }))).toBeNull();
+			expect(autoTurnLaunch(makeTab({ turnAuto: { status: 'pending' } }))).toBeNull();
+			expect(autoTurnLaunch(undefined)).toBeNull();
+		});
+
+		it('is the frozen model and effort, with no place when Auto decided none', () => {
+			const tab = makeTab({
+				turnModel: 'sonnet',
+				turnEffort: 'low',
+				turnAuto: { status: 'routed', route: route('medium', 'low') },
+			});
+			expect(autoTurnLaunch(tab)).toEqual({
+				model: 'sonnet',
+				effort: 'low',
+				route: route('medium', 'low'),
+			});
+		});
+
+		it('is empty for a turn with no decision: the agent default launches', () => {
+			expect(autoTurnLaunch(makeTab({ turnAuto: { status: 'no-decision' } }))).toEqual({});
+		});
+	});
+
+	describe('a queued item', () => {
+		it('keeps the word, and the answer when the caller has one', () => {
+			expect(captureQueuedTurnSettings(makeTab(), AUTO)).toEqual({ model: 'auto', effort: 'high' });
+			expect(captureQueuedTurnSettings(makeTab(), AUTO, route('low', 'low'))).toEqual({
+				model: 'auto',
+				effort: 'high',
+				route: route('low', 'low'),
+			});
+		});
+
+		it('carries no answer on a named model', () => {
+			const session = makeSession('claude-code', { customModel: 'opus' });
+			expect(captureQueuedTurnSettings(makeTab(), session, route('low', 'low'))).toEqual({
+				model: 'opus',
+				effort: undefined,
+			});
+		});
+
+		it('routed when it was queued: final the moment it takes the tab, on its own effort', () => {
+			const item = {
+				turnSettings: { model: 'auto', effort: 'low', route: route('high', 'medium') },
+			};
+			// The agent has since moved to a named model. The item is still Auto.
+			const session = makeSession('claude-code', { customModel: 'sonnet', customEffort: 'max' });
+			expect(codifyQueuedTurnSettings(item, makeTab(), session)).toEqual({
+				turnProvider: 'claude-code',
+				turnModel: 'opus',
+				turnEffort: 'high',
+				turnRunOn: undefined,
+				turnAuto: { status: 'routed', route: route('high', 'medium') },
+			});
+		});
+
+		it('rule 1 is read from the tab when the item drains, not when it was queued', () => {
+			const item = { turnSettings: { model: 'auto', route: route('high', 'medium') } };
+			expect(codifyQueuedTurnSettings(item, liveTab(30_000), AUTO)).toMatchObject({
+				turnModel: 'haiku',
+				turnEffort: 'high',
+				turnAuto: { status: 'routed', hold: { model: 'haiku' } },
+			});
+			expect(codifyQueuedTurnSettings(item, liveTab(COLD), AUTO).turnModel).toBe('opus');
+		});
+
+		it('not routed yet: pending, for the dispatch to settle', () => {
+			const item = { turnSettings: { model: 'auto', effort: 'low' } };
+			expect(codifyQueuedTurnSettings(item, makeTab(), AUTO)).toMatchObject({
+				turnModel: undefined,
+				turnEffort: 'low',
+				turnAuto: { status: 'pending' },
+			});
+		});
+
+		it('queued on a named model stays on it when the agent is set to Auto afterwards', () => {
+			const item = { turnSettings: { model: 'haiku', effort: 'low' } };
+			const codified = codifyQueuedTurnSettings(item, makeTab(), AUTO);
+			expect(codified).toMatchObject({ turnModel: 'haiku', turnEffort: 'low' });
+			expect(codified.turnAuto).toBeUndefined();
+		});
+
+		it('from before settings were captured follows the agent, Auto included', () => {
+			expect(codifyQueuedTurnSettings({}, makeTab(), AUTO).turnAuto).toEqual({ status: 'pending' });
+		});
 	});
 });

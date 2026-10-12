@@ -49,6 +49,7 @@ import {
 	modelRouteFromSystemOne,
 	modelRouterKind,
 	modelRoutingSystemOneRequest,
+	parseRouteTurnRequest,
 	type ModelRoute,
 	type ModelRouterKind,
 	type ModelRoutingEngine,
@@ -235,6 +236,26 @@ export async function routeTurn(
 		...(attempt.engine ? { engine: attempt.engine } : {}),
 		latencyMs,
 	};
+}
+
+/**
+ * `routeTurn` for a request that crossed a process boundary: the renderer's
+ * send path (`localModels:routeTurn`) and the CLI (`model_route_turn`). A
+ * request that cannot be read is the caller's bug and rejects with what is
+ * wrong with it; a routing itself never rejects.
+ */
+export async function routeTurnRequest(request: unknown): Promise<RouteTurnResult> {
+	const parsed = parseRouteTurnRequest(request);
+	if (!parsed.ok) throw new Error(parsed.error);
+	const { prompt, recent, agentId, tabId, timeoutMs } = parsed.request;
+	return routeTurn(
+		{
+			prompt,
+			...(recent ? { recent } : {}),
+			...(agentId ? { agent: { id: agentId, ...(tabId ? { tabId } : {}) } } : {}),
+		},
+		timeoutMs !== undefined ? { timeoutMs } : {}
+	);
 }
 
 // ---------------------------------------------------------------------------

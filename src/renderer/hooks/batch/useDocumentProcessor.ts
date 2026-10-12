@@ -25,7 +25,16 @@ import type {
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
-import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import {
+	describeTurnSettings,
+	resolveTurnSettings,
+	type ResolvedTurnSettings,
+} from '../../../shared/autorunTurnSettings';
+import { isAutoModel } from '../../../shared/autoModel';
+import { autoTurnNeedsRoute, resolveAutoTurn } from '../../../shared/autoTurn';
+import { MODEL_ROUTING_UNATTENDED_TIMEOUT_MS } from '../../../shared/local-models/model-routing-task';
+import { autoRunRoutingPrompt } from '../../../shared/markdownTaskScan';
+import { requestTurnRoute } from '../../services/autoTurn';
 import type { TierRouting } from '../../../shared/modelTiers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import {
@@ -437,16 +446,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				runOn: session.runOn,
 				harnessDefaults: useSettingsStore.getState().harnessTierDefaults,
 			};
-			const turnSettings = resolveTurnSettings(
-				session.toolType,
-				ignoreModelHints ? null : findActiveModelHint(documentContent),
-				baselineModel,
-				baselineEffort,
-				tierRouting
-			);
-			for (const warning of turnSettings.warnings) {
-				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
-			}
+			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
 
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also
@@ -474,6 +474,47 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
 				getTaskSelectionBlock(taskSelectionMode, hintSegment)
 			);
+
+			// The settings this dispatch runs under. On a named model: the marker,
+			// then the baseline. On the Auto model each dispatch is ROUTED: the
+			// router reads the tasks the dispatch will work (not the playbook's
+			// instructions, which are the same words for every task), and its tier
+			// and effort apply. A `MAESTRO:MODEL` marker always wins on the axes it
+			// sets, and one that sets both leaves the router nothing to ask. Each
+			// task starts a fresh provider session, so there is no model to keep.
+			let turnSettings: ResolvedTurnSettings;
+			if (isAutoModel(baselineModel)) {
+				const route = autoTurnNeedsRoute(modelHint)
+					? await requestTurnRoute({
+							sessionId: session.id,
+							prompt: autoRunRoutingPrompt(
+								documentContent,
+								taskSelectionMode === 'document' ? hintSegment?.count : 1
+							),
+							timeoutMs: MODEL_ROUTING_UNATTENDED_TIMEOUT_MS,
+						})
+					: undefined;
+				turnSettings = resolveAutoTurn({
+					toolType: session.toolType,
+					...(route ? { route } : {}),
+					agentEffort: baselineEffort,
+					routing: tierRouting,
+					marker: modelHint,
+				});
+				const note = describeTurnSettings({ ...turnSettings, warnings: [] });
+				if (note) logger.info(`[DocumentProcessor] ${note}`, undefined, { document: filename });
+			} else {
+				turnSettings = resolveTurnSettings(
+					session.toolType,
+					modelHint,
+					baselineModel,
+					baselineEffort,
+					tierRouting
+				);
+			}
+			for (const warning of turnSettings.warnings) {
+				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
+			}
 
 			// Substitute template variables in the prompt
 			const substitutedPrompt = substituteTemplateVariables(

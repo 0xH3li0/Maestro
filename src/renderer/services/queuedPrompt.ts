@@ -25,6 +25,7 @@ import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
+import { routeQueuedAutoItem } from './autoTurn';
 import { generateId } from '../utils/ids';
 
 /** What to queue, and where. */
@@ -103,5 +104,8 @@ export function enqueuePromptForTab(options: {
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],
 	}));
+	// On an agent set to the Auto model the prompt is routed as it is queued,
+	// like one the composer queues. A no-op on a named model.
+	routeQueuedAutoItem(sessionId, item);
 	return item;
 }

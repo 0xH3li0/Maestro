@@ -1,5 +1,6 @@
 import type { AgentConfig, AgentDefinition } from '../providers/definitions';
 import type { AdditionalDirectory } from '../../types';
+import { isAutoModel } from '../../autoModel';
 import { logger } from '../host';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -324,8 +325,15 @@ export function applyAgentConfigOverrides(
 
 			let value: any;
 			if (option.key === 'model') {
-				if (overrides.sessionCustomModel !== undefined && overrides.sessionCustomModel !== '') {
-					value = overrides.sessionCustomModel;
+				// `auto` is Maestro's word for "route this turn", never a model a
+				// provider knows. A launch that arrives here still carrying it came
+				// from a surface with no Auto path, so it gets no session model and
+				// runs on the agent's default, the same as a turn with no decision.
+				const sessionModel = isAutoModel(overrides.sessionCustomModel)
+					? undefined
+					: overrides.sessionCustomModel;
+				if (sessionModel !== undefined && sessionModel !== '') {
+					value = sessionModel;
 					modelSource = 'session';
 				} else if (agentConfigValues[option.key] !== undefined) {
 					value = agentConfigValues[option.key];

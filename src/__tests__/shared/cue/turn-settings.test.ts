@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
+	cueAutoMarker,
+	cueRunIsAutoRouted,
+	cueTurnLaunch,
 	cueTurnSettingsOf,
 	formatCueTurnSettings,
 	resolveCueTurnSettings,
 	sameCueTurnSettings,
 } from '../../../shared/cue/turn-settings';
+import { resolveAutoTurn } from '../../../shared/autoTurn';
 
 describe('cueTurnSettingsOf', () => {
 	it('returns undefined when nothing is set, so ordinary subs thread nothing', () => {
@@ -135,5 +139,84 @@ describe('formatCueTurnSettings', () => {
 		expect(formatCueTurnSettings({})).toBe('');
 		expect(formatCueTurnSettings({ tier: 'high', effort: 'low' })).toBe('tier high, effort low');
 		expect(formatCueTurnSettings({ model: 'gpt-5.5-codex' })).toBe('model gpt-5.5-codex');
+	});
+});
+
+describe('a subscription on the Auto model', () => {
+	it('opts its runs into routing with model: auto, and nothing else does', () => {
+		expect(cueRunIsAutoRouted({ model: 'auto' })).toBe(true);
+		expect(cueRunIsAutoRouted({ model: ' Auto ' })).toBe(true);
+		expect(cueRunIsAutoRouted({ model: 'opus' })).toBe(false);
+		expect(cueRunIsAutoRouted({ tier: 'high' })).toBe(false);
+		expect(cueRunIsAutoRouted({})).toBe(false);
+		expect(cueRunIsAutoRouted(undefined)).toBe(false);
+	});
+
+	it('resolves to what the run launches with when the router gives no decision', () => {
+		const resolved = resolveCueTurnSettings(
+			'claude-code',
+			{ model: 'auto', effort: 'high' },
+			'sonnet',
+			'low'
+		);
+		// The word never becomes a model, and the agent's own model is the default.
+		expect(resolved.model).toBe('sonnet');
+		expect(resolved.effort).toBe('max');
+		expect(resolved.notes.join(' ')).not.toContain('model="auto"');
+	});
+
+	it('never routes a run that did not opt in: an agent set to Auto runs on its default', () => {
+		const resolved = resolveCueTurnSettings('claude-code', undefined, 'auto', 'low');
+		expect(resolved.model).toBeUndefined();
+		expect(resolved.effort).toBe('low');
+
+		// A subscription's tier still launches where that tier launches.
+		expect(resolveCueTurnSettings('claude-code', { tier: 'high' }, 'auto').model).toBe('opus');
+	});
+
+	it("keeps the subscription's effort over the router's, and leaves the tier to the router", () => {
+		expect(cueAutoMarker({ model: 'auto' })).toBeNull();
+		expect(cueAutoMarker(undefined)).toBeNull();
+		const marker = cueAutoMarker({ model: 'auto', effort: 'high' });
+		expect(marker).toEqual({ line: 0, effort: 'high', scopes: { effort: 'subscription' } });
+
+		const turn = resolveAutoTurn({
+			toolType: 'claude-code',
+			route: { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false },
+			marker,
+		});
+		expect(turn.model).toBe('haiku');
+		expect(turn.effort).toBe('max');
+	});
+});
+
+describe('cueTurnLaunch', () => {
+	const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+	const OWN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it("carries the model and effort, on the agent's own target when the turn names no place", () => {
+		const turn = resolveCueTurnSettings('claude-code', { tier: 'high', effort: 'low' });
+		expect(cueTurnLaunch(turn, OWN)).toEqual({
+			customModel: 'opus',
+			customEffort: 'low',
+			runOn: OWN,
+		});
+	});
+
+	it("carries the tier's place over the agent's own", () => {
+		const turn = resolveCueTurnSettings('claude-code', { tier: 'low' }, undefined, undefined, {
+			tierTargets: { low: LOCAL },
+		});
+		expect(cueTurnLaunch(turn, OWN)).toMatchObject({ customModel: 'qwen3.5-4b', runOn: LOCAL });
+	});
+
+	it('carries a refusal as the message the run fails with', () => {
+		const turn = resolveCueTurnSettings('factory-droid', { tier: 'low' }, undefined, undefined, {
+			tierTargets: { low: LOCAL },
+		});
+		expect(cueTurnLaunch(turn, undefined).launchRefusal).toMatch(/"low" tier target/);
+		expect(
+			'launchRefusal' in cueTurnLaunch(resolveCueTurnSettings('claude-code', undefined), undefined)
+		).toBe(false);
 	});
 });

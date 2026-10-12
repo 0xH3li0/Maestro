@@ -386,4 +386,137 @@ describe('plugin headless agent runner', () => {
 		expect(issueRunToken).not.toHaveBeenCalled();
 		expect(spawn).toHaveBeenCalledOnce();
 	});
+
+	// A send to an agent set to the Auto model: the turn is routed here, in the
+	// process that owns the router, and the harness is never handed the word.
+	describe('an agent on the Auto model', () => {
+		const autoAgent = {
+			...agent,
+			toolType: 'claude-code',
+			customModel: 'auto',
+			customEffort: 'high',
+		};
+		const local = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+
+		function harness(
+			turn: Record<string, unknown>,
+			overrides: Partial<Parameters<typeof createPluginHeadlessAgentRunner>[0]> = {}
+		) {
+			const spawn = vi.fn(async () => ({
+				success: true,
+				response: 'done',
+				agentSessionId: 'sess-new',
+			}));
+			const resolveAutoTurn = vi.fn(async () => ({ notes: [], warnings: [], ...turn }));
+			const noteAutoSessionLaunch = vi.fn();
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => autoAgent as SessionInfo,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => false,
+				spawn: spawn as never,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: () => 'token',
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+				resolveAutoTurn: resolveAutoTurn as never,
+				noteAutoSessionLaunch,
+				...overrides,
+			});
+			return { run, spawn, resolveAutoTurn, noteAutoSessionLaunch };
+		}
+		const spawnOptions = (spawn: ReturnType<typeof vi.fn>) => spawn.mock.calls[0][4];
+
+		it('asks for the turn to be routed and launches on the model and effort it resolves to', async () => {
+			const { run, spawn, resolveAutoTurn } = harness({ model: 'haiku', effort: 'low' });
+
+			const reply = await run('agent-a', 'rename the helper');
+
+			expect(reply.success).toBe(true);
+			expect(resolveAutoTurn).toHaveBeenCalledWith({
+				agent: autoAgent,
+				prompt: 'rename the helper',
+			});
+			expect(spawnOptions(spawn)).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+			expect('runOn' in spawnOptions(spawn)).toBe(false);
+		});
+
+		it('never passes the word auto: no decision is no model at all', async () => {
+			const { run, spawn } = harness({ model: undefined, effort: 'high' });
+
+			await run('agent-a', 'rename the helper');
+
+			expect(spawnOptions(spawn).customModel).toBeUndefined();
+			expect(spawnOptions(spawn).customEffort).toBe('high');
+		});
+
+		it('launches on the place the tier names', async () => {
+			const { run, spawn } = harness({ model: 'qwen3.5-4b', runOn: local });
+
+			await run('agent-a', 'rename the helper');
+
+			expect(spawnOptions(spawn)).toMatchObject({ customModel: 'qwen3.5-4b', runOn: local });
+		});
+
+		it('names the provider session a send resumes, so the session can keep its model', async () => {
+			const stop = new AbortController();
+			const { run, resolveAutoTurn } = harness({ model: 'haiku' });
+
+			await run('agent-a', 'and the tests', 'sess-1', stop.signal);
+
+			expect(resolveAutoTurn).toHaveBeenCalledWith({
+				agent: autoAgent,
+				prompt: 'and the tests',
+				providerSessionId: 'sess-1',
+				signal: stop.signal,
+			});
+		});
+
+		it('records what the session ran on once the provider has named it', async () => {
+			const turn = { model: 'haiku', effort: 'low' };
+			const { run, noteAutoSessionLaunch } = harness(turn);
+
+			await run('agent-a', 'rename the helper');
+
+			expect(noteAutoSessionLaunch).toHaveBeenCalledWith(
+				'claude-code',
+				'sess-new',
+				expect.objectContaining(turn)
+			);
+		});
+
+		it('fails the send by name, and spawns nothing, when the tier target cannot be used', async () => {
+			const { run, spawn, noteAutoSessionLaunch } = harness({
+				refusal: {
+					code: 'tier-unsupported-source',
+					message: 'This agent\'s "low" tier target cannot run.',
+				},
+			});
+
+			const reply = await run('agent-a', 'rename the helper');
+
+			expect(reply).toEqual({
+				success: false,
+				response: null,
+				sessionId: null,
+				error: 'This agent\'s "low" tier target cannot run.',
+			});
+			expect(spawn).not.toHaveBeenCalled();
+			expect(noteAutoSessionLaunch).not.toHaveBeenCalled();
+		});
+
+		it('routes nothing for an agent on a named model', async () => {
+			const named = { ...autoAgent, customModel: 'opus' };
+			const { run, spawn, resolveAutoTurn, noteAutoSessionLaunch } = harness(
+				{ model: 'haiku' },
+				{ getAgent: () => named as SessionInfo }
+			);
+
+			await run('agent-a', 'rename the helper');
+
+			expect(resolveAutoTurn).not.toHaveBeenCalled();
+			expect(noteAutoSessionLaunch).not.toHaveBeenCalled();
+			expect(spawnOptions(spawn)).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+		});
+	});
 });

@@ -122,6 +122,7 @@ import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { localSystemOneAccess } from './utils/maestro-system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
+import { noteAutoSessionLaunch, resolveAgentAutoTurn } from './local-models/auto-turn';
 import { generateTabName } from './ipc/handlers/tabNaming';
 import type { SessionInfo } from '../shared/types';
 import { executeCueNotify } from './cue/cue-notify-executor';
@@ -138,8 +139,13 @@ import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
-import { resolveCueTurnSettings } from '../shared/cue/turn-settings';
-import { describeTurnSettings, turnRunOnTarget } from '../shared/autorunTurnSettings';
+import {
+	cueAutoMarker,
+	cueRunIsAutoRouted,
+	cueTurnLaunch,
+	resolveCueTurnSettings,
+} from '../shared/cue/turn-settings';
+import { describeTurnSettings, type ResolvedTurnSettings } from '../shared/autorunTurnSettings';
 import { parseHarnessTierDefaults } from '../shared/modelTiers';
 import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
@@ -1640,12 +1646,18 @@ app
 						harnessDefaults: parseHarnessTierDefaults(store.get('harnessTierDefaults')),
 					}
 				);
-				const turnNote = describeTurnSettings(turn);
-				if (turnNote) {
+				const logCueTurn = (resolvedTurn: ResolvedTurnSettings) => {
+					const turnNote = describeTurnSettings(resolvedTurn);
+					if (!turnNote) return;
 					const line = `[CUE] "${subscriptionName}" model: ${turnNote}`;
-					if (turn.warnings.length > 0) logger.warn(line, 'Cue');
+					if (resolvedTurn.warnings.length > 0) logger.warn(line, 'Cue');
 					else logger.cue(line, 'Cue');
-				}
+				};
+				// A subscription on the Auto model (`model: auto`) is routed once its
+				// prompt is known, by the hook below, and that is the line that says
+				// what the run launched with. `turn` above is what it falls back to.
+				const routed = cueRunIsAutoRouted(turnSettings);
+				if (!routed) logCueTurn(turn);
 
 				const result = await executeCuePrompt({
 					runId,
@@ -1674,10 +1686,26 @@ app
 					customArgs: storedSession.customArgs,
 					customEnvVars: storedSession.customEnvVars,
 					gatewayUrl: storedSession.gatewayUrl,
-					runOn: turnRunOnTarget(turn, storedSession.runOn),
-					launchRefusal: turn.refusal?.message,
-					customModel: turn.model,
-					customEffort: turn.effort,
+					...cueTurnLaunch(turn, storedSession.runOn),
+					...(routed
+						? {
+								resolveLateTurn: async (routedPrompt: string) => {
+									const autoTurn = await resolveAgentAutoTurn({
+										agent: {
+											id: storedSession.id,
+											toolType: storedSession.toolType,
+											customEffort: storedSession.customEffort,
+											tierTargets: storedSession.tierTargets,
+											runOn: storedSession.runOn,
+										},
+										prompt: routedPrompt,
+										marker: cueAutoMarker(turnSettings),
+									});
+									logCueTurn(autoTurn);
+									return cueTurnLaunch(autoTurn, storedSession.runOn);
+								},
+							}
+						: {}),
 					// Claude token-source selection (TUI / API / dynamic), read from
 					// the same persisted session record the model fallback above
 					// reads, so Cue runs honor the triggering agent's choice.
@@ -2734,6 +2762,8 @@ app
 					`agents.send -> agent ${agentId} providerSession=${resumed ? 'resume' : 'fresh'}`,
 					'[PluginAudit]'
 				),
+			resolveAutoTurn: resolveAgentAutoTurn,
+			noteAutoSessionLaunch,
 		});
 		setHeadlessAgentRunner(runHeadlessAgent);
 		const sandboxHost = new PluginSandboxHost({

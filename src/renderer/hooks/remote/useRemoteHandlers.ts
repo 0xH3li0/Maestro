@@ -25,6 +25,7 @@ import { getActiveTab } from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import { settleAutoTurn } from '../../services/autoTurn';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
@@ -673,6 +674,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					});
 				}
 
+				// A command that lands on an agent set to the Auto model took the tab
+				// with a pending stamp just above. Settle it before the spawn: the
+				// router's answer decides the model, effort and place. Null on a named
+				// model, which keeps what this path has always passed. A tier target
+				// that cannot be used throws, into the catch below.
+				const autoLaunch = targetTab?.id
+					? await settleAutoTurn({ sessionId, tabId: targetTab.id, prompt: promptToSend })
+					: null;
+
 				// Ack delivery on whichever comes first: the spawn settling, or a
 				// timer set inside the main-side receipt timeout.
 				//
@@ -717,7 +727,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: session.customModel,
+						...(autoLaunch
+							? {
+									sessionCustomModel: autoLaunch.model,
+									sessionCustomEffort: autoLaunch.effort,
+									...(autoLaunch.runOn ? { runOnOverride: autoLaunch.runOn } : {}),
+								}
+							: { sessionCustomModel: session.customModel }),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});

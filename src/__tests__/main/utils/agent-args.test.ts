@@ -1050,6 +1050,43 @@ describe('applyAgentConfigOverrides', () => {
 		expect(r3.modelSource).toBe('session');
 	});
 
+	// `auto` is Maestro's word for "route this turn". A launch that still
+	// carries it was not routed (a surface with no Auto path), and must run on
+	// the agent's default rather than be handed `--model auto`.
+	it('never hands a harness the word auto as a model', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model to use',
+					default: 'default-model',
+					argBuilder: (val: any) => (val ? ['--model', String(val)] : []),
+				},
+			],
+		});
+
+		for (const spelling of ['auto', 'Auto', ' AUTO ']) {
+			const unrouted = applyAgentConfigOverrides(agent, [], { sessionCustomModel: spelling });
+			expect(unrouted.args).toEqual(['--model', 'default-model']);
+			expect(unrouted.modelSource).toBe('default');
+		}
+
+		// The provider-level setting is the agent's default, so it applies.
+		const withAgentConfig = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { model: 'agent-model' },
+			sessionCustomModel: 'auto',
+		});
+		expect(withAgentConfig.args).toEqual(['--model', 'agent-model']);
+		expect(withAgentConfig.modelSource).toBe('agent');
+
+		// A model that only contains the letters is a model.
+		expect(
+			applyAgentConfigOverrides(agent, [], { sessionCustomModel: 'automatic-1' }).args
+		).toEqual(['--model', 'automatic-1']);
+	});
+
 	// -- effort precedence --
 	// Effort follows the same rules as model, which is also what the effort pill
 	// shows (tab > agent override > agent config). An empty session override means

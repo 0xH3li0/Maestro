@@ -341,6 +341,16 @@ import {
 	runAgentSystemOneRequest,
 } from '../../../../main/local-models/system-one/agent-service';
 
+vi.mock('../../../../main/local-models/route-turn', () => ({
+	routeTurnRequest: vi.fn(async () => ({
+		tier: 'medium',
+		effort: 'low',
+		engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+		latencyMs: 24,
+	})),
+}));
+import { routeTurnRequest } from '../../../../main/local-models/route-turn';
+
 vi.mock('../../../../main/local-models/tab-cleanup', () => ({
 	suggestTabCleanup: vi.fn().mockResolvedValue({
 		success: true,
@@ -6613,6 +6623,46 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			handler.handleMessage(client, { type: 'system_one_access', requestId: 's1-access-3' });
 			await vi.waitFor(() => expect(lastResponse().requestId).toBe('s1-access-3'));
 			expect(lastResponse()).toMatchObject({ success: false, error: 'settings unreadable' });
+		});
+
+		it('model_route_turn routes the turn the request names, and carries no decision as an answer', async () => {
+			const request = { prompt: 'rename the helper', agentId: 'agent-7', timeoutMs: 5000 };
+			handler.handleMessage(client, {
+				type: 'model_route_turn',
+				request,
+				// The caller is another agent: the turn being routed is agent-7's, not its own.
+				fromSessionId: 'agent-caller',
+				requestId: 'route-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('model_route_turn_result'));
+
+			expect(routeTurnRequest).toHaveBeenLastCalledWith(request);
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'route-1',
+				result: { tier: 'medium', effort: 'low', engine: { id: 'embedding-router' } },
+			});
+
+			// Off, slow or down is a result the caller resolves to the agent's default.
+			vi.mocked(routeTurnRequest).mockResolvedValueOnce({
+				skipped: 'off',
+				detail: 'Model routing is off.',
+				latencyMs: 0,
+			});
+			handler.handleMessage(client, { type: 'model_route_turn', request, requestId: 'route-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('route-2'));
+			expect(lastResponse()).toMatchObject({ success: true, result: { skipped: 'off' } });
+
+			// Only a request that cannot be read is a failed round trip.
+			vi.mocked(routeTurnRequest).mockRejectedValueOnce(
+				new Error("A routing request's prompt is text.")
+			);
+			handler.handleMessage(client, { type: 'model_route_turn', requestId: 'route-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('route-3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: "A routing request's prompt is text.",
+			});
 		});
 
 		it('system_one_agent_request carries a refusal as a successful round trip, and a bug as a failed one', async () => {

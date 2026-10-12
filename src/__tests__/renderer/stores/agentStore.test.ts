@@ -5,7 +5,7 @@
  * (kill, interrupt). The store orchestrates sessionStore mutations + IPC calls.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
@@ -16,6 +16,8 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
+import { resetAutoTurnForTests } from '../../../renderer/services/autoTurn';
+import { markTabRunningQueuedItem } from '../../../renderer/utils/tabHelpers';
 
 // ============================================================================
 // Helpers
@@ -69,12 +71,18 @@ const mockInterrupt = vi.fn().mockResolvedValue(true);
 const mockDetect = vi.fn().mockResolvedValue([]);
 const mockGetAgent = vi.fn().mockResolvedValue(null);
 const mockClearError = vi.fn().mockResolvedValue(undefined);
+// Model routing is off unless a test says otherwise, as it is in the app.
+const ROUTER_OFF = { skipped: 'off', detail: 'Model routing is off.', latencyMs: 0 };
+const mockRouteTurn = vi.fn().mockResolvedValue(ROUTER_OFF);
 
 (window as any).maestro = {
 	process: {
 		spawn: mockSpawn,
 		kill: mockKill,
 		interrupt: mockInterrupt,
+	},
+	localModels: {
+		routeTurn: mockRouteTurn,
 	},
 	agents: {
 		detect: mockDetect,
@@ -2360,6 +2368,189 @@ describe('agentStore', () => {
 					sessionCustomEffort: undefined,
 				})
 			);
+		});
+
+		// A turn on the Auto model: the tab takes it with a stamp, and the
+		// dispatch asks the router and launches on what it answers.
+		describe('an item on the Auto model', () => {
+			const ROUTED = {
+				tier: 'medium',
+				effort: 'low',
+				engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+				latencyMs: 20,
+			};
+			const STAMP = {
+				tier: 'medium',
+				effort: 'low',
+				engine: 'Embedding router',
+				calibrated: false,
+			};
+
+			/** Seed an agent, and mark its tab as running `item` the way every dispatch path does. */
+			function seedRunning(item: QueuedItem, overrides: Partial<Session> = {}): void {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					customModel: 'auto',
+					customEffort: 'high',
+					...overrides,
+				});
+				const tabId = session.aiTabs[0].id;
+				useSessionStore.getState().setSessions([
+					{
+						...session,
+						aiTabs: session.aiTabs.map((tab) =>
+							tab.id === tabId ? markTabRunningQueuedItem(tab, item, session) : tab
+						),
+					},
+				]);
+			}
+			const liveTab = () => useSessionStore.getState().sessions[0].aiTabs[0];
+
+			beforeEach(() => {
+				resetAutoTurnForTests();
+				mockSpawn.mockClear();
+				mockRouteTurn.mockReset();
+				mockRouteTurn.mockResolvedValue(ROUTED);
+			});
+
+			afterEach(() => {
+				mockRouteTurn.mockReset();
+				mockRouteTurn.mockResolvedValue(ROUTER_OFF);
+			});
+
+			it('asks the router about the message and launches on its tier and effort', async () => {
+				const item = createQueuedItem({
+					text: 'Rename the helper',
+					turnSettings: { model: 'auto', effort: 'high' },
+				});
+				seedRunning(item);
+				expect(liveTab().turnAuto).toEqual({ status: 'pending' });
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).toHaveBeenCalledTimes(1);
+				expect(mockRouteTurn.mock.calls[0][0]).toMatchObject({
+					prompt: 'Rename the helper',
+					agentId: 'session-1',
+					tabId: 'default-tab',
+				});
+				const spawned = mockSpawn.mock.calls[0][0];
+				expect(spawned.sessionCustomModel).toBe('sonnet');
+				expect(spawned.sessionCustomEffort).toBe('low');
+				expect(spawned.runOnOverride).toBeUndefined();
+				expect(liveTab()).toMatchObject({
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+					turnAuto: { status: 'routed', route: STAMP },
+				});
+			});
+
+			it('never hands the harness the word auto, whatever the router says', async () => {
+				mockRouteTurn.mockResolvedValue(ROUTER_OFF);
+				const item = createQueuedItem({ turnSettings: { model: 'auto', effort: 'high' } });
+				seedRunning(item);
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				const spawned = mockSpawn.mock.calls[0][0];
+				expect(spawned.sessionCustomModel).toBeUndefined();
+				expect(spawned.sessionCustomEffort).toBe('high');
+				expect(liveTab().turnAuto?.status).toBe('router-off');
+			});
+
+			it('routed when it was queued: the drain asks nothing', async () => {
+				const item = createQueuedItem({
+					turnSettings: { model: 'auto', effort: 'high', route: STAMP },
+				});
+				seedRunning(item);
+				expect(liveTab().turnAuto?.status).toBe('routed');
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).not.toHaveBeenCalled();
+				expect(mockSpawn.mock.calls[0][0]).toMatchObject({
+					sessionCustomModel: 'sonnet',
+					sessionCustomEffort: 'low',
+				});
+			});
+
+			it('stays on Auto when the agent has moved to a named model since it was queued', async () => {
+				const item = createQueuedItem({ turnSettings: { model: 'auto' } });
+				seedRunning(item, { customModel: 'opus' });
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).toHaveBeenCalledTimes(1);
+				expect(mockSpawn.mock.calls[0][0].sessionCustomModel).toBe('sonnet');
+			});
+
+			it('an item queued on a named model is not routed by an agent now set to Auto', async () => {
+				const item = createQueuedItem({ turnSettings: { model: 'haiku', effort: 'low' } });
+				seedRunning(item);
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).not.toHaveBeenCalled();
+				expect(mockSpawn.mock.calls[0][0]).toMatchObject({
+					sessionCustomModel: 'haiku',
+					sessionCustomEffort: 'low',
+				});
+				expect(liveTab().turnAuto).toBeUndefined();
+			});
+
+			it('launches a tier the agent maps to a source on that source', async () => {
+				const local = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+				const item = createQueuedItem({ turnSettings: { model: 'auto' } });
+				seedRunning(item, { tierTargets: { medium: local } });
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockSpawn.mock.calls[0][0]).toMatchObject({
+					sessionCustomModel: 'qwen3:latest',
+					runOnOverride: local,
+				});
+			});
+
+			it('does not launch when the tier names a target that cannot be used: the item is held', async () => {
+				const item = createQueuedItem({ turnSettings: { model: 'auto' } });
+				seedRunning(item, {
+					toolType: 'factory-droid',
+					tierTargets: { medium: { type: 'source', endpointId: 'ep-x', model: 'qwen3' } },
+				});
+				mockGetAgent.mockResolvedValue({ ...mockAgent, id: 'factory-droid' });
+
+				await expect(
+					useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+				).rejects.toThrow(/This agent's "medium" tier target/);
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				const session = useSessionStore.getState().sessions[0];
+				expect(session.executionQueue.map((queued) => queued.id)).toContain(item.id);
+				expect(session.executionQueue.find((queued) => queued.id === item.id)?.paused).toBe(true);
+			});
+
+			it('routes a command on the prompt it expands to', async () => {
+				const item = createQueuedItem({
+					type: 'command',
+					text: undefined,
+					command: '/review',
+					commandArgs: 'the auth module',
+					turnSettings: { model: 'auto' },
+				});
+				seedRunning(item);
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, {
+					...defaultDeps,
+					customAICommands: [
+						{ id: 'c1', command: '/review', description: 'Review', prompt: 'Review $ARGUMENTS' },
+					] as any,
+				});
+
+				expect(mockRouteTurn).toHaveBeenCalledTimes(1);
+				expect(mockRouteTurn.mock.calls[0][0].prompt).toBe('Review the auth module');
+				expect(mockSpawn.mock.calls[0][0].sessionCustomModel).toBe('sonnet');
+			});
 		});
 
 		it('tracks pendingAICommandForSynopsis for command items', async () => {

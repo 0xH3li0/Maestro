@@ -54,6 +54,10 @@ import type {
 import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
 import type { AgentFinishedNotice, SpokenNoticeResult } from '../../shared/spokenNotices';
 import type { WorkSearchRequest, WorkSearchResult } from '../../shared/local-models/work-search';
+import type {
+	RouteTurnRequest,
+	RouteTurnResult,
+} from '../../shared/local-models/model-routing-task';
 import type { TabCleanupResult } from '../../shared/tabCleanup';
 import type {
 	ModelServerBind,
@@ -493,6 +497,15 @@ export function createLocalModelsApi() {
 		 */
 		suggestTabCleanup: (): Promise<TabCleanupResult> =>
 			ipcRenderer.invoke('localModels:suggestTabCleanup'),
+
+		/**
+		 * Ask the Model routing assignment how much model and effort one turn
+		 * needs: the question a send on the Auto model asks. Answers a tier and an
+		 * effort, or why there is no decision (the task is off, the router was slow
+		 * or down). A routing never rejects and never outlasts its timeout.
+		 */
+		routeTurn: (request: RouteTurnRequest): Promise<RouteTurnResult> =>
+			ipcRenderer.invoke('localModels:routeTurn', request),
 
 		dictation: createDictationApi(),
 

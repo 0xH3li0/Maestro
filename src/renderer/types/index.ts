@@ -63,6 +63,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { AutoRouteStamp, AutoTurnStamp } from '../../shared/autoTurn';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { BackgroundRequests } from '../../shared/local-models/background-requests';
 import type { RunOnTarget } from '../../shared/local-models/run-on';
@@ -446,10 +447,21 @@ export type QueuedItemType = 'message' | 'command';
  * model the user picked afterwards.
  */
 export interface QueuedTurnSettings {
-	/** Model in force when the item was queued, or undefined for the default. */
+	/**
+	 * Model in force when the item was queued, or undefined for the default.
+	 * `auto` (`AUTO_MODEL`) is a value like any other: the item was queued on the
+	 * Auto model, and stays on it whatever the agent is set to when it drains.
+	 */
 	model?: string;
 	/** Effort in force when the item was queued, or undefined for the default. */
 	effort?: string;
+	/**
+	 * What the model router answered for this item, when `model` is Auto. A
+	 * queued message is routed when it is queued and never again, so the answer
+	 * rides with it. Absent on an Auto item the router has not answered yet: the
+	 * dispatch asks then (`settleAutoTurn`).
+	 */
+	route?: AutoRouteStamp;
 }
 
 /**
@@ -974,6 +986,15 @@ export interface AITab {
 	 * turn on the provider's own model.
 	 */
 	turnRunOn?: string;
+	/**
+	 * Set when the most recent turn was sent on the Auto model: what the router
+	 * answered and what the turn did with it (`shared/autoTurn.ts`). `pending`
+	 * from the moment the turn takes the tab until the router answers, which is
+	 * when `turnModel`, `turnEffort` and `turnRunOn` above become final. Its
+	 * `runOn` is the place the launch uses, and what the NEXT turn's rule 1 reads
+	 * as where this session ran. Undefined for a turn on a named model.
+	 */
+	turnAuto?: AutoTurnStamp;
 }
 
 // A single "thinking item" - one busy tab within a session.

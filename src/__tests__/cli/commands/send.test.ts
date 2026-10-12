@@ -47,6 +47,10 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 	prepareMaestroSystemPromptCli: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/auto-turn', () => ({
+	resolveCliAutoTurn: vi.fn(),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
@@ -84,6 +88,7 @@ import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { resolveCliAutoTurn } from '../../../cli/services/auto-turn';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
 
@@ -821,6 +826,120 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	// A send the CLI spawns itself to an agent set to the Auto model: the
+	// desktop's router decides the turn, and the harness never sees the word.
+	describe('an agent on the Auto model', () => {
+		const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+		const OWN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+		const spawnOptions = () => vi.mocked(spawnAgent).mock.calls[0][4];
+
+		const ready = (overrides: Partial<SessionInfo> = {}) => {
+			const agent = mockAgent({ customModel: 'auto', customEffort: 'high', ...overrides });
+			vi.mocked(resolveAgentId).mockReturnValue(agent.id);
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'done' });
+			return agent;
+		};
+		const resolvesTo = (turn: Record<string, unknown>) =>
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue({
+				notes: [],
+				warnings: [],
+				stamp: { status: 'routed' },
+				...turn,
+			} as never);
+
+		it('routes the message and spawns on the model and effort it resolves to', async () => {
+			const agent = ready();
+			resolvesTo({ model: 'haiku', effort: 'low' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledWith({
+				agent,
+				prompt: 'rename the helper',
+				agentEffort: 'high',
+				client: null,
+			});
+			expect(spawnOptions()).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+		});
+
+		it('never passes the word auto: no decision is no model at all', async () => {
+			ready();
+			resolvesTo({ model: undefined, effort: 'high', stamp: { status: 'no-decision' } });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(spawnOptions()!.customModel).toBeUndefined();
+			expect(spawnOptions()!.customEffort).toBe('high');
+		});
+
+		it("launches on the tier's place, and on the agent's own when the tier names none", async () => {
+			ready({ runOn: OWN });
+			resolvesTo({ model: 'qwen3.5-4b', runOn: LOCAL });
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+			expect(spawnOptions()).toMatchObject({ customModel: 'qwen3.5-4b', runOn: LOCAL });
+
+			vi.mocked(spawnAgent).mockClear();
+			resolvesTo({ model: 'qwen3:latest' });
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+			expect(spawnOptions()).toMatchObject({ runOn: OWN });
+		});
+
+		it('fails the send by name, and spawns nothing, when the tier target cannot be used', async () => {
+			ready();
+			resolvesTo({
+				refusal: { code: 'tier-unsupported-source', message: 'The "low" tier target cannot run.' },
+			});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				error: 'The "low" tier target cannot run.',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			errorSpy.mockRestore();
+		});
+
+		it('says on stderr when the provider could not act on what the router chose', async () => {
+			ready();
+			resolvesTo({
+				warnings: ['copilot-cli has no model tier mapping, so tier="high" was ignored.'],
+			});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Warning: copilot-cli has no model tier mapping, so tier="high" was ignored.'
+			);
+			errorSpy.mockRestore();
+		});
+
+		it('leaves a send the desktop runs to the desktop, which routes it there', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('routes nothing for an agent on a named model', async () => {
+			ready({ customModel: 'opus' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnOptions()).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+		});
 	});
 
 	describe('history', () => {

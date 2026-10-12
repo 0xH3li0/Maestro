@@ -6,6 +6,9 @@ import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-
 import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { requestCliSynopsis } from '../services/synopsis';
+import { resolveCliAutoTurn } from '../services/auto-turn';
+import { isAutoModel } from '../../shared/autoModel';
+import { turnRunOnTarget } from '../../shared/autorunTurnSettings';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
@@ -434,6 +437,22 @@ export async function send(
 						};
 					}
 				}
+				// An agent set to the Auto model has no model of its own to pass:
+				// the desktop's model router decides this turn's model and effort,
+				// and the place when the tier names one. With no desktop to ask (or
+				// no decision) the turn runs on the agent's default. A tier target
+				// that cannot be used fails the send by name. (A send the desktop
+				// runs, above, is routed there, by the same resolver.)
+				const autoTurn = isAutoModel(agent.customModel)
+					? await resolveCliAutoTurn({
+							agent,
+							prompt: message,
+							agentEffort: agent.customEffort,
+							client: desktop,
+						})
+					: undefined;
+				if (autoTurn?.refusal) return { success: false, error: autoTurn.refusal.message };
+				for (const warning of autoTurn?.warnings ?? []) console.error(`Warning: ${warning}`);
 				const appendSystemPrompt =
 					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
 				return spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
@@ -442,13 +461,14 @@ export async function send(
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
-					customModel: agent.customModel,
-					customEffort: agent.customEffort,
+					customModel: autoTurn ? autoTurn.model : agent.customModel,
+					customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
 					customArgs: agent.customArgs,
 					additionalDirectories: agent.additionalDirectories,
 					customEnvVars: agent.customEnvVars,
 					gatewayUrl: agent.gatewayUrl,
-					runOn: agent.runOn,
+					// The tier's target when Auto decided the place, else the agent's own.
+					runOn: turnRunOnTarget(autoTurn ?? {}, agent.runOn),
 					sshRemoteConfig: agent.sessionSshRemoteConfig,
 					appendSystemPrompt,
 					// Honor the agent's Claude token source for `maestro-cli send` turns.
