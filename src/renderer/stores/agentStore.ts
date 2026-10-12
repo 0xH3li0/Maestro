@@ -32,6 +32,7 @@ import type {
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
@@ -511,11 +512,18 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				const messagePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 				// `agentContext` is agent-only text the transcript never shows (a
 				// released consult hold carries the replies verbatim in it).
+				// A queued message that is the tab's FIRST turn opens a new provider
+				// session, so it carries the New Session Message like a typed one does.
+				// A message queued behind a running turn resumes, and gets nothing.
 				const effectivePrompt = withMentionTurnNotes(
 					takePendingMergedContext(
 						sessionId,
 						targetTab.id,
-						item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt
+						prependNewSessionMessageOnFirstTurn(
+							item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt,
+							session.newSessionMessage,
+							tabAgentSessionId
+						)
 					),
 					mentionDispatch
 				);
@@ -654,7 +662,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: substitutedPrompt,
+						// Agent-only, like the message branch: the log entry above keeps
+						// the bare command prompt.
+						prompt: prependNewSessionMessageOnFirstTurn(
+							substitutedPrompt,
+							session.newSessionMessage,
+							tabAgentSessionId
+						),
 						appendSystemPrompt: appendSystemPromptForCommand,
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,

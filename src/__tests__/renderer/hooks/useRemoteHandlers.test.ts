@@ -784,6 +784,56 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		describe('New Session Message', () => {
+			async function dispatchHello(agentSessionId?: string) {
+				const session = createMockSession({
+					inputMode: 'ai',
+					newSessionMessage: 'Always check linting',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							name: 'Tab 1',
+							inputValue: '',
+							logs: [],
+							stagedImages: [],
+							agentSessionId,
+						} as any,
+					],
+				});
+				const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+				renderHook(() => useRemoteHandlers(deps));
+
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: { sessionId: 'session-1', command: 'hello', inputMode: 'ai' },
+						})
+					);
+				});
+			}
+
+			it('prefixes a dispatch that opens the tab (no provider session yet)', async () => {
+				await dispatchHello();
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({ prompt: 'Always check linting\n\n---\n\nhello' })
+				);
+			});
+
+			it('leaves a dispatch into an existing conversation alone', async () => {
+				await dispatchHello('existing-session-123');
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({ prompt: 'hello' })
+				);
+			});
+		});
+
 		it('ignores command when session not found', async () => {
 			const deps = createMockDeps({
 				sessionsRef: { current: [] },

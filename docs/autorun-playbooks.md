@@ -283,7 +283,7 @@ Each task executes in a completely fresh AI session with its own unique session 
 
 This isolation is critical for playbooks with `Reset on Completion` documents that loop indefinitely. Each loop creates a fresh working copy from the original document, and the AI approaches it without memory of previous iterations.
 
-> **Note:** [Nudge messages](./general-usage#creating-agents) configured on an agent do not apply to Auto Run tasks. Nudge messages are only appended to interactive AI messages typed by the user. If you need persistent instructions for Auto Run tasks, include them directly in your task document or use environment variables.
+> **Note:** An agent's [New Session Message](./general-usage#when-each-message-is-sent) is prefixed to every Auto Run task, because each task starts a new provider session. Its Nudge Message is not: nudge messages are only appended to messages you type to the agent. For persistent instructions in Auto Run, use the New Session Message or include them in your task document.
 
 ## Environment Variables
 
