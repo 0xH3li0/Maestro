@@ -101,6 +101,8 @@ export interface QuitHandlerDependencies {
 	closeStatsDB: () => void;
 	/** Function to close the semantic index's embedding store */
 	closeEmbeddingStore: () => void;
+	/** Function to stop the Maestro model server, the whole process tree, at once */
+	stopModelServer?: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 	/** Function to stop settings file watcher (optional, may not be started yet) */
@@ -177,6 +179,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		tunnelManager,
 		closeStatsDB,
 		closeEmbeddingStore,
+		stopModelServer,
 		stopCliWatcher,
 		stopSettingsWatcher,
 		powerManager,
@@ -431,6 +434,16 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// (Sentry MAESTRO-3B).
 		logger.info('Killing all running processes', 'Shutdown');
 		getProcessManager()?.killAll({ shutdown: true });
+
+		// The model server and each model's process under it. It holds no state
+		// to write, so the whole tree goes at once.
+		if (stopModelServer) {
+			try {
+				stopModelServer();
+			} catch (err) {
+				logger.error(`Error stopping the model server on quit: ${err}`, 'Shutdown');
+			}
+		}
 
 		// Once more, now that nothing is running: a line a process printed on its
 		// way out can have moved that store after the save near the top.

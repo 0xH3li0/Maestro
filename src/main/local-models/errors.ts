@@ -12,6 +12,8 @@
  * programming error and stays a plain `Error`, so it reaches Sentry as one.
  */
 
+import type { ModelServerErrorCode } from '../../shared/local-models/model-server';
+
 /**
  * Why a local model could not be used.
  *
@@ -158,4 +160,24 @@ export class LocalModelEndpointError extends Error {
 
 export function isLocalModelEndpointError(error: unknown): error is LocalModelEndpointError {
 	return error instanceof LocalModelEndpointError;
+}
+
+/**
+ * A failure of the Maestro model server (`server/supervisor.ts`). The message is
+ * written for a person and ends with what to do; `code` is for a caller that
+ * switches on the reason (a launch that must refuse by name, the CLI's exit).
+ */
+export class ModelServerError extends Error {
+	readonly code: ModelServerErrorCode;
+
+	constructor(message: string, code: ModelServerErrorCode, cause?: unknown) {
+		super(message);
+		this.name = 'ModelServerError';
+		if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+		this.code = code;
+	}
+}
+
+export function isModelServerError(error: unknown): error is ModelServerError {
+	return error instanceof ModelServerError;
 }

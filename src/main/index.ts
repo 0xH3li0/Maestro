@@ -170,6 +170,7 @@ import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/sema
 import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
 import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
+import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -3680,6 +3681,10 @@ app
 		});
 		void syncTokenProxy();
 
+		// The model server never starts itself: only Start, or a feature the user
+		// turned on that needs it. Wiring it starts nothing; app quit stops it.
+		configureModelServer({ safeSend });
+
 		// Start watching for system timezone changes (laptop crossing zones).
 		timeZoneWatcher.start();
 
@@ -3773,6 +3778,7 @@ quitHandler = createQuitHandler({
 	getHistoryManager,
 	tunnelManager,
 	closeStatsDB,
+	stopModelServer: stopModelServerNow,
 	// The indexer first, so no batch is mid-write when the file is released.
 	closeEmbeddingStore: () => {
 		stopSemanticIndexer();

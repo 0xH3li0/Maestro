@@ -39,7 +39,6 @@
  */
 
 import * as fs from 'fs/promises';
-import * as net from 'net';
 import * as path from 'path';
 import { resolveAgentGateway } from '../../../shared/local-models/gateway';
 import {
@@ -60,6 +59,7 @@ import {
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 import type { SafeSendFn } from '../../utils/safe-send';
+import { isTcpPort, pickFreePort } from '../../utils/tcp-port';
 import { localModelsDataDir } from '../paths';
 import { reportLocalTaskUnavailable } from '../task-notices';
 import { compressRequestBody } from './compress';
@@ -112,17 +112,13 @@ function stateFilePath(): string {
 	return path.join((deps?.dataDir ?? localModelsDataDir)(), TOKEN_PROXY_STATE_FILE);
 }
 
-function isPort(value: unknown): value is number {
-	return typeof value === 'number' && Number.isInteger(value) && value > 0 && value < 65536;
-}
-
 /** The persisted port, or null. Reads the file once per process. */
 async function readPort(): Promise<number | null> {
 	if (knownPort !== undefined) return knownPort;
 	let port: number | null = null;
 	try {
 		const parsed = JSON.parse(await fs.readFile(stateFilePath(), 'utf-8')) as { port?: unknown };
-		if (isPort(parsed?.port)) port = parsed.port;
+		if (isTcpPort(parsed?.port)) port = parsed.port;
 		else logger.warn(`Ignoring ${TOKEN_PROXY_STATE_FILE}: it holds no usable port`, LOG_CONTEXT);
 	} catch (error) {
 		// No file is the normal state for a user who has never used the proxy.
@@ -134,19 +130,6 @@ async function readPort(): Promise<number | null> {
 	}
 	knownPort = port;
 	return port;
-}
-
-/** Ask the OS for a port nothing is using on loopback. */
-function pickFreePort(): Promise<number> {
-	return new Promise<number>((resolve, reject) => {
-		const probe = net.createServer();
-		probe.once('error', reject);
-		probe.listen(0, TOKEN_PROXY_HOST, () => {
-			const address = probe.address();
-			const port = address && typeof address === 'object' ? address.port : 0;
-			probe.close(() => (isPort(port) ? resolve(port) : reject(new Error('no port assigned'))));
-		});
-	});
 }
 
 function agentsPointingAt(port: number): string[] {
@@ -294,7 +277,7 @@ export function ensureTokenProxyPort(): Promise<number> {
 	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
 		const existing = await readPort();
 		if (existing !== null) return existing;
-		const port = await pickFreePort();
+		const port = await pickFreePort(TOKEN_PROXY_HOST);
 		await atomicWriteJson(stateFilePath(), { port });
 		knownPort = port;
 		logger.info(`${TOKEN_PROXY_NAME} will use port ${port}`, LOG_CONTEXT);

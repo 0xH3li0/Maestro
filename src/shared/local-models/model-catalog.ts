@@ -40,6 +40,7 @@ import type {
 	LocalEmbeddingSpec,
 	LocalEncoderGraph,
 	LocalModelEntry,
+	LocalModelFile,
 	LocalModelKind,
 } from './types';
 
@@ -604,6 +605,16 @@ export function isLocalModelId(id: string): boolean {
 /** Every catalog model a runtime reads, in catalog order. */
 export function localModelsForRuntime(runtimeId: NativeRuntimeId): LocalModelEntry[] {
 	return LOCAL_MODEL_CATALOG.filter((entry) => entry.runtime === runtimeId);
+}
+
+/**
+ * The GGUF file llama.cpp opens for a text-generation model, or undefined for
+ * an entry that is not one. The in-process engine and the model server both
+ * load this file, so they cannot disagree on which of a model's files it is.
+ */
+export function localModelGgufFile(entry: LocalModelEntry): LocalModelFile | undefined {
+	if (entry.kind !== 'text-gen' || entry.runtime !== 'llama') return undefined;
+	return entry.files.find((file) => file.path.toLowerCase().endsWith('.gguf'));
 }
 
 /** Total bytes of an arbitrary selection of models. Unknown ids contribute zero. */

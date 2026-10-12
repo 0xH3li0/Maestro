@@ -26,7 +26,7 @@
  * would spend resources (or money) the user did not choose to spend.
  */
 
-import { getLocalModel } from '../../shared/local-models/model-catalog';
+import { getLocalModel, localModelGgufFile } from '../../shared/local-models/model-catalog';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import { extractJsonObject } from '../../shared/jsonUtils';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
@@ -264,10 +264,7 @@ export interface LocalTextEngineOptions {
  */
 export async function resolveInstalledTextModelPath(modelId: string): Promise<string> {
 	const entry = getLocalModel(modelId);
-	const gguf =
-		entry && entry.kind === 'text-gen' && entry.runtime === 'llama'
-			? entry.files.find((file) => file.path.toLowerCase().endsWith('.gguf'))
-			: undefined;
+	const gguf = entry ? localModelGgufFile(entry) : undefined;
 	if (!entry || !gguf) {
 		throw new LocalModelError(`"${modelId}" is not a local text-generation model.`, {
 			code: 'model-unsupported',
