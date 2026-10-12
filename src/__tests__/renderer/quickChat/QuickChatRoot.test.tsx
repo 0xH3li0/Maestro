@@ -11,6 +11,7 @@ import { QuickChatRoot } from '../../../renderer/quickChat/QuickChatRoot';
 import { EMPTY_QUICK_CHAT_SNAPSHOT, type QuickChatSnapshot } from '../../../shared/quickChat';
 import { openZoomViewer, useZoomViewerStore } from '../../../renderer/components/ZoomViewer';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { FONT_SCALE_RANGE, stepScale } from '../../../shared/scaleRange';
 
 function snapshot(patch: Partial<QuickChatSnapshot> = {}): QuickChatSnapshot {
 	return { ...EMPTY_QUICK_CHAT_SNAPSHOT, agentId: 'a', agentName: 'Pedsidian', ...patch };
@@ -22,11 +23,9 @@ async function renderWith(initial: QuickChatSnapshot) {
 	await act(async () => {});
 }
 
-let storage: Map<string, string>;
-
 beforeEach(() => {
 	vi.mocked(window.maestro.quickChat.command).mockReset();
-	storage = installLocalStorageMock();
+	installLocalStorageMock();
 });
 
 describe('Keep button', () => {
@@ -237,6 +236,27 @@ describe('text zoom', () => {
 				100
 		) / 100;
 
+	/** The main process owns the zoom; this stands in for it. */
+	let mainScale: number;
+	let pushFromMain: ((scale: number) => void) | undefined;
+	beforeEach(() => {
+		mainScale = 1;
+		vi.mocked(window.maestro.quickChat.getFontScale).mockImplementation(async () => mainScale);
+		vi.mocked(window.maestro.quickChat.setFontScale).mockImplementation(async (request) => {
+			mainScale =
+				'reset' in request
+					? 1
+					: 'step' in request
+						? stepScale(mainScale, request.step, FONT_SCALE_RANGE)
+						: request.scale;
+			return mainScale;
+		});
+		vi.mocked(window.maestro.quickChat.onFontScale).mockImplementation((cb) => {
+			pushFromMain = cb;
+			return () => {};
+		});
+	});
+
 	it('Cmd+= and Cmd+- step the conversation size, Cmd+0 resets it', async () => {
 		await renderWith(conversation());
 		expect(messagesFontSize()).toBe(1);
@@ -255,25 +275,27 @@ describe('text zoom', () => {
 	it('accepts Cmd+Shift+= (the + key) as a step up', async () => {
 		await renderWith(conversation());
 		await act(async () => fireEvent.keyDown(window, { key: '+', metaKey: true, shiftKey: true }));
+		expect(window.maestro.quickChat.setFontScale).toHaveBeenLastCalledWith({ step: 1 });
 		expect(messagesFontSize()).toBe(1.1);
 	});
 
-	it('remembers the size for the next window', async () => {
-		await renderWith(conversation());
-		await act(async () => fireEvent.keyDown(window, { key: '=', metaKey: true }));
-		expect(storage.get('quickChat.fontScale')).toBe('1.1');
-	});
-
-	it('opens at the remembered size', async () => {
-		storage.set('quickChat.fontScale', '1.3');
+	it('opens at the size the main process remembers', async () => {
+		mainScale = 1.3;
 		await renderWith(conversation());
 		expect(messagesFontSize()).toBe(1.3);
-		expect(screen.getByRole('button', { name: 'Reset text size' })).toHaveTextContent('130%');
+		expect(screen.getByRole('button', { name: 'Reset text font size' })).toHaveTextContent('130%');
 	});
 
-	it('buttons step the size and name their chords in overlays', async () => {
+	it('follows a change made elsewhere (maestro-cli quick-chat font)', async () => {
 		await renderWith(conversation());
-		const larger = screen.getByRole('button', { name: 'Larger text' });
+		act(() => pushFromMain?.(1.5));
+		expect(messagesFontSize()).toBe(1.5);
+	});
+
+	it('draws the shared control, with overlays that name each chord', async () => {
+		await renderWith(conversation());
+		const larger = screen.getByRole('button', { name: 'Increase text font size' });
+		expect(larger).not.toHaveAttribute('title');
 		await act(async () => fireEvent.click(larger));
 		expect(messagesFontSize()).toBe(1.1);
 

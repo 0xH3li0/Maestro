@@ -317,7 +317,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Font-family fallback chain:** `withMonoFallback()`, `resolveSurfaceFont()`, `MONO_FALLBACK_STACK`, `WORDMARK_FONT_STACK` in `src/shared/fontStack.ts`
 - **Fixed-pitch font for shell text:** `resolveFixedPitchFontFamily()`, `resolveTerminalFontFamily()`, `isFixedPitchStack()` in `src/renderer/utils/fixedPitchFont.ts`; `useFixedPitchFont()` in `src/renderer/hooks/ui/useFixedPitchFont.ts`
 - **Saving the user's own font setup:** `captureTypographySnapshot()`, `typographySnapshotPatch()`, `typographySnapshotMatches()` in `src/shared/typographySnapshot.ts`; keys from `TYPOGRAPHY_SURFACE_LIST` in `src/shared/typography.ts`
-- **Font zoom on a reading pane:** `useFontScale(storageKey)` in `src/renderer/hooks/ui/useFontScale.ts`, `<FontScaleControl>` in `src/renderer/components/ui/FontScaleControl.tsx`
+- **Font zoom on a reading pane:** `useFontScale(storageKey)` in `src/renderer/hooks/ui/useFontScale.ts`, `<FontScaleControl>` in `src/renderer/components/ui/FontScaleControl.tsx`, range math in `src/shared/scaleRange.ts`
 
 #### Layout, scroll, sizing, and hook utilities
 

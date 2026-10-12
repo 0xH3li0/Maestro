@@ -2497,6 +2497,14 @@ quickChatCmd
 	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
 
 quickChatCmd
+	.command('font [size]')
+	.description(
+		'Text size of the conversation: in, out, reset, or a size such as 120% (no size prints it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((size: string | undefined, options) => quickChat('font', { state: size }, options));
+
+quickChatCmd
 	.command('agent <agent-id>')
 	.description('Switch Quick Chat to another agent and start a new chat there')
 	.option('--json', 'Output as JSON (for scripting)')

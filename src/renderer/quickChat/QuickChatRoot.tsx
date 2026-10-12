@@ -13,8 +13,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-	AArrowDown,
-	AArrowUp,
 	ArrowUp,
 	Bookmark,
 	BookmarkCheck,
@@ -37,7 +35,9 @@ import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
-import { useFontScale } from '../hooks/ui/useFontScale';
+import { FontScaleControl } from '../components/ui/FontScaleControl';
+import type { UseFontScaleReturn } from '../hooks/ui/useFontScale';
+import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared/scaleRange';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -67,13 +67,6 @@ const QUICK_CHAT_KEYS = {
  * Cmd+0 resets. `+` and `_` are the same keys with Shift, so either hand works.
  */
 const FONT_ZOOM_KEYS: Record<string, 1 | -1 | 0> = { '=': 1, '+': 1, '-': -1, _: -1, '0': 0 };
-
-/**
- * Where the conversation's text zoom is remembered. localStorage in this window
- * is the app's own origin, so it survives a hidden window, a closed one, and a
- * restart.
- */
-const FONT_SCALE_STORAGE_KEY = 'quickChat.fontScale';
 
 /** The conversation's base size (`prose-sm`), which the zoom multiplies. */
 const MESSAGES_BASE_REM = 0.875;
@@ -241,6 +234,7 @@ function QuickChatWindow() {
 	const [error, setError] = useState<string | null>(null);
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [pinned, setPinned] = useState(true);
+	const [fontScaleValue, setFontScaleValue] = useState(FONT_SCALE_DEFAULT);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// This window boots its own renderer and never runs useSettings: load the
@@ -259,12 +253,15 @@ function QuickChatWindow() {
 			textareaRef.current?.focus();
 		});
 		const offPinned = window.maestro.quickChat.onPinned(setPinned);
+		const offFontScale = window.maestro.quickChat.onFontScale(setFontScaleValue);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
 		void window.maestro.quickChat.getPinned().then(setPinned);
+		void window.maestro.quickChat.getFontScale().then(setFontScaleValue);
 		return () => {
 			offSnapshot();
 			offFocus();
 			offPinned();
+			offFontScale();
 		};
 	}, []);
 
@@ -284,8 +281,10 @@ function QuickChatWindow() {
 	}, [expanded]);
 
 	const lastMessage = snapshot.messages[snapshot.messages.length - 1];
+	// The text zoom is in the key: growing the text pushes the latest reply down,
+	// and a reader at the bottom should stay there.
 	const stickRef = useStickToBottom<HTMLDivElement>(
-		`${snapshot.messages.length}:${lastMessage?.text.length ?? 0}:${snapshot.busy}`
+		`${snapshot.messages.length}:${lastMessage?.text.length ?? 0}:${snapshot.busy}:${fontScaleValue}`
 	);
 	useAutosizeTextarea({ textareaRef, value: draft, maxHeight: COMPOSER_MAX_HEIGHT });
 	const elapsed = useElapsedSeconds(snapshot.busySince);
@@ -342,7 +341,27 @@ function QuickChatWindow() {
 		if (snapshot.tabId) void run({ type: 'reveal' });
 	}, [run, snapshot.tabId]);
 	const zoomOpen = useZoomViewerStore((s) => s.request !== null);
-	const fontScale = useFontScale(FONT_SCALE_STORAGE_KEY);
+	// The zoom is owned by the main process (so `maestro-cli quick-chat font`
+	// reaches it, and it is saved with the window's other per-device state);
+	// this is the control the shared FontScaleControl draws.
+	const fontScale = useMemo<UseFontScaleReturn>(() => {
+		const change = (request: Parameters<typeof window.maestro.quickChat.setFontScale>[0]) =>
+			void window.maestro.quickChat
+				.setFontScale(request)
+				.then(setFontScaleValue)
+				.catch((err: unknown) =>
+					setError(
+						`Could not change the text size: ${err instanceof Error ? err.message : String(err)}`
+					)
+				);
+		return {
+			fontScale: fontScaleValue,
+			adjustFontScale: (direction) => change({ step: direction }),
+			resetFontScale: () => change({ reset: true }),
+			canDecrease: fontScaleValue > FONT_SCALE_MIN,
+			canIncrease: fontScaleValue < FONT_SCALE_MAX,
+		};
+	}, [fontScaleValue]);
 	const { adjustFontScale, resetFontScale } = fontScale;
 
 	// A diagram opened full screen needs the whole display, not the chat-sized window.
@@ -480,43 +499,19 @@ function QuickChatWindow() {
 			/>
 			<div className="flex items-center gap-2">
 				{hasConversation && (
-					<div className="flex items-center gap-0.5" data-testid="quick-chat-font-scale">
-						<IconButton
-							theme={theme}
-							label="Smaller text"
-							shortcut={formatShortcutKeys(['Meta', '-'])}
-							onClick={() => adjustFontScale(-1)}
-							disabled={!fontScale.canDecrease}
-						>
-							<AArrowDown className="w-4 h-4" />
-						</IconButton>
-						{fontScale.fontScale !== 1 && (
-							<QuickChatTooltip
-								theme={theme}
-								label="Reset text size"
-								shortcut={formatShortcutKeys(['Meta', '0'])}
-							>
-								<button
-									type="button"
-									aria-label="Reset text size"
-									onClick={resetFontScale}
-									className="px-1 text-xs tabular-nums rounded-md opacity-70 hover:opacity-100"
-									style={{ ...NO_DRAG_REGION, color: c.textDim }}
-								>
-									{Math.round(fontScale.fontScale * 100)}%
-								</button>
-							</QuickChatTooltip>
-						)}
-						<IconButton
-							theme={theme}
-							label="Larger text"
-							shortcut={formatShortcutKeys(['Meta', '='])}
-							onClick={() => adjustFontScale(1)}
-							disabled={!fontScale.canIncrease}
-						>
-							<AArrowUp className="w-4 h-4" />
-						</IconButton>
-					</div>
+					<FontScaleControl
+						theme={theme}
+						control={fontScale}
+						variant="ghost"
+						tooltips="overlay"
+						target="text"
+						shortcutHint={{
+							decrease: formatShortcutKeys(['Meta', '-']),
+							increase: formatShortcutKeys(['Meta', '=']),
+							reset: formatShortcutKeys(['Meta', '0']),
+						}}
+						testId="quick-chat-font-scale"
+					/>
 				)}
 				<div className="flex-1" />
 				<IconButton

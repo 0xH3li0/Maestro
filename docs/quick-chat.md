@@ -12,19 +12,19 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 
 ## Opening and closing it
 
-| Action                                       | How                                                                                                                                              |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Open, focus, or close the window             | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                                                                                 |
-| Open it from inside Maestro                  | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat`                      |
-| Close it                                     | `Esc`, or the **X** in the window                                                                                                                |
-| Start a new chat                             | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                                                  |
-| Switch agent                                 | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                                        |
-| Send                                         | `Enter` (`Shift+Enter` for a new line)                                                                                                           |
-| Open the chat in Maestro                     | `Cmd+T` / `Ctrl+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                                         |
-| View a diagram full screen                   | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                                       |
-| Make the conversation text bigger or smaller | `Cmd+=` / `Cmd+-` (`Ctrl` on Windows and Linux), or the A buttons at the bottom left. `Cmd+0` resets. Maestro remembers the size across restarts |
-| Keep the chat as a tab                       | `Cmd+B` / `Ctrl+B`, or the bookmark in the window. Press again to make it temporary                                                              |
-| Pin the window on top                        | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                                               |
+| Action                                       | How                                                                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open, focus, or close the window             | `Opt+Space` (macOS) / `Alt+Space` (Windows, Linux), from any app                                                                                                                            |
+| Open it from inside Maestro                  | **Open Quick Chat** in the command palette, **Quick Chat** in the Left Bar hamburger menu, or `maestro-cli open quick-chat`                                                                 |
+| Close it                                     | `Esc`, or the **X** in the window                                                                                                                                                           |
+| Start a new chat                             | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                                                                                             |
+| Switch agent                                 | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                                                                                   |
+| Send                                         | `Enter` (`Shift+Enter` for a new line)                                                                                                                                                      |
+| Open the chat in Maestro                     | `Cmd+T` / `Ctrl+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                                                                                    |
+| View a diagram full screen                   | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                                                                                  |
+| Make the conversation text bigger or smaller | `Cmd+=` / `Cmd+-` (`Ctrl` on Windows and Linux), or the A buttons at the bottom left. `Cmd+0` resets. Maestro remembers the size across restarts, and `maestro-cli quick-chat font` sets it |
+| Keep the chat as a tab                       | `Cmd+B` / `Ctrl+B`, or the bookmark in the window. Press again to make it temporary                                                                                                         |
+| Pin the window on top                        | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                                                                                          |
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 
@@ -73,6 +73,7 @@ maestro-cli quick-chat status              # window, agent, mode, and the conver
 maestro-cli quick-chat new
 maestro-cli quick-chat keep                # keep the current chat as a tab ("keep off" makes it ephemeral)
 maestro-cli quick-chat pin                 # float the window above other windows ("pin off" lets it fall behind)
+maestro-cli quick-chat font in             # bigger conversation text: in, out, reset, or a size such as 120%
 maestro-cli quick-chat agent <agent-id>    # switch agents and start a new chat
 maestro-cli quick-chat reveal              # open the chat as a tab in Maestro
 maestro-cli quick-chat stop                # stop the reply

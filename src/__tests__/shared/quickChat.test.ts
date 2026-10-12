@@ -10,6 +10,7 @@ import {
 	QUICK_CHAT_MIN_EXPANDED_HEIGHT,
 	QUICK_CHAT_MIN_WIDTH,
 	logsToQuickChatMessages,
+	parseQuickChatFontScaleRequest,
 	resolveQuickChatSettings,
 	validateQuickChatBoundsRequest,
 } from '../../shared/quickChat';
@@ -133,5 +134,20 @@ describe('validateQuickChatBoundsRequest', () => {
 		expect(validateQuickChatBoundsRequest({ height: QUICK_CHAT_MIN_EXPANDED_HEIGHT - 1 })).toMatch(
 			/Height/
 		);
+	});
+});
+
+describe('parseQuickChatFontScaleRequest', () => {
+	it('accepts a step, an exact scale, or a reset', () => {
+		expect(parseQuickChatFontScaleRequest({ step: 1 })).toEqual({ step: 1 });
+		expect(parseQuickChatFontScaleRequest({ step: -1 })).toEqual({ step: -1 });
+		expect(parseQuickChatFontScaleRequest({ scale: 1.4 })).toEqual({ scale: 1.4 });
+		expect(parseQuickChatFontScaleRequest({ reset: true })).toEqual({ reset: true });
+	});
+
+	it('rejects anything else off the wire', () => {
+		for (const raw of [null, 'in', {}, { step: 2 }, { scale: 0 }, { scale: NaN }, { reset: 1 }]) {
+			expect(parseQuickChatFontScaleRequest(raw)).toBeNull();
+		}
 	});
 });
