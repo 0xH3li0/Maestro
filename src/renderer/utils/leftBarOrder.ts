@@ -22,9 +22,12 @@ export interface LeftBarGroupOrder {
  * Order the groups the Left Bar draws.
  *
  * @param sortedGroups The visible groups, already alphabetical.
- * @param groupById EVERY group, so a child whose parent is suppressed still
- *   knows it is nested and is drawn as a root instead.
+ * @param groupById EVERY group, to resolve a nested group's parent.
  * @param nested Whether Groups+ nesting is on. Off, the order is flat.
+ *
+ * A child is placed under its parent only when that parent is itself drawn. A
+ * child of a missing or suppressed parent draws as a root rather than vanishing
+ * with it.
  */
 export function orderLeftBarGroups(
 	sortedGroups: Group[],
@@ -34,10 +37,11 @@ export function orderLeftBarGroups(
 	const childrenByParentId = new Map<string, Group[]>();
 	if (!nested) return { orderedGroups: sortedGroups, childrenByParentId };
 
+	const drawn = new Set(sortedGroups.map((g) => g.id));
 	const rootGroups: Group[] = [];
 	for (const group of sortedGroups) {
 		const parent = group.parentGroupId ? groupById.get(group.parentGroupId) : undefined;
-		if (!parent || parent.parentGroupId) {
+		if (!parent || parent.parentGroupId || !drawn.has(parent.id)) {
 			rootGroups.push(group);
 			continue;
 		}

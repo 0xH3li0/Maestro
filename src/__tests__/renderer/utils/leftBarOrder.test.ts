@@ -50,6 +50,13 @@ describe('orderLeftBarGroups', () => {
 		expect(childrenByParentId.get('p')?.map((g) => g.id)).toEqual(['c']);
 	});
 
+	it('draws a child as a root when its parent is known but not drawn', () => {
+		expect(orderLeftBarGroups([child, other], byId, true).orderedGroups.map((g) => g.id)).toEqual([
+			'c',
+			'o',
+		]);
+	});
+
 	it('draws a child as a root when its parent is not in the map', () => {
 		const orphan = group('x', 'Orphan', { parentGroupId: 'gone' });
 		expect(

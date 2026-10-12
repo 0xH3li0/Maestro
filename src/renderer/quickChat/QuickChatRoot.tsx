@@ -466,7 +466,8 @@ export function QuickChatRoot() {
 						theme={theme}
 						label="Close"
 						hint="The chat is kept. The hotkey brings it back."
-						shortcut="Esc"
+						// Escape backs out of the picker first, so it only closes without it.
+						shortcut={pickerOpen ? undefined : 'Esc'}
 						onClick={hide}
 					>
 						<X className="w-4 h-4" />

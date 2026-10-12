@@ -334,15 +334,34 @@ export function startQuickChatEngine(): () => void {
 		owner = true;
 		return runQuickChatCommand(command);
 	});
-	const offSessions = useSessionStore.subscribe((state, previous) => {
-		// Groups decide the picker's order and labels, so a group change is news too.
-		const changed = state.sessions !== previous.sessions || state.groups !== previous.groups;
-		if (!owner || !changed || pushTimer) return;
+	const schedulePush = () => {
+		if (!owner || pushTimer) return;
 		pushTimer = setTimeout(pushIfChanged, PUSH_THROTTLE_MS);
+	};
+	// The picker follows the Left Bar (see leftBarAgentOrder), so anything that
+	// reorders or hides a row there is news too: groups, the active agent (whose
+	// hidden group is exempt), Show Hidden, and the Groups+ / Pianola features.
+	const offSessions = useSessionStore.subscribe((state, previous) => {
+		if (
+			state.sessions !== previous.sessions ||
+			state.groups !== previous.groups ||
+			state.activeSessionId !== previous.activeSessionId
+		) {
+			schedulePush();
+		}
+	});
+	const offSettings = useSettingsStore.subscribe((state, previous) => {
+		if (
+			state.showHiddenGroups !== previous.showHiddenGroups ||
+			state.encoreFeatures !== previous.encoreFeatures
+		) {
+			schedulePush();
+		}
 	});
 	return () => {
 		offCommand();
 		offSessions();
+		offSettings();
 		if (pushTimer) clearTimeout(pushTimer);
 		pushTimer = null;
 	};
