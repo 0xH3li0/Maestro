@@ -323,6 +323,21 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	return win;
 }
 
+/**
+ * Raise an unpinned window to the floating level until it loses focus, then
+ * drop it back unless the user pinned it in the meantime.
+ */
+function floatUntilBlur(win: BrowserWindow): void {
+	win.setAlwaysOnTop(true, 'floating');
+	win.removeListener('blur', settleUnpinned);
+	win.once('blur', settleUnpinned);
+}
+
+function settleUnpinned(): void {
+	const win = getQuickChatWindow();
+	if (win && saved?.pinned === false) win.setAlwaysOnTop(false);
+}
+
 /** Show and focus the window, creating it on first use. */
 export function showQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	const existing = getQuickChatWindow();
@@ -332,10 +347,13 @@ export function showQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	const reveal = () => {
 		revealPending = false;
 		if (win.isDestroyed()) return;
+		// Unpinned, the window sits at the normal level. A non-activating panel
+		// shown there while another app is active lands BEHIND that app's window
+		// (`moveTop` does not cross apps), so the hotkey looked dead outside
+		// Maestro. A summon must be seen: float it for the show, and let it settle
+		// back to the normal level once the user clicks away.
+		if (saved?.pinned === false) floatUntilBlur(win);
 		win.show();
-		// Unpinned, the window sits at the normal level, where showing it from
-		// another app can land it behind that app's window. A summon must be seen.
-		if (saved?.pinned === false) win.moveTop();
 		win.focus();
 		win.webContents.send('quickChat:focusInput');
 	};

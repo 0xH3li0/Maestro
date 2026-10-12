@@ -45,7 +45,6 @@ vi.mock('electron', async () => {
 			this.emit('hide');
 		});
 		focus = vi.fn();
-		moveTop = vi.fn();
 		loadURL = vi.fn();
 		setAlwaysOnTop = vi.fn();
 		setVisibleOnAllWorkspaces = vi.fn();
@@ -101,7 +100,6 @@ type WindowModule = typeof import('../../../main/quick-chat/quick-chat-window');
 type Bounds = { x: number; y: number; width: number; height: number };
 type MockWindow = EventEmitter & {
 	show: ReturnType<typeof vi.fn>;
-	moveTop: ReturnType<typeof vi.fn>;
 	setAlwaysOnTop: ReturnType<typeof vi.fn>;
 	webContents: EventEmitter & { send: ReturnType<typeof vi.fn> };
 	setBounds: (b: Bounds) => void;
@@ -449,7 +447,7 @@ describe('Quick Chat window pin', () => {
 		expect(store.value).toMatchObject({ width: 700, pinned: false });
 	});
 
-	it('opens unpinned after a restart, and still comes to the front when summoned', async () => {
+	it('floats an unpinned window for a summon, then lets it settle back on blur', async () => {
 		const { deps: d } = makeDeps({ pinned: false });
 		const mod = await freshModule();
 		mod.showQuickChatWindow(d);
@@ -457,15 +455,46 @@ describe('Quick Chat window pin', () => {
 		expect(win.setAlwaysOnTop).toHaveBeenCalledWith(false, 'floating');
 
 		win.emit('ready-to-show');
-		expect(win.moveTop).toHaveBeenCalledTimes(1);
+		// Raised BEFORE it shows, so it cannot land behind the active app's window.
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'floating');
+		expect(win.setAlwaysOnTop.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			win.show.mock.invocationCallOrder[0]
+		);
+
+		win.emit('blur');
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(false);
 	});
 
-	it('does not jump a pinned window with moveTop', async () => {
+	it('keeps a window the user pinned while it was floating for a summon', async () => {
+		const { deps: d } = makeDeps({ pinned: false });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		win.emit('ready-to-show');
+
+		mod.setQuickChatWindowPinned(true, d);
+		win.emit('blur');
+		expect(win.setAlwaysOnTop).toHaveBeenLastCalledWith(true, 'floating');
+	});
+
+	it('settles back once however many times it was summoned', async () => {
+		const { deps: d } = makeDeps({ pinned: false });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		win.emit('ready-to-show');
+		mod.showQuickChatWindow(d);
+		mod.showQuickChatWindow(d);
+		expect(win.listenerCount('blur')).toBe(1);
+	});
+
+	it('leaves a pinned window at its level when summoned', async () => {
 		const { deps: d } = makeDeps();
 		const mod = await freshModule();
 		mod.showQuickChatWindow(d);
 		const win = lastWindow();
 		win.emit('ready-to-show');
-		expect(win.moveTop).not.toHaveBeenCalled();
+		expect(win.setAlwaysOnTop).toHaveBeenCalledTimes(1);
+		expect(win.listenerCount('blur')).toBe(0);
 	});
 });

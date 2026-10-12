@@ -39,6 +39,7 @@ import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/med
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { orderLeftBarGroups } from '../../utils/leftBarOrder';
 import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
 import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
@@ -1014,40 +1015,7 @@ function SessionListInner(props: SessionListProps) {
 			hiddenGroupIds.size > 0
 				? sortedGroups.filter((group) => !hiddenGroupIds.has(group.id))
 				: sortedGroups;
-		if (!groupsPlusEnabled) {
-			return {
-				orderedGroups: visibleGroups,
-				groupById,
-				childrenByParentId: new Map<string, Group[]>(),
-			};
-		}
-
-		const childrenByParentId = new Map<string, Group[]>();
-		const rootGroups: Group[] = [];
-
-		for (const group of visibleGroups) {
-			const parent = group.parentGroupId ? groupById.get(group.parentGroupId) : undefined;
-			if (!parent || parent.parentGroupId) {
-				rootGroups.push(group);
-				continue;
-			}
-
-			const children = childrenByParentId.get(parent.id);
-			if (children) {
-				children.push(group);
-			} else {
-				childrenByParentId.set(parent.id, [group]);
-			}
-		}
-
-		return {
-			orderedGroups: rootGroups.flatMap((group) => [
-				group,
-				...(childrenByParentId.get(group.id) ?? []),
-			]),
-			groupById,
-			childrenByParentId,
-		};
+		return { ...orderLeftBarGroups(visibleGroups, groupById, groupsPlusEnabled), groupById };
 	}, [groupsPlusEnabled, sortedGroups, hiddenGroupIds]);
 
 	// Counted off the groups themselves, never off `hiddenGroupIds`: that set is

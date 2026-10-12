@@ -95,6 +95,24 @@ describe('agent resolution', () => {
 			{ id: 'b', name: 'Agent b', groupName: undefined, provider: 'Claude Code' },
 		]);
 	});
+
+	it('lists agents in Left Bar order and leaves worktree children out', () => {
+		useSessionStore.setState({
+			sessions: [
+				agent('loose', { name: 'Loose', groupId: undefined }),
+				agent('z', { name: 'Zed', groupId: 'g-alpha' }),
+				agent('wt', { name: 'Zed: feature', groupId: 'g-alpha', parentSessionId: 'z' }),
+				agent('m', { name: 'Mid', groupId: 'g-beta' }),
+				agent('y', { name: 'Yak', groupId: 'g-alpha' }),
+			],
+			groups: [
+				{ id: 'g-beta', name: 'Beta', emoji: '', collapsed: false },
+				{ id: 'g-alpha', name: 'Alpha', emoji: '', collapsed: false },
+			],
+			activeSessionId: 'loose',
+		});
+		expect(buildQuickChatSnapshot().agents.map((x) => x.id)).toEqual(['y', 'z', 'm', 'loose']);
+	});
 });
 
 describe('send', () => {
