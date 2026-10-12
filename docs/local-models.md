@@ -189,21 +189,22 @@ The readiness line shows a green **Ready**, or names what is wrong and offers th
 
 ### The tasks
 
-| Task                    | System | Needs                              | Default       | What it does                                                                                                            |
-| ----------------------- | ------ | ---------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Tab naming              | Two    | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                                   |
-| Summaries               | Two    | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                               |
-| AI command mode         | Two    | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.                       |
-| Tab cleanup suggestions | One    | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                              |
-| Git drafts              | Two    | Text generation                    | Off           | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits. |
-| Semantic search         | One    | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                           |
-| Cue gate                | One    | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                                    |
-| Prompt-injection screen | One    | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                            |
-| Secret screen           | One    | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.            |
-| Dictation               | One    | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                  |
-| Spoken notices          | Two    | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).     |
-| Voice routing           | One    | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                               |
-| Token proxy             | Two    | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                          |
+| Task                    | System | Needs                              | Default       | What it does                                                                                                                    |
+| ----------------------- | ------ | ---------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Tab naming              | Two    | Text generation                    | Utility Agent | Names a new AI tab from the first message sent in it.                                                                           |
+| Summaries               | Two    | Text generation                    | Utility Agent | Writes context summaries for Summarize & Continue and the group chat participant summary.                                       |
+| AI command mode         | Two    | Text generation                    | Utility Agent | Turns a plain-English request in command mode into a shell command. You review it before it runs.                               |
+| Tab cleanup suggestions | One    | Text generation                    | Off           | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                                      |
+| Git drafts              | Two    | Text generation                    | Off           | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.         |
+| Semantic search         | One    | Embeddings                         | Off           | Finds history, transcripts, and documents by meaning rather than exact words.                                                   |
+| Cue gate                | One    | Text generation                    | Off           | Checks a Cue subscription's gate condition against the event before an agent starts.                                            |
+| Prompt-injection screen | One    | Classifier                         | Off           | Scores untrusted text for prompt injection before Cue passes it to an agent.                                                    |
+| Secret screen           | One    | Classifier                         | Off           | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.                    |
+| Dictation               | One    | Speech-to-text                     | Off           | Transcribes speech into any text box without starting a voice session.                                                          |
+| Spoken notices          | Two    | Text generation and text-to-speech | Off           | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).             |
+| Voice routing           | One    | Text generation                    | Off           | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                                       |
+| Token proxy             | Two    | Text generation                    | Off           | Summarizes large tool output for the token-conservation proxy.                                                                  |
+| Local judge             | One    | Text generation                    | Off           | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated. |
 
 For AI command mode, **Utility Agent** means the tab's own provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
 

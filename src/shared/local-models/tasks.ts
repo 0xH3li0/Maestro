@@ -102,9 +102,18 @@ export const LOCAL_MODEL_TASK_IDS = [
 	'spoken-notices',
 	'voice-routing',
 	'token-proxy',
+	'local-judge',
 ] as const;
 
 export type LocalModelTaskId = (typeof LOCAL_MODEL_TASK_IDS)[number];
+
+/**
+ * The task whose assignment is the model System One's local judge runs on
+ * (`src/main/local-models/system-one/local-judge.ts`). The judge has no model
+ * setting of its own: like every other "which model does this" choice, it is
+ * this task's assignment.
+ */
+export const LOCAL_JUDGE_TASK_ID = 'local-judge' satisfies LocalModelTaskId;
 
 /**
  * Which half of the Models settings a task belongs to. System One tasks
@@ -321,6 +330,16 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			system: 'two',
 			label: 'Token proxy',
 			description: 'Summarizes large tool output for the token-conservation proxy.',
+			needs: 'text-gen',
+			allowsUtilityAgent: false,
+			defaultAssignment: OFF_ASSIGNMENT,
+		}),
+		'local-judge': defineTask({
+			id: 'local-judge',
+			system: 'one',
+			label: 'Local judge',
+			description:
+				'The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,

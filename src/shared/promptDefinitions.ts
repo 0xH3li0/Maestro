@@ -169,6 +169,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Token proxy summary for a small local model or endpoint: shortens one piece of a large tool result, keeping paths, identifiers, numbers and errors',
 		category: 'commands',
 	},
+	{
+		id: 'system-one-judge-local',
+		filename: 'system-one-judge-local.md',
+		description:
+			'System One local judge for a small local model or endpoint: reads a state and one typed question (yes or no, pick one, rate on a rubric), and answers as JSON',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -474,6 +481,7 @@ export const PROMPT_IDS = {
 	SPOKEN_NOTICE_LOCAL: 'spoken-notice-local',
 	CUE_GATE_LOCAL: 'cue-gate-local',
 	TOKEN_PROXY_LOCAL: 'token-proxy-local',
+	SYSTEM_ONE_JUDGE_LOCAL: 'system-one-judge-local',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

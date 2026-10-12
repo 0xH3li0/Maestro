@@ -56,6 +56,14 @@ export const JEV_DEFAULT_MODEL = 'jev-latest';
 export const SYSTEM_ONE_DEFAULT_TIMEOUT_MS = 1_500;
 
 /**
+ * The local judge's budget when its caller states none. Far longer than Jev's:
+ * the first question after an idle spell pays for loading the model, which
+ * takes seconds, and a budget sized for a warm model would fail that one every
+ * time.
+ */
+export const LOCAL_JUDGE_DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
  * A remote engine, resolved and ready to call. The key is handed in for the
  * call and never stored on a record; `openjev` may have none.
  */
@@ -311,7 +319,12 @@ export interface SystemOneUsage {
 /** One answered request. */
 export interface SystemOneResult {
 	engine: SystemOneEngineId;
-	/** The model the engine says answered (`jev-1.13.0` for the alias `jev-latest`). */
+	/**
+	 * The model the engine says answered (`jev-1.13.0` for the alias
+	 * `jev-latest`). From the local judge it is the source's spelling,
+	 * `local:<model id>` or `endpoint:<endpoint id>:<model>`, which
+	 * `parseLocalModelAssignmentSpec` reads back.
+	 */
 	model: string;
 	answers: SystemOneAnswers;
 	/** What the engine counted. Zeros when it reports no usage. */

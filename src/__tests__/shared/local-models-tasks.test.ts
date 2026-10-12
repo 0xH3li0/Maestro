@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	LOCAL_JUDGE_TASK_ID,
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
 	isLocalModelOfferedForTask,
@@ -64,6 +65,7 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'spoken-notices',
 			'voice-routing',
 			'token-proxy',
+			'local-judge',
 		]);
 	});
 
@@ -92,9 +94,20 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'cue-gate',
 			'voice-routing',
 			'token-proxy',
+			'local-judge',
 		] as const) {
 			expect(LOCAL_MODEL_TASKS[id].needs).toBe('text-gen');
 		}
+	});
+
+	it('keeps the local judge model as a task assignment, off until the user picks one', () => {
+		const judge = LOCAL_MODEL_TASKS[LOCAL_JUDGE_TASK_ID];
+		expect(judge.system).toBe('one');
+		expect(judge.defaultAssignment).toEqual({ type: 'off' });
+		expect(judge.description).toMatch(/not calibrated/);
+		expect(localModelAssignmentProblem(LOCAL_JUDGE_TASK_ID, { type: 'utility-agent' })).toMatch(
+			/no Utility Agent path/
+		);
 	});
 
 	it('defaults the tasks that already run through an agent to that agent path', () => {
@@ -394,6 +407,7 @@ describe('tasksForSystem', () => {
 			'secret-screen',
 			'dictation',
 			'voice-routing',
+			'local-judge',
 		]);
 		expect(tasksForSystem('two').map((task) => task.id)).toEqual([
 			'tab-naming',

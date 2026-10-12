@@ -833,9 +833,9 @@ output is text written for someone to read or run is `two`. `defineTask` in `tas
 constructor, so a new task cannot skip the choice, and `local-models-tasks.test.ts` fails if one has
 no `system` or if the System One and System Two lists drift from the exact sets.
 
-| System One                                                                                                      | System Two                                                                               |
-| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `cue-gate`, `injection-screen`, `secret-screen`, `voice-routing`, `tab-cleanup`, `semantic-search`, `dictation` | `tab-naming`, `tab-summary`, `ai-command`, `git-drafts`, `spoken-notices`, `token-proxy` |
+| System One                                                                                                                     | System Two                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `cue-gate`, `injection-screen`, `secret-screen`, `voice-routing`, `tab-cleanup`, `semantic-search`, `dictation`, `local-judge` | `tab-naming`, `tab-summary`, `ai-command`, `git-drafts`, `spoken-notices`, `token-proxy` |
 
 `tasksForSystem(system)` returns one system's definitions in registry order. The Settings Models tab
 uses it to draw each assignment table (`LocalModelsAssignmentsSection` takes a `system` prop), and
@@ -933,6 +933,7 @@ falls back to another source.
 | `injection-screen` | `scoreCueInjectionText()` in `local-models/cue-injection-screen.ts`, called by the Cue dispatch service (a classifier task, through `runClassifierTask()`)               | Reported as `off`: a command that set `screen_injection: true` is blocked, a prompt that set it starts with a warning, a command that only got the default starts unscreened | A screened command is blocked (fail closed); a screened prompt starts with a warning (fail open) |
 | `spoken-notices`   | `announceAgentFinished()` in `local-models/spoken-notices.ts`, called by the exit listener through `localModels:spokenNotices:agentFinished`                             | The notice is `<agent name> finished` (the default)                                                                                                                          | The same plain line; one yellow toast (`task-notices.ts`)                                        |
 | `voice-routing`    | `AssignedBrainProvider` in `acappella/providers/local/assigned-brain.ts`, built when the assignment names a source                                                       | The voice-specific Brain routes (the default); under a pipeline built for an assignment, the turn is refused by name                                                         | The turn fails as the assigned Brain, with the reason spoken and shown; no other Brain is tried  |
+| `local-judge`      | `askLocalJudge()` in `local-models/system-one/local-judge.ts`, the System One local judge: one schema-constrained generation per typed question                          | Refused as a `SystemOneError` (`unavailable`) that names the setting (the default)                                                                                           | Refused as a `SystemOneError` with the reason; no other engine or model is asked                 |
 
 `spoken-notices` is the one consumer where `off` and `unavailable` do not stop the feature: the
 task only writes the summary half of the line, and `announceAgentFinished()` in

@@ -194,8 +194,12 @@ function parseJsonReply(text: string): unknown {
  */
 export const DEFAULT_IDLE_UNLOAD_MS = 5 * 60_000;
 
-/** Small context: a roster, a tab transcript excerpt, one request. Never a codebase. */
-const CONTEXT_SIZE = 4096;
+/**
+ * Small context: a roster, a tab transcript excerpt, one request. Never a
+ * codebase. Exported for a caller that must refuse an input too long to fit
+ * (the System One local judge) instead of handing it over.
+ */
+export const LOCAL_TEXT_CONTEXT_TOKENS = 4096;
 
 /** Who the core names when a runtime failure reaches a caller. */
 const CONSUMER_ID = 'local-models:text-gen';
@@ -402,7 +406,7 @@ export class LocalTextEngine {
 			const model = await llama.loadModel({ modelPath });
 			let context: LlamaContextInstance;
 			try {
-				context = await model.createContext({ contextSize: CONTEXT_SIZE });
+				context = await model.createContext({ contextSize: LOCAL_TEXT_CONTEXT_TOKENS });
 			} catch (error) {
 				await safeDispose(() => model.dispose?.());
 				throw error;
