@@ -5,10 +5,11 @@
  * `title`, which macOS does not show in this panel while another app is active.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QuickChatRoot } from '../../../renderer/quickChat/QuickChatRoot';
 import { EMPTY_QUICK_CHAT_SNAPSHOT, type QuickChatSnapshot } from '../../../shared/quickChat';
+import { openZoomViewer, useZoomViewerStore } from '../../../renderer/components/ZoomViewer';
 
 function snapshot(patch: Partial<QuickChatSnapshot> = {}): QuickChatSnapshot {
 	return { ...EMPTY_QUICK_CHAT_SNAPSHOT, agentId: 'a', agentName: 'Pedsidian', ...patch };
@@ -126,5 +127,76 @@ describe('keyboard chords', () => {
 		await renderWith(snapshot());
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Keep as a tab\./ }).parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent(/B$/);
+	});
+});
+
+describe('Open in Maestro', () => {
+	it('Cmd+T opens the chat as a tab once there is one, and the overlay names the chord', async () => {
+		const open = snapshot({ tabId: 't1', messages: [{ id: 'm', role: 'user', text: 'hi' }] });
+		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({ ok: true, snapshot: open });
+		await renderWith(open);
+		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
+		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({ type: 'reveal' });
+
+		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Open in Maestro\./ }).parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/T$/);
+	});
+
+	it('Cmd+T does nothing before the first message', async () => {
+		await renderWith(snapshot({ tabId: null }));
+		await act(async () => fireEvent.keyDown(window, { key: 't', metaKey: true }));
+		expect(window.maestro.quickChat.command).not.toHaveBeenCalledWith({ type: 'reveal' });
+	});
+});
+
+describe('header', () => {
+	it('shows only the agent, not a "Quick Chat" label', async () => {
+		await renderWith(snapshot({ messages: [{ id: 'm', role: 'user', text: 'hi' }] }));
+		expect(screen.queryByText('Quick Chat')).toBeNull();
+		expect(screen.queryByText('Quick Chat tab')).toBeNull();
+	});
+
+	it('explains the agent switcher in an overlay with its chord', async () => {
+		await renderWith(snapshot());
+		const button = screen.getByTestId('quick-chat-agent-button');
+		expect(button).not.toHaveAttribute('title');
+		fireEvent.mouseEnter(button.parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Switching starts a new chat.');
+	});
+});
+
+describe('diagram viewer', () => {
+	afterEach(() => act(() => useZoomViewerStore.getState().close()));
+
+	it('gives the keyboard back to the viewer, not the hidden composer, when summoned again', async () => {
+		let focusInput: (() => void) | undefined;
+		vi.mocked(window.maestro.quickChat.onFocusInput).mockImplementationOnce((cb) => {
+			focusInput = cb;
+			return () => {};
+		});
+		await renderWith(snapshot());
+		act(() =>
+			openZoomViewer(document.createElementNS('http://www.w3.org/2000/svg', 'svg'), 'Flow')
+		);
+		screen.getByPlaceholderText(/anything/).focus();
+
+		act(() => focusInput?.());
+		expect(document.activeElement).toBe(screen.getByTestId('zoom-viewer'));
+	});
+
+	it('opens full screen over the window, and Escape closes it without hiding the window', async () => {
+		vi.mocked(window.maestro.quickChat.setFullView).mockClear();
+		vi.mocked(window.maestro.quickChat.window).mockClear();
+		await renderWith(snapshot());
+		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		act(() => openZoomViewer(svg, 'Flow'));
+		expect(window.maestro.quickChat.setFullView).toHaveBeenLastCalledWith(true);
+
+		await act(async () =>
+			fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+		);
+		expect(useZoomViewerStore.getState().request).toBeNull();
+		expect(window.maestro.quickChat.setFullView).toHaveBeenLastCalledWith(false);
+		expect(window.maestro.quickChat.window).not.toHaveBeenCalledWith('hide');
 	});
 });

@@ -40,6 +40,8 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
+import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
+import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
 
@@ -49,7 +51,13 @@ const DRAG_REGION = { WebkitAppRegion: 'drag' } as React.CSSProperties;
 const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 
 /** The window's in-window chords: Cmd (Ctrl off macOS) plus this letter. */
-const QUICK_CHAT_KEYS = { newChat: 'n', picker: 'k', keep: 'b', pin: 'p' } as const;
+const QUICK_CHAT_KEYS = {
+	newChat: 'n',
+	picker: 'k',
+	keep: 'b',
+	pin: 'p',
+	openTab: 't',
+} as const;
 
 /**
  * The grip the whole window is dragged by. The composer-only shape is all
@@ -95,18 +103,22 @@ function QuickChatTooltip({
 	hint,
 	shortcut,
 	theme,
+	triggerClassName,
 	children,
 }: {
 	label: string;
 	hint?: string;
 	shortcut?: string;
 	theme: Theme;
+	/** Wrapper classes, for a trigger that must keep shrinking in a flex row. */
+	triggerClassName?: string;
 	children: React.ReactNode;
 }) {
 	return (
 		<HoverTooltip
 			theme={theme}
 			shortcut={shortcut}
+			triggerClassName={triggerClassName}
 			maxWidth={hint ? TOOLTIP_MAX_WIDTH : undefined}
 			triggerStyle={NO_DRAG_REGION}
 			label={
@@ -194,7 +206,19 @@ function MessageView({ message, theme }: { message: QuickChatMessage; theme: The
 	);
 }
 
+/**
+ * The window's root. It boots its own renderer, so it brings the layer stack
+ * the full-screen diagram viewer registers with (Escape closes the viewer first).
+ */
 export function QuickChatRoot() {
+	return (
+		<LayerStackProvider>
+			<QuickChatWindow />
+		</LayerStackProvider>
+	);
+}
+
+function QuickChatWindow() {
 	const theme = useResolvedTheme();
 	const [snapshot, setSnapshot] = useState<QuickChatSnapshot>({ ...EMPTY_QUICK_CHAT_SNAPSHOT });
 	const [draft, setDraft] = useState('');
@@ -209,7 +233,15 @@ export function QuickChatRoot() {
 
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
-		const offFocus = window.maestro.quickChat.onFocusInput(() => textareaRef.current?.focus());
+		const offFocus = window.maestro.quickChat.onFocusInput(() => {
+			// Summoned with a diagram still open: the keyboard goes back to the
+			// viewer, or arrows and Enter would land in the draft hidden behind it.
+			if (useZoomViewerStore.getState().request) {
+				document.querySelector<HTMLElement>(`[${ZOOM_VIEWER_ATTR}]`)?.focus();
+				return;
+			}
+			textareaRef.current?.focus();
+		});
 		const offPinned = window.maestro.quickChat.onPinned(setPinned);
 		void window.maestro.quickChat.getSnapshot().then(setSnapshot);
 		void window.maestro.quickChat.getPinned().then(setPinned);
@@ -289,6 +321,16 @@ export function QuickChatRoot() {
 		if (pickerOpen) closePicker();
 		else setPickerOpen(true);
 	}, [pickerOpen, closePicker]);
+	// Nothing to open until the first message creates the tab.
+	const openInMaestro = useCallback(() => {
+		if (snapshot.tabId) void run({ type: 'reveal' });
+	}, [run, snapshot.tabId]);
+	const zoomOpen = useZoomViewerStore((s) => s.request !== null);
+
+	// A diagram opened full screen needs the whole display, not the chat-sized window.
+	useEffect(() => {
+		window.maestro.quickChat.setFullView(zoomOpen);
+	}, [zoomOpen]);
 
 	useEffect(() => {
 		// Cmd (Ctrl off macOS) + letter. Shift is left free for the composer.
@@ -297,8 +339,12 @@ export function QuickChatRoot() {
 			[QUICK_CHAT_KEYS.picker]: togglePicker,
 			[QUICK_CHAT_KEYS.keep]: togglePersistent,
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
+			[QUICK_CHAT_KEYS.openTab]: openInMaestro,
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
+			// The diagram viewer owns the keyboard while it is open: its layer
+			// already took Escape (closing the viewer, not the window).
+			if (e.defaultPrevented || zoomOpen) return;
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				// Escape backs out of the picker first; only a second press hides.
@@ -316,7 +362,17 @@ export function QuickChatRoot() {
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [hide, newChat, pickerOpen, closePicker, togglePicker, togglePersistent, togglePinned]);
+	}, [
+		hide,
+		newChat,
+		pickerOpen,
+		closePicker,
+		togglePicker,
+		togglePersistent,
+		togglePinned,
+		openInMaestro,
+		zoomOpen,
+	]);
 
 	const proseStyles = useMemo(
 		() => generateTerminalProseStyles(theme, '.quick-chat-messages'),
@@ -330,22 +386,29 @@ export function QuickChatRoot() {
 	// from a fixed top edge, so a trigger at the top stays under the cursor
 	// while the picker opens just below it.
 	const agentButton = (
-		<button
-			type="button"
-			onClick={togglePicker}
-			title={`Switch agent (${pickerShortcut}). Switching starts a new chat.`}
-			aria-label="Switch agent"
-			aria-expanded={pickerOpen}
-			className="flex items-center gap-1 text-sm font-medium max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
-			style={{ ...NO_DRAG_REGION, color: c.textMain }}
-			data-testid="quick-chat-agent-button"
+		<QuickChatTooltip
+			theme={theme}
+			label="Switch agent"
+			hint="Switching starts a new chat."
+			shortcut={pickerShortcut}
+			triggerClassName="inline-flex min-w-0"
 		>
-			<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
-			<ChevronDown
-				className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
-				style={{ color: c.textDim }}
-			/>
-		</button>
+			<button
+				type="button"
+				onClick={togglePicker}
+				aria-label="Switch agent"
+				aria-expanded={pickerOpen}
+				className="flex items-center gap-1 text-sm font-medium max-w-[260px] min-w-0 rounded-md px-1 -mx-1 hover:opacity-100 opacity-90"
+				style={{ ...NO_DRAG_REGION, color: c.textMain }}
+				data-testid="quick-chat-agent-button"
+			>
+				<span className="truncate">{snapshot.agentName ?? 'Choose an agent'}</span>
+				<ChevronDown
+					className={`w-3.5 h-3.5 shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`}
+					style={{ color: c.textDim }}
+				/>
+			</button>
+		</QuickChatTooltip>
 	);
 
 	const composer = (
@@ -457,15 +520,12 @@ export function QuickChatRoot() {
 			}}
 		>
 			<style>{proseStyles}</style>
+			{/* Expand on a diagram or image opens here, over the whole (grown) window. */}
+			<ZoomViewerHost theme={theme} />
 			{expanded && <DragHandle theme={theme} />}
 			{expanded && (
 				<div className="h-7 mb-3 flex items-center gap-2 px-4 shrink-0" style={DRAG_REGION}>
-					<div className="flex-1 min-w-0 flex items-center gap-2 text-sm">
-						{agentButton}
-						<span className="truncate" style={{ color: c.textDim }}>
-							{snapshot.persistent ? 'Quick Chat tab' : 'Quick Chat'}
-						</span>
-					</div>
+					<div className="flex-1 min-w-0 flex items-center gap-2 text-sm">{agentButton}</div>
 					<IconButton
 						theme={theme}
 						label="New chat"
@@ -478,7 +538,8 @@ export function QuickChatRoot() {
 						theme={theme}
 						label="Open in Maestro"
 						hint="Shows this chat as a tab in the main window."
-						onClick={() => void run({ type: 'reveal' })}
+						shortcut={formatShortcutKeys(['Meta', QUICK_CHAT_KEYS.openTab])}
+						onClick={openInMaestro}
 						disabled={!snapshot.tabId}
 					>
 						<ExternalLink className="w-4 h-4" />

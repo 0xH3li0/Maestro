@@ -20,7 +20,8 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Start a new chat                 | `Cmd+N` / `Ctrl+N`, or the pencil in the window                                                                             |
 | Switch agent                     | Click the agent name at the top left, or `Cmd+K` / `Ctrl+K`. Type to filter, then `Enter`                                   |
 | Send                             | `Enter` (`Shift+Enter` for a new line)                                                                                      |
-| Open the chat in Maestro         | The arrow in the window. The chat becomes a visible tab and Maestro comes forward                                           |
+| Open the chat in Maestro         | `Cmd+T` / `Ctrl+T`, or the arrow in the window. The chat becomes a visible tab and Maestro comes forward                    |
+| View a diagram full screen       | The expand button on a diagram or image. The window fills its screen until you press `Esc`                                  |
 | Keep the chat as a tab           | `Cmd+B` / `Ctrl+B`, or the bookmark in the window. Press again to make it temporary                                         |
 | Pin the window on top            | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                          |
 
