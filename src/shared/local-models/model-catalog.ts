@@ -280,6 +280,18 @@ export const KOKORO_82M_ID = 'kokoro-82m';
 export const OPENWAKEWORD_BASE_ID = 'openwakeword-base';
 export const HEY_JARVIS_WAKE_ID = 'openwakeword-hey-jarvis';
 export const QWEN3_1_7B_ID = 'qwen3-1.7b-instruct-q4km';
+export const QWEN3_5_4B_ID = 'qwen3.5-4b-q4km';
+export const GEMMA_4_E4B_ID = 'gemma-4-e4b-it-q4-0';
+export const QWEN3_5_9B_ID = 'qwen3.5-9b-q4km';
+export const GEMMA_4_12B_ID = 'gemma-4-12b-it-q4km';
+export const GPT_OSS_20B_ID = 'gpt-oss-20b-mxfp4';
+export const DEVSTRAL_SMALL_2_24B_ID = 'devstral-small-2-24b-q4km';
+export const QWEN3_CODER_30B_A3B_ID = 'qwen3-coder-30b-a3b-q4km';
+export const QWEN3_6_35B_A3B_ID = 'qwen3.6-35b-a3b-q4km';
+export const GEMMA_4_31B_ID = 'gemma-4-31b-it-q4km';
+export const QWEN3_8_27B_ID = 'qwen3.8-27b-q4km';
+export const QWEN3_CODER_NEXT_ID = 'qwen3-coder-next-80b-a3b-q4km';
+export const GPT_OSS_120B_ID = 'gpt-oss-120b-mxfp4';
 export const BGE_SMALL_EN_ID = 'bge-small-en-v1.5';
 export const EMBEDDINGGEMMA_300M_ID = 'embeddinggemma-300m';
 export const PROMPT_GUARD_2_22M_ID = 'prompt-guard-2-22m';
@@ -502,6 +514,354 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 				path: 'Qwen3-1.7B-Q4_K_M.gguf',
 				sha256: 'b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897',
 				bytes: 1107409472,
+			},
+		],
+	}),
+
+	defineModel({
+		id: QWEN3_5_4B_ID,
+		displayName: 'Qwen3.5 4B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/Qwen3.5-4B-GGUF',
+			revision: 'e87f176479d0855a907a41277aca2f8ee7a09523',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/Qwen/Qwen3.5-4B' },
+		description:
+			'A small, fast general model for the quick jobs: routing, labels, tab names and short summaries. Runs comfortably on a laptop with 8 GB of memory.',
+		goodAt: 'Fast judgments and housekeeping: routing, labels, tab names and short summaries.',
+		roles: ['housekeeping', 'judge'],
+		// GGUF metadata: 32 layers, one in four (`full_attention_interval` 4) is full attention, 4 KV heads at head dimension 256. The rest are linear-attention layers with a small fixed state.
+		parameters: { totalB: 4.2, activeB: 4.2 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 8, kvHeads: 4, headDim: 256 },
+		files: [
+			{
+				path: 'Qwen3.5-4B-Q4_K_M.gguf',
+				sha256: '00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4',
+				bytes: 2740937888,
+			},
+		],
+	}),
+	defineModel({
+		id: GEMMA_4_E4B_ID,
+		displayName: 'Gemma 4 E4B (Q4_0)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'ggml-org/gemma-4-E4B-it-GGUF',
+			revision: 'b8093469224f83f5c38f691eb906c380e9e63114',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/google/gemma-4-E4B-it' },
+		description:
+			"Google's efficient Gemma 4 model with an image encoder. It reads screenshots and photos, answers in many languages, and replies quickly on a laptop.",
+		goodAt: 'Reading screenshots and images, many languages, and fast replies on laptops.',
+		roles: ['housekeeping', 'vision'],
+		// GGUF metadata: 42 layers, 7 of them full attention (the rest slide a 512-token window), and the last 18 reuse earlier layers' KV, so 4 layers keep a whole-context cache: 2 KV heads at head dimension 512. The vision projector is downloaded with it.
+		parameters: { totalB: 7.5, activeB: 4.5 },
+		contextLength: 131_072,
+		defaultContext: 40_960,
+		kvLayout: { layers: 4, kvHeads: 2, headDim: 512 },
+		files: [
+			{
+				path: 'gemma-4-E4B-it-Q4_0.gguf',
+				sha256: 'a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2',
+				bytes: 4590807392,
+			},
+			{
+				path: 'mmproj-gemma-4-E4B-it-BF16.gguf',
+				sha256: 'f77995e4b6a569ab8f0d1bfdb7e8da4a0fa5b9e6f309b9bf3bdb76164d75e29f',
+				bytes: 991552256,
+			},
+		],
+	}),
+	defineModel({
+		id: QWEN3_5_9B_ID,
+		displayName: 'Qwen3.5 9B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/Qwen3.5-9B-GGUF',
+			revision: '3885219b6810b007914f3a7950a8d1b469d598a5',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/Qwen/Qwen3.5-9B' },
+		description:
+			'A mid-size general model with better writing than the 4B: commit and pull request drafts, shell commands and summaries.',
+		goodAt: 'Commit and PR drafts, shell commands and summaries.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 32 layers, one in four is full attention, 4 KV heads at head dimension 256.
+		parameters: { totalB: 9, activeB: 9 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 8, kvHeads: 4, headDim: 256 },
+		files: [
+			{
+				path: 'Qwen3.5-9B-Q4_K_M.gguf',
+				sha256: '03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8',
+				bytes: 5680522464,
+			},
+		],
+	}),
+	defineModel({
+		id: GEMMA_4_12B_ID,
+		displayName: 'Gemma 4 12B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/gemma-4-12b-it-GGUF',
+			revision: 'fc034cfff751157913579611efad8462ac1be606',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/google/gemma-4-12B-it' },
+		description:
+			"Google's mid-size Gemma 4 model with an image encoder, strong at writing and at languages other than English.",
+		goodAt: 'Writing and multilingual work, with images.',
+		roles: ['housekeeping', 'vision'],
+		// GGUF metadata: 48 layers, 8 of them full attention (the rest slide a 1,024-token window), 1 KV head at head dimension 512 on those. The vision projector is downloaded with it.
+		parameters: { totalB: 11.9, activeB: 11.9 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 8, kvHeads: 1, headDim: 512 },
+		files: [
+			{
+				path: 'gemma-4-12b-it-Q4_K_M.gguf',
+				sha256: '0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42',
+				bytes: 7121861440,
+			},
+			{
+				path: 'mmproj-F16.gguf',
+				sha256: '91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e',
+				bytes: 175115840,
+			},
+		],
+	}),
+	defineModel({
+		id: GPT_OSS_20B_ID,
+		displayName: 'gpt-oss 20B (MXFP4)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'ggml-org/gpt-oss-20b-GGUF',
+			revision: 'ef9b12f2ff56c69cf32153a02784e7a3c88bf524',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/openai/gpt-oss-20b' },
+		description:
+			"OpenAI's open-weight reasoning model. A mixture of experts, so only 3.6B parameters run per token and it answers fast for its size.",
+		goodAt:
+			'Reasoning with tool calls; the smallest model here likely to drive an agent harness on simple tasks.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 24 layers alternating a 128-token window with full attention, so 12 keep a whole-context cache: 8 KV heads at head dimension 64. A mixture of experts: 32 experts, 4 used per token.
+		parameters: { totalB: 20.9, activeB: 3.6 },
+		contextLength: 131_072,
+		defaultContext: 40_960,
+		kvLayout: { layers: 12, kvHeads: 8, headDim: 64 },
+		files: [
+			{
+				path: 'gpt-oss-20b-MXFP4.gguf',
+				sha256: '27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901',
+				bytes: 12109566624,
+			},
+		],
+	}),
+	defineModel({
+		id: DEVSTRAL_SMALL_2_24B_ID,
+		displayName: 'Devstral Small 2 24B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF',
+			revision: '6e458b8add42681bfd023de5eab93637694aaf82',
+		},
+		license: {
+			spdx: 'Apache-2.0',
+			url: 'https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512',
+		},
+		description:
+			"Mistral's coding-agent model: it edits several files at once in a large repository. A dense model, so it is slower than the mixture-of-experts coders at the same size.",
+		goodAt: 'Built for coding agents: multi-file edits in large repositories.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 40 layers, all full attention, 8 KV heads at head dimension 128. Mistral's own weights, in unsloth's GGUF.
+		parameters: { totalB: 23.6, activeB: 23.6 },
+		contextLength: 393_216,
+		defaultContext: 40_960,
+		kvLayout: { layers: 40, kvHeads: 8, headDim: 128 },
+		files: [
+			{
+				path: 'Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf',
+				sha256: 'd14ba9edee1bb4c4996a726deb81e49ae81800a3216f0774634238c380aee496',
+				bytes: 14334446752,
+			},
+		],
+	}),
+	defineModel({
+		id: QWEN3_CODER_30B_A3B_ID,
+		displayName: 'Qwen3-Coder 30B-A3B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF',
+			revision: 'b17cb02dd882d5b6ab62fc777ad2995f19668350',
+		},
+		license: {
+			spdx: 'Apache-2.0',
+			url: 'https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct',
+		},
+		description:
+			'A fast coding model: a mixture of experts that runs about 3B parameters per token, tuned for tool use.',
+		goodAt: 'A fast coding agent with tool use.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 48 layers, all full attention, 4 KV heads at head dimension 128. A mixture of experts: 128 experts, 8 used per token.
+		parameters: { totalB: 30.5, activeB: 3 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 48, kvHeads: 4, headDim: 128 },
+		files: [
+			{
+				path: 'Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf',
+				sha256: 'fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad',
+				bytes: 18556689568,
+			},
+		],
+	}),
+	defineModel({
+		id: QWEN3_6_35B_A3B_ID,
+		displayName: 'Qwen3.6 35B-A3B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'ggml-org/Qwen3.6-35B-A3B-GGUF',
+			revision: 'baec3ebee244827cda0f4557eafa8b28f7545fa6',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/Qwen/Qwen3.6-35B-A3B' },
+		description:
+			'A general-purpose mixture-of-experts model that runs about 3B parameters per token, with a very long context.',
+		goodAt: 'General agent work: fast, with a long context.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 40 layers, one in four is full attention, 2 KV heads at head dimension 256. A mixture of experts: 256 experts, 8 used per token.
+		parameters: { totalB: 34.7, activeB: 3 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 10, kvHeads: 2, headDim: 256 },
+		files: [
+			{
+				path: 'Qwen3.6-35B-A3B-Q4_K_M.gguf',
+				sha256: '671e47e0ec53c665d048b98c3ecbfd5236b5ca9c3e02ed19fc8f81f7b85140c7',
+				bytes: 20419565568,
+			},
+		],
+	}),
+	defineModel({
+		id: GEMMA_4_31B_ID,
+		displayName: 'Gemma 4 31B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/gemma-4-31B-it-GGUF',
+			revision: 'c1ac76e99d5513b141e8adde7288b85c3f9c32ec',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/google/gemma-4-31B-it' },
+		description:
+			'The largest Gemma 4: strong tool calling and image reading. A dense model, so it is slower than the mixture-of-experts models of similar size.',
+		goodAt: 'The strongest Gemma: tool calling and images (dense, so slower).',
+		roles: ['housekeeping', 'vision'],
+		// GGUF metadata: 60 layers, 10 of them full attention (the rest slide a 1,024-token window), 4 KV heads at head dimension 512 on those. The vision projector is downloaded with it.
+		parameters: { totalB: 30.7, activeB: 30.7 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 10, kvHeads: 4, headDim: 512 },
+		files: [
+			{
+				path: 'gemma-4-31B-it-Q4_K_M.gguf',
+				sha256: '38bd64c852c4b460434cc7162fa9bdcf242faf86502581a754cb72956bb17f84',
+				bytes: 18323733440,
+			},
+			{
+				path: 'mmproj-F16.gguf',
+				sha256: '6edcca228213c28d3567a35d22f849eea52d8360875093851959adf5d2f270eb',
+				bytes: 1198957024,
+			},
+		],
+	}),
+	defineModel({
+		id: QWEN3_8_27B_ID,
+		displayName: 'Qwen3.8 27B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'ggml-org/Qwen3.8-27B-GGUF',
+			revision: '71bc7b627595dc8a91039addd9c791ae548d6747',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/Qwen/Qwen3.8-27B' },
+		description:
+			'The newest dense Qwen: strong at hard reasoning and coding, and slower than the mixture-of-experts models.',
+		goodAt: 'Hard reasoning and coding (dense, so slower than the mixture-of-experts models).',
+		roles: ['housekeeping'],
+		// GGUF metadata: 64 layers, one in four is full attention, 4 KV heads at head dimension 256.
+		parameters: { totalB: 26.9, activeB: 26.9 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 16, kvHeads: 4, headDim: 256 },
+		files: [
+			{
+				path: 'Qwen3.8-27B-Q4_K_M.gguf',
+				sha256: 'c600de0300ae8a0eb3a6c0b8b5561b8b96f16bd2c863c2a66c42de29d391a747',
+				bytes: 18973870528,
+			},
+		],
+	}),
+	defineModel({
+		id: QWEN3_CODER_NEXT_ID,
+		displayName: 'Qwen3-Coder-Next 80B-A3B (Q4_K_M)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'unsloth/Qwen3-Coder-Next-GGUF',
+			revision: 'ce09c67b53bc8739eef83fe67b2f5d293c270632',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/Qwen/Qwen3-Coder-Next' },
+		description:
+			'The strongest local coding model here. A large mixture of experts that runs about 3B parameters per token, and needs a machine with plenty of memory to hold it.',
+		goodAt:
+			'The strongest local coding agent; its model card names Claude Code as a supported harness.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 48 layers, one in four is full attention, 2 KV heads at head dimension 256. A mixture of experts: 512 experts, 10 used per token. The model card names Claude Code as a supported harness.
+		parameters: { totalB: 79.7, activeB: 3 },
+		contextLength: 262_144,
+		defaultContext: 40_960,
+		kvLayout: { layers: 12, kvHeads: 2, headDim: 256 },
+		files: [
+			{
+				path: 'Qwen3-Coder-Next-Q4_K_M.gguf',
+				sha256: '9e6032d2f3b50a60f17ce8bf5a1d85c71af9b53b89c7978020ae7c660f29b090',
+				bytes: 48528320544,
+			},
+		],
+	}),
+	defineModel({
+		id: GPT_OSS_120B_ID,
+		displayName: 'gpt-oss 120B (MXFP4)',
+		kind: 'text-gen',
+		runtime: 'llama',
+		source: {
+			repo: 'ggml-org/gpt-oss-120b-GGUF',
+			revision: '238abdd290bb874b90a5da1b4549881b7d05c091',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/openai/gpt-oss-120b' },
+		description:
+			"OpenAI's large open-weight reasoning model. It needs a workstation with a lot of memory.",
+		goodAt: 'The strongest local reasoning and tool use.',
+		roles: ['housekeeping'],
+		// GGUF metadata: 36 layers alternating a 128-token window with full attention, so 18 keep a whole-context cache: 8 KV heads at head dimension 64. A mixture of experts: 128 experts, 4 used per token.
+		parameters: { totalB: 116.8, activeB: 5.1 },
+		contextLength: 131_072,
+		defaultContext: 40_960,
+		kvLayout: { layers: 18, kvHeads: 8, headDim: 64 },
+		files: [
+			{
+				path: 'gpt-oss-120b-MXFP4.gguf',
+				sha256: '582bd40f6886200101f4c4ed9f25f3fe80cc14c86e9e2b37746cd8904a0c622d',
+				bytes: 63387346208,
 			},
 		],
 	}),
@@ -780,6 +1140,18 @@ export function localModelGgufFile(entry: LocalModelEntry): LocalModelFile | und
 	if (entry.kind !== 'text-gen' || entry.runtime !== 'llama') return undefined;
 	const ggufs = modelGgufFiles(entry.files);
 	return ggufs.find((file) => ggufSplitPart(file.path)?.index === 1) ?? ggufs[0];
+}
+
+/**
+ * The vision projector (`mmproj-*.gguf`) a text model loads beside its weights,
+ * or undefined for a model that reads no images. llama-server is handed it
+ * with `mmproj`; without it a `vision` model would answer an image with text only.
+ */
+export function localModelProjectorFile(entry: LocalModelEntry): LocalModelFile | undefined {
+	if (entry.kind !== 'text-gen' || entry.runtime !== 'llama') return undefined;
+	return entry.files.find(
+		(file) => file.path.toLowerCase().endsWith('.gguf') && isGgufProjector(file.path)
+	);
 }
 
 /** Total bytes of an arbitrary selection of models. Unknown ids contribute zero. */

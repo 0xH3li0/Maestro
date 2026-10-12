@@ -12,7 +12,13 @@ import { describe, it, expect } from 'vitest';
 import {
 	BGE_SMALL_EN_ID,
 	DEBERTA_INJECTION_V2_ID,
+	DEVSTRAL_SMALL_2_24B_ID,
 	EMBEDDINGGEMMA_300M_ID,
+	GEMMA_4_12B_ID,
+	GEMMA_4_31B_ID,
+	GEMMA_4_E4B_ID,
+	GPT_OSS_120B_ID,
+	GPT_OSS_20B_ID,
 	HEY_JARVIS_WAKE_ID,
 	KOKORO_82M_ID,
 	LOCAL_MODEL_CATALOG,
@@ -22,6 +28,12 @@ import {
 	PARAKEET_TDT_V2_ID,
 	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
+	QWEN3_5_4B_ID,
+	QWEN3_5_9B_ID,
+	QWEN3_6_35B_A3B_ID,
+	QWEN3_8_27B_ID,
+	QWEN3_CODER_30B_A3B_ID,
+	QWEN3_CODER_NEXT_ID,
 	WHISPER_BASE_EN_ID,
 	defineModel,
 	getLocalModel,
@@ -29,6 +41,7 @@ import {
 	groupByLocalModelKind,
 	kvBytesPer1kTokens,
 	localModelGgufFile,
+	localModelProjectorFile,
 	type LocalModelDraft,
 	isLocalModelId,
 	localModelsForRuntime,
@@ -40,6 +53,21 @@ import { MODEL_SETS } from '../../shared/acappella/voice-models';
 
 const EMBEDDING_IDS = [BGE_SMALL_EN_ID, EMBEDDINGGEMMA_300M_ID];
 const CLASSIFIER_IDS = [PROMPT_GUARD_2_22M_ID, DEBERTA_INJECTION_V2_ID];
+/** The curated text models above the small default, smallest first. */
+const CURATED_TEXT_IDS = [
+	QWEN3_5_4B_ID,
+	GEMMA_4_E4B_ID,
+	QWEN3_5_9B_ID,
+	GEMMA_4_12B_ID,
+	GPT_OSS_20B_ID,
+	DEVSTRAL_SMALL_2_24B_ID,
+	QWEN3_CODER_30B_A3B_ID,
+	QWEN3_6_35B_A3B_ID,
+	GEMMA_4_31B_ID,
+	QWEN3_8_27B_ID,
+	QWEN3_CODER_NEXT_ID,
+	GPT_OSS_120B_ID,
+];
 
 describe('local model catalog', () => {
 	it('contains every model Maestro can install', () => {
@@ -51,6 +79,7 @@ describe('local model catalog', () => {
 				PARAKEET_TDT_V2_ID,
 				QWEN3_1_7B_ID,
 				WHISPER_BASE_EN_ID,
+				...CURATED_TEXT_IDS,
 				...EMBEDDING_IDS,
 				...CLASSIFIER_IDS,
 			].sort()
@@ -128,6 +157,69 @@ describe('local model catalog', () => {
 		}
 	});
 
+	describe('curated text models', () => {
+		const curated = CURATED_TEXT_IDS.map((id) => getLocalModel(id)!);
+
+		it('are all text models the llama runtime opens, from a maker or a known GGUF publisher', () => {
+			for (const entry of curated) {
+				expect(entry.kind).toBe('text-gen');
+				expect(entry.runtime).toBe('llama');
+				expect(entry.source.repo).toMatch(/^(unsloth|ggml-org|google|mistralai|Qwen)\//);
+				expect(localModelGgufFile(entry)?.path).toMatch(/(Q4_K_M|Q4_0|MXFP4)\.gguf$/);
+			}
+		});
+
+		it('keep to open licenses and name no model "agent" before a harness qualifies it', () => {
+			for (const entry of curated) {
+				expect(entry.license.spdx).toBe('Apache-2.0');
+				expect(entry.roles).not.toContain('agent');
+			}
+		});
+
+		it('hold a vision projector exactly when the model has the vision role', () => {
+			for (const entry of curated) {
+				expect(localModelProjectorFile(entry) !== undefined).toBe(entry.roles!.includes('vision'));
+			}
+			expect(curated.filter((entry) => entry.roles!.includes('vision')).map((e) => e.id)).toEqual([
+				GEMMA_4_E4B_ID,
+				GEMMA_4_12B_ID,
+				GEMMA_4_31B_ID,
+			]);
+		});
+
+		it('are listed smallest download first', () => {
+			const sizes = curated.map((entry) => entry.bytes);
+			// Qwen3-Coder-30B-A3B (18.6 GB) is listed before the 18.3 GB Gemma 31B on purpose:
+			// they are one tier. Everything else is strictly ordered.
+			for (let i = 1; i < sizes.length; i++) {
+				expect(sizes[i]).toBeGreaterThan(sizes[i - 1] * 0.9);
+			}
+		});
+
+		it('size the KV cache from full-attention layers only, so a hybrid model is not overstated', () => {
+			// Qwen3.5 4B: 8 of 32 layers keep a whole-context cache, 4 KV heads x 256.
+			const qwen = getLocalModel(QWEN3_5_4B_ID)!;
+			expect(qwen.memoryHint!.kvLayout).toEqual({ layers: 8, kvHeads: 4, headDim: 256 });
+			expect(qwen.memoryHint!.kvBytesPer1kTokens).toBe(2 * 8 * 4 * 256 * 2 * 1024);
+			// A dense full-attention model keeps every layer.
+			expect(getLocalModel(DEVSTRAL_SMALL_2_24B_ID)!.memoryHint!.kvLayout.layers).toBe(40);
+		});
+
+		it('record a mixture of experts with fewer active parameters than total', () => {
+			for (const id of [
+				GPT_OSS_20B_ID,
+				GPT_OSS_120B_ID,
+				QWEN3_CODER_30B_A3B_ID,
+				QWEN3_CODER_NEXT_ID,
+			]) {
+				const { totalB, activeB } = getLocalModel(id)!.parameters!;
+				expect(activeB).toBeLessThan(totalB / 3);
+			}
+			const dense = getLocalModel(DEVSTRAL_SMALL_2_24B_ID)!.parameters!;
+			expect(dense.activeB).toBe(dense.totalB);
+		});
+	});
+
 	it('records Qwen3 1.7B as its GGUF metadata describes it', () => {
 		const qwen = getLocalModel(QWEN3_1_7B_ID)!;
 		expect(qwen.roles).toEqual(['housekeeping', 'judge']);
@@ -173,7 +265,10 @@ describe('local model catalog', () => {
 		// GGUF weights are read by llama.cpp; everything else in the catalog is ONNX.
 		expect(getLocalModel(QWEN3_1_7B_ID)?.kind).toBe('text-gen');
 		expect(getLocalModel(QWEN3_1_7B_ID)?.runtime).toBe('llama');
-		expect(localModelsForRuntime('llama').map((entry) => entry.id)).toEqual([QWEN3_1_7B_ID]);
+		expect(localModelsForRuntime('llama').map((entry) => entry.id)).toEqual([
+			QWEN3_1_7B_ID,
+			...CURATED_TEXT_IDS,
+		]);
 		expect(
 			localModelsForRuntime('onnx')
 				.map((entry) => entry.id)
@@ -381,6 +476,21 @@ describe('text model drafts', () => {
 		expect(localModelGgufFile(entry)?.path).toBe('Test-Q4_K_M.gguf');
 		// The projector is loaded too, so it counts toward memory.
 		expect(entry.memoryHint!.fileBytes).toBe(105);
+	});
+
+	it('finds the vision projector beside the weights, and none on a text-only model', () => {
+		const withProjector = defineModel(
+			textDraft({
+				roles: ['vision'],
+				files: [
+					{ path: 'Test-Q4_K_M.gguf', sha256: SHA, bytes: 100 },
+					{ path: 'mmproj-F16.gguf', sha256: SHA, bytes: 5 },
+				],
+			})
+		);
+		expect(localModelProjectorFile(withProjector)?.path).toBe('mmproj-F16.gguf');
+		expect(localModelProjectorFile(defineModel(textDraft()))).toBeUndefined();
+		expect(localModelProjectorFile(getLocalModel(PARAKEET_TDT_V2_ID)!)).toBeUndefined();
 	});
 
 	it('refuses a split set with a part missing, repeated, or from another set', () => {

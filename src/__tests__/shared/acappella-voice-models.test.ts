@@ -84,8 +84,17 @@ describe('voice models', () => {
 	it('tags every voice-kind catalog model with the voice capability it unlocks', () => {
 		for (const entry of LOCAL_MODEL_CATALOG) {
 			// Kinds voice has a slot for are voice models; embeddings and classifiers
-			// belong to other consumers and carry no voice capability.
+			// belong to other consumers and carry no voice capability. A text model
+			// fills the brain slot only when voice picked it: the curated agent and
+			// coding models are not Conductor brains, and tagging one would let
+			// "reclaim voice disk" delete a 60 GB download someone made for an agent.
+			if (entry.kind === 'text-gen') continue;
 			expect(voiceModelCapability(entry.id) !== undefined).toBe(voiceSlotForModel(entry) !== null);
+		}
+		for (const entry of LOCAL_MODEL_CATALOG) {
+			if (entry.kind === 'text-gen' && entry.id !== QWEN3_1_7B_ID) {
+				expect(voiceModelCapability(entry.id)).toBeUndefined();
+			}
 		}
 		expect(voiceModelCapability(QWEN3_1_7B_ID)).toBe('local-conductor-brain');
 		expect(voiceModelCapability('nope')).toBeUndefined();

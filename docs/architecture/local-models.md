@@ -2302,7 +2302,8 @@ CUDA and ROCm zips expand past the zip reader's default bomb cap, so those asset
   answers. An empty key is refused as `key-required`; a key that will not unseal is
   `key-unavailable`, and rotating fixes it.
 - **Presets.** One INI section per installed catalog text model, named by its catalog id, with
-  `model`, `c` (context) and `jinja = true`. Router mode makes the section name the model id and
+  `model`, `mmproj` (only a model that reads images: the `mmproj-*.gguf` projector from
+  `localModelProjectorFile()`), `c` (context) and `jinja = true`. Router mode makes the section name the model id and
   forces the child's `--alias` to it, so the alias equals the catalog id. The format has no
   quoting, so a path or id containing `;` or `#` is refused by name rather than written truncated.
   With `-np` on auto, `n_ctx_seq = n_ctx`, so the context is per request and is not divided by
@@ -2396,6 +2397,49 @@ The prompt rate above is for a tiny prompt and understates long prompts, where a
 manual check measured about 3,000 tokens/s on Claude Code's first request. With no user hooks or
 MCP servers, Claude Code's prompt is about 10,560 tokens, well under the 40,960 floor; a real user
 configuration adds to it, which is why the floor is not lower.
+
+## Curated text models and load checks
+
+The catalog carries 12 text models above the small default, pinned to a Hugging Face commit with
+each file's LFS SHA-256 (read from `/api/models/<repo>?blobs=true`, never at runtime). Each entry
+records its `kvLayout` from the GGUF header (`<arch>.block_count`, `attention.head_count_kv`,
+`attention.key_length`). For a hybrid model `layers` counts only the layers that keep a
+whole-context cache: one in four for `qwen35`, `qwen35moe` and `qwen3next`; the full-attention
+layers for `gemma4` and `gpt-oss`, whose other layers slide a small window; and for Gemma 4 E4B
+only the layers that do not reuse another layer's KV. The vision models (Gemma 4 E4B, 12B and 31B)
+download their `mmproj` projector with the weights, and the server hands it to `llama-server`.
+None of them has the `agent` role yet: only a real-harness qualification grants it.
+
+A hash proves the bytes are the pinned ones, not that the pinned engine can run them.
+`src/__tests__/main/local-models/model-catalog-load-e2e.test.ts` (opt-in: `MAESTRO_LOCAL_MODEL_E2E=1`
+and `MAESTRO_LOCAL_MODEL_E2E_MODELS=<id>,...`) downloads a model, starts the model server on it,
+lists it on `/v1/models` and generates, with an image request for a model that has a projector.
+
+### Result: 2026-10-12, darwin-arm64 (Apple M5 Max, 128 GB), engine `b11559` Metal
+
+| Model               | Architecture | Download | Load  | Generation     | Result                                   |
+| ------------------- | ------------ | -------- | ----- | -------------- | ---------------------------------------- |
+| Qwen3.5 4B (Q4_K_M) | `qwen35`     | 2.6 GB   | 1.8 s | 32.3 tokens/s  | Loaded, listed, generated                |
+| Gemma 4 E4B (Q4_0)  | `gemma4`     | 5.2 GB   | 1.8 s | 92.5 tokens/s  | Loaded, listed, generated, read an image |
+| gpt-oss 20B (MXFP4) | `gpt-oss`    | 11.3 GB  | 1.8 s | 142.3 tokens/s | Loaded, listed, generated                |
+
+Load time is from server start to the model answering at its 40,960-token `defaultContext`, with
+the file just written (page cache warm). Tokens per second is from a 2 to 35 token reply, so read
+it as a smoke figure, not a benchmark; the harness qualification pass measures real turns.
+
+**Not loaded here:** Qwen3.5 9B, Gemma 4 12B and 31B, Devstral Small 2 24B, Qwen3-Coder 30B-A3B,
+Qwen3.6 35B-A3B, Qwen3.8 27B, Qwen3-Coder-Next 80B-A3B and gpt-oss 120B. The machine has the memory
+for every one of them. The reason is the download: this link ran at about 2.7 MB/s, and these
+files are 5.7 to 63.4 GB. What was checked instead is weaker: the architecture name each one uses
+(`qwen35`, `qwen35moe`, `qwen3next`, `qwen3moe`, `gemma4`, `gpt-oss`, `mistral3`) is registered in
+the pinned build's `libllama` (strings check), and Qwen3.5 4B, Gemma 4 E4B and gpt-oss 20B share
+architectures with seven of them. `qwen3moe`, `mistral3` and `qwen35moe` have no real load yet.
+Task 4's harness qualification will load each model it qualifies.
+
+**Not checked:** the in-process text engine (`node-llama-cpp`, `generateText()`) against these
+architectures. Its bundled llama.cpp has its own release, so a model the model server loads may
+still be `model-unsupported` there. The housekeeping comparison in the default-model task runs
+Qwen3.5 in-process and will show it.
 
 ## Verification
 

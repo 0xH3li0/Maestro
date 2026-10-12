@@ -25,6 +25,7 @@ vi.mock('../../../../main/local-models/model-store', async (importOriginal) => (
 }));
 
 import {
+	GEMMA_4_E4B_ID,
 	getLocalModel,
 	PARAKEET_TDT_V2_ID,
 	QWEN3_1_7B_ID,
@@ -99,6 +100,26 @@ describe('renderModelServerPresets', () => {
 				'',
 			].join('\n')
 		);
+	});
+
+	it('hands a vision model its projector, and a text model none', () => {
+		const text = renderModelServerPresets([
+			preset({ mmprojPath: '/models/small-model/mmproj-F16.gguf' }),
+			preset({ id: 'plain-model' }),
+		]);
+		const [vision, plain] = text.split('[plain-model]');
+		expect(vision).toContain(
+			'model = /models/small-model/Small-Q4_K_M.gguf\nmmproj = /models/small-model/mmproj-F16.gguf\nc = 40960'
+		);
+		expect(plain).not.toContain('mmproj');
+	});
+
+	it('refuses a projector path the presets file cannot hold, by model name', () => {
+		const error = refusal(() =>
+			renderModelServerPresets([preset({ mmprojPath: '/models/a;b/mmproj.gguf' })])
+		);
+		expect(error.code).toBe('preset-invalid');
+		expect(error.message).toContain('a semicolon');
 	});
 
 	it('writes a file with no models when there are none', () => {
@@ -236,5 +257,16 @@ describe('collectServerModels', () => {
 			},
 		]);
 		expect(path.isAbsolute(models[0].modelPath)).toBe(true);
+	});
+
+	it('adds the projector path for a model that reads images', async () => {
+		store.installed.add(GEMMA_4_E4B_ID);
+		const [gemma] = await collectServerModels();
+		expect(gemma.modelPath).toBe(
+			path.join(tempRoot.dir, 'models', GEMMA_4_E4B_ID, 'gemma-4-E4B-it-Q4_0.gguf')
+		);
+		expect(gemma.mmprojPath).toBe(
+			path.join(tempRoot.dir, 'models', GEMMA_4_E4B_ID, 'mmproj-gemma-4-E4B-it-BF16.gguf')
+		);
 	});
 });

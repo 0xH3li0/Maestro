@@ -28,6 +28,7 @@
 import {
 	LOCAL_MODEL_CATALOG,
 	localModelGgufFile,
+	localModelProjectorFile,
 } from '../../../shared/local-models/model-catalog';
 import {
 	MODEL_SERVER_AGENT_MIN_CONTEXT,
@@ -45,6 +46,8 @@ export interface ServerModelPreset {
 	id: string;
 	/** Absolute path of the GGUF the server opens. */
 	modelPath: string;
+	/** Absolute path of the vision projector loaded beside the GGUF. Only a model that reads images has one. */
+	mmprojPath?: string;
 	/** The context the server runs the model at (`c`). */
 	contextSize: number;
 }
@@ -69,9 +72,11 @@ export async function collectServerModels(): Promise<ServerModelPreset[]> {
 	for (const entry of LOCAL_MODEL_CATALOG) {
 		const gguf = localModelGgufFile(entry);
 		if (!gguf || !(await isInstalled(entry.id))) continue;
+		const projector = localModelProjectorFile(entry);
 		models.push({
 			id: entry.id,
 			modelPath: modelFilePath(entry.id, gguf.path),
+			...(projector ? { mmprojPath: modelFilePath(entry.id, projector.path) } : {}),
 			contextSize: serverContextSize(entry),
 		});
 	}
@@ -115,12 +120,14 @@ export function renderModelServerPresets(models: readonly ServerModelPreset[]): 
 		if (model.id === '' || model.id === '*') {
 			refusePreset(model.id, 'that is not a model id the presets file can hold.');
 		}
-		const pathProblem = iniBreakingCharacter(model.modelPath);
-		if (pathProblem) {
-			refusePreset(
-				model.id,
-				`its file path contains ${pathProblem}, which the presets file cannot hold. Move Maestro's data folder to a path without it.`
-			);
+		for (const filePath of [model.modelPath, model.mmprojPath]) {
+			const pathProblem = filePath === undefined ? null : iniBreakingCharacter(filePath);
+			if (pathProblem) {
+				refusePreset(
+					model.id,
+					`its file path contains ${pathProblem}, which the presets file cannot hold. Move Maestro's data folder to a path without it.`
+				);
+			}
 		}
 		if (!Number.isInteger(model.contextSize) || model.contextSize <= 0) {
 			refusePreset(
@@ -132,6 +139,7 @@ export function renderModelServerPresets(models: readonly ServerModelPreset[]): 
 			'',
 			`[${model.id}]`,
 			`model = ${model.modelPath}`,
+			...(model.mmprojPath ? [`mmproj = ${model.mmprojPath}`] : []),
 			`c = ${model.contextSize}`,
 			'jinja = true'
 		);
