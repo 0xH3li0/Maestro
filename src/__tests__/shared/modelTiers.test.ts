@@ -15,7 +15,6 @@ import {
 	parseTierTarget,
 	resolveEffortLevel,
 	resolveTierTarget,
-	staleCodexTierModels,
 	resolveTierModel,
 	supportsEffortSelection,
 	supportsTierSelection,
@@ -149,44 +148,6 @@ describe('cheap synopsis turn resumed on its session', () => {
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
-	});
-});
-
-describe('stale codex tier slugs', () => {
-	// The shape of ~/.codex/models_cache.json `models` on Codex CLI 0.162.1.
-	const current = [
-		{ slug: 'gpt-6.1-sol', visibility: 'list', priority: 1 },
-		{ slug: 'gpt-6-astra', visibility: 'list', priority: 2 },
-		{ slug: 'gpt-6-sol', visibility: 'list', priority: 3 },
-		{ slug: 'gpt-6-luna', visibility: 'list', priority: 4 },
-		{ slug: 'gpt-reserve', visibility: 'hide', priority: 4 },
-		{ slug: 'gpt-5.6-luna', visibility: 'list', priority: 9 },
-	];
-
-	it('reports nothing when every tier slug is listed', () => {
-		expect(staleCodexTierModels(current)).toEqual([]);
-	});
-
-	it('names the newest listed member of the family as the replacement', () => {
-		const nextGeneration = [
-			{ slug: 'gpt-7-luna', visibility: 'list', priority: 3 },
-			{ slug: 'gpt-7-sol', visibility: 'list', priority: 1 },
-			{ slug: 'gpt-6.1-sol', visibility: 'list', priority: 2 },
-			{ slug: 'gpt-6-luna', visibility: 'hide', priority: 9 },
-		];
-		expect(staleCodexTierModels(nextGeneration)).toEqual([
-			{ tier: 'low', slug: 'gpt-6-luna', replacement: 'gpt-7-luna' },
-			{ tier: 'high', slug: 'gpt-6-astra', replacement: null },
-		]);
-	});
-
-	it('treats a hidden model as not listed', () => {
-		const hidden = current.map((m) =>
-			m.slug === 'gpt-6-astra' ? { ...m, visibility: 'hide' } : m
-		);
-		expect(staleCodexTierModels(hidden)).toEqual([
-			{ tier: 'high', slug: 'gpt-6-astra', replacement: null },
-		]);
 	});
 });
 

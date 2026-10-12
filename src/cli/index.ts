@@ -133,6 +133,13 @@ import { modelsRuntimesInstall, modelsRuntimesList } from './commands/models-run
 import { modelsIndex } from './commands/models-index';
 import { modelsProxyBlock, modelsProxyStatus } from './commands/models-proxy';
 import {
+	modelsTiersList,
+	modelsTiersOptions,
+	modelsTiersReset,
+	modelsTiersSet,
+	modelsTiersSuggest,
+} from './commands/models-tiers';
+import {
 	modelsServerKey,
 	modelsServerSet,
 	modelsServerStart,
@@ -2864,6 +2871,54 @@ modelServer
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsServerKey);
+
+const modelTiers = models
+	.command('tiers')
+	.description(
+		'Harness tier defaults: which model a low, medium or high task launches on, per harness'
+	);
+
+modelTiers
+	.command('list')
+	.description(
+		'Each tier of each harness with its value and where it came from: Harness default (set by you) or Built-in'
+	)
+	.option('--harness <id>', 'Only this harness (e.g. claude-code, codex, opencode)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersList);
+
+modelTiers
+	.command('options <harness>')
+	.description(
+		'What a harness can launch a tier on: its own catalogue and the Run on targets, each in the spelling "tiers set" takes (requires the desktop app)'
+	)
+	.option('--refresh', "Ask the harness again instead of using the app's cached list")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersOptions);
+
+modelTiers
+	.command('suggest <harness>')
+	.description(
+		'A suggested model per tier with the reason, from what the harness lists; a tier nothing ranks is left blank (requires the desktop app)'
+	)
+	.option('--apply', 'Save the suggested tiers; a tier with no suggestion keeps its value')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersSuggest);
+
+modelTiers
+	.command('set <harness> <tier> <target>')
+	.description(
+		"Set one tier (low | medium | high) of one harness. Target: default (clear it) | provider (the agent's own model) | provider:<model> | <source id>:<model>"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersSet);
+
+modelTiers
+	.command('reset <harness>')
+	.description('Put a harness back on the built-in tier table, or one tier with --tier')
+	.option('--tier <tier>', 'Only this tier: low | medium | high')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsTiersReset);
 
 const modelConfig = models
 	.command('config')

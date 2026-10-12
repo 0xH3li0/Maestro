@@ -34,14 +34,22 @@
 import type { ToolType } from './types';
 import { FALLBACK_CONTEXT_WINDOW, getModelContextWindowOverride } from './agentConstants';
 import { isValidAgentId, type AgentId } from './agentIds';
-import { getAgentDisplayName } from './agentMetadata';
+import { getAgentDisplayName, PICKABLE_AGENT_IDS } from './agentMetadata';
+import type { LocalModelEndpoint } from './local-models/endpoints';
 import {
 	agentRunOnSupport,
+	formatRunOnSpec,
+	parseRunOnEdit,
+	parseRunOnSpec,
 	parseRunOnTarget,
+	RUN_ON_PROVIDER_SPEC,
 	runOnTargetLabel,
 	storedRunOnNamesSource,
+	type RunOnSourceTarget,
 	type RunOnTarget,
 } from './local-models/run-on';
+import { runOnModelFacts, type RunOnPickerSource } from './local-models/run-on-picker';
+import { getAgentCapabilities } from './maestro-lib/providers/capabilities';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -107,7 +115,7 @@ const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
  *   keep that from going wrong quietly: a stale slug is refused by Codex with a
  *   400 rather than run on some other model, and the agent detector logs a
  *   warning naming the replacement when a slug here is not in the user's
- *   catalogue (`staleCodexTierModels`). All three were checked with a real
+ *   catalogue (`staleTierModels`). All three were checked with a real
  *   turn on Codex CLI 0.162.1 with a ChatGPT login (2026-10-11).
  *
  * Absent on purpose: `copilot-cli` discovers its catalogue at runtime
@@ -134,39 +142,50 @@ export const CODEX_TIER_FAMILIES: Readonly<Record<ModelTier, string>> = Object.f
 	high: 'astra',
 });
 
-/** One entry of Codex's `models_cache.json`, as much of it as the tier check reads. */
+/** One entry of Codex's `models_cache.json`, as much of it as Maestro reads. */
 export interface CodexCatalogModel {
 	slug?: string;
+	description?: string;
 	visibility?: string;
 	priority?: number;
 }
 
 /**
- * The Codex tier slugs that are not in this catalogue, each with the newest
- * listed member of the same family to replace it with (or `null` when the
- * family is gone). Empty when every tier slug is listed. For a warning only:
- * the tier table itself is never rewritten at runtime, because a document must
- * resolve to the same model on every machine.
+ * One model in a harness's own catalogue, with what the catalogue states about
+ * it. Most catalogues state only the id. Codex also states a sentence and an
+ * order, and those are the only facts Suggest ranks a provider's models by.
  */
-export function staleCodexTierModels(
-	catalog: readonly CodexCatalogModel[]
-): Array<{ tier: ModelTier; slug: string; replacement: string | null }> {
-	const listed = catalog.filter(
-		(m): m is CodexCatalogModel & { slug: string } =>
-			typeof m.slug === 'string' && m.visibility !== 'hide'
-	);
-	const slugs = new Set(listed.map((m) => m.slug));
-	const stale: Array<{ tier: ModelTier; slug: string; replacement: string | null }> = [];
-	for (const tier of TIER_LEVELS) {
-		const slug = TIER_MODELS.codex?.[tier];
-		if (!slug || slugs.has(slug)) continue;
-		const family = CODEX_TIER_FAMILIES[tier];
-		const newest = listed
-			.filter((m) => m.slug.split('-').pop() === family)
-			.sort((a, b) => (a.priority ?? Infinity) - (b.priority ?? Infinity))[0];
-		stale.push({ tier, slug, replacement: newest?.slug ?? null });
+export interface HarnessCatalogModel {
+	/** What the harness takes as its model argument. */
+	id: string;
+	/** The catalogue's own sentence about the model. */
+	description?: string;
+	/** The catalogue's own order, lowest first. */
+	priority?: number;
+}
+
+/**
+ * Codex's `models_cache.json` entries as a catalogue: the listed models only (a
+ * hidden one cannot be picked), in the file's order, each with the description
+ * and priority Codex states.
+ */
+export function codexCatalogModels(raw: readonly CodexCatalogModel[]): HarnessCatalogModel[] {
+	const catalog: HarnessCatalogModel[] = [];
+	for (const entry of raw) {
+		if (typeof entry?.slug !== 'string' || entry.slug === '' || entry.visibility === 'hide') {
+			continue;
+		}
+		catalog.push({
+			id: entry.slug,
+			...(typeof entry.description === 'string' && entry.description.trim() !== ''
+				? { description: entry.description.trim() }
+				: {}),
+			...(typeof entry.priority === 'number' && Number.isFinite(entry.priority)
+				? { priority: entry.priority }
+				: {}),
+		});
 	}
-	return stale;
+	return catalog;
 }
 
 /**
@@ -562,4 +581,446 @@ export function cheapResumeTurnSettings(
 		model: shrinksWindow ? current.model : (cheap.model ?? current.model),
 		effort: cheap.effort ?? current.effort,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Harness tier defaults: the rows, how a target is spelled and checked, Suggest,
+// and the check for a value the harness no longer lists.
+// ---------------------------------------------------------------------------
+
+/** Every harness that has a tier row, in picker order: the ones that take a model. */
+export function tierHarnessIds(): AgentId[] {
+	return PICKABLE_AGENT_IDS.filter((id) => getAgentCapabilities(id).supportsModelSelection);
+}
+
+/**
+ * Why a harness has no tier row, or null when it has one. A tier picks a model,
+ * so only a harness that can be told which model to run has tiers.
+ */
+export function tierHarnessProblem(harness: string): string | null {
+	if (!isValidAgentId(harness) || !PICKABLE_AGENT_IDS.includes(harness)) {
+		return `Unknown harness "${harness}". Harnesses with tiers: ${tierHarnessIds().join(', ')}.`;
+	}
+	if (!getAgentCapabilities(harness).supportsModelSelection) {
+		return `${getAgentDisplayName(harness)} cannot be told which model to run, so it has no tiers.`;
+	}
+	return null;
+}
+
+/** One tier of a harness, as the layers below the agent give it. */
+export interface HarnessTierRow {
+	tier: ModelTier;
+	/** Where the tier launches. Null when no layer maps it, or the stored default cannot be used. */
+	target: TierTarget | null;
+	/** The layer that answered, or null when none did. */
+	source: Exclude<TierTargetSource, 'agent'> | null;
+	/** The built-in table's model for the tier: what Reset goes back to. */
+	builtIn: string | null;
+	/** Why the stored default cannot be used. A launch on this tier is refused with it. */
+	problem?: string;
+}
+
+/**
+ * Each tier of a harness with its value and the layer it came from, for the
+ * Tier defaults table and `maestro-cli models tiers list`. It is
+ * {@link resolveTierTarget} for an agent that sets no tier of its own, so the
+ * table cannot show a value a launch would not use.
+ */
+export function harnessTierRows(
+	harness: ToolType,
+	harnessDefaults?: HarnessTierDefaults | null
+): HarnessTierRow[] {
+	return TIER_LEVELS.map((tier): HarnessTierRow => {
+		const builtIn = resolveTierModel(harness, tier) ?? null;
+		const resolved = resolveTierTarget({ toolType: harness }, tier, harnessDefaults);
+		if (resolved.kind === 'resolved') {
+			return {
+				tier,
+				target: resolved.target,
+				source: resolved.source === 'built-in' ? 'built-in' : 'harness-default',
+				builtIn,
+			};
+		}
+		return resolved.blocksLaunch
+			? { tier, target: null, source: 'harness-default', builtIn, problem: resolved.message }
+			: { tier, target: null, source: null, builtIn };
+	});
+}
+
+/** How a tier on the provider with no model of its own reads. */
+export const TIER_AGENT_MODEL_LABEL = "The agent's own model";
+
+/** A target for a person: the provider's model, or the model and its source. */
+export function tierTargetLabel(
+	target: TierTarget,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
+): string {
+	if (target.type === 'source') return runOnTargetLabel(target, endpoints);
+	return (target.type === 'provider-model' ? target.model : undefined) ?? TIER_AGENT_MODEL_LABEL;
+}
+
+/** The spelling that clears a tier: it falls through to the next layer. */
+export const TIER_TARGET_DEFAULT_SPEC = 'default';
+
+const TIER_PROVIDER_MODEL_PREFIX = `${RUN_ON_PROVIDER_SPEC}:`;
+
+/** The spellings a tier target takes, for a usage line. */
+export const TIER_TARGET_SPEC_FORMS = `${TIER_TARGET_DEFAULT_SPEC}, ${RUN_ON_PROVIDER_SPEC}, ${RUN_ON_PROVIDER_SPEC}:<model>, or <source id>:<model>`;
+
+/**
+ * A tier's target as one word, on a command line and as a picker option's
+ * value: `default` for none (the next layer answers), `provider` for the
+ * provider on the agent's own model, `provider:<model>` for a provider model,
+ * and the Run on spelling `<source id>:<model>` for a source.
+ */
+export function formatTierTargetSpec(target: TierTarget | null | undefined): string {
+	if (!target) return TIER_TARGET_DEFAULT_SPEC;
+	if (target.type === 'source') return formatRunOnSpec(target);
+	const model = target.type === 'provider-model' ? target.model : undefined;
+	return model ? `${TIER_PROVIDER_MODEL_PREFIX}${model}` : RUN_ON_PROVIDER_SPEC;
+}
+
+/** What a writer stores for one tier: a target, or `undefined` to clear it. */
+export type TierTargetEdit =
+	| { ok: true; target: TierTarget | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Read a spelling written by {@link formatTierTargetSpec}. `provider:` is the
+ * provider-model prefix here, so a source is never read out of it. Source ids
+ * are generated, and the Run on spelling keeps the word `provider` already.
+ */
+export function parseTierTargetSpec(spec: string): TierTargetEdit {
+	const trimmed = spec.trim();
+	const lower = trimmed.toLowerCase();
+	if (lower === TIER_TARGET_DEFAULT_SPEC) return { ok: true, target: undefined };
+	if (lower === RUN_ON_PROVIDER_SPEC) return { ok: true, target: { type: 'provider-model' } };
+	if (lower.startsWith(TIER_PROVIDER_MODEL_PREFIX)) {
+		const model = trimmed.slice(TIER_PROVIDER_MODEL_PREFIX.length).trim();
+		return {
+			ok: true,
+			target: model === '' ? { type: 'provider-model' } : { type: 'provider-model', model },
+		};
+	}
+	if (!trimmed.includes(':')) {
+		return { ok: false, error: `A tier target is ${TIER_TARGET_SPEC_FORMS}.` };
+	}
+	return parseRunOnSpec(trimmed);
+}
+
+/**
+ * Check a target someone is about to store for a tier, on an agent or in the
+ * harness defaults: the Tier defaults table, `maestro-cli models tiers set`,
+ * and the agent's own tier writers. On top of {@link parseTierTarget} a source
+ * goes through `parseRunOnEdit`, so a tier cannot hold a source the harness has
+ * no Run on recipe for, or (when `endpoints` is passed) a source id that names
+ * nothing. `undefined` clears the tier.
+ */
+export function parseTierTargetEdit(
+	toolType: string,
+	value: unknown,
+	endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[]
+): TierTargetEdit {
+	if (value === undefined || value === null) return { ok: true, target: undefined };
+	const parsed = parseTierTarget(value);
+	if (!parsed.ok) return parsed;
+	if (parsed.target.type !== 'source') {
+		// `provider` and a provider model with no model say the same thing. One is stored.
+		return {
+			ok: true,
+			target: parsed.target.type === 'provider' ? { type: 'provider-model' } : parsed.target,
+		};
+	}
+	return parseRunOnEdit(toolType, parsed.target, endpoints);
+}
+
+/**
+ * The harness defaults with one harness's row replaced. A row with no tier set
+ * removes the harness, so the stored record stays sparse and "absent" keeps
+ * meaning the built-in table. Shared by the table's Save and the CLI.
+ */
+export function withHarnessTierTargets(
+	defaults: HarnessTierDefaults | null | undefined,
+	harness: AgentId,
+	targets: TierTargets
+): HarnessTierDefaults {
+	const next: HarnessTierDefaults = { ...parseHarnessTierDefaults(defaults) };
+	const row = readTierTargets(targets);
+	if (Object.keys(row).length > 0) next[harness] = row;
+	else delete next[harness];
+	return next;
+}
+
+/** The harness defaults with one tier of one harness set, or cleared by `undefined`. */
+export function withHarnessTierDefault(
+	defaults: HarnessTierDefaults | null | undefined,
+	harness: AgentId,
+	tier: ModelTier,
+	target: TierTarget | undefined
+): HarnessTierDefaults {
+	const row: TierTargets = { ...parseHarnessTierDefaults(defaults)[harness] };
+	if (target) row[tier] = target;
+	else delete row[tier];
+	return withHarnessTierTargets(defaults, harness, row);
+}
+
+/** What Suggest proposes for one tier, and why; or why it proposes nothing. */
+export interface TierSuggestion {
+	/** Null when nothing the catalogue states picks a model for this tier. */
+	target: TierTarget | null;
+	reason: string;
+}
+
+export type HarnessTierSuggestions = Record<ModelTier, TierSuggestion>;
+
+/**
+ * The model families Maestro knows by name, per harness. A family keeps its
+ * role across generations, which is what makes it safe to suggest from: Claude
+ * Code's aliases always name the current model, and Codex's Luna, Sol and Astra
+ * lines are the ones the built-in table follows. A family is NOT read out of
+ * another harness's catalogue (`anthropic/claude-opus-4-8` on OpenCode): which
+ * of several listed members is the one to run is a guess there.
+ */
+const TIER_FAMILIES: Partial<Record<ToolType, Readonly<Record<ModelTier, string>>>> = {
+	'claude-code': { low: 'haiku', medium: 'sonnet', high: 'opus' },
+	codex: CODEX_TIER_FAMILIES,
+};
+
+/** The word in a catalogue's own description that places a model in a tier. */
+const TIER_DESCRIPTION_WORDS: Partial<Record<ModelTier, RegExp>> = {
+	low: /\bfast\b/i,
+	high: /\bfrontier\b/i,
+};
+
+function capitalize(word: string): string {
+	return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/**
+ * The one model a list of candidates names: the only candidate, or the first by
+ * the order the catalogue itself states. Several candidates with no stated
+ * order between them name nothing, because choosing one would be a guess.
+ */
+function pickByStatedOrder(
+	candidates: readonly HarnessCatalogModel[]
+): { model: HarnessCatalogModel; ranked: boolean } | null {
+	if (candidates.length === 0) return null;
+	if (candidates.length === 1) return { model: candidates[0], ranked: false };
+	const ranked = candidates
+		.filter((model) => model.priority !== undefined)
+		.sort((a, b) => (a.priority as number) - (b.priority as number));
+	if (ranked.length === 0) return null;
+	if (ranked.length > 1 && ranked[0].priority === ranked[1].priority) return null;
+	return { model: ranked[0], ranked: true };
+}
+
+/** A provider model for one tier from what the catalogue states, or null. */
+function suggestProviderModel(
+	harness: ToolType,
+	tier: ModelTier,
+	catalog: readonly HarnessCatalogModel[]
+): { model: string; reason: string } | null {
+	const family = TIER_FAMILIES[harness]?.[tier];
+	if (family) {
+		const alias = catalog.find((model) => model.id === family);
+		if (alias) {
+			return {
+				model: alias.id,
+				reason: `the ${family} alias, which always names the current ${capitalize(family)}`,
+			};
+		}
+		const member = pickByStatedOrder(
+			catalog.filter((model) => model.id.split('-').pop() === family)
+		);
+		if (member) {
+			return {
+				model: member.model.id,
+				reason: member.ranked
+					? `newest ${capitalize(family)}`
+					: `the only ${capitalize(family)} listed`,
+			};
+		}
+	}
+
+	const builtIn = resolveTierModel(harness, tier);
+	if (builtIn && catalog.some((model) => model.id === builtIn)) {
+		return { model: builtIn, reason: 'the built-in mapping, which this catalogue lists' };
+	}
+
+	const word = TIER_DESCRIPTION_WORDS[tier];
+	if (word) {
+		const described = pickByStatedOrder(
+			catalog.filter((model) => model.description !== undefined && word.test(model.description))
+		);
+		if (described) {
+			return {
+				model: described.model.id,
+				reason: `described as "${described.model.description}"`,
+			};
+		}
+	}
+	return null;
+}
+
+/** The local models that can be ranked for a harness, smallest first. */
+function rankedLocalTargets(
+	harness: ToolType,
+	runOnTargets: readonly RunOnPickerSource[]
+): Array<{ target: RunOnSourceTarget; parametersB: number }> {
+	const ranked: Array<{ target: RunOnSourceTarget; parametersB: number }> = [];
+	for (const source of runOnTargets) {
+		for (const model of source.models) {
+			const facts = runOnModelFacts(harness, { endpointId: source.endpointId, model });
+			// A model that has not passed the agent qualification with this harness
+			// can still be picked by hand, with its warning. It is not suggested.
+			if (!facts.qualified || facts.parametersB === undefined) continue;
+			ranked.push({
+				target: { type: 'source', endpointId: source.endpointId, model },
+				parametersB: facts.parametersB,
+			});
+		}
+	}
+	return ranked.sort((a, b) => a.parametersB - b.parametersB);
+}
+
+/**
+ * A suggestion for each tier of a harness, from what it can run on this
+ * machine: its own catalogue, and the Run on targets the sources list.
+ *
+ * Rules, first one that names a model wins, per tier:
+ *
+ *   1. A family Maestro knows for this harness ({@link TIER_FAMILIES}): the
+ *      alias when the catalogue lists it, else the newest listed member by the
+ *      catalogue's own order.
+ *   2. The built-in table's model, when the catalogue lists it.
+ *   3. A description that says "fast" (low) or "frontier" (high), by the
+ *      catalogue's own order when several say so.
+ *   4. Medium only: the model the catalogue lists first, when it states an
+ *      order and that model is not the low or high pick.
+ *
+ * When the provider's catalogue names NO tier and the harness has a Run on
+ * recipe, the local models that passed the agent qualification with this
+ * harness are ranked by parameter count: smallest is low, largest is high, and
+ * the lower central one is medium when at least three sizes are listed. A local
+ * model is only ever ranked against other local models, never against a cloud
+ * one.
+ *
+ * A tier nothing names is left blank with the reason. Nothing here writes a
+ * setting: a discovered list must not change how a document resolves until the
+ * user saves it.
+ */
+export function suggestHarnessTierDefaults(
+	harness: ToolType,
+	catalog: readonly HarnessCatalogModel[],
+	runOnTargets: readonly RunOnPickerSource[] = []
+): HarnessTierSuggestions {
+	const name = getAgentDisplayName(harness);
+	const blank = (reason: string): TierSuggestion => ({ target: null, reason });
+	const unranked =
+		catalog.length > 0
+			? `${name}'s catalogue states nothing that ranks a model for this tier. Pick one by hand.`
+			: `No model catalogue was found for ${name}. Pick one by hand.`;
+
+	const provider: Partial<Record<ModelTier, { model: string; reason: string }>> = {};
+	for (const tier of TIER_LEVELS) {
+		const pick = suggestProviderModel(harness, tier, catalog);
+		if (pick) provider[tier] = pick;
+	}
+	if (!provider.medium) {
+		const first = pickByStatedOrder(catalog.filter((model) => model.priority !== undefined));
+		if (
+			first &&
+			first.model.id !== provider.low?.model &&
+			first.model.id !== provider.high?.model
+		) {
+			provider.medium = {
+				model: first.model.id,
+				reason: `catalogue priority ${first.model.priority}`,
+			};
+		}
+	}
+
+	if (Object.keys(provider).length > 0) {
+		const suggest = (tier: ModelTier): TierSuggestion => {
+			const pick = provider[tier];
+			return pick
+				? { target: { type: 'provider-model', model: pick.model }, reason: pick.reason }
+				: blank(unranked);
+		};
+		return { low: suggest('low'), medium: suggest('medium'), high: suggest('high') };
+	}
+
+	const local = agentRunOnSupport(harness).supported
+		? rankedLocalTargets(harness, runOnTargets)
+		: [];
+	const smallest = local[0];
+	const largest = local[local.length - 1];
+	if (!smallest || smallest.parametersB >= largest.parametersB) {
+		return { low: blank(unranked), medium: blank(unranked), high: blank(unranked) };
+	}
+	const size = (entry: { parametersB: number }) => `${entry.parametersB}B parameters`;
+	const middle = local[Math.floor((local.length - 1) / 2)];
+	const hasMiddle =
+		middle.parametersB > smallest.parametersB && middle.parametersB < largest.parametersB;
+	return {
+		low: {
+			target: smallest.target,
+			reason: `smallest local model that runs agents on ${name} (${size(smallest)})`,
+		},
+		medium: hasMiddle
+			? {
+					target: middle.target,
+					reason: `middle local model that runs agents on ${name}, by size (${size(middle)})`,
+				}
+			: blank('Fewer than three local model sizes are listed, so none is the middle one.'),
+		high: {
+			target: largest.target,
+			reason: `largest local model that runs agents on ${name} (${size(largest)})`,
+		},
+	};
+}
+
+/** A tier whose provider model the harness's catalogue does not list. */
+export interface StaleTierModel {
+	tier: ModelTier;
+	/** The model that is not listed. */
+	model: string;
+	/** The layer that names it. */
+	source: Exclude<TierTargetSource, 'agent'>;
+	/** What Suggest would put in its place, or `null` when it names nothing. */
+	replacement: string | null;
+}
+
+/**
+ * The tiers of a harness whose provider model is not in its catalogue, each
+ * with the model Suggest would replace it with. It reads the value a launch
+ * would use ({@link harnessTierRows}), so it covers a harness default the user
+ * saved and the built-in table alike. Empty when every tier's model is listed,
+ * and when the catalogue lists nothing (nothing is known, so nothing is stale).
+ *
+ * For a warning only. Nothing is rewritten: a document must resolve to the same
+ * model until someone changes the mapping.
+ */
+export function staleTierModels(
+	harness: ToolType,
+	catalog: readonly HarnessCatalogModel[],
+	harnessDefaults?: HarnessTierDefaults | null
+): StaleTierModel[] {
+	if (catalog.length === 0) return [];
+	const listed = new Set(catalog.map((model) => model.id));
+	let suggestions: HarnessTierSuggestions | undefined;
+	const stale: StaleTierModel[] = [];
+	for (const row of harnessTierRows(harness, harnessDefaults)) {
+		const model = row.target?.type === 'provider-model' ? row.target.model : undefined;
+		if (!model || !row.source || listed.has(model)) continue;
+		suggestions ??= suggestHarnessTierDefaults(harness, catalog);
+		const suggested = suggestions[row.tier].target;
+		stale.push({
+			tier: row.tier,
+			model,
+			source: row.source,
+			replacement: suggested?.type === 'provider-model' ? (suggested.model ?? null) : null,
+		});
+	}
+	return stale;
 }

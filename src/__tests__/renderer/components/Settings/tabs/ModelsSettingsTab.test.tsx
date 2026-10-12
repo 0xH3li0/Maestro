@@ -108,6 +108,25 @@ describe('ModelsSettingsTab', () => {
 		).toBeTruthy();
 	});
 
+	it('shows the tier defaults table on System Two, and on no other inner tab', () => {
+		vi.mocked(window.maestro.localModels.tiers.options).mockClear();
+		render(<ModelsSettingsTab theme={theme} />);
+		expect(document.querySelector('[data-setting-id="models-tier-defaults"]')).toBeNull();
+		// Opening Library asks no harness what it can run.
+		expect(window.maestro.localModels.tiers.options).not.toHaveBeenCalled();
+
+		openPanel('System Two');
+
+		const tiers = document.querySelector('[data-setting-id="models-tier-defaults"]');
+		expect(tiers).not.toBeNull();
+		expect(screen.getByTestId('tier-defaults-section')).toBeInTheDocument();
+		// Under the Utility Agent, which belongs with the assignments above it.
+		const utility = document.querySelector('[data-setting-id="local-models-utility-agent"]');
+		expect(
+			utility!.compareDocumentPosition(tiers!) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+	});
+
 	it('remembers the last inner tab across mounts', () => {
 		const { unmount } = render(<ModelsSettingsTab theme={theme} />);
 		openPanel('Gateway');

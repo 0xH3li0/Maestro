@@ -217,6 +217,20 @@ vi.mock('../../../../main/local-models/run-on-test', () => ({
 	})),
 }));
 
+vi.mock('../../../../main/local-models/tier-options', () => ({
+	listHarnessTierOptionsRequest: vi.fn(async () => [
+		{
+			harness: 'codex',
+			name: 'Codex',
+			installed: true,
+			catalog: [{ id: 'gpt-6-luna', priority: 4 }],
+			runOn: { supported: true },
+			sources: [],
+			problems: [],
+		},
+	]),
+}));
+
 const dictation = vi.hoisted(() => {
 	const listeners = new Set<(ownerId: string, interruption: unknown) => void>();
 	return {
@@ -268,6 +282,7 @@ import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../../shared/local-mod
 import { remove, removeAll, verify } from '../../../../main/local-models/model-store';
 import { installNativeRuntime } from '../../../../main/local-models/runtime/runtime-installer';
 import { testAgentRunOn } from '../../../../main/local-models/run-on-test';
+import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
 import {
 	artifactForThisPlatform,
 	isRuntimeInstalled,
@@ -640,6 +655,14 @@ describe('task router channel', () => {
 			message: 'The source "Ollama" is disabled.',
 		});
 		expect(testAgentRunOn).toHaveBeenCalledWith(request);
+	});
+
+	it('hands a tier options request to the service and returns its rows', async () => {
+		const request = { harness: 'codex', refresh: true };
+		await expect(handlerFor('localModels:tiers:options')({}, request)).resolves.toEqual([
+			expect.objectContaining({ harness: 'codex', catalog: [{ id: 'gpt-6-luna', priority: 4 }] }),
+		]);
+		expect(listHarnessTierOptionsRequest).toHaveBeenCalledWith(request);
 	});
 
 	it('hands search its request untouched and returns the verdict', async () => {

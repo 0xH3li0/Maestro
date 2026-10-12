@@ -771,6 +771,9 @@ const mockMaestro = {
 				message: 'not mocked',
 			}),
 		},
+		tiers: {
+			options: vi.fn().mockResolvedValue([]),
+		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
 		search: vi.fn().mockResolvedValue({ status: 'off' }),
 		proxy: {

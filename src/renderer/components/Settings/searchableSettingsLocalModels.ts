@@ -1,9 +1,10 @@
 /**
  * Models tab searchable-settings entries.
  *
- * One entry per section of `ModelsSettingsTab`, plus the Utility Agent controls
- * and the semantic index card beside the task tables; each `id` matches a
- * rendered `data-setting-id`, and each `subTab` is the inner tab that renders it.
+ * One entry per section of `ModelsSettingsTab`, plus the Utility Agent controls,
+ * the tier defaults table and the semantic index card beside the task tables;
+ * each `id` matches a rendered `data-setting-id`, and each `subTab` is the
+ * inner tab that renders it.
  */
 
 import {
@@ -233,6 +234,36 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'background',
 			'haiku',
 			'override',
+		],
+	},
+	{
+		id: 'models-tier-defaults',
+		...inPanel('system-two'),
+		label: 'Tier defaults',
+		description:
+			'Choose which model a low, medium or high task launches on for each harness, from its own catalogue or a local source',
+		keywords: [
+			'tier',
+			'tiers',
+			'tier defaults',
+			'harness',
+			'low',
+			'medium',
+			'high',
+			'model tier',
+			'routing',
+			'auto run',
+			'cue',
+			'suggest',
+			'reset',
+			'built-in',
+			'run on',
+			'haiku',
+			'sonnet',
+			'opus',
+			'luna',
+			'sol',
+			'astra',
 		],
 	},
 	{

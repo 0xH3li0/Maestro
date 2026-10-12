@@ -353,6 +353,7 @@ describe('searchableSettings', () => {
 				'local-models-semantic-index': 'system-one',
 				'local-models-system-two': 'system-two',
 				'local-models-utility-agent': 'system-two',
+				'models-tier-defaults': 'system-two',
 				'local-models-gateway': 'gateway',
 			});
 		});

@@ -12,7 +12,7 @@
  * local_models_runtime_install, local_models_server_status,
  * local_models_server_start, local_models_server_stop, local_models_server_set,
  * local_models_server_key, local_models_server_ensure,
- * local_models_run_on_test, notify_speak.
+ * local_models_run_on_test, local_models_tier_options, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -71,6 +71,7 @@ import {
 } from '../../../local-models/server/service';
 import { modelServerForHarness } from '../../../local-models/server/server-endpoint';
 import { testAgentRunOn } from '../../../local-models/run-on-test';
+import { listHarnessTierOptionsRequest } from '../../../local-models/tier-options';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -527,6 +528,27 @@ export function handleLocalModelsRunOnTest(
 		if (agentId === '') throw new Error('Name the agent to test.');
 		return { result: await testAgentRunOn({ agentId }) };
 	});
+}
+
+/**
+ * Handle local_models_tier_options - what a harness can launch a tier on: its
+ * own catalogue and the Run on targets (`maestro-cli models tiers options` and
+ * `suggest`), by the function the Tier defaults table reads. With no `harness`
+ * it answers for every installed harness that can select a model. A read: it
+ * starts no server and saves nothing. An id that names no harness with tiers
+ * comes back as an error.
+ */
+export function handleLocalModelsTierOptions(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_tier_options_result', async () => ({
+		options: await listHarnessTierOptionsRequest({
+			harness: message.harness,
+			refresh: message.refresh,
+		}),
+	}));
 }
 
 /**

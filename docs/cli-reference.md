@@ -2311,6 +2311,54 @@ Show one compressed block from the cache: a diff of what the agent sent against 
 | `--compressed` | Print only the text sent in its place | -       |
 | `--json`       | Output as JSON (for scripting)        | -       |
 
+## `maestro-cli models tiers`
+
+Harness tier defaults: which model a low, medium or high task launches on, per harness
+
+## `maestro-cli models tiers list`
+
+Each tier of each harness with its value and where it came from: Harness default (set by you) or Built-in
+
+| Option           | Description                                           | Default |
+| ---------------- | ----------------------------------------------------- | ------- |
+| `--harness <id>` | Only this harness (e.g. claude-code, codex, opencode) | -       |
+| `--json`         | Output as JSON (for scripting)                        | -       |
+
+## `maestro-cli models tiers options <harness>`
+
+What a harness can launch a tier on: its own catalogue and the Run on targets, each in the spelling "tiers set" takes (requires the desktop app)
+
+| Option      | Description                                                  | Default |
+| ----------- | ------------------------------------------------------------ | ------- |
+| `--refresh` | Ask the harness again instead of using the app's cached list | -       |
+| `--json`    | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli models tiers suggest <harness>`
+
+A suggested model per tier with the reason, from what the harness lists; a tier nothing ranks is left blank (requires the desktop app)
+
+| Option    | Description                                                         | Default |
+| --------- | ------------------------------------------------------------------- | ------- |
+| `--apply` | Save the suggested tiers; a tier with no suggestion keeps its value | -       |
+| `--json`  | Output as JSON (for scripting)                                      | -       |
+
+## `maestro-cli models tiers set <harness> <tier> <target>`
+
+Set one tier (low | medium | high) of one harness. Target: default (clear it) | provider (the agent's own model) | provider:<model> | <source id>:<model>
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models tiers reset <harness>`
+
+Put a harness back on the built-in tier table, or one tier with --tier
+
+| Option          | Description                           | Default |
+| --------------- | ------------------------------------- | ------- |
+| `--tier <tier>` | Only this tier: low \| medium \| high | -       |
+| `--json`        | Output as JSON (for scripting)        | -       |
+
 ## `maestro-cli models config`
 
 Local Models configuration: where model files are downloaded from

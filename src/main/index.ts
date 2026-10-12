@@ -173,6 +173,7 @@ import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/servic
 import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
 import { configureAgentRunOn } from './local-models/run-on';
 import { configureRunOnTest } from './local-models/run-on-test';
+import { configureHarnessTierOptions } from './local-models/tier-options';
 import { getConfiguredLocalModelEndpoints } from './local-models/endpoint-service';
 import { modelServerForHarness } from './local-models/server/server-endpoint';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
@@ -3723,6 +3724,13 @@ app
 			},
 			sshStore: () => createSshRemoteStoreAdapter(store),
 			shellEnvVars: () => store.get('shellEnvVars', {}) as Record<string, string>,
+		});
+		// The Tier defaults table and `maestro-cli models tiers`. Wiring it asks
+		// no harness and no source: a listing runs only when one of them asks.
+		configureHarnessTierOptions({
+			installed: async (harness) => (await agentDetector?.getAgent(harness))?.available === true,
+			catalog: async (harness, forceRefresh) =>
+				(await agentDetector?.discoverModelCatalog(harness, forceRefresh)) ?? [],
 		});
 
 		// Start watching for system timezone changes (laptop crossing zones).

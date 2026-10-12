@@ -1451,6 +1451,93 @@ export function formatLocalModelTasks(
 	return lines.join('\n');
 }
 
+// Harness tier defaults formatting
+
+/** One tier of one harness, as `models tiers list` and `suggest` print it. */
+export interface HarnessTierDisplay {
+	tier: string;
+	/** The target's spelling, or null when the tier has none. */
+	spec: string | null;
+	/** The layer it came from, or the reason beside a suggestion. */
+	note: string;
+	/** Why the stored value cannot be used. */
+	problem?: string;
+}
+
+export interface HarnessTiersDisplay {
+	harness: string;
+	name: string;
+	tiers: HarnessTierDisplay[];
+}
+
+/** The tiers of each harness: value, then the layer (or reason) it came from. */
+export function formatHarnessTiers(title: string, harnesses: HarnessTiersDisplay[]): string {
+	const lines: string[] = [bold(c('cyan', title)) + dim(` (${harnesses.length})`)];
+	const specs = harnesses.flatMap((row) => row.tiers.map((tier) => tier.spec ?? '-'));
+	const specWidth = Math.max(1, ...specs.map((spec) => spec.length));
+	for (const row of harnesses) {
+		lines.push('');
+		lines.push(`  ${c('white', row.name)} ${dim(`(${row.harness})`)}`);
+		for (const tier of row.tiers) {
+			const spec = (tier.spec ?? '-').padEnd(specWidth);
+			lines.push(
+				`    ${tier.tier.padEnd(6)}  ${tier.spec ? c('blue', spec) : dim(spec)}  ${dim(tier.note)}`
+			);
+			if (tier.problem) lines.push(`            ${c('red', tier.problem)}`);
+		}
+	}
+	return lines.join('\n');
+}
+
+export interface HarnessTierOptionsDisplay {
+	harness: string;
+	name: string;
+	installed: boolean;
+	/** The harness's own models, each as the spelling `models tiers set` takes. */
+	catalog: Array<{ spec: string; priority?: number; description?: string }>;
+	/** Why the harness cannot run on a source, when it cannot. */
+	runOnReason?: string;
+	sources: Array<{ name: string; specs: string[] }>;
+	problems: Array<{ name: string; message: string }>;
+}
+
+/** What one harness can launch a tier on, each choice in the spelling `set` takes. */
+export function formatHarnessTierOptions(options: HarnessTierOptionsDisplay): string {
+	const lines: string[] = [
+		bold(c('cyan', 'TIER OPTIONS')) +
+			`  ${c('white', options.name)} ${dim(`(${options.harness})`)}`,
+	];
+	if (!options.installed) {
+		lines.push('');
+		lines.push(c('yellow', `  ${options.name} was not found on this machine.`));
+	}
+	lines.push('');
+	lines.push(`  ${bold('Catalogue')}${dim(` (${options.catalog.length})`)}`);
+	if (options.catalog.length === 0) lines.push(dim('    (lists nothing)'));
+	const width = Math.max(1, ...options.catalog.map((model) => model.spec.length));
+	for (const model of options.catalog) {
+		const facts = [
+			...(model.priority === undefined ? [] : [`priority ${model.priority}`]),
+			...(model.description ? [model.description] : []),
+		].join('  ');
+		lines.push(`    ${c('blue', model.spec.padEnd(width))}${facts ? `  ${dim(facts)}` : ''}`);
+	}
+	for (const source of options.sources) {
+		lines.push('');
+		lines.push(`  ${bold(source.name)}${dim(` (${source.specs.length})`)}`);
+		for (const spec of source.specs) lines.push(`    ${c('blue', spec)}`);
+	}
+	if (options.runOnReason) {
+		lines.push('');
+		lines.push(dim(`  Provider models only. ${options.runOnReason}`));
+	}
+	for (const problem of options.problems) {
+		lines.push('');
+		lines.push(c('yellow', `  ${problem.name}: ${problem.message}`));
+	}
+	return lines.join('\n');
+}
+
 // Director's Notes History formatting
 export interface DirectorNotesHistoryDisplay {
 	stats: {

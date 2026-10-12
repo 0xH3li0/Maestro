@@ -68,6 +68,8 @@ export interface RunOnModelFacts {
 	fit?: ModelFit;
 	/** The context the picker's field starts at. */
 	defaultContextTokens: number;
+	/** Its size in billions of parameters, when the Library states one. */
+	parametersB?: number;
 }
 
 /**
@@ -91,6 +93,7 @@ export function runOnModelFacts(
 		qualified: (entry.agentHarnesses ?? []).includes(toolType as LocalModelAgentHarness),
 		...(hardware ? { fit: modelFit(entry, hardware) } : {}),
 		defaultContextTokens,
+		...(entry.parameters ? { parametersB: entry.parameters.totalB } : {}),
 	};
 }
 

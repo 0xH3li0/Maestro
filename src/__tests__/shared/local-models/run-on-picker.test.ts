@@ -81,6 +81,8 @@ describe('runOnModelFacts', () => {
 		expect(facts.qualified).toBe(true);
 		expect(facts.fit?.fit).toBe('fits');
 		expect(facts.defaultContextTokens).toBe(getLocalModel(GPT_OSS_20B_ID)?.defaultContext);
+		// The size Suggest ranks local models by.
+		expect(facts.parametersB).toBe(getLocalModel(GPT_OSS_20B_ID)?.parameters?.totalB);
 	});
 
 	it('grants the badge only for the harness the model qualified with', () => {

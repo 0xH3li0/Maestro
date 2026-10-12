@@ -208,6 +208,21 @@ vi.mock('../../../../main/local-models/run-on-test', () => ({
 }));
 import { testAgentRunOn } from '../../../../main/local-models/run-on-test';
 
+vi.mock('../../../../main/local-models/tier-options', () => ({
+	listHarnessTierOptionsRequest: vi.fn(async () => [
+		{
+			harness: 'codex',
+			name: 'Codex',
+			installed: true,
+			catalog: [{ id: 'gpt-6-luna', priority: 4 }],
+			runOn: { supported: true },
+			sources: [],
+			problems: [],
+		},
+	]),
+}));
+import { listHarnessTierOptionsRequest } from '../../../../main/local-models/tier-options';
+
 vi.mock('../../../../main/local-models/server/service', () => ({
 	getModelServerReport: vi.fn(async () => ({
 		status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' },
@@ -6265,6 +6280,40 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ro-3'));
 			expect(lastResponse()).toMatchObject({ success: false });
 			expect(testAgentRunOn).not.toHaveBeenCalled();
+		});
+
+		it('local_models_tier_options answers with what the harness can launch a tier on', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_tier_options',
+				harness: 'codex',
+				refresh: true,
+				// Only the harness and the refresh flag are read.
+				catalog: [{ id: 'made-up' }],
+				requestId: 'to-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_tier_options_result'));
+			expect(listHarnessTierOptionsRequest).toHaveBeenCalledWith({
+				harness: 'codex',
+				refresh: true,
+			});
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'to-1',
+				options: [{ harness: 'codex', catalog: [{ id: 'gpt-6-luna', priority: 4 }] }],
+			});
+		});
+
+		it('local_models_tier_options answers a harness with no tiers as an error', async () => {
+			vi.mocked(listHarnessTierOptionsRequest).mockRejectedValueOnce(
+				new Error('Unknown harness "nope".')
+			);
+			handler.handleMessage(client, {
+				type: 'local_models_tier_options',
+				harness: 'nope',
+				requestId: 'to-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('to-2'));
+			expect(lastResponse()).toMatchObject({ success: false, error: 'Unknown harness "nope".' });
 		});
 
 		it('local_models_proxy_block answers with both sides of the block', async () => {

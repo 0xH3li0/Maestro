@@ -9,7 +9,8 @@
  * - System One: the tasks whose output is a judgment (a decision, label,
  *   score, vector or transcript), with their assignments.
  * - System Two: the tasks whose output is text for someone to read or run,
- *   with their assignments and the Utility Agent.
+ *   with their assignments, the Utility Agent, and the harness tier defaults
+ *   (which model a low, medium or high task launches on).
  * - Gateway: the proxy each agent's own provider traffic goes through, and
  *   what the Maestro token proxy carried.
  *
@@ -31,6 +32,7 @@ import { useEffect } from 'react';
 import {
 	Brain,
 	HardDrive,
+	Layers,
 	Router,
 	Server,
 	SlidersHorizontal,
@@ -58,6 +60,7 @@ import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
+import { TierDefaultsSection } from './TierDefaultsSection';
 import { UtilityAgentSettings } from './UtilityAgentSettings';
 
 /** localStorage key for the last inner tab the user opened. */
@@ -197,6 +200,15 @@ export function ModelsSettingsTab({
 							/>
 						</div>
 						<UtilityAgentSettings theme={theme} />
+						<div data-setting-id="models-tier-defaults">
+							<SettingsSectionHeading
+								icon={Layers}
+								description="Which model a low, medium or high task launches on, per harness. Auto Run and Cue tasks ask for a tier; an agent can override a tier in its own settings."
+							>
+								Tier defaults
+							</SettingsSectionHeading>
+							<TierDefaultsSection theme={theme} endpoints={endpoints.endpoints} />
+						</div>
 					</>
 				)}
 

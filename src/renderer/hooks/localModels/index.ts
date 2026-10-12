@@ -45,3 +45,5 @@ export { MODEL_SERVER_POLL_MS, useModelServer } from './useModelServer';
 export type { ModelServerBusy, ModelServerHookState } from './useModelServer';
 export { useRunOnSources } from './useRunOnSources';
 export type { RunOnSourceProblem, RunOnSourcesState } from './useRunOnSources';
+export { useHarnessTierOptions } from './useHarnessTierOptions';
+export type { HarnessTierOptionsState } from './useHarnessTierOptions';

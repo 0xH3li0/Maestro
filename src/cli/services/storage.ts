@@ -778,6 +778,15 @@ export function readHarnessTierDefaults(): HarnessTierDefaults {
 }
 
 /**
+ * Write the harness tier defaults back, in the one form every reader parses;
+ * the settings watcher reloads every window. An empty record removes nothing
+ * else: absent and empty both mean the built-in table.
+ */
+export function writeHarnessTierDefaults(defaults: HarnessTierDefaults): void {
+	writeSettingValue('harnessTierDefaults', parseHarnessTierDefaults(defaults));
+}
+
+/**
  * Put the models the user added from Hugging Face into this process's catalog,
  * so every `models` verb knows their ids and names the way the desktop does.
  *

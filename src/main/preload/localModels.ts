@@ -34,6 +34,7 @@ import type {
 } from '../local-models/endpoint-client';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { RunOnTestRequest, RunOnTestResult } from '../../shared/local-models/run-on';
+import type { HarnessTierOptions } from '../../shared/local-models/tier-options';
 import type {
 	TokenProxyBlockDetail,
 	TokenProxyReport,
@@ -143,6 +144,23 @@ function createRunOnApi() {
 		 */
 		test: (request: RunOnTestRequest): Promise<RunOnTestResult> =>
 			ipcRenderer.invoke('localModels:runOn:test', request),
+	};
+}
+
+/**
+ * `window.maestro.localModels.tiers.*` - what a harness can launch a tier on.
+ * The mapping itself is the `harnessTierDefaults` setting; this is the one call
+ * that needs the main process.
+ */
+function createTiersApi() {
+	return {
+		/**
+		 * The catalogue and Run on targets of one harness, or of every installed
+		 * harness that can select a model. A read: it starts no server and saves
+		 * nothing. `refresh` asks each harness again instead of its cached list.
+		 */
+		options: (request?: { harness?: string; refresh?: boolean }): Promise<HarnessTierOptions[]> =>
+			ipcRenderer.invoke('localModels:tiers:options', request ?? {}),
 	};
 }
 
@@ -418,6 +436,8 @@ export function createLocalModelsApi() {
 		endpoints: createLocalModelEndpointsApi(),
 
 		runOn: createRunOnApi(),
+
+		tiers: createTiersApi(),
 	};
 }
 

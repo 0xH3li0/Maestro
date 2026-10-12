@@ -56,6 +56,8 @@ import {
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
 import { testAgentRunOn } from '../../local-models/run-on-test';
 import type { RunOnTestResult } from '../../../shared/local-models/run-on';
+import { listHarnessTierOptionsRequest } from '../../local-models/tier-options';
+import type { HarnessTierOptions } from '../../../shared/local-models/tier-options';
 import {
 	announceAgentFinishedRequest,
 	speakNoticeRequest,
@@ -522,6 +524,15 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('runOn:test'),
 			async (request: unknown): Promise<RunOnTestResult> => testAgentRunOn(request)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:tiers:options',
+		withIpcErrorLogging(
+			handlerOpts('tiers:options'),
+			async (request: unknown): Promise<HarnessTierOptions[]> =>
+				listHarnessTierOptionsRequest(request)
 		)
 	);
 

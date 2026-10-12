@@ -107,6 +107,7 @@ import {
 	handleLocalModelsRuntimesList,
 	handleLocalModelsRemove,
 	handleLocalModelsRunOnTest,
+	handleLocalModelsTierOptions,
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
 	handleLocalModelsProxyStatus,
@@ -867,6 +868,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_run_on_test':
 				void handleLocalModelsRunOnTest(this.ctx, client, message);
+				break;
+
+			case 'local_models_tier_options':
+				void handleLocalModelsTierOptions(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':
