@@ -391,23 +391,143 @@ A record holds the task, the engine, the question ids and the typed answers. It 
 
 The ledger is kept for 30 days. It is written only while usage statistics are on, and a read says so when they are off.
 
+### System One for agents
+
+An agent can ask System One too. While an engine is chosen and has passed its Test, each agent Maestro starts is told that System One exists and gets the `maestro-cli s1` verbs to ask it. It is for a judgment that repeats over many items the agent should not read into its own context: sort 400 commit messages, rank a list of candidates, check a draft against a source, or screen untrusted text for instructions aimed at an agent.
+
+An agent does not use it for everything. It is told not to for text generation, math, counting, dates, or a list short enough to read. In a real run on Claude Opus 5.5, an agent given 40 one-line commit messages read them and answered itself. Given 400, it sized the job, read the guide, handed the file to `s1 rank`, never read the list into its context, and got all 120 right for less than a tenth of a cent of System One.
+
+#### What an agent is told
+
+Three levels, cheapest first. An agent pays for a level only when it decides it needs it.
+
+| Level  | What the agent gets                                                                                        | When                                                           |
+| ------ | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **L0** | A section of its system prompt, about 18 lines: what System One is, when to use it, the engine, the budget | Each time the agent starts, while a request from it would work |
+| **L1** | `maestro-cli s1 guide [topic]` and `maestro-cli s1 examples [name]`                                        | When the agent decides it needs System One                     |
+| **L2** | The full reference, `maestro-cli prompts get _system-one`: every flag, output shape and pitfall            | When the agent needs exact detail                              |
+
+The L0 section names the engine and says whether its numbers are calibrated. A local judge is always called **not calibrated**, so an agent never treats its number as a probability. It gives the budget as a band ("more than half is left"), not a figure: the system prompt is cached by its exact text, and a figure that changed after every request would cost every agent its cached prompt. The exact figure is on the line under every answer, and in `maestro-cli s1 usage`.
+
+The section also states the rules an agent cannot wait for the guide to learn:
+
+- **Key the items.** Never ask about a position in a list. Asked about items by their place in a list of 150, a model was wrong 27% of the time, against 0 wrong of 320 when each item was keyed. `s1 rank` and `s1 batch` key every item for the agent.
+- **Single-quote a question that holds backticks**, or the shell runs the text inside them as a command.
+- **A screen is not a permission.** System One answers questions about a text. It does not make the text safe to obey.
+- **A refusal is final.** If System One is off or the budget is spent, the agent continues without it. It does not retry and does not route around the refusal.
+
+The guide is plain prompts. Edit what your agents are taught in **Settings -> Maestro Prompts**, in the **System One** category.
+
+The L0 section is there only while **all** of these hold. It is decided each time an agent starts, so turning System One off removes it from the next start. An agent that is already running keeps what it was told, and its verbs refuse by name.
+
+| Condition                                                                        | If it fails                                   |
+| -------------------------------------------------------------------------------- | --------------------------------------------- |
+| An engine is chosen and set up                                                   | `engine-off` or `engine-not-ready`            |
+| The engine has passed its Test as it is set up now                               | `engine-untested`                             |
+| **Let agents use System One** is on                                              | `agents-off`                                  |
+| This agent is not switched off in its own settings                               | `agent-opted-out`                             |
+| The day's budget, for all agents and for this agent if you set one, is not spent | `budget-day` or `budget-agent`                |
+| The agent runs on this computer                                                  | An SSH remote agent is never told (see below) |
+
+Changing the engine, its URL or its model makes the last Test stale. Press **Test** again, or run `maestro-cli s1 test`. An engine you set up before agents could ask needs one Test.
+
+#### The verbs
+
+Every verb takes `--json`. The state is `-s/--state TEXT` (`@path` reads a file, `-` reads standard input), `--state-file`, `--state-json`, `--field key=value`, or piped text. The flags are the `jev` command's, so an agent that knows one reads the other.
+
+| Verb                                                   | Asks                                  | Returns                                                    |
+| ------------------------------------------------------ | ------------------------------------- | ---------------------------------------------------------- |
+| `s1 yes "<question>" -s TEXT [--threshold 0.5]`        | Is this true?                         | The probability of yes                                     |
+| `s1 pick "<question>" a="desc" b="desc" -s TEXT`       | Which one of these?                   | The option, the probability of each, and how sure it is    |
+| `s1 rate "<question>" "<level 1>" "<level 2>" -s TEXT` | Where on this rubric?                 | The level, and how sure it is                              |
+| `s1 ask --noul ... --choice ... --score ... -s TEXT`   | Several questions in one request      | Every answer, keyed                                        |
+| `s1 rank --query Q --candidates-file F [--top N]`      | Which of these items match?           | A ranked list, with a completeness marker                  |
+| `s1 batch --input rows.jsonl --noul ... [--out F]`     | The same questions over many rows     | JSONL, with a completeness marker                          |
+| `s1 usage [--agent <id>] [--since <d>]`                | What was spent, by which agent        | Requests, tokens, cost and latency, against today's budget |
+| `s1 cost <state or file>`                              | Will this fit, and what will it cost? | Tokens against the request limit, and the price            |
+| `s1 guide [topic] [--list]`, `s1 examples [name]`      | Nothing: they print the guide         | Text. They work while System One is off                    |
+
+Each answer names its engine, whether it is calibrated, the model, the tokens, the latency and the cost. The answer goes to standard output and that line to standard error, so `$(maestro-cli s1 yes ...)` holds the answer alone. An item with no answer is **unknown**, never a low score, and `rank` and `batch` end with a marker that says how many items were judged. No marker means the output was cut.
+
+Exit codes let a shell test them:
+
+| Code | Meaning                                                                 |
+| ---- | ----------------------------------------------------------------------- |
+| 0    | Yes, or at or above `--min-confidence`, or a job that judged every item |
+| 1    | No, uncertain, or under `--min-confidence`. Never an error              |
+| 2    | A wrong command line or request                                         |
+| 3-5  | The desktop app could not be reached, or does not know the verb         |
+| 6    | System One refused: a switch, or the budget. Do not retry               |
+| 7    | The engine gave no answer, or a `rank` or `batch` is incomplete         |
+
+#### The budget
+
+The **daily budget** is a ceiling on what all agents spend on System One in a day. It is $1 by default. An optional **budget per agent** caps one agent inside it, with no cap by default.
+
+- A request is checked before it is sent. A request over budget is refused by name (exit 6) and the agent is told to continue without System One. The budget resets at midnight.
+- A day can pass its budget by at most the requests already in flight, which is four requests of a few tenths of a cent each.
+- The count is kept in Maestro and seeded from the [decision ledger](#the-decision-ledger) once a day, so it survives a restart. While usage statistics are off the ledger keeps nothing new, and the count starts again when Maestro restarts.
+- OpenJev and the local judge cost nothing, so a dollar budget never stops them. A budget of 0 stops every agent.
+- Only agents' own requests count. A Cue gate's run is Maestro's spend, not an agent's, even when it names an agent.
+
+Spend is on **Settings -> Models -> System One -> System One for agents**: spent today against the budget, and a table of requests, cached requests, tokens, cost and average latency per agent, over Today, Last 7 days or Last 30 days. The same rows are in the decision ledger, labelled "Agent: rank" and so on, and `maestro-cli s1 usage` prints them.
+
+A request is answered from a cache when the engine, the model, the state and the questions are the same as an earlier one in the last 7 days. It costs nothing and says "cached answer". `--no-cache` asks again.
+
+#### The key stays in Maestro
+
+The agent never holds the key. `maestro-cli` talks to the desktop over its local connection and the desktop asks the engine with the key it holds. A request cannot name a key, a model or a budget, and an agent's environment gets nothing new. Every request is checked for secrets before it leaves your machine, the same as every other System One request.
+
+<Warning>
+	**An agent's request goes where the engine goes.** With Jev, the text an agent hands System One goes to `api.typesafe.ai` after Maestro removes secrets from it. Do not choose Jev for agents that work on text you would not send there yourself.
+</Warning>
+
+#### Turning it off
+
+| To switch off             | Where                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| System One for all agents | **Settings -> Models -> System One -> Let agents use System One**, or `maestro-cli s1 set agents off` |
+| System One for one agent  | **Edit Agent -> Models**, or `maestro-cli update-agent <agent> --system-one off`                      |
+| System One for everything | Set the engine to **Off**, or `maestro-cli s1 set engine off`                                         |
+
+Each takes effect on the next start of an agent, and the verbs refuse at once. A worktree agent inherits its parent's switch, so an agent you switched off does not start asking from a worktree of the same project. A new agent follows the global switch: switch it off after you create it, or with `update-agent`.
+
+Set the budgets with the fields beside the switch, or `maestro-cli s1 set budget <usd>` and `maestro-cli s1 set budget --per-agent <usd|none>`. `maestro-cli s1 status` prints what agents may do and what in the setup stops them.
+
+#### With a `jev` install
+
+You may also have the `jev` command and its skill. Maestro does not forbid them. Inside Maestro the L0 section tells an agent to prefer `maestro-cli s1`, because it uses the key, the budget and the ledger Maestro holds. A call to `jev` is not counted against the budget and is not in the ledger.
+
+#### What does not apply
+
+- **SSH remote agents are not told.** Their shell is on another host, where `maestro-cli` cannot reach this desktop. The Edit Agent pane says so.
+- **Some runs do not name their agent.** A Cue run, a group chat participant and an agent answering an `@mention` are started without the identity `maestro-cli` reads. Their requests are held to the global switches and the daily budget. The per-agent cap and the per-agent switch do not reach them, and the ledger row names no agent.
+- **The desktop app must be running.** With it closed, the verbs cannot work and the section is left out.
+- **A stopped command does not stop its job.** If a shell tool kills a long `rank`, the desktop finishes the job and caches the answers. The same command again collects them at no cost.
+- **Limits per request.** At most 250 questions and about 30,000 tokens go in one request, and 5,000 candidates or rows in one call. Maestro splits a large job. The local judge takes one question a request, so it is slower.
+
 ### System One from the command line
 
 Every verb needs the desktop app running.
 
 ```bash
-maestro-cli s1 status [--json]                   # engine, address, model, timeout, where each key comes from, fail policies
+maestro-cli s1 status [--json]                   # engine, address, model, timeout, where each key comes from, fail policies, agents
 maestro-cli s1 set engine off|jev-cloud|openjev|local-judge [--url <url>] [--model <model>]
 maestro-cli s1 set timeout <ms>                  # 100 to 60000; Jev and OpenJev only
 maestro-cli s1 set fail-policy <task-id> open|closed|default
 maestro-cli s1 set keep-inputs on|off            # whether the ledger keeps what was asked
+maestro-cli s1 set agents on|off                 # whether agents may ask System One
+maestro-cli s1 set budget [<usd>] [--per-agent <usd|none>]   # the daily budget, and the optional cap for one agent
 pbpaste | maestro-cli s1 key set [--engine jev-cloud|openjev]   # the key is read from stdin, never an argument
 maestro-cli s1 key clear [--engine jev-cloud|openjev]
 maestro-cli s1 test [--json]                     # one fixed question: answer, latency, engine
 maestro-cli s1 ledger [--task <task-id>] [--outcome <outcome>] [--since 2h] [--limit <n>] [--json]
+maestro-cli s1 usage [--agent <id>] [--since 7d] [--json]      # what agents spent
 ```
 
 `s1 status` exits non-zero when the engine in force cannot answer as set up (no key, no URL, no judge model). Off is not a failure. `s1 test` exits non-zero when no answer came back. For the local judge, `--model` takes a source (`local:<model-id>` or `endpoint:<endpoint>:<model>`) and assigns it to the **Local judge** task, the same as `maestro-cli models assign local-judge <source>`. `--since` accepts `30m`, `2h`, `1d`, `1w`, an ISO-8601 time, or an epoch.
+
+The verbs an agent asks with (`yes`, `pick`, `rate`, `ask`, `rank`, `batch`, `cost`, `guide`, `examples`) are in [System One for agents](#system-one-for-agents).
 
 ## Model server
 
