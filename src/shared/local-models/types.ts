@@ -82,6 +82,77 @@ export interface LocalEmbeddingSpec extends LocalEncoderGraph {
 	readonly documentPrefix?: string;
 }
 
+/**
+ * What a text model is fit to do, in the words a Library groups by.
+ *
+ * - `judge`: short yes or no decisions (the Cue gate, a local System One judge).
+ * - `housekeeping`: tab names, short summaries, shell commands, PR drafts.
+ * - `agent`: drives an agent harness (Claude Code, Codex). Granted only by a
+ *   real-harness qualification run, never from a model card.
+ * - `vision`: reads images and screenshots.
+ */
+export type LocalModelRole = 'judge' | 'housekeeping' | 'agent' | 'vision';
+
+/** Every role, in the order a Library lists its groups. */
+export const LOCAL_MODEL_ROLES: readonly LocalModelRole[] = Object.freeze([
+	'agent',
+	'housekeeping',
+	'judge',
+	'vision',
+]);
+
+/** Where a model's bytes come from: a Hugging Face repo at a pinned commit. */
+export interface LocalModelSource {
+	/** Hugging Face repo id, for the "where did this come from" line. */
+	readonly repo: string;
+	/** The pinned commit. 40 hex characters; `main` is rejected by the tests. */
+	readonly revision: string;
+}
+
+/** The license a model arrives under. */
+export interface LocalModelLicense {
+	/**
+	 * SPDX identifier as the model card publishes it. A license SPDX does not
+	 * list (Gemma, Llama) keeps the card's own name.
+	 */
+	readonly spdx: string;
+	/** Where the full terms are read. */
+	readonly url: string;
+}
+
+/** A text model's size in billions of parameters. */
+export interface LocalModelParameters {
+	readonly totalB: number;
+	/** Parameters used per token. Equal to `totalB` for a dense model; smaller for a MoE. */
+	readonly activeB: number;
+}
+
+/**
+ * The attention shape that sizes a model's KV cache, read from its GGUF
+ * metadata (`<arch>.block_count`, `<arch>.attention.head_count_kv`,
+ * `<arch>.attention.key_length`).
+ */
+export interface LocalModelKvLayout {
+	/**
+	 * Layers that keep a KV cache for the whole context. For a hybrid model
+	 * (linear-attention or sliding-window layers mixed in) this is only the
+	 * full-attention layers, since the others hold a small fixed state.
+	 */
+	readonly layers: number;
+	readonly kvHeads: number;
+	readonly headDim: number;
+}
+
+/** What a model costs in memory, the input to the hardware fit rule. */
+export interface LocalModelMemoryHint {
+	/** Bytes loaded for the weights: every file of the entry (GGUF parts and any projector). */
+	readonly fileBytes: number;
+	/** KV cache bytes per 1,024 tokens of context, at f16 keys and values. */
+	readonly kvBytesPer1kTokens: number;
+	/** The layout `kvBytesPer1kTokens` was computed from. */
+	readonly kvLayout: LocalModelKvLayout;
+}
+
 export interface LocalClassifierSpec extends LocalEncoderGraph {
 	/** Label per output index, in the graph's logit order (the model's `id2label`). */
 	readonly labels: readonly string[];
@@ -102,15 +173,27 @@ export interface LocalModelEntry {
 	 * need?" and derives its own grouping from the answer.
 	 */
 	readonly runtime: NativeRuntimeId;
-	/** Hugging Face repo id, for the "where did this come from" line. */
-	readonly repo: string;
-	/** The pinned commit. 40 hex characters; `main` is rejected by the tests. */
-	readonly revision: string;
-	/** SPDX-ish identifier as published on the model card. */
-	readonly license: string;
-	readonly licenseUrl: string;
+	/** The repo and pinned revision every file is fetched from. */
+	readonly source: LocalModelSource;
+	readonly license: LocalModelLicense;
 	/** One sentence for the bill of materials. */
 	readonly description: string;
+	/** What the model is good at, in one plain sentence. Shown on its Library row. */
+	readonly goodAt: string;
+	/** What a text model is fit to do. Present exactly when `kind` is `text-gen`. */
+	readonly roles?: readonly LocalModelRole[];
+	/** Present exactly when `kind` is `text-gen`. */
+	readonly parameters?: LocalModelParameters;
+	/** The context the model was trained for, in tokens. Present exactly when `kind` is `text-gen`. */
+	readonly contextLength?: number;
+	/**
+	 * The context the model server runs it at, in tokens. Never above
+	 * `contextLength`, and at least `MODEL_SERVER_AGENT_MIN_CONTEXT` for an
+	 * `agent`. Present exactly when `kind` is `text-gen`.
+	 */
+	readonly defaultContext?: number;
+	/** Present exactly when `kind` is `text-gen`. */
+	readonly memoryHint?: LocalModelMemoryHint;
 	readonly files: readonly LocalModelFile[];
 	/** Sum of every file's `bytes`. Computed, never typed by hand. */
 	readonly bytes: number;

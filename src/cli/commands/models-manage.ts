@@ -148,7 +148,7 @@ export async function modelsList(options: ListOptions): Promise<void> {
 					status: displayStatus(listing),
 					bytes: listing.entry.bytes,
 					bytesOnDisk: listing.status.bytesOnDisk,
-					license: listing.entry.license,
+					license: listing.entry.license.spdx,
 					runtime: listing.entry.runtime,
 					usedBy: usedBy(listing.entry.id),
 					...(listing.entry.pending ? { pending: listing.entry.pending } : {}),

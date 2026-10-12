@@ -120,14 +120,15 @@ function LocalModelRowInner({
 			{!compact && (
 				<div className="text-xs-plus opacity-55 select-text space-y-0.5">
 					<div>
-						{formatSize(entry.bytes)} &middot; {entry.repo}@{entry.revision.slice(0, 7)} &middot;{' '}
+						{formatSize(entry.bytes)} &middot; {entry.source.repo}@
+						{entry.source.revision.slice(0, 7)} &middot;{' '}
 						<a
-							href={entry.licenseUrl}
+							href={entry.license.url}
 							target="_blank"
 							rel="noreferrer"
 							style={{ color: theme.colors.accent }}
 						>
-							{entry.license}
+							{entry.license.spdx}
 						</a>
 					</div>
 					{installPaths.map((installPath) => (

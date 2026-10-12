@@ -34,6 +34,7 @@
  * `src/shared/formatters.ts`. Do not add another size formatter.
  */
 
+import { MODEL_SERVER_AGENT_MIN_CONTEXT } from './model-server';
 import type { NativeRuntimeId } from './native-runtimes';
 import type {
 	LocalClassifierSpec,
@@ -42,35 +43,154 @@ import type {
 	LocalModelEntry,
 	LocalModelFile,
 	LocalModelKind,
+	LocalModelKvLayout,
+	LocalModelLicense,
+	LocalModelParameters,
+	LocalModelRole,
+	LocalModelSource,
 } from './types';
 
 /** Build the pinned resolve URL for a repo file. */
-function hfUrl(repo: string, revision: string, path: string): string {
-	return `https://huggingface.co/${repo}/resolve/${revision}/${path}`;
+function hfUrl(source: LocalModelSource, path: string): string {
+	return `https://huggingface.co/${source.repo}/resolve/${source.revision}/${path}`;
 }
 
 interface ModelDraftBase {
 	id: string;
 	displayName: string;
 	runtime: NativeRuntimeId;
-	repo: string;
-	revision: string;
-	license: string;
-	licenseUrl: string;
+	source: LocalModelSource;
+	license: LocalModelLicense;
 	description: string;
+	goodAt: string;
 	files: Array<{ path: string; sha256: string; bytes: number }>;
 	pending?: string;
 }
 
+/** What only a text model declares: its roles, size, context, and attention shape. */
+interface TextGenDraft {
+	kind: 'text-gen';
+	roles: LocalModelRole[];
+	parameters: LocalModelParameters;
+	contextLength: number;
+	defaultContext: number;
+	kvLayout: LocalModelKvLayout;
+}
+
 /**
  * A draft carries its run spec exactly when its kind needs one, so an embedding
- * model without pooling metadata, or a classifier without labels, does not
- * compile.
+ * model without pooling metadata, a classifier without labels, or a text model
+ * without its context and memory shape, does not compile.
  */
-type ModelDraft =
+export type LocalModelDraft =
 	| (ModelDraftBase & { kind: 'embedding'; embedding: LocalEmbeddingSpec })
 	| (ModelDraftBase & { kind: 'classifier'; classifier: LocalClassifierSpec })
-	| (ModelDraftBase & { kind: Exclude<LocalModelKind, 'embedding' | 'classifier'> });
+	| (ModelDraftBase & TextGenDraft)
+	| (ModelDraftBase & {
+			kind: Exclude<LocalModelKind, 'embedding' | 'classifier' | 'text-gen'>;
+	  });
+
+/** Bytes per K or V element in llama.cpp's default (f16) KV cache. */
+const KV_CACHE_ELEMENT_BYTES = 2;
+
+/**
+ * KV cache bytes for 1,024 tokens of context: a key and a value per KV head per
+ * full-attention layer, at f16.
+ */
+export function kvBytesPer1kTokens(layout: LocalModelKvLayout): number {
+	return 2 * layout.layers * layout.kvHeads * layout.headDim * KV_CACHE_ELEMENT_BYTES * 1024;
+}
+
+/** `-00001-of-00003.gguf` in a split GGUF part's name. */
+const GGUF_SPLIT_PART = /-(\d{5})-of-(\d{5})\.gguf$/i;
+
+/** Which part of a split GGUF set a path is, or null for a single-file GGUF. */
+export function ggufSplitPart(path: string): { index: number; count: number } | null {
+	const match = GGUF_SPLIT_PART.exec(path);
+	return match ? { index: Number(match[1]), count: Number(match[2]) } : null;
+}
+
+/**
+ * Whether a GGUF file is a vision projector (`mmproj-*.gguf`) rather than the
+ * model's weights. llama.cpp loads it beside the model, never as the model.
+ */
+function isGgufProjector(path: string): boolean {
+	return (path.split('/').pop() ?? path).toLowerCase().startsWith('mmproj');
+}
+
+/** The model-weight GGUF files of a file list: every part of a split set, or the one file. */
+function modelGgufFiles<T extends { path: string }>(files: readonly T[]): T[] {
+	return files.filter(
+		(file) => file.path.toLowerCase().endsWith('.gguf') && !isGgufProjector(file.path)
+	);
+}
+
+/**
+ * Check that a text model's weights are one GGUF or one COMPLETE split set. A
+ * set missing a part verifies clean (every file it lists matches its hash) and
+ * then fails to load, so it is refused when the catalog module loads.
+ */
+function assertGgufSet(draft: ModelDraftBase): void {
+	const ggufs = modelGgufFiles(draft.files);
+	if (ggufs.length === 0) {
+		throw new Error(`Model "${draft.id}" is a text model with no GGUF file.`);
+	}
+	const parts = ggufs.map((file) => ggufSplitPart(file.path));
+	if (ggufs.length === 1 && parts[0] === null) return;
+	const count = parts[0]?.count ?? 0;
+	const prefix = ggufs[0].path.replace(GGUF_SPLIT_PART, '');
+	const indexes = new Set<number>();
+	for (const [i, part] of parts.entries()) {
+		if (!part || part.count !== count || ggufs[i].path.replace(GGUF_SPLIT_PART, '') !== prefix) {
+			throw new Error(`Model "${draft.id}" mixes GGUF files that are not one split set.`);
+		}
+		indexes.add(part.index);
+	}
+	for (let index = 1; index <= count; index++) {
+		if (!indexes.has(index)) {
+			throw new Error(`Model "${draft.id}" is missing part ${index} of ${count} of its GGUF.`);
+		}
+	}
+	if (indexes.size !== ggufs.length) {
+		throw new Error(`Model "${draft.id}" lists a GGUF part twice.`);
+	}
+}
+
+/** Freeze a text model's spec, checking its context and weights. */
+function freezeTextGenSpec(
+	draft: ModelDraftBase & TextGenDraft,
+	fileBytes: number
+): Pick<
+	LocalModelEntry,
+	'roles' | 'parameters' | 'contextLength' | 'defaultContext' | 'memoryHint'
+> {
+	assertGgufSet(draft);
+	if (draft.defaultContext > draft.contextLength) {
+		throw new Error(
+			`Model "${draft.id}" runs at ${draft.defaultContext} tokens, past its ${draft.contextLength}-token context.`
+		);
+	}
+	if (draft.roles.includes('agent') && draft.defaultContext < MODEL_SERVER_AGENT_MIN_CONTEXT) {
+		throw new Error(
+			`Model "${draft.id}" is an agent model but runs at ${draft.defaultContext} tokens, under the ${MODEL_SERVER_AGENT_MIN_CONTEXT} an agent harness needs.`
+		);
+	}
+	if (draft.parameters.activeB > draft.parameters.totalB) {
+		throw new Error(`Model "${draft.id}" has more active parameters than total.`);
+	}
+	const kvLayout = Object.freeze({ ...draft.kvLayout });
+	return {
+		roles: Object.freeze([...draft.roles]),
+		parameters: Object.freeze({ ...draft.parameters }),
+		contextLength: draft.contextLength,
+		defaultContext: draft.defaultContext,
+		memoryHint: Object.freeze({
+			fileBytes,
+			kvBytesPer1kTokens: kvBytesPer1kTokens(kvLayout),
+			kvLayout,
+		}),
+	};
+}
 
 /**
  * Check that an encoder spec points at files the entry actually downloads. A
@@ -90,7 +210,7 @@ function assertEncoderGraphFiles(draft: ModelDraftBase, graph: LocalEncoderGraph
 }
 
 /** Freeze the kind-specific run spec, validating it against the file list. */
-function freezeRunSpec(draft: ModelDraft): Pick<LocalModelEntry, 'embedding' | 'classifier'> {
+function freezeRunSpec(draft: LocalModelDraft): Pick<LocalModelEntry, 'embedding' | 'classifier'> {
 	if (draft.kind === 'embedding') {
 		assertEncoderGraphFiles(draft, draft.embedding);
 		return { embedding: Object.freeze({ ...draft.embedding }) };
@@ -117,30 +237,35 @@ function freezeRunSpec(draft: ModelDraft): Pick<LocalModelEntry, 'embedding' | '
  * total. Deep-frozen so a consumer cannot mutate the catalog it renders from -
  * this table is the thing the user consented to, and a renderer that could edit
  * a hash in place would make that consent meaningless.
+ *
+ * Throws for a draft that would verify clean and then fail to run: an encoder
+ * spec naming a file it does not download, an incomplete split GGUF, or a text
+ * model whose server context is past its own or under the agent floor.
  */
-function defineModel(draft: ModelDraft): LocalModelEntry {
+export function defineModel(draft: LocalModelDraft): LocalModelEntry {
 	const files = draft.files.map((file) =>
 		Object.freeze({
 			path: file.path,
-			sourceUrl: hfUrl(draft.repo, draft.revision, file.path),
+			sourceUrl: hfUrl(draft.source, file.path),
 			sha256: file.sha256,
 			bytes: file.bytes,
 		})
 	);
+	const bytes = files.reduce((total, file) => total + file.bytes, 0);
 
 	return Object.freeze({
 		id: draft.id,
 		displayName: draft.displayName,
 		kind: draft.kind,
 		runtime: draft.runtime,
-		repo: draft.repo,
-		revision: draft.revision,
-		license: draft.license,
-		licenseUrl: draft.licenseUrl,
+		source: Object.freeze({ ...draft.source }),
+		license: Object.freeze({ ...draft.license }),
 		description: draft.description,
+		goodAt: draft.goodAt,
 		files: Object.freeze(files),
-		bytes: files.reduce((total, file) => total + file.bytes, 0),
+		bytes,
 		...(draft.pending ? { pending: draft.pending } : {}),
+		...(draft.kind === 'text-gen' ? freezeTextGenSpec(draft, bytes) : {}),
 		...freezeRunSpec(draft),
 	});
 }
@@ -177,12 +302,14 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// where Whisper Base does not, and decodes a few seconds of speech in
 		// about 150 ms. The int8 graphs, because the fp32 encoder is 2.4 GB for no
 		// audible gain on dictated commands. See `local-models/stt/parakeet/engine.ts`.
-		repo: 'istupakov/parakeet-tdt-0.6b-v2-onnx',
-		revision: '0bbb45a3365852604aef28b538a8f066f4ccaa85',
-		license: 'CC-BY-4.0',
-		licenseUrl: 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2',
+		source: {
+			repo: 'istupakov/parakeet-tdt-0.6b-v2-onnx',
+			revision: '0bbb45a3365852604aef28b538a8f066f4ccaa85',
+		},
+		license: { spdx: 'CC-BY-4.0', url: 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2' },
 		description:
 			'Fast, accurate English speech recognition that runs on the CPU. Transcribes on this machine, so no audio leaves it.',
+		goodAt: 'Dictated English: names, casing and punctuation, quickly, on the CPU.',
 		files: [
 			{
 				// The NeMo log-mel front end, as a graph, so it is never re-derived by hand.
@@ -219,12 +346,14 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// because the whisper.cpp binding publishes no prebuilt binary on any
 		// platform and compiles at install time. That made it the one slot that
 		// could never ship. See `local-models/stt/whisper/engine.ts`.
-		repo: 'onnx-community/whisper-base.en',
-		revision: '51eefc0af78b103839eda9e7e4f4186acc6517fe',
-		license: 'Apache-2.0',
-		licenseUrl: 'https://huggingface.co/onnx-community/whisper-base.en',
+		source: {
+			repo: 'onnx-community/whisper-base.en',
+			revision: '51eefc0af78b103839eda9e7e4f4186acc6517fe',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/onnx-community/whisper-base.en' },
 		description:
 			'English-only speech recognition that runs on the CPU. Transcribes on this machine, so no audio leaves it.',
+		goodAt: 'Plain English dictation on modest hardware, as a fallback recognizer.',
 		// Encoder plus the MERGED q4 decoder. The merged graph carries both the
 		// with-cache and without-cache branches, so one file serves the first pass
 		// and every step after it; the q4 weights cost about a third of the fp32
@@ -252,12 +381,17 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		displayName: 'openWakeWord Base',
 		kind: 'wake-word',
 		runtime: 'onnx',
-		repo: 'littlebearlabs/openwakeword-features',
-		revision: '5e032d9ecdb798f9182ca8088284cf934f10d68e',
-		license: 'Apache-2.0',
-		licenseUrl: 'https://huggingface.co/littlebearlabs/openwakeword-features/blob/main/LICENSE',
+		source: {
+			repo: 'littlebearlabs/openwakeword-features',
+			revision: '5e032d9ecdb798f9182ca8088284cf934f10d68e',
+		},
+		license: {
+			spdx: 'Apache-2.0',
+			url: 'https://huggingface.co/littlebearlabs/openwakeword-features/blob/main/LICENSE',
+		},
 		description:
 			'The always-on front end that listens for the wake and stop words. Small, always local, and never optional: hands-free means something is listening, and that something must be on this machine.',
+		goodAt: 'Hearing the wake and stop words with little CPU, all the time.',
 		files: [
 			{
 				path: 'melspectrogram.onnx',
@@ -280,15 +414,17 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// Served from a pinned Hugging Face mirror so it rides the same pinned
 		// resolve URL as every other model; the hash is the one published with the
 		// official GitHub release asset, verified byte for byte against the mirror.
-		repo: 'harvestsu/openwakeword-onnx',
-		revision: '93d1bd6f4f48750cb6a76206ce5bd92d846820c8',
+		source: {
+			repo: 'harvestsu/openwakeword-onnx',
+			revision: '93d1bd6f4f48750cb6a76206ce5bd92d846820c8',
+		},
 		// The openWakeWord CODE is Apache-2.0, but its pretrained models are not:
 		// they are non-commercial. Stated here so the setup surface shows it before the
 		// download rather than burying it in a README.
-		license: 'CC-BY-NC-SA-4.0',
-		licenseUrl: 'https://github.com/dscripka/openWakeWord#license',
+		license: { spdx: 'CC-BY-NC-SA-4.0', url: 'https://github.com/dscripka/openWakeWord#license' },
 		description:
 			'The detector for the default wake phrase, "hey jarvis". Runs on this machine on top of the wake word front end.',
+		goodAt: 'Hearing "hey jarvis" to start a hands-free voice session.',
 		files: [
 			{
 				path: 'hey_jarvis_v0.1.onnx',
@@ -302,12 +438,17 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		displayName: 'Kokoro 82M',
 		kind: 'tts',
 		runtime: 'onnx',
-		repo: 'onnx-community/Kokoro-82M-v1.0-ONNX',
-		revision: '1939ad2a8e416c0acfeecc08a694d14ef25f2231',
-		license: 'Apache-2.0',
-		licenseUrl: 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX',
+		source: {
+			repo: 'onnx-community/Kokoro-82M-v1.0-ONNX',
+			revision: '1939ad2a8e416c0acfeecc08a694d14ef25f2231',
+		},
+		license: {
+			spdx: 'Apache-2.0',
+			url: 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX',
+		},
 		description:
 			'A neural voice that speaks replies and spoken notices from this machine, in American English. One bundled voice (Heart).',
+		goodAt: 'Reading replies and notices aloud in a natural American English voice.',
 		// Speaks since the phoneme front end shipped (espeak-ng through the
 		// `phonemizer` package, `src/main/acappella/providers/local/kokoro/`).
 		files: [
@@ -335,12 +476,23 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		displayName: 'Qwen3 1.7B Instruct (Q4_K_M)',
 		kind: 'text-gen',
 		runtime: 'llama',
-		repo: 'unsloth/Qwen3-1.7B-GGUF',
-		revision: 'd7f544eead698dbd1f15126ef60b45a1e1933222',
-		license: 'Apache-2.0',
-		licenseUrl: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF',
+		source: {
+			repo: 'unsloth/Qwen3-1.7B-GGUF',
+			revision: 'd7f544eead698dbd1f15126ef60b45a1e1933222',
+		},
+		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF' },
 		description:
 			'A small general text model that runs on this machine: names tabs, writes short summaries, drafts shell commands and pull requests, and answers yes or no for the Cue gate. The largest download here, and one you can skip if you already run Ollama or LM Studio.',
+		goodAt:
+			'Fast, small judgments: tab names, yes or no gate answers, short summaries and shell commands.',
+		roles: ['housekeeping', 'judge'],
+		// GGUF metadata at the pinned revision: 1.72B parameters, `qwen3.context_length`
+		// 40,960, 28 layers of 8 KV heads at head dimension 128.
+		parameters: { totalB: 1.7, activeB: 1.7 },
+		contextLength: 40_960,
+		// Claude Code and Codex completed turns against it at 40,960 (2026-10-11).
+		defaultContext: 40_960,
+		kvLayout: { layers: 28, kvHeads: 8, headDim: 128 },
 		// Installable since the llama runtime was proven on real hardware
 		// (docs/architecture/local-models.md, "Llama runtime on real hardware").
 		// It is NOT offered for voice routing: see `unofferedLocalModels` on that
@@ -366,12 +518,14 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// BAAI's bge-small-en-v1.5, exported to ONNX by Xenova. The default
 		// embedding model: 384 dimensions, a 34 MB download, and quick on the CPU.
 		// `model_quantized.onnx` is the q8 graph transformers.js loads by default.
-		repo: 'Xenova/bge-small-en-v1.5',
-		revision: 'ea104dacec62c0de699686887e3f920caeb4f3e3',
-		license: 'MIT',
-		licenseUrl: 'https://huggingface.co/BAAI/bge-small-en-v1.5',
+		source: {
+			repo: 'Xenova/bge-small-en-v1.5',
+			revision: 'ea104dacec62c0de699686887e3f920caeb4f3e3',
+		},
+		license: { spdx: 'MIT', url: 'https://huggingface.co/BAAI/bge-small-en-v1.5' },
 		description:
 			'Turns text into vectors so history, transcripts, and documents can be found by meaning. Small and fast, and runs on this machine.',
+		goodAt: 'Quick search by meaning over history, transcripts and notes in English.',
 		embedding: {
 			modelFile: 'onnx/model_quantized.onnx',
 			tokenizerDir: '',
@@ -426,14 +580,16 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// the finished vector. Mean-pooling `last_hidden_state` instead would skip
 		// the dense projection layers. It is trained with task prefixes, so a query
 		// and a document are embedded differently.
-		repo: 'onnx-community/embeddinggemma-300m-ONNX',
-		revision: '5090578d9565bb06545b4552f76e6bc2c93e4a66',
+		source: {
+			repo: 'onnx-community/embeddinggemma-300m-ONNX',
+			revision: '5090578d9565bb06545b4552f76e6bc2c93e4a66',
+		},
 		// Distributed under the Gemma Terms of Use, which require passing the terms
 		// (and the prohibited use policy) along with the model.
-		license: 'Gemma',
-		licenseUrl: 'https://ai.google.dev/gemma/terms',
+		license: { spdx: 'Gemma', url: 'https://ai.google.dev/gemma/terms' },
 		description:
 			'Higher-quality search by meaning with a longer reading window. A larger download than BGE Small, and runs on this machine.',
+		goodAt: 'Higher-quality search by meaning over longer text, in many languages.',
 		embedding: {
 			modelFile: 'onnx/model_q4.onnx',
 			tokenizerDir: '',
@@ -494,12 +650,14 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// built with it must display "Built with Llama" and carry the notice
 		// "Llama 4 is licensed under the Llama 4 Community License, Copyright ©
 		// Meta Platforms, Inc. All Rights Reserved." The user docs repeat this.
-		repo: 'gravitee-io/Llama-Prompt-Guard-2-22M-onnx',
-		revision: 'da68d0f6023c7aeaf6b256eec549de295d5e8740',
-		license: 'Llama-4-Community-License',
-		licenseUrl: 'https://www.llama.com/llama4/license/',
+		source: {
+			repo: 'gravitee-io/Llama-Prompt-Guard-2-22M-onnx',
+			revision: 'da68d0f6023c7aeaf6b256eec549de295d5e8740',
+		},
+		license: { spdx: 'Llama-4-Community-License', url: 'https://www.llama.com/llama4/license/' },
 		description:
 			'Scores untrusted text, such as an issue comment, for prompt injection before an agent reads it. Small, and runs on this machine.',
+		goodAt: 'Catching prompt injection in untrusted text before an agent reads it.',
 		classifier: {
 			modelFile: 'model.quant.onnx',
 			tokenizerDir: '',
@@ -546,12 +704,17 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		// export and the tokenizer that matches it live in the repo's `onnx/`
 		// directory, so the files keep that prefix and the tokenizer is read from
 		// there.
-		repo: 'protectai/deberta-v3-base-prompt-injection-v2',
-		revision: '90c9989b1a342275dd0d1a95aad283c04e075671',
-		license: 'Apache-2.0',
-		licenseUrl: 'https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2',
+		source: {
+			repo: 'protectai/deberta-v3-base-prompt-injection-v2',
+			revision: '90c9989b1a342275dd0d1a95aad283c04e075671',
+		},
+		license: {
+			spdx: 'Apache-2.0',
+			url: 'https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2',
+		},
 		description:
 			'An alternative prompt-injection classifier under a permissive license. A much larger download than Prompt Guard, and runs on this machine.',
+		goodAt: 'Catching prompt injection under a permissive license, at a larger size.',
 		classifier: {
 			modelFile: 'onnx/model.onnx',
 			tokenizerDir: 'onnx',
@@ -609,12 +772,14 @@ export function localModelsForRuntime(runtimeId: NativeRuntimeId): LocalModelEnt
 
 /**
  * The GGUF file llama.cpp opens for a text-generation model, or undefined for
- * an entry that is not one. The in-process engine and the model server both
- * load this file, so they cannot disagree on which of a model's files it is.
+ * an entry that is not one. For a split set this is part 1: llama.cpp finds the
+ * other parts beside it by name. The in-process engine and the model server
+ * both load this file, so they cannot disagree on which of a model's files it is.
  */
 export function localModelGgufFile(entry: LocalModelEntry): LocalModelFile | undefined {
 	if (entry.kind !== 'text-gen' || entry.runtime !== 'llama') return undefined;
-	return entry.files.find((file) => file.path.toLowerCase().endsWith('.gguf'));
+	const ggufs = modelGgufFiles(entry.files);
+	return ggufs.find((file) => ggufSplitPart(file.path)?.index === 1) ?? ggufs[0];
 }
 
 /** Total bytes of an arbitrary selection of models. Unknown ids contribute zero. */

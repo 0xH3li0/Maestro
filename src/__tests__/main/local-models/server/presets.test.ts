@@ -203,12 +203,13 @@ describe('modelServerEnvironment', () => {
 });
 
 describe('serverContextSize and isServerModel', () => {
-	it('runs the catalog text model at its verified context', () => {
-		expect(serverContextSize(qwen)).toBe(40_960);
+	it('runs a catalog text model at its default context', () => {
+		expect(serverContextSize(qwen)).toBe(qwen.defaultContext);
+		expect(serverContextSize({ ...qwen, defaultContext: 131_072 })).toBe(131_072);
 	});
 
-	it('runs a model with no row at the agent floor', () => {
-		expect(serverContextSize({ ...qwen, id: 'some-new-model' })).toBe(
+	it('runs a model with no default context at the agent floor', () => {
+		expect(serverContextSize({ ...qwen, defaultContext: undefined })).toBe(
 			MODEL_SERVER_AGENT_MIN_CONTEXT
 		);
 	});

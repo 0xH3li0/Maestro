@@ -50,11 +50,10 @@ vi.mock('../../../shared/local-models/model-catalog', async (importOriginal) => 
 		displayName: 'Test Tiny Model',
 		kind: 'stt' as const,
 		runtime: 'onnx' as const,
-		repo: 'maestro/test',
-		revision: '0000000000000000000000000000000000000000',
-		license: 'MIT',
-		licenseUrl: 'https://example.invalid/license',
+		source: { repo: 'maestro/test', revision: '0000000000000000000000000000000000000000' },
+		license: { spdx: 'MIT', url: 'https://example.invalid/license' },
 		description: 'Fixture entry, present only under test.',
+		goodAt: '',
 		files: Object.freeze([
 			{
 				path: 'tiny.bin',

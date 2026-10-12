@@ -200,11 +200,11 @@ export async function writeManifest(manifest: ModelManifest): Promise<void> {
 export function buildManifest(entry: LocalModelEntry, installedAt: number): ModelManifest {
 	return {
 		id: entry.id,
-		revision: entry.revision,
+		revision: entry.source.revision,
 		sha256: modelDigest(entry.files),
 		bytes: entry.bytes,
 		sourceUrl: entry.files[0]?.sourceUrl ?? '',
-		license: entry.license,
+		license: entry.license.spdx,
 		files: entry.files.map((file) => ({
 			path: file.path,
 			sha256: file.sha256,

@@ -96,7 +96,7 @@ describe('VoiceSetupPanel', () => {
 
 		// Name, license, and install path are all on screen before anything is
 		// downloaded. That is the consent surface.
-		expect(screen.getAllByText(parakeet.license).length).toBeGreaterThan(0);
+		expect(screen.getAllByText(parakeet.license.spdx).length).toBeGreaterThan(0);
 		expect(
 			screen.getByText(`/tmp/models/${parakeet.id}/${parakeet.files[0].path}`)
 		).toBeInTheDocument();

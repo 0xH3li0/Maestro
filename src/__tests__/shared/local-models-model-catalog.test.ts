@@ -23,12 +23,18 @@ import {
 	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 	WHISPER_BASE_EN_ID,
+	defineModel,
 	getLocalModel,
+	ggufSplitPart,
 	groupByLocalModelKind,
+	kvBytesPer1kTokens,
+	localModelGgufFile,
+	type LocalModelDraft,
 	isLocalModelId,
 	localModelsForRuntime,
 	sumModelBytes,
 } from '../../shared/local-models/model-catalog';
+import { MODEL_SERVER_AGENT_MIN_CONTEXT } from '../../shared/local-models/model-server';
 import { NATIVE_RUNTIMES } from '../../shared/local-models/native-runtimes';
 import { MODEL_SETS } from '../../shared/acappella/voice-models';
 
@@ -53,12 +59,14 @@ describe('local model catalog', () => {
 
 	it('pins every revision to a commit, never a moving ref', () => {
 		for (const entry of LOCAL_MODEL_CATALOG) {
-			expect(entry.revision).toMatch(/^[0-9a-f]{40}$/);
-			expect(entry.revision).not.toBe('main');
+			expect(entry.source.revision).toMatch(/^[0-9a-f]{40}$/);
+			expect(entry.source.revision).not.toBe('main');
 			for (const file of entry.files) {
 				// A `/main/` URL would make the hash below meaningless: the bytes
 				// behind it could change without the catalog knowing.
-				expect(file.sourceUrl).toContain(`/resolve/${entry.revision}/`);
+				expect(file.sourceUrl).toBe(
+					`https://huggingface.co/${entry.source.repo}/resolve/${entry.source.revision}/${file.path}`
+				);
 				expect(file.sourceUrl).not.toContain('/resolve/main/');
 			}
 		}
@@ -80,9 +88,53 @@ describe('local model catalog', () => {
 
 	it('names a license and a license URL for every model', () => {
 		for (const entry of LOCAL_MODEL_CATALOG) {
-			expect(entry.license).toBeTruthy();
-			expect(entry.licenseUrl).toMatch(/^https:\/\//);
+			expect(entry.license.spdx).toBeTruthy();
+			expect(entry.license.url).toMatch(/^https:\/\//);
 		}
+	});
+
+	it('says what every model is good at in one sentence', () => {
+		for (const entry of LOCAL_MODEL_CATALOG) {
+			expect(entry.goodAt).toMatch(/^[A-Z"].*\.$/);
+			expect(entry.goodAt).not.toContain('\n');
+		}
+	});
+
+	it('gives every text model its roles, size, context and memory shape, and no other model any', () => {
+		for (const entry of LOCAL_MODEL_CATALOG) {
+			const textGen = entry.kind === 'text-gen';
+			for (const field of [
+				entry.roles,
+				entry.parameters,
+				entry.contextLength,
+				entry.defaultContext,
+				entry.memoryHint,
+			]) {
+				expect(field !== undefined).toBe(textGen);
+			}
+			if (!textGen) continue;
+			expect(entry.roles!.length).toBeGreaterThan(0);
+			expect(entry.parameters!.activeB).toBeLessThanOrEqual(entry.parameters!.totalB);
+			expect(entry.defaultContext!).toBeLessThanOrEqual(entry.contextLength!);
+			if (entry.roles!.includes('agent')) {
+				expect(entry.defaultContext!).toBeGreaterThanOrEqual(MODEL_SERVER_AGENT_MIN_CONTEXT);
+			}
+			expect(entry.memoryHint!.fileBytes).toBe(entry.bytes);
+			expect(entry.memoryHint!.kvBytesPer1kTokens).toBe(
+				kvBytesPer1kTokens(entry.memoryHint!.kvLayout)
+			);
+			expect(Object.isFrozen(entry.roles)).toBe(true);
+			expect(Object.isFrozen(entry.memoryHint)).toBe(true);
+		}
+	});
+
+	it('records Qwen3 1.7B as its GGUF metadata describes it', () => {
+		const qwen = getLocalModel(QWEN3_1_7B_ID)!;
+		expect(qwen.roles).toEqual(['housekeeping', 'judge']);
+		expect(qwen.contextLength).toBe(40_960);
+		expect(qwen.defaultContext).toBe(40_960);
+		// 28 layers x 8 KV heads x 128 dims x (K + V) x 2 bytes x 1,024 tokens = 112 MiB.
+		expect(qwen.memoryHint!.kvBytesPer1kTokens).toBe(112 * 1024 * 1024);
 	});
 
 	it('computes each model total from its files', () => {
@@ -270,5 +322,108 @@ describe('kind labels and grouping', () => {
 		const embeddings = groups.find((group) => group.kind === 'embedding');
 		expect(embeddings?.items.map((entry) => entry.id)).toEqual(EMBEDDING_IDS);
 		expect(groupByLocalModelKind([], (entry: { kind: 'stt' }) => entry.kind)).toEqual([]);
+	});
+});
+
+describe('text model drafts', () => {
+	const SHA = 'a'.repeat(64);
+
+	function textDraft(over: Partial<Extract<LocalModelDraft, { kind: 'text-gen' }>> = {}) {
+		return {
+			id: 'test-text',
+			displayName: 'Test Text',
+			kind: 'text-gen' as const,
+			runtime: 'llama' as const,
+			source: { repo: 'maestro/test', revision: '0'.repeat(40) },
+			license: { spdx: 'Apache-2.0', url: 'https://example.invalid/license' },
+			description: 'A test model.',
+			goodAt: 'Tests.',
+			roles: ['housekeeping' as const],
+			parameters: { totalB: 30, activeB: 3 },
+			contextLength: 262_144,
+			defaultContext: 65_536,
+			kvLayout: { layers: 48, kvHeads: 4, headDim: 128 },
+			files: [{ path: 'Test-Q4_K_M.gguf', sha256: SHA, bytes: 100 }],
+			...over,
+		};
+	}
+
+	function split(count: number, indexes: number[], prefix = 'Big-Q4_K_M') {
+		return indexes.map((index) => ({
+			path: `${prefix}-${String(index).padStart(5, '0')}-of-${String(count).padStart(5, '0')}.gguf`,
+			sha256: SHA,
+			bytes: 10,
+		}));
+	}
+
+	it('reads the part of a split GGUF set from its name', () => {
+		expect(ggufSplitPart('Q-Q4_K_M-00002-of-00003.gguf')).toEqual({ index: 2, count: 3 });
+		expect(ggufSplitPart('Q-Q4_K_M.gguf')).toBeNull();
+	});
+
+	it('loads part 1 of a complete split set, listed in any order', () => {
+		const entry = defineModel(textDraft({ files: split(3, [3, 1, 2]) }));
+		expect(entry.files).toHaveLength(3);
+		expect(localModelGgufFile(entry)?.path).toBe('Big-Q4_K_M-00001-of-00003.gguf');
+		expect(entry.memoryHint!.fileBytes).toBe(30);
+	});
+
+	it('loads the model GGUF, never the vision projector beside it', () => {
+		const entry = defineModel(
+			textDraft({
+				roles: ['vision'],
+				files: [
+					{ path: 'mmproj-F16.gguf', sha256: SHA, bytes: 5 },
+					{ path: 'Test-Q4_K_M.gguf', sha256: SHA, bytes: 100 },
+				],
+			})
+		);
+		expect(localModelGgufFile(entry)?.path).toBe('Test-Q4_K_M.gguf');
+		// The projector is loaded too, so it counts toward memory.
+		expect(entry.memoryHint!.fileBytes).toBe(105);
+	});
+
+	it('refuses a split set with a part missing, repeated, or from another set', () => {
+		expect(() => defineModel(textDraft({ files: split(3, [1, 3]) }))).toThrow(
+			/missing part 2 of 3/
+		);
+		expect(() => defineModel(textDraft({ files: split(2, [1, 2, 2]) }))).toThrow(/twice/);
+		expect(() =>
+			defineModel(textDraft({ files: [...split(2, [1, 2]), ...split(2, [1], 'Other')] }))
+		).toThrow(/not one split set/);
+		expect(() =>
+			defineModel(
+				textDraft({ files: [...split(2, [1, 2]), { path: 'Loose.gguf', sha256: SHA, bytes: 1 }] })
+			)
+		).toThrow(/not one split set/);
+	});
+
+	it('refuses a text model with no GGUF', () => {
+		expect(() =>
+			defineModel(textDraft({ files: [{ path: 'weights.bin', sha256: SHA, bytes: 1 }] }))
+		).toThrow(/no GGUF/);
+	});
+
+	it('refuses a server context past the model own, or under the agent floor for an agent', () => {
+		expect(() => defineModel(textDraft({ defaultContext: 300_000 }))).toThrow(/past its/);
+		expect(() =>
+			defineModel(
+				textDraft({ roles: ['agent'], defaultContext: MODEL_SERVER_AGENT_MIN_CONTEXT - 1 })
+			)
+		).toThrow(/agent harness needs/);
+		expect(defineModel(textDraft({ roles: ['agent'] })).defaultContext).toBe(65_536);
+	});
+
+	it('refuses more active parameters than total', () => {
+		expect(() => defineModel(textDraft({ parameters: { totalB: 3, activeB: 30 } }))).toThrow(
+			/active parameters/
+		);
+	});
+
+	it('computes the KV cache per 1,024 tokens from the attention shape', () => {
+		const entry = defineModel(textDraft());
+		// 48 x 4 x 128 x 2 (K and V) x 2 bytes x 1,024 tokens.
+		expect(entry.memoryHint!.kvBytesPer1kTokens).toBe(48 * 4 * 128 * 2 * 2 * 1024);
+		expect(entry.memoryHint!.kvLayout).toEqual({ layers: 48, kvHeads: 4, headDim: 128 });
 	});
 });

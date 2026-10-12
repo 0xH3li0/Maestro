@@ -28,7 +28,6 @@
 import {
 	LOCAL_MODEL_CATALOG,
 	localModelGgufFile,
-	QWEN3_1_7B_ID,
 } from '../../../shared/local-models/model-catalog';
 import {
 	MODEL_SERVER_AGENT_MIN_CONTEXT,
@@ -51,18 +50,12 @@ export interface ServerModelPreset {
 }
 
 /**
- * The context the server gives each model. A model with no row runs at the
- * agent floor: the server is for agent harnesses, and less than that fails
- * their first prompt.
+ * The context the server gives a model: the catalog's `defaultContext`. A model
+ * without one runs at the agent floor: the server is for agent harnesses, and
+ * less than that fails their first prompt.
  */
-const SERVER_CONTEXT_BY_MODEL: Readonly<Record<string, number>> = Object.freeze({
-	// Claude Code and Codex completed turns against this model at 40,960
-	// (2026-10-11).
-	[QWEN3_1_7B_ID]: 40_960,
-});
-
 export function serverContextSize(entry: LocalModelEntry): number {
-	return SERVER_CONTEXT_BY_MODEL[entry.id] ?? MODEL_SERVER_AGENT_MIN_CONTEXT;
+	return entry.defaultContext ?? MODEL_SERVER_AGENT_MIN_CONTEXT;
 }
 
 /** Whether the server can serve a catalog entry at all: a text model llama.cpp opens. */
