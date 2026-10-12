@@ -1350,6 +1350,29 @@ describe('useRemoteHandlers', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 
+		it('forwards a literal provider slash command from new-tab dispatch unchanged', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+
+			await act(async () => {
+				await getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: '/compact',
+							inputMode: 'ai',
+							literalPrompt: true,
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: '/compact' })
+			);
+		});
+
 		it('logs error and returns early for unknown slash commands', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);

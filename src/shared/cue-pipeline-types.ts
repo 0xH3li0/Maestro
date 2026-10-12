@@ -160,6 +160,8 @@ export interface CommandNodeData {
 	cliTarget?: string;
 	/** Optional message override for `mode === 'cli'`. Defaults to {{CUE_SOURCE_OUTPUT}} when blank. */
 	cliMessage?: string;
+	/** Send into a fresh AI tab when using `mode === 'cli'`. */
+	cliNewTab?: boolean;
 	/** Owning session that provides cwd/project root + agent_id binding. */
 	owningSessionId: string;
 	/** Cached owning session name for display. */
@@ -213,6 +215,7 @@ export function commandNodeDataToCueCommand(data: CommandNodeData): CueCommand |
 				command: 'send',
 				target: data.cliTarget,
 				message: data.cliMessage || undefined,
+				...(data.cliNewTab !== undefined ? { new_tab: data.cliNewTab } : {}),
 			},
 		};
 	}
@@ -222,7 +225,10 @@ export function commandNodeDataToCueCommand(data: CommandNodeData): CueCommand |
 /** Build CommandNodeData from a wire-format CueCommand (for deserialization). */
 export function cueCommandToCommandNodeFields(
 	cmd: CueCommand
-): Pick<CommandNodeData, 'mode' | 'shell' | 'cliCommand' | 'cliTarget' | 'cliMessage'> {
+): Pick<
+	CommandNodeData,
+	'mode' | 'shell' | 'cliCommand' | 'cliTarget' | 'cliMessage' | 'cliNewTab'
+> {
 	if (cmd.mode === 'shell') {
 		return { mode: 'shell', shell: cmd.shell };
 	}
@@ -231,6 +237,7 @@ export function cueCommandToCommandNodeFields(
 		cliCommand: cmd.cli.command,
 		cliTarget: cmd.cli.target,
 		cliMessage: cmd.cli.message,
+		...(cmd.cli.new_tab !== undefined ? { cliNewTab: cmd.cli.new_tab } : {}),
 	};
 }
 

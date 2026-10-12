@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { CommandConfigPanel } from '../../../../../renderer/components/CuePipelineEditor/panels/CommandConfigPanel';
 import { THEMES } from '../../../../../renderer/constants/themes';
+import { flushAllPendingEdits } from '../../../../../renderer/hooks/cue/pendingEditsRegistry';
 import type {
 	CommandNodeData,
 	CuePipelineSessionInfo,
@@ -165,5 +166,99 @@ describe('CommandConfigPanel owning-session picker', () => {
 			owningSessionId: '',
 			owningSessionName: '',
 		});
+	});
+});
+
+describe('CommandConfigPanel agent messages', () => {
+	it('offers AI agents as message targets while allowing terminal agents to own shell commands', () => {
+		const allSessions = [...sessions, { id: 'terminal-1', name: 'Terminal', toolType: 'terminal' }];
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({ mode: 'cli', cliNewTab: true })}
+				theme={theme}
+				sessions={allSessions}
+				onUpdateNode={vi.fn()}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Owning agent' }));
+		expect(screen.getByRole('option', { name: 'Terminal · terminal' })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('option', { name: 'Alpha · claude-code' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Target agent' }));
+		expect(screen.getByRole('option', { name: 'Alpha · claude-code' })).toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: 'Terminal · terminal' })).not.toBeInTheDocument();
+	});
+
+	it('starts a new agent message in a fresh tab owned by the selected agent', () => {
+		const onUpdateNode = vi.fn();
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({ owningSessionId: 'sess-a', owningSessionName: 'Alpha' })}
+				theme={theme}
+				sessions={sessions}
+				onUpdateNode={onUpdateNode}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Agent message' }));
+		expect(onUpdateNode).toHaveBeenCalledWith('cmd-1', {
+			mode: 'cli',
+			cliCommand: 'send',
+			cliTarget: 'sess-a',
+			cliNewTab: true,
+		});
+	});
+
+	it('keeps existing agent messages on their current tab until the new-tab option is selected', () => {
+		const onUpdateNode = vi.fn();
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({
+					mode: 'cli',
+					owningSessionId: 'sess-a',
+					owningSessionName: 'Alpha',
+					cliTarget: 'sess-a',
+				})}
+				theme={theme}
+				sessions={sessions}
+				onUpdateNode={onUpdateNode}
+			/>
+		);
+
+		const checkbox = screen.getByRole('checkbox', { name: 'Run in a new agent tab' });
+		expect(checkbox).not.toBeChecked();
+		fireEvent.click(checkbox);
+		expect(onUpdateNode).toHaveBeenCalledWith('cmd-1', { cliNewTab: true });
+	});
+
+	it('flushes the chosen target and slash command with template arguments before saving', () => {
+		const onUpdateNode = vi.fn();
+		render(
+			<CommandConfigPanel
+				node={makeCommandNode({
+					mode: 'cli',
+					owningSessionId: 'sess-a',
+					owningSessionName: 'Alpha',
+					cliTarget: 'sess-a',
+					cliNewTab: true,
+				})}
+				theme={theme}
+				sessions={sessions}
+				onUpdateNode={onUpdateNode}
+			/>
+		);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Target agent' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Bravo · codex' }));
+		fireEvent.change(screen.getByRole('textbox', { name: 'Slash command or message (optional)' }), {
+			target: { value: '/triage {{CUE_GH_NUMBER}}' },
+		});
+		act(() => flushAllPendingEdits());
+
+		expect(onUpdateNode).toHaveBeenCalledWith('cmd-1', { cliTarget: 'sess-b' });
+		expect(onUpdateNode).toHaveBeenCalledWith('cmd-1', {
+			cliMessage: '/triage {{CUE_GH_NUMBER}}',
+		});
+		expect(screen.getByRole('checkbox', { name: 'Run in a new agent tab' })).toBeChecked();
 	});
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode, QueuedItem } from '../../types';
+import type { Session, SessionState, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { cueService } from '../../services/cue';
@@ -75,6 +75,11 @@ export interface UseRemoteIntegrationDeps {
 	defaultSaveToHistory: boolean;
 	/** Default value for showThinking on new tabs */
 	defaultShowThinking: ThinkingMode;
+	/** Prompt-backed commands available to the ordinary command queue. */
+	customAICommandsRef?: React.RefObject<CustomAICommand[]>;
+	speckitCommandsRef?: React.RefObject<CustomAICommand[]>;
+	openspecCommandsRef?: React.RefObject<CustomAICommand[]>;
+	bmadCommandsRef?: React.RefObject<CustomAICommand[]>;
 }
 
 /**
@@ -703,6 +708,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					ack({ success: false, error: `Agent not found: ${sessionId}` });
 					return;
 				}
+				if (targetSession.toolType === 'terminal') {
+					ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
+					return;
+				}
 				// A BUSY agent is deliberately NOT a refusal here. Busy is an
 				// agent-level state, so a brand-new tab inherits it even though it
 				// owns no process, and `dispatch --new-tab` rejects both --force and
@@ -745,17 +754,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// the tab was created: the store write above is the only thing that
 				// ran in between, but the decision below is about live state.
 				const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
-				if (isBusy) {
-					// The agent already owns a live process, so the spawn path would
-					// refuse this prompt. Queue it against the fresh tab instead:
-					// `useQueueProcessing` drains it the moment the current turn ends,
-					// and the item is built by the shared builder so it is identical
-					// to one the composer would have queued - including the frozen
-					// model/effort and the `@mention` flags, which fire at drain time.
+				const commandName = prompt.trim().split(/\s/, 1)[0];
+				const isSlashCommand =
+					commandName.startsWith('/') &&
+					[
+						...(deps.customAICommandsRef?.current ?? []),
+						...(deps.speckitCommandsRef?.current ?? []),
+						...(deps.openspecCommandsRef?.current ?? []),
+						...(deps.bmadCommandsRef?.current ?? []),
+						...(targetSession.agentCommands ?? []),
+					].some((candidate) => candidate.command === commandName && candidate.prompt?.trim());
+				if (isBusy || isSlashCommand) {
+					// Busy agents wait for their current turn. Slash commands also use
+					// the command queue on idle agents, as the composer does: its drain
+					// resolves custom and project commands and substitutes $ARGUMENTS.
+					// Sending them as plain messages would skip that resolution when
+					// busy, while the direct remote-command path lacks project commands.
 					const queued = enqueuePromptForTab({
 						sessionId,
 						tabId: createdTabId,
 						text: prompt,
+						slashCommand: isSlashCommand,
 					});
 					if (!queued) {
 						logger.warn(
@@ -777,7 +796,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// caller that doesn't atomically setActiveSessionId.
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command: prompt, inputMode: 'ai', tabId: createdTabId },
+						detail: {
+							sessionId,
+							command: prompt,
+							inputMode: 'ai',
+							tabId: createdTabId,
+							// Unexpanded provider commands go to the provider as typed.
+							literalPrompt: commandName.startsWith('/'),
+						},
 					})
 				);
 				ack({ success: true, tabId: createdTabId });

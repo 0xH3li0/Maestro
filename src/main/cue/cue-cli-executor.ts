@@ -112,7 +112,8 @@ export async function runMaestroCliSend(
 	target: string,
 	message: string,
 	timeoutMs: number = CLI_SEND_TIMEOUT_MS,
-	runId?: string
+	runId?: string,
+	newTab = false
 ): Promise<CliSendResult> {
 	const cliScriptPath = resolveMaestroCliScriptPath();
 	const truncated = message.substring(0, CLI_SEND_OUTPUT_MAX_CHARS);
@@ -121,7 +122,9 @@ export async function runMaestroCliSend(
 	return new Promise<CliSendResult>((resolve) => {
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
+			const args = [cliScriptPath, 'dispatch', target, truncated, '--background'];
+			if (newTab) args.push('--new-tab');
+			child = spawn(process.execPath, args, {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not
 				// Node - without this flag the spawn would launch the app instead
@@ -296,7 +299,13 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		}
 		const clampedTimeout =
 			timeoutMs > 0 ? Math.min(timeoutMs, CLI_SEND_TIMEOUT_MS) : CLI_SEND_TIMEOUT_MS;
-		const result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId);
+		const result = await runMaestroCliSend(
+			resolvedTarget,
+			resolvedMessage,
+			clampedTimeout,
+			runId,
+			cli.new_tab
+		);
 		const status = result.timedOut ? 'timeout' : result.ok ? 'completed' : 'failed';
 		if (result.timedOut) {
 			onLog(

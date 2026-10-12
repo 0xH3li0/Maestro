@@ -98,6 +98,27 @@ describe('buildQueuedMessageItem', () => {
 		expect(item.crossAgentMention).toBeUndefined();
 		expect(item.crossAgentOnly).toBeUndefined();
 	});
+
+	it('queues a slash command with arguments and frozen turn settings', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[1],
+			text: ' /triage\tissue 123 ',
+			slashCommand: true,
+		});
+
+		expect(item).toMatchObject({
+			type: 'command',
+			command: '/triage',
+			commandArgs: 'issue 123',
+			tabId: 'b',
+			tabName: 'Bravo',
+		});
+		expect(item.turnSettings).toBeDefined();
+		expect(item.text).toBeUndefined();
+		expect(planCrossAgentMentions).not.toHaveBeenCalled();
+	});
 });
 
 describe('enqueuePromptForTab', () => {

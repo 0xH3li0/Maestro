@@ -1499,6 +1499,10 @@ function MaestroConsoleInner() {
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
+		customAICommandsRef,
+		speckitCommandsRef,
+		openspecCommandsRef,
+		bmadCommandsRef,
 	});
 
 	// Web broadcasting hook - handles external history change notifications

@@ -35,10 +35,12 @@ export interface QueuedPromptOptions {
 	text: string;
 	/** Base64 data URLs, forwarded to the spawn. */
 	images?: string[];
+	/** Resolve a slash command through the command queue when this item drains. */
+	slashCommand?: boolean;
 }
 
 /**
- * Build the queue item a message becomes, exactly as the composer builds it.
+ * Build the queue item a message or slash command becomes, as the composer does.
  *
  * Three of these fields are easy to omit and each has a visible cost:
  * `tabName` is the label a closed tab's queued item falls back to,
@@ -56,14 +58,22 @@ export function buildQueuedMessageItem({
 	tab,
 	text,
 	images,
+	slashCommand,
 }: QueuedPromptOptions): QueuedItem {
-	const mentionPlan = planCrossAgentMentions(text, session.id);
+	const commandText = slashCommand ? text.trim() : undefined;
+	const firstWhitespace = commandText?.search(/\s/) ?? -1;
+	const mentionPlan = slashCommand ? null : planCrossAgentMentions(text, session.id);
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
 		tabId: tab.id,
-		type: 'message',
-		text,
+		...(commandText !== undefined
+			? {
+					type: 'command' as const,
+					command: firstWhitespace === -1 ? commandText : commandText.slice(0, firstWhitespace),
+					commandArgs: firstWhitespace === -1 ? '' : commandText.slice(firstWhitespace + 1).trim(),
+				}
+			: { type: 'message' as const, text }),
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
@@ -90,15 +100,16 @@ export function enqueuePromptForTab(options: {
 	tabId: string;
 	text: string;
 	images?: string[];
+	slashCommand?: boolean;
 }): QueuedItem | null {
-	const { sessionId, tabId, text, images } = options;
+	const { sessionId, tabId, text, images, slashCommand } = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId) ?? getActiveTab(session);
 	if (!tab) return null;
 
-	const item = buildQueuedMessageItem({ session, tab, text, images });
+	const item = buildQueuedMessageItem({ session, tab, text, images, slashCommand });
 	updateSessionWith(sessionId, (s) => ({
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],

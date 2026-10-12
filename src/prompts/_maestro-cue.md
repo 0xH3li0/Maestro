@@ -235,11 +235,34 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
       command: send # required; only 'send' is supported today
       target: <session-id-or-name> # required, supports template vars
       message: '{{CUE_SOURCE_OUTPUT}}' # optional; default is exactly this
+      new_tab: true # optional boolean; default false, fresh AI tab per dispatch
   # standard subscription fields all still apply (pipeline_name, target_node_key,
   # source_session, source_sub, event-specific fields like interval_minutes, etc.)
 ```
 
-**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present; `command.cli.new_tab` must be a boolean when present. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+
+**Agent message to a fresh tab:** In the Pipeline Graph, choose **Agent message**, pick the target, enter a message or slash command, and enable **Run in a new agent tab**. This uses the structured `cli` block below; no user-written CLI script is needed:
+
+```yaml
+- name: triage-new-issue
+  pipeline_name: Synapse issue triage
+  event: github.issue
+  repo: chr1sw0/Synapse-Server
+  agent_id: <synapse-agent-id>
+  action: command
+  command:
+    mode: cli
+    cli:
+      command: send
+      target: <synapse-agent-id>
+      message: '/triage {{CUE_GH_NUMBER}}'
+      new_tab: true
+```
+
+Cue substitutes event variables before delivery. Existing Maestro custom and project/provider prompt commands expand with their arguments as they do in the composer; `/triage` must already exist for the target agent. Each `new_tab: true` dispatch creates a fresh AI tab visible in the target's tab strip, while preserving the user's current view. With `new_tab` omitted or `false`, delivery uses the target's active tab. The Maestro desktop app must be running.
+
+**Completion means delivery:** A `mode: cli` command completes when its message is delivered, without waiting for the target AI turn. Downstream subscriptions receive the delivery command's stdout, not the target AI's answer.
 
 **Fields that are NOT configurable per node** (and what they actually use):
 
