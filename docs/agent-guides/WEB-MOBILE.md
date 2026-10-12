@@ -101,6 +101,11 @@ not submitted mutations: uncertain submissions require inspecting host state
 before resubmitting. Disconnected diagnostics stay local rather than recursively
 reporting bridge failures through the broken bridge.
 
+Settings hydration reads `settings:getAll` and `logger:getLogLevel` remotely but
+skips the native-only `logger:getMaxLogBuffer` call. That channel stays private:
+calling it from web-desktop aborts the settings patch, leaving `showToolCalls`
+disabled even when OMP tool rows have arrived in the canonical transcript.
+
 ### Two Clients, One Sessions Store
 
 The browser runs the same renderer as the desktop, which means every client
