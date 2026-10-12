@@ -1,5 +1,6 @@
 /**
- * Peer Agents - normalization, access labelling, and roster resolution.
+ * Peer Agents - normalization, access labelling, roster resolution, and the
+ * prompt block.
  *
  * The roster is never persisted: it is rebuilt from an agent's three stored
  * sources (explicit rows, the group grant, the worktree grant) and the live
@@ -17,8 +18,9 @@ import {
 	mergePeerAccess,
 	resolvePeerRoster,
 	resolvePeerRosterForPrompt,
+	formatPeerAgentsForPrompt,
 } from '../../shared/peerAgents';
-import type { PeerRosterInput } from '../../shared/peerAgents';
+import type { PeerRosterInput, ResolvedPeer } from '../../shared/peerAgents';
 import type { PeerAccess, PeerAgent } from '../../shared/types';
 
 const R: PeerAccess = { read: true, write: false };
@@ -28,6 +30,39 @@ const NONE: PeerAccess = { read: false, write: false };
 
 function agent(id: string, name: string, extra: Partial<PeerRosterInput> = {}): PeerRosterInput {
 	return { id, name, ...extra };
+}
+
+function peer(
+	sessionId: string,
+	name: string,
+	access: PeerAccess,
+	description?: string
+): ResolvedPeer {
+	return {
+		sessionId,
+		name,
+		...access,
+		...(description === undefined ? {} : { description }),
+		source: 'explicit',
+	};
+}
+
+/** The table of a rendered block: header, separator, then one line per peer. */
+function tableLines(block: string): string[] {
+	return block.split('\n').filter((line) => line.startsWith('|'));
+}
+
+/** The peer rows of a rendered block, without the header and the separator. */
+function peerRows(block: string): string[] {
+	return tableLines(block).slice(2);
+}
+
+/** The cells of one table line. A pipe escaped inside a cell does not split it. */
+function cellsOf(line: string): string[] {
+	return line
+		.split(/(?<!\\)\|/)
+		.slice(1, -1)
+		.map((cell) => cell.trim());
 }
 
 describe('normalizePeerAgents', () => {
@@ -482,5 +517,193 @@ describe('resolvePeerRoster', () => {
 		const before = JSON.stringify(all);
 		resolvePeerRoster(me, all);
 		expect(JSON.stringify(all)).toBe(before);
+	});
+});
+
+describe('formatPeerAgentsForPrompt', () => {
+	describe('nothing to say', () => {
+		it("renders '' for an empty roster, so no bare heading reaches the agent", () => {
+			expect(formatPeerAgentsForPrompt([])).toBe('');
+		});
+
+		it("renders '' when no peer in the roster has access", () => {
+			expect(formatPeerAgentsForPrompt([peer('a', 'Alpha', NONE)])).toBe('');
+		});
+	});
+
+	describe('the table', () => {
+		it('renders three columns when no peer has a description', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R), peer('b', 'Bravo', RW)]);
+			const lines = tableLines(block);
+			expect(lines[0]).toBe('| Agent | Agent ID | Access |');
+			expect(lines[1]).toBe('| ----- | -------- | ------ |');
+			expect(lines.slice(2)).toEqual([
+				'| Alpha | `a` | Consult only |',
+				'| Bravo | `b` | Consult + Delegate |',
+			]);
+			expect(block).not.toContain('Notes');
+		});
+
+		it('widens every row to four columns when one peer has a description', () => {
+			const block = formatPeerAgentsForPrompt([
+				peer('a', 'Alpha', R, 'Owns the API'),
+				peer('b', 'Bravo', RW),
+			]);
+			const lines = tableLines(block);
+			expect(lines[0]).toBe('| Agent | Agent ID | Access | Notes |');
+			expect(lines[1]).toBe('| ----- | -------- | ------ | ----- |');
+			expect(lines.map((line) => cellsOf(line).length)).toEqual([4, 4, 4, 4]);
+			expect(cellsOf(lines[2])).toEqual(['Alpha', '`a`', 'Consult only', 'Owns the API']);
+			// The peer with no description still gets its fourth cell, empty.
+			expect(cellsOf(lines[3])).toEqual(['Bravo', '`b`', 'Consult + Delegate', '']);
+		});
+
+		it('does not widen the table for a description that is only whitespace', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R, '   ')]);
+			expect(tableLines(block)[0]).toBe('| Agent | Agent ID | Access |');
+			expect(cellsOf(peerRows(block)[0])).toHaveLength(3);
+		});
+
+		it('renders each of the three access labels in its own row', () => {
+			const block = formatPeerAgentsForPrompt([
+				peer('a', 'Alpha', R),
+				peer('b', 'Bravo', W),
+				peer('c', 'Charlie', RW),
+			]);
+			expect(peerRows(block).map((row) => cellsOf(row)[2])).toEqual([
+				'Consult only',
+				'Delegate only',
+				'Consult + Delegate',
+			]);
+		});
+
+		it('puts the agent id in every row, because the name is not addressable', () => {
+			const roster = [
+				peer('11111111-aaaa', 'Alpha', R),
+				peer('22222222-bbbb', 'Bravo', W, 'Runs the builds'),
+				peer('33333333-cccc', 'Charlie', RW),
+			];
+			const rows = peerRows(formatPeerAgentsForPrompt(roster));
+			expect(rows).toHaveLength(roster.length);
+			expect(rows.map((row) => cellsOf(row)[1])).toEqual(
+				roster.map((entry) => `\`${entry.sessionId}\``)
+			);
+		});
+
+		it('leaves a peer with no access out of the table and keeps the rest', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', NONE), peer('b', 'Bravo', R)]);
+			expect(peerRows(block)).toEqual(['| Bravo | `b` | Consult only |']);
+			expect(block).not.toContain('No access');
+		});
+
+		it('keeps the order it was given (the resolver sorts, the formatter does not)', () => {
+			const block = formatPeerAgentsForPrompt([peer('z', 'Zulu', R), peer('a', 'Alpha', R)]);
+			expect(peerRows(block).map((row) => cellsOf(row)[0])).toEqual(['Zulu', 'Alpha']);
+		});
+
+		it('escapes a pipe and folds a line break in a name or a note, so a cell cannot break the table', () => {
+			const block = formatPeerAgentsForPrompt([
+				peer('a', 'Front | End', R, 'Ask about\nthe UI | the theme'),
+			]);
+			const rows = peerRows(block);
+			expect(rows).toEqual([
+				'| Front \\| End | `a` | Consult only | Ask about the UI \\| the theme |',
+			]);
+			expect(cellsOf(rows[0])).toHaveLength(4);
+		});
+	});
+
+	describe('the text around the table', () => {
+		it('opens with the heading and states that the Access column is a hard rule', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R)]);
+			expect(block.split('\n')[0]).toBe('## Peer Agents');
+			expect(block).toContain('The Conductor has authorized you');
+			expect(block).toContain('The Access column is a hard rule');
+		});
+
+		it('explains all three access labels, whichever ones the roster uses', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R)]);
+			expect(block).toContain('- **Consult + Delegate** -');
+			expect(block).toContain('- **Consult only** -');
+			expect(block).toContain('- **Delegate only** -');
+		});
+
+		it('mentions the Notes column only when the table has one', () => {
+			const plain = formatPeerAgentsForPrompt([peer('a', 'Alpha', R)]);
+			expect(plain).not.toContain('Notes column');
+			expect(plain).toContain("from what you know of a peer's scope");
+
+			const withNotes = formatPeerAgentsForPrompt([peer('a', 'Alpha', R, 'Owns the API')]);
+			expect(withNotes).toContain('The Notes column is a hint from the Conductor');
+			expect(withNotes).toContain("from the Notes column and what you know of a peer's scope");
+		});
+
+		it('says what is out of bounds and that the user must be told', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R)]);
+			expect(block).toContain('is out of bounds. Say so instead.');
+			expect(block).toContain('Tell the user which peer you reached and why');
+		});
+	});
+
+	describe('the how-to', () => {
+		it('teaches only the consult command when every peer is consult-only', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', R), peer('b', 'Bravo', R)]);
+			expect(block).toContain('`maestro-cli ask <agent-id> "<question>"`');
+			expect(block).not.toContain('dispatch');
+			expect(block).not.toContain('--notify-on-complete');
+		});
+
+		it('teaches only the delegate command when every peer is delegate-only', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', W)]);
+			expect(block).toContain(
+				'`maestro-cli dispatch <agent-id> "<task>" --new-tab --notify-on-complete <your-agent-id>`'
+			);
+			expect(block).not.toContain('ask <agent-id>');
+		});
+
+		it('teaches both commands when the roster holds both kinds of access', () => {
+			const mixed = formatPeerAgentsForPrompt([peer('a', 'Alpha', R), peer('b', 'Bravo', W)]);
+			const both = formatPeerAgentsForPrompt([peer('c', 'Charlie', RW)]);
+			for (const block of [mixed, both]) {
+				expect(block).toContain('ask <agent-id> "<question>"');
+				expect(block).toContain('dispatch <agent-id> "<task>" --new-tab --notify-on-complete');
+			}
+		});
+
+		it("writes the agent's own id and CLI command into the commands when given", () => {
+			const cli = 'node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js"';
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', RW)], {
+				agentId: 'me-123',
+				cliCommand: cli,
+			});
+			expect(block).toContain(`\`${cli} ask <agent-id> "<question>"\``);
+			expect(block).toContain(
+				`\`${cli} dispatch <agent-id> "<task>" --new-tab --notify-on-complete me-123\``
+			);
+			expect(block).not.toContain('<your-agent-id>');
+			expect(block).not.toContain('`maestro-cli ');
+		});
+
+		it('falls back to the bare command and a placeholder when the options are absent or blank', () => {
+			const roster = [peer('a', 'Alpha', RW)];
+			const absent = formatPeerAgentsForPrompt(roster);
+			expect(absent).toContain('`maestro-cli ask <agent-id> "<question>"`');
+			expect(absent).toContain('--notify-on-complete <your-agent-id>`');
+			expect(formatPeerAgentsForPrompt(roster, { agentId: '  ', cliCommand: '  ' })).toBe(absent);
+		});
+
+		it('leaves no template variable in the block for a later substitution pass to miss', () => {
+			const block = formatPeerAgentsForPrompt([peer('a', 'Alpha', RW, 'Owns the API')], {
+				agentId: 'me-123',
+			});
+			expect(block).not.toContain('{{');
+		});
+	});
+
+	it('does not mutate the roster', () => {
+		const roster = [peer('b', 'Bravo', RW, ' a | note '), peer('a', 'Alpha', NONE)];
+		const before = JSON.stringify(roster);
+		formatPeerAgentsForPrompt(roster, { agentId: 'me' });
+		expect(JSON.stringify(roster)).toBe(before);
 	});
 });
