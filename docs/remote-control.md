@@ -191,6 +191,11 @@ password, and no Tailscale Serve route, certificate provisioning, advertisement 
 administrator step. Tailscale supplies the encrypted network; Maestro's paired-device
 credential supplies application authorization.
 
+The normal control server stays loopback-only unless LAN access is enabled separately.
+Lite opens its consented private listener on the assigned Tailscale interface; sharing
+TCP port 56036 with a loopback-only backend does not require broadening that backend's
+bind address.
+
 #### Enable the host once
 
 1. Keep full Maestro running on a machine connected to Tailscale. Open
