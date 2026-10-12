@@ -96,6 +96,38 @@ describe('direct tailnet transport and consent', () => {
 		await h.close();
 		expect((await host()).host).toBeUndefined();
 	});
+	it.each(['none', 'disabled', 'enabled'])(
+		'restores only acknowledged consent when shutdown cancels a saved enable (%s)',
+		async (priorConsent) => {
+			const h = await host();
+			if (priorConsent !== 'none') {
+				await h.enable(true);
+				if (priorConsent === 'disabled') await h.disable();
+				else {
+					fixture.status = state({ BackendState: 'Stopped' });
+					await h.refresh();
+					fixture.status = state();
+				}
+			}
+			let finishWrite!: () => void;
+			const persist = vi.mocked(rename).getMockImplementation()!;
+			vi.mocked(rename).mockImplementationOnce(async (...args) => {
+				await persist(...args);
+				await new Promise<void>((resolve) => (finishWrite = resolve));
+			});
+			const enabling = h.enable(true);
+			const cancelled = expect(enabling).rejects.toThrow();
+			await vi.waitFor(() => expect(finishWrite).toBeTypeOf('function'));
+			const closing = h.close();
+			finishWrite();
+			await Promise.all([cancelled, closing]);
+			const restored = await host();
+			expect(restored.state.enabled).toBe(priorConsent === 'enabled');
+			expect(
+				restored.host?.isPublishedRequest('100.64.0.10:56036', '100.64.0.20', '100.64.0.10')
+			).toBe(priorConsent === 'enabled' ? true : undefined);
+		}
+	);
 	it('cancels a pending enable on shutdown while allowing a later explicit enable after disable', async () => {
 		const h = await host();
 		await h.refresh();

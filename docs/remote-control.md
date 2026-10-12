@@ -299,6 +299,10 @@ access. Restart restores consent only after read-only daemon/interface validatio
 it does not recreate routes or silently switch networks. Periodic checks close
 access during an outage and recover only the originally consented network. A changed
 node/network requires explicit review rather than overwriting unrelated settings.
+If host shutdown cancels **Turn on access** while its consent write is pending,
+shutdown waits for the prior consent to be restored before completing. A cancelled
+enable cannot turn access on at the next launch; previously completed consent
+still survives normal host shutdown.
 
 On the host, open **Manage access**. **Turn off access** closes the application
 path/private listener without changing Tailscale or erasing paired devices. Choose

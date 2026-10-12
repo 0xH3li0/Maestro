@@ -197,15 +197,21 @@ export class DirectTailnetHost {
 			if (!this.snapshot || Date.now() - this.snapshot.checkedAt >= 45000)
 				throw new Error(this.state.message);
 			const state = this.snapshot;
-			await this.save({
+			const previousConsent = this.consent;
+			const nextConsent: Consent = {
 				version: 1,
 				enabled: true,
 				instanceId: this.instanceId,
 				device: state.device,
 				tailnet: state.tailnet,
 				address: state.address,
-			});
-			if (revision !== this.revision) throw new Error('Direct access request was cancelled.');
+			};
+			await this.save(nextConsent);
+			if (revision !== this.revision) {
+				// Undo only this unacknowledged enable before shutdown can finish.
+				await this.save(previousConsent ?? { ...nextConsent, enabled: false });
+				throw new Error('Direct access request was cancelled.');
+			}
 			this.state.enabled = true;
 			await this.refresh();
 		});
