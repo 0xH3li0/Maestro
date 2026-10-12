@@ -1,10 +1,11 @@
 /**
- * AgentTurnSettings - the model and effort an agent node runs at.
+ * AgentTurnSettings - the model and effort a Cue agent run uses.
  *
- * Writes `tier` OR an exact `model`, plus `effort`, onto the node. The
- * serializer copies them onto the subscription that runs the node, and the
- * engine resolves them per provider with the same tables Auto Run uses, so
- * "High" here means the provider's top model and the top of its effort ladder.
+ * Two surfaces mount it: a Pipeline Graph agent node and the Scheduled Tasks
+ * form. It edits `tier` OR an exact `model`, plus `effort`; the host stores
+ * them on the subscription, and the engine resolves them per provider with the
+ * same tables Auto Run uses, so "High" here means the provider's top model and
+ * the top of its effort ladder.
  *
  * Tier options are labelled with the model they resolve to for this agent's
  * provider. A provider with no tier table (Codex, OpenCode) offers only the
@@ -13,7 +14,7 @@
 
 import { useState } from 'react';
 import type { Theme } from '../../../types';
-import type { AgentNodeData } from '../../../../shared/cue-pipeline-types';
+import type { CueTurnSettings } from '../../../../shared/cue/turn-settings';
 import type { ToolType } from '../../../../shared/types';
 import {
 	TIER_LEVELS,
@@ -31,9 +32,12 @@ const EXACT_MODEL = 'exact';
 const LEVEL_LABELS = { low: 'Low', medium: 'Medium', high: 'High' } as const;
 
 interface AgentTurnSettingsProps {
-	data: AgentNodeData;
+	/** The current choice plus the provider it runs on. An agent node's data
+	 *  fits as-is. An unknown provider offers only the default and an exact id. */
+	data: CueTurnSettings & { toolType?: string };
 	theme: Theme;
-	onChange: (patch: Partial<AgentNodeData>) => void;
+	/** Receives the changed axes. An `undefined` value clears that axis. */
+	onChange: (patch: Partial<CueTurnSettings>) => void;
 }
 
 export function AgentTurnSettings({ data, theme, onChange }: AgentTurnSettingsProps) {

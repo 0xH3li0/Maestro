@@ -17,6 +17,7 @@
 
 import type { ToolType } from '../types';
 import { resolveTurnSettings, type ResolvedTurnSettings } from '../autorunTurnSettings';
+import { TIER_LEVELS, asTierLevel } from '../modelTiers';
 import type { CueSubscription } from './contracts';
 
 /** The three per-subscription model fields, carried from dispatch to spawn. */
@@ -87,4 +88,106 @@ export function formatCueTurnSettings(sub: CueTurnSettings): string {
 	]
 		.filter(Boolean)
 		.join(', ');
+}
+
+/**
+ * An edit to a subscription's model choice. `undefined` leaves an axis alone,
+ * `null` clears it back to the agent's own value. `null` rather than
+ * `undefined` for "clear" because the patch crosses IPC as JSON, which drops
+ * `undefined` keys.
+ */
+export interface CueTurnSettingsPatch {
+	tier?: CueTurnSettings['tier'] | null;
+	model?: string | null;
+	effort?: CueTurnSettings['effort'] | null;
+}
+
+/** Whether a patch asks for any change at all. */
+export function hasCueTurnSettingsPatch(patch: CueTurnSettingsPatch | undefined): boolean {
+	return (
+		!!patch && (patch.tier !== undefined || patch.model !== undefined || patch.effort !== undefined)
+	);
+}
+
+/**
+ * Apply a model-choice patch to a raw subscription record, in place.
+ *
+ * Tier and exact model are one choice with two spellings, so setting either
+ * removes the other: a caller that says `tier: high` on a subscription pinned
+ * to a model gets the tier, never a record the validator rejects for carrying
+ * both. Returns the reason the patch was refused, or `null` when applied.
+ */
+export function applyCueTurnSettingsPatch(
+	target: Record<string, unknown>,
+	patch: CueTurnSettingsPatch
+): string | null {
+	const model = typeof patch.model === 'string' ? patch.model.trim() : patch.model;
+	if (patch.tier && model) return 'set a model tier or an exact model, not both';
+	if (patch.tier !== undefined && patch.tier !== null && !asTierLevel(patch.tier)) {
+		return `tier must be one of: ${TIER_LEVELS.join(', ')}`;
+	}
+	if (patch.effort !== undefined && patch.effort !== null && !asTierLevel(patch.effort)) {
+		return `effort must be one of: ${TIER_LEVELS.join(', ')}`;
+	}
+	if (model === '') return 'model needs a model id';
+
+	const setsAny = !!patch.tier || !!model || !!patch.effort;
+	if (setsAny && (target.action === 'command' || target.action === 'notify')) {
+		return `a model, tier, or effort applies to agent runs, not to an action "${String(target.action)}" subscription`;
+	}
+
+	if (patch.tier !== undefined) {
+		if (patch.tier === null) delete target.tier;
+		else {
+			target.tier = patch.tier;
+			delete target.model;
+		}
+	}
+	if (model !== undefined) {
+		if (model === null) delete target.model;
+		else {
+			target.model = model;
+			delete target.tier;
+		}
+	}
+	if (patch.effort !== undefined) {
+		if (patch.effort === null) delete target.effort;
+		else target.effort = patch.effort;
+	}
+	return null;
+}
+
+/** A parsed `--tier` / `--model` / `--effort` set, or why it was refused. */
+export type CueTurnSettingsInputResult =
+	| { ok: true; settings: CueTurnSettings }
+	| { ok: false; error: string; code: string };
+
+/**
+ * Validate the raw strings a caller typed for tier / model / effort. Shared by
+ * every CLI verb that accepts the three flags, so they refuse the same typos
+ * with the same words.
+ */
+export function parseCueTurnSettingsInput(input: {
+	tier?: string;
+	model?: string;
+	effort?: string;
+}): CueTurnSettingsInputResult {
+	const levels = TIER_LEVELS.join(', ');
+	const tier = input.tier !== undefined ? asTierLevel(input.tier.trim().toLowerCase()) : undefined;
+	if (input.tier !== undefined && !tier) {
+		return { ok: false, error: `--tier must be one of: ${levels}`, code: 'BAD_TIER' };
+	}
+	const effort =
+		input.effort !== undefined ? asTierLevel(input.effort.trim().toLowerCase()) : undefined;
+	if (input.effort !== undefined && !effort) {
+		return { ok: false, error: `--effort must be one of: ${levels}`, code: 'BAD_EFFORT' };
+	}
+	const model = input.model?.trim() || undefined;
+	if (input.model !== undefined && !model) {
+		return { ok: false, error: '--model needs a model id', code: 'BAD_MODEL' };
+	}
+	if (tier && model) {
+		return { ok: false, error: 'pass --tier or --model, not both', code: 'TIER_AND_MODEL' };
+	}
+	return { ok: true, settings: cueTurnSettingsOf({ tier, model, effort }) ?? {} };
 }
