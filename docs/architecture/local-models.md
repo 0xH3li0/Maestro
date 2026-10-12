@@ -83,6 +83,7 @@ flowchart TD
 | `model-fit.ts`                                                    | `modelFit()`, `HardwareProfile`, `describeHardwareProfile()`, `hardwareFitCaveat()`, `MODEL_FIT_LABELS`: whether a model runs on a computer, and the sentence that says why                                                                                                                                                                                                               |
 | `library.ts`                                                      | `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` group and badge models                                                                                                                                                                                                                                                     |
 | `user-models.ts`                                                  | `huggingFaceModelRecord()`, `userLocalModelEntry()`, `parseUserLocalModels()`: a model the user adds from Hugging Face, as a record and as a catalog entry                                                                                                                                                                                                                                |
+| `model-routing.ts`, `model-routing-examples.ts`                   | Model routing by example: `MODEL_ROUTING_EXAMPLES` (the shipped labeled prompts), the corrections file shape, `normalizeModelRoutingText()`, and `voteModelRoute()`: see [Model routing](#model-routing)                                                                                                                                                                                  |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
@@ -120,6 +121,8 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `sources.ts`                   | `LocalModelSource`, `sourceForAssignment()`, `readLocalModelAssignments()`                                               |
 | `task-router.ts`               | `runLocalTask()` and its embedding, classifier, and speech-to-text twins: assignment picks the source                    |
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)                              |
+| `model-router.ts`              | `EmbeddingRouter`: a tier and an effort from a prompt's nearest labeled examples (below)                                 |
+| `model-routing-corrections.ts` | `ModelRoutingCorrectionStore` over `userData/model-routing-corrections.json`: the user's routing corrections             |
 | `system-one/`                  | The System One engines, key, settings, and ledger: see [System One](#system-one-engines-the-router-entry-and-the-ledger) |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`                           |
 | `errors.ts`                    | `LocalModelError` with a stable `code`, a user-facing `recovery`, and the `consumerId`                                   |
@@ -229,6 +232,7 @@ userData/models/<model-id>/      manifest.json + the model's files
 userData/runtimes/<runtime-id>/  an installed native runtime
 userData/embeddings.db           the semantic index's vectors (SQLite, WAL)
 userData/local-models-user.json  the models the user added from Hugging Face
+userData/model-routing-corrections.json  the user's model routing corrections
 ```
 
 `local-models-user.json` sits beside the models root, not inside it, so "remove all models" does
@@ -1760,6 +1764,73 @@ from one of them reaches the service as a caller that names no agent: the global
 daily budget hold, the per-agent cap and the per-agent switch do not, and the ledger row has no
 agent. Their prompt is gated correctly (the builder knows the agent), so an agent that is switched
 off is not told about System One; it is only not stopped if it asks anyway. Not fixed here: stamping the identity there also makes a `dispatch` or an `ask` from those runs write a delegation notice into the agent's transcript, and what that does for a run with no tab was not checked.
+
+## Model routing
+
+Model routing is a fast judgment of how much model a turn needs: a tier and an effort, in the one
+vocabulary of `TIER_LEVELS` (`low`, `medium`, `high`). Three kinds of router can make it (an
+embedding router, a local judge, a System One engine). This section covers the first; the task,
+the timeout and the ledger are a later part of it.
+
+### The embedding router: `getEmbeddingRouter().route(source, text)`
+
+`model-router.ts` generates no text. It embeds the prompt with an embedding model (`embedTexts`,
+the service semantic search uses), finds the labeled prompts nearest to it, and lets them vote.
+
+```
+prompt -> normalizeModelRoutingText -> embedTexts (query mode) -> nearest 5 of the labeled prompts
+                                                                     -> voteModelRoute -> tier, effort, margins
+```
+
+**The labeled prompts** come from two places, merged by `mergeModelRoutingExamples()`:
+
+| Source                 | Where                                                                                 | Notes                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| The shipped examples   | `MODEL_ROUTING_EXAMPLES` in `src/shared/local-models/model-routing-examples.ts`       | 57 coding requests, 19 per tier, each with a tier and an effort. A typed module, in the bundle. |
+| The user's corrections | `userData/model-routing-corrections.json`, through `getModelRoutingCorrectionStore()` | At most 500, oldest out first. `effort` is optional: a tier-only correction has no effort vote. |
+
+A correction for the exact text of a shipped example replaces it. The shipped examples are the
+TUNE half of the routing set. The report half is the eval's fixture, and a prompt belongs to one
+half only.
+
+**The vote** (`voteModelRoute()` in `src/shared/local-models/model-routing.ts`, pure):
+
+| Rule                                                     | Why                                                                                                            |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Each neighbour weighs `1 / max(0.01, 1 - similarity)`    | The standard inverse-distance weight. A near prompt says more than a far one.                                  |
+| An exact match weighs 100                                | A corrected prompt is its own nearest neighbour and outvotes any four others. No special case for corrections. |
+| Tier and effort are voted separately                     | They differ: a mechanical change across files is medium tier at low effort.                                    |
+| The confidence is the margin: (winner - runner-up) / all | 1 is unanimous, 0 is a tie. One per axis: `tierConfidence`, `effortConfidence`.                                |
+| A tie goes to the higher level                           | Too much model costs money; too little costs a wrong answer.                                                   |
+| No neighbour with an effort label                        | The effort is the tier that won, at confidence 0.                                                              |
+
+**The vectors** are held in memory under `localModelSourceKey(source)`, one source at a time:
+
+| Event                                    | What is embedded                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| First prompt after a start, or `warm()`  | Every labeled prompt, once                                       |
+| Any later prompt                         | The prompt only                                                  |
+| A new correction                         | That correction only                                             |
+| A different source (the model changed)   | Every labeled prompt again; the old vectors are dropped          |
+| The same source answers in another width | Every labeled prompt again, once (an endpoint swapped its model) |
+
+Rules that are easy to break:
+
+- **The build is never tied to one caller.** The first prompt has to embed every example, which
+  can take longer than a send may wait. A caller whose signal aborts stops WAITING (a cancelled
+  `LocalModelError`); the build runs on and the next prompt finds it done. Tied to the caller, a
+  slow machine would abandon the build on every send and never route at all.
+- **Both sides are embedded in `query` mode.** A nearest-neighbour vote compares a prompt with
+  other prompts. Embedding the examples as documents would measure how well each one ANSWERS the
+  prompt.
+- **A prompt is routed as it would be stored.** `normalizeModelRoutingText()` replaces secrets,
+  trims, and cuts to 2,000 characters, for the router and for the corrections store alike, so a
+  correction is the exact match of its prompt. Secrets are replaced before the cut.
+- **It decides nothing about whether routing runs.** No assignment, no timeout, no ledger. A source
+  that cannot run fails as itself, never by falling back to another.
+
+Not measured yet: agreement with a person's labels, latency, and whether 5 neighbours and this
+weighting are the right choice. The routing eval reports those.
 
 ## Speech-to-text and dictation
 
