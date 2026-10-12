@@ -13,6 +13,8 @@ import { execFile, execFileSync } from 'child_process';
  * shell leaks. A `CLAUDE_CODE_*` variable from a parent Claude Code session
  * makes the child behave as a nested session, a Maestro variable would point it
  * at live app data, and an inherited base URL would send it somewhere else.
+ * `PWD` names THIS process's directory, not the one the child is started in,
+ * and OpenCode 2 works in the directory `PWD` names when it is set.
  */
 export function providerCliEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {};
@@ -20,6 +22,7 @@ export function providerCliEnv(extra: Record<string, string>): NodeJS.ProcessEnv
 		if (key === 'CLAUDECODE' || key === 'CLAUDE_PID' || key === 'CLAUDE_EFFORT') continue;
 		if (key.startsWith('CLAUDE_CODE_') || key.startsWith('MAESTRO_')) continue;
 		if (key === 'ANTHROPIC_BASE_URL' || key === 'OPENAI_BASE_URL') continue;
+		if (key === 'PWD') continue;
 		env[key] = value;
 	}
 	return { ...env, ...extra };

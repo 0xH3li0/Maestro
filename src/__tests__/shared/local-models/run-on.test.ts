@@ -509,6 +509,9 @@ describe('resolveRunOnLaunch: Copilot CLI', () => {
 				COPILOT_PROVIDER_WIRE_API: 'completions',
 				COPILOT_PROVIDER_API_KEY: RUN_ON_PLACEHOLDER_KEY,
 				COPILOT_PROVIDER_WIRE_MODEL: 'qwen3:latest',
+				// A name no model family matches, so the model's own name never
+				// picks a tool set the source cannot parse.
+				COPILOT_PROVIDER_MODEL_ID: 'maestro-run-on',
 				// The window, split into what the prompt and the reply may use.
 				COPILOT_PROVIDER_MAX_PROMPT_TOKENS: String(RUN_ON_DEFAULT_CONTEXT_TOKENS - 8192),
 				COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: '8192',
@@ -542,6 +545,23 @@ describe('resolveRunOnLaunch: Copilot CLI', () => {
 			COPILOT_PROVIDER_MAX_PROMPT_TOKENS: '168000',
 			COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: '32000',
 		});
+	});
+
+	it('never lets the name of the model choose the tools Copilot CLI sends', () => {
+		// Measured: `--model gpt-oss-20b-mxfp4` alone made Copilot CLI send a
+		// freeform `apply_patch` tool, which llama-server refuses with a 500.
+		const resolution = copilot({
+			target: {
+				type: 'source',
+				endpointId: OLLAMA.id,
+				model: 'gpt-oss-20b-mxfp4',
+				contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS,
+			},
+		});
+
+		expect(resolution.envVars.COPILOT_PROVIDER_WIRE_MODEL).toBe('gpt-oss-20b-mxfp4');
+		expect(resolution.envVars.COPILOT_PROVIDER_MODEL_ID).toBe('maestro-run-on');
+		expect(resolution.harnessModel).toBe('gpt-oss-20b-mxfp4');
 	});
 
 	it('blanks a bearer token even when the agent sets it, so it never reaches the source', () => {

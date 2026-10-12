@@ -121,6 +121,17 @@ export const RUN_ON_KEY_ENV_VAR = 'MAESTRO_RUN_ON_KEY';
  */
 const RUN_ON_PROVIDER_ID = 'maestro';
 
+/**
+ * What Copilot CLI is told the model IS (`COPILOT_PROVIDER_MODEL_ID`), apart
+ * from the name it sends the source. Copilot CLI picks its tools from that id,
+ * which defaults to `--model`: a name it takes for a GPT model gets a freeform
+ * `apply_patch` tool (`"type": "custom"`), and `llama-server` answers a request
+ * that carries one with 500 "Unsupported tool type". Measured 2026-10-12 with
+ * Copilot CLI 1.0.95 and `gpt-oss-20b-mxfp4`: every call failed until the id
+ * was a name no family matches, which gets plain function tools.
+ */
+const COPILOT_NEUTRAL_MODEL_ID = 'maestro-run-on';
+
 /** The variable OpenCode reads an inline config document from. */
 export const OPENCODE_CONFIG_ENV_VAR = 'OPENCODE_CONFIG_CONTENT';
 
@@ -266,7 +277,8 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 	// is given, so the URL carries `/v1`. Measured: the source's key is the only
 	// credential sent (no GitHub token; a launch with no key sends an empty
 	// bearer), `--model` names the model, and a resumed session stays on the
-	// source.
+	// source. The model's name must not choose the tools: see
+	// COPILOT_NEUTRAL_MODEL_ID.
 	'copilot-cli': {
 		supported: true,
 		baseUrlEnvVar: 'COPILOT_PROVIDER_BASE_URL',
@@ -293,6 +305,9 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 					// The name sent to the source. Left in the shell for another
 					// provider, it went out in place of `--model` (measured).
 					COPILOT_PROVIDER_WIRE_MODEL: model,
+					// What picks Copilot CLI's tools. Never the model's own name, and
+					// never a value left in the shell for another provider.
+					COPILOT_PROVIDER_MODEL_ID: COPILOT_NEUTRAL_MODEL_ID,
 					COPILOT_PROVIDER_MAX_PROMPT_TOKENS: String(contextTokens - outputTokens),
 					COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: String(outputTokens),
 				},

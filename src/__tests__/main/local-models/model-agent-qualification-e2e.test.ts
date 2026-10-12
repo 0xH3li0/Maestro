@@ -39,7 +39,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -89,6 +89,8 @@ import {
 	readClaudeStream,
 	readCodexStream,
 	readServerTimings,
+	serverLogSince,
+	serverLogSize,
 	tokensPerSecond,
 	writeQualificationRepo,
 	type QualificationRecord,
@@ -173,20 +175,6 @@ function record(id: string, results: ModelResults): void {
 	writeFileSync(RESULTS_FILE, `${JSON.stringify(merged, null, 2)}\n`);
 }
 
-/** The bytes the server log has now, so a run reads only the timings it caused. */
-function logSize(): number {
-	const logPath = modelServerLogPath();
-	return existsSync(logPath) ? statSync(logPath).size : 0;
-}
-
-/** What the server log gained since `from`; all of it when the capped log rotated. */
-function logSince(from: number): string {
-	const logPath = modelServerLogPath();
-	if (!existsSync(logPath)) return '';
-	const text = readFileSync(logPath);
-	return (text.length >= from ? text.subarray(from) : text).toString('utf8');
-}
-
 /** One harness on one model: a fresh repo, the run, and its verdict. */
 async function qualify(
 	harness: LocalModelAgentHarness,
@@ -206,7 +194,7 @@ async function qualify(
 	// Claude Code prefers an API key over the server's token when both are set.
 	delete env.ANTHROPIC_API_KEY;
 
-	const logFrom = logSize();
+	const logFrom = serverLogSize(modelServerLogPath());
 	const result = await runProviderCli(command, launch.args, {
 		cwd: repo,
 		env,
@@ -216,7 +204,7 @@ async function qualify(
 		harness === 'claude-code' ? readClaudeStream(result.stdout) : readCodexStream(result.stdout);
 	const state = checkQualificationRepo(repo);
 	const verdict = judgeQualification({ transcript, repo: state, timedOut: result.timedOut });
-	const timings = readServerTimings(logSince(logFrom));
+	const timings = readServerTimings(serverLogSince(modelServerLogPath(), logFrom));
 	writeFileSync(path.join(runDir, 'stdout.jsonl'), result.stdout);
 	writeFileSync(path.join(runDir, 'stderr.txt'), result.stderr);
 	return {

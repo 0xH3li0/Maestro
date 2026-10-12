@@ -2714,6 +2714,89 @@ they keep no `agent` role until a run passes.
 128 GB Mac. Gemma 4 E4B (5.2 GB) and gpt-oss 20B (11.3 GB) are the qualified models a 16 GB
 machine could hold.
 
+## Run on, end to end
+
+**Run on** keeps an agent's harness and swaps the model behind it: the agent record carries
+`runOn` (Provider, or a source and a model), `resolveRunOnLaunch()` in
+`src/shared/local-models/run-on.ts` turns it into variables and arguments for that harness, and
+`prepareLaunchRunOn()` in `src/main/local-models/run-on.ts` makes sure the source can serve the
+model before `buildAgentLaunchPlan()` applies it. A target that cannot run refuses the launch by
+name.
+
+The on-device check is `src/__tests__/main/local-models/run-on-e2e.test.ts`, skipped unless
+`MAESTRO_LOCAL_MODEL_E2E=1`:
+
+```bash
+MAESTRO_LOCAL_MODEL_E2E=1 env -u MAESTRO_USER_DATA npx vitest run src/__tests__/main/local-models/run-on-e2e.test.ts
+```
+
+It stores one agent record per provider that has a recipe, each with `runOn` naming the Maestro
+model server and an installed agent model (the first id in `MAESTRO_LOCAL_MODEL_E2E_MODELS`, else
+the installed model the most harnesses qualified), written through `parseRunOnEdit()`. It then
+calls `testAgentRunOn({ agentId })`, the function behind the Test button and
+`maestro-cli agent test-run-on`. That is the agent's own launch: the stored record,
+`prepareLaunchRunOn`, `buildAgentLaunchPlan`, `runToCompletion`. No command is built by hand, and
+the stores are wired as `main/index.ts` wires them, with the real server behind
+`modelServerForHarness`. A harness that is not on PATH is skipped, and the skip names the command.
+
+A turn passes when all of these hold:
+
+- the reply is `ready` (the prompt is `Reply with the single word: ready`);
+- exactly one process was started, and its arguments and variables carry the server's address,
+  the server's key and the target's model;
+- the server reports the model loaded, and its log gained a generation while the turn ran
+  (`readServerTimings`);
+- the working directory is the agent's.
+
+Each harness runs in a home of its own, set in the agent's own environment variables
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, OpenCode's `XDG_*` directories), so it has no
+login to fall back on and no user hooks, MCP servers or memory in its prompt. One more case stores
+a target naming a model the server does not have: it must be refused as `run-on-server-failed`,
+by name, with nothing spawned. Results are written to `run-on-e2e-results.json` in the scratch
+dir.
+
+### Result: 2026-10-12, darwin-arm64 (Apple M5 Max, 128 GB), engine `b11559` Metal
+
+`gpt-oss-20b-mxfp4` at a 40,960-token context; the model loaded in 4.6 s. One read-only turn each,
+in an empty directory.
+
+| Harness             | Result  | Turn  | Prompt tokens | Generated | Tokens/s |
+| ------------------- | ------- | ----- | ------------- | --------- | -------- |
+| Claude Code 2.1.296 | `ready` | 2.7 s | 6,484         | 19        | 139      |
+| Codex CLI 0.162.1   | `ready` | 2.2 s | 4,855         | 17        | 136      |
+| OpenCode 2.0.25     | `ready` | 5.8 s | 11,748        | 43        | 92       |
+| Copilot CLI 1.0.95  | `ready` | 6.1 s | 10,930        | 22        | 127      |
+
+The turn time is the launch to the end of the turn. Prompt tokens are what the server evaluated,
+so a prefix it had cached from an earlier request is not counted. The unknown model was refused
+before anything was spawned.
+
+The first run failed on two harnesses, and both failures were real:
+
+- **Copilot CLI picks its tools from the model's name.** With `--model gpt-oss-20b-mxfp4` it took
+  the model for a GPT model and sent a freeform `apply_patch` tool (`"type": "custom"`).
+  `llama-server` answered every call with 500 "Failed to parse tools: Unsupported tool type", and
+  Copilot CLI gave up after five retries ("Request timed out"). The recipe now sets
+  `COPILOT_PROVIDER_MODEL_ID=maestro-run-on`, a name no family matches, which gets plain function
+  tools; `--model` and `COPILOT_PROVIDER_WIRE_MODEL` still carry the model's own name. A turn that
+  reads a file through a tool call was checked by hand against the same server. The stand-in
+  server the recipe was first measured on accepts any tool, so it could not show this.
+- **OpenCode 2 works in the directory `PWD` names, not the one it is started in.** The test
+  process inherited `PWD` from the shell that ran it, so OpenCode ran in this repository, loaded
+  its instruction files, and spent the whole 5 minute budget compacting (57 requests) without an
+  answer. Checked directly: `PWD=<other dir> opencode run ...` boots in the other directory, and
+  with `PWD` unset it boots in its real one. The test now drops `PWD` from its own environment
+  (`providerCliEnv`). **Maestro's launches do not set `PWD`**, so a Maestro process that has one
+  (`maestro-cli` run from a shell, or a dev build started from a terminal) starts an OpenCode
+  agent in the caller's directory. That is not a Run on fault and is not fixed here; the fix is
+  for the launch to set `PWD` to the directory it spawns in.
+
+**Not measured:** a source other than the Maestro model server, an SSH remote, a turn that uses a
+tool through the launch plan (the qualification suite covers tool use, with its own recipes), and
+a context above 40,960. The server runs a model at the catalog's context whatever the target
+says, so a target with a larger context tells the harness about a window the server does not
+have.
+
 ## Verification
 
 ### Smoke test: 2026-10-11, dev build at `2f019d8881`, darwin-arm64

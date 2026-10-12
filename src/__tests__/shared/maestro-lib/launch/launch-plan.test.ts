@@ -653,6 +653,7 @@ describe('buildAgentLaunchPlan', () => {
 						COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:11434/v1',
 						COPILOT_PROVIDER_API_KEY: RUN_ON_PLACEHOLDER_KEY,
 						COPILOT_PROVIDER_WIRE_MODEL: 'qwen3:latest',
+						COPILOT_PROVIDER_MODEL_ID: 'maestro-run-on',
 					});
 					// A bearer token exported for another provider would go out in place
 					// of the source's key.

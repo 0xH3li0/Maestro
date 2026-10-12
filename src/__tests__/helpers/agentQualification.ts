@@ -20,7 +20,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import type { LocalModelAgentHarness } from '../../shared/local-models/types';
 
@@ -422,6 +422,18 @@ export function readCodexStream(stdout: string): HarnessTranscript {
 	if (!completed && !transcript.error)
 		transcript.error = 'The stream ended without a completed turn.';
 	return transcript;
+}
+
+/** The bytes the server log holds now, so a run reads only what it caused. 0 for no log yet. */
+export function serverLogSize(logPath: string): number {
+	return existsSync(logPath) ? statSync(logPath).size : 0;
+}
+
+/** What the server log gained since `from` bytes; all of it when the capped log rotated. */
+export function serverLogSince(logPath: string, from: number): string {
+	if (!existsSync(logPath)) return '';
+	const text = readFileSync(logPath);
+	return (text.length >= from ? text.subarray(from) : text).toString('utf8');
 }
 
 /** Generation and prompt throughput, summed over the requests the server served. */
