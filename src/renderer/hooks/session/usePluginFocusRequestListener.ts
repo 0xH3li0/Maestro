@@ -15,6 +15,7 @@ import { useEffect } from 'react';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 
+/** Applies plugin focus requests through the canonical renderer navigation helpers. */
 export function usePluginFocusRequestListener(): void {
 	useEffect(() => {
 		const api = window.maestro?.sessions;

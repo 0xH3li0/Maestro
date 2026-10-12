@@ -42,6 +42,7 @@ const EMPTY: AggregatedContributions = {
 	errorsByPlugin: {},
 };
 
+/** Builds a generic contributed-panel fixture with per-test overrides. */
 function panel(over: Partial<PanelContribution> = {}): PanelContribution {
 	return {
 		id: 'acme.panel/flow',
