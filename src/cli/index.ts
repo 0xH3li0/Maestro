@@ -199,7 +199,7 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsQuery } from './commands/stats';
+import { stats, statsModels, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -3607,12 +3607,24 @@ feedback
 
 // Stats commands - introspect the Usage Dashboard's SQLite store (requires the
 // running Maestro desktop app, which owns the open database).
-program
+const statsCommand = program
 	.command('stats')
 	.description('Show aggregated Usage Dashboard metrics for a time range')
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full aggregation object as JSON')
 	.action(stats);
+
+// `stats` owns `--range` and `--json` too, and Commander hands a flag to the
+// first command that knows it, so the flags written after `models` land on the
+// parent. `optsWithGlobals()` reads them from wherever they landed.
+statsCommand
+	.command('models')
+	.description(
+		"Show what every model other than a provider's own did: sources, tasks, Run on agents, System One and the token proxy (the Usage Dashboard's Models tab)"
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the full model usage record as JSON')
+	.action((_options: unknown, command: Command) => statsModels(command.optsWithGlobals()));
 
 program
 	.command('stats-query <sql>')

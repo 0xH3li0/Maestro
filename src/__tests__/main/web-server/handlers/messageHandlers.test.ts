@@ -351,6 +351,11 @@ vi.mock('../../../../main/local-models/route-turn', () => ({
 }));
 import { routeTurnRequest } from '../../../../main/local-models/route-turn';
 
+vi.mock('../../../../main/local-models/model-usage', () => ({
+	readModelUsage: vi.fn(async (range?: unknown) => ({ range: range ?? 'week', sources: [] })),
+}));
+import { readModelUsage } from '../../../../main/local-models/model-usage';
+
 vi.mock('../../../../main/local-models/model-routing-corrections', () => ({
 	recordModelRoutingCorrectionRequest: vi.fn(async () => ({
 		ok: true,
@@ -6749,6 +6754,44 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(lastResponse()).toMatchObject({
 				success: false,
 				error: "A routing request's prompt is text.",
+			});
+		});
+
+		it('get_model_usage answers with the record for the range, and carries a failure under its own type', async () => {
+			handler.handleMessage(client, {
+				type: 'get_model_usage',
+				range: 'month',
+				requestId: 'usage-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('model_usage'));
+
+			expect(readModelUsage).toHaveBeenLastCalledWith('month');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'usage-1',
+				data: { range: 'month', sources: [] },
+			});
+
+			// No range is the service's to default, not the handler's.
+			handler.handleMessage(client, { type: 'get_model_usage', requestId: 'usage-2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('usage-2'));
+			expect(readModelUsage).toHaveBeenLastCalledWith(undefined);
+
+			// A refused range answers as `model_usage` with the request's id: an
+			// `error` message carries no id and the CLI would wait out its timeout.
+			vi.mocked(readModelUsage).mockRejectedValueOnce(
+				new Error('Invalid range. Must be one of: day, week, month, quarter, year, all')
+			);
+			handler.handleMessage(client, {
+				type: 'get_model_usage',
+				range: 'fortnight',
+				requestId: 'usage-3',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('usage-3'));
+			expect(lastResponse()).toMatchObject({
+				type: 'model_usage',
+				success: false,
+				error: 'Invalid range. Must be one of: day, week, month, quarter, year, all',
 			});
 		});
 

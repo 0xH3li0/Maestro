@@ -7,6 +7,14 @@ import {
 	modelServerBindLabel,
 	type ModelServerReport,
 } from '../../shared/local-models/model-server';
+import {
+	MODEL_USAGE_SOURCE_KIND_LABELS,
+	isModelUsageEmpty,
+	modelUsageOnDeviceShare,
+	type ModelUsage,
+	type ModelUsageDecisionCounts,
+	type ModelUsageSource,
+} from '../../shared/local-models/model-usage';
 import { serverAcceleratorProblemMessage } from '../../shared/local-models/server-accelerator';
 import { JEV_DEFAULT_MODEL } from '../../shared/local-models/system-one';
 import {
@@ -44,6 +52,7 @@ import {
 	type TokenProxyBlockDetail,
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
+import type { DurationPercentiles } from '../../shared/percentiles';
 import type { ProxyRequestTotals } from '../../shared/stats-types';
 import {
 	TIER_NOT_MAPPED_LABEL,
@@ -1202,6 +1211,169 @@ export function formatTokenProxyBlockHeader(block: TokenProxyBlockDetail): strin
 		`  ${block.originalTokens} -> ${block.compressedTokens} tokens  ${dim(`${block.compressors.join(', ')}, ${formatRelativeTime(block.createdAt)}`)}`,
 		'',
 	].join('\n');
+}
+
+function plural(count: number, one: string, many = `${one}s`): string {
+	return `${count} ${count === 1 ? one : many}`;
+}
+
+/** `p50 240ms  p95 1.2s`, or nothing for a distribution with no sample. */
+function latencyCells(latency: DurationPercentiles): string {
+	return latency.count === 0
+		? ''
+		: `p50 ${formatDurationDecimal(latency.p50)}  p95 ${formatDurationDecimal(latency.p95)}`;
+}
+
+/** How a source's requests split, in the units they were counted in. */
+function sourceRequestSplit(source: ModelUsageSource): string {
+	return [
+		source.runs > 0 ? plural(source.runs, 'run') : '',
+		source.turns > 0 ? plural(source.turns, 'turn') : '',
+		source.routed > 0 ? `${source.routed} routed` : '',
+	]
+		.filter(Boolean)
+		.join(', ');
+}
+
+function decisionOutcomeLine(counts: ModelUsageDecisionCounts): string {
+	const outcomes = (Object.keys(counts.outcomes) as Array<keyof typeof counts.outcomes>)
+		.filter((outcome) => counts.outcomes[outcome] > 0)
+		.map(
+			(outcome) =>
+				`${counts.outcomes[outcome]} ${SYSTEM_ONE_LEDGER_OUTCOME_LABELS[outcome].toLowerCase()}`
+		);
+	if (counts.timeouts > 0) {
+		outcomes.push(`${counts.timeouts} ${SYSTEM_ONE_LEDGER_OUTCOME_LABELS.timeout.toLowerCase()}`);
+	}
+	const cached = counts.cached > 0 ? ` (${counts.cached} from the cache)` : '';
+	return `${plural(counts.decisions, 'decision')}${cached}${outcomes.length > 0 ? `: ${outcomes.join(', ')}` : ''}`;
+}
+
+/**
+ * `maestro-cli stats models`: what every model other than a provider's own did
+ * in the range, the way the Usage Dashboard's Models tab draws it: the sources
+ * (with the providers' own cloud for comparison), the tasks, the agents that
+ * ran turns on a Run on source, System One's decisions and the token proxy.
+ */
+export function formatModelUsage(usage: ModelUsage): string {
+	const { totals } = usage;
+	const lines = [`${bold(c('cyan', 'MODEL USAGE'))}  ${dim(usage.range)}`];
+	if (totals.requests === 0 && isModelUsageEmpty(usage)) {
+		lines.push(
+			'',
+			dim('  Nothing ran in this range.'),
+			dim('  -> See what is set up to run on another model: maestro-cli models status')
+		);
+		return lines.join('\n');
+	}
+	lines.push(
+		`  ${plural(totals.requests, 'request')}, ${formatTokens(totals.tokensIn)} tokens in, ${formatTokens(totals.tokensOut)} out, ${Math.round(modelUsageOnDeviceShare(totals) * 100)}% on this machine, ${plural(totals.errors, 'error')}`
+	);
+
+	lines.push('', bold('Sources'));
+	const labelWidth = Math.max(...usage.sources.map((source) => source.label.length), 0);
+	for (const source of usage.sources) {
+		const errors = source.errors > 0 ? c('red', plural(source.errors, 'error')) : '';
+		const latency =
+			source.kind === 'provider' ? latencyCells(source.turnDuration) : latencyCells(source.latency);
+		lines.push(
+			[
+				`  ${c('white', source.label.padEnd(labelWidth))}`,
+				dim(MODEL_USAGE_SOURCE_KIND_LABELS[source.kind]),
+				`${plural(source.requests, 'request')} ${dim(`(${sourceRequestSplit(source)})`)}`,
+				`${formatTokens(source.tokensIn)} in, ${formatTokens(source.tokensOut)} out`,
+				errors,
+				latency,
+			]
+				.filter(Boolean)
+				.join('  ')
+		);
+		if (source.kind !== 'provider' && source.models.length > 0) {
+			lines.push(`    ${dim(source.models.map((entry) => entry.model).join(', '))}`);
+		}
+	}
+	if (usage.sources.some((source) => source.kind === 'provider')) {
+		lines.push(dim('  For a provider cloud, p50 and p95 are whole turns, not single requests.'));
+	}
+
+	if (usage.byTask.length > 0) {
+		lines.push('', bold('Tasks'));
+		const taskWidth = Math.max(...usage.byTask.map((task) => task.label.length));
+		for (const task of usage.byTask) {
+			const errors = task.errors > 0 ? c('red', plural(task.errors, 'error')) : '';
+			lines.push(
+				[
+					`  ${c('white', task.label.padEnd(taskWidth))}`,
+					plural(task.runs, 'run'),
+					errors,
+					latencyCells(task.latency),
+					dim(task.sources.map((source) => `${source.label} ${source.runs}`).join(', ')),
+				]
+					.filter(Boolean)
+					.join('  ')
+			);
+		}
+	}
+
+	const runOnAgents = usage.byAgent.filter((agent) => agent.turns > 0);
+	if (runOnAgents.length > 0) {
+		lines.push('', bold('Agents (Run on turns)'));
+		for (const agent of runOnAgents) {
+			const targets = agent.targets
+				.map((target) => `${target.model} on ${target.sourceLabel} ${target.turns}`)
+				.join(', ');
+			lines.push(
+				`  ${c('white', agent.name ?? agent.agentId.slice(0, 8))}  ${plural(agent.turns, 'turn')}  ${formatTokens(agent.tokensIn)} in, ${formatTokens(agent.tokensOut)} out  ${dim(targets)}`
+			);
+		}
+	}
+
+	const { systemOne } = usage;
+	const routed = systemOne.routedTiers;
+	const routedTurns = routed.low + routed.medium + routed.high;
+	if (systemOne.decisions > 0 || routedTurns > 0) {
+		const kept = systemOne.coversRange
+			? ''
+			: `  ${dim(`decisions are kept ${systemOne.retentionDays} days`)}`;
+		lines.push('', `${bold('System One')}${kept}`);
+		if (systemOne.decisions > 0) {
+			lines.push(`  ${decisionOutcomeLine(systemOne)}, ${formatSystemOneCost(systemOne.costUsd)}`);
+			const taskWidth = Math.max(...systemOne.byTask.map((task) => task.label.length));
+			for (const task of systemOne.byTask) {
+				lines.push(
+					[
+						`  ${c('white', task.label.padEnd(taskWidth))}`,
+						decisionOutcomeLine(task),
+						latencyCells(task.latency),
+					]
+						.filter(Boolean)
+						.join('  ')
+				);
+			}
+		}
+		if (routedTurns > 0) {
+			lines.push(
+				`  ${c('white', 'Auto routing')}  ${plural(routedTurns, 'turn')}: low ${routed.low}, medium ${routed.medium}, high ${routed.high}`
+			);
+		}
+	}
+
+	const { proxy } = usage;
+	if (proxy.totals.requests > 0) {
+		lines.push('', bold('Token proxy'));
+		lines.push(proxyUsageLine('All agents', proxy.totals));
+		for (const row of proxy.byAgent) {
+			const label = row.agentId === null ? 'No agent' : (row.name ?? row.agentId.slice(0, 8));
+			lines.push(proxyUsageLine(label, row));
+		}
+		if (proxy.routedRequests > 0) {
+			lines.push(
+				`  ${plural(proxy.routedRequests, 'background request')} sent to a Local Models target`
+			);
+		}
+		if (proxy.totals.compressRequests > 0) lines.push(dim(`  ${TOKEN_PROXY_ESTIMATE_NOTE}`));
+	}
+	return lines.join('\n');
 }
 
 /**

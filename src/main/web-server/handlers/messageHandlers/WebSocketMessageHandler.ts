@@ -229,6 +229,7 @@ import {
 import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
+	handleGetModelUsage,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
@@ -679,6 +680,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_stats_aggregation':
 				handleGetStatsAggregation(this.ctx, client, message);
+				break;
+
+			case 'get_model_usage':
+				void handleGetModelUsage(this.ctx, client, message);
 				break;
 
 			case 'stats_query':

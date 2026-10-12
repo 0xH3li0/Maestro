@@ -3862,6 +3862,10 @@ interface MaestroAPI {
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<StatsAggregation>;
+		// What every model other than a provider's own did in a range (Models tab)
+		getModelUsage: (
+			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<import('../shared/local-models/model-usage').ModelUsage>;
 		// Interactive vs autonomous (Auto Run + Cue) totals, merged across the
 		// stats DB and the Cue DB. Defaults to all retained history.
 		getDelegationTotals: (

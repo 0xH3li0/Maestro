@@ -86,6 +86,8 @@ import type {
 	SystemOneLedgerEntry,
 } from '../../shared/local-models/system-one-ledger';
 import { getAggregatedStats } from './aggregations';
+import { getModelUsage } from './model-usage';
+import type { ModelUsage, ModelUsageNames } from '../../shared/local-models/model-usage';
 import {
 	getQuerySourceTotals,
 	getQuerySourceByDay,
@@ -903,6 +905,14 @@ export class StatsDB {
 
 	getRecentProxyCompressions(limit: number): ProxyCompressionEntry[] {
 		return getRecentProxyCompressions(this.database, limit);
+	}
+
+	// ============================================================================
+	// Model Usage (delegated)
+	// ============================================================================
+
+	getModelUsage(range: StatsTimeRange, names?: ModelUsageNames): ModelUsage {
+		return getModelUsage(this.database, range, names);
 	}
 
 	// ============================================================================

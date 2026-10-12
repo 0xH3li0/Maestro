@@ -3143,6 +3143,15 @@ Show aggregated Usage Dashboard metrics for a time range
 | `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
 | `--json`              | Output the full aggregation object as JSON                       | -       |
 
+## `maestro-cli stats models`
+
+Show what every model other than a provider's own did: sources, tasks, Run on agents, System One and the token proxy (the Usage Dashboard's Models tab)
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output the full model usage record as JSON                       | -       |
+
 ## `maestro-cli stats-query <sql>`
 
 Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)

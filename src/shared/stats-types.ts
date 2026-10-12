@@ -141,6 +141,20 @@ export interface SessionLifecycleEvent {
  */
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 
+/** Every range, shortest first. What a range flag or a bridge message is checked against. */
+export const STATS_TIME_RANGES: readonly StatsTimeRange[] = [
+	'day',
+	'week',
+	'month',
+	'quarter',
+	'year',
+	'all',
+];
+
+export function isStatsTimeRange(value: unknown): value is StatsTimeRange {
+	return (STATS_TIME_RANGES as readonly unknown[]).includes(value);
+}
+
 /**
  * Aggregated stats for dashboard display
  */
