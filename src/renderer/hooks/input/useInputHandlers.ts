@@ -28,6 +28,7 @@ import {
 	updateAiTab,
 } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
@@ -293,7 +294,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// the subscription on atMentionOpen so streaming flushes from any agent don't
 	// recompute mention suggestions while the picker is closed (mirrors the
 	// fileSuggestions gate below). Stable empty refs avoid re-render churn.
-	const sessions = useSessionStore((s) => (atMentionOpen ? s.sessions : EMPTY_SESSIONS));
+	const allSessions = useSessionStore((s) => (atMentionOpen ? s.sessions : EMPTY_SESSIONS));
+	// Mentionable agents follow the Left Bar: the Pianola agent outlives its
+	// Encore flag in the session store and is not offered while the flag is off.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const sessions = useMemo(
+		() => filterSessionsVisibleInSidebar(allSessions, { pianolaEnabled }),
+		[allSessions, pianolaEnabled]
+	);
 	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
 
 	// --- Derived values ---
@@ -665,10 +673,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Resolve a message's mentions WITHOUT consulting anyone yet. The send path
 	// decides when to fire: immediately for a message that dispatches now, or at
 	// dequeue time for one that lands in the execution queue. `suppressLocal` on
-	// the returned plan means the message leads with an `@agent` mention, so only
-	// the mentioned agent(s) answer; a trailing mention (`hey @Backend,
-	// thoughts?`) or a leading `@file` mention leaves it false and the source
-	// agent answers too.
+	// the returned plan means the source agent is not sent to now: the message
+	// leads with an `@agent` mention (only the mentioned agents answer) or asks
+	// for the consult FIRST (the source agent answers once the replies are in).
+	// A trailing mention otherwise runs in parallel or hands off the answer.
 	const handleCrossAgentMentionPlan = useCallback(
 		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
 			planCrossAgentMentions(message, sourceSession.id),

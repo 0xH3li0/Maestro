@@ -22,6 +22,7 @@ import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
 import { flushPendingSessionWritesSync } from '../stores';
+import { flushCotConfigStoreSync } from '../cot-export/config-store';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -96,10 +97,6 @@ export interface QuitHandlerDependencies {
 	getHistoryManager: () => HistoryManager;
 	/** Tunnel manager instance */
 	tunnelManager: typeof tunnelManagerInstance;
-	/** Function to get active grooming session count */
-	getActiveGroomingSessionCount: () => number;
-	/** Function to cleanup all grooming sessions */
-	cleanupAllGroomingSessions: (pm: ProcessManager) => Promise<void>;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
@@ -176,8 +173,6 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getWebServer,
 		getHistoryManager,
 		tunnelManager,
-		getActiveGroomingSessionCount,
-		cleanupAllGroomingSessions,
 		closeStatsDB,
 		stopCliWatcher,
 		stopSettingsWatcher,
@@ -357,6 +352,15 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			logger.error(`Error flushing sessions on quit: ${err}`, 'Shutdown');
 		}
 
+		// The per-device state store saves behind a short timer for the same
+		// reason, so its last write is landed here too, before anything further
+		// down can throw.
+		try {
+			flushCotConfigStoreSync();
+		} catch (err) {
+			logger.error(`Error flushing device state on quit: ${err}`, 'Shutdown');
+		}
+
 		// Snapshot the multi-window layout while every window is still open and its
 		// bounds are valid (windows are destroyed after before-quit). This is
 		// additive to the legacy per-window 'close' save in window-manager.ts and
@@ -397,17 +401,6 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			stopSessionCleanup();
 		}
 
-		// Clean up active grooming sessions (context merge/transfer operations)
-		const processManager = getProcessManager();
-		const groomingSessionCount = getActiveGroomingSessionCount();
-		if (groomingSessionCount > 0 && processManager) {
-			logger.info(`Cleaning up ${groomingSessionCount} active grooming session(s)`, 'Shutdown');
-			// Fire and forget - don't await
-			cleanupAllGroomingSessions(processManager).catch((err) => {
-				logger.error(`Error cleaning up grooming sessions: ${err}`, 'Shutdown');
-			});
-		}
-
 		// Kill all active Cue processes (tracked separately from ProcessManager)
 		logger.info('Killing active Cue processes', 'Shutdown');
 		stopAllCueRuns();
@@ -434,7 +427,15 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// underlying mutex is already gone, aborting the main process
 		// (Sentry MAESTRO-3B).
 		logger.info('Killing all running processes', 'Shutdown');
-		processManager?.killAll({ shutdown: true });
+		getProcessManager()?.killAll({ shutdown: true });
+
+		// Once more, now that nothing is running: a line a process printed on its
+		// way out can have moved that store after the save near the top.
+		try {
+			flushCotConfigStoreSync();
+		} catch (err) {
+			logger.error(`Error flushing device state on quit: ${err}`, 'Shutdown');
+		}
 
 		// Clear power save blocker AFTER killAll() to prevent late process output
 		// from re-arming the blocker via addBlockReason()

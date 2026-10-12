@@ -66,8 +66,8 @@ const mockDb = {
 		}
 		// Same idea for cue_event_queue - Phase 01 added chain_root_id /
 		// parent_event_id so persisted queue rows survive restart with
-		// lineage intact. Returning the full column set keeps the additive
-		// migration a no-op under the mock.
+		// lineage intact. This is the set from BEFORE `turn_settings_json`,
+		// so the additive migration must backfill that one column.
 		if (query.startsWith('table_info(cue_event_queue)')) {
 			return [
 				{ name: 'id' },
@@ -83,6 +83,8 @@ const mockDb = {
 				{ name: 'queued_at' },
 				{ name: 'chain_root_id' },
 				{ name: 'parent_event_id' },
+				{ name: 'auto_run_json' },
+				{ name: 'notify_json' },
 			];
 		}
 		// cue_github_seen - the GitHub re-trigger feature added `last_revision`
@@ -114,12 +116,6 @@ vi.mock('better-sqlite3', () => ({
 		pragma = mockDb.pragma;
 		prepare = mockDb.prepare;
 		close = mockDb.close;
-	},
-}));
-
-vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn(() => os.tmpdir()),
 	},
 }));
 
@@ -239,6 +235,30 @@ describe('cue-db additive column migration', () => {
 		expect(createSql).toContain('full_output TEXT');
 	});
 
+	it('declares turn_settings_json on the persisted queue table', () => {
+		initCueDb(undefined, dbPath);
+
+		const createSql = prepareCalls.find((sql) =>
+			sql.includes('CREATE TABLE IF NOT EXISTS cue_event_queue')
+		);
+		expect(createSql).toContain('turn_settings_json TEXT');
+	});
+
+	it('ALTERs a queue table that predates turn_settings_json', () => {
+		initCueDb(undefined, dbPath);
+
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN turn_settings_json TEXT'
+			)
+		).toBe(true);
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN chain_root_id TEXT'
+			)
+		).toBe(false);
+	});
+
 	it('ALTERs an existing database that predates the output columns', () => {
 		// The mocked `table_info(cue_events)` reports the pre-output column
 		// set, i.e. a database created before this phase. The idempotent
@@ -276,6 +296,7 @@ describe('cue-db additive column migration', () => {
 					{ name: 'exit_code' },
 					{ name: 'output_excerpt' },
 					{ name: 'full_output' },
+					{ name: 'stream_usage_json' },
 				];
 			}
 			return originalPragma?.(query);
@@ -372,12 +393,14 @@ describe('cue-db event journal', () => {
 		const lastPrepare = prepareCalls[prepareCalls.length - 1];
 		expect(lastPrepare).toContain('output_excerpt = ?');
 		expect(lastPrepare).toContain('full_output = ?');
+		expect(lastPrepare).toContain('stream_usage_json = ?');
 		const lastRun = runCalls[runCalls.length - 1];
 		// status, completed_at, provider_session_id, error_message, exit_code,
-		// output_excerpt, full_output, id
+		// output_excerpt, full_output, stream_usage_json, id
 		expect(lastRun[5]).toBe('Merged PR #12.');
 		expect(lastRun[6]).toBe('Merged PR #12.\nDetails follow.');
-		expect(lastRun[7]).toBe('evt-5');
+		expect(lastRun[7]).toBeNull(); // stream_usage_json (not passed by this call)
+		expect(lastRun[8]).toBe('evt-5');
 	});
 
 	it('should write NULL output columns for a silent run', () => {
@@ -387,7 +410,8 @@ describe('cue-db event journal', () => {
 		// No provider session id, so the columns shift left by one.
 		expect(lastRun[4]).toBeNull(); // output_excerpt
 		expect(lastRun[5]).toBeNull(); // full_output
-		expect(lastRun[6]).toBe('evt-6');
+		expect(lastRun[6]).toBeNull(); // stream_usage_json
+		expect(lastRun[7]).toBe('evt-6');
 	});
 
 	it('should query recent events with correct since parameter', () => {

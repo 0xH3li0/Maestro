@@ -336,6 +336,90 @@ describe('update-agent command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
+	describe('--codex-transport', () => {
+		const codexAgent = () =>
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'codex',
+			} as never);
+
+		const connect = (sendCommand: ReturnType<typeof vi.fn>) =>
+			vi
+				.mocked(withMaestroClient)
+				.mockImplementation(async (action) => action({ sendCommand } as never));
+
+		it('stores app-server on a Codex agent', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			codexAgent();
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			connect(sendCommand);
+
+			await updateAgent('agent-1', { codexTransport: 'App-Server' });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_config',
+					configPatch: { codexTransport: 'app-server' },
+				}),
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith('  Codex transport: app-server');
+		});
+
+		it('clears the field for exec, the default transport', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			codexAgent();
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			connect(sendCommand);
+
+			await updateAgent('agent-1', { codexTransport: 'exec' });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ configPatch: { codexTransport: null } }),
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith('  Codex transport: exec');
+		});
+
+		it('rejects an invalid value before contacting the app', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			codexAgent();
+			const sendCommand = vi.fn();
+			connect(sendCommand);
+
+			await updateAgent('agent-1', { codexTransport: 'websocket' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--codex-transport expects exec or app-server')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('rejects the flag on a non-Codex agent', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+			} as never);
+			const sendCommand = vi.fn();
+			connect(sendCommand);
+
+			await updateAgent('agent-1', { codexTransport: 'app-server' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('only applies to Codex agents')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	it('refuses --provider without --force', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
 		vi.mocked(getSessionById).mockReturnValue({

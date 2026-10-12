@@ -4,9 +4,11 @@
  * Extracted from messageHandlers.ts.
  */
 
+import type { QueueSteerResult } from '../../../../shared/chatSteering';
 import { WebSocket } from 'ws';
 import type {
 	AutoRunDocument,
+	AutoRunState,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -40,6 +42,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
@@ -83,6 +86,10 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
+	cliAuthenticated?: boolean;
+	/** Admitted by the CLI secret (see the root WebClient in ../../types). */
+	cli?: boolean;
 }
 
 /**
@@ -112,6 +119,12 @@ export interface LiveSessionInfo {
  */
 export interface MessageHandlerCallbacks {
 	getSessionDetail: (sessionId: string) => SessionDetailForHandler | null;
+	/**
+	 * The live Auto Run state the desktop last broadcast for an agent (what the
+	 * Auto Run panel shows), or undefined when none is running. The session detail
+	 * does not carry it.
+	 */
+	getAutoRunState?: (sessionId: string) => AutoRunState | undefined;
 	executeCommand: (
 		sessionId: string,
 		command: string,
@@ -138,6 +151,8 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli window` - list windows, move an agent or a group between them. */
+	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (
@@ -163,7 +178,13 @@ export interface MessageHandlerCallbacks {
 	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		config: {
+			cwd?: string;
+			shell?: string;
+			name?: string | null;
+			command?: string;
+			inputRequired?: boolean;
+		},
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
@@ -201,6 +222,10 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
+	steerQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,

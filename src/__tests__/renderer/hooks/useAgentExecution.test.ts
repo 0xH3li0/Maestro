@@ -339,6 +339,91 @@ describe('useAgentExecution', () => {
 		expect(resultData.error).toBe('Prompt is too long');
 	});
 
+	// A `/compact` runs through this spawner for its hidden process id, but it
+	// is not a synopsis: it prints nothing on success, and the summary it writes
+	// becomes the conversation, so it must run on the tab's own settings.
+	it('runs a compaction on the tab settings and accepts its empty output', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'/compact',
+			'claude-code',
+			{ customModel: 'sonnet', customEffort: 'high' },
+			{ keepTurnSettings: true, allowEmptyResponse: true }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionCustomModel).toBe('sonnet');
+		expect(spawned.sessionCustomEffort).toBe('high');
+
+		act(() => {
+			onExitHandler?.(spawned.sessionId as string, 0);
+		});
+
+		expect((await spawnPromise).success).toBe(true);
+	});
+
+	it('still fails a compaction that printed a provider error', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'/compact',
+			'claude-code',
+			undefined,
+			{ keepTurnSettings: true, allowEmptyResponse: true }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+		act(() => {
+			onDataHandler?.(targetSessionId, 'Prompt is too long');
+			onExitHandler?.(targetSessionId, 0);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(resultData.error).toBe('Prompt is too long');
+	});
+
 	it('reports a non-zero synopsis exit as failed even with prose on stdout', async () => {
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };

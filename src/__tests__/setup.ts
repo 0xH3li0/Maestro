@@ -587,6 +587,8 @@ const mockMaestro = {
 	web: {
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
+		takeOrphanedAutoRuns: vi.fn().mockResolvedValue([]),
+		abandonAutoRunReclaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -818,6 +820,9 @@ const mockMaestro = {
 		save: vi.fn().mockResolvedValue({ success: true }),
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		getSystemPromptPaths: vi
+			.fn()
+			.mockResolvedValue({ success: true, computerHistoryDir: '/mock/userData/computer-history' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Multi-window API (window<->session ownership). Defaults model a single
@@ -839,6 +844,35 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+		onRemoteCommand: vi.fn(() => () => {}),
+		sendRemoteCommandResponse: vi.fn(),
+	},
+	// MaestroRun (macOS launcher install + Full Disk Access walkthrough). Not
+	// ready by default, so no spawn test picks up its system-prompt section.
+	maestroRun: {
+		status: vi.fn().mockResolvedValue(null),
+		refresh: vi.fn().mockResolvedValue(null),
+		install: vi.fn().mockResolvedValue(null),
+		requestAccess: vi.fn().mockResolvedValue(null),
+		readyPath: vi.fn().mockResolvedValue(null),
+		onStatusChanged: vi.fn(() => () => {}),
+	},
+	// Quick Chat (floating window + its engine). Subscriptions return a no-op
+	// unsubscribe so App's engine hook mounts and cleans up in every render test.
+	quickChat: {
+		command: vi.fn().mockResolvedValue({ ok: true, snapshot: null }),
+		window: vi.fn().mockResolvedValue(null),
+		getSnapshot: vi.fn().mockResolvedValue(null),
+		setLayout: vi.fn(),
+		setFullView: vi.fn(),
+		getPinned: vi.fn().mockResolvedValue(true),
+		setPinned: vi.fn((pinned: boolean) => Promise.resolve(pinned)),
+		onPinned: vi.fn(() => () => {}),
+		onSnapshot: vi.fn(() => () => {}),
+		onFocusInput: vi.fn(() => () => {}),
+		onCommand: vi.fn(() => () => {}),
+		pushSnapshot: vi.fn(),
+		onHotkeyFailed: vi.fn(() => () => {}),
 	},
 	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
 	// test that sends a message doesn't accidentally rename tabs; tests that care

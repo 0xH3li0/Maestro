@@ -110,6 +110,7 @@ The response is always JSON:
 	"sessionId": "abc123def456",
 	"response": "The authentication flow works by...",
 	"success": true,
+	"outcome": "completed",
 	"usage": {
 		"inputTokens": 1000,
 		"outputTokens": 500,
@@ -122,6 +123,19 @@ The response is always JSON:
 }
 ```
 
+`outcome` says how the turn ended:
+
+| `outcome`                | `success` | Meaning                                                                                                 |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
+| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                    |
+| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                    |
+| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr. |
+| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.  |
+
+For providers that stream JSON lines (everything except Claude Code), a captured answer outranks a bare non-zero exit, but not a specific provider error: a turn whose stderr says the login expired fails even if some text was produced. Claude Code keeps requiring a clean exit. A process killed by a signal nobody requested is always `crashed`.
+
+The first Ctrl+C stops the agent gracefully (SIGTERM, then SIGKILL after 5 seconds if it ignores it) and exits with code `130`; a second Ctrl+C exits immediately. Other failures exit with `1`. Over an SSH remote this stops the local `ssh` client, and the remote process is not guaranteed to receive the hangup.
+
 On failure, `success` is `false` and an `error` field is included:
 
 ```json
@@ -132,11 +146,15 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
+| Flag                 | Description                                                         |
+| -------------------- | ------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one            |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)              |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app       |
+| `--no-history`       | Do not write a History entry for this turn                          |
+| `--no-synopsis`      | Skip the synopsis turn; the History entry carries the response text |
+
+Every `send` writes an entry to the agent's History, the same file the desktop History panel reads, whether or not the desktop app is running (an open app picks it up live). Who started the send decides the kind of entry. A send Maestro Cue started (a `command` action that runs `maestro-cli send`, or an agent Cue woke that runs it) is a `CUE` entry, and the turn it runs is marked `MAESTRO_QUERY_SOURCE=cue`. A send run from another agent's shell is an `AGENT` entry whose summary opens with `Sent by <agent>:`. Both carry a pass/fail indicator. A send from your own shell or a script is a `USER` entry. A successful turn is summarized by a short synopsis turn resumed on the same provider session at the cheapest model and effort, unless that would shrink the context window, in which case the agent's own model is kept. If the synopsis reports nothing to record, fails, or prints a provider error, the first line of the response is used instead. After a `--read-only` send the synopsis turn is read-only too. Failed and interrupted turns are recorded without a synopsis turn. A History write that fails prints a warning on stderr and never fails the send; the JSON on stdout is unchanged either way. Use `--no-synopsis` to skip the extra turn, or `--no-history` to record nothing.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
@@ -521,6 +539,9 @@ maestro-cli update-agent <agent-id> --clear-env
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
+# Opt a Codex agent into the experimental app-server transport (enables steering)
+maestro-cli update-agent <agent-id> --codex-transport app-server
+
 # Update SSH execution config (use "none" to revert to local)
 maestro-cli update-agent <agent-id> --ssh-remote <remote-id> --ssh-cwd /remote/workdir
 maestro-cli update-agent <agent-id> --ssh-remote none
@@ -531,7 +552,7 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
-For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api).
+For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running local chat turn be steered. SSH, image, Auto Run, and Cue turns keep using `codex exec` either way.
 
 | Flag                              | Description                                                                                                                                        | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -551,6 +572,7 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 | `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |
 | `--token-source <mode>`           | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                     | -       |
 | `--maestro-p-path <path>`         | Override the maestro-p binary path. Empty string clears                                                                                            | -       |
+| `--codex-transport <transport>`   | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only                              | -       |
 | `--provider <type>`               | Switch the agent's provider. Destructive: resets tabs and clears provider config. Requires `--force`. Cannot be combined with other settings edits | -       |
 | `--force`                         | Confirm a destructive change (required for `--provider`)                                                                                           | -       |
 | `--json`                          | Machine-readable JSON output                                                                                                                       | -       |
@@ -669,6 +691,30 @@ Notes on behavior:
 | ------------- | --------------------------------------------------------- | ------- |
 | `-f, --force` | Delete even if the group still has agents (ungroups them) | -       |
 | `--json`      | Machine-readable JSON output                              | -       |
+
+### Moving Agents and Groups Between Windows (`window`)
+
+The CLI half of the Left Bar's **Move to Window** menus. `move-agent` carries one agent with its worktrees; `move-group` carries every agent in a group (and its subgroups when Groups+ nesting is on), gathering a group that is split across windows into one. The primary window answers through the same code path as a click, so the same rule applies: a move that would leave the main window with no agents is refused.
+
+```bash
+# See which windows exist and what each holds
+maestro-cli window list
+
+# Pull a whole group out into a new window
+maestro-cli window move-group <group-id> --to new
+
+# Bring an agent back to the main window, or into window 2 / a named window
+maestro-cli window move-agent <agent-id> --to main
+maestro-cli window move-agent <agent-id> --to 2
+maestro-cli window move-agent <agent-id> --to "Research"
+```
+
+`--to` takes `new`, `main`, a window number (as shown by `window list` and the Left Bar badge), a window id, or a custom window name. Agent and group IDs accept the usual partial-ID resolution. Moving onto the window that already holds everything succeeds and moves nothing.
+
+| Flag            | Description                                            | Default |
+| --------------- | ------------------------------------------------------ | ------- |
+| `--to <window>` | Destination (required for `move-agent` / `move-group`) | -       |
+| `--json`        | Machine-readable JSON output                           | -       |
 
 ### Creating Worktree Agents
 
@@ -1118,9 +1164,40 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`).
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`).
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
+
+### MaestroRun (macOS)
+
+Set up [MaestroRun](./maestro-run), the signed launcher that holds one Full Disk Access grant for your scheduled scripts. Each verb takes the same path as the matching button on the MaestroRun tile in Settings. The app must be running, and the plugin must be on (`maestro-cli encore enable maestroRun`).
+
+```bash
+maestro-cli maestro-run status               # installed version, signature, Full Disk Access
+maestro-cli maestro-run status --check-latest --json
+maestro-cli maestro-run install              # install the newest release for this Mac, or update
+maestro-cli maestro-run grant                # open the Full Disk Access list and watch for the switch
+maestro-cli maestro-run grant --reveal       # also show MaestroRun.app in Finder
+```
+
+`grant` cannot switch the permission on: macOS has no prompt for Full Disk Access, so you flip the switch in System Settings and `status` reports `ready` once you have. These verbs set MaestroRun up. To run a script, use the launcher itself, at the path `status` prints.
+
+### Quick Chat
+
+Drive the [Quick Chat](./quick-chat) window, the floating chat summoned by a system-wide hotkey. Each verb takes the same path as the matching button in the window. The app must be running.
+
+```bash
+maestro-cli quick-chat toggle                # what the hotkey does: open, focus, or close
+maestro-cli quick-chat send "summarize the last commit"
+maestro-cli quick-chat status --json         # window state, agent, mode, and the conversation
+maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
+maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)
+maestro-cli quick-chat new                   # start over; an ephemeral chat's hidden tab is deleted
+maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
+maestro-cli quick-chat reveal                # open the chat as a tab in the main window
+maestro-cli quick-chat stop                  # stop the reply
+maestro-cli quick-chat bounds --width 640 --height 520   # resize or move the window (remembered)
+```
 
 ### Custom Theme Palette
 
@@ -1190,14 +1267,15 @@ maestro-cli settings agent reset codex model
 
 **Common agent config keys:**
 
-| Key               | Type   | Description                                      |
-| ----------------- | ------ | ------------------------------------------------ |
-| `customPath`      | string | Custom path to the agent CLI binary              |
-| `customArgs`      | string | Additional CLI arguments                         |
-| `customEnvVars`   | object | Extra environment variables                      |
-| `model`           | string | Model override (e.g., `gpt-5.3-codex`, `o3`)     |
-| `contextWindow`   | number | Context window size in tokens                    |
-| `reasoningEffort` | string | Reasoning effort level (`low`, `medium`, `high`) |
+| Key                | Type   | Description                                                                                                       |
+| ------------------ | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `customPath`       | string | Custom path to the agent CLI binary                                                                               |
+| `customArgs`       | string | Additional CLI arguments                                                                                          |
+| `customEnvVars`    | object | Extra environment variables                                                                                       |
+| `model`            | string | Model override (e.g., `gpt-5.3-codex`, `o3`)                                                                      |
+| `contextWindow`    | number | Context window size in tokens                                                                                     |
+| `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
+| `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.
@@ -1330,6 +1408,12 @@ maestro-cli playbook <playbook-id> --json
 {"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
 ```
 
+If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopped gracefully and the stream ends with a `complete` event carrying `"stopped":true`. The interrupted task is recorded as "interrupted" rather than failed, and the process exits with code `130`. A second Ctrl+C exits immediately. `maestro-cli playbook`, `maestro-cli run-doc` and `maestro-cli goal-run` all behave this way; a goal run ends with `exitReason: "stopped-by-user"`.
+
+```json
+{"type":"complete","timestamp":...,"success":false,"totalTasksCompleted":2,"totalElapsedMs":31000,"stopped":true}
+```
+
 The `send` command always outputs JSON (no `--json` flag needed).
 
 ### Desktop Integration
@@ -1399,6 +1483,12 @@ for f in episodes/*.mp3; do maestro-cli open-file "$f" --queue; done
 ```
 
 `--queue` on a file that is not audio or video is an error.
+
+Pass an `http://` or `https://` URL instead of a path to stream it in the player. This covers progressive MP4 (H.264 video, AAC audio) and plain audio files such as MP3 or M4A. Adaptive and live formats (HLS `.m3u8`, DASH, RTSP, RTMP) are not supported. A URL never becomes a tab and never switches agents; it is filed under `--agent`, or the agent that owns your shell's current directory. `--queue` works the same as for a file:
+
+```bash
+maestro-cli open-file https://example.com/clip.mp4 --queue
+```
 
 #### Open a Browser Tab
 
@@ -1768,6 +1858,12 @@ tabs keep using its configured default, and the override disappears when the run
 ends. Omit them to use the agent default. They are honored in worktree mode too,
 without changing the child worktree session's own configured model. See
 [Per-run model override](#per-run-model-override) for the full picture.
+
+Every document must sit inside the agent's Auto Run folder. A saved playbook
+stores each one relative to that folder, so `--save-as` and `--launch` both
+refuse a document outside it and name the file. When a saved playbook names a
+document that no longer exists, `maestro-cli playbook` fails with
+`DOCUMENT_NOT_FOUND` and lists the missing paths.
 
 Worktree mode reuses the desktop app's Auto Run pipeline: the app creates the
 worktree (or reuses an existing one on the same repo), checks out the requested

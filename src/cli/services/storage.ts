@@ -3,7 +3,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -18,24 +18,41 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 } from '../../shared/history';
+import { resolveSyncDir } from '../../shared/syncPath';
 
-// Get the Maestro config directory path
+// Get the Maestro config directory path. Delegates to the shared resolver
+// (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
+// runner can never disagree on where Maestro's data lives - see that module's
+// doc comment for how `MAESTRO_USER_DATA` and the platform fallback agree with
+// the desktop app.
 export function getConfigDir(): string {
-	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
-	if (process.env.MAESTRO_USER_DATA) {
-		return path.resolve(process.env.MAESTRO_USER_DATA);
-	}
-	const platform = os.platform();
-	const home = os.homedir();
+	return resolveUserDataDir();
+}
 
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
+/**
+ * The directory the desktop keeps its SYNCED stores in: the custom Storage
+ * Location when one is set (Settings -> General), else the config directory.
+ * Agents, groups, settings and pasted images live here; history, playbooks,
+ * agent configs and the CLI server discovery file stay in the config directory
+ * on every machine.
+ */
+export function getSyncDir(): string {
+	return resolveSyncDir(getConfigDir());
+}
+
+/**
+ * Store files the desktop opens under the sync directory. Must match the
+ * stores `initializeStores()` (src/main/stores/instances.ts) gives
+ * `cwd: _syncPath`; anything not listed is read from the config directory.
+ */
+const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
+	'maestro-sessions.json',
+	'maestro-groups.json',
+	'maestro-settings.json',
+]);
+
+function getStoreFileDir(filename: string): string {
+	return SYNCED_STORE_FILES.has(filename) ? getSyncDir() : getConfigDir();
 }
 
 /**
@@ -43,7 +60,7 @@ export function getConfigDir(): string {
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getConfigDir(), filename);
+	const filePath = path.join(getStoreFileDir(filename), filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -61,7 +78,7 @@ function readStoreFile<T>(filename: string): T | undefined {
  * Creates the file (and parent directory) if it doesn't exist.
  */
 function writeStoreFile<T>(filename: string, data: T): void {
-	const dirPath = getConfigDir();
+	const dirPath = getStoreFileDir(filename);
 	if (!fs.existsSync(dirPath)) {
 		fs.mkdirSync(dirPath, { recursive: true });
 	}
@@ -579,6 +596,27 @@ export function getSessionHistoryMtimeMs(sessionId: string): number {
 	} catch {
 		return 0;
 	}
+}
+
+/**
+ * Absolute path of a session's existing history file, for the system prompt's
+ * `{{AGENT_HISTORY_PATH}}`. Prefers the JSONL file and falls back to a legacy
+ * `.json` one the desktop app has not migrated yet (the CLI never migrates; see
+ * `readSessionHistory`). Undefined when neither exists, e.g. a brand-new agent.
+ */
+export function resolveSessionHistoryFilePath(sessionId: string): string | undefined {
+	for (const filePath of [
+		getSessionHistoryPath(sessionId),
+		getLegacySessionHistoryPath(sessionId),
+	]) {
+		try {
+			fs.accessSync(filePath, fs.constants.R_OK);
+			return filePath;
+		} catch {
+			// Not there (or unreadable); try the next format.
+		}
+	}
+	return undefined;
 }
 
 /**

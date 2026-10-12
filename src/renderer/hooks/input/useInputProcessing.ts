@@ -7,7 +7,6 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
-	ConsultHoldTarget,
 } from '../../types';
 import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -22,20 +21,22 @@ import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/s
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
 import {
-	collectNamingPrompt,
-	requestTabAutoName,
+	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
 } from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
-import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
+import {
+	withMentionTurnNotes,
+	type CrossAgentMentionDispatch,
+	type CrossAgentMentionPlan,
+} from '../../services/crossAgentMentions';
 import {
 	dropConsultHold,
 	hasConsultHoldForTab,
 	hasRunnableQueueItem,
 	hasWorkAheadOfNewMessage,
 } from '../../utils/executionQueue';
-import { withConsultPendingNote } from '../../services/crossAgentConsultHold';
 import { probeSessionAiProcesses } from '../../services/process';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { hasPendingRetry, noteDirectDispatch } from '../../stores/retryStore';
@@ -48,6 +49,7 @@ import {
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
+import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -179,9 +181,10 @@ export interface UseInputProcessingDeps {
 	 * invoked for direct input-box submits (not queued replays / force-sends).
 	 *
 	 * `suppressLocal` on the returned plan means the source agent's own send must
-	 * be SUPPRESSED: the message leads with an `@agent` mention, so it is
-	 * addressed only at the consulted agent(s), and the caller records the user's
-	 * bubble without dispatching locally.
+	 * be SUPPRESSED: the message leads with an `@agent` mention (addressed only at
+	 * the consulted agents), or asks for the consult to run FIRST (the source
+	 * agent answers when the consult hold releases). Either way the caller
+	 * records the user's bubble without dispatching locally.
 	 */
 	onPlanCrossAgentMentions?: (
 		message: string,
@@ -199,8 +202,9 @@ export interface UseInputProcessingDeps {
 		plan: CrossAgentMentionPlan,
 		message: string,
 		sourceSession: Session,
-		sourceTabId: string
-	) => ConsultHoldTarget[] | void;
+		sourceTabId: string,
+		images?: string[]
+	) => CrossAgentMentionDispatch | void;
 }
 
 /**
@@ -214,6 +218,12 @@ export type BatchState = BatchRunState;
 /** Optional pins for deferred sends (replay / recovery) so a late timeout cannot retarget. */
 export type ProcessInputOptions = {
 	forceParallel?: boolean;
+	/**
+	 * Steer Running Turn: when this send lands in the queue, hand it straight to
+	 * the turn already running on its tab. A send that dispatches immediately has
+	 * no turn to steer and is an ordinary send.
+	 */
+	steer?: boolean;
 	images?: string[];
 	/** Prefer this agent over the live activeSessionId when the callback runs. */
 	sessionId?: string;
@@ -750,21 +760,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// an early `return` and the dequeue path (agentStore.processQueuedItem) does no
 			// naming of its own. Sitting after it meant a first message sent while any other
 			// tab was busy got queued and the tab stayed permanently unnamed - the retry
-			// never fires because there is no second send.
+			// never fires because there is no second send. (The drain and remote
+			// dispatch now name too, so this is no longer the only entry point.)
 			const activeTabForNaming = resolveTargetTab(activeSession);
-			if (currentMode === 'ai' && activeTabForNaming && effectiveInputValue.trim()) {
-				requestTabAutoName({
-					session: activeSession,
-					tabId: activeTabForNaming.id,
-					// Prior user messages plus the current one - richer context produces
-					// names that survive the extractor's filters.
-					prompt: collectNamingPrompt(
-						activeTabForNaming.logs
-							.filter((entry) => entry.source === 'user')
-							.map((entry) => entry.text),
-						effectiveInputValue
-					),
-				});
+			if (currentMode === 'ai' && activeTabForNaming) {
+				requestTabAutoNameForMessage(activeSession, activeTabForNaming.id, effectiveInputValue);
 			}
 
 			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
@@ -789,7 +789,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const sourceTab = resolveTargetTab(activeSession);
 
 				// The message leads with an `@agent` mention, so it is addressed only at
-				// the consulted agent(s): this agent does not answer it.
+				// the consulted agent(s) and this agent does not answer it - or it asks
+				// for the consult FIRST, so this agent answers only once the consult
+				// hold releases with the replies. Either way nothing spawns here.
 				if (crossAgentMentionPlan.suppressLocal) {
 					// ...but "this agent doesn't answer it" is NOT the same as "it has
 					// nothing to wait for". When the user has already put work in front
@@ -849,6 +851,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								executionQueue: [...s.executionQueue, mentionQueuedItem],
 							};
 						});
+						// An @mention cannot be steered; asking anyway reports why.
+						if (options?.steer) {
+							void steerQueuedItemOrExplain(resolvedSessionId, mentionQueuedItem.id);
+						}
 
 						clearComposerUnlessTaken();
 						if (mentionProbe.probeFailed) {
@@ -865,7 +871,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						crossAgentMentionPlan,
 						effectiveInputValue,
 						activeSession,
-						mentionSourceTabId
+						mentionSourceTabId,
+						effectiveImages
 					);
 					const mentionOnlyEntry = {
 						id: generateId(),
@@ -1121,6 +1128,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// Steer Running Turn: the draft is a queued item now, which is what a
+					// steer starts from. One that cannot be steered stays queued and the
+					// service says why.
+					if (options?.steer) {
+						void steerQueuedItemOrExplain(resolvedSessionId, queuedItem.id);
+					}
 
 					clearComposerUnlessTaken();
 					if (processState.probeFailed) {
@@ -1131,17 +1144,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			}
 
 			// This message dispatches now, so its consults fire now too - just before
-			// the source agent's own turn, matching the order the user sees. The
-			// returned targets are what this turn's consult hold is waiting on.
-			const consultTargets =
+			// the source agent's own turn, matching the order the user sees (or a
+			// hand-off is armed for when that turn ends). The result is what this
+			// turn's prompt has to be told about.
+			const mentionDispatch =
 				(crossAgentMentionPlan &&
 					onDispatchCrossAgentMentions?.(
 						crossAgentMentionPlan,
 						effectiveInputValue,
 						activeSession,
-						mentionSourceTabId
+						mentionSourceTabId,
+						effectiveImages
 					)) ||
-				[];
+				undefined;
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
@@ -1550,9 +1565,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						}
 
 						// A mid-message @mention is being answered by the consulted agent
-						// in parallel: tell this turn so it works without finishing, and
-						// waits for the reply its consult hold will deliver.
-						effectivePrompt = withConsultPendingNote(effectivePrompt, consultTargets);
+						// in parallel (work without finishing, wait for the reply its
+						// consult hold will deliver), or is handed this turn's answer when
+						// it ends (write an answer that stands alone). Tell this turn which.
+						effectivePrompt = withMentionTurnNotes(effectivePrompt, mentionDispatch);
 
 						// Prepare Maestro system prompt. Always send it; the main-process handler
 						// decides how to deliver it based on agent capabilities:

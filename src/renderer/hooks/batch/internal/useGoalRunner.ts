@@ -39,6 +39,7 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 import type { BatchAction } from '../batchReducer';
 import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchControlActions';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
+import { getClientInstanceId } from '../../../utils/clientInstance';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 
@@ -321,7 +322,13 @@ export function useGoalRunner({
 			// run and a goal run racing in different clients cannot both start.
 			let claimedStart = false;
 			try {
-				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+				// The owner record is what lets this tab pick the run back up if the
+				// page reloads mid-run (#1470).
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId, {
+					instanceId: getClientInstanceId(),
+					config,
+					folderPath,
+				});
 			} catch (error) {
 				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'GoalRunner', {
 					sessionId,
@@ -472,6 +479,7 @@ export function useGoalRunner({
 					startTime: goalStartTime,
 					tasksTotal: 100,
 					projectPath: session.cwd,
+					kind: 'goal-driven',
 				});
 			} catch (statsError) {
 				logger.warn('[GoalRunner] Failed to start stats tracking:', undefined, statsError);
@@ -489,6 +497,7 @@ export function useGoalRunner({
 				getOutputTokens: () => totalOutputTokens,
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => 0,
+				kind: 'goal-driven',
 			};
 
 			const history: GoalIterationRecord[] = [];
@@ -910,6 +919,7 @@ export function useGoalRunner({
 					outputTokens: totalOutputTokens,
 					totalCostUsd: totalCost,
 					documentsProcessed: 0,
+					kind: 'goal-driven',
 				});
 			}
 

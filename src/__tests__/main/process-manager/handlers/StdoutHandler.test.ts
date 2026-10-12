@@ -12,7 +12,7 @@
  * - If usageIsCumulative is already false: returns raw stats, stores totals
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { EventEmitter } from 'events';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ vi.mock('../../../../main/process-manager/utils/bufferUtils', () => ({
 	appendToBuffer: vi.fn((buf: string, data: string) => buf + data),
 }));
 
-vi.mock('../../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	aggregateModelUsage: vi.fn(() => ({
 		inputTokens: 100,
 		outputTokens: 50,
@@ -41,7 +41,7 @@ vi.mock('../../../../main/parsers/usage-aggregator', () => ({
 	})),
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
@@ -57,7 +57,11 @@ import {
 	StdoutHandler,
 	pushResolvedOmpContextWindow,
 } from '../../../../main/process-manager/handlers/StdoutHandler';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import {
+	getErrorPatterns,
+	matchErrorPattern,
+	matchSshErrorPattern,
+} from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
@@ -1107,6 +1111,40 @@ describe('StdoutHandler', () => {
 
 	// ── normalizeUsageToDelta (tested via outputParser path) ───────────────
 
+	describe('chat steering verdicts (maestro-p stdout)', () => {
+		function claudeContext() {
+			const ctx = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: new ClaudeOutputParser(),
+			});
+			const verdictSpy = vi.fn();
+			ctx.emitter.on('steering-verdict', verdictSpy);
+			return { ...ctx, verdictSpy };
+		}
+
+		it('forwards a steering frame and keeps it out of the transcript', () => {
+			const { handler, sessionId, verdictSpy, bufferManager } = claudeContext();
+
+			sendJsonLine(handler, sessionId, { type: 'steering', id: 's1', verdict: 'dropped' });
+
+			expect(verdictSpy).toHaveBeenCalledWith(sessionId, {
+				type: 'steering',
+				id: 's1',
+				verdict: 'dropped',
+			});
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('drops a malformed steering frame instead of forwarding it', () => {
+			const { handler, sessionId, verdictSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, { type: 'steering', id: 's1', verdict: 'exploded' });
+
+			expect(verdictSpy).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('in-turn API error notices (Claude Code)', () => {
 		// Captured live: Claude Code emitted this mid-turn, retried the call itself,
 		// and kept working. Raising it at once put the tab into the blocking error
@@ -1201,6 +1239,51 @@ describe('StdoutHandler', () => {
 			expect(proc.provisionalError).toBeUndefined();
 			expect(errorSpy.mock.invocationCallOrder[0]).toBeLessThan(
 				bufferManager.emitDataBuffered.mock.invocationCallOrder[0]
+			);
+		});
+
+		// Captured live from `claude --print` when the transcript outgrew the
+		// context window. The notice's tag is the bare `invalid_request`, so the
+		// turn ended on an `unknown` error reading "invalid_request".
+		it('raises a full context window as token exhaustion, not as its bare tag', async () => {
+			// This file stubs the pattern table out; the classification under test
+			// needs the real one.
+			const real = await vi.importActual<
+				typeof import('../../../../shared/maestro-lib/parsers/error-patterns')
+			>('../../../../shared/maestro-lib/parsers/error-patterns');
+			vi.mocked(getErrorPatterns).mockImplementation(real.getErrorPatterns);
+			vi.mocked(matchErrorPattern).mockImplementation(real.matchErrorPattern);
+			onTestFinished(() => {
+				vi.mocked(getErrorPatterns).mockImplementation(() => ({}));
+				vi.mocked(matchErrorPattern).mockImplementation(() => null);
+			});
+			const { handler, sessionId, errorSpy } = claudeContext();
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				error: 'invalid_request',
+				is_api_error_message: true,
+				message: {
+					model: '<synthetic>',
+					role: 'assistant',
+					stop_reason: 'stop_sequence',
+					content: [{ type: 'text', text: 'Prompt is too long' }],
+				},
+				session_id: 'claude-session',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: true,
+				terminal_reason: 'blocking_limit',
+				result: 'Prompt is too long',
+				session_id: 'claude-session',
+			});
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({ type: 'token_exhaustion', sessionId })
 			);
 		});
 
@@ -2516,6 +2599,209 @@ function createMinimalOutputParser(usageReturn: {
 
 // ── Performance: single JSON.parse per NDJSON line ──────────────────────
 
+describe('StdoutHandler - parsed-event', () => {
+	const assistantText = {
+		type: 'assistant',
+		message: {
+			id: 'msg_1',
+			model: 'claude-opus-5',
+			role: 'assistant',
+			content: [{ type: 'text', text: 'Hello.' }],
+		},
+		session_id: 'claude-session',
+	};
+
+	const toolUse = {
+		type: 'assistant',
+		message: {
+			id: 'msg_1',
+			model: 'claude-opus-5',
+			role: 'assistant',
+			content: [{ type: 'tool_use', id: 'toolu_1', name: 'Edit', input: {} }],
+		},
+		session_id: 'claude-session',
+	};
+
+	// The in-turn notice the error branch holds: an assistant line with content.
+	const heldNotice = {
+		type: 'assistant',
+		error: 'server_error',
+		is_api_error_message: true,
+		message: {
+			model: '<synthetic>',
+			role: 'assistant',
+			content: [{ type: 'text', text: 'API Error: Connection lost mid-response.' }],
+		},
+		session_id: 'claude-session',
+	};
+
+	function claudeContext() {
+		return createTestContext({
+			isStreamJsonMode: true,
+			toolType: 'claude-code',
+			outputParser: new ClaudeOutputParser(),
+		});
+	}
+
+	/** Everything emitted under one event name, as argument lists. */
+	function emitsOf(calls: unknown[][], name: string): unknown[][] {
+		return calls.filter((call) => call[0] === name).map((call) => call.slice(1));
+	}
+
+	it('emits nothing while nobody is subscribed', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const emitSpy = vi.spyOn(emitter, 'emit');
+
+		sendJsonLine(handler, sessionId, assistantText);
+		sendJsonLine(handler, sessionId, toolUse);
+
+		expect(emitsOf(emitSpy.mock.calls, 'parsed-event')).toEqual([]);
+		// The lines were handled all the same.
+		expect(emitsOf(emitSpy.mock.calls, 'tool-execution')).toHaveLength(1);
+	});
+
+	it('emits each line once, with the event the parser built, while something is subscribed', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const seen: Array<{ sessionId: string; raw: unknown; type: string }> = [];
+		emitter.on('parsed-event', (id: string, event: { raw: unknown; type: string }) => {
+			seen.push({ sessionId: id, raw: event.raw, type: event.type });
+		});
+
+		sendJsonLine(handler, sessionId, assistantText);
+		sendJsonLine(handler, sessionId, toolUse);
+
+		expect(seen).toHaveLength(2);
+		expect(seen.map((entry) => entry.sessionId)).toEqual([sessionId, sessionId]);
+		expect(seen[0].raw).toEqual(assistantText);
+		expect(seen[1].raw).toEqual(toolUse);
+	});
+
+	it('stops emitting when the last subscriber leaves', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const listener = vi.fn();
+		emitter.on('parsed-event', listener);
+		sendJsonLine(handler, sessionId, assistantText);
+		emitter.off('parsed-event', listener);
+		const emitSpy = vi.spyOn(emitter, 'emit');
+		sendJsonLine(handler, sessionId, toolUse);
+
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(emitsOf(emitSpy.mock.calls, 'parsed-event')).toEqual([]);
+	});
+
+	it('emits ahead of the early return for a tool call it has already shown', () => {
+		const toolEvent = {
+			type: 'tool_use' as const,
+			toolName: 'run',
+			toolCallId: 'call-1',
+			toolState: { status: 'running' },
+		};
+		const mockParser = {
+			agentId: 'opencode',
+			parseJsonLine: vi.fn(() => toolEvent),
+			parseJsonObject: vi.fn((parsed: unknown) => ({ ...toolEvent, raw: parsed })),
+			isResultMessage: vi.fn(() => false),
+			extractSessionId: vi.fn(() => null),
+			extractUsage: vi.fn(() => null),
+			extractSlashCommands: vi.fn(() => null),
+			detectErrorFromLine: vi.fn(() => null),
+			detectErrorFromParsed: vi.fn(() => null),
+			detectErrorFromExit: vi.fn(() => null),
+		};
+		const { handler, sessionId, emitter } = createTestContext({
+			isStreamJsonMode: true,
+			toolType: 'opencode',
+			outputParser: mockParser as any,
+		});
+		const parsedEvents = vi.fn();
+		const toolExecutions = vi.fn();
+		emitter.on('parsed-event', parsedEvents);
+		emitter.on('tool-execution', toolExecutions);
+
+		sendJsonLine(handler, sessionId, { n: 1 });
+		sendJsonLine(handler, sessionId, { n: 2 });
+
+		// The repeat is not shown a second time, and is still handed on.
+		expect(toolExecutions).toHaveBeenCalledTimes(1);
+		expect(parsedEvents).toHaveBeenCalledTimes(2);
+	});
+
+	it('emits a line the error branch holds back, which never reaches the event handler', () => {
+		const { handler, sessionId, emitter, proc } = claudeContext();
+		const seen: unknown[] = [];
+		emitter.on('parsed-event', (_id: string, event: { raw: unknown }) => seen.push(event.raw));
+
+		sendJsonLine(handler, sessionId, heldNotice);
+
+		expect(proc.provisionalError).toBeDefined();
+		expect(seen).toEqual([heldNotice]);
+	});
+
+	it('emits a failed result once, with the usage it carries', () => {
+		const failedResult = {
+			type: 'result',
+			subtype: 'error_during_execution',
+			is_error: true,
+			result: 'API Error: 500 Internal server error',
+			session_id: 'claude-session',
+			modelUsage: {
+				'claude-opus-5': {
+					inputTokens: 10,
+					outputTokens: 5,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					contextWindow: 200000,
+				},
+			},
+			total_cost_usd: 0.01,
+		};
+		const { handler, sessionId, emitter, proc } = claudeContext();
+		const errors = vi.fn();
+		const seen: Array<{ raw: unknown; usage?: unknown }> = [];
+		emitter.on('agent-error', errors);
+		emitter.on('parsed-event', (_id: string, event: { raw: unknown; usage?: unknown }) =>
+			seen.push(event)
+		);
+
+		sendJsonLine(handler, sessionId, failedResult);
+
+		// The line left through the error branch, and was still handed on once.
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect(proc.errorEmitted).toBe(true);
+		expect(seen).toHaveLength(1);
+		expect(seen[0].raw).toEqual(failedResult);
+		expect(seen[0].usage).toBeDefined();
+	});
+
+	it('emits nothing for a line that is not JSON', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		const listener = vi.fn();
+		emitter.on('parsed-event', listener);
+
+		handler.handleData(sessionId, 'Loading shell profile...\n');
+
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	it('goes on handling the line when a subscriber throws', () => {
+		const { handler, sessionId, emitter } = claudeContext();
+		emitter.on('parsed-event', () => {
+			throw new Error('subscriber failed');
+		});
+		const toolExecutions = vi.fn();
+		emitter.on('tool-execution', toolExecutions);
+
+		expect(() => sendJsonLine(handler, sessionId, toolUse)).not.toThrow();
+
+		expect(toolExecutions).toHaveBeenCalledTimes(1);
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('parsed-event listener threw'),
+			'ProcessManager',
+			expect.objectContaining({ sessionId })
+		);
+	});
+});
+
 describe('StdoutHandler - single JSON parse per line', () => {
 	it('parses JSON exactly once per NDJSON line (output parser path)', () => {
 		// Instrument JSON.parse to count calls
@@ -2689,6 +2975,58 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(proc.errorEmitted).toBe(false);
+		});
+
+		// The SSH branch is a separate emit 70 lines below the parser one, and it
+		// was outside this rule: tearing down a remote process is exactly what
+		// writes an SSH pattern to stdout, so a stopped turn surfaced as a crash
+		// and armed recovery. `matchSshErrorPattern` is mocked in this file, so
+		// each case sets its own return value and resets it, per the SSH tests
+		// further down - `clearAllMocks` in `beforeEach` clears calls, not
+		// implementations.
+		const SSH_LINE = 'ssh: connect to host build-box port 22: Connection refused\n';
+		const sshFailure = {
+			type: 'agent_crashed' as const,
+			message: 'SSH connection refused.',
+			recoverable: false,
+		};
+
+		it('does not emit agent-error for an SSH pattern on stdout after interrupt', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(sshFailure);
+
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, SSH_LINE);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('still emits agent-error for an SSH pattern on stdout when the user did not stop it', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(sshFailure);
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, SSH_LINE);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+
+			mockedMatchSsh.mockReset();
 		});
 
 		it('still emits agent-error for a cancelled grok end when the user did not stop it', async () => {

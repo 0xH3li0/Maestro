@@ -59,7 +59,7 @@ import type {
 	GroomingProgress,
 	MergeResult,
 } from '../../types/contextMerge';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 
 // Lazy-loaded: FilePreview is the single aggregation point that pulls mermaid,
 // react-syntax-highlighter, and the full react-markdown/remark/rehype stack into
@@ -209,6 +209,8 @@ export interface MainPanelContentProps {
 	 * Execution Queue modal does instead of re-deriving one from a subset.
 	 */
 	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	onOpenQueueBrowser?: () => void;
 	showFlashNotification?: (message: string) => void;
 
@@ -400,6 +402,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		onForceSendQueuedItem,
 		forcedParallelEnabled,
 		getForceSendContext,
+		getSteerContext,
+		onSteerQueuedItem,
 		onOpenQueueBrowser,
 		showFlashNotification,
 		summarizeProgress,
@@ -740,6 +744,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			onInterrupt: handleInterrupt,
 			setLightboxImage,
 			setMarkdownEditMode: useSettingsStore.getState().setChatRawTextMode,
@@ -774,6 +780,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			handleInterrupt,
 			setLightboxImage,
 			onReplayMessage,
@@ -1010,6 +1018,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}
+								getSteerContext={getSteerContext}
+								onSteerQueuedItem={onSteerQueuedItem}
 								onInterrupt={handleInterrupt}
 								onScrollPositionChange={onScrollPositionChange}
 								onAtBottomChange={onAtBottomChange}

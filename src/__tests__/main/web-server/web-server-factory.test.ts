@@ -46,9 +46,11 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSelectTabCallback = vi.fn();
 			setNewTabCallback = vi.fn();
 			setCloseTabCallback = vi.fn();
+			setReopenTabCallback = vi.fn();
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
+			setWindowCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
@@ -64,6 +66,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setEnqueueCommandCallback = vi.fn();
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
+			setSteerQueueItemCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
 			setRefreshAutoRunDocsCallback = vi.fn();
 			setConfigureAutoRunCallback = vi.fn();
@@ -1971,6 +1974,72 @@ describe('web-server/web-server-factory', () => {
 				expect.any(String)
 			);
 		});
+
+		it('setSteerQueueItemCallback forwards to the renderer and validates its reply', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSteerQueueItemCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'item-1');
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:steerQueueItem'
+			);
+			expect(request).toEqual(['remote:steerQueueItem', 'session-1', 'item-1', expect.any(String)]);
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === request?.[3])?.[1];
+			responseListener?.({} as never, {
+				success: true,
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			});
+
+			await expect(resultPromise).resolves.toEqual({
+				success: true,
+				result: { outcome: 'delivered', verdict: 'delivered' },
+			});
+		});
+
+		it('setSteerQueueItemCallback reports a malformed reply as a failure, not an outcome', async () => {
+			const server = createWebServerFactory(deps)() as any;
+			const callback = server.setSteerQueueItemCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', 'item-1');
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:steerQueueItem'
+			);
+			const responseListener = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === request?.[3])?.[1];
+			responseListener?.({} as never, { success: true, result: { outcome: 'exploded' } });
+
+			await expect(resultPromise).resolves.toMatchObject({ success: false });
+		});
+
+		it('routes agent-scoped queue requests to the window that owns the agent', () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
+			const server = createWebServerFactory(deps)() as any;
+
+			void server.setSteerQueueItemCallback.mock.calls[0][0]('session-2', 'item-1');
+			void server.setRemoveQueueItemCallback.mock.calls[0][0]('session-2', 'item-2');
+			void server.setEnqueueCommandCallback.mock.calls[0][0]('session-2', 'hi', 'ai');
+
+			const channels = secondaryWebContents.send.mock.calls.map((call) => call[0]);
+			expect(channels).toEqual([
+				'remote:steerQueueItem',
+				'remote:removeQueueItem',
+				'remote:enqueueCommand',
+			]);
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('gistCallbacks smoke', () => {
@@ -2574,11 +2643,20 @@ describe('web-server/web-server-factory', () => {
 			await expect(resultPromise).resolves.toEqual({ tabId: 'new-tab' });
 
 			const closeCallback = server.setCloseTabCallback.mock.calls[0][0];
-			await expect(closeCallback('session-in-secondary-window', 'new-tab')).resolves.toBe(true);
+			const closePromise = closeCallback('session-in-secondary-window', 'new-tab');
+			const closeChannel = vi
+				.mocked(secondaryWebContents.send)
+				.mock.calls.find((call) => call[0] === 'remote:closeTab')?.[3] as string;
+			const closeReply = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === closeChannel)?.[1];
+			closeReply?.({} as never, true);
+			await expect(closePromise).resolves.toBe(true);
 			expect(secondaryWebContents.send).toHaveBeenCalledWith(
 				'remote:closeTab',
 				'session-in-secondary-window',
-				'new-tab'
+				'new-tab',
+				expect.any(String)
 			);
 			expect(mockWebContents.send).not.toHaveBeenCalledWith(
 				'remote:closeTab',

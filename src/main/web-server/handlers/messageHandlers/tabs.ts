@@ -9,7 +9,7 @@
 
 import path from 'path';
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
-import type { MediaOpenMode } from '../../../../shared/mediaTypes';
+import { isRemoteMediaUrl, type MediaOpenMode } from '../../../../shared/mediaTypes';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -372,8 +372,12 @@ export function handleOpenFileTab(
 	// intentionally allowed - a paired client already has shell-level access
 	// (execute_command), so confining preview tabs to the worktree gated
 	// nothing the connection token doesn't already gate.
-	const sessionRoot = path.resolve(session.cwd);
-	const resolved = path.resolve(sessionRoot, filePath);
+	//
+	// An http(s) URL is remote media for the floating player
+	// (`maestro-cli open-file <url>`), so it passes through untouched - running it
+	// through path.resolve would glue it onto the agent's cwd.
+	const remoteMedia = isRemoteMediaUrl(filePath);
+	const resolved = remoteMedia ? filePath : path.resolve(path.resolve(session.cwd), filePath);
 
 	if (!ctx.callbacks.openFileTab) {
 		sendErrorResult('File tab opening not configured');
@@ -550,6 +554,7 @@ export async function handleOpenTerminalTab(
 	const rawShell = message.shell;
 	const rawName = message.name;
 	const rawCommand = message.command;
+	const rawInputRequired = message.inputRequired;
 	const background = readBackgroundField(message);
 	// cwd/shell/name can leak local usernames or project names - log
 	// presence flags only.
@@ -593,6 +598,10 @@ export async function handleOpenTerminalTab(
 	}
 	if (rawCommand !== undefined && typeof rawCommand !== 'string') {
 		sendErrorResult('Invalid command: must be a string');
+		return;
+	}
+	if (rawInputRequired !== undefined && typeof rawInputRequired !== 'boolean') {
+		sendErrorResult('Invalid inputRequired: must be a boolean');
 		return;
 	}
 	const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
@@ -641,7 +650,17 @@ export async function handleOpenTerminalTab(
 	}
 
 	ctx.callbacks
-		.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
+		.openTerminalTab(
+			sessionId,
+			{
+				cwd: resolvedCwd,
+				shell,
+				name,
+				command,
+				...(rawInputRequired === true && { inputRequired: true }),
+			},
+			{ background }
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'open_terminal_tab_result',

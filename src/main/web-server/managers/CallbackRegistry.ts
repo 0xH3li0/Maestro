@@ -17,10 +17,12 @@ import type {
 	SelectTabCallback,
 	NewTabCallback,
 	CloseTabCallback,
+	ReopenTabCallback,
 	RenameTabCallback,
 	RenameTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -56,6 +58,8 @@ import type {
 	ListQueueResult,
 	RemoveQueueItemCallback,
 	RemoveQueueItemResult,
+	SteerQueueItemCallback,
+	SteerQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -152,6 +156,7 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -175,9 +180,11 @@ export interface WebServerCallbacks {
 	selectTab: SelectTabCallback | null;
 	newTab: NewTabCallback | null;
 	closeTab: CloseTabCallback | null;
+	reopenTab: ReopenTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
+	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
@@ -196,6 +203,7 @@ export interface WebServerCallbacks {
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
+	steerQueueItem: SteerQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -279,9 +287,11 @@ export class CallbackRegistry {
 		selectTab: null,
 		newTab: null,
 		closeTab: null,
+		reopenTab: null,
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
+		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
@@ -300,6 +310,7 @@ export class CallbackRegistry {
 		enqueueCommand: null,
 		listQueue: null,
 		removeQueueItem: null,
+		steerQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -448,6 +459,11 @@ export class CallbackRegistry {
 		return this.callbacks.closeTab(sessionId, tabId);
 	}
 
+	/** Restore the requested conversation from the owning renderer's close history. */
+	async reopenTab(sessionId: string, tabId: string): Promise<{ tabId: string } | null> {
+		return this.callbacks.reopenTab?.(sessionId, tabId) ?? null;
+	}
+
 	async renameTab(
 		sessionId: string,
 		tabId: string,
@@ -467,6 +483,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Snooze is not configured' };
 		}
 		return this.callbacks.snoozeCommand(request);
+	}
+
+	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
+		if (!this.callbacks.windowCommand) {
+			return { success: false, error: 'Window commands are not configured' };
+		}
+		return this.callbacks.windowCommand(request);
 	}
 
 	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
@@ -593,6 +616,11 @@ export class CallbackRegistry {
 		if (!this.callbacks.removeQueueItem)
 			return { success: false, removed: false, error: 'not configured' };
 		return this.callbacks.removeQueueItem(sessionId, itemId);
+	}
+
+	async steerQueueItem(sessionId: string, itemId: string): Promise<SteerQueueItemResult> {
+		if (!this.callbacks.steerQueueItem) return { success: false, error: 'not configured' };
+		return this.callbacks.steerQueueItem(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -1131,6 +1159,11 @@ export class CallbackRegistry {
 		this.callbacks.closeTab = callback;
 	}
 
+	/** Register the owner-side conversation restore callback. */
+	setReopenTabCallback(callback: ReopenTabCallback): void {
+		this.callbacks.reopenTab = callback;
+	}
+
 	setRenameTabCallback(callback: RenameTabCallback): void {
 		logger.info('[CallbackRegistry] setRenameTabCallback called', LOG_CONTEXT);
 		this.callbacks.renameTab = callback;
@@ -1142,6 +1175,10 @@ export class CallbackRegistry {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbacks.snoozeCommand = callback;
+	}
+
+	setWindowCommandCallback(callback: WindowCommandCallback): void {
+		this.callbacks.windowCommand = callback;
 	}
 
 	setReorderTabCallback(callback: ReorderTabCallback): void {
@@ -1214,6 +1251,10 @@ export class CallbackRegistry {
 
 	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
 		this.callbacks.removeQueueItem = callback;
+	}
+
+	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
+		this.callbacks.steerQueueItem = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {

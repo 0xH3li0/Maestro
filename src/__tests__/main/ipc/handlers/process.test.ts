@@ -11,8 +11,9 @@
  * - runCommand: Execute a single command and capture output
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as os from 'os';
 import * as path from 'path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import {
 	registerProcessHandlers,
@@ -20,7 +21,7 @@ import {
 } from '../../../../main/ipc/handlers/process';
 import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
-import { checkCustomPath } from '../../../../main/agents/path-prober';
+import { checkCustomPath } from '../../../../shared/maestro-lib/launch/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
 import {
 	primeOmpModelCatalog,
@@ -52,12 +53,12 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-vi.mock('../../../../main/agents/path-prober', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/path-prober', () => ({
 	checkCustomPath: vi.fn(async (customPath: string) => ({ exists: true, path: customPath })),
 }));
 
 // Mock the agent-args utilities
-vi.mock('../../../../main/utils/agent-args', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: vi.fn((agent, opts) => opts.baseArgs || []),
 	applyAgentConfigOverrides: vi.fn((agent, args, opts) => ({
 		args,
@@ -273,6 +274,14 @@ vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
 	})),
 }));
 
+// Mock the remote maestro-p probe. An SSH-enabled Claude spawn warms it before
+// resolving the token mode, and the real one shells out to `ssh` against the
+// fixture host: CI fails that DNS lookup fast, a local resolver can take 30s
+// and time the test out. `undefined` is the probe's own "could not determine".
+vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock the prompt manager so the copilot-preamble injection has deterministic
 // content without bootstrapping the real prompt cache. Per-test overrides use
 // mockReturnValueOnce / mockImplementation.
@@ -397,6 +406,7 @@ describe('process IPC handlers', () => {
 				'concerto-html:restore',
 				'process:spawn',
 				'process:write',
+				'process:steer',
 				'process:broadcast-user-input',
 				'process:interrupt',
 				'process:kill',
@@ -742,6 +752,48 @@ describe('process IPC handlers', () => {
 			});
 		});
 
+		it('keeps a provider default above a global Settings var, and the agent above both', async () => {
+			// Desktop order: global < provider defaults < agent vars. The record the
+			// process manager gets as `customEnvVars` holds the defaults and the
+			// agent's vars; the global vars travel beside it as `shellEnvVars`, and
+			// the spawner applies them beneath that record.
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				requiresPty: false,
+				defaultEnvVars: {
+					CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+					OTHER_DEFAULT: 'default',
+				},
+			});
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'shellEnvVars') {
+					return { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0', OTHER_DEFAULT: 'global' };
+				}
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 2002, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-env-layers',
+				toolType: 'claude-code',
+				cwd: '/test',
+				command: 'claude',
+				args: [],
+				sessionCustomEnvVars: { OTHER_DEFAULT: 'agent' },
+			});
+
+			const spawnConfig = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnConfig.customEnvVars).toMatchObject({
+				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+				OTHER_DEFAULT: 'agent',
+			});
+			expect(spawnConfig.shellEnvVars).toEqual({
+				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0',
+				OTHER_DEFAULT: 'global',
+			});
+		});
+
 		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);
@@ -756,9 +808,12 @@ describe('process IPC handlers', () => {
 				effectiveCustomEnvVars: { OPENCODE_CONFIG_CONTENT: yoloConfig },
 			});
 
+			// The env record comes from the launch plan's layers, so the YOLO value
+			// is the provider default it is in the real OpenCode definition.
 			const mockAgent = {
 				id: 'opencode',
 				requiresPty: false,
+				defaultEnvVars: { OPENCODE_CONFIG_CONTENT: yoloConfig },
 				readOnlyEnvOverrides: {
 					OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
 				},
@@ -1002,6 +1057,87 @@ describe('process IPC handlers', () => {
 					promptArgs: undefined,
 				})
 			);
+		});
+
+		// Codex transport: the persisted agent record decides, so a stale renderer
+		// cannot route a turn differently from what is saved.
+		describe('Codex transport', () => {
+			const codexAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				path: '/detected/codex',
+				requiresPty: false,
+			};
+
+			const spawnCodex = async (extra: Record<string, unknown> = {}) => {
+				mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 5150, success: true });
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'codex-agent-ai-tab-1',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: ['exec'],
+					prompt: 'hi',
+					...extra,
+				});
+				return mockProcessManager.spawn.mock.calls[0][0];
+			};
+
+			const persist = (records: unknown[]) => {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? records : defaultValue
+				);
+			};
+
+			it('passes app-server when the persisted agent opted in', async () => {
+				persist([{ id: 'codex-agent', codexTransport: 'app-server' }]);
+				const spawnCall = await spawnCodex();
+				expect(spawnCall.codexTransport).toBe('app-server');
+			});
+
+			it('defaults to exec when the persisted agent has no setting', async () => {
+				persist([{ id: 'codex-agent' }]);
+				const spawnCall = await spawnCodex();
+				expect(spawnCall.codexTransport).toBe('exec');
+			});
+
+			it('lets the persisted record outrank a stale inline value', async () => {
+				persist([{ id: 'codex-agent', codexTransport: 'exec' }]);
+				const spawnCall = await spawnCodex({ codexTransport: 'app-server' });
+				expect(spawnCall.codexTransport).toBe('exec');
+			});
+
+			it('falls back to the inline value when no record matches', async () => {
+				persist([]);
+				const spawnCall = await spawnCodex({ codexTransport: 'app-server' });
+				expect(spawnCall.codexTransport).toBe('app-server');
+			});
+
+			it('never resolves app-server for a non-Codex agent', async () => {
+				persist([{ id: 'opencode-agent', codexTransport: 'app-server' }]);
+				mockAgentDetector.getAgent.mockResolvedValue({
+					id: 'opencode',
+					name: 'OpenCode',
+					binaryName: 'opencode',
+					path: '/detected/opencode',
+					requiresPty: false,
+				});
+				mockProcessManager.spawn.mockReturnValue({ pid: 5151, success: true });
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'opencode-agent-ai-tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: ['run'],
+					prompt: 'hi',
+					codexTransport: 'app-server',
+				});
+				expect(mockProcessManager.spawn.mock.calls[0][0].codexTransport).toBe('exec');
+			});
 		});
 
 		// Batch Mode default-off: when `enableMaestroP` isn't set on the spawn
@@ -1416,6 +1552,22 @@ describe('process IPC handlers', () => {
 			it('does not sanitize SSH-enabled spawns (transcript lives on remote, not local disk)', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
 				mockProcessManager.spawn.mockReturnValue({ pid: 4250, success: true });
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+					if (key === 'sshRemotes') {
+						return [
+							{
+								id: 'remote-1',
+								name: 'Dev Server',
+								host: 'dev.example.com',
+								port: 22,
+								username: 'devuser',
+								privateKeyPath: '',
+								enabled: true,
+							},
+						];
+					}
+					return defaultValue;
+				});
 
 				const handler = handlers.get('process:spawn');
 				await handler!({} as any, {
@@ -1431,6 +1583,152 @@ describe('process IPC handlers', () => {
 
 				expect(stripThinkingFromTranscript).not.toHaveBeenCalled();
 			});
+
+			// The sanitizer must open the exact file claude wrote:
+			// <config dir>/projects/<cwd slug>/<session id>.jsonl. A near miss is
+			// silent (the sanitizer no-ops on a missing file) and leaves the 400.
+			it('targets <home>/.claude/projects/<slug>/<id>.jsonl for a macOS project path', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4251, success: true });
+				const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+				delete process.env.CLAUDE_CONFIG_DIR;
+
+				try {
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, {
+						sessionId: 'session-mac',
+						toolType: 'claude-code',
+						cwd: '/Users/jane/Library/Mobile Documents/com~apple~CloudDocs/My App/',
+						command: 'claude',
+						args: claudeCodeAgent.args,
+						agentSessionId: 'mac-session-uuid',
+						prompt: 'continue',
+					});
+				} finally {
+					if (savedConfigDir !== undefined) process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+				}
+
+				expect(vi.mocked(stripThinkingFromTranscript).mock.calls[0][0]).toBe(
+					path.join(
+						os.homedir(),
+						'.claude',
+						'projects',
+						'-Users-jane-Library-Mobile-Documents-com-apple-CloudDocs-My-App',
+						'mac-session-uuid.jsonl'
+					)
+				);
+			});
+
+			// Multi-account setups point an agent at `~/.claude-<name>`. The spawn
+			// expands the `~/`; the sanitizer used to path.resolve() it into
+			// `<cwd>/~/.claude-work` and never find the transcript.
+			it.each([
+				['a ~/ account dir', '~/.claude-work', () => path.join(os.homedir(), '.claude-work')],
+				['a blank value (means unset)', '', () => path.join(os.homedir(), '.claude')],
+			])(
+				'resolves CLAUDE_CONFIG_DIR from the agent env the way the spawn does: %s',
+				async (_label, value, expectedDir) => {
+					mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+					mockProcessManager.spawn.mockReturnValue({ pid: 4252, success: true });
+
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, {
+						sessionId: 'session-account',
+						toolType: 'claude-code',
+						cwd: '/Users/jane/Code/app',
+						command: 'claude',
+						args: claudeCodeAgent.args,
+						agentSessionId: 'account-session-uuid',
+						prompt: 'continue',
+						sessionCustomEnvVars: { CLAUDE_CONFIG_DIR: value },
+					});
+
+					expect(vi.mocked(stripThinkingFromTranscript).mock.calls[0][0]).toBe(
+						path.join(
+							expectedDir(),
+							'projects',
+							'-Users-jane-Code-app',
+							'account-session-uuid.jsonl'
+						)
+					);
+				}
+			);
+
+			// CLAUDE_CONFIG_DIR set outside the agent's own vars still reaches the
+			// spawned claude, so the sanitizer has to look there too. The agent's
+			// own vars REPLACE the provider-level set (they do not layer over it),
+			// which is why the last case falls back to the global dir.
+			it.each<
+				[
+					string,
+					Record<string, string> | undefined,
+					Record<string, string>,
+					Record<string, string>,
+					string,
+				]
+			>([
+				[
+					'Settings -> Shell Configuration',
+					undefined,
+					{},
+					{ CLAUDE_CONFIG_DIR: '~/.claude-work' },
+					'.claude-work',
+				],
+				[
+					'the provider-level agent config',
+					undefined,
+					{ CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					{},
+					'.claude-team',
+				],
+				[
+					"the global layer when the agent's own vars replace the provider set",
+					{ SOME_OTHER_VAR: '1' },
+					{ CLAUDE_CONFIG_DIR: '~/.claude-team' },
+					{ CLAUDE_CONFIG_DIR: '~/.claude-work' },
+					'.claude-work',
+				],
+			])(
+				'resolves a CLAUDE_CONFIG_DIR set in %s',
+				async (_label, sessionCustomEnvVars, agentLevelVars, globalVars, expectedDir) => {
+					mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+					mockProcessManager.spawn.mockReturnValue({ pid: 4253, success: true });
+					mockAgentConfigsStore.get.mockReturnValue({
+						'claude-code': { customEnvVars: agentLevelVars },
+					});
+					mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+						key === 'shellEnvVars' ? globalVars : defaultValue
+					);
+					const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+					delete process.env.CLAUDE_CONFIG_DIR;
+
+					try {
+						const handler = handlers.get('process:spawn');
+						await handler!({} as any, {
+							sessionId: 'session-layered',
+							toolType: 'claude-code',
+							cwd: '/Users/jane/Code/app',
+							command: 'claude',
+							args: claudeCodeAgent.args,
+							agentSessionId: 'layered-session-uuid',
+							prompt: 'continue',
+							sessionCustomEnvVars,
+						});
+					} finally {
+						if (savedConfigDir !== undefined) process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+					}
+
+					expect(vi.mocked(stripThinkingFromTranscript).mock.calls[0][0]).toBe(
+						path.join(
+							os.homedir(),
+							expectedDir,
+							'projects',
+							'-Users-jane-Code-app',
+							'layered-session-uuid.jsonl'
+						)
+					);
+				}
+			);
 		});
 	});
 
@@ -2498,7 +2796,10 @@ describe('process IPC handlers', () => {
 			);
 		});
 
-		it('should run locally when no SSH remotes are configured', async () => {
+		it('refuses to spawn when SSH is on but its remote is not configured', async () => {
+			// This used to run the agent LOCALLY, against a cwd that belongs to the
+			// remote host. The user asked for a remote, so the spawn is refused and
+			// the tab is told why.
 			const mockAgent = {
 				id: 'claude-code',
 				requiresPty: true,
@@ -2506,13 +2807,12 @@ describe('process IPC handlers', () => {
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
 			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
-				if (key === 'sshRemotes') return []; // No remotes configured
+				if (key === 'sshRemotes') return []; // Remote was deleted
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
-			await handler!({} as any, {
+			const result = await handler!({} as any, {
 				sessionId: 'session-1',
 				toolType: 'claude-code',
 				cwd: '/local/project',
@@ -2525,12 +2825,85 @@ describe('process IPC handlers', () => {
 				},
 			});
 
-			// No matching SSH remote, should run locally
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: 'claude',
-					requiresPty: true, // Preserved when running locally
-				})
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ success: false, pid: 0 });
+			const window = deps.getMainWindow() as unknown as {
+				webContents: { send: ReturnType<typeof vi.fn> };
+			};
+			expect(window.webContents.send).toHaveBeenCalledWith(
+				'process:data',
+				'session-1',
+				expect.stringContaining('"remote-1" no longer exists')
+			);
+		});
+
+		it('refuses to spawn when the configured SSH remote is disabled', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [{ ...mockSshRemote, enabled: false }];
+				return defaultValue;
+			});
+
+			const handler = handlers.get('process:spawn');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/remoteuser/remote-project',
+				command: 'codex',
+				args: [],
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: mockSshRemote.id,
+				},
+			});
+
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ success: false, pid: 0 });
+			const window = deps.getMainWindow() as unknown as {
+				webContents: { send: ReturnType<typeof vi.fn> };
+			};
+			expect(window.webContents.send).toHaveBeenCalledWith(
+				'process:data',
+				'session-1',
+				expect.stringContaining('is disabled')
+			);
+		});
+
+		it('refuses to spawn when the SSH remote is removed after the launch plan resolved it', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+			// The launch plan sees the remote; every later read (including the
+			// spawn-time lookup in the SSH wrapper) finds it gone, as if it was
+			// deleted mid-handler.
+			let sshRemoteReads = 0;
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return sshRemoteReads++ === 0 ? [mockSshRemote] : [];
+				return defaultValue;
+			});
+
+			const handler = handlers.get('process:spawn');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'codex',
+				cwd: '/home/remoteuser/remote-project',
+				command: 'codex',
+				args: [],
+				prompt: 'secret prompt',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: mockSshRemote.id,
+				},
+			});
+
+			expect(sshRemoteReads).toBeGreaterThan(1);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ success: false, pid: 0 });
+			const window = deps.getMainWindow() as unknown as {
+				webContents: { send: ReturnType<typeof vi.fn> };
+			};
+			expect(window.webContents.send).toHaveBeenCalledWith(
+				'process:data',
+				'session-1',
+				expect.stringContaining(`configured remote "${mockSshRemote.id}" could not be resolved`)
 			);
 		});
 
@@ -3393,6 +3766,13 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.prompt!.replace(/^COPILOT_PREAMBLE_TEXT\n\n/, '')).toBe(
 				'Follow-up question'
 			);
+			// The spawn log reports what actually happened, not "embedded".
+			const { logger } = await import('../../../../main/utils/logger');
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('Spawning process'),
+				expect.anything(),
+				expect.objectContaining({ systemPromptDelivery: 'skipped-resume' })
+			);
 		});
 
 		it('should still embed system prompt on first turn (no agentSessionId) for unsupported agents', async () => {
@@ -3536,6 +3916,28 @@ describe('process IPC handlers', () => {
 				},
 			};
 
+			it('lets a global shell var beat an inherited copy of the same key', async () => {
+				const saved = process.env.CLAUDE_CONFIG_DIR;
+				process.env.CLAUDE_CONFIG_DIR = 'C:\\inherited';
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: 'C:\\global' } : defaultValue
+				);
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+				try {
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, buildSpawnConfig());
+				} finally {
+					if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+					else process.env.CLAUDE_CONFIG_DIR = saved;
+				}
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.shellEnvVars).toMatchObject({ CLAUDE_CONFIG_DIR: 'C:\\global' });
+				expect(spawnCall.customEnvVars?.CLAUDE_CONFIG_DIR).toBeUndefined();
+				expect(spawnCall.customEnvVars?.PATH).toBeDefined();
+			});
+
 			it('writes temp file with prompt content via fs/promises', async () => {
 				const fsp = await import('fs/promises');
 				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
@@ -3545,10 +3947,10 @@ describe('process IPC handlers', () => {
 				await handler!({} as any, buildSpawnConfig());
 
 				expect(fsp.writeFile).toHaveBeenCalledTimes(1);
-				const [tempPath, content, encoding] = vi.mocked(fsp.writeFile).mock.calls[0];
-				expect(tempPath).toMatch(/maestro-sysprompt-session-1-\d+\.txt/);
+				const [tempPath, content, options] = vi.mocked(fsp.writeFile).mock.calls[0];
+				expect(tempPath).toMatch(/maestro-sysprompt-session-1-\d+-[0-9a-f]{8}\.txt/);
 				expect(content).toBe('You are Maestro system prompt content');
-				expect(encoding).toBe('utf-8');
+				expect(options).toEqual({ encoding: 'utf-8', mode: 0o600 });
 			});
 
 			it('schedules unlink after 30s timer', async () => {
@@ -3567,7 +3969,7 @@ describe('process IPC handlers', () => {
 
 				expect(fsp.unlink).toHaveBeenCalledTimes(1);
 				const [unlinkPath] = vi.mocked(fsp.unlink).mock.calls[0];
-				expect(unlinkPath).toMatch(/maestro-sysprompt-session-1-\d+\.txt/);
+				expect(unlinkPath).toMatch(/maestro-sysprompt-session-1-\d+-[0-9a-f]{8}\.txt/);
 			});
 
 			it('silences ENOENT cleanup errors (file already gone)', async () => {
@@ -3620,7 +4022,7 @@ describe('process IPC handlers', () => {
 				expect(ctxArg).toEqual(
 					expect.objectContaining({
 						context: 'systemPromptTempFile cleanup (safety)',
-						file: expect.stringMatching(/maestro-sysprompt-session-1-\d+\.txt/),
+						file: expect.stringMatching(/maestro-sysprompt-session-1-\d+-[0-9a-f]{8}\.txt/),
 					})
 				);
 			});
@@ -3860,6 +4262,22 @@ describe('process IPC handlers', () => {
 		it('leaves stdin delivery off for SSH sessions (the SSH script owns stdin)', async () => {
 			await setHostWindows(true);
 			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') {
+					return [
+						{
+							id: 'remote-1',
+							name: 'Remote',
+							host: 'remote.example.com',
+							port: 22,
+							username: 'dev',
+							privateKeyPath: '~/.ssh/id_ed25519',
+							enabled: true,
+						},
+					];
+				}
+				return defaultValue;
+			});
 
 			const spawnCall = await spawnWith({
 				toolType: 'claude-code',

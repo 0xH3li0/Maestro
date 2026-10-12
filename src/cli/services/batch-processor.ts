@@ -10,7 +10,8 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
-import { captureCliRun } from './agent-run-capture';
+import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
+import { requestCliSynopsis } from './synopsis';
 import { addHistoryEntry, readGroups, readHistory } from './storage';
 import {
 	aggregateAutoRunHistoryTotals,
@@ -21,7 +22,6 @@ import { substituteTemplateVariables, TemplateContext } from '../../shared/templ
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
-import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
@@ -30,7 +30,6 @@ import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/autorunModelHints';
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
-import { cheapTurnSettings } from '../../shared/modelTiers';
 
 // Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
 // both share it and draw a pill for a marker that would block the next run.
@@ -76,6 +75,11 @@ export async function* runPlaybook(
 		 * override, then the agent's settings. Same run-scoped contract.
 		 */
 		ignoreModelHints?: boolean;
+		/**
+		 * Stop the run. The agent turn in flight is aborted, the run records
+		 * "stopped" (never a failure) and ends cleanly. See `spawnAgent`'s `signal`.
+		 */
+		signal?: AbortSignal;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -87,11 +91,9 @@ export async function* runPlaybook(
 		model: runModel,
 		effort: runEffort,
 		ignoreModelHints = false,
+		signal,
 	} = options;
 	const batchStartTime = Date.now();
-	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
-	// it depends only on the provider, which cannot change mid-run.
-	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -155,8 +157,10 @@ export async function* runPlaybook(
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
 		let preExistingHalt: { document: string; halt: HaltMarker } | null = null;
+		const missingDocuments: string[] = [];
 		for (const doc of playbook.documents) {
-			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
+			const { taskCount, content, missingPath } = readDocAndCountTasks(folderPath, doc.filename);
+			if (missingPath) missingDocuments.push(missingPath);
 			if (debug) {
 				yield {
 					type: 'debug',
@@ -180,6 +184,22 @@ export async function* runPlaybook(
 				category: 'scan',
 				message: `Total unchecked tasks: ${initialTotalTasks}`,
 			};
+		}
+
+		// A missing document is a broken playbook, not one with nothing left to
+		// do. Counting it as zero tasks once reported "No unchecked tasks" for a
+		// playbook whose every document path was wrong.
+		if (missingDocuments.length > 0) {
+			unregisterCliActivity(session.id);
+			yield {
+				type: 'error',
+				timestamp: Date.now(),
+				message:
+					`${missingDocuments.length} of ${playbook.documents.length} playbook document${playbook.documents.length !== 1 ? 's' : ''} not found ` +
+					`(names are relative to the Auto Run folder, without .md): ${missingDocuments.join(', ')}`,
+				code: 'DOCUMENT_NOT_FOUND',
+			};
+			return;
 		}
 
 		if (initialTotalTasks === 0) {
@@ -375,6 +395,8 @@ export async function* runPlaybook(
 				return runtimeTotals;
 			}
 		};
+
+		const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
 
 		// Helper to create total Auto Run summary from reconciled totals.
 		//
@@ -636,6 +658,7 @@ export async function* runPlaybook(
 
 					const result = await captureCliRun(
 						{
+							agentId: session.id,
 							sessionId: session.id,
 							toolType: session.toolType,
 							cwd: session.cwd,
@@ -658,8 +681,9 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								signal,
 							}),
-						(r) => (r.success ? 0 : 1)
+						settlementFromAgentResult
 					);
 
 					const elapsedMs = Date.now() - taskStartTime;
@@ -713,52 +737,27 @@ export async function* runPlaybook(
 					let fullSynopsis = shortSummary;
 
 					if (result.success && result.agentSessionId && !skipSynopsis) {
-						// Request synopsis from the agent
-						const synopsisResult = await captureCliRun(
-							{
-								sessionId: result.agentSessionId ?? session.id,
-								toolType: session.toolType,
-								cwd: session.cwd,
-								source: 'cli:autorun-synopsis',
-							},
-							async () =>
-								spawnAgent(
-									session.toolType,
-									session.cwd,
-									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
-									result.agentSessionId,
-									{
-										// A synopsis is a throwaway summarization of work that already
-										// happened, so it runs at the bottom of both ladders regardless of
-										// what the task ran at. On a long playbook this is one premium turn
-										// per task saved. Safe because the synopsis is a leaf: its returned
-										// agentSessionId is discarded, so the downgrade cannot follow the
-										// conversation into the next real turn.
-										// The `??` fallbacks matter on providers with no tier mapping
-										// (codex, opencode): there is nothing to downgrade TO, so the
-										// synopsis inherits, and it must inherit the same value the task
-										// ran under - the run override, not just the session's.
-										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
-										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
-										customArgs: session.customArgs,
-										additionalDirectories: session.additionalDirectories,
-										customEnvVars: session.customEnvVars,
-										sshRemoteConfig: session.sessionSshRemoteConfig,
-										querySource: 'auto',
-										// Honor the token source for the Auto Run synopsis turn too.
-										enableMaestroP: session.enableMaestroP,
-										maestroPMode: session.maestroPMode,
-										maestroPPath: session.maestroPPath,
-									}
-								),
-							(r) => (r.success ? 0 : 1)
-						);
+						// Request synopsis from the agent. It is told what the TASK ran
+						// under (document hint, then run override, then the agent's own
+						// value), because that is the model whose transcript it resumes and
+						// what it inherits on a provider with no cheap tier. On a long
+						// playbook the cheap turn is one premium turn per task saved.
+						const synopsis = await requestCliSynopsis(session, result.agentSessionId, {
+							source: 'cli:autorun-synopsis',
+							model: turnSettings.model,
+							effort: turnSettings.effort,
+							signal,
+						});
 
-						if (synopsisResult.success && synopsisResult.response) {
-							const parsed = parseSynopsis(synopsisResult.response);
-							shortSummary = parsed.shortSummary;
-							fullSynopsis = parsed.fullSynopsis;
+						// No usable synopsis (failed turn, bare provider error, or
+						// NOTHING_TO_REPORT) keeps the default label above.
+						if (synopsis) {
+							shortSummary = synopsis.shortSummary;
+							fullSynopsis = synopsis.fullSynopsis;
 						}
+					} else if (result.outcome === 'interrupted') {
+						shortSummary = `[${docEntry.filename}] Task interrupted`;
+						fullSynopsis = 'Interrupted by the operator before the task finished.';
 					} else if (!result.success) {
 						shortSummary = `[${docEntry.filename}] Task failed`;
 						fullSynopsis = result.error || shortSummary;
@@ -804,6 +803,35 @@ export async function* runPlaybook(
 								entryId: historyEntry.id,
 							};
 						}
+					}
+
+					// The operator stopped the run (Ctrl+C). The interrupted task was
+					// recorded above as "interrupted", not as a failure, and the run
+					// reconciles and closes exactly like a halt so the next run's
+					// aggregation does not absorb this one's task entries.
+					if (result.outcome === 'interrupted' || signal?.aborted) {
+						logger.autorun(`Auto Run stopped by operator`, session.name, {
+							document: docEntry.filename,
+							taskIndex,
+							loopNumber: loopIteration + 1,
+						});
+
+						createFinalLoopEntry('Stopped by operator');
+						unregisterCliActivity(session.id);
+
+						const stopReconciled = reconcileTotals();
+						createAutoRunSummary(stopReconciled, OPERATOR_STOP_OUTCOME);
+
+						yield {
+							type: 'complete',
+							timestamp: Date.now(),
+							success: false,
+							totalTasksCompleted: stopReconciled.totalCompletedTasks,
+							totalElapsedMs: stopReconciled.totalElapsedMs,
+							totalCost: stopReconciled.totalCost,
+							stopped: true,
+						};
+						return;
 					}
 
 					// Halt marker detected - agent has signaled early exit. Stop the
@@ -1102,6 +1130,27 @@ export async function* runPlaybook(
 		// spanned a restart/resume reports its full stats, not just this
 		// process's in-memory slice.
 		const reconciled = reconcileTotals();
+
+		// A stop that lands after the last task is still a stop. The only other
+		// abort check sits inside the task loop, so a Ctrl+C arriving once the
+		// loop was done fell through to the success block below and exited 0
+		// instead of 130. The loop has already written its own final entry by
+		// now ("All tasks completed" and the like), so history records why the
+		// LOOP ended while this records why the RUN did.
+		if (signal?.aborted) {
+			createAutoRunSummary(reconciled, OPERATOR_STOP_OUTCOME);
+
+			yield {
+				type: 'complete',
+				timestamp: Date.now(),
+				success: false,
+				totalTasksCompleted: reconciled.totalCompletedTasks,
+				totalElapsedMs: reconciled.totalElapsedMs,
+				totalCost: reconciled.totalCost,
+				stopped: true,
+			};
+			return;
+		}
 
 		// Add total Auto Run summary (only if looping was used)
 		createAutoRunSummary(reconciled);

@@ -7,7 +7,10 @@
 
 import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerTabNamingHandlers } from '../../../../main/ipc/handlers/tabNaming';
+import {
+	generateTabName,
+	registerTabNamingHandlers,
+} from '../../../../main/ipc/handlers/tabNaming';
 import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
@@ -46,7 +49,7 @@ vi.mock('../../../../main/prompt-manager', () => ({
 }));
 
 // Mock the agent args utilities
-vi.mock('../../../../main/utils/agent-args', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: vi.fn((agent, options) => options.baseArgs || []),
 	applyAgentConfigOverrides: vi.fn((agent, args, overrides) => ({
 		args,
@@ -216,6 +219,118 @@ describe('Tab Naming IPC Handlers', () => {
 		});
 	});
 
+	it('cancels the shared naming turn and releases its process listeners', async () => {
+		const controller = new AbortController();
+		const pending = generateTabName(
+			{
+				getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+				getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+				agentConfigsStore: mockAgentConfigsStore as unknown as Parameters<
+					typeof generateTabName
+				>[0]['agentConfigsStore'],
+				settingsStore: mockSettingsStore as unknown as Parameters<
+					typeof generateTabName
+				>[0]['settingsStore'],
+			},
+			{ userMessage: 'Build a login form', agentType: 'claude-code', cwd: '/test/project' },
+			controller.signal
+		);
+		await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+		controller.abort();
+		await expect(pending).resolves.toBeNull();
+		expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
+		expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+		expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
+	});
+
+	it.each([null, 'missing', 'disabled'])(
+		'refuses an enabled unresolved SSH title target before a local spawn: %s',
+		async (remoteId) => {
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			const result = await generateTabName(
+				{
+					getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+					getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+					agentConfigsStore: mockAgentConfigsStore as any,
+					settingsStore: mockSettingsStore as any,
+				},
+				{
+					userMessage: 'remote private text',
+					agentType: 'codex',
+					cwd: '/remote',
+					sessionSshRemoteConfig: { enabled: true, remoteId },
+					useUtilityAgent: false,
+				}
+			);
+			expect(result).toBeNull();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each([
+		['claude-code', 'detection'],
+		['codex', 'detection'],
+		['claude-code', 'probe'],
+	])('keeps %s naming on the resolved SSH target across %s', async (agentType, stage) => {
+		const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+		const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+		const { ensureRemoteMaestroPProbed } =
+			await import('../../../../main/agents/probeRemoteMaestroP');
+		const remote = { id: 'r1', host: 'remote.example.com', port: 22 };
+		vi.mocked(getSshRemoteConfig).mockReturnValue({ config: remote as any, source: 'session' });
+		vi.mocked(buildSshCommand).mockResolvedValue({
+			command: 'ssh',
+			args: ['remote.example.com'],
+		} as any);
+		mockAgentDetector.getAgent.mockImplementation(async () => {
+			if (stage === 'detection') {
+				vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+			}
+			return {
+				...mockClaudeAgent,
+				id: agentType,
+				command: agentType === 'codex' ? 'codex' : 'claude',
+			};
+		});
+		if (stage === 'probe') {
+			vi.mocked(ensureRemoteMaestroPProbed).mockImplementationOnce(async () => {
+				vi.mocked(getSshRemoteConfig).mockReturnValue({ config: null, source: 'none' });
+				return true;
+			});
+		}
+		const controller = new AbortController();
+		const pending = generateTabName(
+			{
+				getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+				getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+				agentConfigsStore: mockAgentConfigsStore as any,
+				settingsStore: mockSettingsStore as any,
+			},
+			{
+				userMessage: 'remote private text',
+				agentType,
+				cwd: '/remote',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				useUtilityAgent: false,
+				enableMaestroP: false,
+			},
+			controller.signal
+		);
+		try {
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ command: 'ssh' })
+			);
+			expect(buildSshCommand).toHaveBeenCalledWith(remote, expect.anything());
+			expect(getSshRemoteConfig).toHaveBeenCalledOnce();
+		} finally {
+			controller.abort();
+			await pending;
+		}
+	});
+
 	describe('tabNaming:generateTabName', () => {
 		it('returns null when agent is not found', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(null);
@@ -316,6 +431,42 @@ describe('Tab Naming IPC Handlers', () => {
 			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
 			onExitCallback?.('tab-naming-mock-uuid-1234');
 			await resultPromise;
+		});
+
+		it('pins plugin title generation to the authorized agent despite a utility agent setting', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'utilityAgentId') return 'codex';
+				if (key === 'utilityModelId') return 'gpt-4o-mini';
+				return defaultValue ?? {};
+			});
+			const controller = new AbortController();
+			const pending = generateTabName(
+				{
+					getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+					getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+					agentConfigsStore: mockAgentConfigsStore as unknown as Parameters<
+						typeof generateTabName
+					>[0]['agentConfigsStore'],
+					settingsStore: mockSettingsStore as unknown as Parameters<
+						typeof generateTabName
+					>[0]['settingsStore'],
+				},
+				{
+					userMessage: 'Build a login form',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+					useUtilityAgent: false,
+				},
+				controller.signal
+			);
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('claude-code');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'claude-code' })
+			);
+			expect(mockSettingsStore.get).not.toHaveBeenCalledWith('utilityAgentId', null);
+			controller.abort();
+			await expect(pending).resolves.toBeNull();
 		});
 
 		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {

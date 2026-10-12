@@ -31,6 +31,7 @@ import {
 	type AgentCompletionData,
 	type CueCommand,
 	type CueConfig,
+	type CueAutoRunConfig,
 	type CueNotifyConfig,
 	type CueEventType,
 	type CueRunResult,
@@ -76,6 +77,14 @@ import {
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
+import {
+	acquireCueEngineLock,
+	releaseCueEngineLock,
+	touchCueEngineLock,
+	CUE_ENGINE_LOCK_HEARTBEAT_MS,
+	type CueEngineRunnerMode,
+} from './cue-engine-lock';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -92,6 +101,10 @@ export interface CueEngineDeps {
 		action?: CueSubscription['action'];
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
+		autoRun?: CueAutoRunConfig;
+		/** The subscription's `tier` / `model` / `effort`; the host resolves it
+		 *  against the target agent (see `resolveCueTurnSettings`). */
+		turnSettings?: CueTurnSettings;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -123,6 +136,15 @@ export interface CueEngineDeps {
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+	/**
+	 * Which kind of process this engine instance runs in - `'desktop'`
+	 * (default, every existing caller) or `'standalone'` (the headless
+	 * `maestro-cli cue engine` runner). Stamped onto the cross-process lock
+	 * (`cue-engine-lock.ts`) so `start()` can refuse to run a second engine
+	 * over the same data directory and a lock conflict message can say WHICH
+	 * kind of process is already running.
+	 */
+	runnerMode?: CueEngineRunnerMode;
 }
 
 /**
@@ -152,6 +174,8 @@ export class CueEngine {
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
 	private startReason: 'system-boot' | null = null;
+	/** Refreshes the cross-process lock's heartbeat while the engine runs. */
+	private lockHeartbeat: ReturnType<typeof setInterval> | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
@@ -395,7 +419,9 @@ export class CueEngine {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				autoRun,
+				turnSettings
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -411,7 +437,9 @@ export class CueEngine {
 					pipelineName,
 					chainRootId,
 					parentEventId,
-					notify
+					notify,
+					autoRun,
+					turnSettings
 				);
 			},
 			onLog: meteredOnLog,
@@ -568,10 +596,29 @@ export class CueEngine {
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
 
-		const initResult = this.recoveryService.init();
-		if (!initResult.ok) {
+		// Cross-process guard (cue-engine-lock.ts): refuse to start a second
+		// engine loop over the same data directory - a standalone
+		// `maestro-cli cue engine` runner and this desktop instance (or two
+		// standalone runners) dispatching the SAME subscriptions would
+		// double-fire every trigger. Logged and returned, not thrown, to match
+		// every other early-return failure path in this method (the DB-init
+		// failure right below does the same) - existing callers (boot,
+		// `cue:enable`) already treat a no-op start as "try again later."
+		const lock = acquireCueEngineLock(this.deps.runnerMode ?? 'desktop');
+		if (!lock.acquired) {
+			this.meteredOnLog(
+				'error',
+				`[CUE] Refusing to start: another Cue engine (${lock.heldBy.mode}, pid ${lock.heldBy.pid}) already holds the lock for this data directory. Stop it first, or this instance will exit without starting.`
+			);
 			return;
 		}
+
+		const initResult = this.recoveryService.init();
+		if (!initResult.ok) {
+			releaseCueEngineLock();
+			return;
+		}
+		this.startLockHeartbeat();
 
 		// Rehydrate the activity log from sqlite so the Cue Modal shows recent
 		// runs after an app restart instead of starting blank. Must run after
@@ -592,6 +639,12 @@ export class CueEngine {
 			type: 'engineStarted',
 		} satisfies CueLogPayload);
 
+		// Snapshot what a PREVIOUS run left in the queue before any session
+		// initializes: initSession can enqueue this boot's own app.startup or
+		// initial heartbeat behind a busy slot, and that enqueue persists a row
+		// the restore below would otherwise run a second time.
+		const persistedBeforeBoot = this.queuePersistence.persistedIds();
+
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
@@ -604,7 +657,7 @@ export class CueEngine {
 		// The prior persistId is discarded via remove() inside the restore
 		// helper's session-missing drop path (if applicable), or is discarded
 		// implicitly on re-enqueue since we never reuse the old id.
-		const restored = this.queuePersistence.restoreAll();
+		const restored = this.queuePersistence.restoreAll(persistedBeforeBoot);
 		for (const [sessionId, entries] of restored) {
 			for (const entry of entries) {
 				// Remove the persisted row immediately - runManager.execute will
@@ -634,13 +687,21 @@ export class CueEngine {
 					// chain root in stats. Roots and rows persisted before
 					// usageStats was enabled come back as undefined.
 					entry.chainRootId,
-					entry.parentEventId
+					entry.parentEventId,
+					// The two action payloads that travel with the run instead of
+					// being re-read from the subscription: a notify's `sticky`, and
+					// the documents an `action: autorun` run was scheduled with.
+					entry.notify,
+					entry.autoRun,
+					entry.turnSettings
 				);
 			}
 		}
 
-		// Detect sleep gap from previous heartbeat
-		this.recoveryService.detectSleepAndReconcile();
+		// Detect the gap since the previous run's last heartbeat. Heartbeat
+		// subscriptions are skipped: each one already fired as its session
+		// initialized above, and a catch-up would run it twice in a row.
+		this.recoveryService.detectSleepAndReconcile({ atEngineStart: true });
 
 		// Start heartbeat writer (30s interval)
 		this.heartbeat.start();
@@ -652,6 +713,14 @@ export class CueEngine {
 
 		this.enabled = false;
 		this.startReason = null;
+		if (this.lockHeartbeat) {
+			clearInterval(this.lockHeartbeat);
+			this.lockHeartbeat = null;
+		}
+		// Release the cross-process lock acquired in start() so a standalone
+		// runner (or this same process restarting the engine) can acquire it.
+		// No-op if this process doesn't hold it - see cue-engine-lock.ts.
+		releaseCueEngineLock();
 		this.sessionRuntimeService.clearAll();
 		// Clear startup dedup keys so that re-enabling Cue fires app.startup
 		// subscriptions again for the new engine cycle.
@@ -671,6 +740,28 @@ export class CueEngine {
 		this.meteredOnLog('cue', '[CUE] Engine stopped', {
 			type: 'engineStopped',
 		} satisfies CueLogPayload);
+	}
+
+	/**
+	 * Keep the cross-process lock fresh. A lock whose heartbeat stops is treated
+	 * as stale (that is what protects against PID reuse), so a running engine
+	 * must keep beating. If another engine has taken the lock over - this
+	 * process was suspended past the stale window - stop rather than fire
+	 * every trigger a second time beside it.
+	 */
+	private startLockHeartbeat(): void {
+		const mode = this.deps.runnerMode ?? 'desktop';
+		this.lockHeartbeat = setInterval(() => {
+			if (touchCueEngineLock(mode) === 'lost') {
+				this.meteredOnLog(
+					'error',
+					'[CUE] Another Cue engine took over the lock for this data directory - stopping this one to avoid firing every trigger twice.'
+				);
+				this.stop();
+			}
+		}, CUE_ENGINE_LOCK_HEARTBEAT_MS);
+		// Never keep a process alive just to beat.
+		this.lockHeartbeat.unref?.();
 	}
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */

@@ -13,6 +13,8 @@
 import { useCallback } from 'react';
 import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { steerQueuedItem } from '../../services/chatSteering';
+import type { QueueSteerResult } from '../../../shared/chatSteering';
 import {
 	applyQueuedItemDispatch,
 	applyQueuedItemEdit,
@@ -48,6 +50,12 @@ export interface UseQueueHandlersReturn {
 	handleEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	/** Dispatch one queued item immediately, out of queue order */
 	handleForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	/**
+	 * Steer a queued message into the turn ALREADY RUNNING on its tab, rather than
+	 * waiting for that turn to finish. Claude-interactive turns only - see
+	 * getSteerEligibility.
+	 */
+	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<QueueSteerResult>;
 }
 
 // ============================================================================
@@ -188,6 +196,16 @@ export function useQueueHandlers({
 		[processQueuedItem]
 	);
 
+	// Steering: hand this message to the turn already in flight so claude can change
+	// course mid-task. The inverse of Force Send above - that one needs the tab IDLE
+	// and spawns a turn, this one needs it BUSY and types into the live TUI. The
+	// whole flow, including what happens when the transcript answers later, lives in
+	// services/chatSteering.ts.
+	const handleSteerQueueItem = useCallback(
+		(sessionId: string, itemId: string) => steerQueuedItem(sessionId, itemId),
+		[]
+	);
+
 	return {
 		handleRemoveQueueItem,
 		handleSwitchQueueSession,
@@ -195,5 +213,6 @@ export function useQueueHandlers({
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
 		handleForceSendQueueItem,
+		handleSteerQueueItem,
 	};
 }

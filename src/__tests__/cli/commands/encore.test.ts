@@ -3,7 +3,7 @@
  * @description Tests for the encore CLI commands
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/storage', () => ({
@@ -68,13 +68,54 @@ describe('encore commands', () => {
 		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-		// rc's CLI also exposes Pianola, which has not graduated and ships off.
-		expect(parsed.features).toEqual({
+		// rc's CLI also exposes Pianola and Computer History, which have not
+		// graduated and ship off, and Quick Chat, which ships on. MaestroRun is
+		// macOS only, so it is covered by its own platform tests below.
+		const { maestroRun: _maestroRun, ...everywhere } = parsed.features;
+		expect(everywhere).toEqual({
 			directorNotes: true,
 			usageStats: true,
 			symphony: true,
 			maestroCue: true,
 			pianola: false,
+			computerHistory: false,
+			quickChat: true,
+		});
+	});
+
+	describe('a macOS-only feature (MaestroRun)', () => {
+		const realPlatform = process.platform;
+		const setPlatform = (value: string) =>
+			Object.defineProperty(process, 'platform', { value, configurable: true });
+		afterEach(() => setPlatform(realPlatform));
+
+		it('is listed and can be enabled on macOS', async () => {
+			setPlatform('darwin');
+			encoreList({ json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).features.maestroRun).toBe(false);
+
+			const getPayload = mockSend({ success: true });
+			await encoreSet('maestro-run', true, {});
+			expect((getPayload().value as Record<string, boolean>).maestroRun).toBe(true);
+		});
+
+		it.each(['win32', 'linux'])('is not listed and refuses to enable on %s', async (platform) => {
+			setPlatform(platform);
+			encoreList({ json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).features).not.toHaveProperty('maestroRun');
+
+			await expect(encoreSet('maestroRun', true, {})).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('not available on this operating system')
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('can still be switched off anywhere', async () => {
+			setPlatform('linux');
+			mockSend({ success: true });
+			await encoreSet('maestroRun', false, {});
+			expect(withMaestroClient).toHaveBeenCalled();
 		});
 	});
 
@@ -93,10 +134,16 @@ describe('encore commands', () => {
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(false);
 	});
 
-	it('resolves friendly aliases (e.g. "group-chat" -> symphony)', async () => {
+	it('resolves friendly aliases (e.g. "maestro-symphony" -> symphony)', async () => {
 		const getPayload = mockSend({ success: true });
-		await encoreSet('group-chat', true, {});
+		await encoreSet('maestro-symphony', true, {});
 		expect((getPayload().value as Record<string, boolean>).symphony).toBe(true);
+	});
+
+	it('does not map "group-chat" onto Symphony (Group Chat has no Encore flag)', async () => {
+		await expect(encoreSet('group-chat', false, {})).rejects.toThrow('__exit__');
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Unknown Encore feature'));
+		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 
 	it('lists pianola, defaulting off when unset', () => {

@@ -35,12 +35,7 @@ import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
 import { registerOpenSpecHandlers } from './openspec';
 import { registerBmadHandlers } from './bmad';
-import {
-	registerContextHandlers,
-	ContextHandlerDependencies,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
-} from './context';
+import { registerContextHandlers, ContextHandlerDependencies } from './context';
 import { registerMarketplaceHandlers, MarketplaceHandlerDependencies } from './marketplace';
 import { registerStatsHandlers, StatsHandlerDependencies } from './stats';
 import { registerCueStatsHandlers, CueStatsHandlerDependencies } from './cue-stats';
@@ -64,6 +59,8 @@ import {
 	WebHandlerDependencies,
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
+import { registerComputerHistoryHandlers } from './computerHistory';
+import { registerMaestroRunHandlers } from './maestroRun';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
@@ -79,6 +76,7 @@ import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
 import { registerBrowserSessionHandlers } from './browser-session';
+import { registerCotExportHandlers } from './cot-export';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
@@ -100,6 +98,7 @@ import type { WindowManager } from '../../app-lifecycle/window-manager';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
+import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -122,7 +121,7 @@ export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
 export { registerBmadHandlers };
-export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingSessionCount };
+export { registerContextHandlers };
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
 export { registerStatsHandlers };
@@ -142,6 +141,8 @@ export {
 };
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
+export { registerComputerHistoryHandlers };
+export { registerMaestroRunHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers };
@@ -162,6 +163,8 @@ export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
 export { registerCoworkingHandlers };
 export { registerBrowserSessionHandlers };
+// Registered from setupIpcHandlers() only. See the header of ./cot-export.ts.
+export { registerCotExportHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
@@ -245,7 +248,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		);
 	registerHistoryHandlers({
 		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
-		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION) as number,
 		getSshRemoteById,
 		getSessionById: (id: string) => readSessionRecords().find((s) => s.id === id),
 		getAllSessions: readSessionRecords,

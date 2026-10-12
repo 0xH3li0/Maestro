@@ -1,7 +1,7 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
-import { execFile, execFileSync } from 'child_process';
+import { randomUUID } from 'crypto';
 import type {
 	ProcessConfig,
 	ManagedProcess,
@@ -13,14 +13,20 @@ import type {
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
+import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
+import { codexAppServerConfigBlocker } from '../codex-app-server/invocation';
+import { resolveCodexTransport } from '../../shared/codexTransport';
+import { DEFAULT_QUERY_SOURCE } from '../../shared/querySource';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
+import { STEERING_TURN_FINISHED_DETAIL, type SteeringResultFrame } from '../../shared/chatSteering';
+import { sendSteeringRequest } from './steering-client';
+import { steerCodexAppServerTurn } from '../codex-app-server/steering';
 import { isPidAlive } from './utils/childProcessInfo';
-import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
 import { agentAlreadyRunningMessage } from '../../shared/processErrors';
 import type { AgentError, SshRemoteConfig } from '../../shared/types';
@@ -33,10 +39,15 @@ import {
 } from '../coworking/coworking-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
-import { killPty } from './utils/commandKill';
+import {
+	stopProcess,
+	INTERACTIVE_STOP_GRACE_MS,
+} from '../../shared/maestro-lib/control/termination';
 
-/** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
-const PTY_KILL_ESCALATION_MS = 2000;
+export interface ProcessManagerOptions {
+	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
+	appVersion?: string;
+}
 
 /**
  * ProcessManager orchestrates spawning and managing processes for sessions.
@@ -53,6 +64,7 @@ export class ProcessManager extends EventEmitter {
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
 	private opencodeServerSpawner: OpencodeServerSpawner;
+	private codexAppServerSpawner: CodexAppServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
@@ -63,7 +75,8 @@ export class ProcessManager extends EventEmitter {
 		 * route to the SDK-serve path. Read on every spawn so toggling the plugin
 		 * takes effect without an app restart.
 		 */
-		private readonly isOpencodeServerEnabled: () => boolean = () => false
+		private readonly isOpencodeServerEnabled: () => boolean = () => false,
+		options: ProcessManagerOptions = {}
 	) {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
@@ -76,6 +89,15 @@ export class ProcessManager extends EventEmitter {
 			this,
 			this.bufferManager,
 			(config) => this.childProcessSpawner.spawn(config)
+		);
+		// Same contract for Codex: a turn the app-server transport cannot carry,
+		// or whose server will not start, runs on `codex exec` instead.
+		this.codexAppServerSpawner = new CodexAppServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.childProcessSpawner.spawn(config),
+			{ clientVersion: options.appVersion }
 		);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
@@ -220,7 +242,12 @@ export class ProcessManager extends EventEmitter {
 		// resulting env-less MCP subprocess (its parent is the shared serve PID, not a
 		// tracked agent CLI), so the tools are cleanly unavailable, never mis-scoped.
 		if (this.shouldUseOpencodeServer(config)) {
-			return this.opencodeServerSpawner.spawn(config);
+			const serveResult = this.opencodeServerSpawner.spawn(config);
+			// The same `spawn` seam the CLI path emits below. This transport
+			// reports `exit` through the shared handlers, so a listener that pairs
+			// the two would otherwise see every turn here end without a start.
+			this.emitSpawn(config);
+			return serveResult;
 		}
 
 		// Inject the *owning Maestro session id* into the agent CLI's env so the
@@ -255,22 +282,35 @@ export class ProcessManager extends EventEmitter {
 						},
 					};
 
-		const usePty = this.shouldUsePty(configWithCoworkingSession);
-		const result = usePty
-			? this.ptySpawner.spawn(configWithCoworkingSession)
-			: this.childProcessSpawner.spawn(configWithCoworkingSession);
+		// The Codex app-server child is spawned per turn (no shared server to
+		// fingerprint, unlike OpenCode serve), so it takes the coworking env like
+		// any CLI spawn and is routed after the injection.
+		let result: SpawnResult;
+		if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
+		} else if (this.shouldUsePty(configWithCoworkingSession)) {
+			result = this.ptySpawner.spawn(configWithCoworkingSession);
+		} else {
+			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
+		}
 
-		// Emit a spawn event AFTER the spawner returns so the agent-run capture
-		// service only records a running run for a process that actually started
-		// (symmetric with the 'exit' seam; no orphan on spawn failure). Guarded:
-		// a capture listener throwing must never break spawning.
+		this.emitSpawn(config);
+
+		return result;
+	}
+
+	/**
+	 * Emit a spawn event AFTER the spawner returns so the agent-run capture
+	 * service only records a running run for a process that actually started
+	 * (symmetric with the 'exit' seam; no orphan on spawn failure). Guarded: a
+	 * capture listener throwing must never break spawning.
+	 */
+	private emitSpawn(config: ProcessConfig): void {
 		try {
 			this.emit('spawn', config);
 		} catch {
 			// Capture is best-effort; never let it break process spawning.
 		}
-
-		return result;
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {
@@ -299,6 +339,71 @@ export class ProcessManager extends EventEmitter {
 			!config.sshRemoteId &&
 			!(config.images && config.images.length > 0)
 		);
+	}
+
+	/**
+	 * Route a Codex turn through `codex app-server` (steerable mid-turn) instead
+	 * of `codex exec --json`. Opt-in per agent (`codexTransport`), and only for an
+	 * INTERACTIVE turn: an Auto Run or Cue turn has nobody to steer it, so it
+	 * stays on the default transport rather than paying for an experimental one.
+	 * Origin is read from `querySource`, which every dispatcher claims at the
+	 * spawn site (absent means a human sent it, see `shared/querySource.ts`).
+	 *
+	 * The config-level exclusions (no prompt, images, SSH, a prompt already in
+	 * the args) are the spawner's own `codexAppServerConfigBlocker`, so routing
+	 * and the spawner cannot disagree about which turns app-server can carry.
+	 * The spawner still re-checks the args and falls back to exec for anything
+	 * it does not recognize.
+	 */
+	private shouldUseCodexAppServer(config: ProcessConfig): boolean {
+		return (
+			resolveCodexTransport(config) === 'app-server' &&
+			(config.querySource ?? DEFAULT_QUERY_SOURCE) === 'user' &&
+			codexAppServerConfigBlocker(config) === null
+		);
+	}
+
+	/**
+	 * Ask a running turn to take `text` into the turn in flight (chat steering):
+	 * a Claude turn on maestro-p, or a Codex turn on the app-server transport.
+	 * Resolves with a verdict for the UI; never rejects. The later verdict for a
+	 * delivered steer is emitted as `steering-verdict` with the same id: for
+	 * maestro-p it arrives on stdout (StdoutHandler), for Codex it comes from
+	 * `steerCodexAppServerTurn`.
+	 *
+	 * Requires the process to still be REGISTERED, checked here rather than left to
+	 * the socket, because a finished turn and an un-steerable one need different
+	 * words: "the turn has already finished" is actionable (send it normally) where
+	 * "not steerable" invites the user to go looking for a setting.
+	 *
+	 * Everything else is deliberately NOT decided here. Whether the turn is on
+	 * maestro-p at all is answered by whether a channel exists (the spawn opens one
+	 * only for a local interactive turn), and whether the TUI can accept keystroke
+	 * right now is answered by maestro-p, which is the only party holding the
+	 * screen. Re-deriving either would mean two places believing different things
+	 * about the same turn. A Codex process carries its own channel
+	 * (`codexAppServer`, present only on the app-server path), so an exec turn has
+	 * none and is refused by the socket client exactly like an unsteerable Claude
+	 * turn.
+	 */
+	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
+		const id = randomUUID();
+		const process = this.processes.get(sessionId);
+		if (!process) {
+			return {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: 'not-running',
+				detail: STEERING_TURN_FINISHED_DETAIL,
+			};
+		}
+		if (process.codexAppServer) {
+			return steerCodexAppServerTurn(process.codexAppServer, { id, text }, (verdict) =>
+				this.emit('steering-verdict', sessionId, verdict)
+			);
+		}
+		return sendSteeringRequest({ processKey: sessionId, text, id });
 	}
 
 	/**
@@ -357,13 +462,17 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Send interrupt signal (SIGINT/Ctrl+C) to a process.
-	 * For child processes, escalates to kill() if the process doesn't exit
-	 * within a short timeout (Claude Code may not immediately exit on SIGINT).
+	 * Interrupt a process, the way the Stop button does.
 	 *
-	 * On Windows, POSIX signals are not supported for shell-spawned processes,
-	 * so we write Ctrl+C (\x03) to stdin instead. If that doesn't work, the
-	 * escalation timer falls through to kill() which uses taskkill /t /f.
+	 * A pipe-backed agent goes through the shared stop ladder: SIGINT (Ctrl+C on
+	 * stdin on Windows, where a signal does not reach a shell-spawned process),
+	 * then SIGTERM or `taskkill /t /f` if it is still running after the grace
+	 * period, then SIGKILL for its tree. Whatever the agent started is stopped
+	 * with it.
+	 *
+	 * A PTY gets Ctrl+C and nothing more. A PTY process that survives Ctrl+C is
+	 * the normal case, not a stuck one: a shell that cancelled a command, or a
+	 * TUI that cancelled its turn and is waiting for the next prompt.
 	 */
 	interrupt(sessionId: string): boolean {
 		const process = this.processes.get(sessionId);
@@ -378,58 +487,23 @@ export class ProcessManager extends EventEmitter {
 
 		try {
 			if (process.sdkController) {
-				// Server-backed (OpenCode SDK) process: abort the in-flight turn.
+				// Server-backed process (OpenCode SDK, Codex app-server): interrupt the
+				// in-flight turn over its protocol; the controller escalates if needed.
 				process.sdkController.interrupt();
 				return true;
 			} else if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.write('\x03');
 				return true;
 			} else if (process.childProcess) {
-				const child = process.childProcess;
-
-				if (isWindows()) {
-					// On Windows, child.kill('SIGINT') is unreliable for shell-spawned
-					// processes. Write Ctrl+C to stdin as a gentle interrupt instead.
-					if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) {
-						child.stdin.write('\x03');
-						logger.debug(
-							'[ProcessManager] Wrote Ctrl+C to stdin for Windows interrupt',
-							'ProcessManager',
-							{ sessionId }
-						);
-					} else {
-						logger.warn(
-							'[ProcessManager] stdin unavailable for Windows interrupt, will escalate to kill',
-							'ProcessManager',
-							{ sessionId }
-						);
+				stopProcess(
+					{ child: process.childProcess },
+					{
+						from: 'interrupt',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						sessionId,
+						label: 'interrupt',
 					}
-				} else {
-					child.kill('SIGINT');
-				}
-
-				// Escalate to forceful kill if the process doesn't exit promptly.
-				// Some agents (e.g., Claude Code --print) may not exit on SIGINT alone.
-				// On Windows, we don't call child.kill('SIGINT') because it's unreliable
-				// for shell-spawned processes. The .killed flag remains false, which
-				// correctly allows the escalation timer to fire.
-				const escalationTimer = setTimeout(() => {
-					const stillRunning = this.processes.get(sessionId);
-					if (stillRunning?.childProcess && !stillRunning.childProcess.killed) {
-						logger.warn(
-							'[ProcessManager] Process did not exit after interrupt, escalating to kill',
-							'ProcessManager',
-							{ sessionId, pid: stillRunning.pid }
-						);
-						this.kill(sessionId);
-					}
-				}, 2000);
-
-				// Clear the timer if the process exits on its own
-				child.once('exit', () => {
-					clearTimeout(escalationTimer);
-				});
-
+				);
 				return true;
 			}
 			return false;
@@ -444,20 +518,35 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Kill a specific process.
+	 * Kill a specific process, through the shared stop ladder.
 	 *
-	 * PTY processes receive SIGTERM first; if the process hasn't exited after
-	 * PTY_KILL_ESCALATION_MS, it is sent SIGKILL. The process is removed from
-	 * the tracking map immediately so that a replacement can be spawned, but the
-	 * escalation timer keeps a reference to ensure the OS-level process dies.
+	 * The ladder starts at SIGTERM and, if the process has not exited after the
+	 * grace period, kills it with SIGKILL. On Windows the whole tree goes through
+	 * `taskkill /t /f`, because node-pty and `child.kill()` end only the direct
+	 * child. The process is removed from the tracking map immediately so that a
+	 * replacement can be spawned; the ladder keeps its own reference to make sure
+	 * the OS-level process dies.
 	 *
-	 * `shutdown: true` switches PTYs to SIGKILL with no escalation timer or
-	 * onExit listener. This collapses the window in which node-pty's worker
-	 * thread is still posting via napi_threadsafe_function while Electron
-	 * begins tearing down the Node environment - that race aborts inside
-	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
-	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
-	 * shutdown anyway since the user has already confirmed quit.
+	 * An agent's descendants are stopped with it. A terminal tab's are not: a
+	 * job the user left running in their shell is theirs to keep, so only the
+	 * shell is signalled, as before.
+	 *
+	 * `sync: true` blocks on `taskkill`, so the tree is gone before the app
+	 * exits.
+	 *
+	 * `shutdown: true` is the app quitting. It sends exactly what quitting has
+	 * always sent, at once, with no timer and no exit listener, and leaves the
+	 * process's descendants alone:
+	 * - a PTY gets SIGKILL directly. This collapses the window in which
+	 *   node-pty's worker thread is still posting via napi_threadsafe_function
+	 *   while Electron begins tearing down the Node environment - that race
+	 *   aborts inside `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock`
+	 *   on macOS (Sentry MAESTRO-3B).
+	 * - a pipe-backed agent gets SIGTERM and nothing after it, so it can finish
+	 *   writing its state (a transcript, a session file) before it exits. No
+	 *   SIGKILL follows: there is no event loop left to wait out a grace period,
+	 *   and one sent right behind the SIGTERM would take that chance away.
+	 * - on Windows both go through a blocking `taskkill /t /f`.
 	 */
 	kill(
 		sessionId: string,
@@ -466,6 +555,11 @@ export class ProcessManager extends EventEmitter {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return false;
 
+		// A kill is a stop Maestro asked for (a closed tab, the Process Monitor, a
+		// watchdog), so the exit it causes is not a crash. The resolver reads any
+		// signal it is not told about as an outside kill, which it is not here.
+		proc.interrupted = true;
+
 		try {
 			if (proc.dataBufferTimeout) {
 				clearTimeout(proc.dataBufferTimeout);
@@ -473,69 +567,38 @@ export class ProcessManager extends EventEmitter {
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (proc.sdkController) {
-				// Server-backed (OpenCode SDK) process: no OS child to signal. Abort
-				// the turn and tear down the SSE subscription; the stream ending emits
-				// the exit event. Fall through to the map deletion below.
-				proc.sdkController.kill();
+				// Server-backed process (OpenCode SDK, Codex app-server): the stop
+				// starts with a protocol call. The controller tears its transport down
+				// (and runs the stop ladder on any child it owns); the exit event
+				// follows from there. Fall through to the map deletion below.
+				proc.sdkController.kill({ sync, shutdown });
 			} else if (proc.isTerminal && proc.ptyProcess) {
-				if (isWindows() && proc.pid) {
-					// On Windows, node-pty's kill() only terminates the direct ConPTY
-					// child (the shell), not grandchild processes it spawned (e.g., dev
-					// servers, watchers). Use taskkill /t /f to kill the entire tree.
-					this.killWindowsProcessTree(proc.pid, sessionId, sync);
-				} else if (shutdown) {
-					// Shutdown path: SIGKILL the pty child immediately so the master fd
-					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
-					// before Electron's environment teardown runs CleanupHandles.
-					try {
-						killPty(proc.ptyProcess, 'SIGKILL');
-					} catch {
-						// Process may already be dead
+				stopProcess(
+					{ pty: proc.ptyProcess, pid: proc.pid },
+					{
+						from: shutdown ? 'kill' : 'terminate',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						immediate: shutdown,
+						blocking: sync,
+						includeDescendants: !shutdown && proc.toolType !== 'terminal',
+						sessionId,
+						label: 'kill',
 					}
-				} else {
-					const ptyProc = proc.ptyProcess;
-					const pid = proc.pid;
-
-					// Use SIGTERM (not the default SIGHUP which shells may survive on macOS)
-					try {
-						killPty(ptyProc, 'SIGTERM');
-					} catch {
-						// Process may already be dead
-					}
-
-					// Escalate to SIGKILL if the process doesn't exit promptly.
-					const escalationTimer = setTimeout(() => {
-						try {
-							killPty(ptyProc, 'SIGKILL');
-							logger.warn(
-								'[ProcessManager] PTY did not exit after SIGTERM, escalated to SIGKILL',
-								'ProcessManager',
-								{ sessionId, pid }
-							);
-						} catch {
-							// Process already exited - expected after normal SIGTERM
-						}
-					}, PTY_KILL_ESCALATION_MS);
-
-					// Cancel escalation if the PTY exits on its own
-					ptyProc.onExit(() => {
-						clearTimeout(escalationTimer);
-					});
-				}
+				);
 			} else if (proc.childProcess) {
-				const pid = proc.childProcess.pid;
-				if (isWindows() && pid) {
-					this.killWindowsProcessTree(pid, sessionId, sync);
-				} else if (isWindows()) {
-					logger.warn(
-						'[ProcessManager] pid unavailable for Windows taskkill, falling back to SIGTERM',
-						'ProcessManager',
-						{ sessionId }
-					);
-					proc.childProcess.kill('SIGTERM');
-				} else {
-					proc.childProcess.kill('SIGTERM');
-				}
+				stopProcess(
+					{ child: proc.childProcess },
+					{
+						from: 'terminate',
+						upTo: shutdown ? 'terminate' : 'kill',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						immediate: shutdown,
+						blocking: sync,
+						includeDescendants: !shutdown,
+						sessionId,
+						label: 'kill',
+					}
+				);
 			}
 			this.processes.delete(sessionId);
 			return true;
@@ -546,41 +609,6 @@ export class ProcessManager extends EventEmitter {
 				error: String(error),
 			});
 			return false;
-		}
-	}
-
-	/**
-	 * Kill a process and its entire child tree on Windows using taskkill.
-	 * This is necessary because POSIX signals (SIGINT/SIGTERM) don't reliably
-	 * terminate shell-spawned processes on Windows.
-	 */
-	private killWindowsProcessTree(pid: number, sessionId: string, sync = false): void {
-		logger.info(
-			'[ProcessManager] Using taskkill to terminate process tree on Windows',
-			'ProcessManager',
-			{ sessionId, pid, sync }
-		);
-		if (sync) {
-			// During shutdown, block until taskkill completes so the process tree
-			// is actually dead before Electron exits.
-			try {
-				execFileSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
-					timeout: 5000,
-				});
-			} catch {
-				// taskkill returns non-zero if the process is already dead, which is fine
-			}
-		} else {
-			execFile('taskkill', ['/pid', String(pid), '/t', '/f'], (error) => {
-				if (error) {
-					// taskkill returns non-zero if the process is already dead, which is fine
-					logger.debug(
-						'[ProcessManager] taskkill exited with error (process may already be terminated)',
-						'ProcessManager',
-						{ sessionId, pid, error: String(error) }
-					);
-				}
-			});
 		}
 	}
 

@@ -10,9 +10,10 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../../../main/utils/agent-args';
-import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
+import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
-import { getAgentDefinition } from '../../../main/agents/definitions';
+import { logger as mockLogger } from '../../../main/utils/logger';
+import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -43,6 +44,11 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 // ---------------------------------------------------------------------------
 // buildAgentArgs
 // ---------------------------------------------------------------------------
+// The library logs and reports through its host (shared/maestro-lib/host.ts),
+// which the real desktop modules register into on load. They are mocked here,
+// so register the mocks instead.
+setMaestroLibLogger(mockLogger);
+
 describe('buildAgentArgs', () => {
 	it('returns baseArgs when agent is null', () => {
 		const result = buildAgentArgs(null, { baseArgs: ['--foo', '--bar'] });
@@ -916,6 +922,59 @@ describe('buildAgentArgs', () => {
 // applyAgentConfigOverrides
 // ---------------------------------------------------------------------------
 describe('applyAgentConfigOverrides', () => {
+	describe('Codex reasoning config (#1744)', () => {
+		const baseArgs = ['exec', '--json'];
+		const codex = () => getAgentDefinition('codex');
+
+		it('inherits the Codex reasoning summary default until explicitly configured', () => {
+			expect(applyAgentConfigOverrides(codex(), baseArgs, {}).args).toEqual(baseArgs);
+		});
+
+		it.each(['auto', 'concise', 'detailed', 'none'])(
+			'forwards supported reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual([...baseArgs, '-c', `model_reasoning_summary="${reasoningSummary}"`]);
+			}
+		);
+
+		// Codex refuses to load its config on an unknown variant, so a bad stored
+		// value must drop the flag rather than break every spawn.
+		it.each(['', 'invalid', ' auto ', null, 42])(
+			'drops unsupported stored reasoning summary %s',
+			(reasoningSummary) => {
+				expect(
+					applyAgentConfigOverrides(codex(), baseArgs, {
+						agentConfigValues: { reasoningSummary },
+					}).args
+				).toEqual(baseArgs);
+			}
+		);
+
+		it('keeps the summary override when Codex runs in read-only mode', () => {
+			const agent = codex();
+			const readOnlyArgs = buildAgentArgs(agent, { baseArgs, readOnlyMode: true });
+			const { args } = applyAgentConfigOverrides(agent, readOnlyArgs, {
+				readOnlyMode: true,
+				agentConfigValues: { reasoningSummary: 'auto' },
+			});
+			expect(args).toEqual([...readOnlyArgs, '-c', 'model_reasoning_summary="auto"']);
+			expect(args).toContain('--sandbox');
+			expect(args).toContain('read-only');
+		});
+
+		it('sends effort as model_reasoning_effort, the key Codex reads', () => {
+			const { args } = applyAgentConfigOverrides(codex(), baseArgs, {
+				agentConfigValues: { reasoningEffort: 'high', reasoningSummary: 'none' },
+			});
+			expect(args).toContain('model_reasoning_effort="high"');
+			expect(args.some((arg) => arg.startsWith('reasoning.effort'))).toBe(false);
+		});
+	});
+
 	it('processes configOptions with argBuilder', () => {
 		const agent = makeAgent({
 			configOptions: [

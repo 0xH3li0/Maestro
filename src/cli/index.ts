@@ -14,7 +14,7 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { dispatch } from './commands/dispatch';
 import { ask } from './commands/ask';
-import { queueList, queueRemove } from './commands/queue';
+import { queueList, queueRemove, queueSteer } from './commands/queue';
 import {
 	snoozeDismiss,
 	snoozeHistory,
@@ -23,6 +23,7 @@ import {
 	snoozeTabCommand,
 	snoozeWake,
 } from './commands/snooze';
+import { windowList, windowMoveAgent, windowMoveGroup } from './commands/window';
 import { sessionList, sessionShow } from './commands/session';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
@@ -59,6 +60,12 @@ import {
 	cuePipelineRemove,
 	cuePipelineReplace,
 } from './commands/cue-pipeline';
+import {
+	cueEngineStart,
+	cueEngineStop,
+	cueEngineStatus,
+	cueEngineInspect,
+} from './commands/cue-engine';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -76,7 +83,7 @@ import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
-import { settingsGet } from './commands/settings-get';
+import { settingsGet, settingsMediaStatus } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
 import {
 	displayFont,
@@ -98,6 +105,8 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import { quickChat } from './commands/quick-chat';
+import { maestroRun } from './commands/maestro-run';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -155,6 +164,22 @@ import { setTheme } from './commands/set-theme';
 import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
+import {
+	computerHistoryApps,
+	computerHistoryClear,
+	computerHistoryConfig,
+	computerHistoryDigests,
+	computerHistoryEnableAccessibility,
+	computerHistoryList,
+	computerHistoryPause,
+	computerHistoryQuery,
+	computerHistoryResume,
+	computerHistoryRulesAdd,
+	computerHistoryRulesList,
+	computerHistoryRulesMode,
+	computerHistoryRulesRemove,
+	computerHistoryStatus,
+} from './commands/computer-history';
 import { setVerbosity } from './output/verbosity';
 import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
 import { pianolaLearn } from './commands/pianola-learn';
@@ -172,7 +197,13 @@ import {
 	pianolaSuperviseRemove,
 	pianolaSuperviseSetEnabled,
 } from './commands/pianola-supervise';
-import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import {
+	pluginInit,
+	pluginValidate,
+	pluginSign,
+	pluginPack,
+	pluginRuntime,
+} from './commands/plugin';
 import {
 	agentRunAppendEvent,
 	agentRunList,
@@ -444,10 +475,20 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
+	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
+	.option(
+		'--require-tool-receipt <tool-id>',
+		'Require a host-observed delivery receipt from this plugin tool ID'
+	)
 	.option(
 		'--no-system-prompt',
 		'Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.'
 	)
+	.option(
+		'--no-history',
+		'Do not write a History entry for this turn (written by default, desktop app running or not)'
+	)
+	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -524,8 +565,9 @@ program
 	.action(ask);
 
 // Queue commands - inspect and manage the desktop execution queue populated by
-// `dispatch --queue`. Read-only `list` plus a `remove` verb for scriptable
-// cleanup/debugging. The queue lives authoritatively in the desktop renderer.
+// `dispatch --queue`. Read-only `list`, a `remove` verb for scriptable
+// cleanup/debugging, and `steer` (the Steer button). The queue lives
+// authoritatively in the desktop renderer.
 const queue = program
 	.command('queue')
 	.description('Inspect and manage the desktop execution queue (from dispatch --queue)');
@@ -544,6 +586,41 @@ queue
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueRemove);
+
+queue
+	.command('steer <item-id>')
+	.description(
+		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueSteer);
+
+// Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
+// agent and on a group) and the matching Cmd+K commands. Answered by the primary
+// window through the same code path as a click.
+const windowCmd = program
+	.command('window')
+	.description('List Maestro windows, and move agents or whole groups between them');
+
+windowCmd
+	.command('list')
+	.description('List open windows and the agents each one holds')
+	.option('--json', 'Output as JSON')
+	.action(windowList);
+
+windowCmd
+	.command('move-agent <agent-id>')
+	.description('Move an agent (with its worktrees) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveAgent);
+
+windowCmd
+	.command('move-group <group-id>')
+	.description('Move every agent in a group (with subgroups when nesting is on) to another window')
+	.option('--to <window>', '"new", "main", a window number, a window id, or a window name')
+	.option('--json', 'Output as JSON')
+	.action(windowMoveGroup);
 
 // Snooze commands - the CLI half of the Snooze dialog (Opt+Cmd+S), the Snoozed
 // Tabs list, and its history log. `<when>` takes the same expressions the dialog
@@ -704,7 +781,7 @@ groupChat
 program
 	.command('open-file <file-path>')
 	.description(
-		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)'
+		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player)'
 	)
 	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
 	.option(
@@ -809,6 +886,7 @@ program
 		'Command to run in the terminal (kept as the startup command, so it re-runs if the tab restarts)'
 	)
 	.option('--background', 'Create the tab without moving the view (agent and tab stay put)')
+	.option('--input-required', 'Notify the user that this terminal needs human input')
 	.option('--focus', 'Switch to the terminal tab after opening it (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openTerminal);
@@ -1054,7 +1132,39 @@ cue
 	.option('--pause <name>', 'Disable a task without deleting it')
 	.option('--resume <name>', 'Re-enable a paused task')
 	.option('-a, --agent <id-or-name>', 'Target agent (required when creating; scopes other modes)')
-	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
+	.option(
+		'-p, --prompt <text>',
+		'Prompt to send when the task fires. With --auto-run: extra instructions for the run'
+	)
+	.option(
+		'--auto-run <documents...>',
+		"Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch"
+	)
+	.option('--reset-on-completion', 'With --auto-run: uncheck every task when the run finishes')
+	.option('--loop', 'With --auto-run: re-run the documents once every task is checked off')
+	.option('--max-loops <n>', 'With --auto-run: loop ceiling (implies --loop)')
+	.option('--per-document', 'With --auto-run: one agent turn per document instead of one per task')
+	.option('--ignore-model-hints', "With --auto-run: ignore the documents' MAESTRO:MODEL hints")
+	.option('--no-auto-resume', 'With --auto-run: stay paused after an agent error')
+	.option('--auto-resume-after <minutes>', 'With --auto-run: minutes between auto-resume attempts')
+	.option('--max-auto-resumes <n>', 'With --auto-run: auto-resume attempt ceiling')
+	.option(
+		'--worktree-branch <name>',
+		'With --auto-run: create a worktree on this branch when the run fires, and run there'
+	)
+	.option(
+		'--worktree-agent <id-or-name>',
+		'With --auto-run: run in this already-open worktree agent'
+	)
+	.option(
+		'--worktree-path <path>',
+		'With --auto-run: run in the worktree already on disk at this path'
+	)
+	.option(
+		'--base-branch <ref>',
+		'With a worktree flag: ref a new branch is cut from, and the pull request target'
+	)
+	.option('--create-pr', 'With a worktree flag: open a pull request when the run finishes')
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
@@ -1062,6 +1172,18 @@ cue
 	.option('-l, --label <text>', 'Human-readable label (defaults to truncated prompt)')
 	.option('--pipeline <name>', 'Pipeline name (default: Tasks)')
 	.option('--grace-minutes <n>', 'Override the default 360-minute grace window')
+	.option(
+		'--tier <level>',
+		'Model tier for the prompt run: low, medium, high (mapped per provider)'
+	)
+	.option(
+		'--model <id>',
+		'Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only'
+	)
+	.option(
+		'--effort <level>',
+		'Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only'
+	)
 	.option(
 		'--keep-on-failure',
 		'Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)'
@@ -1116,6 +1238,42 @@ cuePipeline
 	.option('--force', 'Suppress the no-op error when the pipeline is already absent')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cuePipelineRemove);
+
+// Cue engine subcommands - run Maestro Cue unattended, without the desktop
+// app, and inspect/control that runner. See `cue-engine.ts` for what the
+// standalone engine can and cannot do relative to the desktop app's own
+// instance, and `cue-engine-lock.ts` for the cross-process guard that keeps
+// this from double-firing triggers alongside a desktop app left open.
+const cueEngine = cue
+	.command('engine')
+	.description('Run Maestro Cue unattended (no desktop app) and control that runner');
+
+cueEngine
+	.command('start')
+	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
+	.option('--json', 'Print machine-readable start/failure status')
+	.action(cueEngineStart);
+
+cueEngine
+	.command('stop')
+	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
+		parseInt(v, 10)
+	)
+	.action((opts) => cueEngineStop(opts));
+
+cueEngine
+	.command('status')
+	.description('Report whether an engine is running and its last known heartbeat')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineStatus);
+
+cueEngine
+	.command('inspect')
+	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueEngineInspect);
 
 // Director's Notes commands
 const directorNotes = program
@@ -1251,7 +1409,9 @@ program
 // backward compatibility.
 program
 	.command('update-group <group-id>')
-	.description("Update a group's name, icon, color, or parent in the Maestro desktop app")
+	.description(
+		"Update a group's name, icon, color, parent, or Left Bar visibility in the Maestro desktop app"
+	)
 	.option('-n, --name <name>', 'New group name')
 	.option('-e, --emoji <emoji>', 'Emoji icon for the group. Mutually exclusive with --icon')
 	.option(
@@ -1264,6 +1424,11 @@ program
 	.option('--clear-icon', 'Remove the icon')
 	.option('--clear-color', 'Remove the label color')
 	.option('--clear-parent', 'Promote the group to the top level')
+	.option(
+		'--hide',
+		'Park the group out of the Left Bar. Its agents stay reachable through search and the switcher'
+	)
+	.option('--show', 'Bring a hidden group back into the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroup(groupId, options));
 
@@ -1348,6 +1513,10 @@ program
 		'Claude token source: api | tui | dynamic (Claude Code agents only)'
 	)
 	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option(
+		'--codex-transport <transport>',
+		'Codex transport: exec | app-server (experimental, enables steering; Codex only)'
+	)
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
@@ -1602,7 +1771,7 @@ program
 	.command('test-ssh-remote <remote-id>')
 	.description('Test an SSH remote connection and report what the remote answered')
 	.option('-a, --agent <command>', 'Also check whether this binary is on the remote PATH')
-	.option('--timeout <seconds>', 'Give up after this many seconds (default: 60)')
+	.option('--timeout <seconds>', 'Give up after this many seconds', Number, 60)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(testSshRemote);
 
@@ -1692,6 +1861,11 @@ settings
 	.description('Reset a setting to its default value')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(settingsReset);
+
+settings
+	.command('media-status')
+	.description('Report media tools available to this CLI process and allowed models as JSON')
+	.action(settingsMediaStatus);
 
 // Agent-specific config subcommands
 const agent = settings.command('agent').description('View and manage per-agent configuration');
@@ -1792,7 +1966,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
@@ -1802,6 +1976,149 @@ encore
 	.description('Disable an Encore feature')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, false, options));
+
+// Computer History - local record of what the user saw and typed (Encore-gated,
+// off by default). Reads come from disk and work with the app closed; writes go
+// to the running app's ComputerHistoryService. Captured content is untrusted.
+const computerHistory = program
+	.command('computer-history')
+	.description(
+		'Computer History: query what the user saw and typed across apps (local, untrusted content)'
+	);
+
+computerHistory
+	.command('status')
+	.description('Show whether recording is on, permission state, and store size')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryStatus(options));
+
+computerHistory
+	.command('list')
+	.description('List recorded 15-minute segments in a time range')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 2h)')
+	.option('--until <time>', 'End (default now)')
+	.option('--app <id>', 'Only segments that include this app id')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryList(options));
+
+computerHistory
+	.command('query')
+	.description('Search recorded events (text, selections, snapshots, app and window changes)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1h)')
+	.option('--until <time>', 'End (default now)')
+	.option(
+		'--app <id>',
+		'App id or name (comma list or repeat)',
+		(val: string, prev: string[]) => [...prev, val],
+		[]
+	)
+	.option(
+		'--kind <kind>',
+		'text | selection | snapshot | app | window (comma list or repeat)',
+		(val: string, prev: string[]) => [...prev, val],
+		[]
+	)
+	.option('--grep <regex>', 'Case-insensitive regex over text, titles, URLs, and labels')
+	.option('--limit <n>', 'Most recent N matches (default 200)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryQuery(options));
+
+computerHistory
+	.command('apps')
+	.description('Apps used in a time range, by foreground time and event count')
+	.option('--since <time>', 'Start (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryApps(options));
+
+computerHistory
+	.command('digests')
+	.description('List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--kind <kind>', '15m | 6h (default both)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryDigests(options));
+
+computerHistory
+	.command('pause')
+	.description('Pause recording (until resumed, or for a duration)')
+	.option('--for <duration>', 'Pause for 30m, 2h, 1d, 1w (default: until resumed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryPause(options));
+
+computerHistory
+	.command('resume')
+	.description('Resume recording')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryResume(options));
+
+const computerHistoryRules = computerHistory
+	.command('rules')
+	.description('Which apps are recorded (exclude or include mode) and domains never recorded');
+
+computerHistoryRules
+	.command('list')
+	.description('Show the app mode and user rules (built-in exclusions always apply)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryRulesList(options));
+
+computerHistoryRules
+	.command('mode [mode]')
+	.description(
+		'Show or set the app mode: exclude (record every app except ignored ones) or include (record only the record-only list)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode, options) => computerHistoryRulesMode(mode, options));
+
+computerHistoryRules
+	.command('add')
+	.description(
+		'Never record an app or a domain (and its subdomains); with --include, add an app to the record-only list'
+	)
+	.option('--app <id>', 'App id or exact name: macOS bundle id, Windows exe name, Linux desktop id')
+	.option('--domain <domain>', 'Domain, e.g. bank.example.com')
+	.option('--include', 'Add the app to the record-only list used in include mode')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryRulesAdd(options));
+
+computerHistoryRules
+	.command('remove <id>')
+	.description('Remove a rule by id (or by its app id / domain)')
+	.option('--include', 'When removing by value, remove it from the record-only list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((id, options) => computerHistoryRulesRemove(id, options));
+
+computerHistory
+	.command('clear')
+	.description('Delete recorded history: everything since a time, or all of it')
+	.option('--since <time>', 'Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601')
+	.option('--all', 'Delete all recorded history (settings and rules stay)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryClear(options));
+
+computerHistory
+	.command('enable-accessibility')
+	.description(
+		'macOS: show the Accessibility prompt. Linux: turn on the desktop accessibility bus. Windows: not needed'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryEnableAccessibility(options));
+
+computerHistory
+	.command('config')
+	.description('Show settings, or change them with the flags below')
+	.option('--retention-days <n>', 'Keep this many days (default 90)')
+	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
+	.option('--snapshots <on|off>', 'Record visible window text snapshots')
+	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
+	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
+	.option(
+		'--digest-rollup <on|off>',
+		'Also write 6-hour roll-ups from the 15-minute digests (default on)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryConfig(options));
 
 // Pianola - the autonomous manager agent (Encore-gated, off by default).
 const pianola = program
@@ -2092,6 +2409,123 @@ profiling
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profilingStatus);
 
+// MaestroRun commands (macOS only) - install the signed launcher that holds
+// Full Disk Access for scheduled scripts, and walk the grant. Each verb is the
+// same action as the matching button on the MaestroRun tile in Settings.
+const maestroRunCmd = program
+	.command('maestro-run')
+	.description(
+		'MaestroRun (macOS): install the launcher and grant it Full Disk Access for scheduled scripts'
+	);
+
+maestroRunCmd
+	.command('status')
+	.description('Re-check the launcher: installed version, signature, and Full Disk Access')
+	.option('--check-latest', 'Also ask GitHub for the newest release')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => maestroRun('status', options));
+
+maestroRunCmd
+	.command('install')
+	.description(
+		'Download, verify, and install the newest MaestroRun release for this Mac (or update it)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => maestroRun('install', options));
+
+maestroRunCmd
+	.command('grant')
+	.description(
+		'Open System Settings on the Full Disk Access list and watch for the switch (the user flips it)'
+	)
+	.option('--reveal', 'Also show MaestroRun.app in Finder, for dragging into the list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => maestroRun('grant', options));
+
+// Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
+// the same action as the matching button in the window.
+const quickChatCmd = program
+	.command('quick-chat')
+	.description('Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey');
+
+quickChatCmd
+	.command('show')
+	.description('Open the Quick Chat window (same as the hotkey when it is closed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('show', {}, options));
+
+quickChatCmd
+	.command('hide')
+	.description('Close the Quick Chat window; the conversation is kept')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('hide', {}, options));
+
+quickChatCmd
+	.command('toggle')
+	.description('Open the window, focus it, or close it (exactly what the hotkey does)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('toggle', {}, options));
+
+quickChatCmd
+	.command('status')
+	.description('Show the window state, the agent, the mode, and the current conversation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('status', {}, options));
+
+quickChatCmd
+	.command('send <message...>')
+	.description('Send a message in the current Quick Chat (starts a chat if none is open)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((words: string[], options) => quickChat('send', { text: words.join(' ') }, options));
+
+quickChatCmd
+	.command('new')
+	.description('Start a new chat (an ephemeral previous chat is deleted)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('new', {}, options));
+
+quickChatCmd
+	.command('keep [state]')
+	.description('Keep the current chat as a visible tab on its agent ("off" makes it ephemeral)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((state: string | undefined, options) => quickChat('keep', { state }, options));
+
+quickChatCmd
+	.command('pin [state]')
+	.description('Float the window above other windows ("off" lets it fall behind them)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((state: string | undefined, options) => quickChat('pin', { state }, options));
+
+quickChatCmd
+	.command('agent <agent-id>')
+	.description('Switch Quick Chat to another agent and start a new chat there')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => quickChat('agent', { agent }, options));
+
+quickChatCmd
+	.command('reveal')
+	.description('Open the current chat as a tab in the main Maestro window')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('reveal', {}, options));
+
+quickChatCmd
+	.command('stop')
+	.description('Stop the reply the agent is writing')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('stop', {}, options));
+
+quickChatCmd
+	.command('bounds')
+	.description(
+		'Move or resize the window, as dragging it does, and remember it (--height is the conversation height)'
+	)
+	.option('--x <px>', 'Left edge, in screen points (give with --y)')
+	.option('--y <px>', 'Top edge, in screen points (give with --x)')
+	.option('--width <px>', 'Width')
+	.option('--height <px>', 'Height of the conversation shape')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('bounds', {}, options));
+
 // Cadenza commands - open small cadenza panels that display or track work.
 const cadenza = program
 	.command('cadenza')
@@ -2380,6 +2814,18 @@ program
 const plugin = program
 	.command('plugin')
 	.description('Author, validate, sign, and package Maestro plugins');
+
+plugin
+	.command('list')
+	.description('Read installed plugin versions, load status, and enable state from the desktop')
+	.option('--json', 'Output as JSON')
+	.action((options) => pluginRuntime('list', undefined, options));
+
+plugin
+	.command('update <dir>')
+	.description('Update an installed plugin from a local package directory, preserving data')
+	.option('--json', 'Output the resulting plugin registry as JSON')
+	.action((dir, options) => pluginRuntime('update', dir, options));
 
 plugin
 	.command('init [dir]')

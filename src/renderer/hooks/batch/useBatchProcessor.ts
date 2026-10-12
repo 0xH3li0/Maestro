@@ -21,6 +21,7 @@ import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
 import { useBatchSelectors } from './internal/useBatchSelectors';
 import { useBatchBroadcast } from './internal/useBatchBroadcast';
+import { useAutoRunReclaim } from './useAutoRunReclaim';
 import { useAutoRunStateMirror } from './useAutoRunStateMirror';
 import {
 	useBatchControlActions,
@@ -29,6 +30,7 @@ import {
 import { useBatchKillAction } from './internal/useBatchKillAction';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
+import type { AutoRunKind } from '../../../shared/stats-types';
 
 export interface BatchCompleteInfo {
 	sessionId: string;
@@ -45,6 +47,8 @@ export interface BatchCompleteInfo {
 	totalCostUsd: number;
 	/** Number of documents processed */
 	documentsProcessed: number;
+	/** Which engine ran it. Undefined is treated as spec-driven downstream. */
+	kind?: AutoRunKind;
 }
 
 export interface PRResultInfo {
@@ -345,6 +349,10 @@ export function useBatchProcessor({
 		},
 		[startGoalRun, startDocumentBatchRun]
 	);
+
+	// A reload kills the run loop while main keeps its task running; this hands
+	// the run back to the reloaded page and restarts it (#1470).
+	useAutoRunReclaim(startBatchRun);
 
 	return {
 		batchRunStates,

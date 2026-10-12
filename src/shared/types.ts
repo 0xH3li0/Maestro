@@ -4,6 +4,7 @@
 // Re-export agent ID constants and types from the single source of truth
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
+import type { CodexTransport } from './codexTransport';
 
 /**
  * Union type of all valid agent IDs.
@@ -222,6 +223,14 @@ export interface Group {
 	color?: string;
 	parentGroupId?: string;
 	collapsed: boolean;
+	/**
+	 * Parked out of the Left Bar. A middle ground between keeping a group on
+	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
+	 * never restricts access, so the agents inside stay reachable through
+	 * search, the Cmd+O switcher, and every other surface. Optional because
+	 * every group written before this field existed reads back as visible.
+	 */
+	hidden?: boolean;
 }
 
 export function isWorktreeGroup(group: Group): boolean {
@@ -253,6 +262,8 @@ export interface SessionInfo {
 	toolType: ToolType;
 	cwd: string;
 	projectRoot: string;
+	/** The agent's original working directory, persisted by the desktop app. Older records may lack it. */
+	fullPath?: string;
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
@@ -263,6 +274,8 @@ export interface SessionInfo {
 	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
+	/** The pinned Pianola manager agent; its system prompt gets the Pianola role section. */
+	isPianola?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
@@ -293,6 +306,12 @@ export interface SessionInfo {
 	maestroPMode?: 'interactive' | 'dynamic';
 	/** Per-session override of the maestro-p binary path. */
 	maestroPPath?: string;
+	/**
+	 * Codex transport opt-in: `'app-server'` runs local interactive chat turns on
+	 * `codex app-server` so they can be steered mid-turn. Absent means `'exec'`.
+	 * Resolve with `resolveCodexTransport` in shared/codexTransport.
+	 */
+	codexTransport?: CodexTransport;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
@@ -415,7 +434,7 @@ export interface UsageStats {
  * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
  * single list every filter/validator iterates - update it, not a local copy.
  */
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT' | 'RELAY';
 
 export interface HistoryEntry {
 	id: string;

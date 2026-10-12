@@ -10,8 +10,8 @@
 
 import * as path from 'path';
 import { getWakaTimeManager } from '../wakatime-instance';
-import type { CueEvent, CueRunResult, CueSubscription } from './cue-types';
-import type { SessionInfo, ToolType } from '../../shared/types';
+import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cue-types';
+import type { SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
@@ -24,11 +24,39 @@ import {
 	getActiveProcessOutput,
 	getProcessList,
 } from './cue-process-lifecycle';
-import { getOutputParser } from '../parsers';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
+import { logger } from '../utils/logger';
+import {
+	pluginToolRunIdentity,
+	removePluginRunProofFile,
+} from '../plugins/plugin-tool-run-identity';
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
+
+/**
+ * One finished agent run, handed to `CueExecutionConfig.onRunTranscript`. It
+ * carries what the run was asked and what the agent printed, and nothing the
+ * observer could use to change the run.
+ */
+export interface CueRunTranscript {
+	agentId: string;
+	toolType: string;
+	/** The prompt after variable substitution, as it was sent. */
+	prompt: string;
+	/** The agent's stdout byte for byte. `CueRunResult.stdout` is the cleaned text. */
+	rawStdout: string;
+	/** The agent's own directory (the remote path, for a run over SSH). */
+	cwd: string;
+	/** When the run started, in epoch milliseconds. */
+	startTime: number;
+	exitCode: number | null;
+	durationMs: number;
+	status: CueRunStatus;
+	providerSessionId: string | null;
+	/** The SSH remote the run executed on, when it ran on one. */
+	sshRemoteId?: string;
+}
 
 /** Configuration for executing a Cue-triggered prompt */
 export interface CueExecutionConfig {
@@ -58,14 +86,22 @@ export interface CueExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
+	/**
+	 * Called once with the run's raw transcript after an agent process has run
+	 * and the result is built. It has no way to change the result, the cleaned
+	 * stdout or the timing, and a throw from it is swallowed. Not called when no
+	 * process was started (an empty prompt, a spec that could not be built).
+	 * Must return quickly: the run's caller waits for it.
+	 */
+	onRunTranscript?: (run: CueRunTranscript) => void;
+	/**
+	 * The Maestro system prompt for the target agent (built in main from the
+	 * stored session). Delivered by `applySystemPromptDelivery`: the native flag
+	 * for agents that support it, embedded into the prompt otherwise.
+	 */
+	appendSystemPrompt?: string;
 }
 
-/**
- * Extract clean human-readable text from agent stdout.
- * For agents that output JSON/NDJSON (like OpenCode --format json), parses each
- * line and collects text from 'result' events. Falls back to raw stdout when no
- * parser is available or no result-text events are found (e.g. plain-text agents).
- */
 /**
  * Build the per-run WakaTime heartbeat callback for a Cue run.
  *
@@ -95,77 +131,6 @@ function buildCueWakaTimeHeartbeat(
 				/* never let a heartbeat failure surface in a Cue run */
 			});
 	};
-}
-
-function extractCleanStdout(rawStdout: string, toolType: string): string {
-	if (!rawStdout.trim()) {
-		return rawStdout;
-	}
-
-	const parser = getOutputParser(toolType as ToolType);
-	if (!parser) {
-		return rawStdout;
-	}
-
-	const resultParts: string[] = [];
-	const assistantTextByMessage = new Map<string, string>();
-	const assistantTextWithoutId: string[] = [];
-	for (const line of rawStdout.split('\n')) {
-		if (!line.trim()) continue;
-		const event = parser.parseJsonLine(line);
-		if (event?.type === 'result' && event.text) {
-			resultParts.push(event.text);
-		} else if (event?.type === 'text' && event.text) {
-			// Track assistant text per message ID to avoid duplication from
-			// streaming chunks. Each chunk for the same message ID carries the
-			// full text so far, so we keep only the latest (longest) version.
-			const raw = event.raw as { message?: { id?: string } } | undefined;
-			const msgId = raw?.message?.id;
-			if (msgId) {
-				const existing = assistantTextByMessage.get(msgId);
-				if (!existing || event.text.length > existing.length) {
-					assistantTextByMessage.set(msgId, event.text);
-				}
-			} else {
-				assistantTextWithoutId.push(event.text);
-			}
-		}
-	}
-
-	// Prefer explicit result text, fall back to assistant message text
-	if (resultParts.length > 0) {
-		return resultParts.join('\n');
-	}
-	if (assistantTextByMessage.size > 0 || assistantTextWithoutId.length > 0) {
-		return [...assistantTextByMessage.values(), ...assistantTextWithoutId].join('\n');
-	}
-	return rawStdout;
-}
-
-/**
- * Parse the provider session id (e.g. Claude's `session_id`) out of agent
- * stdout. Each Cue run spawns a fresh agent process with no `--resume`, so the
- * run produces exactly one provider session; we return the last id the parser
- * surfaces (the `result` event is authoritative and emitted last). Returns null
- * for plain-text agents, command runs with no parser, or output that never
- * carried a session id. This is what lets the Cue stats dashboard attribute
- * token usage - the on-disk session files are keyed by this id, not by the
- * Maestro agent id stored on the event row.
- */
-function extractProviderSessionId(rawStdout: string, toolType: string): string | null {
-	if (!rawStdout.trim()) return null;
-	const parser = getOutputParser(toolType as ToolType);
-	if (!parser) return null;
-
-	let sessionId: string | null = null;
-	for (const line of rawStdout.split('\n')) {
-		if (!line.trim()) continue;
-		const event = parser.parseJsonLine(line);
-		if (!event) continue;
-		const parsed = parser.extractSessionId(event);
-		if (parsed) sessionId = parsed;
-	}
-	return sessionId;
 }
 
 /**
@@ -258,18 +223,44 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sshActuallyUsed
 	);
 
-	const processResult = await runProcess(runId, spec, {
-		toolType: config.toolType,
-		timeoutMs,
-		sshRemoteEnabled: sshActuallyUsed,
-		sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
-		stdinPrompt: sshActuallyUsed ? spec.stdinPrompt : undefined,
-		onLog,
-		onActivity: wakaHeartbeat,
-	});
+	// Capture the existing raw stream only when the optional recorder listens.
+	let rawStdout = '';
+	let processResult;
+	try {
+		processResult = await runProcess(runId, spec, {
+			toolType: config.toolType,
+			timeoutMs,
+			sshRemoteEnabled: sshActuallyUsed,
+			sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
+			stdinPrompt: spec.stdinPrompt,
+			onLog,
+			onActivity: wakaHeartbeat,
+			...(config.onRunTranscript
+				? {
+						onRawStdout: (raw: string) => {
+							rawStdout = raw;
+						},
+					}
+				: {}),
+		});
+	} finally {
+		if (spec.pluginRunToken) pluginToolRunIdentity.revoke(spec.pluginRunToken);
+		if (spec.pluginRunProofFile) {
+			try {
+				removePluginRunProofFile(spec.pluginRunProofFile);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
+		}
+	}
 
-	// 5. Assemble final result
-	return {
+	// 5. Assemble final result. `processResult.stdout` is already clean text and
+	// `providerSessionId`/`usage` already extracted - both parsed once, live,
+	// by `cue-process-lifecycle.ts`'s stream capture as stdout arrived, rather
+	// than re-parsed here from the finished buffer.
+	const result: CueRunResult = {
 		runId,
 		sessionId: session.id,
 		sessionName: session.name,
@@ -277,14 +268,40 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		pipelineName: subscription.pipeline_name,
 		event,
 		status: processResult.status,
-		stdout: extractCleanStdout(processResult.stdout, config.toolType),
+		stdout: processResult.stdout,
 		stderr: processResult.stderr,
 		exitCode: processResult.exitCode,
 		durationMs: sleepAwareElapsedMs(runSpan),
 		startedAt,
 		endedAt: new Date().toISOString(),
-		providerSessionId: extractProviderSessionId(processResult.stdout, config.toolType),
+		providerSessionId: processResult.providerSessionId,
+		usage: processResult.usage ?? undefined,
 	};
+
+	// After the result is built, so nothing the observer does is in its timing.
+	if (config.onRunTranscript) {
+		try {
+			config.onRunTranscript({
+				agentId: session.id,
+				toolType: config.toolType,
+				prompt: substitutedPrompt,
+				rawStdout,
+				cwd: config.projectRoot,
+				startTime: Date.parse(startedAt),
+				exitCode: processResult.exitCode,
+				durationMs: result.durationMs,
+				status: processResult.status,
+				providerSessionId: processResult.providerSessionId,
+				...(sshActuallyUsed && config.sshRemoteConfig?.remoteId
+					? { sshRemoteId: config.sshRemoteConfig.remoteId }
+					: {}),
+			});
+		} catch {
+			// An observer of a run must not be able to fail it.
+		}
+	}
+
+	return result;
 }
 
 /**

@@ -483,6 +483,26 @@ A queued item carries a **Force Send** button that dispatches that message immed
 
 `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
 
+A message that Force Send ran beside another working tab, or that the chord sent from the input, carries a small hammer icon in the transcript, so you can tell later which messages jumped the queue.
+
+### Steer
+
+While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images or an `@mention` is not steerable and sends normally when the turn ends. The same holds on Claude Code for a message that starts with `/` or `!`, which its editor would read as a command.
+
+`Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
+
+A steered message carries the Steer button's arrow icon in the transcript, the same way a force-sent one carries the hammer. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the mark.
+
+Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
+
+|                     | Force Send                                                                                              | Steer                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Use it when         | The message's tab is idle and the queue is holding it                                                   | The message's tab is working                                                  |
+| What it does        | Starts the message as its own turn now                                                                  | Hands the message to the turn in progress                                     |
+| Keyboard            | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`                                                                  | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`                                            |
+| Needs               | Forced Parallel Execution: always for the chord, and for the button only to run beside another busy tab | Claude Code on the interactive token source, or Codex on app-server transport |
+| Mark on the message | Hammer                                                                                                  | Arrow                                                                         |
+
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
@@ -738,7 +758,7 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 - **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
-  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source-max-plan-vs-api) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
 
 ### Editing Agents
 

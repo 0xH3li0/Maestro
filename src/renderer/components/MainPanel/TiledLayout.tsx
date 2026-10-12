@@ -20,8 +20,8 @@ import {
 	Maximize2,
 	GripHorizontal,
 	AlertCircle,
-	Loader2,
 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 
 import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
@@ -121,6 +121,8 @@ export type PaneChatActions = Partial<
 		| 'onForceSendQueuedItem'
 		| 'forcedParallelEnabled'
 		| 'getForceSendContext'
+		| 'getSteerContext'
+		| 'onSteerQueuedItem'
 		| 'onInterrupt'
 		| 'setLightboxImage'
 		| 'setMarkdownEditMode'
@@ -1006,10 +1008,7 @@ function PaneStatusIndicators({
 			<WizardIndicator active={isWizard} generatingDocs={!!aiTab.wizardState?.isGeneratingDocs} />
 			{aiTab.isGeneratingName && (
 				<span title="Generating tab name...">
-					<Loader2
-						className="w-3 h-3 shrink-0 animate-spin"
-						style={{ color: theme.colors.textDim }}
-					/>
+					<Spinner size={12} color={theme.colors.textDim} decorative />
 				</span>
 			)}
 			{aiTab.state !== 'busy' && aiTab.hasUnread && (

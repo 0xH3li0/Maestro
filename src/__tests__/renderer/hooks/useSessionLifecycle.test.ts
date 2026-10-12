@@ -239,6 +239,52 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customEnvVarsDisabled).toEqual({ PARKED: 'b' });
 		});
 
+		// Only the app-server opt-in is stored; choosing Standard clears the field
+		// so a saved `exec` and a never-configured agent read the same.
+		it.each([
+			[undefined, 'app-server', 'app-server'],
+			['app-server', 'exec', undefined],
+		] as const)('saves codexTransport (stored %s, chosen %s) as %s', (before, chosen, after) => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex',
+				codexTransport: before,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Agent',
+					undefined, // toolType unchanged
+					undefined, // nudgeMessage
+					undefined, // newSessionMessage
+					undefined, // customPath
+					undefined, // customArgs
+					undefined, // customEnvVars
+					undefined, // customModel
+					undefined, // customEffort
+					undefined, // customContextWindow
+					undefined, // sessionSshRemoteConfig
+					undefined, // enableMaestroP
+					undefined, // maestroPPath
+					undefined, // maestroPMode
+					undefined, // retryOnAvailabilityErrors
+					undefined, // retryOnTokenExhaustion
+					undefined, // additionalDirectories
+					undefined, // contextWindowSource
+					undefined, // customEnvVarsDisabled
+					undefined, // workingDirectory
+					undefined, // codexAutoResetOnExhaustion
+					chosen
+				);
+			});
+
+			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(after);
+		});
+
 		it('only modifies the targeted session', () => {
 			const session1 = createMockSession({ id: 'session-1', name: 'Session 1' });
 			const session2 = createMockSession({ id: 'session-2', name: 'Session 2' });
@@ -256,6 +302,24 @@ describe('useSessionLifecycle', () => {
 			const sessions = useSessionStore.getState().sessions;
 			expect(sessions[0].name).toBe('Session 1');
 			expect(sessions[1].name).toBe('Updated Session 2');
+		});
+
+		it('writes the save to disk right away, since the next spawn routes from it', () => {
+			// Persistence is debounced and re-armed by every store change; a streaming
+			// agent would otherwise hold a transport change past the next turn.
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'codex' })],
+				activeSessionId: 'session-1',
+			});
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			mockFlushSessionPersistence.mockClear();
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'Renamed');
+			});
+			vi.runAllTimers();
+
+			expect(mockFlushSessionPersistence).toHaveBeenCalledTimes(1);
 		});
 
 		it('sets optional fields to undefined when not provided', () => {

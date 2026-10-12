@@ -21,10 +21,15 @@
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
-import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
+import {
+	clearRetryIfSettled,
+	hasPendingRetry,
+	noteFailedTurnExited,
+} from '../../../stores/retryStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { isQuickChatTab } from '../../../services/quickChatEngine';
 import {
 	formatSessionId,
 	getActiveTab,
@@ -47,6 +52,7 @@ import {
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { drainTurnUsage, turnUsageStatsFields } from '../../../../shared/turnUsageLedger';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
+import { releaseMentionHandoff } from '../../../services/crossAgentHandoff';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
@@ -813,6 +819,26 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 			}
 
+			// A message that asked for this turn's result to go to other agents
+			// ("then send what you find to @Backend") armed a hand-off on the tab;
+			// the turn is over, so forward its answer now. Flush first so the
+			// answer's trailing chunks are in the store. A retry still counting
+			// down means the turn will run again, so the hand-off waits for that
+			// run instead of forwarding the failed one.
+			if (isFromAi && ownsSideEffects && tabIdFromSession && !isRetryPending(tabIdFromSession)) {
+				deps.batchedUpdater.flushNow();
+				releaseMentionHandoff(actualSessionId, tabIdFromSession, { failed: code !== 0 });
+			}
+
+			// A turn refused on the context limit is recovered by compacting its
+			// session and resending, and that waits for exactly this: the failed
+			// process is gone and the tab is settled. After the state update above
+			// on purpose - the compaction marks the tab busy again, and the update
+			// would have idled it.
+			if (isFromAi && tabIdFromSession) {
+				noteFailedTurnExited(actualSessionId, tabIdFromSession);
+			}
+
 			if (queuedItemToProcess && ownsSideEffects) {
 				// Flush any pending batched stdout/stderr chunks before the queued
 				// message is dispatched. Otherwise the new user log entry is appended
@@ -836,7 +862,11 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							);
 						});
 				}, 0);
-			} else if (toastData) {
+			} else if (toastData && !(tabIdFromSession && isRetryPending(tabIdFromSession))) {
+				// A retry counting down means this turn FAILED and will run again, so
+				// it gets no completion toast or sound. Without this gate each failed
+				// attempt of an outage announced itself as a green success, quoting
+				// whatever the dying turn printed last.
 				setTimeout(() => {
 					window.maestro.logger.log('info', 'Agent process completed', 'App', {
 						agentSessionId: toastData!.agentSessionId,
@@ -857,9 +887,17 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 
 					const currentActiveSession = getSessions().find((s) => s.id === getActiveSessionId());
+					// A Quick Chat reply is read in the Quick Chat window (and an
+					// ephemeral one sits in a hidden tab a toast could not open), so it
+					// counts as watched: no visual toast, the audio cue still fires.
+					const completedSession = getSessions().find((s) => s.id === actualSessionId);
+					const isQuickChatReply = isQuickChatTab(
+						completedSession?.aiTabs?.find((t) => t.id === tabIdFromSession)
+					);
 					const isViewingCompletedTab =
-						currentActiveSession?.id === actualSessionId &&
-						(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
+						isQuickChatReply ||
+						(currentActiveSession?.id === actualSessionId &&
+							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession));
 
 					if (!isViewingCompletedTab) {
 						notifyToast({
