@@ -13,6 +13,7 @@
  */
 
 import type { ModelServerErrorCode } from '../../shared/local-models/model-server';
+import type { SystemOneEngineId, SystemOneErrorCode } from '../../shared/local-models/system-one';
 
 /**
  * Why a local model could not be used.
@@ -86,11 +87,12 @@ export function throwIfLocalModelCancelled(
 }
 
 /**
- * True when a failure from any local-model call (a local model or an endpoint)
- * means the caller cancelled, which is never a fault to report.
+ * True when a failure from any local-model call (a local model, an endpoint or
+ * a System One engine) means the caller cancelled, which is never a fault to
+ * report.
  */
 export function isLocalModelCancelled(error: unknown): boolean {
-	if (isLocalModelError(error)) return error.code === 'cancelled';
+	if (isLocalModelError(error) || isSystemOneError(error)) return error.code === 'cancelled';
 	return (error as { kind?: unknown } | null)?.kind === 'cancelled';
 }
 
@@ -180,4 +182,36 @@ export class ModelServerError extends Error {
 
 export function isModelServerError(error: unknown): error is ModelServerError {
 	return error instanceof ModelServerError;
+}
+
+export interface SystemOneErrorOptions {
+	code: SystemOneErrorCode;
+	/** The engine that was asked. A failure never names a different one. */
+	engine: SystemOneEngineId;
+	httpStatus?: number;
+	cause?: unknown;
+}
+
+/**
+ * A System One request with no answer. The message names the engine and is
+ * written for a person; `code` is what a task's fail policy and the CLI's exit
+ * switch on. The codes are documented on `SystemOneErrorCode`.
+ */
+export class SystemOneError extends Error {
+	readonly code: SystemOneErrorCode;
+	readonly engine: SystemOneEngineId;
+	readonly httpStatus?: number;
+
+	constructor(message: string, options: SystemOneErrorOptions) {
+		super(message);
+		this.name = 'SystemOneError';
+		if (options.cause !== undefined) (this as { cause?: unknown }).cause = options.cause;
+		this.code = options.code;
+		this.engine = options.engine;
+		this.httpStatus = options.httpStatus;
+	}
+}
+
+export function isSystemOneError(error: unknown): error is SystemOneError {
+	return error instanceof SystemOneError;
 }

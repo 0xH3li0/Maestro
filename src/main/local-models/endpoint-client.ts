@@ -640,7 +640,11 @@ function requireVectors(
  * (a proxy's HTML error page) is not quoted.
  */
 async function readErrorDetail(response: Response): Promise<string | null> {
-	const text = await response.text().catch(() => '');
+	return errorDetailFromBody(await response.text().catch(() => ''));
+}
+
+/** {@link readErrorDetail} for a body already read. Shared with the System One client. */
+export function errorDetailFromBody(text: string): string | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
