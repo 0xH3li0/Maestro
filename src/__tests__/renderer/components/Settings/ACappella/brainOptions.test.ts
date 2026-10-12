@@ -12,7 +12,11 @@ import type { LocalModelListing } from '../../../../../main/local-models/service
 import { buildBrainOptionGroups } from '../../../../../renderer/components/Settings/ACappella/brainOptions';
 import type { VoiceBrainSource } from '../../../../../shared/acappella/voice-routing';
 import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
-import { QWEN3_1_7B_ID, getLocalModel } from '../../../../../shared/local-models/model-catalog';
+import {
+	QWEN3_1_7B_ID,
+	QWEN3_5_4B_ID,
+	getLocalModel,
+} from '../../../../../shared/local-models/model-catalog';
 
 const PROVIDER_ROWS = [
 	{ value: 'mock-brain', label: 'Built-in (keyword routing)' },
@@ -35,8 +39,8 @@ const lmStudio: LocalModelEndpoint = {
 	enabled: false,
 };
 
-function installedQwen(): LocalModelListing {
-	const entry = getLocalModel(QWEN3_1_7B_ID)!;
+function installedQwen(modelId: string = QWEN3_1_7B_ID): LocalModelListing {
+	const entry = getLocalModel(modelId)!;
 	return {
 		entry,
 		status: { id: entry.id, status: 'installed', manifest: null, bytesOnDisk: 1 },
@@ -75,7 +79,7 @@ describe('buildBrainOptionGroups', () => {
 		]);
 	});
 
-	it('does not offer an installed local model as a fresh choice', () => {
+	it('does not offer an installed local model that measured badly at routing', () => {
 		const groups = buildBrainOptionGroups(null, {
 			listings: [installedQwen()],
 			endpoints: [],
@@ -83,6 +87,29 @@ describe('buildBrainOptionGroups', () => {
 		});
 
 		expect(groups).toEqual([{ label: null, options: PROVIDER_ROWS }]);
+	});
+
+	it('offers an installed local model that voice routing offers', () => {
+		// Qwen3.5 4B routed every request to the agent it named (2026-10-12), so the
+		// task offers it and this picker does too. Qwen3 1.7B beside it stays out.
+		const groups = buildBrainOptionGroups(null, {
+			listings: [installedQwen(), installedQwen(QWEN3_5_4B_ID)],
+			endpoints: [],
+			endpointModels: {},
+		});
+
+		expect(groups).toEqual([
+			{ label: null, options: PROVIDER_ROWS },
+			{
+				label: 'Local models',
+				options: [
+					{
+						value: `local:${QWEN3_5_4B_ID}`,
+						label: getLocalModel(QWEN3_5_4B_ID)!.displayName,
+					},
+				],
+			},
+		]);
 	});
 
 	it('lists the local model that is already assigned', () => {

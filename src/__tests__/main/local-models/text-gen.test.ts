@@ -69,6 +69,10 @@ interface MockOptions {
 	/** Make `prompt` wait on this before answering. */
 	gate?: Promise<void>;
 	promptError?: Error;
+	/** A binding with no `resolveChatWrapper` export. */
+	noWrapperResolver?: boolean;
+	/** Make the chat session constructor throw (a template the binding cannot read). */
+	sessionError?: Error;
 	loadError?: Error;
 	grammarError?: Error;
 	tokens?: { input: number; output: number };
@@ -76,15 +80,21 @@ interface MockOptions {
 
 function mockLlama(options: MockOptions = {}) {
 	const events: string[] = [];
-	const promptCalls: Array<{ text: string; options: Record<string, unknown>; system?: unknown }> =
-		[];
+	const counts = { sequencesReturned: 0 };
+	const promptCalls: Array<{
+		text: string;
+		options: Record<string, unknown>;
+		system?: unknown;
+		chatWrapper?: unknown;
+	}> = [];
 	const getLlama = vi.fn(async (_options?: Record<string, unknown>) => ({
 		loadModel: vi.fn(async ({ modelPath }: { modelPath: string }) => {
 			if (options.loadError) throw options.loadError;
 			events.push(`load:${modelPath}`);
 			return {
 				// Like node-llama-cpp's default context: ONE sequence, handed back only
-				// when it is disposed.
+				// when it is disposed, and only once the async dispose has finished
+				// (the real one waits on the context lock).
 				createContext: async () => {
 					let held = false;
 					return {
@@ -98,8 +108,11 @@ function mockLlama(options: MockOptions = {}) {
 											usedOutputTokens: options.tokens.output,
 										}
 									: undefined,
-								dispose: () => {
+								dispose: async () => {
+									// Microtask hops, not a timer: some tests here fake timers.
+									for (let hop = 0; hop < 50; hop++) await Promise.resolve();
 									held = false;
+									counts.sequencesReturned += 1;
 								},
 							};
 						},
@@ -118,15 +131,22 @@ function mockLlama(options: MockOptions = {}) {
 
 	class LlamaChatSession {
 		private readonly opts: {
-			contextSequence: { dispose(): void };
+			contextSequence: { dispose(): Promise<void> };
 			autoDisposeSequence?: boolean;
 			systemPrompt?: string;
+			chatWrapper?: unknown;
 		};
 		constructor(opts: LlamaChatSession['opts']) {
+			if (options.sessionError) throw options.sessionError;
 			this.opts = opts;
 		}
 		async prompt(text: string, promptOptions: Record<string, unknown> = {}) {
-			promptCalls.push({ text, options: promptOptions, system: this.opts.systemPrompt });
+			promptCalls.push({
+				text,
+				options: promptOptions,
+				system: this.opts.systemPrompt,
+				chatWrapper: this.opts.chatWrapper,
+			});
 			if (options.gate) await options.gate;
 			const signal = promptOptions.signal as AbortSignal | undefined;
 			if (signal?.aborted) throw new Error('aborted');
@@ -135,14 +155,25 @@ function mockLlama(options: MockOptions = {}) {
 			return typeof reply === 'function' ? reply(text) : reply;
 		}
 		dispose() {
-			if (this.opts.autoDisposeSequence) this.opts.contextSequence.dispose();
+			// Like the real session: it STARTS the sequence's dispose and returns.
+			if (this.opts.autoDisposeSequence) void this.opts.contextSequence.dispose();
 		}
 	}
 
-	const module = { getLlama, LlamaChatSession };
+	// Like node-llama-cpp's: the chat format for a model, under the caller's settings.
+	const resolveChatWrapper = vi.fn((_model: unknown, wrapperOptions: Record<string, unknown>) => ({
+		wrapperOptions,
+	}));
+	const module = {
+		getLlama,
+		LlamaChatSession,
+		...(options.noWrapperResolver ? {} : { resolveChatWrapper }),
+	};
 	return {
 		events,
+		counts,
 		promptCalls,
+		resolveChatWrapper,
 		getLlama,
 		loadRuntime: vi.fn(async () => module as never),
 	};
@@ -370,6 +401,58 @@ describe('LocalTextEngine', () => {
 		await expect(engine.generate('m1', TURN)).rejects.toMatchObject({
 			message: expect.stringContaining('context is full'),
 		});
+	});
+
+	it('runs every turn on the no-reasoning chat format, resolved once per load', async () => {
+		// Qwen3.5 opens a reply inside a thought unless its wrapper is told not to,
+		// and the binding files the first token of a grammar reply there: the JSON
+		// came back without its opening brace (found on real hardware, 2026-10-12).
+		const llama = mockLlama();
+		const engine = engineFor(llama);
+
+		await engine.generate('m1', TURN);
+		await engine.generate('m1', TURN);
+
+		expect(llama.resolveChatWrapper).toHaveBeenCalledTimes(1);
+		const wrapper = llama.resolveChatWrapper.mock.results[0].value;
+		expect(wrapper.wrapperOptions).toEqual({
+			customWrapperSettings: { qwen: { thoughts: 'discourage' } },
+		});
+		expect(llama.promptCalls.map((call) => call.chatWrapper)).toEqual([wrapper, wrapper]);
+		// The budget stays: it is what bounds a model of another family.
+		expect(llama.promptCalls[0].options.budgets).toEqual({ thoughtTokens: 0 });
+	});
+
+	it('lets the session pick its chat format when the binding cannot resolve one', async () => {
+		const llama = mockLlama({ noWrapperResolver: true });
+
+		await expect(engineFor(llama).generate('m1', TURN)).resolves.toMatchObject({ text: 'ok' });
+		expect(llama.promptCalls[0].chatWrapper).toBeUndefined();
+	});
+
+	it('waits for the sequence to be back before the turn ends', async () => {
+		// The sequence's dispose is async. A turn that returned while it was still
+		// running let the next turn find the context empty: every turn after the
+		// first failed on Qwen3.5 (found on real hardware, 2026-10-12).
+		const llama = mockLlama();
+		const engine = engineFor(llama);
+
+		await engine.generate('m1', TURN);
+		expect(llama.counts.sequencesReturned).toBe(1);
+		await expect(engine.generate('m1', TURN)).resolves.toMatchObject({ text: 'ok' });
+		await expect(engine.generate('m1', TURN)).resolves.toMatchObject({ text: 'ok' });
+	});
+
+	it('gives the sequence back when the chat session cannot be built', async () => {
+		const llama = mockLlama({ sessionError: new Error('unsupported chat template') });
+		const engine = engineFor(llama);
+
+		for (let turn = 0; turn < 2; turn++) {
+			await expect(engine.generate('m1', TURN)).rejects.toMatchObject({
+				code: 'generation-failed',
+				message: expect.stringContaining('unsupported chat template'),
+			});
+		}
 	});
 
 	it('refuses an already-cancelled request without loading anything', async () => {

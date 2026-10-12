@@ -535,9 +535,12 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		},
 		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/unsloth/Qwen3-1.7B-GGUF' },
 		description:
-			'A small general text model that runs on this machine: names tabs, writes short summaries, drafts shell commands and pull requests, and answers yes or no for the Cue gate. The largest download here, and one you can skip if you already run Ollama or LM Studio.',
-		goodAt:
-			'Fast, small judgments: tab names, yes or no gate answers, short summaries and shell commands.',
+			'The smallest and fastest text model here: names tabs, writes short summaries and pull request drafts, and answers yes or no for the Cue gate. It is not offered for shell commands or voice routing, which Qwen3.5 4B does well.',
+		goodAt: 'The fastest small judgments: tab names, yes or no gate answers and short summaries.',
+		// Kept beside Qwen3.5 4B because nothing smaller beat it (2026-10-12,
+		// docs/architecture/local-models.md, "the small models compared"): it is
+		// 2.5 times faster on a tab name and a gate answer, and Qwen3.5 2B, the
+		// only candidate near its size, missed a bug report this model caught.
 		roles: ['housekeeping', 'judge'],
 		// GGUF metadata at the pinned revision: 1.72B parameters, `qwen3.context_length`
 		// 40,960, 28 layers of 8 KV heads at head dimension 128.
@@ -570,8 +573,15 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		},
 		license: { spdx: 'Apache-2.0', url: 'https://huggingface.co/Qwen/Qwen3.5-4B' },
 		description:
-			'A small, fast general model for the quick jobs: routing, labels, tab names and short summaries. Runs comfortably on a laptop with 8 GB of memory.',
-		goodAt: 'Fast judgments and housekeeping: routing, labels, tab names and short summaries.',
+			'The small model to start with. It does every housekeeping task well: tab names, shell commands, pull request drafts, summaries, yes or no answers for the Cue gate, and sending a spoken request to the agent it names.',
+		goodAt:
+			'Every housekeeping task: tab names, shell commands, PR drafts, gate answers and voice routing.',
+		// The offered housekeeping model. Measured on 2026-10-12 against Qwen3 1.7B
+		// and Qwen3.5 2B on the shipped prompts (`llama-housekeeping-e2e.test.ts`,
+		// docs/architecture/local-models.md, "the small models compared"): 8 of 8 tab
+		// names with both ID numbers kept, 8 of 8 correct shell commands and none
+		// destructive, 8 of 8 gate answers, and 6 of 6 spoken requests routed. No
+		// task records it under `unofferedLocalModels`.
 		roles: ['housekeeping', 'judge'],
 		// Agent qualification (2026-10-12, docs/architecture/local-models.md): not an agent here. Its chat template refuses a system message after the first, which both harnesses send.
 		// GGUF metadata: 32 layers, one in four (`full_attention_interval` 4) is full attention, 4 KV heads at head dimension 256. The rest are linear-attention layers with a small fixed state.

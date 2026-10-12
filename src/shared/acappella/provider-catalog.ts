@@ -192,16 +192,24 @@ export const BUILTIN_BRAIN_PROVIDER_ID = 'mock-brain';
  * (see `voice-routing.ts`). The id keeps its first name so routing logs and
  * turn metrics recorded under it stay comparable.
  *
- * No local model is OFFERED in the Conductor Brain picker yet, and the reason
- * is routing quality, not loading. The llama runtime loads and Qwen3 1.7B (the
- * one text model in the catalog) answers a grammar-constrained turn in about
- * 0.4 s on Apple Silicon. But on 2026-10-11, against a two-agent roster, it
- * sent four of four utterances that named an agent ("tell the frontend agent
- * ...", "ask backend to ...") to the Conductor, under seven shapes of the
- * decision schema. A Brain that never reaches a named agent reads as "voice is
- * broken", so the picker lists a local model only when it is already assigned.
+ * Which local models the Conductor Brain picker OFFERS is decided by routing
+ * quality, not by loading, and it is recorded on the `voice-routing` task
+ * (`unofferedLocalModels`), not here:
+ *
+ * - Qwen3 1.7B is not offered. It answers a grammar-constrained turn in about
+ *   0.4 s on Apple Silicon, but on 2026-10-11, against a two-agent roster, it
+ *   sent four of four utterances that named an agent ("tell the frontend agent
+ *   ...", "ask backend to ...") to the Conductor, under seven shapes of the
+ *   decision schema. A Brain that never reaches a named agent reads as "voice
+ *   is broken", so the picker lists it only when it is already assigned.
+ * - Qwen3.5 4B is offered. On 2026-10-12 it sent four of four of those
+ *   utterances to the agent they named, and matched 9 of 14 on the routing
+ *   evaluation script in about 1.3 s a turn, with the right agent every time
+ *   it routed (its misses open a new tab where an old one should be recalled).
+ *
  * An endpoint model is offered, because the user chose that model themselves.
- * See docs/architecture/local-models.md.
+ * See docs/architecture/local-models.md and
+ * docs/architecture/acappella/routing-evaluation.md.
  */
 export const QWEN3_BRAIN_PROVIDER_ID = 'qwen3-local';
 

@@ -29,6 +29,26 @@ export const LLAMA_GET_OPTIONS = Object.freeze({
 	progressLogs: false,
 } as const);
 
+/**
+ * The `resolveChatWrapper()` options for every local text turn: no reasoning.
+ *
+ * `qwen.thoughts: 'discourage'` is the Qwen family's own no-thinking format (an
+ * empty thought written before the reply, what its template does for
+ * `enable_thinking=false`, and what the model server path sends as
+ * `chat_template_kwargs`). Without it the Qwen3.5 format OPENS every reply
+ * inside a thought, and node-llama-cpp files the first generated token there:
+ * a grammar reply came back without its opening `{` and parsed as nothing, on
+ * every task (found on real hardware, 2026-10-12). A token budget of zero
+ * (`budgets.thoughtTokens`) closes the thought one token too late to help.
+ *
+ * Keyed by wrapper type, so it changes nothing for a model of another family.
+ */
+export const LLAMA_CHAT_WRAPPER_OPTIONS = Object.freeze({
+	customWrapperSettings: Object.freeze({
+		qwen: Object.freeze({ thoughts: 'discourage' }),
+	}),
+} as const);
+
 /** The part of node-llama-cpp's `Llama` instance a backend report reads. */
 export interface LlamaBackendInfo {
 	/** `'metal' | 'cuda' | 'vulkan'`, or `false` for CPU only. */

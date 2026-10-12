@@ -7,14 +7,16 @@
  * come from the same builder the Local Models Assignments picker uses, so the
  * two cannot offer different sources for the task.
  *
- * Two differences from that picker, both deliberate:
- * - There is no "Off" row. Off is what choosing a voice-specific provider
- *   means here, so those providers stand where Off would.
- * - A local model is listed only when it is ALREADY the assignment. None is
- *   offered as a fresh choice yet (see `QWEN3_BRAIN_PROVIDER_ID` for the
- *   measured reason), but a choice made elsewhere must still be shown as what
- *   it is: a `<select>` whose value matches no row renders its first row, and
- *   the panel would read "Built-in" while a model routes.
+ * One difference from that picker, and it is deliberate: there is no "Off"
+ * row. Off is what choosing a voice-specific provider means here, so those
+ * providers stand where Off would.
+ *
+ * A local model is offered here exactly when the task offers it: installed, and
+ * not recorded as measured-unfit for voice routing (`unofferedLocalModels`).
+ * Qwen3 1.7B is recorded there, so it appears only when it is ALREADY the
+ * assignment, with the reason in its label: a `<select>` whose value matches no
+ * row renders its first row, and the panel would read "Built-in" while a model
+ * routes. See `QWEN3_BRAIN_PROVIDER_ID` for the measurements.
  */
 
 import { voiceProvidersForRole } from '../../../../shared/acappella/provider-catalog';
@@ -24,7 +26,6 @@ import {
 } from '../../../../shared/acappella/voice-routing';
 import { LOCAL_MODEL_TASKS, OFF_ASSIGNMENT } from '../../../../shared/local-models/tasks';
 import {
-	LOCAL_MODELS_GROUP_LABEL,
 	buildAssignmentOptionGroups,
 	type AssignmentOption,
 	type AssignmentOptionGroup,
@@ -52,9 +53,6 @@ export function buildBrainOptionGroups(
 			// Off is dropped; what survives is a current assignment no row covers
 			// (a model not downloaded, an endpoint removed or switched off).
 			head.push(...group.options.filter(isCurrent));
-		} else if (group.label === LOCAL_MODELS_GROUP_LABEL) {
-			const current = group.options.filter(isCurrent);
-			if (current.length > 0) groups.push({ label: group.label, options: current });
 		} else {
 			groups.push(group);
 		}

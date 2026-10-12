@@ -402,8 +402,8 @@ registerVoiceProvider({
 //
 // Not provider choices: the `voice-routing` assignment selects them, and
 // `readVoiceProviderSettings` reports whichever one it names as `brain`. Both
-// run every turn through the task router. See QWEN3_BRAIN_PROVIDER_ID for why
-// no local model is offered in the picker yet.
+// run every turn through the task router. See QWEN3_BRAIN_PROVIDER_ID for
+// which local models the picker offers, and why.
 
 registerVoiceProvider({
 	role: 'brain',

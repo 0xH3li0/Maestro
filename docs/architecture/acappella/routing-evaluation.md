@@ -63,7 +63,7 @@ drives the real `createConductorRouter` against a real Brain:
 npm run acappella:eval                          # the Conductor-agent Brain
 npm run acappella:eval -- --brain anthropic     # ANTHROPIC_API_KEY
 npm run acappella:eval -- --brain openai        # OPENAI_API_KEY
-npm run acappella:eval -- --brain local --model-path /path/to/qwen3-1.7b.gguf
+npm run acappella:eval -- --brain local --model-path /path/to/model.gguf
 ```
 
 This was originally written down as a microphone session with four live agents, which is the wrong
@@ -141,6 +141,8 @@ real model would have produced those decisions.
 | 2026-08-15 | `conductor-agent` | 10/14 | 3           | 2              | 77%      | 5485 ms      |
 | 2026-08-15 | `conductor-agent` | 11/14 | 2           | 2              | 85%      | 6703 ms      |
 | 2026-08-15 | `conductor-agent` | 10/14 | 3           | 2              | 77%      | 5854 ms      |
+| 2026-10-12 | Qwen3.5 4B, local | 8/14  | 5           | 1              | 62%      | 1333 ms      |
+| 2026-10-12 | Qwen3 1.7B, local | 0/14  | 14          | 1              | 0%       | 676 ms       |
 
 Three runs of the Conductor-agent Brain (Claude Code, `--output-format json`, read-only). "Hits" is
 `dispatched` from the routing log; the script matched 11, 12 and 11 of its fourteen expectations, and
@@ -170,20 +172,31 @@ want routing that reasons about their projects and will accept the wait for it. 
 the local and hosted tiers, and their numbers belong in the table above before any claim about
 A Cappella's felt latency is made.
 
-**Not yet measured: the local and hosted tiers, and shape parity between them.** Both fail closed
-here and say so:
+**The local tier, 2026-10-12** (Apple M5 Max, 128 GB, the in-process llama runtime, temperature 0,
+so one run is the score). Run with `MAESTRO_USER_DATA` set to a data dir that holds the `llama`
+runtime, and `--model-path` at the GGUF:
+
+- **Qwen3.5 4B matched 9 of 14, at 1.3 s a turn.** It chose the right agent on every utterance it
+  routed. Its misses are the tab and the question, not the repository: it opened a NEW tab where an
+  existing one should have been recalled or continued (4, 5 and 13), it asked a question on "which
+  one is busy right now", and it guessed on "do the auth one" where it should have asked. A miss of
+  that kind costs a duplicate tab. It is a quarter of the Conductor-agent Brain's latency for about
+  two fewer hits, so it is offered for voice routing (`unofferedLocalModels` has no entry for it).
+- **Qwen3 1.7B matched 1 of 14.** It named the right agent on 12 of 14 here, but set `clarify` on
+  every turn, so nothing was dispatched. On the two-agent roster in
+  `llama-housekeeping-e2e.test.ts` it sends a named agent's request to the Conductor instead. Either
+  way no utterance reaches an agent, and it stays unoffered.
+
+**Not yet measured: the hosted tier, and shape parity between the tiers.** A hosted Brain fails
+closed here and says so:
 
 ```
-Routing evaluation failed: Qwen3 1.7B (local) is not usable here:
-  llama.cpp (Conductor Brain) is not part of this build yet.
 Routing evaluation failed: Anthropic (hosted) is not usable here:
   No Anthropic API key is configured.
 ```
 
-`node-llama-cpp` is loaded dynamically and is not installed in this checkout, and no hosted key is
-configured. Filling those rows in needs the native runtime plus the Qwen3 1.7B GGUF for the first and
-one API key for the second; the harness needs nothing else, and each run is about ninety seconds.
-What to look for when they are run:
+Filling that row in needs one API key; the harness needs nothing else, and each run is about ninety
+seconds. What to look for when it is run:
 
 1. **Shape parity.** The local grammar-constrained Brain and a hosted Brain must produce the same
    decision SHAPE for the same input - the same `target`, `tabAction`, and `tabId` - even where their

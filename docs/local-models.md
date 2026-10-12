@@ -53,8 +53,8 @@ Below that is the Library, grouped by what each model is for. A text model is li
 | Housekeeping   | Devstral Small 2 24B (Q4_K_M)     | 13.3 GB  | Multi-file edits in large repositories                                    |
 | Housekeeping   | Qwen3.6 35B-A3B (Q4_K_M)          | 19.0 GB  | General agent work: fast, with a long context                             |
 | Housekeeping   | Qwen3.8 27B (Q4_K_M)              | 17.7 GB  | Hard reasoning and coding                                                 |
-| Judge          | Qwen3 1.7B Instruct (Q4_K_M)      | 1.0 GB   | Fast, small judgments: tab names, gate answers, short summaries           |
-| Judge          | Qwen3.5 4B (Q4_K_M)               | 2.6 GB   | Fast judgments and housekeeping: routing, labels, tab names               |
+| Judge          | Qwen3 1.7B Instruct (Q4_K_M)      | 1.0 GB   | The fastest small judgments: tab names, gate answers, short summaries     |
+| Judge          | Qwen3.5 4B (Q4_K_M)               | 2.6 GB   | Every housekeeping task, shell commands and voice routing included        |
 | Vision         | Gemma 4 12B (Q4_K_M)              | 6.8 GB   | Writing and multilingual work, with images                                |
 | Embeddings     | BGE Small (English)               | 33.1 MB  | Quick search by meaning in English                                        |
 | Embeddings     | EmbeddingGemma 300M               | 208.6 MB | Higher-quality search by meaning, in many languages                       |
@@ -115,15 +115,28 @@ A model you add is labeled **Not verified by Maestro**. Maestro pins the revisio
 - A gated or private repo cannot be added: Maestro downloads without an account.
 - **Remove from Library** on the row deletes the model's files and takes it out of the list. **Remove** deletes only the files.
 
-### The text model
+### The small text models
 
-**Qwen3 1.7B** is the small text model the housekeeping tasks default to. It is fast (a tab name in about a quarter of a second on Apple Silicon), and that size decides what it is offered for:
+Two small models do the housekeeping tasks. Both were run on the same requests, on the prompts Maestro ships:
+
+| Task                                 | Qwen3.5 4B (2.6 GB)          | Qwen3 1.7B (1.0 GB)               |
+| ------------------------------------ | ---------------------------- | --------------------------------- |
+| Tab names (8)                        | 8 good, both ID numbers kept | 8 good, one ID number dropped     |
+| Shell commands (8)                   | 8 correct                    | 1 correct, 1 that kills a process |
+| Cue gate answers (8)                 | 8 correct                    | 8 correct                         |
+| Pull request drafts (2)              | 2 good, with file names      | 2 good, shorter                   |
+| Spoken requests sent to an agent (4) | 4                            | 0                                 |
+| A tab name on Apple Silicon          | about 0.25 s                 | about 0.1 s                       |
+
+**Qwen3.5 4B is the one to start with.** It is offered for every text task, and it fits a Mac with 8 GB of memory.
+
+**Qwen3 1.7B** is the smallest and the fastest, and that size decides what it is offered for:
 
 - **Offered for:** tab naming, summaries, the Cue gate, pull request drafts, spoken notices, tab cleanup suggestions, and the token proxy's digest.
-- **Not offered for AI command mode.** In testing it wrote a wrong command for one request, and a command that kills a process for a request to find it.
+- **Not offered for AI command mode.** In testing it wrote one correct command for eight requests, and a command that kills a process for a request to find it.
 - **Not offered for voice routing.** It sent requests that named an agent to the Conductor instead of to that agent.
 
-The assignment picker leaves it out of those two tasks. For them, use an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
+The assignment picker leaves it out of those two tasks. For them, use Qwen3.5 4B, or an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
 
 ### The neural voice
 
@@ -243,10 +256,10 @@ Your transcripts are sent to the endpoint you assign, and the line at the top of
 If the assigned model cannot answer (the server is down, the model is not loaded), the voice session says so by name and does not route on another Brain. A turn is given 30 seconds, because the first one can include the server loading the model.
 
 <Note>
-	A model run on this machine is not offered as a Conductor Brain yet. The one text model in the
-	catalog, Qwen3 1.7B, loads and answers quickly, but in testing it sent requests that named an
-	agent to the Conductor instead of to that agent. Use an endpoint with a larger model, the
-	built-in router, or a hosted Brain.
+	A model run on this machine can be the Conductor Brain too. Qwen3.5 4B is offered for it: in
+	testing it sent every request to the agent it named, in about a second a turn. It opens a new
+	tab more often than the built-in router where an old tab should be recalled. Qwen3 1.7B is not
+	offered: it sent requests that named an agent to the Conductor instead of to that agent.
 </Note>
 
 ### The secret screen

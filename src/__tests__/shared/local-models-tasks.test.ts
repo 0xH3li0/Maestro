@@ -31,6 +31,7 @@ import {
 	BGE_SMALL_EN_ID,
 	KOKORO_82M_ID,
 	QWEN3_1_7B_ID,
+	QWEN3_5_4B_ID,
 	getLocalModel,
 } from '../../shared/local-models/model-catalog';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
@@ -478,6 +479,18 @@ describe('models a task does not offer', () => {
 		for (const taskId of LOCAL_MODEL_TASK_IDS) {
 			expect(isLocalModelOfferedForTask(taskId, QWEN3_1_7B_ID)).toBe(!unoffered.includes(taskId));
 		}
+	});
+
+	it('offers Qwen3.5 4B, the housekeeping model, for every task', () => {
+		// It passed every housekeeping check on real hardware (2026-10-12), shell
+		// commands and voice routing included, so no task turns it away. An entry
+		// for it here needs a measurement behind it, not a guess.
+		for (const taskId of LOCAL_MODEL_TASK_IDS) {
+			expect(isLocalModelOfferedForTask(taskId, QWEN3_5_4B_ID)).toBe(true);
+		}
+		const assignment = { type: 'local' as const, modelId: QWEN3_5_4B_ID };
+		expect(localModelAssignmentCaution('ai-command', assignment)).toBeNull();
+		expect(localModelAssignmentCaution('voice-routing', assignment)).toBeNull();
 	});
 
 	it('names only catalog models of the kind the task needs', () => {

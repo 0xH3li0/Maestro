@@ -82,9 +82,10 @@ Hosted providers need an API key, entered in **Voice Providers**. Keys are store
 <Note>
 	**Kokoro**, a neural voice that runs on this machine, is a Text-to-Speech choice once you download
 	it (326 MB, from [Local Models](./local-models#the-neural-voice)). The system voice stays the
-	default because it needs no download. A **local model** as the Conductor Brain is still held
-	back: the one text model in the catalog (Qwen3 1.7B) does not route a request to the agent it
-	names. Use an endpoint, the built-in router, or a hosted Brain for routing.
+	default because it needs no download. A **local model** can be the Conductor Brain: download
+	**Qwen3.5 4B** in [Local Models](./local-models#the-small-text-models) and pick it under Conductor
+	Brain. It sends a request to the agent you name in about a second, and nothing leaves this
+	machine. The smaller Qwen3 1.7B is not offered there, because it does not.
 </Note>
 
 ## Downloading the models

@@ -333,7 +333,8 @@ cannot run the loader's `new Function` import, so the test swaps in a plain `imp
 agent to fix the navbar padding" and "ask backend to add rate limiting to login" both came back as
 `target: "conductor"` with a clarifying question, not routed to the named agent. That is a model or
 prompt problem, not a load problem; no local model is offered in the Conductor Brain picker until
-one routes an explicit agent name correctly.
+one routes an explicit agent name correctly. (Qwen3.5 4B did on 2026-10-12, and is offered: see "the
+small models compared" below.)
 
 ### Result: 2026-10-11, the same machine, routing only
 
@@ -360,9 +361,10 @@ field, not a malformed reply. No schema shape fixes it. The model stays out of t
 for a small one, would have to pass this check first.
 
 **Bug the first run found.** The Brain took a context sequence per turn and never gave it back,
-so the second turn on a loaded model failed with `No sequences left`. The chat session now passes
+so the second turn on a loaded model failed with `No sequences left`. The chat session was given
 `autoDisposeSequence: true`, and the unit-test mock models a one-sequence context so the regression
-is caught without hardware.
+is caught without hardware. (That fix raced on Qwen3.5: since 2026-10-12 the engine disposes the
+sequence itself and waits for it.)
 
 ### Result: 2026-10-11, the same machine, housekeeping tasks
 
@@ -411,6 +413,98 @@ already constrained), which is why the routing run did not see it.
 **Not measured:** tab cleanup suggestions (its deterministic guard runs after the model whatever it
 says), context summaries of a long transcript, and any of this on Windows, Linux, or an Intel Mac.
 
+### Result: 2026-10-12, the same machine, the small models compared
+
+Which small model should the Library offer for housekeeping? The same file now runs every candidate
+on the SAME cases (more of them than the run above: 8 tab names, 8 shell commands, 8 gate events, 2
+pull requests, and 6 spoken requests through the real `AssignedBrainProvider`), on the in-process
+llama runtime at temperature 0. Candidates: Qwen3 1.7B, Qwen3.5 4B, and Qwen3.5 2B
+(`unsloth/Qwen3.5-2B-GGUF`, not in the catalog, so the test adds it the way **Add from Hugging
+Face** does, which also makes it the first real download and run of a user-added model).
+
+```bash
+MAESTRO_LOCAL_MODEL_E2E=1 ELECTRON_RUN_AS_NODE=1 env -u MAESTRO_USER_DATA \
+  node_modules/electron/dist/Electron.app/Contents/MacOS/Electron node_modules/vitest/vitest.mjs run \
+  src/__tests__/main/local-models/llama-housekeeping-e2e.test.ts
+```
+
+| Task                                                | Qwen3 1.7B (1.0 GB)                | Qwen3.5 2B (1.2 GB)                 | Qwen3.5 4B (2.6 GB)             |
+| --------------------------------------------------- | ---------------------------------- | ----------------------------------- | ------------------------------- |
+| Tab naming (8)                                      | 8 on topic, 1 of 2 ID numbers kept | 8 on topic, 1 of 2 ID numbers kept  | 8 on topic, 2 of 2 IDs kept     |
+| Shell command (8)                                   | **1 correct, 1 destructive**       | 3 correct, 0 destructive            | **8 correct**, 0 destructive    |
+| Cue gate (8)                                        | 8 correct                          | **7 correct** (missed a bug report) | 8 correct                       |
+| Pull request draft (2)                              | 2 good, terse                      | 2 good, names files                 | 2 good, names files             |
+| Spoken notice (3)                                   | 3; "needs input" case still weak   | 3; says "needs your decision"       | 3; says "needs your decision"   |
+| Tool-output digest (1)                              | 2285 to 626 chars, 3 of 3 facts    | 2285 to 615 chars, 3 of 3 facts     | 2285 to 297 chars, 3 of 3 facts |
+| Voice routing, named agent (4)                      | **0**                              | **0**                               | **4**                           |
+| Voice routing, Conductor (2)                        | 2                                  | 2                                   | 2                               |
+| Median warm turn: tab name / command / gate / route | 100 / 248 / 147 / 762 ms           | 108 / 391 / 205 / 984 ms            | 257 / 508 / 393 / 1006 ms       |
+| Cold load                                           | 1.6 s                              | 2.6 s                               | 2.4 s                           |
+
+"Correct" for a shell command is a person's reading of the command, not the test's check that a
+plausible tool appears in it (that check passes 7, 7 and 8). Read that way:
+
+- **Qwen3 1.7B, 1 of 8.** Besides the two failures of the earlier run (a `grep -c` that counts
+  nothing, and `lsof ... | xargs kill -9` for "find which process"), it answered "last 5 commits
+  that touched package.json" with `git log --grep='package.json'` (which searches commit MESSAGES),
+  "how much free disk space" with `df -h | grep 'Used'`, and "which branch am I on" with
+  `git branch | grep -v 'detached' | head -1` (the first branch in the list).
+- **Qwen3.5 2B, 3 of 8.** Nothing destructive, but it invented a flag (`git log --main-branch`),
+  put `-n 5` after the `--` that ends git's options, and summed `wc -l`'s own total line.
+- **Qwen3.5 4B, 8 of 8:** `wc -l src/**/*.ts`, `git branch --merged main`, `lsof -i :8080`,
+  `git log -5 --pretty=format:"%H" -- package.json`, `find . -type f -size +100M -exec ls -lh {} \;`,
+  `git branch --show-current`.
+
+**Decision: Qwen3.5 4B is the offered housekeeping model, and Qwen3 1.7B stays beside it.**
+
+- Qwen3.5 4B is at least as good as Qwen3 1.7B on every task and far better on two, so no task
+  records it under `unofferedLocalModels`: it is offered for AI command mode and for voice routing,
+  the two tasks the 1.7B is kept out of. It is the first local model to send a spoken request to the
+  agent it names. On the fifteen-utterance routing script it matched 9 of 14 at 1.3 s a turn, with
+  the right agent on every utterance it routed (see
+  [routing evaluation](acappella/routing-evaluation.md)), so the Conductor Brain picker now lists it.
+- It is also the honest choice for a small computer. Its linear-attention layers keep no
+  whole-context cache, so at the model server's 40,960-token context it needs 3.8 GB and **fits** a
+  Mac with 8 GB, where Qwen3 1.7B (28 full-attention layers) needs 5.4 GB and is labeled Too large.
+  In-process housekeeping runs both at 4,096 tokens, where both fit.
+- Qwen3 1.7B is kept because nothing smaller beat it. Qwen3.5 2B is the only candidate near its
+  size, and it is slower, larger, and missed "Nice work overall. One thing: on Safari the Load more
+  button does nothing" at the Cue gate. A gate that answers no to a bug report skips a run that was
+  needed, which is the expensive direction. So the 2B is not added to the catalog (it stays reachable
+  through **Add from Hugging Face**), and the 1.7B stays for its speed: 2.5 times faster on a tab
+  name and a gate answer.
+- The test now asserts quality only where the catalog makes a promise: a curated model a task still
+  offers must pass that task's clear cases. So `unofferedLocalModels` is the only way a model that
+  fails a task stays in the catalog.
+
+**Bug this run found: every turn after the first failed on Qwen3.5 with `No sequences left`.** The
+engine asked the chat session to give the context's one sequence back (`autoDisposeSequence`). The
+session starts the sequence's dispose and returns without waiting, so the next turn raced it. Qwen3
+1.7B always won that race; a Qwen3.5 sequence keeps checkpoints and lost it every time. In the app
+this would have shown as a model that names one tab and then fails until it is unloaded.
+`LocalTextEngine.runTurn` now disposes the sequence itself and waits, and builds the session inside
+the `try` so a session that cannot be built gives the sequence back too. The unit-test mock now
+returns its sequence asynchronously, as the real one does.
+
+**Bug this run found: a Qwen3.5 grammar reply lost its opening brace.** The Qwen3.5 chat format
+opens every reply inside a thought. node-llama-cpp filed the first generated token there, and the
+zero thought budget closed the thought one token later, so `{"name": "..."}` came back as
+`"name": "..."}` and parsed as nothing: 0 of 8 tab names, 0 of 8 gate answers. The engine now
+resolves the chat wrapper once per load with `qwen: { thoughts: 'discourage' }`
+(`LLAMA_CHAT_WRAPPER_OPTIONS` in `runtime/llama-options.ts`), which is the family's own no-thinking
+format and what the model server path already sends as `enable_thinking: false`. Qwen3 1.7B's
+results did not change with it.
+
+**Seen, not fixed: Gemma 4 leaks its reasoning into a free-text reply.** On the in-process runtime a
+Gemma 4 E4B turn with no grammar returns its deliberation, then `<channel|>`, then the answer: the
+zero thought budget does not hold for node-llama-cpp's Gemma 4 wrapper. Grammar turns are clean. It
+affects the free-text tasks (the token proxy's digest, context summaries) when a Gemma 4 model is
+assigned to them and is not served by the model server. gpt-oss 20B is clean both ways.
+
+**Not measured:** more than one machine, the model server path for these tasks (it sends
+`enable_thinking: false` and applies the model's own template), tab cleanup suggestions, and context
+summaries of a long transcript.
+
 ## Text generation
 
 `generateText({ source, prompt, system?, maxTokens, temperature?, jsonSchema?, signal? })` in
@@ -419,15 +513,17 @@ catalog model (`{ type: 'local', modelId }`) or a saved endpoint (`{ type: 'endp
 model }`). The result shape is the same for both: `text`, `json` (only when a schema was given and
 the reply parsed), `source`, sleep-aware `durationMs`, and token counts when known.
 
-| Rule                                    | Why                                                                                                                                                   |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| One resident local model, app-wide      | A GGUF is a gigabyte of RAM. Asking for another model frees the resident one first.                                                                   |
-| Loaded lazily, freed after 5 idle min   | Warm within a burst of work, cold between them. The idle clock restarts after every turn.                                                             |
-| Turns are serialized                    | The context has one sequence; a parallel second turn would fail with `No sequences left`.                                                             |
-| JSON schema becomes a llama.cpp grammar | Compiled once per schema per load. A build without grammar support generates unconstrained.                                                           |
-| Endpoints by exact id, enabled only     | An assignment stores the full id; a prefix that later matches two servers must not pick one.                                                          |
-| Temperature defaults to 0               | Housekeeping output should be reproducible.                                                                                                           |
-| Failures are classified, never swapped  | `LocalModelError` (`model-unsupported`, `model-not-installed`, `runtime-unavailable`, `generation-failed`, `cancelled`) or `LocalModelEndpointError`. |
+| Rule                                    | Why                                                                                                                                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One resident local model, app-wide      | A GGUF is a gigabyte of RAM. Asking for another model frees the resident one first.                                                                                    |
+| Loaded lazily, freed after 5 idle min   | Warm within a burst of work, cold between them. The idle clock restarts after every turn.                                                                              |
+| Turns are serialized                    | The context has one sequence; a parallel second turn would fail with `No sequences left`.                                                                              |
+| A turn ends when its sequence is back   | The engine disposes the sequence and waits. A chat session only starts that dispose, and the next turn loses the race on Qwen3.5.                                      |
+| No reasoning, by format and by budget   | The chat wrapper is resolved with `qwen: { thoughts: 'discourage' }`, and every turn has a zero thought budget. A reply that opens in a thought loses its first token. |
+| JSON schema becomes a llama.cpp grammar | Compiled once per schema per load. A build without grammar support generates unconstrained.                                                                            |
+| Endpoints by exact id, enabled only     | An assignment stores the full id; a prefix that later matches two servers must not pick one.                                                                           |
+| Temperature defaults to 0               | Housekeeping output should be reproducible.                                                                                                                            |
+| Failures are classified, never swapped  | `LocalModelError` (`model-unsupported`, `model-not-installed`, `runtime-unavailable`, `generation-failed`, `cancelled`) or `LocalModelEndpointError`.                  |
 
 ## Embedding and classifier models
 
@@ -1434,8 +1530,10 @@ Rules a change here must keep:
   `summariseVoiceEgress(ids, { endpointName })` says "Text is sent to <endpoint name>". It does not
   inspect the URL to decide whether the server is on this machine: the transcript leaves this
   process either way, and the user named where it goes.
-- **No local model is offered in the picker.** `buildBrainOptionGroups()` lists a local model only
-  when it is already the assignment, so a choice made in Settings > Models or with
+- **The picker offers a local model exactly when the task does.** `buildBrainOptionGroups()` lists
+  the installed models `voice-routing` offers (Qwen3.5 4B, since 2026-10-12). A model the task
+  records under `unofferedLocalModels` (Qwen3 1.7B) is listed only when it is already the
+  assignment, with "(not recommended)" in its label, so a choice made in Settings > Models or with
   `maestro-cli models assign voice-routing local:<id>` is shown as what it is.
 
 ## Spoken notices: `announceAgentFinished()`

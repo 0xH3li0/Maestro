@@ -215,15 +215,17 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'text-gen',
 			allowsUtilityAgent: true,
 			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
-			// Measured on 2026-10-11 (`llama-housekeeping-e2e.test.ts`, recorded in
-			// docs/architecture/local-models.md): of four plain requests, Qwen3 1.7B
-			// wrote one command that does not do what was asked, and for "find which
-			// process is listening on port 8080" it wrote `lsof ... | xargs kill -9`,
-			// lifted from the prompt's own example. The user reviews a command before
-			// it runs, but a model that turns "find" into "kill" is not one to invite.
+			// Measured on 2026-10-11 and again, on eight requests, on 2026-10-12
+			// (`llama-housekeeping-e2e.test.ts`, recorded in
+			// docs/architecture/local-models.md): Qwen3 1.7B wrote one command of
+			// eight that does what was asked, and for "find which process is
+			// listening on port 8080" it wrote `lsof ... | xargs kill -9`, lifted from
+			// the prompt's own example. The user reviews a command before it runs, but
+			// a model that turns "find" into "kill" is not one to invite. Qwen3.5 4B
+			// wrote eight correct commands of eight, so it is offered.
 			unofferedLocalModels: {
 				[QWEN3_1_7B_ID]:
-					'It wrote a wrong command for one of four plain requests, and a command that kills a process for a request to find it, so it is not offered for shell commands.',
+					'It wrote one correct command for eight plain requests, and a command that kills a process for a request to find it, so it is not offered for shell commands.',
 			},
 		}),
 		'git-drafts': defineTask({
@@ -307,7 +309,8 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			// routing only"): asked to route six utterances under seven shapes of the
 			// reply schema, Qwen3 1.7B sent every request that named an agent to the
 			// Conductor under six of them. The rest of each decision was right, so
-			// this is the model's choice, not a malformed reply.
+			// this is the model's choice, not a malformed reply. Qwen3.5 4B sent four
+			// of four to the agent they named (2026-10-12), so it is offered.
 			unofferedLocalModels: {
 				[QWEN3_1_7B_ID]:
 					'It sends requests that name an agent to the Conductor, so it is not offered for voice routing.',

@@ -48,7 +48,7 @@ import {
 	throwIfLocalModelCancelled,
 } from './errors';
 import { isInstalled, modelFilePath } from './model-store';
-import { LLAMA_GET_OPTIONS } from './runtime/llama-options';
+import { LLAMA_CHAT_WRAPPER_OPTIONS, LLAMA_GET_OPTIONS } from './runtime/llama-options';
 import { loadLocalRuntime } from './runtime/load-runtime';
 import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { loadedModelServerTarget } from './server/server-endpoint';
@@ -215,6 +215,8 @@ interface LlamaTokenMeter {
 
 interface LlamaContextSequence {
 	tokenMeter?: LlamaTokenMeter;
+	/** Hands the sequence back to its context. Async: it waits on the context lock. */
+	dispose?(): Promise<void> | void;
 }
 
 interface LlamaChatSessionInstance {
@@ -240,6 +242,8 @@ interface LlamaInstance {
 interface LlamaModule {
 	getLlama(options?: Record<string, unknown>): Promise<LlamaInstance>;
 	LlamaChatSession: new (options: Record<string, unknown>) => LlamaChatSessionInstance;
+	/** The chat format for a model. Optional: a session picks its own without it. */
+	resolveChatWrapper?(model: LlamaModelInstance, options: Record<string, unknown>): unknown;
 }
 
 /** Everything one resident model holds, so unloading is one object to drop. */
@@ -248,6 +252,12 @@ interface LoadedModel {
 	model: LlamaModelInstance;
 	context: LlamaContextInstance;
 	ChatSession: LlamaModule['LlamaChatSession'];
+	/**
+	 * The model's chat format with reasoning switched off (see
+	 * `LLAMA_CHAT_WRAPPER_OPTIONS`), resolved once per load. Undefined when the
+	 * binding cannot resolve one; the session then picks its default.
+	 */
+	chatWrapper: unknown;
 	/** Compile a JSON-schema grammar on this load's llama instance. */
 	createGrammar(schema: unknown): Promise<LlamaGrammar | null>;
 	/**
@@ -402,6 +412,7 @@ export class LocalTextEngine {
 				model,
 				context,
 				ChatSession: module.LlamaChatSession,
+				chatWrapper: module.resolveChatWrapper?.(model, { ...LLAMA_CHAT_WRAPPER_OPTIONS }),
 				createGrammar: (schema) =>
 					llama
 						.createGrammarForJsonSchema(schema)
@@ -445,17 +456,16 @@ export class LocalTextEngine {
 	private async runTurn(loaded: LoadedModel, options: LocalTextOptions): Promise<LocalTextReply> {
 		const grammar = options.jsonSchema ? await this.grammarFor(loaded, options.jsonSchema) : null;
 		const sequence = loaded.context.getSequence() as LlamaContextSequence;
-		const session = new loaded.ChatSession({
-			contextSequence: sequence,
-			...(options.system ? { systemPrompt: options.system } : {}),
-			// The context has ONE sequence, and a session does not give it back on
-			// dispose unless told to. Without this the first turn holds it forever
-			// and every later turn fails with "No sequences left" - found by the
-			// on-device E2E, which mocked unit tests could not see.
-			autoDisposeSequence: true,
-		});
+		let session: LlamaChatSessionInstance | null = null;
 
 		try {
+			// Inside the `try`: a session that cannot be built (a chat template the
+			// binding cannot read) must still give the sequence back.
+			session = new loaded.ChatSession({
+				contextSequence: sequence,
+				...(loaded.chatWrapper ? { chatWrapper: loaded.chatWrapper } : {}),
+				...(options.system ? { systemPrompt: options.system } : {}),
+			});
 			const text = await session.prompt(options.prompt, {
 				temperature: options.temperature,
 				maxTokens: options.maxTokens,
@@ -463,10 +473,10 @@ export class LocalTextEngine {
 				// free-text reply with a thought the chat session strips from what it
 				// returns, and that thought is charged against `maxTokens`: on real
 				// hardware a 400-token summary turn came back as an EMPTY string,
-				// because every token went to thinking. A grammar turn never thinks
-				// (its first token is already constrained), so this only changes
-				// free-text turns, and every consumer here wants the answer, not the
-				// deliberation.
+				// because every token went to thinking. Every consumer here wants the
+				// answer, not the deliberation. This is the budget; the chat wrapper
+				// (`loaded.chatWrapper`) is what stops a Qwen reply from STARTING in a
+				// thought, which a budget alone does not.
 				budgets: { thoughtTokens: 0 },
 				...(grammar ? { grammar } : {}),
 				...(options.signal ? { signal: options.signal } : {}),
@@ -490,7 +500,16 @@ export class LocalTextEngine {
 				}
 			);
 		} finally {
-			await safeDispose(() => session.dispose?.());
+			await safeDispose(() => session?.dispose?.());
+			// The context has ONE sequence, and this turn must not end before it is
+			// back. The engine disposes it and WAITS, instead of asking the session
+			// to (`autoDisposeSequence`): the session starts the sequence's async
+			// dispose and returns at once, so the next turn races it. Qwen3 1.7B
+			// always won that race; Qwen3.5 (whose sequences keep checkpoints) lost
+			// it every time, and every turn after the first failed with "No
+			// sequences left". Both were found by the on-device E2E, which the
+			// mocked unit tests could not see.
+			await safeDispose(() => sequence.dispose?.());
 		}
 	}
 
