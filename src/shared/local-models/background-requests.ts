@@ -1,10 +1,10 @@
 /**
  * Background requests: where an agent's SIDE requests go.
  *
- * Claude Code sends work that is not the conversation (a tab title, a summary,
- * a topic check) on its small model. An agent on the Maestro token proxy can
- * send exactly those requests to a model on a Local Models source, while its
- * own turns keep going to the provider. The proxy decides per request
+ * Claude Code sends work that is not the conversation (a session title, the
+ * summary of a fetched web page) on its small model. An agent on the Maestro
+ * token proxy can send exactly those requests to a model on a Local Models
+ * source, while its own turns keep going to the provider. The proxy decides per request
  * (`src/main/local-models/proxy/background-route.ts`). This module holds what
  * every surface shares: the stored setting, and the wording of a target that
  * cannot be used.
@@ -79,8 +79,13 @@ export function parseBackgroundRequests(value: unknown): BackgroundRequestsParse
 /** The provider whose side requests the proxy can route: the Anthropic Messages route alone. */
 const BACKGROUND_REQUESTS_PROVIDER = 'claude-code';
 
-/** The sentence beside the picker: what is routed, and what never is. */
-export const BACKGROUND_REQUESTS_DESCRIPTION = `${getAgentDisplayName(BACKGROUND_REQUESTS_PROVIDER)} sends side requests, such as tab titles and summaries, on its small model. The ${TOKEN_PROXY_NAME} can send those to a local model. The agent's own turns always go to the provider, and a request the local model cannot serve fails: it is not sent to the provider instead.`;
+/**
+ * The sentence beside the picker: what is routed, and what never is. The two
+ * examples are the two requests a real session routed, and the last sentence
+ * is what that session cost with a model that thinks: a minute for each page
+ * (docs/architecture/local-models.md, "Real run: background requests").
+ */
+export const BACKGROUND_REQUESTS_DESCRIPTION = `${getAgentDisplayName(BACKGROUND_REQUESTS_PROVIDER)} sends side requests, such as a session title and the summary of a web page it fetched, on its small model. The ${TOKEN_PROXY_NAME} can send those to a local model. The agent's own turns always go to the provider, and a request the local model cannot serve fails: it is not sent to the provider instead. Pick a model that answers without thinking first: the agent waits for the summary of each page.`;
 
 /** Why the setting needs the proxy first. Said by the picker's host and by every writer. */
 export const BACKGROUND_REQUESTS_NEEDS_PROXY = `Background requests are routed by the ${TOKEN_PROXY_NAME}, and this agent does not use it. Set its proxy mode to Passthrough or Compress first.`;

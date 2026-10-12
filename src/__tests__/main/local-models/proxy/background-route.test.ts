@@ -2,9 +2,10 @@
  * @file background-route.test.ts
  *
  * The decision behind per-request routing, on request bodies shaped like the
- * ones Claude Code sends: a side request on the small model is routed, and
- * every sign of a turn keeps the request on the provider. Then the rewrite:
- * the model's name is the only thing that changes, byte for byte.
+ * ones Claude Code sends: a side request on the small model is routed, while
+ * every sign of a turn, and a probe of the provider, keeps the request on the
+ * provider. Then the rewrite: the model's name is the only thing that changes,
+ * byte for byte.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -176,6 +177,21 @@ describe('planBackgroundRoute: every sign of a turn keeps the request on the pro
 			tools: [{ name: 'Read', description: 'Read a file', input_schema: { type: 'object' } }],
 		});
 		expect(skipReason(body)).toBe('tools');
+	});
+
+	it('a probe: a request for at most one token is a question about the provider', () => {
+		// The TUI's quota probe, as Claude Code 2.1.296 sends it before a turn.
+		const quota = { model: HAIKU, max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] };
+		expect(skipReason(quota)).toBe('probe');
+		expect(skipReason(sideRequest({ max_tokens: 0 }))).toBe('probe');
+		// Two tokens is work, and so is a request that states no limit or a
+		// value that is not a number.
+		expect(plan(sideRequest({ max_tokens: 2 })).route).toBe(true);
+		for (const max_tokens of [undefined, null, '1', true]) {
+			expect(plan(sideRequest({ max_tokens })).route, String(max_tokens)).toBe(true);
+		}
+		// A probe on another model is already not a small-model request.
+		expect(skipReason({ ...quota, model: 'claude-opus-4-8' })).toBe('not-small-model');
 	});
 
 	it('reports the strongest sign when a request shows several', () => {

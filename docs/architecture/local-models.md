@@ -2427,6 +2427,155 @@ environment and are not given the id of a Left Bar agent, and the Group Chat mod
 agent. Someone who runs a gateway as a REQUIRED route (a company proxy that holds the key) should
 know those calls reach the provider direct. The user docs say which is which.
 
+### Real run: 2026-10-12, background requests
+
+An agent on the proxy can have its **background requests** sent to a model on a Local Models
+source (`backgroundRequests` on the agent record). The proxy decides per Anthropic Messages
+request (`planBackgroundRoute()` in `proxy/background-route.ts`): a request on the provider's
+small model that shows no sign of a turn goes to the target, and every other request goes to the
+provider as it arrived. This run asked what that does to one real session: how many requests are
+routed, which ones, what the provider is spared, and whether the session still completes.
+
+| Part         | Value                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| Test         | `token-proxy-real-e2e.test.ts`, the background case (opt-in, see the command below)           |
+| Branch       | `acappella` at `bec74a39db`, plus the `probe` rule this run added                             |
+| Claude Code  | 2.1.296, `claude.ai` login, Max subscription, main loop on `haiku` (`claude-haiku-5-5`)       |
+| Proxy        | The product's service (`configureTokenProxy`), reading a stored agent record per request      |
+| Launch       | `applyAgentGatewayToSpawn()` gives the base URL with the agent in it, then `claude` is called |
+| Target       | The Maestro model server (engine `b11559`, Metal), context 40,960, model loaded beforehand    |
+| Machine      | darwin-arm64, Apple M5 Max, 128 GB                                                            |
+| Session      | Three turns: `cat build.log` (24 KB), WebFetch of `https://example.com/`, a one word reply    |
+| Token source | A recorder in front of `api.anthropic.com` and one in front of the model server               |
+
+```bash
+npm run build:maestro-p
+MAESTRO_TOKEN_PROXY_E2E=1 MAESTRO_TOKEN_PROXY_E2E_CODEX=0 \
+  MAESTRO_TOKEN_PROXY_E2E_BACKGROUND_MODEL=qwen3.5-4b-q4km \
+  MAESTRO_TOKEN_PROXY_E2E_MAESTRO_P="$PWD/dist/cli/maestro-p.js" \
+  env -u MAESTRO_USER_DATA npx vitest run \
+  src/__tests__/main/local-models/proxy/token-proxy-real-e2e.test.ts -t "background requests"
+```
+
+The session runs as a pair: once with no target (plain passthrough) and once with the target.
+Maestro starts Claude Code two ways, and they do not send the same side requests, so the pair
+ran both ways: as `claude --print`, and through the TUI with `maestro-p`. The proxy's log never
+holds a body, so the two recorders (`src/__tests__/helpers/recordingRelay.ts`) are what say WHICH
+request went where and what the provider counted for it. The main loop is on `haiku` on purpose:
+every request of the session then names the small model, and only the signs of a turn keep the
+loop on the provider.
+
+**Results in one table.**
+
+| Question                                    | `claude --print`                   | TUI (`maestro-p`)                              |
+| ------------------------------------------- | ---------------------------------- | ---------------------------------------------- |
+| Did the session complete with a target?     | Yes, three turns                   | Yes, three turns                               |
+| Messages requests in the session            | 7                                  | 13                                             |
+| Routed to the target                        | 1                                  | 2                                              |
+| Which                                       | The WebFetch page summary          | The session title, the page summary            |
+| Kept on the provider, and why               | 6: 2 `cache-control`, 4 `thinking` | 11: 3 `probe`, 2 `cache-control`, 6 `thinking` |
+| Prompt cost units, session without a target | 37101                              | 68762                                          |
+| Of which the routed requests                | 267 (0.7%)                         | 1468 (2.1%)                                    |
+| Output tokens, session without a target     | 678                                | 870                                            |
+| Of which the routed requests                | 166 (24%)                          | 250 (29%)                                      |
+| Prompt cost units, session with the target  | 36948                              | 56327                                          |
+| Time the proxy held a routed request        | 5 ms                               | 19 ms                                          |
+| A request sent to both places               | None                               | None                                           |
+
+Prompt cost units are the formula of the run above (write x 1.25 + read x 0.1 + uncached input),
+over every Messages request that reached the provider, from the `usage` the provider returned.
+
+**What the provider is spared is exact; the session totals are not a measure of it.** The row
+"of which the routed requests" is the provider's own count for the requests the router calls
+background, in the session where they reached it. The two session totals differ by cache state
+more than by that:
+
+- Five print pairs were run (three target models). Session with the target against session
+  without: +7.3%, -1.3%, -0.4%, +0.7%, +7.3%. The routed request is 0.7% of either.
+- The TUI totals differ by 12435 units. 1468 are the routed requests. 10984 are two prompt
+  suggestion requests (a copy of the conversation, sent after a turn ends) that the TUI cut when
+  it exited in the session with the target, so their `usage` never arrived.
+
+#### The side requests Claude Code 2.1.296 sends
+
+| Request               | Sent by      | Shape                                                                                   | The provider's answer                     |
+| --------------------- | ------------ | --------------------------------------------------------------------------------------- | ----------------------------------------- |
+| WebFetch page summary | Both         | No tools, no `thinking` setting, `max_tokens` 128000, the page as the message           | 1.1 to 2.6 s, 166 to 402 output tokens    |
+| Session title         | The TUI only | No tools, no `thinking` setting, 1205 input tokens ("You are naming a coding session")  | 0.6 s, 15 output tokens                   |
+| Quota probe           | The TUI only | `max_tokens` 1, no system prompt, the message is the word `quota`; one before each turn | 429 in about 150 ms                       |
+| Prompt suggestion     | The TUI only | The conversation with its tools and thinking blocks, on the main model                  | 0.7 s. Stays on the provider (`thinking`) |
+
+Not seen in either session: a permission check on the small model (the session's one shell
+command, `cat`, was allowed by rule), and a topic check.
+
+1. **`claude --print` sends one kind of side request, and only when the agent fetches a page.** A
+   print session that calls no WebFetch routes nothing. Print mode is how Maestro starts Claude
+   Code unless the agent uses the TUI token source.
+2. **The page summary is not a side effect: its answer goes back into the turn.** WebFetch hands
+   the page to the small model and gives the agent that model's answer as the tool result. With a
+   target, the agent reads the local model's summary of the page. Every summary was right here,
+   on a page of one paragraph.
+3. **The title is asked for and never read in a `maestro-p` turn.** The TUI exits when the turn
+   ends. The provider answers in 0.6 s, before the exit. The local model was still thinking 6.1 s
+   later, when the TUI left (`200 client-aborted` in the proxy's log).
+
+#### Finding 1: a model that thinks makes a fetched page take a minute
+
+The page summary, by where it was answered:
+
+| Answered by                               | Time                        | Output tokens |
+| ----------------------------------------- | --------------------------- | ------------- |
+| The provider (`claude-haiku-5-5`), 6 runs | 1.1 to 2.6 s                | 166 to 402    |
+| Qwen3.5 4B, 4 runs                        | 48.6, 64.1, 66.6 and 83.6 s | 4860 to 8241  |
+| gpt-oss 20B, 1 run                        | 2.1 s                       | 213           |
+| Qwen3 Coder 30B A3B, 1 run                | 0.56 s                      | 19            |
+
+Every answer was one correct sentence. Qwen3.5 4B wrote 4860 to 8241 tokens of reasoning first.
+The request states no `thinking` setting, which at the provider means none. `llama-server` applies
+the model's own chat template, and the Qwen3.5 template thinks unless it is told not to. Maestro's
+own tasks tell it (`enable_thinking: false`); a routed request is the client's body with one
+value changed, so nothing does. The agent's turn waits that long for each page.
+
+Qwen3.5 4B is the housekeeping model the Library offers, so it is the model a user is most likely
+to pick here, and it is the wrong one as things stand. **Not fixed in this run.** The fix changes
+what a routed request holds (the body would no longer be "the same except the model's name") or
+how the model server starts a model (which also changes an agent that runs on it and wants to
+think), so it is a decision. Until then the picker's sentence says to pick a model that answers
+without thinking first (`BACKGROUND_REQUESTS_DESCRIPTION`).
+
+#### Finding 2: the quota probe was routed, and now stays on the provider
+
+The TUI sends a one token request before each turn to learn the state of the account from the
+provider's answer. In the first TUI pair all three went to the target: 5 of 13 requests were
+routed, not 2. The provider answered each probe 429. The local model answered each 200 with one
+token in 35 to 124 ms, which says nothing about the account. Both sessions completed, so this
+build of Claude Code carries on after either answer, but the request is a question about the
+provider, and the target was answering it.
+
+`planBackgroundRoute()` now keeps a request that asks for at most one token on the provider
+(skip reason `probe`). It reads `max_tokens`, not the word `quota`: a request for one token is not
+work a model can do, whatever it says. The table at the top is the run after that rule.
+
+#### What this run says about the setting
+
+- **Routing is exact.** In seven sessions with a target, the model server received exactly the
+  requests the proxy logged as routed, the provider received exactly the rest, no request that
+  declares tools reached the model server, and no request the router calls background reached the
+  provider. With `haiku` as the main model, every loop request was a small-model request and was
+  kept by a sign of a turn (`cache-control` or `thinking`), never by its model name.
+- **The saving on this session is small:** 0.7% of the prompt cost in print mode and 2.1% through
+  the TUI, and about a quarter of the output tokens, which are few (166 and 250). A session that
+  fetches large pages would save more, one page at a time.
+- **The cost is time, and it depends on the model:** half a second with Qwen3 Coder 30B, a minute
+  with Qwen3.5 4B.
+
+Not run: a main loop on a larger model (its loop requests are kept as `not-small-model` before any
+sign is read), a session long enough to compact, a large page, a shell command that needs a
+permission check, a subagent, an Ollama or LM Studio target, a model that loads inside the first
+routed request (2.0 s for Qwen3.5 4B, 5.6 s for gpt-oss 20B and 11.8 s for Qwen3 Coder 30B, each
+loaded before its session), the launch from the app's own spawn path, and any of this on Windows
+or Linux. One sample per cell, except where a count of runs is given.
+
 ## Model server
 
 The Maestro model server is llama.cpp's own `llama-server`, downloaded as an engine and run in

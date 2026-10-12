@@ -3,8 +3,8 @@
  * request is a BACKGROUND request, and write the target's model into it.
  *
  * A provider CLI sends two kinds of request. Its own turns (the main loop, and
- * a subagent's loop) carry the conversation. Its side requests (a tab title, a
- * summary, a topic check) are small, self-contained, and sent on the
+ * a subagent's loop) carry the conversation. Its side requests (a session
+ * title, the summary of a fetched web page) are self-contained and sent on the
  * provider's small model. An agent whose `backgroundRequests` names a target
  * has the second kind sent there (`shared/local-models/background-requests.ts`).
  *
@@ -29,6 +29,17 @@
  *     nothing to call. This is what keeps the FIRST request of a loop on the
  *     provider when the CLI was told not to mark its conversation for caching.
  *
+ * One small-model request is neither a turn nor work a target can do, and it
+ * stays on the provider too:
+ *
+ *   - `probe`: the request asks for at most one token (`max_tokens` of 1 or
+ *     less). Claude Code's TUI sends one before a turn (its message is the
+ *     word `quota`) to learn the state of the ACCOUNT from the provider's
+ *     answer: the status and the rate-limit headers. A local model answers 200
+ *     with one token, which says nothing about the account and reads as "no
+ *     limit". On a real session the provider answered that probe 429 and the
+ *     target answered it 200 (docs/architecture/local-models.md).
+ *
  * Like the compressor, this never parses the body into a value and prints it
  * again. It locates values (`json-spans.ts`) and writes one new string literal
  * over the model's. Every other byte is the byte the client sent.
@@ -52,6 +63,8 @@ export type BackgroundRouteSkip =
 	| 'unreadable'
 	/** The model is not the provider's small model. */
 	| 'not-small-model'
+	/** It asks for at most one token: a question about the provider, not work. */
+	| 'probe'
 	| 'thinking'
 	| 'cache-control'
 	| 'tool-result'
@@ -119,6 +132,10 @@ export function planBackgroundRoute(body: string, toolType: string): BackgroundR
 	}
 	if (!modelIdInTierFamily(toolType, 'low', model)) {
 		return { route: false, reason: 'not-small-model' };
+	}
+	const maxTokens = memberOf(root, 'max_tokens');
+	if (maxTokens?.kind === 'scalar' && Number(body.slice(maxTokens.start, maxTokens.end)) <= 1) {
+		return { route: false, reason: 'probe' };
 	}
 
 	const signs: TurnSigns = { thinking: false, cacheControl: false, toolResult: false };

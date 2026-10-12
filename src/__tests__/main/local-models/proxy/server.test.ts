@@ -1342,6 +1342,15 @@ describe('token proxy server, background routing', () => {
 				skipped: 'tools',
 				body: titleRequest({ tools: [{ name: 'Read', input_schema: { type: 'object' } }] }),
 			},
+			{
+				// The TUI's quota probe, as Claude Code 2.1.296 sends it.
+				skipped: 'probe',
+				body: JSON.stringify({
+					model: HAIKU,
+					max_tokens: 1,
+					messages: [{ role: 'user', content: 'quota' }],
+				}),
+			},
 			{ skipped: 'unreadable', body: '{"model":"claude-haiku-4-5-20251001"' },
 		];
 
