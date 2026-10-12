@@ -26,11 +26,20 @@ import {
 	selectTabCleanupCandidates,
 	tabCleanupApplyCommand,
 	tabCleanupProtection,
+	tabCleanupQuestionId,
 	tabCleanupRef,
+	tabCleanupReplyFromSystemOne,
+	tabCleanupSystemOneRequest,
+	TAB_CLEANUP_KEEP_OPTION,
 	type RawTabCleanupSuggestion,
 	type TabCleanupCandidate,
 	type TabCleanupTab,
 } from '../../shared/tabCleanup';
+import {
+	systemOneQuestionsProblem,
+	systemOneStateProblem,
+	type SystemOneAnswers,
+} from '../../shared/local-models/system-one';
 
 const NOW = Date.UTC(2026, 9, 11, 12, 0, 0);
 const DAY = 24 * 60 * 60 * 1000;
@@ -461,5 +470,113 @@ describe('helpers', () => {
 		).toBe(
 			'40 tabs reviewed, 3 left out (busy, starred, or with a draft), more tabs than fit, the oldest were reviewed'
 		);
+	});
+});
+
+describe('tab cleanup on System One', () => {
+	const JEV = 'Jev (TypeSafe cloud)';
+	const shown = selectTabCleanupCandidates([
+		openTab({ tabId: 'tab-old', label: 'Old spike', lastActivityAt: NOW - 30 * DAY }),
+		openTab({ tabId: 'tab-quiet', label: 'Migration', lastActivityAt: NOW - 9 * DAY }),
+		snoozedTab({ tabId: 'tab-parked', snoozeId: 'snooze-9', note: 'after the release' }),
+	]).shown;
+	const pick = (choice: string, probability?: number) => ({
+		type: 'choice' as const,
+		choice,
+		...(probability !== undefined ? { probabilities: { [choice]: probability } } : {}),
+	});
+
+	it('keys each question by the real id: the tab id, or the snooze id for a parked tab', () => {
+		expect(shown.map(tabCleanupQuestionId)).toEqual(['tab-old', 'tab-quiet', 'snooze-9']);
+		// A parked entry with no snooze id still gets a key of its own.
+		expect(tabCleanupQuestionId({ kind: 'snoozed', tabId: 'tab-x' })).toBe('tab-x');
+	});
+
+	it('asks one choice per tab, with the tab facts inside its own question and no handle', () => {
+		const request = tabCleanupSystemOneRequest({ candidates: shown, now: NOW });
+		expect(systemOneStateProblem(request.state)).toBeNull();
+		expect(systemOneQuestionsProblem(request.questions)).toBeNull();
+		expect(Object.keys(request.questions)).toEqual(['tab-old', 'tab-quiet', 'snooze-9']);
+
+		const open = request.questions['tab-old'];
+		expect(open.type).toBe('choice');
+		expect(open.instructions).toBe(
+			'What should be done with this tab? open | agent "Backend" | "Old spike" | last active 4 weeks ago | 4 messages'
+		);
+		expect(open.instructions).not.toMatch(/\bT1\b/);
+		expect(Object.keys(open.criteria ?? {})).toEqual(['close', 'snooze', TAB_CLEANUP_KEEP_OPTION]);
+	});
+
+	it('offers a parked tab wake or keep, so an action that means nothing cannot be answered', () => {
+		const request = tabCleanupSystemOneRequest({ candidates: shown, now: NOW });
+		const parked = request.questions['snooze-9'];
+		expect(Object.keys(parked.criteria ?? {})).toEqual(['wake', TAB_CLEANUP_KEEP_OPTION]);
+		expect(parked.instructions).toContain('note: after the release');
+	});
+
+	it('asks nothing about no tabs', () => {
+		expect(tabCleanupSystemOneRequest({ candidates: [], now: NOW }).questions).toEqual({});
+	});
+
+	it('reads the answers as raw suggestions on the handles the guard knows, and keep as nothing', () => {
+		const answers: SystemOneAnswers = {
+			'tab-old': pick('close', 0.871),
+			'tab-quiet': pick(TAB_CLEANUP_KEEP_OPTION, 0.7),
+			'snooze-9': pick('wake'),
+		};
+		const reply = tabCleanupReplyFromSystemOne(answers, shown, JEV);
+		expect(reply).toEqual([
+			{ ref: 'T1', action: 'close', reason: `${JEV} chose close, 87% likely.` },
+			// An engine that reports no distribution (the local judge) gives no number.
+			{ ref: 'T3', action: 'wake', reason: `${JEV} chose wake.` },
+		]);
+
+		const { suggestions, dropped } = guardTabCleanupSuggestions(reply!, shown);
+		expect(dropped).toEqual([]);
+		expect(suggestions.map((s) => [s.tabId, s.action, s.snoozeId])).toEqual([
+			['tab-old', 'close', undefined],
+			['tab-parked', 'wake', 'snooze-9'],
+		]);
+	});
+
+	it('leaves the guard the last word on an answer for a tab that became protected', () => {
+		const reply = tabCleanupReplyFromSystemOne({ 'tab-old': pick('close') }, shown, JEV);
+		const now = shown.map((c) => (c.tabId === 'tab-old' ? { ...c, busy: true } : c));
+		expect(guardTabCleanupSuggestions(reply!, now)).toEqual({
+			suggestions: [],
+			dropped: [{ ref: 'T1', action: 'close', why: 'busy' }],
+		});
+	});
+
+	it('skips a tab with no usable answer, and an option that is not an action', () => {
+		const answers: SystemOneAnswers = {
+			'tab-old': { type: 'noul', probability: 0.9 },
+			'tab-quiet': pick('archive'),
+			'snooze-9': pick('wake'),
+		};
+		expect(tabCleanupReplyFromSystemOne(answers, shown, JEV)).toEqual([
+			{ ref: 'T3', action: 'wake', reason: `${JEV} chose wake.` },
+		]);
+	});
+
+	it('is unusable when no tab got a choice at all, and an empty list when every tab is kept', () => {
+		expect(tabCleanupReplyFromSystemOne({}, shown, JEV)).toBeNull();
+		expect(
+			tabCleanupReplyFromSystemOne(
+				Object.fromEntries(shown.map((c) => [tabCleanupQuestionId(c), pick('keep')])),
+				shown,
+				JEV
+			)
+		).toEqual([]);
+		expect(tabCleanupReplyFromSystemOne({}, [], JEV)).toEqual([]);
+	});
+
+	it('keeps a reason inside the cap a model reason is held to', () => {
+		const reply = tabCleanupReplyFromSystemOne(
+			{ 'tab-old': pick('close') },
+			shown,
+			'Local judge (a very long model name) '.repeat(8)
+		);
+		expect(reply![0].reason.length).toBeLessThanOrEqual(TAB_CLEANUP_REASON_MAX_LENGTH);
 	});
 });

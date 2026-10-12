@@ -17,7 +17,17 @@
  * and validate an assignment by the same rules.
  */
 
+import {
+	voiceRoutingSystemOneRequest,
+	type VoiceRoutingSystemOneInput,
+} from '../acappella/voice-routing-system-one';
 import { cueGateSystemOneRequest, type CueGateInput } from '../cue/gate';
+import {
+	cueInjectionSystemOneRequest,
+	type CueInjectionSystemOneInput,
+} from '../cue/injection-screen';
+import { secretScreenSystemOneRequest, type SecretScreenSystemOneInput } from '../secretScan';
+import { tabCleanupSystemOneRequest, type TabCleanupSystemOneInput } from '../tabCleanup';
 import type { LocalModelEndpoint } from './endpoints';
 import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
 import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
@@ -140,7 +150,11 @@ export const LOCAL_MODEL_SYSTEMS: readonly LocalModelSystem[] = Object.freeze(['
  * input here, so `runSystemOneTask(taskId, input)` checks the input at the call.
  */
 export interface SystemOneTaskInputs {
+	'tab-cleanup': TabCleanupSystemOneInput;
 	'cue-gate': CueGateInput;
+	'injection-screen': CueInjectionSystemOneInput;
+	'secret-screen': SecretScreenSystemOneInput;
+	'voice-routing': VoiceRoutingSystemOneInput;
 }
 
 export type SystemOneTaskId = keyof SystemOneTaskInputs;
@@ -260,6 +274,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
+			// No fail policy: a list of suggestions gates nothing, so a run with no
+			// answer is reported as that.
+			systemOneQuestions: tabCleanupSystemOneRequest,
 		}),
 		'ai-command': defineTask({
 			id: 'ai-command',
@@ -325,6 +342,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			defaultAssignment: OFF_ASSIGNMENT,
 			// The screen exists to keep unscreened text out of a run.
 			failPolicy: 'closed',
+			systemOneQuestions: cueInjectionSystemOneRequest,
 		}),
 		'secret-screen': defineTask({
 			id: 'secret-screen',
@@ -335,6 +353,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'classifier',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
+			// No fail policy: this pass is extra coverage, so it can neither stop a
+			// publish nor let one through. The pattern scan has already decided.
+			systemOneQuestions: secretScreenSystemOneRequest,
 		}),
 		dictation: defineTask({
 			id: 'dictation',
@@ -361,10 +382,12 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			system: 'one',
 			label: 'Voice routing',
 			description:
-				'Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings.',
+				'Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings. On System One the engine picks the agent and tab, and that voice brain still writes what is spoken.',
 			needs: 'text-gen',
 			allowsUtilityAgent: false,
 			defaultAssignment: OFF_ASSIGNMENT,
+			// No fail policy: a request with no route is refused out loud, by name.
+			systemOneQuestions: voiceRoutingSystemOneRequest,
 			// Measured on 2026-10-11 (docs/architecture/local-models.md, "Result:
 			// routing only"): asked to route six utterances under seven shapes of the
 			// reply schema, Qwen3 1.7B sent every request that named an agent to the

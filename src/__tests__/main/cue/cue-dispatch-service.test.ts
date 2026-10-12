@@ -897,15 +897,18 @@ describe('createCueDispatchService', () => {
 
 			// One call per untrusted value the command uses.
 			expect(scoreInjection).toHaveBeenCalledTimes(2);
+			// The owner agent travels with each value, for the record a scorer keeps.
 			expect(scoreInjection).toHaveBeenCalledWith({
 				text: 'Crash on save',
 				variable: 'CUE_GH_TITLE',
 				subscriptionName: 'my-sub',
+				agentId: 'owner',
 			});
 			expect(scoreInjection).toHaveBeenCalledWith({
 				text: 'It crashes every time.',
 				variable: 'CUE_GH_BODY',
 				subscriptionName: 'my-sub',
+				agentId: 'owner',
 			});
 			expect(onInjectionBlocked).not.toHaveBeenCalled();
 			expect(executeRun).toHaveBeenCalledTimes(1);

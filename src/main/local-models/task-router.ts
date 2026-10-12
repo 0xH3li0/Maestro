@@ -349,6 +349,13 @@ export interface SystemOneTaskOptions {
 	/** In-process callers only. The engine's own budget still applies. */
 	signal?: AbortSignal;
 	/**
+	 * Replaces the engine's stored budget for this one request. For a task that
+	 * asks many questions at once while a person watches it work (tab cleanup
+	 * asks one per tab, and the local judge answers them one generation each):
+	 * the budget sized for one quick decision would fail every such run.
+	 */
+	timeoutMs?: number;
+	/**
 	 * A more specific rule the caller holds for this run (a Cue subscription's
 	 * `gate_on_unavailable`). It replaces the task's fail policy, so the outcome
 	 * recorded is the one that happened.
@@ -454,12 +461,10 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 		);
 	}
 	try {
-		const result = await askResolvedSystemOne(
-			resolved,
-			request.state,
-			request.questions,
-			options.signal ? { signal: options.signal } : {}
-		);
+		const result = await askResolvedSystemOne(resolved, request.state, request.questions, {
+			...(options.signal ? { signal: options.signal } : {}),
+			...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+		});
 		decision({
 			outcome: 'ok',
 			model: result.model,

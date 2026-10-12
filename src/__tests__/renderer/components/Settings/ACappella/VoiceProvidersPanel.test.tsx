@@ -255,6 +255,49 @@ describe('VoiceProvidersPanel', () => {
 		expect(await screen.findByText('Audio stays on this machine.')).toBeInTheDocument();
 	});
 
+	it('leaves a System One assignment alone when a voice-specific Brain is picked, and says who routes', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue(storedBlob({ brain: 'mock-brain' }));
+		useSettingsStore.setState({
+			localModelAssignments: { 'voice-routing': { type: 'system-one' } },
+		});
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+
+		// System One fills no slot, so the picker shows the Brain that speaks, and
+		// the row says the routing decision is not that Brain's.
+		const note = await screen.findByTestId('voice-routing-system-one-note');
+		expect(note).toHaveTextContent(
+			'System One decides which agent and tab a request is for (Settings > Models > System One).'
+		);
+		expect(note).toHaveTextContent('This Brain still writes what is spoken');
+
+		fireEvent.change(screen.getByLabelText(BRAIN_PICKER), { target: { value: 'anthropic-brain' } });
+
+		await waitFor(() => {
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'acappella',
+				expect.objectContaining({
+					providers: expect.objectContaining({ brain: 'anthropic-brain' }),
+				})
+			);
+		});
+		// Picking who speaks must not switch the routing off.
+		expect(window.maestro.settings.set).not.toHaveBeenCalledWith(
+			'localModelAssignments',
+			expect.anything()
+		);
+		expect(screen.getByTestId('voice-routing-system-one-note')).toBeInTheDocument();
+	});
+
+	it('says nothing about System One while it does not route', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue(storedBlob({ brain: 'mock-brain' }));
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+		await screen.findByLabelText(BRAIN_PICKER);
+
+		expect(screen.queryByTestId('voice-routing-system-one-note')).not.toBeInTheDocument();
+	});
+
 	it('shows a local model that is already assigned, without offering one otherwise', async () => {
 		useSettingsStore.setState({
 			localModelAssignments: {

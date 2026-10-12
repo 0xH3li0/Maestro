@@ -359,6 +359,17 @@ describe('runSystemOneTask', () => {
 		expect(recorded()).toMatchObject({ outcome: 'failed-open', code: 'timeout' });
 	});
 
+	it("replaces the engine's stored budget for one request when the caller states its own", async () => {
+		const jev = await gateOnJev();
+		await updateSystemOneSettingsRequest({ timeoutMs: 100 });
+		jev.setDelayMs(400);
+
+		// Past the stored 100 ms, inside the caller's own budget: answered.
+		await expect(runSystemOneTask('cue-gate', INPUT, { timeoutMs: 5_000 })).resolves.toMatchObject({
+			status: 'ok',
+		});
+	});
+
 	it('reports a caller abort as cancelled, which is not a failure of either policy', async () => {
 		const jev = await gateOnJev();
 		jev.setDelayMs(600);

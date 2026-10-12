@@ -1271,7 +1271,7 @@ Two tab is the earlier section, [System One and System Two](#system-one-and-syst
 
 ```mermaid
 flowchart TD
-	task["A task that declares systemOneQuestions(input)<br/>(cue-gate today)"]
+	task["A task that declares systemOneQuestions(input)<br/>(five tasks, listed below)"]
 	run["runSystemOneTask(taskId, input, options)<br/>task-router.ts"]
 	svc["resolveSystemOneForTask(taskId)<br/>one read: engine, label, fail policy, keepInputs"]
 	ask["askResolvedSystemOne(resolved, state, questions)"]
@@ -1435,8 +1435,11 @@ valid for a task that satisfies `taskAcceptsSystemOne(task)`: `system === 'one'`
 does not accept it is dropped by `parseLocalModelAssignment` (the task stays on its default), and
 `localModelAssignmentProblem()` refuses it at save with the reason and the sources the task takes.
 
-`runSystemOneTask(taskId, input, { signal, failPolicy, agentId })` sits beside `runLocalTask` and its
-twins. `SystemOneTaskInputs` holds each task's input type, so a call is checked at the call site.
+`runSystemOneTask(taskId, input, { signal, timeoutMs, failPolicy, agentId })` sits beside
+`runLocalTask` and its twins. `SystemOneTaskInputs` holds each task's input type, so a call is
+checked at the call site. `timeoutMs` replaces the engine's stored budget for one request: tab
+cleanup passes the budget a model gets, because it asks one question per tab and the local judge
+answers them one generation each.
 
 | Status          | Meaning                                                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -1473,6 +1476,50 @@ settings with nothing sent. The two new reasons are `system-one-off` and `system
 a full listing reads the engine once. The picker labels come from `systemOneAssignmentLabel(engine)`:
 "System One (Jev)", "System One (OpenJev)", "System One (local judge)", and "System One (no engine
 chosen)" for a task left on it after the engine was switched off.
+
+### The tasks that run on System One
+
+Five tasks declare `systemOneQuestions`. Each builder and the function that reads the answers back
+live in the task's OWN shared module, next to the model path's reply contract, and each caller asks
+`runSystemOneTask` first and runs its model twin on `not-assigned`. The output shape and the
+threshold are the model path's, so a caller cannot tell which engine answered except through the
+ledger and the name in the reason.
+
+| Task               | Questions                                                                                   | Builder and reader                                                                                             | Result, and the threshold kept                                                                      | No answer                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `cue-gate`         | One noul, `proceed`. State: the event, under the model path's caps                          | `cueGateSystemOneRequest`, `cueGateCheckFromSystemOne` in `shared/cue/gate.ts`                                 | `CueGateCheck`. Pass at P(yes) >= 0.5                                                               | Fail policy, default `open`. See the table above                           |
+| `injection-screen` | One noul, `injection`. State: the untrusted value, WHOLE                                    | `cueInjectionSystemOneRequest`, `cueInjectionScoreFromSystemOne` in `shared/cue/injection-screen.ts`           | `CueInjectionScore`. P(yes) is the score, held to the subscription's `injection_threshold` (0.8)    | `unavailable` (never `off`) carrying the fail policy, default `closed`     |
+| `secret-screen`    | One noul, `secret`. State: everything about to be published, joined                         | `secretScreenSystemOneRequest`, `secretScreenVerdictFromSystemOne` in `shared/secretScan.ts`                   | A `model-flagged` `SecretFinding` named for the engine. Flag at P(yes) >= 0.5                       | A note. It never blocks: the pattern scan already ran                      |
+| `tab-cleanup`      | One choice PER TAB, keyed by tab id (snooze id for a parked tab), the facts in the question | `tabCleanupSystemOneRequest`, `tabCleanupReplyFromSystemOne` in `shared/tabCleanup.ts`                         | `RawTabCleanupSuggestion[]`, then the same `guardTabCleanupSuggestions`. `keep` suggests nothing    | The run fails with the reason (`unavailable`, or `cancelled` on a timeout) |
+| `voice-routing`    | `target` (choice, by agent id), `tab` (choice, by tab id), `clear` (noul)                   | `voiceRoutingSystemOneRequest`, `routeDecisionFromSystemOne` in `shared/acappella/voice-routing-system-one.ts` | `RouteDecision`, validated and held to the Conductor router's confidence threshold (0.55) as always | Refused out loud, by name. The Brain is NOT asked to route instead         |
+
+Rules that hold across them:
+
+- **Every option and every question is keyed by a real id, never by a place in a list.** An answer
+  is one of the keys it was offered, so an id that does not exist cannot come back, and a miscounted
+  index cannot name a neighbor. Tab cleanup puts each tab's facts inside that tab's own question
+  rather than asking an engine to find one tab among forty.
+- **Nothing is cut to fit.** The injection screen hands over the whole value, as the classifier
+  reads every window: an injection appended to a long comment must not be dropped by a cap. A value
+  too large for the engine is no answer (`too-large`), and the fail policy decides.
+- **A secret a pattern knows never reaches an engine.** Every request is redacted on its way out
+  (`redactSystemOneRequest`), so the secret screen's question says a `[REDACTED_...]` marker is not
+  a finding. What is left for the engine is what no pattern has a shape for.
+- **The injection screen's fail policy only tightens Cue's rule.** `closed` (the default) blocks
+  every action when the engine gives no answer; `open` leaves Cue's own rule in place, and under
+  that rule a command is still blocked. `CueInjectionUnavailable.failPolicy` carries it to
+  `resolveCueInjectionDecision()`, the one place it is applied. The model path carries none and is
+  unchanged.
+- **An engine writes nothing, so voice routing is split.** `withSystemOneRouting(brain)`
+  (`main/acappella/providers/system-one-brain.ts`) decorates the Brain in force, inside the
+  Conductor router. The engine picks the agent and the tab; the prompt is the user's own words (the
+  ORIGINAL request when the utterance answers a clarifying question), a new tab gets no suggested
+  name, and the decision never carries a `clarify` or a `reply`. The Brain still writes everything
+  spoken, and routes a turn in conversational mode, where a turn may end in a spoken reply. With
+  the session bound to an agent only `tab` is asked. The confidence is the probability of the chosen
+  target, or `clear` when the engine reports no distribution (the local judge). The assignment fills
+  no Brain slot (`isVoiceRoutingOnSystemOne`): the Voice Providers panel says so beside the Brain
+  picker, and picking a Brain there no longer clears it.
 
 ### The Cue gate on System One
 

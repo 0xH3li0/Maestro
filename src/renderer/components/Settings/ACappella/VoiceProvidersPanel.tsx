@@ -37,6 +37,8 @@ import {
 } from '../../../../shared/acappella/provider-catalog';
 import type { VoicePipelineShape, VoiceProviderRole } from '../../../../shared/acappella/providers';
 import type { VoiceSlotReadiness } from '../../../../shared/acappella/readiness';
+import { VOICE_ROUTING_TASK_ID } from '../../../../shared/acappella/voice-routing';
+import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
 import type {
 	CredentialState,
 	CredentialValidation,
@@ -229,6 +231,13 @@ export function VoiceProvidersPanel({ theme, enabled }: VoiceProvidersPanelProps
 							onCredentialsChanged={refreshCredentials}
 							onDownload={(modelId) => void models.download(modelId)}
 						/>
+						{selection.routedBySystemOne && (
+							<div className="text-xs opacity-70 mt-1" data-testid="voice-routing-system-one-note">
+								System One decides which agent and tab a request is for (
+								{taskAssignmentLocation(VOICE_ROUTING_TASK_ID)}). This Brain still writes what is
+								spoken, and routes a turn in conversational mode.
+							</div>
+						)}
 					</div>
 				</>
 			)}

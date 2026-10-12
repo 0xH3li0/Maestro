@@ -13,6 +13,7 @@ vi.mock('../../../main/utils/logger', () => ({
 
 vi.mock('../../../main/local-models/task-router', () => ({
 	runClassifierTask: vi.fn(),
+	runSystemOneTask: vi.fn(),
 }));
 
 const stores = vi.hoisted(() => ({
@@ -47,9 +48,10 @@ import {
 	screenForSecrets,
 	SECRET_SCREEN_MODEL_TIMEOUT_MS,
 } from '../../../main/local-models/secret-screen';
-import { runClassifierTask } from '../../../main/local-models/task-router';
+import { runClassifierTask, runSystemOneTask } from '../../../main/local-models/task-router';
 import { logger } from '../../../main/utils/logger';
 import { PROMPT_GUARD_2_22M_ID } from '../../../shared/local-models/model-catalog';
+import { SECRET_SCREEN_QUESTION_ID } from '../../../shared/secretScan';
 
 // Assembled at runtime so no token literal sits in the repository.
 const GITHUB_TOKEN = ['ghp', 'a1B2c3D4e5'.repeat(4).slice(0, 36)].join('_');
@@ -61,6 +63,8 @@ const modelOff = () => vi.mocked(runClassifierTask).mockResolvedValue({ status: 
 describe('screenForSecrets', () => {
 	beforeEach(() => {
 		vi.mocked(runClassifierTask).mockReset();
+		// Any assignment but System One: the classifier pass is the whole story.
+		vi.mocked(runSystemOneTask).mockReset().mockResolvedValue({ status: 'not-assigned' });
 		vi.mocked(logger.warn).mockReset();
 		stores.settings = {};
 		stores.configs = {};
@@ -203,6 +207,103 @@ describe('screenForSecrets', () => {
 			expect(result.note).toBe(
 				'Secret screen model did not run: it failed to run. Pattern detection still ran.'
 			);
+		});
+	});
+
+	describe('the model pass on System One', () => {
+		const JEV = 'Jev (TypeSafe cloud)';
+
+		function answered(probability: number) {
+			return {
+				status: 'ok' as const,
+				engine: 'jev-cloud' as const,
+				engineLabel: JEV,
+				model: 'jev-1.13.0',
+				answers: { [SECRET_SCREEN_QUESTION_ID]: { type: 'noul' as const, probability } },
+				usage: { inputTokens: 40, outputTokens: 1 },
+				costUsd: 0.0000017,
+				latencyMs: 210,
+				calibrated: true,
+				redacted: false,
+			};
+		}
+
+		it('asks the engine about all the text, under the pass budget, and runs no classifier', async () => {
+			vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.02));
+
+			await screenForSecrets([{ text: 'part one' }, { text: 'part two' }]);
+
+			expect(runSystemOneTask).toHaveBeenCalledTimes(1);
+			const [taskId, input, options] = vi.mocked(runSystemOneTask).mock.calls[0];
+			expect(taskId).toBe('secret-screen');
+			expect(input).toEqual({ text: 'part one\n\npart two' });
+			expect(options?.signal).toBeInstanceOf(AbortSignal);
+			expect(runClassifierTask).not.toHaveBeenCalled();
+		});
+
+		it('adds a finding that names the engine and its probability on a yes', async () => {
+			vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.934));
+			const result = await screenForSecrets([{ text: 'plain words' }]);
+			expect(result).toEqual({
+				findings: [{ kind: 'model-flagged', line: 0, preview: 'secret 0.93', name: JEV }],
+			});
+		});
+
+		it('adds nothing on a no', async () => {
+			vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.12));
+			expect(await screenForSecrets([{ text: 'plain words' }])).toEqual({ findings: [] });
+		});
+
+		it('still runs the pattern scan, and keeps its findings beside the engine finding', async () => {
+			vi.mocked(runSystemOneTask).mockResolvedValue(answered(0.9));
+			const result = await screenForSecrets([
+				{ source: 'notes.md', text: `token ${GITHUB_TOKEN}` },
+			]);
+			expect(result.findings.map((finding) => finding.kind)).toEqual([
+				'github-token',
+				'model-flagged',
+			]);
+		});
+
+		it('reports an engine with no answer as a note, whatever the status, and keeps the pattern result', async () => {
+			for (const status of ['failed-open', 'failed-closed', 'unavailable'] as const) {
+				vi.mocked(runSystemOneTask).mockResolvedValue({
+					status,
+					engine: 'jev-cloud',
+					engineLabel: JEV,
+					code: 'auth',
+					reason: `${JEV} has no key.`,
+				});
+				const result = await screenForSecrets([{ text: `token ${GITHUB_TOKEN}` }]);
+				expect(result.findings.map((finding) => finding.kind)).toEqual(['github-token']);
+				expect(result.note).toBe(
+					`Secret screen model did not run: ${JEV} has no key. Pattern detection still ran.`
+				);
+			}
+			expect(runClassifierTask).not.toHaveBeenCalled();
+		});
+
+		it('reports a timeout and an unreadable answer as notes', async () => {
+			vi.mocked(runSystemOneTask).mockResolvedValue({
+				status: 'cancelled',
+				engine: 'jev-cloud',
+				engineLabel: JEV,
+			});
+			expect((await screenForSecrets([{ text: 'plain words' }])).note).toMatch(
+				/Jev \(TypeSafe cloud\) took too long to answer/
+			);
+
+			vi.mocked(runSystemOneTask).mockResolvedValue({ ...answered(0.9), answers: {} });
+			const result = await screenForSecrets([{ text: 'plain words' }]);
+			expect(result.findings).toEqual([]);
+			expect(result.note).toMatch(/did not answer its question/);
+		});
+
+		it('never throws when the engine does', async () => {
+			vi.mocked(runSystemOneTask).mockRejectedValue(new Error('engine bug'));
+			const result = await screenForSecrets([{ text: `token ${GITHUB_TOKEN}` }]);
+			expect(result.findings.map((finding) => finding.kind)).toEqual(['github-token']);
+			expect(result.note).toMatch(/it failed to run/);
 		});
 	});
 

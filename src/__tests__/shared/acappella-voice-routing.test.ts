@@ -21,6 +21,7 @@ import {
 	assignedBrainProviderId,
 	effectiveBrainProviderId,
 	isAssignedBrainProviderId,
+	isVoiceRoutingOnSystemOne,
 	parseVoiceBrainChoice,
 	resolveVoiceBrainSource,
 	voiceBrainChoiceValue,
@@ -170,5 +171,30 @@ describe('the route decision schema a grammar is compiled from', () => {
 			Object.keys(ROUTE_DECISION_JSON_SCHEMA.properties)
 		);
 		expect(ROUTE_DECISION_GRAMMAR_SCHEMA.required).toEqual(ROUTE_DECISION_JSON_SCHEMA.required);
+	});
+});
+
+describe('voice routing assigned to System One', () => {
+	const SYSTEM_ONE = { [VOICE_ROUTING_TASK_ID]: { type: 'system-one' } };
+
+	it('is accepted by the task, which declares its typed questions', () => {
+		expect(LOCAL_MODEL_TASKS[VOICE_ROUTING_TASK_ID].systemOneQuestions).toBeTypeOf('function');
+		expect(isVoiceRoutingOnSystemOne(SYSTEM_ONE)).toBe(true);
+	});
+
+	it('is not the case for off, a model, an endpoint, or an unreadable setting', () => {
+		expect(isVoiceRoutingOnSystemOne({})).toBe(false);
+		expect(isVoiceRoutingOnSystemOne(undefined)).toBe(false);
+		expect(isVoiceRoutingOnSystemOne('system-one')).toBe(false);
+		expect(
+			isVoiceRoutingOnSystemOne({ [VOICE_ROUTING_TASK_ID]: { type: 'local', modelId: 'm' } })
+		).toBe(false);
+	});
+
+	it('fills no Brain slot: the stored voice-specific choice stays the Brain in force', () => {
+		const source = resolveVoiceBrainSource(SYSTEM_ONE, ENDPOINTS);
+		expect(source).toBeNull();
+		expect(effectiveBrainProviderId(source, 'builtin-brain')).toBe('builtin-brain');
+		expect(voiceBrainChoiceValue(source, 'builtin-brain')).toBe('builtin-brain');
 	});
 });

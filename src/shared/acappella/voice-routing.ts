@@ -10,6 +10,10 @@
  * Brains are not Local Models sources, so they stay where they were
  * (`acappella.providers.brain`) and apply while the assignment is `off`.
  *
+ * A third assignment, `system-one`, names no Brain at all: the stored choice
+ * stays in the slot and speaks, and the System One engine decides the route
+ * ({@link isVoiceRoutingOnSystemOne}).
+ *
  * Nothing here stores a provider id for an assigned Brain. The id a session
  * reports (`qwen3-local`, `endpoint-brain`) is DERIVED from the assignment, so
  * a panel cannot show "Built-in" while a session routes on a model.
@@ -89,6 +93,20 @@ export function resolveVoiceBrainSource(
 		label: localModelAssignmentSourceLabel(assignment, endpoints) ?? '',
 		...(endpointName ? { endpointName } : {}),
 	};
+}
+
+/**
+ * Whether System One decides the route: the `voice-routing` task is assigned to
+ * it. That fills no slot. The Brain in force is still the voice-specific choice
+ * and still writes what is spoken; the engine picks the agent and the tab
+ * (`shared/acappella/voice-routing-system-one.ts`). A panel that shows the
+ * Brain says so beside it, so "Built-in" is never read as what routes.
+ */
+export function isVoiceRoutingOnSystemOne(assignments: unknown): boolean {
+	return (
+		resolveLocalModelAssignment(parseLocalModelAssignments(assignments), VOICE_ROUTING_TASK_ID)
+			.type === 'system-one'
+	);
 }
 
 /**

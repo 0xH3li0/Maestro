@@ -48,6 +48,7 @@ import {
 	VOICE_ROUTING_TASK_ID,
 	effectiveBrainProviderId,
 	isAssignedBrainProviderId,
+	isVoiceRoutingOnSystemOne,
 	parseVoiceBrainChoice,
 	resolveVoiceBrainSource,
 	voiceBrainChoiceValue,
@@ -155,12 +156,18 @@ export interface VoiceProviderSelection {
 	providerIds: Record<VoiceProviderRole, string>;
 	/**
 	 * Pick a provider for a slot. For the Brain this is a voice-specific choice
-	 * (built-in, hosted), so it also switches the `voice-routing` assignment off:
-	 * an assignment left on would keep deciding the slot.
+	 * (built-in, hosted), so it also switches a MODEL `voice-routing` assignment
+	 * off: one left on would keep deciding the slot. A System One assignment
+	 * fills no slot and is left as it is.
 	 */
 	setProvider: (slot: VoiceProviderRole, providerId: string) => Promise<void>;
-	/** The model the `voice-routing` assignment names, or null when it is off. */
+	/** The model the `voice-routing` assignment names, or null when it names none. */
 	brainSource: VoiceBrainSource | null;
+	/**
+	 * System One decides which agent and tab a request is for, and the Brain in
+	 * the slot only speaks. The Brain row says so beside the picker.
+	 */
+	routedBySystemOne: boolean;
 	/** The Conductor Brain picker's value for the Brain in force. */
 	brainChoice: string;
 	/**
@@ -257,6 +264,7 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		() => resolveVoiceBrainSource(assignments, endpoints),
 		[assignments, endpoints]
 	);
+	const routedBySystemOne = useMemo(() => isVoiceRoutingOnSystemOne(assignments), [assignments]);
 	/** The Brain in force: `providerIds` holds only the stored voice-specific one. */
 	const effectiveProviderIds = useMemo(
 		() => ({
@@ -318,15 +326,18 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 				// assigning a model, so there is nothing to write under this id.
 				if (isAssignedBrainProviderId(providerId)) return;
 				// Sent before the blob so main has both by the time it is asked to
-				// apply: an assignment left on would keep deciding the slot.
-				writeBrainAssignment(OFF_ASSIGNMENT);
+				// apply: an assignment left on would keep deciding the slot. Only a
+				// MODEL assignment fills the slot, so only that is cleared: System
+				// One routes beside the Brain chosen here, which still does the
+				// speaking, and picking that Brain must not switch the routing off.
+				if (brainSource) writeBrainAssignment(OFF_ASSIGNMENT);
 			}
 			setProviderIds((prev) => ({ ...prev, [slot]: providerId }));
 			await persist((blob) => {
 				blob.providers = { ...(blob.providers ?? {}), [slot]: providerId };
 			});
 		},
-		[persist, writeBrainAssignment]
+		[persist, writeBrainAssignment, brainSource]
 	);
 
 	const setBrainChoice = useCallback(
@@ -430,6 +441,7 @@ export function useVoiceProviderSelection(enabled: boolean): VoiceProviderSelect
 		providerIds: effectiveProviderIds,
 		setProvider,
 		brainSource,
+		routedBySystemOne,
 		brainChoice: voiceBrainChoiceValue(brainSource, effectiveProviderIds.brain),
 		setBrainChoice,
 		pipeline,

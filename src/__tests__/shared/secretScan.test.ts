@@ -6,11 +6,20 @@ import {
 	scanForSecrets,
 	secretScreenRefusal,
 	secretScreenReportLines,
+	secretScreenSystemOneRequest,
+	secretScreenVerdictFromSystemOne,
+	SECRET_SCREEN_FLAG_PROBABILITY,
+	SECRET_SCREEN_QUESTION_ID,
 	SECRETS_FOUND_CODE,
 	shannonEntropy,
 	type SecretFinding,
 } from '../../shared/secretScan';
 import { maskEnvValue } from '../../shared/agentEnvironment';
+import {
+	redactSystemOneRequest,
+	systemOneQuestionsProblem,
+	systemOneStateProblem,
+} from '../../shared/local-models/system-one';
 
 /**
  * Fixtures are assembled at runtime, never written out whole. A literal token
@@ -338,5 +347,54 @@ describe('secretScreenReportLines', () => {
 			'Note: Secret screen model did not run.',
 			`Remove them, or re-run with ${ALLOW_SECRETS_FLAG} to send it anyway.`,
 		]);
+	});
+});
+
+describe('the model pass on System One', () => {
+	const JEV = 'Jev (TypeSafe cloud)';
+	const noul = (probability: number) => ({
+		[SECRET_SCREEN_QUESTION_ID]: { type: 'noul' as const, probability },
+	});
+
+	it('asks one yes or no about the content, as a request an engine accepts', () => {
+		const request = secretScreenSystemOneRequest({ text: 'db password is hunter2-prod' });
+		expect(request.state).toBe('db password is hunter2-prod');
+		expect(systemOneStateProblem(request.state)).toBeNull();
+		expect(systemOneQuestionsProblem(request.questions)).toBeNull();
+		expect(Object.keys(request.questions)).toEqual([SECRET_SCREEN_QUESTION_ID]);
+		expect(request.questions[SECRET_SCREEN_QUESTION_ID].type).toBe('noul');
+	});
+
+	it('tells the engine a redaction marker is not a finding, since a known secret never reaches it', () => {
+		const request = secretScreenSystemOneRequest({ text: `token ${FIXTURES.githubClassic}` });
+		const sent = redactSystemOneRequest(request.state, request.questions);
+		expect(sent.redacted).toBe(true);
+		expect(sent.state).toBe('token [REDACTED_API_KEY]');
+		const question = sent.questions[SECRET_SCREEN_QUESTION_ID];
+		expect(question.type === 'noul' && question.criteria?.false).toContain('[REDACTED_API_KEY]');
+	});
+
+	it('flags at the midpoint and above, naming the engine and its probability', () => {
+		expect(SECRET_SCREEN_FLAG_PROBABILITY).toBe(0.5);
+		expect(secretScreenVerdictFromSystemOne(noul(0.934), JEV)).toEqual({
+			finding: { kind: 'model-flagged', line: 0, preview: 'secret 0.93', name: JEV },
+		});
+		expect(secretScreenVerdictFromSystemOne(noul(0.5), JEV)?.finding).not.toBeNull();
+		expect(secretScreenVerdictFromSystemOne(noul(0.49), JEV)).toEqual({ finding: null });
+	});
+
+	it('describes its finding the way a classifier finding is described', () => {
+		const verdict = secretScreenVerdictFromSystemOne(noul(0.934), JEV);
+		expect(describeSecretFinding(verdict!.finding!)).toBe(`Flagged by model (${JEV}) secret 0.93`);
+	});
+
+	it('has no verdict when the answers hold no yes or no for its question', () => {
+		expect(secretScreenVerdictFromSystemOne({}, JEV)).toBeNull();
+		expect(
+			secretScreenVerdictFromSystemOne(
+				{ [SECRET_SCREEN_QUESTION_ID]: { type: 'score', score: 1 } },
+				JEV
+			)
+		).toBeNull();
 	});
 });

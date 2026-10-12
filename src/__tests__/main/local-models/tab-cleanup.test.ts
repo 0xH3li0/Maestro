@@ -4,6 +4,9 @@
  * store, every task router verdict, and that the model's reply is guarded
  * against the app as it is AFTER the model answered. Nothing here may fall back
  * to an agent, and nothing here may change a tab.
+ *
+ * Assigned to System One, the engine is asked one choice per tab FIRST and the
+ * model path is never reached. Its answers go through the same guard.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -18,6 +21,7 @@ vi.mock('../../../main/prompt-manager', () => ({
 
 vi.mock('../../../main/local-models/task-router', () => ({
 	runLocalTask: vi.fn(),
+	runSystemOneTask: vi.fn(),
 }));
 
 vi.mock('../../../main/local-models/sources', () => ({
@@ -35,7 +39,7 @@ import {
 	type TabCleanupStores,
 } from '../../../main/local-models/tab-cleanup';
 import { TAB_CLEANUP_REPLY_SCHEMA } from '../../../shared/tabCleanup';
-import { runLocalTask } from '../../../main/local-models/task-router';
+import { runLocalTask, runSystemOneTask } from '../../../main/local-models/task-router';
 import { readLocalModelAssignments } from '../../../main/local-models/sources';
 
 const NOW = Date.UTC(2026, 9, 11, 12, 0, 0);
@@ -93,6 +97,8 @@ function storesOver(
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(readLocalModelAssignments).mockReturnValue(ASSIGNED as never);
+	// Any assignment but System One: the model path is the whole story.
+	vi.mocked(runSystemOneTask).mockResolvedValue({ status: 'not-assigned' });
 	configureTabCleanup(null);
 });
 
@@ -525,5 +531,153 @@ describe('suggestTabCleanup', () => {
 		expect(result).toMatchObject({ success: false, status });
 		expect(result.success === false && result.error).toMatch(message);
 		expect(runLocalTask).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('suggestTabCleanup on System One', () => {
+	const JEV = 'Jev (TypeSafe cloud)';
+	const ON_SYSTEM_ONE = { 'tab-cleanup': { type: 'system-one' } };
+
+	function answered(answers: Record<string, unknown>) {
+		return {
+			status: 'ok',
+			engine: 'jev-cloud',
+			engineLabel: JEV,
+			model: 'jev-1.13.0',
+			answers,
+			usage: { inputTokens: 300, outputTokens: 2 },
+			costUsd: 0.0000126,
+			latencyMs: 260,
+			calibrated: true,
+			redacted: false,
+		} as never;
+	}
+
+	const pick = (choice: string, probability?: number) => ({
+		type: 'choice',
+		choice,
+		...(probability !== undefined ? { probabilities: { [choice]: probability } } : {}),
+	});
+
+	const sessions = () => [
+		agent('a1', [aiTab('t1'), aiTab('t2')], {
+			snoozedTabs: [
+				{
+					id: 's1',
+					type: 'ai',
+					snoozedAt: NOW - 3 * DAY,
+					wakeAt: NOW - DAY,
+					tab: aiTab('parked'),
+				},
+			],
+		}),
+	];
+
+	beforeEach(() => {
+		vi.mocked(readLocalModelAssignments).mockReturnValue(ON_SYSTEM_ONE as never);
+	});
+
+	it('asks the engine about the tabs the model would be shown, under the model budget', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(answered({}));
+
+		await suggestTabCleanup(storesOver(sessions));
+
+		expect(runSystemOneTask).toHaveBeenCalledTimes(1);
+		const [taskId, input, options] = vi.mocked(runSystemOneTask).mock.calls[0];
+		expect(taskId).toBe('tab-cleanup');
+		expect(input).toMatchObject({ now: NOW });
+		expect(
+			(input as { candidates: Array<{ tabId: string }> }).candidates.map((c) => c.tabId)
+		).toEqual(['t1', 't2', 'parked']);
+		expect(options).toEqual({ timeoutMs: 120_000 });
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it('returns the guarded suggestions with the real ids, the engine as the reason and as who wrote them', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(
+			answered({ t1: pick('close', 0.87), t2: pick('keep', 0.6), s1: pick('wake') })
+		);
+
+		const result = await suggestTabCleanup(storesOver(sessions));
+
+		expect(result).toMatchObject({
+			success: true,
+			considered: 3,
+			droppedCount: 0,
+			producedBy: JEV,
+		});
+		expect(result.success && result.suggestions).toEqual([
+			expect.objectContaining({
+				tabId: 't1',
+				agentId: 'a1',
+				action: 'close',
+				reason: `${JEV} chose close, 87% likely.`,
+			}),
+			expect.objectContaining({
+				tabId: 'parked',
+				action: 'wake',
+				snoozeId: 's1',
+				reason: `${JEV} chose wake.`,
+			}),
+		]);
+	});
+
+	it('guards the answers against the app as it is after the engine answered', async () => {
+		const busy: string[] = [];
+		vi.mocked(runSystemOneTask).mockImplementation(async () => {
+			busy.push('a1-ai-t1');
+			return answered({ t1: pick('close'), t2: pick('snooze'), s1: pick('keep') });
+		});
+
+		const result = await suggestTabCleanup(storesOver(sessions, () => busy));
+
+		expect(result).toMatchObject({ success: true, droppedCount: 1 });
+		expect(result.success && result.suggestions.map((s) => s.tabId)).toEqual(['t2']);
+	});
+
+	it('does not ask the engine when no tab is eligible', async () => {
+		const result = await suggestTabCleanup(
+			storesOver(() => [agent('a1', [aiTab('t1', { starred: true })])])
+		);
+		expect(result).toMatchObject({ success: true, considered: 0, protectedCount: 1 });
+		expect(runSystemOneTask).not.toHaveBeenCalled();
+	});
+
+	it('fails with the reason when the engine gives no answer, and asks no model', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue({
+			status: 'unavailable',
+			engine: 'jev-cloud',
+			engineLabel: JEV,
+			code: 'auth',
+			reason: `${JEV} has no key.`,
+		});
+		await expect(suggestTabCleanup(storesOver(sessions))).resolves.toEqual({
+			success: false,
+			status: 'unavailable',
+			error: `${JEV} has no key.`,
+		});
+
+		vi.mocked(runSystemOneTask).mockResolvedValue({
+			status: 'unavailable',
+			engine: 'jev-cloud',
+			engineLabel: JEV,
+			code: 'timeout',
+			reason: `${JEV}: no answer within 120000 ms.`,
+		});
+		await expect(suggestTabCleanup(storesOver(sessions))).resolves.toMatchObject({
+			success: false,
+			status: 'cancelled',
+		});
+		expect(runLocalTask).not.toHaveBeenCalled();
+	});
+
+	it('fails as unusable, naming the engine, when no tab got a choice', async () => {
+		vi.mocked(runSystemOneTask).mockResolvedValue(answered({}));
+		await expect(suggestTabCleanup(storesOver(sessions))).resolves.toEqual({
+			success: false,
+			status: 'unusable',
+			error: `${JEV} did not answer for any tab. Try again.`,
+			producedBy: JEV,
+		});
 	});
 });

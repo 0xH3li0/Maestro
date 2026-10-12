@@ -41,6 +41,7 @@ import type {
 	VoiceWindowId,
 } from '../../../shared/acappella/protocol';
 import { getSessionsStore } from '../../stores/getters';
+import { withSystemOneRouting } from '../../acappella/providers/system-one-brain';
 import { createConductorRouter } from '../../acappella/router/conductor-router';
 import { invalidateRoutingContext } from '../../acappella/router/routing-context';
 import {
@@ -692,8 +693,10 @@ async function buildService(
 			// keeps that provider's id and tier, so `provider-state` still names the
 			// engine that is really running; what it adds is the bounded context, the
 			// recall shortlist, roster validation, one constrained retry, and the
-			// refusal to guess below the confidence threshold.
-			brain: createConductorRouter({ brain: resolution.providers.brain }),
+			// refusal to guess below the confidence threshold. Inside it, the
+			// `voice-routing` task assigned to System One hands the routing decision
+			// to that engine; on any other assignment the Brain routes untouched.
+			brain: createConductorRouter({ brain: withSystemOneRouting(resolution.providers.brain) }),
 		},
 		pipelineShape: resolution.shape,
 		getRoster: readAgentRoster,

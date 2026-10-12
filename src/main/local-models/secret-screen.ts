@@ -19,16 +19,24 @@
  *    and returned as `note`, so the caller can say that only patterns ran.
  *    The verdict names the model and its score, because a classifier answers
  *    for what it was trained on and the user chose which one to assign.
+ *    Assigned to System One, the pass is one typed yes or no question for the
+ *    engine in force, under the same rules: its verdict names the engine, and
+ *    an engine that gives no answer is a note, never a block.
  */
 
-import { scanForSecrets, type SecretFinding, type SecretScanEnv } from '../../shared/secretScan';
+import {
+	scanForSecrets,
+	secretScreenVerdictFromSystemOne,
+	type SecretFinding,
+	type SecretScanEnv,
+} from '../../shared/secretScan';
 import {
 	LOCAL_MODEL_TASKS,
 	localModelAssignmentSourceLabel,
 } from '../../shared/local-models/tasks';
 import { getAgentConfigsStore, getSessionsStore, getSettingsStore } from '../stores/getters';
 import { logger } from '../utils/logger';
-import { runClassifierTask } from './task-router';
+import { runClassifierTask, runSystemOneTask } from './task-router';
 
 const LOG_CONTEXT = '[SecretScreen]';
 
@@ -100,9 +108,42 @@ async function modelPass(
 		note: `${task.label} model did not run: ${reason} Pattern detection still ran.`,
 	});
 
+	const text = parts.map((part) => part.text).join('\n\n');
+
 	try {
+		// System One first: it answers `not-assigned` for any other assignment and
+		// touches nothing, so the classifier path below runs exactly as it did.
+		const judged = await runSystemOneTask(
+			TASK_ID,
+			{ text },
+			{ signal: AbortSignal.timeout(SECRET_SCREEN_MODEL_TIMEOUT_MS) }
+		);
+		switch (judged.status) {
+			case 'not-assigned':
+				break;
+			case 'ok': {
+				const read = secretScreenVerdictFromSystemOne(judged.answers, judged.engineLabel);
+				if (!read) return unavailable(`${judged.engineLabel} did not answer its question.`);
+				return read.finding ? { finding: read.finding } : {};
+			}
+			case 'cancelled':
+				logger.warn('Secret screen timed out on System One', LOG_CONTEXT, {
+					engine: judged.engine,
+				});
+				return unavailable(`${judged.engineLabel} took too long to answer.`);
+			case 'failed-open':
+			case 'failed-closed':
+			case 'unavailable':
+				logger.warn('Secret screen: System One gave no answer', LOG_CONTEXT, {
+					engine: judged.engine,
+					code: judged.code,
+					reason: judged.reason,
+				});
+				return unavailable(judged.reason);
+		}
+
 		const verdict = await runClassifierTask(TASK_ID, {
-			text: parts.map((part) => part.text).join('\n\n'),
+			text,
 			signal: AbortSignal.timeout(SECRET_SCREEN_MODEL_TIMEOUT_MS),
 		});
 		switch (verdict.status) {

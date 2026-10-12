@@ -289,6 +289,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 	 * is `unavailable`, so the policy decides and no event is stranded.
 	 */
 	async function checkInjection(
+		ownerSessionId: string,
 		sub: CueSubscription,
 		work: CueInjectionScreenWork
 	): Promise<CueInjectionCheck> {
@@ -301,7 +302,12 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 		}
 		try {
 			return await screenCueInjectionTargets(work.targets, work.plan.threshold, (target) =>
-				scorer({ text: target.text, variable: target.variable, subscriptionName: sub.name })
+				scorer({
+					text: target.text,
+					variable: target.variable,
+					subscriptionName: sub.name,
+					agentId: ownerSessionId,
+				})
 			);
 		} catch (error) {
 			void captureException(error, {
@@ -321,7 +327,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 	 *
 	 * Failure policy (see `src/shared/cue/injection-screen.ts`): a command
 	 * fails CLOSED when the screen was asked for and cannot run; every other
-	 * action fails OPEN with a visible warning.
+	 * action fails OPEN with a visible warning, unless the screen is on System
+	 * One and its task fails closed.
 	 */
 	async function applyInjectionScreen(
 		work: CueInjectionScreenWork,
@@ -332,7 +339,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 		chainRootId?: string,
 		parentEventId?: string
 	): Promise<CueEvent | null> {
-		const check = await checkInjection(sub, work);
+		const check = await checkInjection(ownerSessionId, sub, work);
 		const decision = resolveCueInjectionDecision(check, {
 			action: sub.action,
 			explicit: work.plan.explicit,

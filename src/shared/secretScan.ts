@@ -15,13 +15,18 @@
  * `maskEnvValue()`, so the list can be shown in a dialog, printed by the CLI,
  * and written to a log.
  *
- * Import-free apart from `agentEnvironment`, so the renderer, the main process,
- * and the CLI bundle can all use it. It never reads `process.env` itself (the
- * renderer's `process` is a shim): a caller that wants configured values
- * matched passes them in as `env`.
+ * That model pass can also be a System One engine, asked one typed yes or no
+ * question ({@link secretScreenSystemOneRequest}). It is extra coverage in the
+ * same way: the pattern scan has already run by the time it is asked.
+ *
+ * Pure: it imports only `agentEnvironment` and the System One vocabulary, so
+ * the renderer, the main process, and the CLI bundle can all use it. It never
+ * reads `process.env` itself (the renderer's `process` is a shim): a caller
+ * that wants configured values matched passes them in as `env`.
  */
 
 import { isSecretEnvKey, maskEnvValue } from './agentEnvironment';
+import { noul, type SystemOneAnswers, type SystemOneTaskRequest } from './local-models/system-one';
 
 export type SecretKind =
 	| 'aws-access-key'
@@ -45,7 +50,7 @@ export interface SecretFinding {
 	preview: string;
 	/**
 	 * What the secret was found beside: the variable name for `env-var-value`
-	 * and `generic-api-key`, the model for `model-flagged`.
+	 * and `generic-api-key`, the model or System One engine for `model-flagged`.
 	 */
 	name?: string;
 	/** Which part of the content it is in, when the caller scanned several. */
@@ -348,6 +353,72 @@ export function describeSecretFinding(finding: SecretFinding): string {
 		finding.occurrences && finding.occurrences > 1 ? `${finding.occurrences} times` : null,
 	].filter(Boolean);
 	return `${label} ${finding.preview}${where.length > 0 ? ` (${where.join(', ')})` : ''}`;
+}
+
+/** What the model pass is asked about on System One: everything about to be published. */
+export interface SecretScreenSystemOneInput {
+	text: string;
+}
+
+/** The id of the one question the secret screen asks a System One engine. */
+export const SECRET_SCREEN_QUESTION_ID = 'secret';
+
+/**
+ * P(yes) at or above which a System One answer flags the content. The
+ * midpoint, which is where a classifier's positive label becomes its most
+ * likely one: the rule the model pass already flags by.
+ */
+export const SECRET_SCREEN_FLAG_PROBABILITY = 0.5;
+
+/**
+ * The model pass as a System One request: the content is the state, and one
+ * yes or no question is asked about it.
+ *
+ * Every request to an engine is redacted on its way out
+ * (`redactSystemOneRequest`), so a secret a pattern knows never reaches the
+ * engine: it reads a `[REDACTED_...]` marker in its place. The question says a
+ * marker is not a finding, because the pattern scan has reported that one
+ * already. What is left for the engine is what no pattern has a shape for.
+ */
+export function secretScreenSystemOneRequest(
+	input: SecretScreenSystemOneInput
+): SystemOneTaskRequest {
+	return {
+		state: input.text,
+		questions: {
+			[SECRET_SCREEN_QUESTION_ID]: noul(
+				'Does this content contain a secret that must not be published?',
+				{
+					true: 'The content holds a live credential: an API key, an access token, a password, a private key, a connection string with a password in it, or a session cookie.',
+					false:
+						'The content holds no credential. A placeholder, an example value, a variable name with no value, and a marker such as [REDACTED_API_KEY] or [REDACTED_SECRET] are not secrets.',
+				}
+			),
+		},
+	};
+}
+
+/**
+ * Read a System One answer as the model pass's verdict. `engineLabel` names the
+ * engine that answered, the way a classifier finding names its model. Returns
+ * `null` when the answers hold no yes or no for the screen's question: the
+ * caller reports that the pass did not run, never that the content is clean.
+ */
+export function secretScreenVerdictFromSystemOne(
+	answers: SystemOneAnswers,
+	engineLabel: string
+): { finding: SecretFinding | null } | null {
+	const answer = answers[SECRET_SCREEN_QUESTION_ID];
+	if (answer?.type !== 'noul') return null;
+	if (answer.probability < SECRET_SCREEN_FLAG_PROBABILITY) return { finding: null };
+	return {
+		finding: {
+			kind: 'model-flagged',
+			line: 0,
+			preview: `secret ${answer.probability.toFixed(2)}`,
+			name: engineLabel,
+		},
+	};
 }
 
 /**

@@ -19,9 +19,19 @@
  * the model said about it. The renderer runs the same {@link
  * tabCleanupProtection} against LIVE state before it shows a row and again
  * before it applies one, because the list main read is a few seconds old.
+ *
+ * The task can also be assigned to System One, which answers one typed choice
+ * per tab ({@link tabCleanupSystemOneRequest}) instead of writing a list. Its
+ * answers become the same raw suggestions, and go through the same guard.
  */
 
 import { formatDurationWords } from './duration';
+import {
+	choice,
+	type SystemOneAnswers,
+	type SystemOneQuestions,
+	type SystemOneTaskRequest,
+} from './local-models/system-one';
 import { formatSnoozeTarget } from './snooze';
 
 /** What a suggestion can ask for. */
@@ -449,10 +459,9 @@ export function formatTabCleanupAge(at: number, now: number): string {
 	return `${formatDurationWords(age, 1)} ago`;
 }
 
-/** One candidate as a line of facts. */
-function formatCandidateLine(candidate: TabCleanupCandidate, now: number): string {
+/** The facts about one candidate, in the order a line states them. No handle. */
+function candidateFacts(candidate: TabCleanupCandidate, now: number): string[] {
 	const parts = [
-		candidate.ref,
 		candidate.kind === 'snoozed' && candidate.wakeAt !== undefined
 			? `snoozed until ${formatSnoozeTarget(candidate.wakeAt, now)}`
 			: candidate.kind,
@@ -472,7 +481,15 @@ function formatCandidateLine(candidate: TabCleanupCandidate, now: number): strin
 	if (candidate.summary) {
 		parts.push(`last asked: ${flattenToLine(candidate.summary, CANDIDATE_TEXT_MAX_LENGTH)}`);
 	}
-	return flattenToLine(parts.join(' | '), CANDIDATE_LINE_MAX_LENGTH);
+	return parts;
+}
+
+/** One candidate as a line of facts, led by its handle. */
+function formatCandidateLine(candidate: TabCleanupCandidate, now: number): string {
+	return flattenToLine(
+		[candidate.ref, ...candidateFacts(candidate, now)].join(' | '),
+		CANDIDATE_LINE_MAX_LENGTH
+	);
 }
 
 /**
@@ -481,6 +498,107 @@ function formatCandidateLine(candidate: TabCleanupCandidate, now: number): strin
  */
 export function formatTabCleanupInput(shown: readonly TabCleanupCandidate[], now: number): string {
 	return ['Tabs:', ...shown.map((candidate) => formatCandidateLine(candidate, now))].join('\n');
+}
+
+/** What the task asks a System One engine about: the tabs the model path would be shown. */
+export interface TabCleanupSystemOneInput {
+	/** What {@link selectTabCleanupCandidates} returned, already capped. */
+	candidates: readonly TabCleanupCandidate[];
+	now: number;
+}
+
+/** The option that leaves a tab as it is. Never becomes a suggestion. */
+export const TAB_CLEANUP_KEEP_OPTION = 'keep';
+
+/** What every tab's question is judged against. A state cannot be empty. */
+const TAB_CLEANUP_SYSTEM_ONE_STATE =
+	'A person is tidying the tabs of Maestro, a desktop app that runs AI coding agents. Each question describes one tab and asks what to do with it. Nothing is done without their confirmation.';
+
+/**
+ * The id of the question about one tab: the tab's own id, or the snooze's id
+ * for a parked one (the handle a wake needs). Never the tab's place in the
+ * list: an engine answers by question id, so the real id costs nothing here,
+ * and an answer can only ever name the tab it was asked about.
+ */
+export function tabCleanupQuestionId(
+	candidate: Pick<TabCleanupCandidate, 'kind' | 'tabId' | 'snoozeId'>
+): string {
+	return candidate.kind === 'snoozed' ? (candidate.snoozeId ?? candidate.tabId) : candidate.tabId;
+}
+
+/**
+ * The cleanup as a System One request: one choice per tab, keyed by the tab's
+ * id, with the tab's facts INSIDE its own question. An engine is never asked
+ * to find one tab in a list of forty, which is where indexed answers go wrong.
+ *
+ * An open tab is offered close, snooze or keep, and a snoozed one wake or
+ * keep, in the words `tab-cleanup-local` gives a model, so an action that
+ * means nothing for a tab cannot be answered. `keep` is the answer for a tab
+ * the engine is not sure about.
+ */
+export function tabCleanupSystemOneRequest(input: TabCleanupSystemOneInput): SystemOneTaskRequest {
+	const questions: SystemOneQuestions = {};
+	for (const candidate of input.candidates) {
+		const facts = flattenToLine(
+			candidateFacts(candidate, input.now).join(' | '),
+			CANDIDATE_LINE_MAX_LENGTH
+		);
+		questions[tabCleanupQuestionId(candidate)] = choice(
+			`What should be done with this tab? ${facts}`,
+			candidate.kind === 'snoozed'
+				? {
+						wake: 'Bring it back: its note or last request looks relevant again, or its wake time has already passed.',
+						[TAB_CLEANUP_KEEP_OPTION]: 'Leave it snoozed. Choose this when not sure.',
+					}
+				: {
+						close:
+							'It looks finished or abandoned: not touched in weeks, empty, or its last request reads as done.',
+						snooze:
+							'It has gone quiet but looks like unfinished work the person will come back to.',
+						[TAB_CLEANUP_KEEP_OPTION]:
+							'Leave it open. Choose this when not sure, and for a tab that was active in the last day.',
+					}
+		);
+	}
+	return { state: TAB_CLEANUP_SYSTEM_ONE_STATE, questions };
+}
+
+/**
+ * Read System One answers as the raw suggestions a model reply would hold, so
+ * {@link guardTabCleanupSuggestions} checks them exactly as it checks a model.
+ *
+ * An engine gives a choice and no sentence, so the reason says who chose and,
+ * when the engine reports one, how likely it held the choice to be. `keep`
+ * suggests nothing. Returns `null` when no tab got a choice at all (the run is
+ * unusable); a tab with no usable answer of its own is skipped.
+ */
+export function tabCleanupReplyFromSystemOne(
+	answers: SystemOneAnswers,
+	candidates: readonly TabCleanupCandidate[],
+	engineLabel: string
+): RawTabCleanupSuggestion[] | null {
+	const suggestions: RawTabCleanupSuggestion[] = [];
+	let answered = 0;
+	for (const candidate of candidates) {
+		const answer = answers[tabCleanupQuestionId(candidate)];
+		if (answer?.type !== 'choice') continue;
+		answered += 1;
+		if (!isTabCleanupAction(answer.choice)) continue;
+		const probability = answer.probabilities?.[answer.choice];
+		const likelihood =
+			typeof probability === 'number' && Number.isFinite(probability)
+				? `, ${Math.round(probability * 100)}% likely`
+				: '';
+		suggestions.push({
+			ref: candidate.ref,
+			action: answer.choice,
+			reason: flattenToLine(
+				`${engineLabel} chose ${answer.choice}${likelihood}.`,
+				TAB_CLEANUP_REASON_MAX_LENGTH
+			),
+		});
+	}
+	return answered === 0 && candidates.length > 0 ? null : suggestions;
 }
 
 /** One line on what a successful run looked at, for the modal footer and the CLI. */

@@ -399,12 +399,18 @@ describe('buildAssignmentOptionGroups', () => {
 			expect(head('cue-gate')).toEqual([{ value: 'off', label: 'Off' }]);
 		});
 
-		it('is never offered to a task that has no typed questions', () => {
+		it('is offered to exactly the tasks that declare typed questions', () => {
+			const accepting = [
+				'tab-cleanup',
+				'cue-gate',
+				'injection-screen',
+				'secret-screen',
+				'voice-routing',
+			];
 			for (const task of Object.values(LOCAL_MODEL_TASKS)) {
-				if (task.id === 'cue-gate') continue;
-				expect(head(task.id, 'jev-cloud').map((option) => option.value)).not.toContain(
-					'system-one'
-				);
+				const offered = head(task.id, 'jev-cloud').map((option) => option.value);
+				if (accepting.includes(task.id)) expect(offered).toContain('system-one');
+				else expect(offered).not.toContain('system-one');
 			}
 		});
 

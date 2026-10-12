@@ -23,6 +23,11 @@
  *     agent path, so there is nothing to keep using.
  *   - `unavailable` and `cancelled` fail with the reason, which the modal shows
  *     in place of the list.
+ *
+ * Assigned to System One, the engine in force is asked one typed choice per
+ * tab (`runSystemOneTask`) instead of a model writing a list. Its answers are
+ * read as the same raw suggestions and go through the same guard, so a caller
+ * sees one result shape; `producedBy` names the engine.
  */
 
 import { getSessionIdsBusyWithCli } from '../../shared/cli-activity';
@@ -40,7 +45,10 @@ import {
 	parseTabCleanupReply,
 	rebindTabCleanupCandidates,
 	selectTabCleanupCandidates,
+	tabCleanupReplyFromSystemOne,
+	type RawTabCleanupSuggestion,
 	type TabCleanupResult,
+	type TabCleanupSelection,
 	type TabCleanupTab,
 	type TabCleanupTabType,
 } from '../../shared/tabCleanup';
@@ -49,7 +57,7 @@ import { isAiTabProcessActive, type ProcessLivenessProbe } from '../utils/agent-
 import { logger } from '../utils/logger';
 import { getConfiguredLocalModelEndpoints } from './endpoint-service';
 import { readLocalModelAssignments } from './sources';
-import { runLocalTask } from './task-router';
+import { runLocalTask, runSystemOneTask } from './task-router';
 
 const LOG_CONTEXT = '[TabCleanup]';
 
@@ -268,6 +276,38 @@ function readTabs(stores: TabCleanupStores): TabCleanupTab[] {
 }
 
 /**
+ * Turn what was answered into what may be shown, whoever answered.
+ *
+ * Guards against the app as it is NOW. A model may have taken a minute, and a
+ * tab can start a turn or gain a draft in that time.
+ */
+function guardedResult(
+	raw: readonly RawTabCleanupSuggestion[],
+	selection: TabCleanupSelection,
+	stores: TabCleanupStores,
+	producedBy: string | undefined,
+	logged: Record<string, unknown>
+): TabCleanupResult {
+	const current = rebindTabCleanupCandidates(selection.shown, readTabs(stores));
+	const { suggestions, dropped } = guardTabCleanupSuggestions(raw, current);
+	logger.info('Tab cleanup suggestions ready', LOG_CONTEXT, {
+		...logged,
+		considered: selection.shown.length,
+		suggested: suggestions.length,
+		dropped: dropped.map((drop) => drop.why),
+	});
+	return {
+		success: true,
+		suggestions,
+		considered: selection.shown.length,
+		protectedCount: selection.protectedCount,
+		droppedCount: dropped.length,
+		truncated: selection.truncated,
+		...(producedBy && { producedBy }),
+	};
+}
+
+/**
  * Suggest tabs to close, snooze, or wake, across every agent.
  *
  * Throws only for an unclassified failure inside the model engine, which is a
@@ -301,6 +341,48 @@ export async function suggestTabCleanup(
 			droppedCount: 0,
 			truncated: false,
 		};
+	}
+
+	// System One first: it answers `not-assigned` for any other assignment and
+	// touches nothing, so the model path below runs exactly as it did. The
+	// budget is the one a model gets, because the local judge answers one tab
+	// at a time.
+	const judged = await runSystemOneTask(
+		TASK_ID,
+		{ candidates: selection.shown, now },
+		{ timeoutMs: TAB_CLEANUP_TIMEOUT_MS }
+	);
+	switch (judged.status) {
+		case 'not-assigned':
+			break;
+		case 'cancelled':
+			return fail('cancelled', `${judged.engineLabel} was stopped before it answered. Try again.`);
+		case 'failed-open':
+		case 'failed-closed':
+		case 'unavailable':
+			logger.warn('Tab cleanup skipped: System One gave no answer', LOG_CONTEXT, {
+				engine: judged.engine,
+				code: judged.code,
+				reason: judged.reason,
+			});
+			return fail(judged.code === 'timeout' ? 'cancelled' : 'unavailable', judged.reason);
+		case 'ok': {
+			const raw = tabCleanupReplyFromSystemOne(judged.answers, selection.shown, judged.engineLabel);
+			if (!raw) {
+				logger.warn('System One returned no usable tab cleanup answers', LOG_CONTEXT, {
+					engine: judged.engine,
+				});
+				return fail(
+					'unusable',
+					`${judged.engineLabel} did not answer for any tab. Try again.`,
+					judged.engineLabel
+				);
+			}
+			return guardedResult(raw, selection, stores, judged.engineLabel, {
+				engine: judged.engine,
+				durationMs: judged.latencyMs,
+			});
+		}
 	}
 
 	const verdict = await runLocalTask(TASK_ID, {
@@ -349,26 +431,10 @@ export async function suggestTabCleanup(
 				);
 			}
 
-			// Guard against the app as it is NOW. The model may have taken a
-			// minute, and a tab can start a turn or gain a draft in that time.
-			const current = rebindTabCleanupCandidates(selection.shown, readTabs(stores));
-			const { suggestions, dropped } = guardTabCleanupSuggestions(raw, current);
-			logger.info('Tab cleanup suggestions ready', LOG_CONTEXT, {
+			return guardedResult(raw, selection, stores, producedBy, {
 				source: verdict.source,
 				durationMs: verdict.durationMs,
-				considered: selection.shown.length,
-				suggested: suggestions.length,
-				dropped: dropped.map((drop) => drop.why),
 			});
-			return {
-				success: true,
-				suggestions,
-				considered: selection.shown.length,
-				protectedCount: selection.protectedCount,
-				droppedCount: dropped.length,
-				truncated: selection.truncated,
-				...(producedBy && { producedBy }),
-			};
 		}
 	}
 }

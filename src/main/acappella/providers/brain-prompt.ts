@@ -16,11 +16,17 @@
  */
 
 import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
-import type { RosterAgent, RosterTab } from '../../../shared/acappella/protocol';
+import type { RosterAgent } from '../../../shared/acappella/protocol';
 import type { VoiceConverseContext, VoiceRouteContext } from '../../../shared/acappella/providers';
 import type { RouteDecision, RouteTabAction } from '../../../shared/acappella/route-decision';
 import { ROUTE_TAB_ACTIONS } from '../../../shared/acappella/route-decision';
 import { splitIntoSpokenSentences } from '../../../shared/acappella/sentences';
+import {
+	VOICE_ROUTE_MAX_AGENTS,
+	VOICE_ROUTE_MAX_TABS_PER_AGENT,
+	VOICE_ROUTE_RECENT_UTTERANCES,
+	describeRosterTab,
+} from '../../../shared/acappella/voice-routing-system-one';
 import { PROMPT_IDS } from '../../../shared/promptDefinitions';
 import { extractJsonObject } from '../../../shared/jsonUtils';
 import { stripMarkdown } from '../../../shared/markdown';
@@ -28,10 +34,6 @@ import { getPrompt } from '../../prompt-manager';
 
 /** Spoken replies stay short unless the caller asks for more. */
 const DEFAULT_SPOKEN_SENTENCES = 2;
-
-/** Cap on the roster handed to a model. A hundred agents is a prompt, not context. */
-const MAX_ROSTER_AGENTS = 40;
-const MAX_TABS_PER_AGENT = 12;
 
 /**
  * The routing instructions, as the user may have edited them.
@@ -110,20 +112,22 @@ export const CONVERSE_SYSTEM_PROMPT = [
  *
  * One renderer, deliberately: the assembler measures its size cap against this
  * exact text, so a second copy that formatted a tab differently would cap the
- * wrong string and the prompt would quietly overrun.
+ * wrong string and the prompt would quietly overrun. The caps and the tab line
+ * are shared with the System One questions (`voice-routing-system-one.ts`), so
+ * a model and an engine are shown the same roster.
  */
 export function serializeRoster(agents: readonly RosterAgent[]): string[] {
 	const lines: string[] = ['Running agents:'];
 	if (agents.length === 0) lines.push('  (none)');
 
-	for (const agent of agents.slice(0, MAX_ROSTER_AGENTS)) {
+	for (const agent of agents.slice(0, VOICE_ROUTE_MAX_AGENTS)) {
 		const status = agent.status ? ` ${agent.status}` : '';
 		lines.push(
 			`- ${agent.name} [${agent.sessionId}] (${agent.agentType}${status}) in ${agent.cwd}`
 		);
 		if (agent.recentWork) lines.push(`    recently: ${agent.recentWork}`);
-		for (const tab of agent.tabs.slice(0, MAX_TABS_PER_AGENT)) {
-			lines.push(`    tab ${tab.id}: ${describeTab(tab)}`);
+		for (const tab of agent.tabs.slice(0, VOICE_ROUTE_MAX_TABS_PER_AGENT)) {
+			lines.push(`    tab ${tab.id}: ${describeRosterTab(tab)}`);
 		}
 	}
 
@@ -156,7 +160,9 @@ export function buildRouteUserPrompt(input: string, context: VoiceRouteContext):
 	const recent = context.recentUtterances ?? [];
 	if (recent.length > 0) {
 		lines.push('', 'Earlier in this conversation:');
-		for (const utterance of recent.slice(-5)) lines.push(`- ${utterance}`);
+		for (const utterance of recent.slice(-VOICE_ROUTE_RECENT_UTTERANCES)) {
+			lines.push(`- ${utterance}`);
+		}
 	}
 
 	const conversation = context.conversation ?? [];
@@ -194,23 +200,6 @@ export function buildRouteUserPrompt(input: string, context: VoiceRouteContext):
 
 	lines.push('', `Utterance: ${input}`);
 	return lines.join('\n');
-}
-
-/**
- * One tab, as a line in the roster.
- *
- * The topic is what makes recall possible at all: a tab called "Tab 3" tells a
- * model nothing, and "auth middleware rewrite" is the phrase the user will say
- * six hours later. The state is what stops a recall from being a lie - a snoozed
- * or closed tab is a legitimate target, but only if whoever picks it knows it has
- * to be woken first.
- */
-function describeTab(tab: RosterTab): string {
-	const label = tab.name ?? 'untitled';
-	const parts = [label];
-	if (tab.topic && tab.topic !== label) parts.push(`- ${tab.topic}`);
-	if (tab.state && tab.state !== 'open') parts.push(`(${tab.state})`);
-	return parts.join(' ');
 }
 
 /** How many earlier spoken lines a rewrite is shown. Enough to avoid repeating itself. */
