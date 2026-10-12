@@ -12,7 +12,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ## System-Wide Hotkey (Summon Maestro)
 
-Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. This is the only shortcut in Maestro that fires while the app is in the background; every other shortcut on this page is in-app.
+Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It and the [Quick Chat](#quick-chat-hotkey) hotkey are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
 
 **To configure:**
 
@@ -27,6 +27,14 @@ Tips and gotchas:
 - If the OS or another app already owns the combo, Maestro will surface a registration failure - pick a different binding.
 - `Meta` maps to **Cmd** on macOS and **Win** (Super) on Windows/Linux automatically.
 - The hotkey works even when Maestro is hidden, minimized, or behind other windows.
+
+## Quick Chat Hotkey
+
+[Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
+
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+K` / `Ctrl+K` opens the agent picker, `Cmd+B` / `Ctrl+B` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+T` / `Ctrl+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, and `Esc` closes the window (or, with the picker open, just the picker).
+
+The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
 
 ## Global Shortcuts
 
@@ -65,10 +73,12 @@ Tips and gotchas:
 | Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
+| Computer History              | `Ctrl+Cmd+H`            | `Ctrl+Win+H`              |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
+| Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 

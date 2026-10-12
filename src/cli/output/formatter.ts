@@ -67,6 +67,8 @@ export interface GroupDisplay {
 	name: string;
 	emoji?: string;
 	collapsed?: boolean;
+	/** Parked out of the Left Bar. */
+	hidden?: boolean;
 }
 
 export function formatGroups(groups: GroupDisplay[]): string {
@@ -82,7 +84,7 @@ export function formatGroups(groups: GroupDisplay[]): string {
 		const emoji = group.emoji || '📁';
 		const name = c('white', group.name);
 		const id = dim(group.id);
-		lines.push(`  ${emoji}  ${name}`);
+		lines.push(`  ${emoji}  ${name}${group.hidden ? dim(' (hidden)') : ''}`);
 		lines.push(`      ${id}`);
 	}
 
@@ -519,6 +521,7 @@ export interface AgentDetailDisplay {
 	customEffort?: string | null;
 	customContextWindow?: number | null;
 	tokenSource?: string | null;
+	codexTransport?: string | null;
 	stats: {
 		historyEntries: number;
 		successCount: number;
@@ -609,6 +612,9 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	}
 	if (agent.toolType === 'claude-code' && agent.tokenSource) {
 		addConfig('Token source', agent.tokenSource);
+	}
+	if (agent.toolType === 'codex' && agent.codexTransport) {
+		addConfig('Codex transport', agent.codexTransport);
 	}
 	if (configRows.length > 0) {
 		lines.push('');
@@ -880,6 +886,7 @@ export interface DirectorNotesHistoryDisplay {
 		userCount: number;
 		cueCount: number;
 		agentEntryCount: number;
+		relayCount: number;
 		totalCount: number;
 		lookbackDays: number;
 	};
@@ -913,7 +920,7 @@ export function formatDirectorNotesHistory(
 	// Stats
 	const { stats } = data;
 	lines.push(
-		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent)`)}`
+		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue, ${stats.agentEntryCount} agent, ${stats.relayCount} relay)`)}`
 	);
 	lines.push(`  ${c('white', 'Showing:')}  ${data.showing} of ${data.total}`);
 	lines.push('');
@@ -940,7 +947,9 @@ export function formatDirectorNotesHistory(
 					? c('magenta', '[CUE]')
 					: entry.type === 'AGENT'
 						? c('cyan', '[AGENT]')
-						: c('yellow', '[USER]');
+						: entry.type === 'RELAY'
+							? c('cyan', '[RELAY]')
+							: c('yellow', '[USER]');
 		const agent = entry.agentName
 			? c('white', truncate(entry.agentName, 20))
 			: dim(entry.sourceSessionId.slice(0, 8));

@@ -129,6 +129,43 @@ describe('cue-queue-persistence', () => {
 			expect(entries[0].event.type).toBe('time.heartbeat');
 		});
 
+		it('round-trips the model choice so a restored run keeps its tier / model / effort', () => {
+			const p = makePersistence();
+			p.persist('s-1', 'pid-tier', makeEntry({ turnSettings: { tier: 'high', effort: 'low' } }));
+			p.persist('s-1', 'pid-model', makeEntry({ turnSettings: { model: 'gpt-5.5-codex' } }));
+			p.persist('s-1', 'pid-none', makeEntry());
+
+			const entries = p.restoreAll().get('s-1')!;
+			const byId = new Map(entries.map((e) => [e.persistId, e]));
+			expect(byId.get('pid-tier')!.turnSettings).toEqual({ tier: 'high', effort: 'low' });
+			expect(byId.get('pid-model')!.turnSettings).toEqual({ model: 'gpt-5.5-codex' });
+			expect(byId.get('pid-none')!.turnSettings).toBeUndefined();
+		});
+
+		it('restores a row persisted before turn_settings_json existed', () => {
+			const p = makePersistence();
+			// Pre-column row: the field is absent rather than null.
+			getSharedDb().persistQueuedEvent({
+				id: 'legacy',
+				sessionId: 's-1',
+				subscriptionName: 'sub',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: 'p',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: null,
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+			});
+
+			const entries = p.restoreAll().get('s-1')!;
+			expect(entries).toHaveLength(1);
+			expect(entries[0].turnSettings).toBeUndefined();
+		});
+
 		it('round-trips chain lineage (chainRootId + parentEventId) through the queue table', () => {
 			const p = makePersistence();
 			p.persist(
@@ -161,6 +198,64 @@ describe('cue-queue-persistence', () => {
 			// to their chain root after a crash.
 			expect(child.chainRootId).toBe('run-root');
 			expect(child.parentEventId).toBe('run-root');
+		});
+
+		// A queued `action: autorun` run launches from the payload captured when
+		// it was scheduled. Losing it across a restart leaves a run with no
+		// documents, which fails to launch a schedule nobody is watching.
+		it('round-trips the Auto Run payload through the queue table', () => {
+			const p = makePersistence();
+			const autoRun = {
+				documents: ['/repo/.maestro/playbooks/ship-it.md'],
+				reset_on_completion: [true],
+				prompt: 'work the list',
+				loop_enabled: true,
+				max_loops: 3,
+				model: 'opus',
+			};
+			p.persist('s-1', 'pid-autorun', makeEntry({ action: 'autorun', autoRun }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'autorun')!.autoRun).toEqual(autoRun);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.autoRun).toBeUndefined();
+		});
+
+		// The message of a queued notify also rides the `prompt` slot, but
+		// `sticky` lives only here. Losing it turned a toast the user asked to
+		// stay on screen into one that dismissed itself after a restart.
+		it('round-trips the notify config through the queue table', () => {
+			const p = makePersistence();
+			const notify = { message: 'Deploy finished', sticky: true };
+			p.persist('s-1', 'pid-notify', makeEntry({ action: 'notify', notify }));
+			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
+
+			const restored = p.restoreAll().get('s-1')!;
+			expect(restored.find((e) => e.action === 'notify')!.notify).toEqual(notify);
+			expect(restored.find((e) => e.subscriptionName === 'plain')!.notify).toBeUndefined();
+		});
+
+		it('drops a row whose Auto Run payload is not valid JSON', () => {
+			const p = makePersistence();
+			getSharedDb().persistQueuedEvent({
+				id: 'bad-autorun',
+				sessionId: 's-1',
+				subscriptionName: 'scheduled',
+				eventJson: JSON.stringify(makeEvent()),
+				prompt: '',
+				outputPrompt: null,
+				cliOutputJson: null,
+				action: 'autorun',
+				commandJson: null,
+				chainDepth: 0,
+				queuedAt: NOW - 1000,
+				chainRootId: null,
+				parentEventId: null,
+				autoRunJson: '{not json',
+			});
+
+			expect(p.restoreAll().size).toBe(0);
+			expect(getSharedDb().getQueuedEvents()).toHaveLength(0);
 		});
 
 		it('groups by session and preserves queuedAt ordering', () => {

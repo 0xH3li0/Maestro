@@ -85,9 +85,11 @@ import type {
 	SelectTabCallback,
 	NewTabCallback,
 	CloseTabCallback,
+	ReopenTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -111,6 +113,7 @@ import type {
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
+	SteerQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -189,6 +192,7 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { WindowCommandRequest } from '../../shared/windowCommands';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -539,6 +543,11 @@ export class WebServer {
 		this.callbackRegistry.setCloseTabCallback(callback);
 	}
 
+	/** Register the owner-side conversation restore callback. */
+	setReopenTabCallback(callback: ReopenTabCallback): void {
+		this.callbackRegistry.setReopenTabCallback(callback);
+	}
+
 	setRenameTabCallback(callback: RenameTabCallback): void {
 		this.callbackRegistry.setRenameTabCallback(callback);
 	}
@@ -549,6 +558,10 @@ export class WebServer {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
+	}
+
+	setWindowCommandCallback(callback: WindowCommandCallback): void {
+		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
 
 	setReorderTabCallback(callback: ReorderTabCallback): void {
@@ -644,6 +657,10 @@ export class WebServer {
 
 	setRemoveQueueItemCallback(callback: RemoveQueueItemCallback): void {
 		this.callbackRegistry.setRemoveQueueItemCallback(callback);
+	}
+
+	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
+		this.callbackRegistry.setSteerQueueItemCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1134,6 +1151,7 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
+			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
 			executeCommand: async (
 				sessionId: string,
 				command: string,
@@ -1168,6 +1186,8 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			windowCommand: async (request: WindowCommandRequest) =>
+				this.callbackRegistry.windowCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
@@ -1216,6 +1236,8 @@ export class WebServer {
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
+			steerQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.steerQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
@@ -1482,6 +1504,16 @@ export class WebServer {
 
 	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
 		return this.callbackRegistry.newTab(sessionId, background);
+	}
+
+	/** Resolve true only after the owning renderer confirms closure. */
+	requestCloseTab(sessionId: string, tabId: string): Promise<boolean> {
+		return this.callbackRegistry.closeTab(sessionId, tabId);
+	}
+
+	/** Reopen a browser-selected history entry using the desktop's tab identity. */
+	requestReopenTab(sessionId: string, tabId: string): Promise<{ tabId: string } | null> {
+		return this.callbackRegistry.reopenTab(sessionId, tabId);
 	}
 
 	broadcastThemeChange(theme: Theme): void {

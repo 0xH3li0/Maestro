@@ -11,6 +11,7 @@ import {
 	writeDoc,
 } from './agent-spawner';
 import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
+import { requestCliSynopsis } from './synopsis';
 import { addHistoryEntry, readGroups, readHistory } from './storage';
 import {
 	aggregateAutoRunHistoryTotals,
@@ -21,7 +22,6 @@ import { substituteTemplateVariables, TemplateContext } from '../../shared/templ
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
-import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
@@ -30,7 +30,6 @@ import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/autorunModelHints';
 import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
-import { cheapTurnSettings } from '../../shared/modelTiers';
 
 // Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
 // both share it and draw a pill for a marker that would block the next run.
@@ -95,9 +94,6 @@ export async function* runPlaybook(
 		signal,
 	} = options;
 	const batchStartTime = Date.now();
-	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
-	// it depends only on the provider, which cannot change mid-run.
-	const cheapSynopsis = cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -161,8 +157,10 @@ export async function* runPlaybook(
 		// per-document stable for callers/mocks.
 		let initialTotalTasks = 0;
 		let preExistingHalt: { document: string; halt: HaltMarker } | null = null;
+		const missingDocuments: string[] = [];
 		for (const doc of playbook.documents) {
-			const { taskCount, content } = readDocAndCountTasks(folderPath, doc.filename);
+			const { taskCount, content, missingPath } = readDocAndCountTasks(folderPath, doc.filename);
+			if (missingPath) missingDocuments.push(missingPath);
 			if (debug) {
 				yield {
 					type: 'debug',
@@ -186,6 +184,22 @@ export async function* runPlaybook(
 				category: 'scan',
 				message: `Total unchecked tasks: ${initialTotalTasks}`,
 			};
+		}
+
+		// A missing document is a broken playbook, not one with nothing left to
+		// do. Counting it as zero tasks once reported "No unchecked tasks" for a
+		// playbook whose every document path was wrong.
+		if (missingDocuments.length > 0) {
+			unregisterCliActivity(session.id);
+			yield {
+				type: 'error',
+				timestamp: Date.now(),
+				message:
+					`${missingDocuments.length} of ${playbook.documents.length} playbook document${playbook.documents.length !== 1 ? 's' : ''} not found ` +
+					`(names are relative to the Auto Run folder, without .md): ${missingDocuments.join(', ')}`,
+				code: 'DOCUMENT_NOT_FOUND',
+			};
+			return;
 		}
 
 		if (initialTotalTasks === 0) {
@@ -644,6 +658,7 @@ export async function* runPlaybook(
 
 					const result = await captureCliRun(
 						{
+							agentId: session.id,
 							sessionId: session.id,
 							toolType: session.toolType,
 							cwd: session.cwd,
@@ -723,53 +738,23 @@ export async function* runPlaybook(
 					let fullSynopsis = shortSummary;
 
 					if (result.success && result.agentSessionId && !skipSynopsis) {
-						// Request synopsis from the agent
-						const synopsisResult = await captureCliRun(
-							{
-								sessionId: result.agentSessionId ?? session.id,
-								toolType: session.toolType,
-								cwd: session.cwd,
-								source: 'cli:autorun-synopsis',
-							},
-							async () =>
-								spawnAgent(
-									session.toolType,
-									session.cwd,
-									await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
-									result.agentSessionId,
-									{
-										// A synopsis is a throwaway summarization of work that already
-										// happened, so it runs at the bottom of both ladders regardless of
-										// what the task ran at. On a long playbook this is one premium turn
-										// per task saved. Safe because the synopsis is a leaf: its returned
-										// agentSessionId is discarded, so the downgrade cannot follow the
-										// conversation into the next real turn.
-										// The `??` fallbacks matter on providers with no tier mapping
-										// (codex, opencode): there is nothing to downgrade TO, so the
-										// synopsis inherits, and it must inherit the same value the task
-										// ran under - the run override, not just the session's.
-										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
-										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
-										customArgs: session.customArgs,
-										additionalDirectories: session.additionalDirectories,
-										customEnvVars: session.customEnvVars,
-										requiredSecrets: session.requiredSecrets,
-										sshRemoteConfig: session.sessionSshRemoteConfig,
-										querySource: 'auto',
-										// Honor the token source for the Auto Run synopsis turn too.
-										enableMaestroP: session.enableMaestroP,
-										maestroPMode: session.maestroPMode,
-										maestroPPath: session.maestroPPath,
-										signal,
-									}
-								),
-							settlementFromAgentResult
-						);
+						// Request synopsis from the agent. It is told what the TASK ran
+						// under (document hint, then run override, then the agent's own
+						// value), because that is the model whose transcript it resumes and
+						// what it inherits on a provider with no cheap tier. On a long
+						// playbook the cheap turn is one premium turn per task saved.
+						const synopsis = await requestCliSynopsis(session, result.agentSessionId, {
+							source: 'cli:autorun-synopsis',
+							model: turnSettings.model,
+							effort: turnSettings.effort,
+							signal,
+						});
 
-						if (synopsisResult.success && synopsisResult.response) {
-							const parsed = parseSynopsis(synopsisResult.response);
-							shortSummary = parsed.shortSummary;
-							fullSynopsis = parsed.fullSynopsis;
+						// No usable synopsis (failed turn, bare provider error, or
+						// NOTHING_TO_REPORT) keeps the default label above.
+						if (synopsis) {
+							shortSummary = synopsis.shortSummary;
+							fullSynopsis = synopsis.fullSynopsis;
 						}
 					} else if (result.outcome === 'interrupted') {
 						shortSummary = `[${docEntry.filename}] Task interrupted`;

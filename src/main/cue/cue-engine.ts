@@ -31,6 +31,7 @@ import {
 	type AgentCompletionData,
 	type CueCommand,
 	type CueConfig,
+	type CueAutoRunConfig,
 	type CueNotifyConfig,
 	type CueEventType,
 	type CueRunResult,
@@ -87,6 +88,7 @@ import {
 	CUE_ENGINE_LOCK_HEARTBEAT_MS,
 	type CueEngineRunnerMode,
 } from './cue-engine-lock';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -105,6 +107,10 @@ export interface CueEngineDeps {
 		notify?: CueNotifyConfig;
 		/** Aborted when the run is stopped; see `CueRunManagerDeps.onCueRun`. */
 		signal?: AbortSignal;
+		autoRun?: CueAutoRunConfig;
+		/** The subscription's `tier` / `model` / `effort`; the host resolves it
+		 *  against the target agent (see `resolveCueTurnSettings`). */
+		turnSettings?: CueTurnSettings;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -494,7 +500,9 @@ export class CueEngine {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				autoRun,
+				turnSettings
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -510,7 +518,9 @@ export class CueEngine {
 					pipelineName,
 					chainRootId,
 					parentEventId,
-					notify
+					notify,
+					autoRun,
+					turnSettings
 				);
 			},
 			onLog: meteredOnLog,
@@ -766,7 +776,12 @@ export class CueEngine {
 					// usageStats was enabled come back as undefined.
 					entry.chainRootId,
 					entry.parentEventId,
-					undefined,
+					// The two action payloads that travel with the run instead of
+					// being re-read from the subscription: a notify's `sticky`, and
+					// the documents an `action: autorun` run was scheduled with.
+					entry.notify,
+					entry.autoRun,
+					entry.turnSettings,
 					// Work a drain deferred is not buffered overflow: restore all of it.
 					entry.drainedAt !== undefined
 				);

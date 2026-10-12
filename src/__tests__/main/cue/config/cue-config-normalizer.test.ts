@@ -426,3 +426,117 @@ describe('normalizer - github.label field passthrough', () => {
 		).toBeUndefined();
 	});
 });
+
+describe('normalizer - action: autorun option passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'nightly',
+		event: 'time.once',
+		action: 'autorun',
+		agent_id: 'agent-xyz',
+		fire_at: '2030-01-01T10:00:00.000Z',
+		enabled: true,
+	};
+
+	it('carries task_selection_mode and ignore_model_hints to the engine', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: {
+				documents: ['/proj/a.md'],
+				task_selection_mode: 'document',
+				ignore_model_hints: true,
+			},
+		});
+
+		expect(sub.auto_run).toMatchObject({
+			task_selection_mode: 'document',
+			ignore_model_hints: true,
+		});
+	});
+
+	it('leaves both absent when the document does not set them', () => {
+		const sub = normalizeSub({ ...base, auto_run: { documents: ['/proj/a.md'] } });
+
+		expect(sub.auto_run).not.toHaveProperty('task_selection_mode');
+		expect(sub.auto_run).not.toHaveProperty('ignore_model_hints');
+	});
+
+	it('carries the auto-resume settings and the worktree to the engine', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: {
+				documents: ['/proj/a.md'],
+				auto_resume_on_error: false,
+				auto_resume_after_min: 10,
+				max_auto_resumes: 3,
+				worktree: { mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+			},
+		});
+
+		expect(sub.auto_run).toMatchObject({
+			auto_resume_on_error: false,
+			auto_resume_after_min: 10,
+			max_auto_resumes: 3,
+			worktree: { mode: 'create-new', branch: 'nightly', base_branch: 'rc', create_pr: true },
+		});
+	});
+
+	// Carrying on without the block would run the documents in the owning
+	// agent's own checkout, so the whole payload is unusable instead.
+	it('drops the whole payload when its worktree block cannot be resolved', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: { documents: ['/proj/a.md'], worktree: { mode: 'create-new' } },
+		});
+
+		expect(sub.auto_run).toBeUndefined();
+	});
+
+	it('drops an unknown task_selection_mode rather than handing it to the launch', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: { documents: ['/proj/a.md'], task_selection_mode: 'file' },
+		});
+
+		expect(sub.auto_run).not.toHaveProperty('task_selection_mode');
+	});
+});
+
+describe('normalizer - tier / model / effort passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'review',
+		event: 'time.heartbeat',
+		interval_minutes: 30,
+		prompt: 'Review the latest changes',
+		enabled: true,
+	};
+
+	it('keeps tier and effort so the run uses the model the YAML asks for', () => {
+		const sub = normalizeSub({ ...base, tier: 'high', effort: 'low' });
+		expect(sub.tier).toBe('high');
+		expect(sub.effort).toBe('low');
+		expect(sub.model).toBeUndefined();
+	});
+
+	it('keeps an exact model, trimmed', () => {
+		expect(normalizeSub({ ...base, model: '  gpt-5.5-codex ' }).model).toBe('gpt-5.5-codex');
+	});
+
+	it('drops values outside the low | medium | high vocabulary', () => {
+		const sub = normalizeSub({ ...base, tier: 'max', effort: 7, model: '' });
+		expect(sub.tier).toBeUndefined();
+		expect(sub.effort).toBeUndefined();
+		expect(sub.model).toBeUndefined();
+	});
+});

@@ -47,12 +47,15 @@ function builtinTile(flag: keyof EncoreFeatureFlags, enabled: boolean): UnifiedE
 
 const TILES = [builtinTile('usageStats', true), builtinTile('maestroCue', false)];
 
+/** The community plugin subsystem flag the mocked hook reports. */
+let pluginsSubsystemEnabled = true;
+
 vi.mock('../../../../../renderer/components/Settings/Extensions/useExtensions', () => ({
 	useExtensions: () => ({
 		extensions: TILES,
 		encoreFeatures: {},
 		contributions: null,
-		pluginsSubsystemEnabled: true,
+		pluginsSubsystemEnabled,
 		loading: false,
 		busyId: null,
 		reload: vi.fn(),
@@ -152,6 +155,20 @@ describe('ExtensionsView escape routing', () => {
 });
 
 describe('ExtensionsView header slot', () => {
+	// Installing is refused by main while the subsystem is off, so the button
+	// would open a folder picker and then fail with a toast.
+	it('withholds install while the community plugin subsystem is off', () => {
+		pluginsSubsystemEnabled = false;
+		try {
+			renderView();
+
+			expect(screen.queryByTestId('extensions-install')).not.toBeInTheDocument();
+			expect(screen.getByTestId('extensions-enable-subsystem')).toBeInTheDocument();
+		} finally {
+			pluginsSubsystemEnabled = true;
+		}
+	});
+
 	it('offers install, and no way back, on the grid', () => {
 		renderView();
 

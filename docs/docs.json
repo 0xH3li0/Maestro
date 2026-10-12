@@ -88,8 +88,11 @@
 					"usage-dashboard",
 					"symphony",
 					"concerto",
+					"quick-chat",
 					"pianola",
 					"coworking",
+					"computer-history",
+					"maestro-run",
 					{
 						"group": "Maestro Cue",
 						"icon": "bolt",

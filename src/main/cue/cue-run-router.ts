@@ -26,6 +26,7 @@ import type { CueEngineDeps } from './cue-engine';
 import type {
 	executeCuePrompt as ExecuteCuePrompt,
 	stopCueRun as StopCueRun,
+	CueRunTranscript,
 } from './cue-executor';
 import type { executeCueShell as ExecuteCueShell } from './cue-shell-executor';
 import type { executeCueCli as ExecuteCueCli } from './cue-cli-executor';
@@ -33,9 +34,12 @@ import type { CueNotifyExecutionConfig } from './cue-notify-executor';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { CueRunResult } from '../../shared/cue/contracts';
-import type { ToolType } from '../../shared/types';
+import type { SessionInfo, ToolType } from '../../shared/types';
+import type { CueAutoRunConfig, CueEvent, CueSubscription } from './cue-types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
+import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
+import { describeTurnSettings } from '../../shared/autorunTurnSettings';
 
 /** What `CueEngine` hands its `onCueRun` dependency for one run. */
 export type OnCueRunParams = Parameters<CueEngineDeps['onCueRun']>[0];
@@ -50,6 +54,7 @@ export interface CueRunSessionRecord {
 	fullPath?: string;
 	autoRunFolderPath?: string;
 	sessionSshRemoteConfig?: { enabled: boolean; remoteId: string | null };
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	/** Secret names this agent needs; resolved per launch (see `SessionInfo.requiredSecrets`). */
@@ -78,12 +83,25 @@ export interface CueRunActionDeps {
 	 * name is left to `spawn()`'s own PATH search.
 	 */
 	resolveAgentPath?: (toolType: string) => Promise<string | undefined> | string | undefined;
+	resolveAgentBinary?: (options: {
+		session: CueRunSessionRecord;
+		agentConfigValues: Record<string, unknown>;
+	}) => Promise<string | undefined>;
 	sshStore: SshRemoteSettingsStore;
 	getAgentConfigValues: (toolType: string) => Record<string, unknown>;
 	onLog: (level: string, message: string) => void;
 	/** Read on EVERY run, never cached at boot, so a profile edit applies to the next run. */
 	getConductorProfile?: () => string | undefined;
 	onNotify: (params: CueNotifyParams) => Promise<CueRunResult>;
+	onAutoRun?: (params: {
+		runId: string;
+		session: SessionInfo;
+		subscription: CueSubscription;
+		event: CueEvent;
+		autoRun?: CueAutoRunConfig;
+	}) => Promise<CueRunResult>;
+	getAppendSystemPrompt?: (sessionId: string) => Promise<string | undefined>;
+	getOnRunTranscript?: (sessionId: string) => ((run: CueRunTranscript) => void) | undefined;
 	/**
 	 * Hand prompt and shell runs only the server-mode env allowlist. Omit to
 	 * leave it to `MAESTRO_SERVER_MODE` (see `isServerModeActive`).
@@ -108,6 +126,8 @@ export async function executeCueRunAction(
 		action,
 		command,
 		notify,
+		autoRun,
+		turnSettings,
 		signal,
 	}: OnCueRunParams
 ): Promise<CueRunResult> {
@@ -150,6 +170,71 @@ export async function executeCueRunAction(
 		projectRoot,
 		autoRunFolderPath: storedSession.autoRunFolderPath,
 	};
+
+	// `action: autorun` launches an Auto Run in the owning agent. Handled
+	// before notify/command/prompt for the same reason they are: it never
+	// spawns an agent process here, so the agent-path resolution, SSH
+	// wrapping, and prompt plumbing below do not apply. The document list
+	// travels on the subscription rather than being re-read from the
+	// agent's Auto Run folder, so repointing that folder between
+	// scheduling and firing cannot swap the run out from under the user.
+	if (action === 'autorun') {
+		const subscription = {
+			name: subscriptionName,
+			event: event.type,
+			enabled: true,
+			prompt,
+			action,
+			auto_run: autoRun,
+			agent_id: storedSession.id,
+		};
+		if (!deps.onAutoRun) {
+			const reason = 'action=autorun is not supported in this runner mode';
+			deps.onLog('error', `[CUE] Auto Run "${subscriptionName}" did not start: ${reason}`);
+			const startedAt = new Date().toISOString();
+			return {
+				runId,
+				sessionId: storedSession.id,
+				sessionName: storedSession.name,
+				subscriptionName,
+				event,
+				status: 'failed' as const,
+				stdout: '',
+				stderr: `Auto Run launch failed: ${reason}`,
+				exitCode: 1,
+				durationMs: 0,
+				startedAt,
+				endedAt: startedAt,
+			};
+		}
+		if (!autoRun || autoRun.documents.length === 0) {
+			const reason =
+				'no documents on the run - the captured Auto Run payload did not survive the queue';
+			deps.onLog('error', `[CUE] Auto Run "${subscriptionName}" did not start: ${reason}`);
+			const startedAt = new Date().toISOString();
+			return {
+				runId,
+				sessionId: storedSession.id,
+				sessionName: storedSession.name,
+				subscriptionName,
+				event,
+				status: 'failed' as const,
+				stdout: '',
+				stderr: `Auto Run launch failed: ${reason}`,
+				exitCode: 1,
+				durationMs: 0,
+				startedAt,
+				endedAt: startedAt,
+			};
+		}
+		return deps.onAutoRun({
+			runId,
+			session: sessionInfo,
+			subscription,
+			event,
+			autoRun,
+		});
+	}
 
 	// `action: notify` surfaces a toast through the owning agent instead of
 	// spawning anything - handled before command/prompt so the spawn config,
@@ -244,16 +329,45 @@ export async function executeCueRunAction(
 
 	const agentConfigValues = deps.getAgentConfigValues(storedSession.toolType);
 
-	// Resolve the agent's binary path. Without this, Cue falls back to the bare
-	// command name (e.g., 'claude'), which fails with ENOENT when spawn() can't
-	// find it on PATH.
-	let resolvedAgentPath =
-		typeof agentConfigValues.customPath === 'string' && agentConfigValues.customPath
-			? agentConfigValues.customPath
-			: undefined;
-	if (!resolvedAgentPath && deps.resolveAgentPath) {
-		resolvedAgentPath = (await deps.resolveAgentPath(storedSession.toolType)) || undefined;
+	// Resolve the agent's binary path.
+	let resolvedAgentPath: string | undefined;
+	if (deps.resolveAgentBinary) {
+		resolvedAgentPath = await deps.resolveAgentBinary({
+			session: storedSession,
+			agentConfigValues,
+		});
 		if (isLaunchCancelled(signal)) return stoppedResult();
+	} else {
+		resolvedAgentPath =
+			typeof agentConfigValues.customPath === 'string' && agentConfigValues.customPath
+				? agentConfigValues.customPath
+				: undefined;
+		if (!resolvedAgentPath && deps.resolveAgentPath) {
+			resolvedAgentPath = (await deps.resolveAgentPath(storedSession.toolType)) || undefined;
+			if (isLaunchCancelled(signal)) return stoppedResult();
+		}
+	}
+
+	const appendSystemPrompt = deps.getAppendSystemPrompt
+		? await deps.getAppendSystemPrompt(storedSession.id)
+		: undefined;
+	if (isLaunchCancelled(signal)) return stoppedResult();
+
+	// The subscription's tier / model / effort outranks the agent's own
+	// config for this run only. A tier or effort the provider cannot
+	// honor falls back to the agent's value and is logged as a warning,
+	// so a run never silently lands on a different model than asked.
+	const turn = resolveCueTurnSettings(
+		storedSession.toolType,
+		turnSettings,
+		storedSession.customModel,
+		storedSession.customEffort
+	);
+	const turnNote = describeTurnSettings(turn);
+	if (turnNote) {
+		const line = `[CUE] "${subscriptionName}" model: ${turnNote}`;
+		if (turn.warnings.length > 0) deps.onLog('warn', line);
+		else deps.onLog('cue', line);
 	}
 
 	const result = await deps.executeCuePrompt({
@@ -276,8 +390,8 @@ export async function executeCueRunAction(
 		customArgs: storedSession.customArgs,
 		customEnvVars: storedSession.customEnvVars,
 		requiredSecrets: storedSession.requiredSecrets,
-		customModel: storedSession.customModel,
-		customEffort: storedSession.customEffort,
+		customModel: turn.model,
+		customEffort: turn.effort,
 		// Claude token-source selection (TUI / API / dynamic), read from
 		// the same persisted session record that supplies customModel
 		// above, so Cue runs honor the triggering agent's choice.
@@ -287,6 +401,8 @@ export async function executeCueRunAction(
 		onLog: deps.onLog,
 		sshStore: deps.sshStore,
 		agentConfigValues,
+		onRunTranscript: deps.getOnRunTranscript?.(storedSession.id),
+		appendSystemPrompt,
 		isServerMode: deps.isServerMode,
 		signal,
 	});

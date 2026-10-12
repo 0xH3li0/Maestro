@@ -24,6 +24,7 @@ import {
 } from './searchableSettingsMisc';
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
+import type { EncoreFeatureFlags } from '../../types';
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
@@ -40,7 +41,8 @@ export interface SearchableSetting {
 		| 'ssh'
 		| 'environment'
 		| 'encore'
-		| 'prompts';
+		| 'prompts'
+		| `plugin-settings:${string}`;
 	/** Human-readable tab label */
 	tabLabel: string;
 	/** The setting's visible title */
@@ -58,6 +60,13 @@ export interface SearchableSetting {
 	 * does render so the result still lands somewhere meaningful.
 	 */
 	jumpToId?: string;
+	/**
+	 * Encore Feature this setting configures. The entry is left out of search
+	 * while that feature is off, so a disabled feature's options cannot be
+	 * found. Do NOT set it on the feature's own tile entry: the tile is how the
+	 * user turns the feature on, so it has to stay findable.
+	 */
+	requiresEncore?: keyof EncoreFeatureFlags;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,33 +90,44 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
  * Search settings by query string. Matches against label, description, tab label, and keywords.
  * Returns matching settings sorted by relevance (label match first, then description, then keywords).
  */
-export function searchSettings(query: string): SearchableSetting[] {
+export function searchSettings(
+	query: string,
+	additional: SearchableSetting[] = [],
+	encoreFeatures?: Partial<EncoreFeatureFlags>
+): SearchableSetting[] {
 	if (!query.trim()) return [];
 	const q = query.toLowerCase().trim();
 	const terms = q.split(/\s+/);
 
-	return ALL_SEARCHABLE_SETTINGS.map((setting) => {
-		const label = setting.label.toLowerCase();
-		const desc = (setting.description || '').toLowerCase();
-		const tabLabel = setting.tabLabel.toLowerCase();
-		const keywords = (setting.keywords || []).join(' ').toLowerCase();
-		const all = `${label} ${desc} ${tabLabel} ${keywords}`;
+	return [...ALL_SEARCHABLE_SETTINGS, ...additional]
+		.filter(
+			(setting) =>
+				!encoreFeatures ||
+				!setting.requiresEncore ||
+				encoreFeatures[setting.requiresEncore] === true
+		)
+		.map((setting) => {
+			const label = setting.label.toLowerCase();
+			const desc = (setting.description || '').toLowerCase();
+			const tabLabel = setting.tabLabel.toLowerCase();
+			const keywords = (setting.keywords || []).join(' ').toLowerCase();
+			const all = `${label} ${desc} ${tabLabel} ${keywords}`;
 
-		// Every search term must appear somewhere
-		const allMatch = terms.every((term) => all.includes(term));
-		if (!allMatch) return null;
+			// Every search term must appear somewhere
+			const allMatch = terms.every((term) => all.includes(term));
+			if (!allMatch) return null;
 
-		// Score: label match is strongest, then description, then keywords
-		let score = 0;
-		for (const term of terms) {
-			if (label.includes(term)) score += 3;
-			else if (desc.includes(term)) score += 2;
-			else if (tabLabel.includes(term)) score += 1;
-			else if (keywords.includes(term)) score += 1;
-		}
+			// Score: label match is strongest, then description, then keywords
+			let score = 0;
+			for (const term of terms) {
+				if (label.includes(term)) score += 3;
+				else if (desc.includes(term)) score += 2;
+				else if (tabLabel.includes(term)) score += 1;
+				else if (keywords.includes(term)) score += 1;
+			}
 
-		return { setting, score };
-	})
+			return { setting, score };
+		})
 		.filter(Boolean)
 		.sort((a, b) => b!.score - a!.score)
 		.map((entry) => entry!.setting);

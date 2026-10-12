@@ -13,7 +13,14 @@
 
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
-import type { CueCommand, CueEvent, CueSubscription } from './cue-types';
+import type {
+	CueAutoRunConfig,
+	CueCommand,
+	CueEvent,
+	CueNotifyConfig,
+	CueSubscription,
+} from './cue-types';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import {
 	getQueuedEvents,
 	clearPersistedQueue,
@@ -49,6 +56,15 @@ export interface PersistableQueueEntry {
 	 * crash leftover), which keeps the wall-clock rule.
 	 */
 	drainedAt?: number;
+	/** Captured Auto Run payload for `action: autorun`. The run launches from
+	 *  THIS, not from the subscription, so it has to survive a restart with the
+	 *  row or the restored run has no documents. */
+	autoRun?: CueAutoRunConfig;
+	/** Resolved notify config for `action: notify`. The message also rides the
+	 *  `prompt` slot, but `sticky` lives nowhere else. */
+	notify?: CueNotifyConfig;
+	/** The subscription's model choice, so a restored run keeps it. */
+	turnSettings?: CueTurnSettings;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
@@ -120,6 +136,9 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			queuedAt: entry.queuedAt,
 			chainRootId: entry.chainRootId ?? null,
 			parentEventId: entry.parentEventId ?? null,
+			autoRunJson: entry.autoRun ? JSON.stringify(entry.autoRun) : null,
+			notifyJson: entry.notify ? JSON.stringify(entry.notify) : null,
+			turnSettingsJson: entry.turnSettings ? JSON.stringify(entry.turnSettings) : null,
 		};
 		safePersistQueuedEvent(record);
 	}
@@ -244,6 +263,9 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			let cliOutput: { target: string } | undefined;
 			let command: CueCommand | undefined;
 			let drainedAt: number | undefined;
+			let autoRun: CueAutoRunConfig | undefined;
+			let notify: CueNotifyConfig | undefined;
+			let turnSettings: CueTurnSettings | undefined;
 			try {
 				const parsed = JSON.parse(row.eventJson) as CueEvent & { [DRAINED_AT_KEY]?: unknown };
 				if (typeof parsed[DRAINED_AT_KEY] === 'number') drainedAt = parsed[DRAINED_AT_KEY];
@@ -251,6 +273,9 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				event = parsed;
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
+				autoRun = row.autoRunJson ? JSON.parse(row.autoRunJson) : undefined;
+				notify = row.notifyJson ? JSON.parse(row.notifyJson) : undefined;
+				turnSettings = row.turnSettingsJson ? JSON.parse(row.turnSettingsJson) : undefined;
 			} catch (err) {
 				const errorMessage = err instanceof Error ? err.message : String(err);
 				deps.onLog(
@@ -295,6 +320,9 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				queuedAt: drainedAt !== undefined ? currentTime - ageMs : row.queuedAt,
 				chainRootId: row.chainRootId ?? undefined,
 				parentEventId: row.parentEventId ?? undefined,
+				autoRun,
+				notify,
+				turnSettings,
 				...(drainedAt !== undefined ? { drainedAt } : {}),
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);

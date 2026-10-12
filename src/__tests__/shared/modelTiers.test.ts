@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	TIER_LEVELS,
 	asTierLevel,
+	cheapResumeTurnSettings,
 	cheapTurnSettings,
 	resolveEffortLevel,
 	resolveTierModel,
@@ -89,5 +90,39 @@ describe('cheap synopsis turn', () => {
 	it('yields all-undefined for a provider with neither axis mapped', () => {
 		// Callers fall back to the agent's own config, so a synopsis still runs.
 		expect(cheapTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
+	});
+});
+
+describe('cheap synopsis turn resumed on its session', () => {
+	it('drops to the bottom of both ladders when the window does not shrink', () => {
+		expect(cheapResumeTurnSettings('claude-code', { model: 'opus', effort: 'max' })).toEqual({
+			model: 'haiku',
+			effort: 'low',
+		});
+	});
+
+	it('keeps the session model when the cheap one has a smaller context window', () => {
+		// Resuming replays the transcript: what fit a 1M window cannot fit 200k.
+		// Effort still drops, since that costs nothing to read.
+		expect(cheapResumeTurnSettings('claude-code', { model: 'opus[1m]', effort: 'max' })).toEqual({
+			model: 'opus[1m]',
+			effort: 'low',
+		});
+	});
+
+	it('inherits the session values on a provider with no cheap tier', () => {
+		expect(cheapResumeTurnSettings('codex', { model: 'gpt-5-codex', effort: 'high' })).toEqual({
+			model: 'gpt-5-codex',
+			effort: 'minimal',
+		});
+		expect(cheapResumeTurnSettings('opencode', { model: 'm', effort: 'e' })).toEqual({
+			model: 'm',
+			effort: 'e',
+		});
+	});
+
+	it('works with nothing configured on the session', () => {
+		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
+		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
 	});
 });

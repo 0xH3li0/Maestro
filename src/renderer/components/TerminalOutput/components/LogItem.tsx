@@ -12,6 +12,7 @@ import {
 	Save,
 	Share2,
 	Hammer,
+	Navigation,
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
@@ -32,6 +33,7 @@ import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
+import { ContextCompactionCard } from '../../ContextCompactionCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
@@ -277,6 +279,57 @@ export const LogItem = memo(
 				<div className="whitespace-pre-wrap text-sm break-words">{linkifyNode(text, theme)}</div>
 			);
 
+		// A slash command expands to a long authored prompt the user already knows,
+		// so its body starts COLLAPSED to the first line and the header pill toggles
+		// it. It rides the per-log `isExpanded` state rather than local state so the
+		// choice survives the virtualized list remounting the row.
+		const renderAiCommandCard = (aiCommand: NonNullable<LogEntry['aiCommand']>) => {
+			const firstLine = filteredText.split('\n').find((line) => line.trim()) ?? '';
+			const hasMore = filteredText.trim() !== firstLine.trim();
+			return (
+				<div className="space-y-3">
+					<button
+						type="button"
+						onClick={handleExpandToggle}
+						aria-expanded={isExpanded}
+						className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left hover:opacity-80 transition-opacity"
+						style={{
+							backgroundColor: theme.colors.accent + '15',
+							borderColor: theme.colors.accent + '30',
+						}}
+					>
+						<span className="font-mono font-bold text-sm" style={{ color: theme.colors.accent }}>
+							{aiCommand.command}:
+						</span>
+						<span className="text-sm flex-1 min-w-0" style={{ color: theme.colors.textMain }}>
+							{aiCommand.description}
+						</span>
+						{isExpanded ? (
+							<ChevronUp className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
+						) : (
+							<ChevronDown
+								className="w-3.5 h-3.5 shrink-0"
+								style={{ color: theme.colors.textDim }}
+							/>
+						)}
+					</button>
+					{isExpanded ? (
+						<div style={{ color: theme.colors.textMain }}>{renderAiCommandBody(filteredText)}</div>
+					) : (
+						<div
+							className="text-sm truncate cursor-pointer"
+							style={{ color: theme.colors.textDim }}
+							onClick={handleExpandToggle}
+							title="Show full prompt"
+						>
+							{firstLine}
+							{hasMore && ' …'}
+						</div>
+					)}
+				</div>
+			);
+		};
+
 		// Command mode: a `!command` run renders as its own terminal-output card
 		// (monospace, ANSI preserved) rather than a markdown chat bubble.
 		if (log.shellCommand) {
@@ -337,6 +390,25 @@ export const LogItem = memo(
 					<div className="hidden sm:block w-20 shrink-0" />
 					<div className="flex-1 min-w-0">
 						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
+		// Maestro compacted the conversation to get a refused turn through. Same
+		// clean pill row as a hand-off: it marks where it happened and asks nothing.
+		if (log.contextCompaction) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<ContextCompactionCard log={log} theme={theme} />
 					</div>
 				</div>
 			);
@@ -725,6 +797,8 @@ export const LogItem = memo(
 							>
 								<span>No matches found for filter</span>
 							</div>
+						) : log.aiCommand ? (
+							renderAiCommandCard(log.aiCommand)
 						) : shouldCollapse && !isExpanded ? (
 							<div>
 								<div
@@ -814,29 +888,6 @@ export const LogItem = memo(
 											<span style={{ color: theme.colors.accent }}>$ </span>
 											{filteredText}
 										</div>
-									) : log.aiCommand ? (
-										<div className="space-y-3">
-											<div
-												className="flex items-center gap-2 px-3 py-2 rounded-lg border"
-												style={{
-													backgroundColor: theme.colors.accent + '15',
-													borderColor: theme.colors.accent + '30',
-												}}
-											>
-												<span
-													className="font-mono font-bold text-sm"
-													style={{ color: theme.colors.accent }}
-												>
-													{log.aiCommand.command}:
-												</span>
-												<span className="text-sm" style={{ color: theme.colors.textMain }}>
-													{log.aiCommand.description}
-												</span>
-											</div>
-											<div style={{ color: theme.colors.textMain }}>
-												{renderAiCommandBody(filteredText)}
-											</div>
-										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
 										<MarkdownRenderer
@@ -893,29 +944,6 @@ export const LogItem = memo(
 									>
 										<span style={{ color: theme.colors.accent }}>$ </span>
 										{filteredText}
-									</div>
-								) : log.aiCommand ? (
-									<div className="space-y-3">
-										<div
-											className="flex items-center gap-2 px-3 py-2 rounded-lg border"
-											style={{
-												backgroundColor: theme.colors.accent + '15',
-												borderColor: theme.colors.accent + '30',
-											}}
-										>
-											<span
-												className="font-mono font-bold text-sm"
-												style={{ color: theme.colors.accent }}
-											>
-												{log.aiCommand.command}:
-											</span>
-											<span className="text-sm" style={{ color: theme.colors.textMain }}>
-												{log.aiCommand.description}
-											</span>
-										</div>
-										<div style={{ color: theme.colors.textMain }}>
-											{renderAiCommandBody(filteredText)}
-										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
 									// Rendered markdown for AI responses
@@ -1162,6 +1190,19 @@ export const LogItem = memo(
 								/>
 							</span>
 						)}
+						{/* Steer indicator for messages handed to a turn that was already
+						    running. Same icon and color as the Steer button on a queued card. */}
+						{isUserMessage && isAIMode && log.steered && (
+							<span
+								title="Sent as a steer into the turn that was already running"
+								className="flex items-center"
+							>
+								<Navigation
+									className="w-3.5 h-3.5"
+									style={{ color: theme.colors.accent, opacity: 0.7 }}
+								/>
+							</span>
+						)}
 						{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
 						{isUserMessage && isAIMode && log.delivered && (
 							<span title="Message delivered" className="flex items-center">
@@ -1185,6 +1226,7 @@ export const LogItem = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.steered === nextProps.log.steered &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
@@ -1212,6 +1254,8 @@ export const LogItem = memo(
 			// consult tab id the jump arrow needs only arrives with the answer.
 			prevProps.log.delegation?.status === nextProps.log.delegation?.status &&
 			prevProps.log.delegation?.toTabId === nextProps.log.delegation?.toTabId &&
+			// A compaction pill settles the same way: spinner to outcome, same text.
+			prevProps.log.contextCompaction?.status === nextProps.log.contextCompaction?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

@@ -20,6 +20,8 @@ import {
 	Zap,
 	Clapperboard,
 	Bot,
+	ScanEye,
+	KeyRound,
 	ShieldCheck,
 	ShieldAlert,
 	ShieldX,
@@ -61,6 +63,8 @@ const BUILTIN_ICONS: Record<string, LucideIcon> = {
 	maestroCue: Zap,
 	directorNotes: Clapperboard,
 	pianola: Bot,
+	computerHistory: ScanEye,
+	maestroRun: KeyRound,
 };
 
 const TRUST_META: Record<

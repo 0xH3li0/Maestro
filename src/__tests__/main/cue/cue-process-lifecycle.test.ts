@@ -185,6 +185,83 @@ describe('cue-process-lifecycle', () => {
 		});
 	});
 
+	// The result's `stdout` is cleaned text, so a caller that needs the stream
+	// the agent actually printed (the chain of thought export) reads it here.
+	describe('onRawStdout (raw stream hook)', () => {
+		// `mockReturnValue` outlives `clearAllMocks`, so put the no-parser default
+		// back for the tests that run after these.
+		afterEach(() => {
+			mockGetOutputParser.mockReturnValue(null);
+		});
+
+		const parsingParser = {
+			parseJsonLine: (line: string) => {
+				const msg = JSON.parse(line);
+				return msg.type === 'result' ? { type: 'result', text: msg.result } : null;
+			},
+		};
+
+		it('hands over the raw stream while the result carries the cleaned text', async () => {
+			mockGetOutputParser.mockReturnValue(parsingParser as any);
+			const onRawStdout = vi.fn();
+			const raw = [
+				JSON.stringify({ type: 'system', note: 'init' }),
+				JSON.stringify({ type: 'result', result: 'Cleaned answer' }),
+			].join('\n');
+
+			const resultPromise = runProcess(
+				'run-1',
+				createSpec(),
+				createOptions({ toolType: 'claude-code', onRawStdout })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+			mockChild.stdout.emit('data', raw.slice(0, 20));
+			mockChild.stdout.emit('data', raw.slice(20));
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.stdout).toBe('Cleaned answer');
+			expect(onRawStdout).toHaveBeenCalledTimes(1);
+			expect(onRawStdout).toHaveBeenCalledWith(raw);
+		});
+
+		it('leaves the result unchanged when the observer throws', async () => {
+			mockGetOutputParser.mockReturnValue(parsingParser as any);
+			const raw = JSON.stringify({ type: 'result', result: 'Answer' });
+
+			const run = async (options: Record<string, unknown>) => {
+				const resultPromise = runProcess('run-1', createSpec(), createOptions(options));
+				await vi.advanceTimersByTimeAsync(0);
+				mockChild.stdout.emit('data', raw);
+				mockChild.emit('close', 0);
+				return resultPromise;
+			};
+
+			const without = await run({ toolType: 'claude-code' });
+			const throwing = await run({
+				toolType: 'claude-code',
+				onRawStdout: () => {
+					throw new Error('observer failed');
+				},
+			});
+
+			expect(throwing).toEqual(without);
+			expect(throwing.status).toBe('completed');
+		});
+
+		it('is not called when the process never started', async () => {
+			mockSpawn.mockImplementationOnce(() => {
+				throw new Error('spawn blew up');
+			});
+			const onRawStdout = vi.fn();
+
+			const result = await runProcess('run-1', createSpec(), createOptions({ onRawStdout }));
+
+			expect(result.status).toBe('failed');
+			expect(onRawStdout).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('runProcess', () => {
 		it('neither spawns nor registers a process for a run already stopped', async () => {
 			const controller = new AbortController();

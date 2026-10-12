@@ -103,6 +103,16 @@ export interface ProcessRunOptions {
 	 * spawn: a stopped run never starts a process (see cue-launch-cancel.ts).
 	 */
 	signal?: AbortSignal;
+	/**
+	 * Receives the run's RAW stdout, byte for byte, once the child has settled
+	 * and just before the result is returned. The result's own `stdout` is the
+	 * cleaned text, so this is the only way a caller can read the stream the
+	 * agent actually printed. Called at most once, and for a child that reported
+	 * a spawn error too (it printed nothing, so the text is then empty). A throw
+	 * from it is swallowed: an observer cannot be allowed to change what a run
+	 * reports.
+	 */
+	onRawStdout?: (rawStdout: string) => void;
 }
 
 // ─── Module State ────────────────────────────────────────────────────────────
@@ -399,8 +409,16 @@ export async function runProcess(
 	spec: SpawnSpec,
 	options: ProcessRunOptions
 ): Promise<ProcessRunResult> {
-	const { toolType, timeoutMs, sshRemoteEnabled, sshStdinScript, stdinPrompt, onLog, onActivity } =
-		options;
+	const {
+		toolType,
+		timeoutMs,
+		sshRemoteEnabled,
+		sshStdinScript,
+		stdinPrompt,
+		onLog,
+		onActivity,
+		onRawStdout,
+	} = options;
 
 	// The last check before the spawn; nothing below awaits until the child
 	// is started and registered, so a stop cannot slip in between.
@@ -511,14 +529,23 @@ export async function runProcess(
 	untrack();
 	if (timeoutTimer) clearTimeout(timeoutTimer);
 
-	const finish = (status: CueRunStatus, exitCode: number | null): ProcessRunResult => ({
-		stdout: capture.getCleanStdout(),
-		stderr: extractCleanStderr(stderr, toolType),
-		exitCode,
-		status,
-		providerSessionId: capture.providerSessionId,
-		usage: capture.usage,
-	});
+	const finish = (status: CueRunStatus, exitCode: number | null): ProcessRunResult => {
+		if (onRawStdout) {
+			try {
+				onRawStdout(stdout);
+			} catch {
+				// An observer of the raw stream must not be able to change the result.
+			}
+		}
+		return {
+			stdout: capture.getCleanStdout(),
+			stderr: extractCleanStderr(stderr, toolType),
+			exitCode,
+			status,
+			providerSessionId: capture.providerSessionId,
+			usage: capture.usage,
+		};
+	};
 
 	// Spawn errors that arrive after spawn returned (e.g. ENOENT).
 	if (exit.spawnError) {

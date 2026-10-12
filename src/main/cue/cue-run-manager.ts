@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import type {
+	CueAutoRunConfig,
 	CueCommand,
 	CueEvent,
 	CueNotifyConfig,
@@ -34,6 +35,7 @@ import { captureException } from '../utils/sentry';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { runMaestroCliSend } from './cue-cli-executor';
+import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 
 /** Cap on persisted error_message length - enough to carry an agent error
  *  envelope / stderr tail without bloating the journal DB. */
@@ -115,6 +117,14 @@ export interface QueuedEvent {
 	 *  need to re-derive anything. Optional - non-notify actions leave
 	 *  this undefined. */
 	notify?: CueNotifyConfig;
+	/** Captured Auto Run payload for `action: autorun` runs. Travels with the
+	 *  run so the launch is pinned to the documents chosen when the run was
+	 *  scheduled, rather than re-resolved from the agent's (mutable) Auto Run
+	 *  folder at fire time. Optional - other actions leave this undefined. */
+	autoRun?: CueAutoRunConfig;
+	/** The subscription's `tier` / `model` / `effort`, resolved against the
+	 *  target agent at spawn time. Undefined when the subscription sets none. */
+	turnSettings?: CueTurnSettings;
 	/** Phase 12A - DB row id for the persisted copy, when persistence is enabled. */
 	persistId?: string;
 	/** Phase 01 - chain lineage propagated from the dispatching parent. When
@@ -143,6 +153,8 @@ export interface CueRunManagerDeps {
 		 * (see `cue-launch-cancel.ts`); both phases of a two-phase run get it.
 		 */
 		signal?: AbortSignal;
+		autoRun?: CueAutoRunConfig;
+		turnSettings?: CueTurnSettings;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -241,6 +253,14 @@ export interface CueRunManager {
 		 * and sticky flag when they drain.
 		 */
 		notify?: CueNotifyConfig,
+		/**
+		 * Captured Auto Run payload for `action: autorun` runs. Threaded
+		 * through the queue alongside `notify` so a concurrency-gated
+		 * scheduled run still launches the documents it was scheduled with.
+		 */
+		autoRun?: CueAutoRunConfig,
+		/** The subscription's model choice, threaded through the queue. */
+		turnSettings?: CueTurnSettings,
 		/**
 		 * Skip the `queue_size` cap (and the queue_size <= 0 drop) when this
 		 * event has to wait. Passed by the engine when it restores rows a
@@ -466,7 +486,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.command,
 				entry.chainRootId,
 				entry.parentEventId,
-				entry.notify
+				entry.notify,
+				entry.autoRun,
+				entry.turnSettings
 			);
 		}
 
@@ -516,7 +538,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		command?: CueCommand,
 		incomingChainRootId?: string,
 		parentEventId?: string,
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		autoRun?: CueAutoRunConfig,
+		turnSettings?: CueTurnSettings
 	): Promise<void> {
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
@@ -596,6 +620,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				action,
 				command,
 				notify,
+				autoRun,
+				turnSettings,
 				signal: abortController.signal,
 			});
 			if (!activeRuns.has(runId)) {
@@ -706,6 +732,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						subscriptionName: `${subscriptionName}:output`,
 						event: outputEvent,
 						timeoutMs,
+						// Same agent, same subscription: the follow-up runs on the
+						// model the subscription chose for the main task.
+						turnSettings,
 						// The same signal: a stop during this phase cancels its launch too.
 						signal: abortController.signal,
 					});
@@ -915,6 +944,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			chainRootId?: string,
 			parentEventId?: string,
 			notify?: CueNotifyConfig,
+			autoRun?: CueAutoRunConfig,
+			turnSettings?: CueTurnSettings,
 			exemptFromQueueCap?: boolean
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
@@ -1008,6 +1039,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					action,
 					command,
 					notify,
+					autoRun,
+					turnSettings,
 					persistId,
 					chainRootId,
 					parentEventId,
@@ -1030,6 +1063,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						queuedAt,
 						chainRootId,
 						parentEventId,
+						autoRun,
+						notify,
+						turnSettings,
 					});
 				}
 
@@ -1057,7 +1093,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				command,
 				chainRootId,
 				parentEventId,
-				notify
+				notify,
+				autoRun,
+				turnSettings
 			);
 		},
 

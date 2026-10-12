@@ -511,6 +511,87 @@ describe('createCueRunManager', () => {
 		});
 	});
 
+	describe('turn settings (tier / model / effort)', () => {
+		const settings = { tier: 'high' as const, effort: 'low' as const };
+
+		/** `execute` with everything but the trailing model choice left default. */
+		function executeWithSettings(
+			manager: ReturnType<typeof createCueRunManager>,
+			subscriptionName: string,
+			outputPrompt?: string
+		): void {
+			manager.execute(
+				'session-1',
+				'prompt',
+				createEvent(),
+				subscriptionName,
+				outputPrompt,
+				undefined, // chainDepth
+				undefined, // cliOutput
+				undefined, // action
+				undefined, // command
+				undefined, // queuedAtOverride
+				undefined, // pipelineName
+				undefined, // chainRootId
+				undefined, // parentEventId
+				undefined, // notify
+				undefined, // autoRun
+				settings
+			);
+		}
+
+		it('hands the model choice to onCueRun on an immediate dispatch', () => {
+			const deps = createDeps({ onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})) });
+			const manager = createCueRunManager(deps);
+
+			executeWithSettings(manager, 'deep-review');
+
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({ subscriptionName: 'deep-review', turnSettings: settings })
+			);
+		});
+
+		it('keeps the model choice on a run that waited in the queue', async () => {
+			let resolveFirst: ((val: CueRunResult) => void) | undefined;
+			const deps = createDeps({
+				onCueRun: vi.fn(
+					() =>
+						new Promise<CueRunResult>((resolve) => {
+							resolveFirst ??= resolve;
+						})
+				),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'busy');
+			executeWithSettings(manager, 'deep-review'); // max_concurrent 1 -> queued
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+
+			resolveFirst!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(deps.onCueRun).toHaveBeenLastCalledWith(
+				expect.objectContaining({ subscriptionName: 'deep-review', turnSettings: settings })
+			);
+		});
+
+		it('runs the output-prompt phase on the same model choice', async () => {
+			const deps = createDeps();
+			const manager = createCueRunManager(deps);
+
+			executeWithSettings(manager, 'deep-review', 'summarize it');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+			expect(deps.onCueRun).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					subscriptionName: 'deep-review:output',
+					turnSettings: settings,
+				})
+			);
+		});
+	});
+
 	describe('DB recording', () => {
 		it('updates DB status on natural completion', async () => {
 			const deps = createDeps();
@@ -1492,6 +1573,84 @@ describe('createCueRunManager', () => {
 			);
 		});
 
+		// A scheduled Auto Run that fires behind a busy slot waits in the queue.
+		// Its documents ride the run rather than being re-read from the
+		// subscription, so they have to be written with the row.
+		it('persists the Auto Run payload of a queued autorun run', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			const autoRun = { documents: ['/repo/.maestro/playbooks/ship-it.md'] };
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute(
+				'session-1',
+				'',
+				createEvent(),
+				'scheduled',
+				undefined,
+				undefined,
+				undefined,
+				'autorun',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				autoRun
+			); // queued
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ action: 'autorun', autoRun })
+			);
+		});
+
+		it('persists the notify config of a queued notify run', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			const notify = { message: 'Deploy finished', sticky: true };
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute(
+				'session-1',
+				'Deploy finished',
+				createEvent(),
+				'reminder',
+				undefined,
+				undefined,
+				undefined,
+				'notify',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				notify
+			); // queued
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ action: 'notify', notify })
+			);
+		});
+
 		it('calls queuePersistence.remove when a queued event drains', async () => {
 			const persistence = makeMockPersistence();
 			let resolveFirst: ((r: CueRunResult) => void) | null = null;
@@ -1807,6 +1966,8 @@ describe('createCueRunManager', () => {
 					undefined,
 					undefined,
 					Date.now(),
+					undefined,
+					undefined,
 					undefined,
 					undefined,
 					undefined,

@@ -305,6 +305,50 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
 		});
 
+		it('shows the steer indicator for a message steered into a running turn', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'go left instead', source: 'user', steered: true }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(
+				screen.getByTitle('Sent as a steer into the turn that was already running')
+			).toBeInTheDocument();
+		});
+
+		it('does not show the steer indicator for a message that started its own turn', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'Regular message', source: 'user', forceParallel: true }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(
+				screen.queryByTitle('Sent as a steer into the turn that was already running')
+			).not.toBeInTheDocument();
+			// The two marks are separate: a force-sent message keeps its hammer.
+			expect(
+				screen.getByTitle('Sent via forced parallel execution (bypassed queue)')
+			).toBeInTheDocument();
+		});
+
 		it('renders error log entries through the markdown renderer to preserve line breaks', () => {
 			// Issue #775: agent error messages contain status + explanation separated by
 			// newlines; rendering them inside a plain <p> collapsed the whitespace, so
@@ -3218,9 +3262,15 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Header pill still renders, body goes through the markdown stack
-			// (react-markdown is mocked to a div with this testid).
+			// Collapsed by default: only the first line shows, as plain text.
 			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			expect(screen.getByText(/## Step 1/)).toBeInTheDocument();
+			expect(screen.queryByText(/what moved/)).not.toBeInTheDocument();
+
+			// Clicking the header expands the body through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			fireEvent.click(screen.getByText('/archive-playbooks:'));
 			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
 		});
 
@@ -3246,6 +3296,7 @@ describe('TerminalOutput', () => {
 
 			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
+			fireEvent.click(screen.getByText('/pr-review:'));
 
 			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
 

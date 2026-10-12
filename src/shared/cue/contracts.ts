@@ -4,7 +4,8 @@
  * Keep these types runtime-agnostic and free of Node/Electron dependencies.
  */
 
-import type { UsageStats } from '../types';
+import type { TaskSelectionMode, UsageStats } from '../types';
+import type { EffortLevel, ModelTier } from '../modelTiers';
 
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -112,7 +113,7 @@ export type CueGitHubLabelTarget = 'pr' | 'issue' | 'both';
 export const CUE_GITHUB_LABEL_TARGETS: CueGitHubLabelTarget[] = ['pr', 'issue', 'both'];
 
 /** What a subscription does when it fires. */
-export type CueAction = 'prompt' | 'command' | 'notify';
+export type CueAction = 'prompt' | 'command' | 'notify' | 'autorun';
 
 /** Sub-mode of a `command` action. */
 export type CueCommandMode = 'shell' | 'cli';
@@ -133,6 +134,89 @@ export interface CueNotifyConfig {
 	/** When true, render the toast as dismissible (no auto-timeout - the
 	 *  user must explicitly close it). Maps to `notifyToast({ dismissible: true })`. */
 	sticky?: boolean;
+}
+
+/** The three places a worktree-bound Auto Run can land. */
+export const CUE_AUTORUN_WORKTREE_MODES = [
+	'existing-open',
+	'existing-closed',
+	'create-new',
+] as const;
+export type CueAutoRunWorktreeMode = (typeof CUE_AUTORUN_WORKTREE_MODES)[number];
+
+/**
+ * Where an `action: 'autorun'` run executes when it is NOT the owning agent's
+ * own checkout. The cue.yaml spelling of the Auto Run window's "Run in
+ * Worktree" choice; `src/shared/cue/autorun-worktree.ts` converts it to and
+ * from the `WorktreeRunTarget` the launch path speaks.
+ *
+ * Everything here is captured when the run is scheduled and resolved when it
+ * FIRES, so each mode names something that can still be found then: an agent
+ * id, a path on disk, or a branch to create.
+ */
+export interface CueAutoRunWorktree {
+	mode: CueAutoRunWorktreeMode;
+	/** `existing-open`: id of the worktree agent to run in. */
+	agent_id?: string;
+	/** `existing-closed`: absolute path of a worktree already on disk. */
+	path?: string;
+	/** `create-new`: branch the new worktree is created on. */
+	branch?: string;
+	/** Ref a new branch is cut from, and the pull request's target branch. */
+	base_branch?: string;
+	/** Open a pull request when the run finishes. Absent means no. */
+	create_pr?: boolean;
+}
+
+/**
+ * Auto Run config for `action: 'autorun'` subscriptions.
+ *
+ * An autorun subscription launches an Auto Run in the owning agent instead of
+ * spawning a prompt. Paired with a `time.once` trigger this is what backs
+ * "schedule this Auto Run for 6am" - the Cue engine already owns persistence,
+ * the missed-fire grace window, and the activity log, so scheduling does not
+ * need a second timer of its own.
+ *
+ * `documents` is deliberately a list of ABSOLUTE paths captured at schedule
+ * time rather than a folder resolved when the run fires. An agent's Auto Run
+ * folder is a mutable setting: resolving it late means repointing the folder
+ * between scheduling and firing silently runs the agent against a different
+ * set of documents than the user chose.
+ */
+export interface CueAutoRunConfig {
+	/** Absolute paths to the `.md` documents to run, in order. Non-empty. */
+	documents: string[];
+	/** Per-document "uncheck every task when the run finishes" flags, aligned
+	 *  index-for-index with {@link documents}. Absent means all-false. */
+	reset_on_completion?: boolean[];
+	/** Extra instructions prepended to the run, mirroring the Auto Run panel's
+	 *  prompt box. */
+	prompt?: string;
+	/** Re-run the document set once every task is checked off. */
+	loop_enabled?: boolean;
+	/** Loop ceiling. Only meaningful when `loop_enabled` is true. */
+	max_loops?: number;
+	/** Run-scoped model override. Wins over the agent's configured model for
+	 *  this run only and is never written back to the session. */
+	model?: string;
+	/** Run-scoped reasoning-effort override. Same scope rules as `model`. */
+	effort?: string;
+	/** "Fresh context per" in the Auto Run window: one agent turn per task
+	 *  (`task`, the default when absent) or one per document (`document`). */
+	task_selection_mode?: TaskSelectionMode;
+	/** Ignore the documents' `MAESTRO:MODEL` hints and run every task on the
+	 *  run's own model. Absent means the hints apply. */
+	ignore_model_hints?: boolean;
+	/** Resume on its own after an agent error pauses the run. Absent means ON,
+	 *  as everywhere else (see `resolveAutoResumePolicy`). */
+	auto_resume_on_error?: boolean;
+	/** Minutes between auto-resume attempts. Absent means the default. */
+	auto_resume_after_min?: number;
+	/** Auto-resume attempt ceiling. Absent means the default. */
+	max_auto_resumes?: number;
+	/** Run in a worktree instead of the owning agent's own checkout. Absent
+	 *  means the owning agent's checkout. */
+	worktree?: CueAutoRunWorktree;
 }
 
 /**
@@ -201,6 +285,9 @@ export interface CueSubscription {
 	/** Toast notification config for `action: 'notify'` subscriptions.
 	 *  Required when `action === 'notify'`. See {@link CueNotifyConfig}. */
 	notify?: CueNotifyConfig;
+	/** Auto Run payload for `action: 'autorun'` subscriptions.
+	 *  Required when `action === 'autorun'`. See {@link CueAutoRunConfig}. */
+	auto_run?: CueAutoRunConfig;
 	watch?: string;
 	source_session?: string | string[];
 	/** Stable session ID(s) for chain subscriptions (event === 'agent.completed').
@@ -291,6 +378,19 @@ export interface CueSubscription {
 	 *  agents later in the chain can access it via per-source template variables
 	 *  like {{CUE_OUTPUT_<NAME>}}. */
 	forward_output_from?: string[];
+	/** Model tier for the agent run (`low | medium | high`), mapped per provider
+	 *  by `resolveTierModel` (Claude: `high` -> `opus`). Mutually exclusive with
+	 *  `model`. Omitted = the agent's configured model. Fan-out targets share it.
+	 *  Ignored by `action: command` and `action: notify`. */
+	tier?: ModelTier;
+	/** Exact model id handed to the agent verbatim. For a model a tier cannot
+	 *  name, or a provider with no tier table (Codex, OpenCode). Mutually
+	 *  exclusive with `tier`. */
+	model?: string;
+	/** Effort level (`low | medium | high`), mapped to the provider's own ladder
+	 *  by `resolveEffortLevel` (Claude: `high` -> `max`). Omitted = the agent's
+	 *  configured effort. */
+	effort?: EffortLevel;
 	/**
 	 * @deprecated Replaced by a downstream `action: command` subscription with
 	 * `command: { mode: 'cli', cli: { command: 'send', target } }`. The

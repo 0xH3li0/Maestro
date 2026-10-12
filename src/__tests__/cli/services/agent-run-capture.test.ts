@@ -234,3 +234,48 @@ describe('captureCliRun', () => {
 		expect(result).toEqual({ success: true });
 	});
 });
+
+describe('captureCliRun agent id', () => {
+	beforeEach(() => {
+		vi.mocked(upsertAgentRun).mockClear();
+	});
+
+	const settle = (): { status: 'completed'; exitCode: number } => ({
+		status: 'completed',
+		exitCode: 0,
+	});
+
+	it('puts the Maestro agent on the run, at its start and at its end', async () => {
+		await captureCliRun(
+			{
+				agentId: 'agent-1',
+				sessionId: 'provider-session-9',
+				toolType: 'claude-code',
+				cwd: '/w',
+				source: 'cli:send',
+			},
+			async () => ({ success: true }),
+			settle
+		);
+
+		const runs = vi.mocked(upsertAgentRun).mock.calls.map(([run]) => run as AgentRun);
+		expect(runs.map((run) => run.status)).toEqual(['running', 'completed']);
+		// The session can be a provider conversation. The agent id never is.
+		for (const run of runs) {
+			expect(run.agentId).toBe('agent-1');
+			expect(run.sessionId).toBe('provider-session-9');
+		}
+	});
+
+	it('leaves the field out when the caller knows no agent', async () => {
+		await captureCliRun(
+			{ toolType: 'claude-code', cwd: '/w', source: 'cli:send' },
+			async () => ({ success: true }),
+			settle
+		);
+
+		for (const [run] of vi.mocked(upsertAgentRun).mock.calls) {
+			expect(run).not.toHaveProperty('agentId');
+		}
+	});
+});

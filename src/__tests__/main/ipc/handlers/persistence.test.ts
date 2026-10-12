@@ -45,6 +45,8 @@ vi.mock('fs/promises', () => ({
 	writeFile: vi.fn(),
 	mkdir: vi.fn(),
 	access: vi.fn(),
+	realpath: vi.fn(),
+	stat: vi.fn(),
 }));
 
 // Mock the logger
@@ -78,6 +80,16 @@ vi.mock('../../../../main/themes', () => ({
 		colors: {},
 	}),
 }));
+
+vi.mock('../../../../main/plugins/plugin-media-tools', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/plugins/plugin-media-tools')>()),
+	resolveMediaRuntime: vi.fn(),
+	getMediaToolStatus: vi.fn(),
+}));
+import {
+	resolveMediaRuntime,
+	getMediaToolStatus,
+} from '../../../../main/plugins/plugin-media-tools';
 
 describe('persistence IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -171,6 +183,7 @@ describe('persistence IPC handlers', () => {
 				'settings:get',
 				'settings:set',
 				'settings:getAll',
+				'settings:mediaStatus',
 				'sessions:getAll',
 				'sessions:getBootstrap',
 				'sessions:getDeferredContent',
@@ -338,7 +351,7 @@ describe('persistence IPC handlers', () => {
 				expect(localEmit).toHaveBeenCalledTimes(1);
 				expect(localEmit.mock.calls[0][0].payload).toEqual({ sessionId: 'A' });
 
-				// Agent Flow calls sessions.focus(B): index.ts emits B directly, then
+				// A plugin calls sessions.focus(B): index.ts emits B directly, then
 				// records it through the shared dedupe. Simulate that record here.
 				noteSessionActivated('B');
 
@@ -372,7 +385,7 @@ describe('persistence IPC handlers', () => {
 				await localSetHandler({}, 'A');
 				expect(localEmit).not.toHaveBeenCalled();
 
-				// Agent Flow directly focuses B mid-window (index.ts emits B on the bus
+				// A plugin directly focuses B mid-window (index.ts emits B on the bus
 				// and records it here). This must cancel the pending A flush.
 				noteSessionActivated('B');
 
@@ -423,7 +436,63 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 
+	it('reads media status using the live host setting', async () => {
+		const runtime = { binaries: {}, models: {} };
+		const status = { profiles: [], models: [], missing: ['model-directory'] };
+		mockSettingsStore.get.mockReturnValue('/models');
+		vi.mocked(resolveMediaRuntime).mockResolvedValue(runtime);
+		vi.mocked(getMediaToolStatus).mockReturnValue(status as never);
+		expect(await handlers.get('settings:mediaStatus')!({})).toEqual(status);
+		expect(resolveMediaRuntime).toHaveBeenCalledWith('/models');
+		expect(getMediaToolStatus).toHaveBeenCalledWith(runtime);
+	});
+
 	describe('settings:set', () => {
+		it.each(['mediaModelDirectory.child', 'mediaModelDirectory.child.deep'])(
+			'rejects nested media key %s without overwriting the directory',
+			async (key) => {
+				mockSettingsStore.get.mockReturnValue('/canonical/models');
+				expect(await handlers.get('settings:set')!({}, key, 'replacement')).toBe(false);
+				expect(mockSettingsStore.set).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(['relative/models', '~/models', 42, null, {}])(
+			'rejects invalid media directory %j without writing',
+			async (value) => {
+				expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', value)).toBe(false);
+				expect(mockSettingsStore.set).not.toHaveBeenCalled();
+			}
+		);
+
+		it('stores a canonical existing media directory', async () => {
+			vi.mocked(fs.realpath).mockResolvedValue('/canonical/models');
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as never);
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '/alias/models')).toBe(
+				true
+			);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith(
+				'mediaModelDirectory',
+				'/canonical/models'
+			);
+		});
+
+		it('rejects missing or non-directory media paths without overwriting the setting', async () => {
+			vi.mocked(fs.realpath).mockRejectedValueOnce(new Error('ENOENT'));
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '/missing')).toBe(
+				false
+			);
+			vi.mocked(fs.realpath).mockResolvedValue('/file');
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => false } as never);
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '/file')).toBe(false);
+			expect(mockSettingsStore.set).not.toHaveBeenCalled();
+		});
+
+		it('allows clearing the host directory for the environment fallback', async () => {
+			expect(await handlers.get('settings:set')!({}, 'mediaModelDirectory', '')).toBe(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('mediaModelDirectory', '');
+		});
+
 		it('should store setting value', async () => {
 			const handler = handlers.get('settings:set');
 			const result = await handler!({} as any, 'fontSize', 16);
@@ -1429,6 +1498,24 @@ describe('persistence IPC handlers', () => {
 			inputMode: 'ai' as const,
 			toolType: 'claude-code',
 		};
+
+		it('notifies Pianola of added and removed agents only after a durable write', async () => {
+			const onSessionsPersisted = vi.fn(() => {
+				expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
+			});
+			registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+				onSessionsPersisted,
+			});
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const newcomer = { ...baseSession, id: 's2' };
+			await handlers.get('sessions:setMany')!({} as any, [newcomer], ['s1']);
+			expect(onSessionsPersisted).toHaveBeenCalledWith([newcomer], [newcomer], ['s1']);
+		});
 
 		it('writes the merged sessions array to the store', async () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);

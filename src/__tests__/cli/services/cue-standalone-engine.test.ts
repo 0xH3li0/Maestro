@@ -74,6 +74,46 @@ describe('buildStandaloneCueEngineDeps', () => {
 		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
 		expect(initializeOutputParsers).toHaveBeenCalledTimes(1);
 	});
+
+	// The desktop host resolves a subscription's tier / model / effort in
+	// src/main/index.ts. This runner has its own onCueRun, so without the same
+	// step a headless run silently used the agent's default model.
+	it("spawns the prompt run on the subscription's model choice", async () => {
+		executeCuePrompt.mockClear();
+		const onLog = vi.fn();
+		const deps = buildStandaloneCueEngineDeps({ onLog });
+
+		await deps.onCueRun({
+			runId: 'run-2',
+			sessionId: 'agent-1',
+			prompt: 'Review it',
+			subscriptionName: 'deep-review',
+			event,
+			timeoutMs: 1000,
+			turnSettings: { model: 'claude-pinned-model', effort: 'low' },
+		} as Parameters<typeof deps.onCueRun>[0]);
+
+		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
+		expect(executeCuePrompt.mock.calls[0][0]).toMatchObject({ customModel: 'claude-pinned-model' });
+		expect(executeCuePrompt.mock.calls[0][0].customEffort).toBeTruthy();
+	});
+
+	it("keeps the agent's own model when the subscription sets none", async () => {
+		executeCuePrompt.mockClear();
+		const deps = buildStandaloneCueEngineDeps({ onLog: vi.fn() });
+
+		await deps.onCueRun({
+			runId: 'run-3',
+			sessionId: 'agent-1',
+			prompt: 'Say pong',
+			subscriptionName: 'ask',
+			event,
+			timeoutMs: 1000,
+		} as Parameters<typeof deps.onCueRun>[0]);
+
+		expect(executeCuePrompt.mock.calls[0][0].customModel).toBeUndefined();
+		expect(executeCuePrompt.mock.calls[0][0].customEffort).toBeUndefined();
+	});
 });
 
 describe('a run stopped while the executors are still loading', () => {

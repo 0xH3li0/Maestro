@@ -20,6 +20,7 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 } from '../../shared/history';
+import { resolveSyncDir } from '../../shared/syncPath';
 
 // Get the Maestro config directory path. Delegates to the shared resolver
 // (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
@@ -31,11 +32,37 @@ export function getConfigDir(): string {
 }
 
 /**
+ * The directory the desktop keeps its SYNCED stores in: the custom Storage
+ * Location when one is set (Settings -> General), else the config directory.
+ * Agents, groups, settings and pasted images live here; history, playbooks,
+ * agent configs and the CLI server discovery file stay in the config directory
+ * on every machine.
+ */
+export function getSyncDir(): string {
+	return resolveSyncDir(getConfigDir());
+}
+
+/**
+ * Store files the desktop opens under the sync directory. Must match the
+ * stores `initializeStores()` (src/main/stores/instances.ts) gives
+ * `cwd: _syncPath`; anything not listed is read from the config directory.
+ */
+const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
+	'maestro-sessions.json',
+	'maestro-groups.json',
+	'maestro-settings.json',
+]);
+
+function getStoreFileDir(filename: string): string {
+	return SYNCED_STORE_FILES.has(filename) ? getSyncDir() : getConfigDir();
+}
+
+/**
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getConfigDir(), filename);
+	const filePath = path.join(getStoreFileDir(filename), filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -53,7 +80,7 @@ function readStoreFile<T>(filename: string): T | undefined {
  * Creates the file (and parent directory) if it doesn't exist.
  */
 function writeStoreFile<T>(filename: string, data: T): void {
-	const dirPath = getConfigDir();
+	const dirPath = getStoreFileDir(filename);
 	if (!fs.existsSync(dirPath)) {
 		fs.mkdirSync(dirPath, { recursive: true });
 	}
@@ -83,7 +110,7 @@ interface AgentConfigsStore {
  * Read all sessions from storage
  */
 export function readSessions(): SessionInfo[] {
-	return readSessionsStoreFile(getConfigDir()).sessions;
+	return readSessionsStoreFile(getSyncDir()).sessions;
 }
 
 /**
@@ -92,7 +119,7 @@ export function readSessions(): SessionInfo[] {
  * themselves, so this is the same read `readSessions` already does.
  */
 export function readActiveAgentId(): string | null {
-	const id = readSessionsStoreFile(getConfigDir()).data?.activeSessionId;
+	const id = readSessionsStoreFile(getSyncDir()).data?.activeSessionId;
 	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
@@ -569,6 +596,27 @@ export function getSessionHistoryMtimeMs(sessionId: string): number {
 	} catch {
 		return 0;
 	}
+}
+
+/**
+ * Absolute path of a session's existing history file, for the system prompt's
+ * `{{AGENT_HISTORY_PATH}}`. Prefers the JSONL file and falls back to a legacy
+ * `.json` one the desktop app has not migrated yet (the CLI never migrates; see
+ * `readSessionHistory`). Undefined when neither exists, e.g. a brand-new agent.
+ */
+export function resolveSessionHistoryFilePath(sessionId: string): string | undefined {
+	for (const filePath of [
+		getSessionHistoryPath(sessionId),
+		getLegacySessionHistoryPath(sessionId),
+	]) {
+		try {
+			fs.accessSync(filePath, fs.constants.R_OK);
+			return filePath;
+		} catch {
+			// Not there (or unreadable); try the next format.
+		}
+	}
+	return undefined;
 }
 
 /**

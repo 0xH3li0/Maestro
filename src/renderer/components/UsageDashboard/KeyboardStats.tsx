@@ -22,6 +22,7 @@ import type { Theme } from '../../types';
 import type { ShortcutUsageDay, StatsTimeRange } from '../../../shared/stats-types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import { availableShortcuts } from '../../utils/encoreShortcuts';
 import {
 	KEYBOARD_MASTERY_LEVELS,
 	collectBoundShortcuts,
@@ -278,6 +279,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 	const masteryStats = useSettingsStore((s) => s.keyboardMasteryStats);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 
 	const [series, setSeries] = useState<ShortcutUsageDay[] | null>(null);
 	const [total, setTotal] = useState<number>(0);
@@ -330,10 +332,16 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 
 	// Unbound shortcuts are excluded outright: the user cannot fire a chord that
 	// does not exist, so listing one as "unused" is busywork and counting one in
-	// the denominator holds the mastery ring below 100% forever.
+	// the denominator holds the mastery ring below 100% forever. The same goes
+	// for the chord of an Encore Feature that is switched off.
 	const boundShortcuts = useMemo(
-		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
-		[shortcuts, tabShortcuts]
+		() =>
+			collectBoundShortcuts(
+				availableShortcuts(shortcuts, encoreFeatures),
+				tabShortcuts,
+				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
+			),
+		[shortcuts, tabShortcuts, encoreFeatures]
 	);
 
 	const totalShortcuts = boundShortcuts.length;

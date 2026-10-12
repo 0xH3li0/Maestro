@@ -254,6 +254,7 @@ interface CodexItem {
 	id?: string;
 	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result' | 'command_execution';
 	text?: string;
+	phase?: string;
 	// Legacy tool_call/tool_result fields (Codex < v0.111.0)
 	tool?: string;
 	args?: Record<string, unknown>;
@@ -301,7 +302,7 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
  * and StdoutHandler's once-only `errorEmitted` latch then swallowed the real
  * terminal error if the retries ran out (#1694).
  */
-function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
+export function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
 	return (
 		obj.type === 'error' &&
 		typeof obj.message === 'string' &&
@@ -319,7 +320,7 @@ function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
  * If `summary` is absent, empty, or only contains blank strings, returns '' so the
  * caller can fall back to a non-displayable `system` event (encrypted_content only).
  */
-function extractReasoningSummaryText(summary: unknown): string {
+export function extractReasoningSummaryText(summary: unknown): string {
 	if (!Array.isArray(summary) || summary.length === 0) {
 		return '';
 	}
@@ -557,6 +558,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (isCodexRetryNotice(msg as Record<string, unknown>)) {
 			return {
 				type: 'text',
+				isRetryNotice: true,
 				text: String(msg.message),
 				isPartial: true,
 				isReasoning: true,
@@ -587,6 +589,9 @@ export class CodexOutputParser implements AgentOutputParser {
 	private transformEventMsg(payload: CodexPayload, msg: CodexRawMessage): ParsedEvent {
 		// agent_message: commentary or final response text shown to user
 		if (payload.type === 'agent_message' && payload.message) {
+			if (payload.phase && !['commentary', 'final', 'final_answer'].includes(payload.phase)) {
+				return { type: 'system', raw: msg };
+			}
 			const isCommentary = payload.phase === 'commentary';
 			if (isCommentary) {
 				// Commentary is intermediate progress text - emit as partial text
@@ -594,6 +599,7 @@ export class CodexOutputParser implements AgentOutputParser {
 					type: 'text',
 					text: payload.message,
 					isPartial: true,
+					responsePhase: 'commentary',
 					raw: msg,
 				};
 			}
@@ -602,6 +608,8 @@ export class CodexOutputParser implements AgentOutputParser {
 				type: 'result',
 				text: payload.message,
 				isPartial: false,
+				responsePhase:
+					payload.phase === 'final' || payload.phase === 'final_answer' ? 'final' : 'candidate',
 				raw: msg,
 			};
 		}
@@ -680,6 +688,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (payload.type === 'stream_error' && payload.message) {
 			return {
 				type: 'text',
+				isRetryNotice: true,
 				text: payload.message,
 				isPartial: true,
 				isReasoning: true,
@@ -704,12 +713,16 @@ export class CodexOutputParser implements AgentOutputParser {
 			const textContent = this.extractTextFromContent(payload.content);
 
 			if (payload.role === 'assistant') {
+				if (payload.phase && !['commentary', 'final', 'final_answer'].includes(payload.phase)) {
+					return { type: 'system', raw: msg };
+				}
 				const isCommentary = payload.phase === 'commentary';
 				if (isCommentary) {
 					return {
 						type: 'text',
 						text: textContent,
 						isPartial: true,
+						responsePhase: 'commentary',
 						raw: msg,
 					};
 				}
@@ -718,6 +731,8 @@ export class CodexOutputParser implements AgentOutputParser {
 					type: 'result',
 					text: textContent,
 					isPartial: false,
+					responsePhase:
+						payload.phase === 'final' || payload.phase === 'final_answer' ? 'final' : 'candidate',
 					raw: msg,
 				};
 			}
@@ -904,12 +919,25 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'agent_message':
-				// Final text response from agent - mark as 'result' so it gets emitted
-				// This is the actual response text (not reasoning or tool output)
+				if (item.phase && !['commentary', 'final', 'final_answer'].includes(item.phase)) {
+					return { type: 'system', raw: msg };
+				}
+				if (item.phase === 'commentary') {
+					return {
+						type: 'text',
+						text: item.text || '',
+						isPartial: true,
+						responsePhase: 'commentary',
+						raw: msg,
+					};
+				}
+				// Phase-less agent messages are answer candidates until turn completion.
 				return {
 					type: 'result',
 					text: item.text || '',
 					isPartial: false,
+					responsePhase:
+						item.phase === 'final' || item.phase === 'final_answer' ? 'final' : 'candidate',
 					raw: msg,
 				};
 

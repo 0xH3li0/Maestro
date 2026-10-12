@@ -87,6 +87,18 @@ describe('searchableSettings', () => {
 			expect(results.some((s) => s.id === 'general-rendering')).toBe(true);
 		});
 
+		it.each([
+			'Whisper',
+			'Relay',
+			'speech recognition',
+			'model-directory',
+			'MAESTRO_MEDIA_MODEL_DIR',
+			'Available models',
+			'Check status',
+		])('finds host media settings for %s', (query) => {
+			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
+		});
+
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
 			const upper = searchSettings('FONT');
@@ -105,6 +117,44 @@ describe('searchableSettings', () => {
 				expect(all).toContain('tab');
 				expect(all).toContain('naming');
 			}
+		});
+
+		// A disabled Encore Feature's options must not be findable; its tile must,
+		// because the tile is how it gets switched on.
+		it('hides the sub-settings of an Encore Feature that is off, but keeps its tile', () => {
+			const off = searchSettings('cue', [], { maestroCue: false }).map((s) => s.id);
+			expect(off).toContain('encore-cue');
+			expect(off).not.toContain('cue-history-retention');
+			expect(off).not.toContain('general-group-cue-entries');
+
+			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
+			expect(on).toEqual(
+				expect.arrayContaining(['encore-cue', 'cue-history-retention', 'general-group-cue-entries'])
+			);
+		});
+
+		it('never gates an Encore tile entry on its own flag', () => {
+			const tiles = ALL_SEARCHABLE_SETTINGS.filter(
+				(s) => s.tab === 'encore' && s.requiresEncore && !s.jumpToId
+			);
+			// Every gated Encore-tab entry is a sub-setting: its id extends a tile id
+			// or names a control inside one, never the bare tile.
+			const tileIds = new Set([
+				'encore-usage-stats',
+				'encore-symphony',
+				'encore-cue',
+				'encore-computer-history',
+				'encore-coworking',
+				'encore-director-notes',
+				'encore-pianola',
+				'encore-concerto',
+				'encore-groups-plus',
+				'encore-web-login',
+				'encore-maestro-run',
+				'encore-quick-chat',
+				'encore-plugins',
+			]);
+			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
 		});
 
 		it('should return no results for gibberish', () => {
@@ -228,6 +278,8 @@ describe('searchableSettings', () => {
 			['global cue settings', 'encore-cue'],
 			['playbook registry', 'encore-symphony'],
 			['synopsis provider', 'encore-director-notes'],
+			['computer history', 'encore-computer-history'],
+			['digest agent', 'encore-computer-history'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

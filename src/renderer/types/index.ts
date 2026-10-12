@@ -63,6 +63,7 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { CodexTransport } from '../../shared/codexTransport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -86,6 +87,7 @@ export type UsageDashboardViewMode =
 	| 'cue'
 	| 'shortcuts';
 export type SettingsTab =
+	| 'environment'
 	| 'general'
 	// SettingsModal has always rendered a Display tab and accepted it as an
 	// `initialTab`; it was simply missing from this union, so nothing could
@@ -245,6 +247,9 @@ export interface LogEntry {
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
+	// For user messages - tracks if message was steered into a turn that was
+	// already running, rather than starting a turn of its own (see chatSteering.ts)
+	steered?: boolean;
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
@@ -398,6 +403,17 @@ export interface LogEntry {
 		/** Ask only: why no answer came back. */
 		error?: string;
 	};
+	// Marks where Maestro compacted this conversation on its own because the
+	// turn above it no longer fit the model's context window. The failed prompt
+	// is resent once the compaction lands, so this pill is all the user sees of
+	// the failure. Written and settled by services/contextCompaction.ts, driven
+	// by retryStore. See components/ContextCompactionCard.tsx.
+	contextCompaction?: {
+		/** `pending` while the provider is compacting, then how it ended. */
+		status: 'pending' | 'done' | 'error' | 'canceled';
+		/** Why the compaction did not land. */
+		error?: string;
+	};
 }
 
 // Queued item for the session-level execution queue
@@ -457,6 +473,21 @@ export interface ConsultHoldReply extends ConsultHoldTarget {
 export interface ConsultHold {
 	pending: ConsultHoldTarget[];
 	replies: ConsultHoldReply[];
+	/**
+	 * Set when the message asked for the consult to run FIRST ("check with
+	 * @Backend first"): the source agent has not seen the message at all, so the
+	 * released hold carries it (and its images) into the turn that answers it.
+	 * Absent for a parallel consult, whose local turn is already running.
+	 */
+	deferred?: { message: string; images?: string[] };
+}
+
+/** A hand-off waiting for its turn to end (see `AITab.pendingMentionHandoff`). */
+export interface MentionHandoff {
+	/** The agents the turn's final answer goes to. */
+	targets: ConsultHoldTarget[];
+	/** The user's message, verbatim, relayed alongside the answer. */
+	message: string;
 }
 
 export interface QueuedItem {
@@ -858,6 +889,23 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/**
+	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
+	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
+	 * and is deleted when the next chat starts; a kept one is an ordinary tab.
+	 * Replies on these tabs never raise a completion toast: the user is reading
+	 * them in the Quick Chat window.
+	 */
+	quickChat?: boolean;
+	/**
+	 * A hand-off armed by a message that asked for this turn's result to go to
+	 * other agents ("then send what you find to @Backend"). When the turn ends
+	 * cleanly, its final answer is forwarded to `targets` and this is cleared;
+	 * Stop or a failed turn clears it without sending. Persisted with the tab so
+	 * a renderer reload mid-turn does not lose it. See
+	 * services/crossAgentHandoff.ts.
+	 */
+	pendingMentionHandoff?: MentionHandoff;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
 	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
@@ -1286,6 +1334,19 @@ export interface SnoozedGroupPayload {
 /** The group variant of {@link SnoozedTabEntry}, named so guards can return it. */
 export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
+/** A delivered chat steer awaiting its transcript verdict (see Session.pendingSteers). */
+export interface PendingSteer {
+	/** The steer id the socket answered with; verdicts carry the same id. */
+	steerId: string;
+	/** `{sessionId}-ai-{tabId}`, the process the text was typed into. */
+	processKey: string;
+	tabId: string;
+	/** The queued item exactly as it left the queue, for putting it back. */
+	item: QueuedItem;
+	/** The user log entry the steer appended, removed again if the item goes back. */
+	logEntryId?: string;
+}
+
 export interface Session {
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
@@ -1385,6 +1446,11 @@ export interface Session {
 	// Execution queue for sequential processing within this session
 	// All messages and commands are queued here and processed one at a time
 	executionQueue: QueuedItem[];
+	// Queued messages STEERED into a running turn whose transcript verdict has not
+	// arrived yet. The item left executionQueue on `delivered`, so this is the only
+	// copy until the verdict says it was taken (drop the record) or not (put it back
+	// in the queue). Persisted so a reload cannot lose it. See services/chatSteering.ts.
+	pendingSteers?: PendingSteer[];
 	// Active time tracking - cumulative milliseconds of active use
 	activeTimeMs: number;
 	// Agent slash commands available for this session (fetched per session based on cwd)
@@ -1577,6 +1643,12 @@ export interface Session {
 	// the spawner uses the bundled script (`process.resourcesPath/maestro-p.js`
 	// in packaged builds, `dist/cli/maestro-p.js` in dev).
 	maestroPPath?: string;
+	// Per-session Codex transport (Codex only). 'app-server' runs local
+	// interactive chat turns on `codex app-server` so the Steer button can reach
+	// them mid-turn; SSH, image, Auto Run and Cue turns stay on `codex exec`.
+	// Absent means 'exec'. Experimental. Always read it through
+	// `resolveCodexTransport` in shared/codexTransport, never directly.
+	codexTransport?: CodexTransport;
 
 	// Agent Resilience (auto-retry). Both default ON - `undefined` reads as
 	// enabled via `resilienceEnabled` in shared/agentConstants, so existing
@@ -1806,6 +1878,17 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Computer History - local accessibility-based record of what the user reads
+	// and types, exposed to every agent. Off by default. Optional so older
+	// fixtures and persisted settings remain valid.
+	computerHistory?: boolean;
+	// Quick Chat - a floating chat window summoned by a system-wide hotkey. ON by
+	// default. Optional so older fixtures and persisted settings remain valid.
+	quickChat?: boolean;
+	// MaestroRun - installs the signed macOS launcher that holds Full Disk Access
+	// for scheduled scripts. macOS only, off by default. Optional so older
+	// fixtures and persisted settings remain valid.
+	maestroRun?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

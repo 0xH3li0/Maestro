@@ -50,7 +50,9 @@ export interface CueEventRecord {
 	/**
 	 * Process exit code the run terminated with. For agent runs through
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
-	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 1 =
+	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
+	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
+	 * resumed session has no transcript on this host, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -190,7 +192,10 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
     chain_depth INTEGER DEFAULT 0,
     queued_at INTEGER NOT NULL,
     chain_root_id TEXT,
-    parent_event_id TEXT
+    parent_event_id TEXT,
+    auto_run_json TEXT,
+    notify_json TEXT,
+    turn_settings_json TEXT
   )
 `;
 
@@ -198,7 +203,23 @@ const CREATE_CUE_EVENT_QUEUE_SQL = `
 // `cue_events` additive set because the two tables migrate independently:
 // queue rows are transient (deleted on dispatch), so the migration only needs
 // to keep schema in sync without backfilling values.
-const CUE_EVENT_QUEUE_ADDITIVE_COLUMNS = ['chain_root_id', 'parent_event_id'] as const;
+//
+// `auto_run_json` joined later for `action: autorun`: the captured document
+// list travels with the run rather than being re-read from the subscription,
+// so a queue row without it restores as an Auto Run with nothing to launch.
+// `notify_json` is the same idea for `action: notify`: the message survived a
+// restart in the `prompt` slot, but `sticky` did not, so a toast the user asked
+// to stay on screen came back as one that dismisses itself.
+//
+// `turn_settings_json` carries the subscription's tier / model / effort so a
+// run restored after a crash spawns on the model it was queued with.
+const CUE_EVENT_QUEUE_ADDITIVE_COLUMNS = [
+	'chain_root_id',
+	'parent_event_id',
+	'auto_run_json',
+	'notify_json',
+	'turn_settings_json',
+] as const;
 
 const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_session ON cue_event_queue(session_id);
@@ -501,7 +522,8 @@ function migrateCueEventsAdditiveColumns(database: Database.Database): void {
 /**
  * Idempotent migration: ensures the `cue_event_queue` table carries the Phase
  * 01 chain-lineage columns (`chain_root_id`, `parent_event_id`) so persisted
- * queue rows survive a crash with their lineage intact. Without this, recovery
+ * queue rows survive a crash with their lineage intact, and `auto_run_json` so
+ * a queued Auto Run survives one with its documents. Without this, recovery
  * would orphan resumed runs into fresh chain roots in stats. Mirrors the
  * conditional-ALTER pattern of `migrateCueEventsAdditiveColumns`.
  */
@@ -1457,6 +1479,14 @@ export interface CueQueuedEventRecord {
 	chainRootId: string | null;
 	/** Phase 01 - immediate parent's runId, NULL for roots. */
 	parentEventId: string | null;
+	/** Serialized `CueAutoRunConfig` for `action: autorun`, NULL for every
+	 *  other action and for rows persisted before the column existed. */
+	autoRunJson: string | null;
+	/** Serialized `CueNotifyConfig` for `action: notify`, NULL for every other
+	 *  action and for rows persisted before the column existed. */
+	notifyJson: string | null;
+	/** JSON of the subscription's `CueTurnSettings`, NULL when it sets none. */
+	turnSettingsJson: string | null;
 }
 
 /** Persist a queued event. Throws on DB failure - use safePersistQueuedEvent for
@@ -1467,8 +1497,8 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			`INSERT OR REPLACE INTO cue_event_queue
 			 (id, session_id, subscription_name, event_json, prompt, output_prompt,
 			  cli_output_json, action, command_json, chain_depth, queued_at,
-			  chain_root_id, parent_event_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  chain_root_id, parent_event_id, auto_run_json, notify_json, turn_settings_json)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(
 			record.id,
@@ -1483,7 +1513,10 @@ export function persistQueuedEvent(record: CueQueuedEventRecord): void {
 			record.chainDepth,
 			record.queuedAt,
 			record.chainRootId,
-			record.parentEventId
+			record.parentEventId,
+			record.autoRunJson,
+			record.notifyJson,
+			record.turnSettingsJson ?? null
 		);
 }
 
@@ -1517,6 +1550,9 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		queued_at: number;
 		chain_root_id: string | null;
 		parent_event_id: string | null;
+		auto_run_json: string | null;
+		notify_json: string | null;
+		turn_settings_json: string | null;
 	}>;
 
 	return rows.map((row) => ({
@@ -1533,6 +1569,9 @@ export function getQueuedEvents(sessionId?: string): CueQueuedEventRecord[] {
 		queuedAt: row.queued_at,
 		chainRootId: row.chain_root_id,
 		parentEventId: row.parent_event_id,
+		autoRunJson: row.auto_run_json ?? null,
+		notifyJson: row.notify_json ?? null,
+		turnSettingsJson: row.turn_settings_json ?? null,
 	}));
 }
 

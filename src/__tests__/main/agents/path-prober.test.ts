@@ -46,6 +46,7 @@ import {
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
 import { captureException } from '../../../main/utils/sentry';
+import { detectNodeVersionManagerBinPaths } from '../../../shared/pathUtils';
 import { setMaestroLibLogger, setMaestroLibErrorReporter } from '../../../shared/maestro-lib/host';
 
 // The library logs and reports through its host (shared/maestro-lib/host.ts),
@@ -526,6 +527,17 @@ describe('path-prober', () => {
 			expect(result).toBeNull();
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
+		});
+
+		it('prefers the standalone Codex path over an installed nvm version', async () => {
+			vi.mocked(detectNodeVersionManagerBinPaths).mockReturnValueOnce(['/old/nvm/bin']);
+			const preferred = path.join(os.homedir(), '.local', 'bin', 'codex');
+			accessMock.mockImplementation(async (candidate) => {
+				if (candidate === preferred || candidate === '/old/nvm/bin/codex') return;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeUnixPaths('codex')).toBe(preferred);
 		});
 	});
 

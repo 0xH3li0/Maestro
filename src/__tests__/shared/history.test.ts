@@ -46,8 +46,8 @@ describe('shared/history', () => {
 			expect(HISTORY_VERSION).toBe(1);
 		});
 
-		it('exports MAX_ENTRIES_PER_SESSION as 5000', () => {
-			expect(MAX_ENTRIES_PER_SESSION).toBe(5000);
+		it('exports MAX_ENTRIES_PER_SESSION as 10000', () => {
+			expect(MAX_ENTRIES_PER_SESSION).toBe(10000);
 		});
 
 		it('exports ORPHANED_SESSION_ID as _orphaned', () => {
@@ -397,7 +397,13 @@ describe('history entry type helpers', () => {
 
 	describe('ALL_HISTORY_ENTRY_TYPES', () => {
 		it('is the single list of every entry type', () => {
-			expect([...ALL_HISTORY_ENTRY_TYPES].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
+			expect([...ALL_HISTORY_ENTRY_TYPES].sort()).toEqual([
+				'AGENT',
+				'AUTO',
+				'CUE',
+				'RELAY',
+				'USER',
+			]);
 		});
 	});
 

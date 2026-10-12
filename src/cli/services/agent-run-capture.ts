@@ -73,6 +73,8 @@ export interface CaptureCliRunInput {
 	 * session id; `findActiveRunBySession` tolerates undefined.
 	 */
 	sessionId?: string;
+	/** The Maestro agent the run belongs to, when the caller knows it. */
+	agentId?: string;
 	/** Raw provider toolType (resolved to a canonical provider). */
 	toolType: string;
 	/** Working directory the agent runs in. */
@@ -120,6 +122,7 @@ function buildRun(
 		reviews: [],
 		cwd: input.cwd,
 		source: input.source,
+		...(input.agentId ? { agentId: input.agentId } : {}),
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
 		...(metadata ? { metadata } : {}),

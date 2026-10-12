@@ -8,6 +8,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -4889,6 +4890,41 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 		expect(setDirectorNotesOpen).toHaveBeenCalledWith(true);
 	});
 
+	describe('Computer History (a Ctrl+Cmd chord)', () => {
+		const withHistory = { usageStats: true, computerHistory: true };
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('computerHistory');
+		});
+
+		it('opens on Ctrl+Cmd+H', () => {
+			// Both matchers accept the full chord; the folded one is what lets it
+			// through the open-modal guard as a destination shortcut.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true, ctrlKey: true },
+				{
+					encoreFeatures: withHistory,
+					isPaneShortcut: (_e: KeyboardEvent, id: string) => id === 'computerHistory',
+				}
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(true);
+		});
+
+		it('does not open on plain Cmd+H, which the general matcher would accept', () => {
+			// isShortcut folds Ctrl and Cmd into one modifier, so it reports this
+			// binding as matched on a bare Cmd+H (macOS Hide) or Ctrl+H.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true },
+				{ encoreFeatures: withHistory, isPaneShortcut: () => false }
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(false);
+		});
+	});
+
 	it('still opens the Usage Dashboard from an open modal', () => {
 		const setUsageDashboardOpen = vi.fn();
 		pressShortcut(
@@ -4948,5 +4984,49 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 			activeSession: { id: 'test' },
 		});
 		expect(blockedWithModal).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * Steer Running Turn from outside the composer. The composer answers the chord
+ * itself while the caret is in it; everywhere else the window handler asks for it
+ * by event, because the queued message it steers is drawn in the transcript.
+ */
+describe('useMainKeyboardHandler - steerSend', () => {
+	function press(ctxOverrides: Record<string, unknown>, target?: HTMLElement): number {
+		const heard = vi.fn();
+		window.addEventListener(STEER_SEND_EVENT, heard);
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'steerSend',
+			...ctxOverrides,
+		});
+		act(() => {
+			(target ?? window).dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, altKey: true, bubbles: true })
+			);
+		});
+		window.removeEventListener(STEER_SEND_EVENT, heard);
+		return heard.mock.calls.length;
+	}
+
+	it('asks the composer to steer when the chord is pressed outside it', () => {
+		expect(press({})).toBe(1);
+	});
+
+	it('leaves the chord to the composer when the caret is inside it', () => {
+		// The composer already ran it on its own keydown; firing the event too
+		// would send the draft twice.
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		try {
+			expect(press({ inputRef: { current: textarea } }, textarea)).toBe(0);
+		} finally {
+			textarea.remove();
+		}
+	});
+
+	it('does nothing while a group chat is on screen', () => {
+		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
 	});
 });

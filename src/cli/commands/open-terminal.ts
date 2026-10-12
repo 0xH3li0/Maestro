@@ -15,6 +15,7 @@ interface OpenTerminalOptions {
 	name?: string;
 	command?: string;
 	background?: boolean;
+	inputRequired?: boolean;
 	focus?: boolean;
 	json?: boolean;
 }
@@ -50,6 +51,7 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 					name: options.name,
 					command: options.command,
 					background,
+					...(options.inputRequired && { inputRequired: true }),
 				},
 				'open_terminal_tab_result'
 			);

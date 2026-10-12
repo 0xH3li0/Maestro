@@ -8,6 +8,7 @@
 import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
+import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -124,10 +125,15 @@ export interface MaestroSettings {
 	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
 	// the main-process background scheduler (usage-refresh-scheduler.ts).
 	usageRefreshIntervals: Record<string, number>;
+	/** Add a supervised Pianola watch for each newly created top-level agent. */
+	pianolaAutoWatchNewAgents: boolean;
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
 	globalShowHotkey: string[];
+	// Quick Chat (Encore Feature): its own system-wide hotkey, target agent, and
+	// ephemeral/persistent defaults. See src/shared/quickChat.ts.
+	quickChatSettings: QuickChatSettings;
 	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
 	// the task uses the session's own agent (fully backward compatible).
 	utilityAgentId: string | null;
@@ -199,13 +205,15 @@ export interface WindowState {
 	 * becomes the source of truth once windows are created through the registry.
 	 */
 	multiWindow?: MultiWindowState;
+	/** Where the user left the Quick Chat window (see `QuickChatWindowBounds`). */
+	quickChat?: QuickChatWindowBounds;
 }
 
 // ============================================================================
 // Claude Session Origins Store
 // ============================================================================
 
-export type ClaudeSessionOrigin = 'user' | 'auto';
+export type ClaudeSessionOrigin = 'user' | 'auto' | 'relay';
 
 export interface ClaudeSessionOriginInfo {
 	origin: ClaudeSessionOrigin;
@@ -229,7 +237,10 @@ export interface AgentSessionOriginsData {
 		string,
 		Record<
 			string,
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>
 	>;
 }

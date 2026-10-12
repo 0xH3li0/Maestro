@@ -32,6 +32,8 @@ vi.mock('../../../renderer/utils/sentry', () => ({
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	planCrossAgentMentions: vi.fn(() => null),
 	dispatchCrossAgentMentions: vi.fn(),
+	previewMentionDispatch: vi.fn(() => ({ consultTargets: [], handoffTargets: [] })),
+	withMentionTurnNotes: vi.fn((prompt: string) => prompt),
 }));
 
 vi.mock('../../../renderer/utils/ids', () => ({
@@ -65,6 +67,12 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
+// Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
+// here we only assert which entry points hand the message to it (issue #1531).
+vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+	requestTabAutoNameForMessage: vi.fn(),
+}));
+
 // Agents with batch mode support. The real capability module is used (not
 // mocked) so the miss-vs-cached-false distinction the hook now depends on is
 // exercised for real; `seedCapabilitiesCache()` below stands in for the startup
@@ -85,6 +93,7 @@ import {
 	planCrossAgentMentions,
 	dispatchCrossAgentMentions,
 } from '../../../renderer/services/crossAgentMentions';
+import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -528,7 +537,8 @@ describe('useRemoteHandlers', () => {
 				plan,
 				'@Reviewer look at this',
 				expect.objectContaining({ id: 'session-1' }),
-				'tab-1'
+				'tab-1',
+				undefined
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			// Delivery is acked: the consult IS the dispatch.
@@ -611,8 +621,90 @@ describe('useRemoteHandlers', () => {
 				plan,
 				'fix it, then ask @Reviewer',
 				expect.objectContaining({ id: 'session-1' }),
-				'tab-1'
+				'tab-1',
+				undefined
 			);
+		});
+
+		describe('tab auto-naming (issue #1531)', () => {
+			const dispatch = async (deps: UseRemoteHandlersDeps, command: string) => {
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: { sessionId: 'session-1', command, inputMode: 'ai' },
+						})
+					);
+				});
+			};
+
+			beforeEach(() => {
+				vi.mocked(requestTabAutoNameForMessage).mockClear();
+			});
+
+			it('names the target tab from a dispatched AI message', async () => {
+				const session = createMockSession({ inputMode: 'ai' });
+				await dispatch(
+					createMockDeps({ sessionsRef: { current: [session] } }),
+					'explain this code'
+				);
+
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledTimes(1);
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'explain this code',
+					'remote'
+				);
+			});
+
+			it('names the tab a leading @mention lands its bubble in, without spawning', async () => {
+				const session = createMockSession({ inputMode: 'ai' });
+				vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+					targetSessionIds: ['reviewer-1'],
+					suppressLocal: true,
+				} as any);
+				await dispatch(
+					createMockDeps({ sessionsRef: { current: [session] } }),
+					'@Reviewer look at this'
+				);
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledTimes(1);
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'@Reviewer look at this',
+					'remote'
+				);
+			});
+
+			it('does not name a tab from a matched slash command, as the composer does not', async () => {
+				const session = createMockSession({ inputMode: 'ai' });
+				await dispatch(
+					createMockDeps({
+						sessionsRef: { current: [session] },
+						customAICommandsRef: {
+							current: [{ command: '/deploy', description: 'Deploy', prompt: 'Deploy it' }],
+						},
+					}),
+					'/deploy'
+				);
+
+				expect(window.maestro.process.spawn).toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+			});
+
+			it('does not name a tab for a dispatch that is dropped before it runs', async () => {
+				const session = createMockSession({ inputMode: 'ai', state: 'busy' });
+				await dispatch(createMockDeps({ sessionsRef: { current: [session] } }), 'explain this');
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+			});
 		});
 
 		it('includes appendSystemPrompt for new sessions (no agentSessionId)', async () => {
@@ -1578,6 +1670,30 @@ describe('useRemoteHandlers', () => {
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.state).toBe('busy');
 			expect(updated?.busySource).toBe('ai');
+		});
+
+		it('stamps the target tab with its own start time, not just the agent', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+			const before = Date.now();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'analyze code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			// Quick Chat's "Working for" timer reads the tab: without this it sat at 0s.
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const tab = updated?.aiTabs.find((t) => t.id === updated.activeTabId);
+			expect(tab?.state).toBe('busy');
+			expect(tab?.thinkingStartTime).toBeGreaterThanOrEqual(before);
 		});
 
 		it('adds user log entry to the active tab for AI commands', async () => {

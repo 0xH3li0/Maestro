@@ -230,6 +230,20 @@ describe('useSessionCrud', () => {
 			expect(sessions[0].projectRoot).toBe('/test/project');
 		});
 
+		it('writes the new agent to disk right away, since its first spawn routes from it', async () => {
+			vi.useFakeTimers();
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('codex', '/test/project', 'Codex');
+			});
+			vi.runAllTimers();
+			vi.useRealTimers();
+
+			expect(deps.flushSessionPersistence).toHaveBeenCalled();
+		});
+
 		it('sets active session ID to the new session', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));
@@ -534,6 +548,33 @@ describe('useSessionCrud', () => {
 			expect(aiRef!.id).toBe(session.activeTabId);
 			expect(termRef).toBeUndefined();
 			expect(session.terminalTabs).toHaveLength(0);
+		});
+
+		// `exec` is the default, so only the app-server opt-in is stored. Writing
+		// `exec` onto every new agent would be noise in every session record.
+		it.each([
+			['app-server', 'app-server'],
+			['exec', undefined],
+			[undefined, undefined],
+		] as const)('stores codexTransport %s as %s', async (chosen, stored) => {
+			mockMaestro.agents.get.mockResolvedValueOnce({
+				id: 'codex',
+				name: 'Codex',
+				command: 'codex',
+			});
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// codexTransport is the 22nd positional argument; everything between
+			// the name and it is left at its default.
+			const args: unknown[] = ['codex', '/test/project', 'Codex Session'];
+			args[21] = chosen;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+
+			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(stored);
 		});
 	});
 
