@@ -61,7 +61,7 @@ import {
 	updateModelServerConfig,
 } from '../../../main/local-models/server/supervisor';
 import { isModelServerError } from '../../../main/local-models/errors';
-import type { SealProvider } from '../../../main/utils/safe-storage-seal';
+import { scratchKeySeal } from '../../helpers/scratchKeySeal';
 import { probePort } from '../../../main/utils/tcp-port';
 import {
 	getLocalModel,
@@ -83,11 +83,7 @@ const HAS_CODEX = RUN && isOnPath('codex');
  * real seal would need Electron's `safeStorage`, which works only in the app.
  */
 let keyStoreAvailable = true;
-const seal: SealProvider = {
-	available: () => keyStoreAvailable,
-	seal: (text) => Buffer.from(`e2e-sealed:${text}`),
-	unseal: (blob) => blob.toString().slice('e2e-sealed:'.length),
-};
+const seal = scratchKeySeal(() => keyStoreAvailable);
 
 const MB = 1024 * 1024;
 const PROMPT = 'Explain in one paragraph why a build cache speeds up CI.';

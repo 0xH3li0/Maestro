@@ -4,7 +4,8 @@
  * The pure rules of model routing by example: the text that is routed and
  * stored, the corrections file, how a correction joins the shipped examples,
  * and the distance-weighted vote. Also the shipped examples themselves, which
- * are data a compiler cannot fully check.
+ * are data a compiler cannot fully check, and the report half of the routing
+ * set (the eval's fixture), which no compiler checks at all.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -24,7 +25,9 @@ import {
 	type ModelRoutingNeighbour,
 } from '../../../shared/local-models/model-routing';
 import { MODEL_ROUTING_EXAMPLES } from '../../../shared/local-models/model-routing-examples';
+import { MODEL_ROUTING_TIER_DESCRIPTIONS } from '../../../shared/local-models/model-routing-task';
 import { TIER_LEVELS, type EffortLevel, type ModelTier } from '../../../shared/modelTiers';
+import reportFixture from '../../fixtures/model-routing-prompts.json';
 
 function correction(
 	text: string,
@@ -288,5 +291,44 @@ describe('the shipped examples', () => {
 		expect(new Set(texts).size).toBe(texts.length);
 		for (const text of texts) expect(normalizeModelRoutingText(text)).toBe(text);
 		expect(mergeModelRoutingExamples(MODEL_ROUTING_EXAMPLES, [])).toHaveLength(texts.length);
+	});
+});
+
+describe('the report half of the routing set (the eval fixture)', () => {
+	const { prompts } = reportFixture;
+
+	it('holds about 40 prompts, with every tier well represented', () => {
+		expect(prompts.length).toBeGreaterThanOrEqual(36);
+		for (const level of TIER_LEVELS) {
+			expect(prompts.filter((prompt) => prompt.tier === level).length).toBeGreaterThanOrEqual(12);
+		}
+	});
+
+	it('carries only known levels', () => {
+		for (const prompt of prompts) {
+			expect(TIER_LEVELS).toContain(prompt.tier);
+			expect(TIER_LEVELS).toContain(prompt.effort);
+		}
+	});
+
+	it('holds each prompt once, already in the form a router is handed', () => {
+		const texts = prompts.map((prompt) => prompt.text);
+		expect(new Set(texts).size).toBe(texts.length);
+		for (const text of texts) expect(normalizeModelRoutingText(text)).toBe(text);
+	});
+
+	it('shares no prompt with the tune half, so the eval never reports on a memorized prompt', () => {
+		const tune = new Set(
+			MODEL_ROUTING_EXAMPLES.map((example) => normalizeModelRoutingText(example.text).toLowerCase())
+		);
+		for (const prompt of prompts) {
+			expect(tune.has(normalizeModelRoutingText(prompt.text).toLowerCase())).toBe(false);
+		}
+	});
+
+	it('states the rubric the task asks a judge to score against, word for word', () => {
+		// The labels were picked against this rubric. If the task's wording moves,
+		// the labels have to be read again, not just the strings copied over.
+		expect(reportFixture.rubric).toEqual({ ...MODEL_ROUTING_TIER_DESCRIPTIONS });
 	});
 });

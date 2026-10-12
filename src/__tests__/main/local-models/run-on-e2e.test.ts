@@ -74,7 +74,7 @@ import {
 	modelServerLogPath,
 	resetModelServerForTests,
 } from '../../../main/local-models/server/supervisor';
-import type { SealProvider } from '../../../main/utils/safe-storage-seal';
+import { scratchKeySeal } from '../../helpers/scratchKeySeal';
 import { AGENT_IDS } from '../../../shared/agentIds';
 import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../shared/local-models/model-catalog';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../shared/local-models/model-server';
@@ -112,11 +112,7 @@ const LOAD_TIMEOUT_MS = 15 * 60_000;
 const TURN_TIMEOUT_MS = 7 * 60_000;
 const RESULTS_FILE = path.join(DATA_DIR, 'run-on-e2e-results.json');
 
-const seal: SealProvider = {
-	available: () => true,
-	seal: (text) => Buffer.from(`e2e-sealed:${text}`),
-	unseal: (blob) => blob.toString().slice('e2e-sealed:'.length),
-};
+const seal = scratchKeySeal();
 
 /**
  * A home of its own for each harness, set the way a user would set it: in the

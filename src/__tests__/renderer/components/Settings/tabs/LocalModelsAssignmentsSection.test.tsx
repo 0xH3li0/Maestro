@@ -17,6 +17,7 @@ import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import type { SystemOneEngineChoice } from '../../../../../shared/local-models/system-one-settings';
 import {
 	LOCAL_MODEL_TASKS,
+	isLocalModelOfferedForTask,
 	tasksForSystem,
 	type LocalModelTaskId,
 } from '../../../../../shared/local-models/tasks';
@@ -478,16 +479,25 @@ describe('the model routing picker (a local-first task)', () => {
 		expect(groups('jev-cloud')[0].options).toEqual([{ value: 'off', label: 'Off' }]);
 	});
 
-	it('puts the embedding model first, then judge models smallest first, then the rest', () => {
-		// Qwen3 1.7B and Qwen3.5 4B carry the judge role; Gemma 4 E4B does not.
-		expect(getLocalModel(QWEN3_1_7B_ID)!.roles).toContain('judge');
+	it('puts the embedding model first, then the judge model, then the rest', () => {
+		// Qwen3.5 4B carries the judge role; Gemma 4 E4B does not.
+		expect(getLocalModel(QWEN3_5_4B_ID)!.roles).toContain('judge');
 		expect(getLocalModel(GEMMA_4_E4B_ID)!.roles).not.toContain('judge');
 		expect(groups()[1].options.map((option) => option.value)).toEqual([
 			`local:${BGE_SMALL_EN_ID}`,
-			`local:${QWEN3_1_7B_ID}`,
 			`local:${QWEN3_5_4B_ID}`,
 			`local:${GEMMA_4_E4B_ID}`,
 		]);
+	});
+
+	it('does not offer Qwen3 1.7B, the judge that rated every request as the most model', () => {
+		// Installed, a text model, and a judge by role: the picker would list it
+		// first among the judges. The task records what the routing eval measured.
+		expect(getLocalModel(QWEN3_1_7B_ID)!.roles).toContain('judge');
+		expect(isLocalModelOfferedForTask('model-routing', QWEN3_1_7B_ID)).toBe(false);
+		expect(groups()[1].options.map((option) => option.value)).not.toContain(
+			`local:${QWEN3_1_7B_ID}`
+		);
 	});
 
 	it('says of every source which router it is and whether it is calibrated', () => {
@@ -495,7 +505,7 @@ describe('the model routing picker (a local-first task)', () => {
 		expect(local.options[0].label).toBe(
 			`${name(BGE_SMALL_EN_ID)} (embedding router, not calibrated)`
 		);
-		expect(local.options[1].label).toBe(`${name(QWEN3_1_7B_ID)} (local judge, not calibrated)`);
+		expect(local.options[1].label).toBe(`${name(QWEN3_5_4B_ID)} (local judge, not calibrated)`);
 		expect(endpoint.options).toEqual([
 			{
 				value: 'endpoint:ep-ollama:qwen3:latest',

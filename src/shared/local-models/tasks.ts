@@ -438,6 +438,17 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			// No fail policy: a turn with no decision runs at the agent's default
 			// tier, which is neither letting unchecked work through nor stopping it.
 			systemOneQuestions: modelRoutingSystemOneRequest,
+			// Measured on 2026-10-12 (`model-routing-eval-e2e.test.ts`, recorded in
+			// docs/architecture/local-models.md, "Model routing on real hardware"):
+			// as a local judge, Qwen3 1.7B answered `high` on both questions for all
+			// 40 report prompts, "what port does the dev server listen on?" included,
+			// in-process and on the model server alike. A router that always says
+			// the most model is Auto with no routing, at the highest price. Qwen3.5
+			// 4B told the tiers apart (22 to 25 of 40), so it is offered.
+			unofferedLocalModels: {
+				[QWEN3_1_7B_ID]:
+					'It rated every one of 40 test requests, lookups included, as needing the most model and the most effort, so it is not offered for model routing.',
+			},
 		}),
 		'token-proxy': defineTask({
 			id: 'token-proxy',

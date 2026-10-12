@@ -1800,7 +1800,10 @@ judge is the reading that needs none. The picker (`buildAssignmentOptionGroups`,
 task) lists the recommended router first: an installed embedding model, then text models with the
 `judge` role smallest first, then other text models, then endpoints, and System One last, offered
 only while an engine is chosen. Every option says which router it is and whether it is calibrated
-(`modelRouterSourceNote()`).
+(`modelRouterSourceNote()`). Qwen3 1.7B carries the `judge` role and is NOT offered here: the task
+records it under `unofferedLocalModels`, because as a router it answered `high` for every request
+(see [Model routing on real hardware](#model-routing-on-real-hardware)). So the smallest judge the
+picker lists is Qwen3.5 4B.
 
 **The two questions** (`modelRoutingSystemOneRequest(input)`), asked of a judge and of an engine
 alike, so every router that reads text is held to one rubric:
@@ -1884,8 +1887,6 @@ A request may carry `timeoutMs`, capped at `MODEL_ROUTING_MAX_TIMEOUT_MS` (30 s)
 400 ms default. A turn nobody is typing at (an Auto Run task, a Cue run, a `maestro-cli send`)
 passes `MODEL_ROUTING_UNATTENDED_TIMEOUT_MS` (5 s): a router that is still loading its model is
 worth the wait there, and past it the turn runs at the agent's default like any other.
-
-Not built yet: the Auto choice in the pickers, its pills and `maestro-cli s1 route`.
 
 ### Auto: a turn sent on the model `auto`
 
@@ -2108,8 +2109,193 @@ Rules that are easy to break:
 - **It decides nothing about whether routing runs.** No assignment, no timeout, no ledger: those are
   `routeTurn`'s, above. A source that cannot run fails as itself, never by falling back to another.
 
-Not measured yet: agreement with a person's labels, latency, and whether 5 neighbours and this
-weighting are the right choice. The routing eval reports those.
+Agreement with a person's labels, latency, and whether 5 neighbours is the right count are
+measured in the next section.
+
+### Model routing on real hardware
+
+`src/__tests__/main/local-models/model-routing-eval-e2e.test.ts` is opt-in. It asks every router
+the task can be assigned, through `routeTurn` (the call a send makes), about the same hand-labeled
+coding requests, on real models. It runs what it can: the local routers with
+`MAESTRO_LOCAL_MODEL_E2E=1`, the hosted Jev with `MAESTRO_JEV_E2E=1` and a key a test process can
+read. Run it with Electron's Node, the runtime the app loads the models in:
+
+```bash
+MAESTRO_LOCAL_MODEL_E2E=1 MAESTRO_JEV_E2E=1 MAESTRO_ROUTING_EVAL_CPU_THREADS=4 ELECTRON_RUN_AS_NODE=1 env -u MAESTRO_USER_DATA \
+  node_modules/electron/dist/Electron.app/Contents/MacOS/Electron node_modules/vitest/vitest.mjs run \
+  src/__tests__/main/local-models/model-routing-eval-e2e.test.ts
+```
+
+| Setting                            | Effect                                                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `MAESTRO_LOCAL_MODEL_E2E_MODELS`   | The local candidates, by catalog id. An embedding model is measured as the embedding router and a text model as a local judge   |
+| `MAESTRO_ROUTING_EVAL_CPU_THREADS` | Extra CPU-only runs held to a thread count (`4,8`). An 18-core desktop CPU is not a laptop's                                    |
+| `MAESTRO_LOCAL_MODEL_E2E_DIR`      | The scratch data dir, shared with the other on-device suites. Results go to `model-routing-eval-results.json` there, per prompt |
+
+**The set is split, and nothing is tuned on the half that is reported.**
+
+| Half   | Where                                                       | Size                            | Used for                                                                           |
+| ------ | ----------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| Tune   | `MODEL_ROUTING_EXAMPLES`, the prompts the router ships with | 57 (19 per tier)                | Leave-one-out: how many neighbours vote, and whether a vote's margin says anything |
+| Report | `src/__tests__/fixtures/model-routing-prompts.json`         | 40 (13 low, 13 medium, 14 high) | Agreement, with the constants the app ships. It selects nothing                    |
+
+`model-routing.test.ts` guards the fixture in the normal suite: known levels, no prompt shared with
+the tune half, and a rubric that is the task's own, word for word.
+
+How it measures:
+
+- **Each routing is one `routeTurn` call** with the assignment set to the router under test, so the
+  latency is the one a send would feel, the ledger record included. The timeout is widened to 2
+  minutes: held to 400 ms, a slow router would be forty skips and no agreement at all. The share of
+  answers inside 400 ms is counted instead.
+- **One routing first, on a tune prompt.** It pays for the model load, the 57 example vectors or the
+  connection, and its time is the "Cold" column. The 40 report prompts follow.
+- **A local judge is measured four ways.** In-process (the path a `local:` assignment takes), on the
+  Maestro model server with its default device, on the server forced to the CPU (`--device none`),
+  and on the CPU held to 4 threads. The eval adds the arguments through the supervisor's `spawn`
+  seam and reads the model's own process back from `ps` to prove they reached it: router mode hands
+  them to the process it starts for each model.
+- **The embedding router needs no CPU run of its own.** `OnnxEncoderPool` opens a session with no
+  execution provider named, which is ONNX Runtime's CPU provider on every machine.
+- **Corrections are left out.** The corrections store is stubbed empty, so the shipped examples
+  alone vote.
+
+It asserts structure: every routing is a decision or a named skip, each is in the ledger once, and
+no router failed in a way `routeTurn` could not classify. Quality is recorded, and asserted only
+where the catalog makes a promise: a curated model the task still OFFERS must beat a router that
+answers one level for everything (14 of 40 here). So `unofferedLocalModels` is the only way a model
+that fails as a router stays in the catalog.
+
+### Result: 2026-10-12, darwin-arm64 (Apple M5 Max, 18 cores, 128 GB), engine `b11559` Metal, Electron 41.10.7
+
+**Agreement with the labels**, 40 report prompts. A router that answers one level for everything
+scores 14 of 40 (35%).
+
+| Router                                 | Tier        | Within one tier | Too little model | Too much model | Effort      | Both axes |
+| -------------------------------------- | ----------- | --------------- | ---------------- | -------------- | ----------- | --------- |
+| Jev, calibrated                        | 39/40 (98%) | 40/40           | 1                | 0              | 33/40 (83%) | 33/40     |
+| Embedding router, EmbeddingGemma 300M  | 26/40 (65%) | 38/40           | 6                | 8              | 30/40 (75%) | 25/40     |
+| Embedding router, BGE Small (English)  | 24/40 (60%) | 37/40           | 9                | 7              | 25/40 (63%) | 20/40     |
+| Local judge, Qwen3.5 4B, server on CPU | 25/40 (63%) | 39/40           | 0                | 15             | 26/40 (65%) | 17/40     |
+| Local judge, Qwen3.5 4B, in-process    | 22/40 (55%) | 37/40           | 1                | 17             | 25/40 (63%) | 17/40     |
+| Local judge, Qwen3 1.7B, any hardware  | 14/40 (35%) | 27/40           | 0                | 26             | 14/40 (35%) | 13/40     |
+
+**Latency and cost.** p50 and p95 are over the 40 report prompts, each with both questions.
+
+| Router                                | Hardware                          | Cold     | p50      | p95      | Inside 400 ms | Inside 5 s | Cost per 1,000 |
+| ------------------------------------- | --------------------------------- | -------- | -------- | -------- | ------------- | ---------- | -------------- |
+| Embedding router, BGE Small (English) | ONNX Runtime, CPU                 | 176 ms   | 4 ms     | 7 ms     | 40/40         | 40/40      | $0             |
+| Embedding router, EmbeddingGemma 300M | ONNX Runtime, CPU                 | 886 ms   | 21 ms    | 33 ms    | 40/40         | 40/40      | $0             |
+| Jev                                   | TypeSafe cloud, from this network | 155 ms   | 123 ms   | 195 ms   | 40/40         | 40/40      | $0.0202        |
+| Local judge, Qwen3 1.7B               | In-process llama.cpp, Metal       | 3,941 ms | 373 ms   | 1,033 ms | 30/40         | 40/40      | $0             |
+| Local judge, Qwen3 1.7B               | Model server, Metal               | 155 ms   | 148 ms   | 167 ms   | 40/40         | 40/40      | $0             |
+| Local judge, Qwen3 1.7B               | Model server, CPU only            | 2,195 ms | 1,589 ms | 3,821 ms | 0/40          | 40/40      | $0             |
+| Local judge, Qwen3 1.7B               | Model server, CPU only, 4 threads | 3,129 ms | 1,375 ms | 2,131 ms | 0/40          | 40/40      | $0             |
+| Local judge, Qwen3.5 4B               | In-process llama.cpp, Metal       | 4,927 ms | 990 ms   | 1,230 ms | 0/40          | 40/40      | $0             |
+| Local judge, Qwen3.5 4B               | Model server, Metal               | 458 ms   | 512 ms   | 567 ms   | 1/40          | 40/40      | $0             |
+| Local judge, Qwen3.5 4B               | Model server, CPU only            | 7,394 ms | 3,783 ms | 4,444 ms | 0/40          | 40/40      | $0             |
+| Local judge, Qwen3.5 4B               | Model server, CPU only, 4 threads | 11.4 s   | 4,564 ms | 7,625 ms | 0/40          | 34/40      | $0             |
+
+Notes on the table:
+
+- An in-process "Cold" includes the model load. A model server row does not: the server had the
+  model loaded already (`ensureModelServerFor`, 2.3 to 4.8 s to start and load), because that is
+  the only state in which a `local:` call goes to the server.
+- Jev's cost is from the tokens it reported: 481 input tokens a decision on average, for both
+  questions in one request, at $0.042 a million. The local routers cost nothing a meter counts.
+- Agreement did not move between runs (every router is asked at temperature 0). Latency did. Over
+  three runs the 1.7B judge's p50 was 278 to 373 ms in-process and 972 to 1,589 ms on the CPU, and
+  over two the 4B judge's was 916 to 990 ms in-process. Other agents were working on the machine.
+
+**The tune half** (leave-one-out over the 57 shipped examples, tier agreement and effort agreement
+of 57):
+
+| Neighbours  | BGE Small (English) | EmbeddingGemma 300M |
+| ----------- | ------------------- | ------------------- |
+| 1           | 28, 27              | 33, 26              |
+| 3           | 34, 29              | 39, 29              |
+| 5 (shipped) | 36, 30              | 41, 33              |
+| 7           | 33, 30              | 42, 35              |
+| 9           | 35, 30              | 46, 34              |
+| 11          | 31, 28              | 42, 31              |
+
+**Does a confidence say anything?** Tier agreement among the decisions at or above a floor, and
+among those below it:
+
+| Router, half                         | Floor | At or above | Below       |
+| ------------------------------------ | ----- | ----------- | ----------- |
+| BGE Small, tune (margin)             | 0.2   | 27/39 (69%) | 9/18 (50%)  |
+| BGE Small, tune (margin)             | 0.5   | 10/11 (91%) | 26/46 (57%) |
+| BGE Small, report (margin)           | 0.2   | 16/21 (76%) | 8/19 (42%)  |
+| BGE Small, report (margin)           | 0.5   | 6/6         | 18/34 (53%) |
+| EmbeddingGemma, tune (margin)        | 0.5   | 11/14 (79%) | 30/43 (70%) |
+| EmbeddingGemma, report (margin)      | 0.5   | 11/12 (92%) | 15/28 (54%) |
+| Jev, report (peak of a distribution) | 0.5   | 36/36       | 3/4         |
+| Jev, report (peak of a distribution) | 0.9   | 16/16       | 23/24       |
+
+**Findings.**
+
+1. **Jev is the only router that agrees with the labels**: 39 of 40 tiers, and its one miss is one
+   level down. It answers inside the send timeout every time (p95 195 ms) for two cents a thousand
+   decisions. It needs the network and a key.
+2. **The embedding router is fast everywhere and right about 6 times in 10.** 4 ms on the small
+   model, on a CPU, with no network. 37 or 38 of 40 are within one tier. But its misses go both
+   ways: 6 to 9 of 40 requests got too LITTLE model, and BGE Small sent "Write a threat model for
+   the file sharing feature" to `low`. EmbeddingGemma is a little better on both axes and five
+   times slower, which at 21 ms does not matter.
+3. **Qwen3 1.7B cannot route.** As a judge it answered `high` on both questions for all 40
+   prompts, "what port does the dev server listen on?" included, in-process and on the server
+   alike. Two grammar implementations gave the same answers and the 4B varies on the same path, so
+   this is the model's choice, not a malformed reply. A router that always says the most model is
+   Auto with no routing, at the highest price. The picker listed it FIRST among the judges
+   (smallest first), so the `model-routing` task now records it under `unofferedLocalModels`.
+4. **Qwen3.5 4B routes, upward.** 55 to 63% tier agreement, 15 to 18 requests given too much model
+   and 0 or 1 too little. That is the safe direction and the expensive one. Its answers differ
+   between Metal and the CPU (22 right against 25): temperature 0 does not make two backends agree
+   on a close call.
+5. **A local judge is too slow for a typed send on this Mac.** In-process, the 4B judge answered
+   none of 40 inside 400 ms (p50 990 ms), and one to three of 40 on the model server. Under rule 2
+   every such turn runs as "Auto (no decision)". A judge fits the 5 s an unattended turn waits (an
+   Auto Run task, a Cue run, `maestro-cli send`), and on a CPU held to 4 threads it misses that too
+   on 6 of 40 (21 of 40 in an earlier run).
+6. **The in-process path is twice as slow as the model server on the same GPU.** The judge asks
+   two questions as two generations. `LocalTextEngine` reads the whole prompt each time (about 500
+   tokens: the judge instructions, the state, one question). `llama-server` keeps the shared
+   prefix and evaluates about 140 tokens a question (its log: `prompt eval time ... / 141 tokens`).
+   Not fixed here. Keeping the prefix in-process would roughly halve the judge's time on every
+   task that uses it.
+7. **5 neighbours stays.** Leave-one-out picks 5 for BGE Small and 9 for EmbeddingGemma (46 of 57
+   against 41). Five examples of 57 is inside the noise of a set this size, and one count for every
+   model is simpler than a table of them.
+8. **A high margin means something, and few votes have one.** At a margin of 0.5 or more the
+   embedding router was right 79 to 100% of the time, on both halves. Only 15 to 30% of prompts reach
+   it. No floor is applied: `routeTurn` still acts on every vote. A floor that turned a low-margin
+   vote into "no decision" would trade most of the router's reach for its accuracy, which is a
+   product choice and not a measurement.
+
+**What this says about the defaults.**
+
+- 400 ms is the right send timeout for the embedding router and for Jev, which both answer well
+  inside it, and it rules a local judge out of typed sends on every hardware measured.
+- 5 s is enough for an unattended turn everywhere but the 4B judge on 4 CPU threads.
+- The picker's order (embedding model first, System One last) is the plan's "local first" and was
+  not changed. By these numbers Jev is the better router on every measure but working offline, so
+  listing System One first while an engine is chosen is worth a decision.
+
+**Not verified.**
+
+- **The labels are one labeler's**, and that labeler is the agent that built the router. Jev's 39
+  of 40 on tier supports the tier labels. The effort labels are softer: no router passed 83%.
+- **40 prompts.** One prompt is 2.5 points. At 60% the 95% interval is about 15 points either way,
+  so the two embedding models and the 4B judge are not told apart by this set.
+- **`recent` was not exercised.** Every prompt stands alone. How a judge or Jev reads "do it" with
+  the exchange before it is unmeasured.
+- **This Mac's CPU is not a laptop's.** `--device none` proves the path with no GPU; 4 threads of an
+  M5 Max are still fast threads. No Windows or Linux run, and no CUDA or Vulkan build.
+- **Not measured:** OpenJev (no server), a judge on an endpoint (Ollama, LM Studio), a larger judge
+  (Qwen3.5 9B), the user's corrections, and the embedding router held to a thread count.
+- **The judge's wording was not tuned.** The rubric says "or anything where a wrong answer is
+  costly", which may be what pulls a small model up. A wording pass belongs on the tune half.
 
 ## Speech-to-text and dictation
 

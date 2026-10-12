@@ -551,8 +551,8 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		kvLayout: { layers: 28, kvHeads: 8, headDim: 128 },
 		// Installable since the llama runtime was proven on real hardware
 		// (docs/architecture/local-models.md, "Llama runtime on real hardware").
-		// It is NOT offered for voice routing: see `unofferedLocalModels` on that
-		// task for the measured reason.
+		// It is NOT offered for voice routing, shell commands or model routing: see
+		// `unofferedLocalModels` on each task for the measured reason.
 		files: [
 			{
 				path: 'Qwen3-1.7B-Q4_K_M.gguf',

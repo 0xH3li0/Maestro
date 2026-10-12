@@ -96,7 +96,7 @@ import {
 	configureModelServer,
 	resetModelServerForTests,
 } from '../../../../main/local-models/server/supervisor';
-import type { SealProvider } from '../../../../main/utils/safe-storage-seal';
+import { scratchKeySeal } from '../../../helpers/scratchKeySeal';
 import { parseBackgroundRequestsEdit } from '../../../../shared/local-models/background-requests';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
 import { formatRunOnSpec } from '../../../../shared/local-models/run-on';
@@ -327,11 +327,7 @@ const BACKGROUND_TURNS = [
 const BACKGROUND_ALLOWED_TOOLS = ['Bash(cat:*)', 'WebFetch(domain:example.com)'];
 
 /** The key seal the model server is given here: the real one needs Electron. */
-const seal: SealProvider = {
-	available: () => true,
-	seal: (text) => Buffer.from(`e2e-sealed:${text}`),
-	unseal: (blob) => blob.toString().slice('e2e-sealed:'.length),
-};
+const seal = scratchKeySeal();
 
 /** The start of a text, on one line, for a record a person reads. */
 function head(text: string, length: number): string {

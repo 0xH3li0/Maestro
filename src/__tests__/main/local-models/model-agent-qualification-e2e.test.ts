@@ -76,7 +76,7 @@ import {
 } from '../../../main/local-models/server/supervisor';
 import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../shared/local-models/model-catalog';
 import type { LocalModelAgentHarness } from '../../../shared/local-models/types';
-import type { SealProvider } from '../../../main/utils/safe-storage-seal';
+import { scratchKeySeal } from '../../helpers/scratchKeySeal';
 import { isOnPath, providerCliEnv, runProviderCli } from '../../helpers/providerCli';
 import {
 	checkQualificationRepo,
@@ -108,11 +108,7 @@ const RESULTS_FILE = path.join(DATA_DIR, 'agent-qualification-e2e-results.json')
 const ATTEMPTS =
 	Number.isInteger(ATTEMPTS_ENV) && ATTEMPTS_ENV > 0 ? ATTEMPTS_ENV : QUALIFICATION_ATTEMPTS;
 
-const seal: SealProvider = {
-	available: () => true,
-	seal: (text) => Buffer.from(`e2e-sealed:${text}`),
-	unseal: (blob) => blob.toString().slice('e2e-sealed:'.length),
-};
+const seal = scratchKeySeal();
 
 const TEXT_MODEL_IDS = LOCAL_MODEL_CATALOG.filter((entry) => entry.kind === 'text-gen').map(
 	(entry) => entry.id

@@ -62,7 +62,7 @@ import {
 	localModelProjectorFile,
 } from '../../../shared/local-models/model-catalog';
 import { MODEL_SERVER_AGENT_MIN_CONTEXT } from '../../../shared/local-models/model-server';
-import type { SealProvider } from '../../../main/utils/safe-storage-seal';
+import { scratchKeySeal } from '../../helpers/scratchKeySeal';
 
 const GB = 1024 ** 3;
 const DOWNLOAD_TIMEOUT_MS = 4 * 60 * 60_000;
@@ -75,11 +75,7 @@ const RESULTS_FILE = path.join(DATA_DIR, 'catalog-load-e2e-results.json');
 const RED_PNG =
 	'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=';
 
-const seal: SealProvider = {
-	available: () => true,
-	seal: (text) => Buffer.from(`e2e-sealed:${text}`),
-	unseal: (blob) => blob.toString().slice('e2e-sealed:'.length),
-};
+const seal = scratchKeySeal();
 
 const ids =
 	MODELS_ENV.trim() === 'all'

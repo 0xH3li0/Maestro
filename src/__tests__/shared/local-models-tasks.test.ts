@@ -730,10 +730,11 @@ describe('the system-one assignment', () => {
 });
 
 describe('models a task does not offer', () => {
-	it('keeps Qwen3 1.7B out of the two pickers it measured badly on, and no others', () => {
-		// Voice routing (it never reaches a named agent) and shell commands (it
-		// turned "find the process" into "kill the process").
-		const unoffered: LocalModelTaskId[] = ['voice-routing', 'ai-command'];
+	it('keeps Qwen3 1.7B out of the three pickers it measured badly on, and no others', () => {
+		// Voice routing (it never reaches a named agent), shell commands (it
+		// turned "find the process" into "kill the process") and model routing (it
+		// rated every request, a lookup included, as needing the most model).
+		const unoffered: LocalModelTaskId[] = ['voice-routing', 'ai-command', 'model-routing'];
 		for (const taskId of LOCAL_MODEL_TASK_IDS) {
 			expect(isLocalModelOfferedForTask(taskId, QWEN3_1_7B_ID)).toBe(!unoffered.includes(taskId));
 		}
@@ -749,6 +750,7 @@ describe('models a task does not offer', () => {
 		const assignment = { type: 'local' as const, modelId: QWEN3_5_4B_ID };
 		expect(localModelAssignmentCaution('ai-command', assignment)).toBeNull();
 		expect(localModelAssignmentCaution('voice-routing', assignment)).toBeNull();
+		expect(localModelAssignmentCaution('model-routing', assignment)).toBeNull();
 	});
 
 	it('names only catalog models of the kind the task needs', () => {
@@ -766,6 +768,8 @@ describe('models a task does not offer', () => {
 		// A caution is not a refusal: a choice made from the CLI keeps working.
 		expect(localModelAssignmentProblem('voice-routing', assignment)).toBeNull();
 		expect(localModelAssignmentCaution('voice-routing', assignment)).toMatch(/Conductor/);
+		expect(localModelAssignmentProblem('model-routing', assignment)).toBeNull();
+		expect(localModelAssignmentCaution('model-routing', assignment)).toMatch(/most model/);
 		expect(localModelAssignmentCaution('tab-naming', assignment)).toBeNull();
 		expect(localModelAssignmentCaution('voice-routing', { type: 'off' })).toBeNull();
 		expect(

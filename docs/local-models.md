@@ -141,8 +141,9 @@ Two small models do the housekeeping tasks. Both were run on the same requests, 
 - **Offered for:** tab naming, summaries, the Cue gate, pull request drafts, spoken notices, tab cleanup suggestions, and the token proxy's digest.
 - **Not offered for AI command mode.** In testing it wrote one correct command for eight requests, and a command that kills a process for a request to find it.
 - **Not offered for voice routing.** It sent requests that named an agent to the Conductor instead of to that agent.
+- **Not offered for model routing.** As a judge it rated every one of 40 test requests, lookups included, as needing the most model and the most effort.
 
-The assignment picker leaves it out of those two tasks. For them, use Qwen3.5 4B, or an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
+The assignment picker leaves it out of those three tasks. For them, use Qwen3.5 4B, or an [endpoint](#endpoints) with a larger model. `maestro-cli models assign` still accepts it there and prints the reason.
 
 ### The neural voice
 
