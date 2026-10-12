@@ -6108,6 +6108,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		});
 
 		it('local_models_server_set with only a build leaves the settings alone', async () => {
+			// The previous case called it once, and this file does not reset mocks between cases.
+			vi.mocked(updateModelServerConfigRequest).mockClear();
 			handler.handleMessage(client, {
 				type: 'local_models_server_set',
 				build: 'default',

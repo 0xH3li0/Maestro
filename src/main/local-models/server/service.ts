@@ -150,7 +150,13 @@ export function installModelServerEngine(
 	rawChoice: unknown,
 	options: Omit<ServerEngineInstallOptions, 'onProgress' | 'beforePromote'> = {}
 ): Promise<ModelServerReport> {
-	const choice = requireBuildChoice(rawChoice);
+	let choice: ServerBuildChoice;
+	try {
+		choice = requireBuildChoice(rawChoice);
+	} catch (error) {
+		// A transport hands this an unchecked value; the caller awaits a promise.
+		return Promise.reject(error);
+	}
 	if (engineInstall) {
 		if (engineInstall.choice === choice) return engineInstall.promise;
 		return Promise.reject(
