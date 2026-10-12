@@ -172,17 +172,21 @@ a scratch directory and are not committed.
 
 ## Update, 2026-10-12
 
-On `feat/cue-server`, local commits on top of `046a276da`, not pushed:
+On `feat/cue-server`, commits on top of `046a276da` (pushed since, with the rc
+merges, up to `c64ccb428`):
 
 | Commit      | What                                                                                               | Verified by                                                  |
 | ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `a1a206775` | `file.changed` fires for a watched folder created after start, or deleted and created again        | Tests only (real chokidar)                                   |
+| `a1a206775` | `file.changed` fires for a watched folder created after start, or deleted and created again        | Tests (real chokidar); **live** on `c64ccb428`, see below    |
 | `e1a800935` | Run router tests for a subscription's `tier`, `model` and `effort`                                 | Tests; live check below                                      |
-| `5f21b4e3c` | A `cue.yaml` reload keeps an unchanged heartbeat's schedule. **Desktop behaviour change**          | Tests only                                                   |
+| `5f21b4e3c` | A `cue.yaml` reload keeps an unchanged heartbeat's schedule. **Desktop behaviour change**          | Tests; **live** on `c64ccb428`, see below                    |
 | `fc1db36a3` | `file.changed`: a folder created in a different case than the glob spells it, on Windows and macOS | Tests only; the test runs on Windows and macOS, not on Linux |
 
-The VM ran a build of `046a276da` today, so none of the three fixes above has
-run live. Raw notes for the VM work are outside the repository.
+The stability run used a build of `046a276da`. After it the VM was upgraded to
+`c64ccb428`, and `a1a206775` and `5f21b4e3c` were checked live on it (see
+[Live checks on `c64ccb428`](#live-checks-on-c64ccb428)). `fc1db36a3` changes
+Windows and macOS only, so the Linux VM cannot show it. Raw notes for the VM
+work are outside the repository.
 
 ### Findings from the VM, 2026-10-12
 
@@ -250,12 +254,143 @@ the five spawns (the poll ended when the first run finished).
 - `'discovery'` in `SessionInitReason` (`cue-session-runtime-service.ts`) is
   never passed by any caller.
 
-### Stability run
+### Stability run, 2026-10-12
 
-A second stability run, on the build of `046a276da`, started 2026-10-12
-16:53:37 UTC and is due to end at about 21:28:37 UTC. The first 10 samples
-were clean (one MainPID, `NRestarts` 0, probes 200, `quick_check` ok, no
-gap). Results are recorded after it ends.
+Second run, on the build of `046a276da`, same VM, pipeline, monitor and
+summarizer (sha256 unchanged) as [Friday's](#stability-run), started at the
+same offset after the engine came up (17 min 27 s; Friday 17 min 29 s). The
+engine (MainPID 3417) was not restarted, re-imported or edited during it. The
+monitor was stopped at 21:31:06 UTC; the engine kept running. Units as
+Friday's: MiB = KiB / 1024, MB = KiB x 1024 / 10^6.
+
+| Figure                          | 2026-10-12 (`046a276da`)                                                                         | 2026-10-09 (`6fa5ca2d7`)                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| Window                          | 16:53:37 to 21:30:45, 4 h 37 min, 278 samples                                                    | 16:41:39 to 21:16:47, about 4.6 h, 276 samples |
+| Sample gaps                     | none (every interval 60.0 to 60.1 s)                                                             | none                                           |
+| MainPID                         | one (3417), `active` in 278 of 278                                                               | one (5543), `active` in 276 of 276             |
+| `NRestarts`                     | 0 in 278 of 278                                                                                  | 1 in 276 of 276 (from S4)                      |
+| RSS start                       | 129528 KiB = 126.5 MiB = 132.6 MB                                                                | 129088 KiB = 126.1 MiB = 132.2 MB              |
+| RSS after warm-up (sample 61)   | 135812 KiB = 132.6 MiB = 139.1 MB                                                                | 135768 KiB = 132.6 MiB = 139.0 MB              |
+| RSS end                         | 135732 KiB = 132.6 MiB = 139.0 MB                                                                | 133132 KiB = 130.0 MiB = 136.3 MB              |
+| Highest sample                  | 144664 KiB = 141.3 MiB = 148.1 MB (20:20)                                                        | 143320 KiB = 140.0 MiB = 146.8 MB (20:23)      |
+| Peak (VmHWM) at the end         | 144820 KiB = 141.4 MiB = **148.3 MB**                                                            | 143644 KiB = 140.3 MiB = 147.1 MB              |
+| RSS median                      | 132.9 MiB = 139.4 MB                                                                             | 133.2 MiB = 139.7 MB                           |
+| RSS slope: whole, first hour    | +0.49 MiB/h, +4.14 MiB/h                                                                         | +0.42 MiB/h, +4.04 MiB/h                       |
+| RSS slope after warm-up         | -0.49 MiB/h                                                                                      | -0.60 MiB/h                                    |
+| Engine CPU: whole run, median   | 0.255%, 0.250%                                                                                   | 0.295%, 0.267%                                 |
+| Engine CPU, highest 60 s sample | 0.999% (20:20)                                                                                   | 1.116% (20:23)                                 |
+| Service cgroup CPU: median, max | 0.298%, 19.6% (an hourly chain)                                                                  | 0.326%, 31.7% (an agent turn)                  |
+| Open files, threads             | 27 and 11 in every sample                                                                        | 27 and 11 in every sample                      |
+| `/healthz`, `/readyz` non-200   | 0 of 278 each                                                                                    | 0 of 276 each                                  |
+| `quick_check` not `ok`          | 0 of 278                                                                                         | 0 of 276                                       |
+| Engine warn or error lines      | 0                                                                                                | 0                                              |
+| Runs in the window              | `hourly`, `after-claude`, `join` +4; `beat` +55; `hook` +28; others +0; no failed or stopped run | the same counts                                |
+| Hourly chains                   | 13.0, 10.1, 12.7, 9.6 s                                                                          | 14.1, 10.9, 12.9, 19.7 s                       |
+| Webhooks                        | 28 new, all 202 (6 to 20 ms); 27 repeats, all 200 `duplicate` (1 to 24 ms)                       | 28 of 28, 27 of 27                             |
+
+It matches Friday. Every pass/fail figure is the same, and RSS at the start
+and after warm-up is within 0.5 MiB of Friday's. The differences:
+
+- `NRestarts` reads 0 throughout, as expected: the service was restarted by
+  hand before the run, which resets the counter.
+- The peak is 1.2 MB higher than Friday's, 148.3 MB against 147.1 MB, so 1.7
+  MB under the 150 MB target where Friday was 2.9 MB under. Like Friday, the
+  peak comes from one high point late in the run (20:20 today, 20:23 Friday),
+  in a 60 s sample that also had the run's highest engine CPU; at the next
+  sample RSS was 11.8 MiB lower (144664 to 132572 KiB) with no run active.
+  Unlike Friday the heap barely moved across that drop (33.6 to 33.3 MiB), so
+  this run does not show what freed the memory. Two runs of 4.6 hours each
+  cannot show that later peaks stay under 150 MB.
+- Engine CPU is slightly lower (0.255% against 0.295% over the run), and no
+  60 s sample went over 1%.
+
+The run's raw data and summaries are outside the repository. The sleep
+inhibitor on the host was released after the run.
+
+### Upgrade check on `c64ccb428`
+
+After the run, before building: the VM reached the npm registry over IPv4
+(200 in 0.14 s), so `install.sh` would not stall in its `npm install` step
+(see the finding above).
+
+- Tarball built from a clean `git archive c64ccb428` outside the repository
+  (`npm ci --ignore-scripts`, `npm run build:server`, both exit 0):
+  `maestro-server-1.1.0-RC.tgz`, 1759572 bytes, better-sqlite3 12.11.1,
+  sha256 `fe79aaf223e026f4738c17e6fb04261aa4a6b170cd5cedc15ce766f7862b266a`
+  (the same on the VM after copying).
+- `install.sh` with the same `--agent-cli` options: exit 0 in 74 s,
+  `ok maestro-cue restarted on the new version`. The restart drained 0 runs in
+  0.0 s and the new engine logged `Ready: 3 agent(s), 3 workspace(s), 10
+subscription(s) checked, no gaps.`
+- Version: `maestro-cli --version` still prints `1.1.0-RC`, the same string as
+  the previous build, so the build was confirmed by hash instead: the installed
+  `/opt/maestro/maestro-cli.js` and the built one are both sha256
+  `63c4fdeca154...`.
+- `LimitCORE=0` in the unit and in the engine's own limits; the
+  `LoadCredential=` drop-in kept; service enabled and active, `NRestarts` 0;
+  `/healthz` and `/readyz` 200; `cue engine check` (the `systemd-run` form,
+  with the unit's credentials) exit 0, no gaps.
+- The installer also updated OpenCode from 1.18.35 to 1.19.0 (Claude Code
+  unchanged at 2.1.296).
+
+### Live checks on `c64ccb428`
+
+Through the running service, with temporary subscriptions in a separate
+`LiveCheck` pipeline: `lc-flat` (watch `lcdrop/*.txt`) and `lc-nested` (watch
+`lcdeep/inner/*.txt`) in the SoakOps workspace, `action: command`, each
+appending its own name, the change type and the path to a log, with
+`changeType: '!unlink'` so the deletes in the check cannot be counted as
+fires; `lc-beat` (`time.heartbeat`, 3 minutes, a one-word prompt) on the
+Claude Code agent. `cue trigger` was not used, so the known sibling firing
+cannot appear, and every journal line names the subscription that fired.
+Times are the engine's journal, UTC.
+
+**`file.changed` on folders created after start: Pass.** Neither folder
+existed when the subscriptions loaded (21:35:23).
+
+| Step (as the `maestro` user)                                                     | Fired                                 |
+| -------------------------------------------------------------------------------- | ------------------------------------- |
+| 21:35:37 `mkdir lcdrop`; 21:35:41 write `lcdrop/one.txt`                         | `lc-flat` once, 21:35:46.150, `add`   |
+| 21:35:50 `mkdir lcdeep`; 21:35:54 `mkdir lcdeep/inner`; 21:35:58 write `one.txt` | `lc-nested` once, 21:36:03.161, `add` |
+| 21:36:07 write `lcdrop/two.txt`                                                  | `lc-flat` once, 21:36:12.166          |
+| 21:36:09 write `lcdeep/inner/two.txt`                                            | `lc-nested` once, 21:36:14.169        |
+| 21:36:18 `rm -rf lcdrop`; 21:36:22 `mkdir lcdrop`; 21:36:26 write `three.txt`    | `lc-flat` once, 21:36:31.188          |
+| 21:36:35 `rm -rf lcdeep`; recreate both levels; 21:36:47 write `three.txt`       | `lc-nested` once, 21:36:52.208        |
+
+Six files, six runs, all completed, one per file, each about 5 s after the
+write (the documented debounce). Deletions were filtered out, so this check
+says nothing about `unlink` events.
+
+**`time.heartbeat` reload: Pass.**
+
+| Time         | Action                           | Engine                                                                  |
+| ------------ | -------------------------------- | ----------------------------------------------------------------------- |
+| 21:35:09.464 | `lc-beat` added (interval 3)     | `triggered (time.heartbeat, initial)`: a new subscription fires on load |
+| 21:38:09.465 | none                             | scheduled tick                                                          |
+| 21:38:23.183 | only the prompt edited and saved | `Config reloaded`, no fire                                              |
+| 21:41:09.465 | none                             | tick on the original schedule (load + 6 min), not reload + 3 min        |
+| 21:41:27.446 | interval changed to 2 and saved  | `triggered (time.heartbeat, initial)`: fires on load                    |
+| 21:43:27.447 | none                             | tick at the new interval from that load                                 |
+
+Claude Code's own session records show the old prompt in the 21:35 and 21:38
+runs and the edited one from 21:41:10 on, so the edit took effect while the
+schedule held. The other heartbeats in the edited files behaved the same way:
+`hourly` (SoakClaude) fired only at engine start (21:33:45), never on the four
+reloads of its file, the fourth being the restore below (on `046a276da` this
+morning, every reload re-fired it); and
+`beat` (SoakOps) ticked at 21:38:45.267 and 21:43:45.268, five and ten
+minutes after engine start, through both SoakOps reloads (21:35:23, and the
+restore at 21:43:39). No warn or error line.
+
+Afterwards the three `cue.yaml` files were restored (sha256 identical to the
+values recorded before any change), the test folders and log were removed, and
+the service was restarted (21:43:51, drain 0.0 s, `Ready ... no gaps`,
+`/healthz` and `/readyz` 200, `cue engine check` no gaps).
+
+**VM state as left:** `maestro-cue` on the `c64ccb428` build, **enabled and
+active** (MainPID 7314, `NRestarts` 0, `LimitCORE=0`). Being enabled, it starts
+again on every VM boot. The stability monitor's unit is stopped and gone; its
+files and the day's scratch directories are still on the VM.
 
 ### Windows review, 2026-10-12
 
