@@ -115,6 +115,7 @@ import {
 	modelsEndpointsTest,
 	modelsEndpointsUpdate,
 } from './commands/models-endpoints';
+import { modelsConfigSet, modelsConfigShow } from './commands/models-config';
 import { modelsAssign, modelsTasks } from './commands/models-assign';
 import { loadUserLocalModels } from './services/storage';
 import {
@@ -2835,6 +2836,24 @@ modelServer
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsServerKey);
+
+const modelConfig = models
+	.command('config')
+	.description('Local Models configuration: where model files are downloaded from');
+
+modelConfig
+	.command('show')
+	.description('Show the download base in force (works with Maestro closed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsConfigShow);
+
+modelConfig
+	.command('set <key> <value>')
+	.description(
+		'Set a Local Models option. Key: download-base, the host models and Hugging Face metadata are requested from (a mirror when your network blocks Hugging Face; "default" restores https://huggingface.co). Every download is still checked against its hash'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsConfigSet);
 
 const modelEndpoints = models
 	.command('endpoints')

@@ -31,6 +31,7 @@ import { ipcErrorMessage } from '../../../../utils/ipcErrorMessage';
 import { FormInput } from '../../../ui/FormInput';
 import { MiniBadge } from '../../../ui/MiniBadge';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
+import { CardButton } from './CardButton';
 
 export interface AddHuggingFaceModelCardProps {
 	theme: Theme;
@@ -237,41 +238,5 @@ export function AddHuggingFaceModelCard({
 				)}
 			</div>
 		</SectionCard>
-	);
-}
-
-function CardButton({
-	theme,
-	icon: Icon,
-	label,
-	onClick,
-	disabled,
-	primary = false,
-	testId,
-}: {
-	theme: Theme;
-	icon: typeof Plus;
-	label: string;
-	onClick: () => void;
-	disabled: boolean;
-	primary?: boolean;
-	testId: string;
-}) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			className="px-2 py-1 rounded border text-xs flex items-center gap-1.5 disabled:opacity-50"
-			style={{
-				borderColor: primary ? theme.colors.accent : theme.colors.border,
-				backgroundColor: primary ? theme.colors.accentDim : 'transparent',
-				color: theme.colors.textMain,
-			}}
-			data-testid={testId}
-		>
-			<Icon className="w-3 h-3" />
-			{label}
-		</button>
 	);
 }

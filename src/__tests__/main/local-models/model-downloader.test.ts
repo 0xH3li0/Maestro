@@ -29,6 +29,12 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// The singleton reads the setting through the settings store, which a downloader
+// test has no reason to stand up.
+vi.mock('../../../main/local-models/download-base', () => ({
+	currentDownloadBase: () => 'https://huggingface.co',
+}));
+
 const fixture = vi.hoisted(() => {
 	// eslint-disable-next-line @typescript-eslint/no-require-imports
 	const { createHash } = require('crypto') as typeof import('crypto');
@@ -36,7 +42,7 @@ const fixture = vi.hoisted(() => {
 	return {
 		contents,
 		id: 'test-tiny-model',
-		url: 'https://example.invalid/tiny.bin',
+		url: 'https://huggingface.co/maestro/test/resolve/0000000000000000000000000000000000000000/tiny.bin',
 		sha256: createHash('sha256').update(contents).digest('hex'),
 		bytes: contents.length,
 	};
@@ -156,6 +162,57 @@ describe('model-downloader', () => {
 		const manifest = await readManifest(fixture.id);
 		expect(manifest?.id).toBe(fixture.id);
 		expect(manifest?.bytes).toBe(fixture.bytes);
+	});
+
+	it('requests from the configured download base, and still checks the catalog hash', async () => {
+		const urls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			urls.push(url);
+			return new Response(new Uint8Array(fixture.contents), { status: 200 });
+		};
+		const downloader = new ModelDownloader({
+			fetchImpl,
+			retryDelayMs: () => 0,
+			progressIntervalMs: 0,
+			downloadBase: () => 'https://mirror.example/hf',
+		});
+
+		const result = await downloader.download(fixture.id);
+
+		expect(result.status).toBe('complete');
+		expect(urls).toEqual([
+			'https://mirror.example/hf/maestro/test/resolve/0000000000000000000000000000000000000000/tiny.bin',
+		]);
+	});
+
+	it('rejects bytes a mirror served that do not match the catalog hash', async () => {
+		const corrupted = Buffer.from(fixture.contents);
+		corrupted[0] = corrupted[0] ^ 0xff;
+		const downloader = new ModelDownloader({
+			fetchImpl: async () => new Response(new Uint8Array(corrupted), { status: 200 }),
+			retryDelayMs: () => 0,
+			progressIntervalMs: 0,
+			downloadBase: () => 'https://mirror.example',
+		});
+
+		const result = await downloader.download(fixture.id);
+
+		expect(result.status).toBe('error');
+		expect(result.mismatch?.expected).toBe(fixture.sha256);
+		expect(await exists(finalPath())).toBe(false);
+		expect(await exists(partPath())).toBe(false);
+	});
+
+	it('requests from the catalog host when no download base is configured', async () => {
+		const urls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			urls.push(url);
+			return new Response(new Uint8Array(fixture.contents), { status: 200 });
+		};
+
+		await makeDownloader(fetchImpl).download(fixture.id);
+
+		expect(urls).toEqual([fixture.url]);
 	});
 
 	it('resumes from a partial .part instead of restarting', async () => {

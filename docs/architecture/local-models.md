@@ -209,8 +209,16 @@ sequenceDiagram
   40-hex revision, 64-hex hashes, safe relative paths, an https license link) and drops a record
   that fails, counting it. A file that is not JSON is moved aside, never overwritten. The license
   name comes from a model card and reaches a terminal, so it is cut to printable ASCII.
-- **Not done here.** A vision projector cannot be added with a user model, and the download base
-  is still `https://huggingface.co` (`HUGGING_FACE_BASE_URL`); the mirror setting is a later task.
+- **Not done here.** A vision projector cannot be added with a user model.
+- **The download base** (`localModelsDownloadBase`, `shared/local-models/download-base.ts`). The
+  catalog stays pinned to `https://huggingface.co` (`HUGGING_FACE_BASE_URL`): the revision and the
+  hash are the contract, and a mirror is only a different host for the same bytes. The host is
+  swapped at request time, in two places: `ModelDownloader.transferFile()` rewrites the file's
+  `sourceUrl` with `rebaseSourceUrl()` (the base is a getter, read per transfer, so a change applies
+  to the next request and a retry), and `fetchRepoInfo()` builds the API URL from it. The hash
+  check is untouched and mandatory, so a mirror that serves other bytes is a `HashMismatchError`.
+  A stored value that fails `downloadBaseProblem()` (a hand-edited file) reads as the default
+  through `resolveDownloadBase()`. The manifest keeps the catalog URL, not the mirror's.
 
 ## Storage paths
 

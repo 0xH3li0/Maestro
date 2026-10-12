@@ -28,7 +28,15 @@
  */
 
 import { useEffect } from 'react';
-import { Brain, HardDrive, Router, Server, Sparkles, type LucideIcon } from 'lucide-react';
+import {
+	Brain,
+	HardDrive,
+	Router,
+	Server,
+	SlidersHorizontal,
+	Sparkles,
+	type LucideIcon,
+} from 'lucide-react';
 import {
 	MODELS_SETTINGS_PANELS,
 	MODELS_SETTINGS_PANEL_LABELS,
@@ -45,6 +53,7 @@ import { ModalTabStrip, tabPanelProps, type ModalTab } from '../../../ui/ModalTa
 import type { SubTabRequest } from '../../searchableSettings';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { LocalModelsAssignmentsSection } from './LocalModelsAssignmentsSection';
+import { LocalModelsDownloadSourceCard } from './LocalModelsDownloadSourceCard';
 import { LocalModelsEndpointsSection } from './LocalModelsEndpointsSection';
 import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
@@ -129,6 +138,18 @@ export function ModelsSettingsTab({
 				)}
 
 				{panel === 'library' && <LocalModelsServerSection theme={theme} />}
+
+				{panel === 'library' && (
+					<div data-setting-id="local-models-download-source">
+						<SettingsSectionHeading
+							icon={SlidersHorizontal}
+							description="Where model files are downloaded from, for networks that block Hugging Face."
+						>
+							Advanced
+						</SettingsSectionHeading>
+						<LocalModelsDownloadSourceCard theme={theme} />
+					</div>
+				)}
 
 				{panel === 'sources' && (
 					<div data-setting-id="local-models-endpoints">

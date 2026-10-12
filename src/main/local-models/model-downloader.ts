@@ -44,9 +44,11 @@ import { createReadStream, createWriteStream } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
+import { DEFAULT_DOWNLOAD_BASE, rebaseSourceUrl } from '../../shared/local-models/download-base';
 import { getLocalModel } from '../../shared/local-models/model-catalog';
 import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
 import { logger } from '../utils/logger';
+import { currentDownloadBase } from './download-base';
 import {
 	ensureModelDir,
 	markInstalled,
@@ -121,6 +123,12 @@ export interface ModelDownloaderOptions {
 	progressIntervalMs?: number;
 	/** Injectable clock, so rate and ETA are testable. */
 	now?: () => number;
+	/**
+	 * The base files are requested from, read per transfer so a mirror change
+	 * applies to the next request. Defaults to the catalog's own host; the
+	 * app-wide downloader reads the `localModelsDownloadBase` setting.
+	 */
+	downloadBase?: () => string;
 }
 
 /** Errors we retry. Everything else is a real failure and fails immediately. */
@@ -192,6 +200,7 @@ export class ModelDownloader {
 	private readonly maxActive: number;
 	private readonly progressIntervalMs: number;
 	private readonly now: () => number;
+	private readonly downloadBase: () => string;
 
 	private readonly listeners = new Set<DownloadProgressListener>();
 	private readonly jobs = new Map<string, Job>();
@@ -207,6 +216,7 @@ export class ModelDownloader {
 		this.maxActive = options.maxActiveDownloads ?? MAX_ACTIVE_DOWNLOADS;
 		this.progressIntervalMs = options.progressIntervalMs ?? PROGRESS_INTERVAL_MS;
 		this.now = options.now ?? (() => Date.now());
+		this.downloadBase = options.downloadBase ?? (() => DEFAULT_DOWNLOAD_BASE);
 	}
 
 	/** Subscribe to progress. Returns the unsubscribe function. */
@@ -483,7 +493,9 @@ export class ModelDownloader {
 		const headers: Record<string, string> = {};
 		if (resumeFrom > 0) headers.Range = `bytes=${resumeFrom}-`;
 
-		const response = await this.fetchImpl(file.sourceUrl, {
+		// The hash is checked against the catalog's, whichever host served the bytes.
+		const url = rebaseSourceUrl(file.sourceUrl, this.downloadBase());
+		const response = await this.fetchImpl(url, {
 			headers,
 			signal: job.controller.signal,
 		}).catch((error) => {
@@ -498,7 +510,7 @@ export class ModelDownloader {
 			throw new TransientHttpError('Partial file rejected by server (416)');
 		}
 		if (!response.ok) {
-			const message = `HTTP ${response.status} for ${file.sourceUrl}`;
+			const message = `HTTP ${response.status} for ${url}`;
 			if (response.status >= 500 || response.status === 429) throw new TransientHttpError(message);
 			throw new Error(message);
 		}
@@ -521,7 +533,7 @@ export class ModelDownloader {
 		job.lastSampleAt = this.now();
 		this.emit(job, true);
 
-		if (!response.body) throw new TransientHttpError(`Empty body for ${file.sourceUrl}`);
+		if (!response.body) throw new TransientHttpError(`Empty body for ${url}`);
 
 		const sink = createWriteStream(partPath, { flags: resumeFrom > 0 ? 'a' : 'w' });
 		const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
@@ -612,7 +624,7 @@ let instance: ModelDownloader | null = null;
 
 /** The app-wide downloader. Built on first use; nothing runs until then. */
 export function getModelDownloader(): ModelDownloader {
-	if (!instance) instance = new ModelDownloader();
+	if (!instance) instance = new ModelDownloader({ downloadBase: currentDownloadBase });
 	return instance;
 }
 

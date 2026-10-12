@@ -26,6 +26,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { downloadSourceName } from '../../shared/local-models/download-base';
 import {
 	getLocalModel,
 	isCuratedLocalModelId,
@@ -49,6 +50,7 @@ import { corruptStorePath } from '../stores/corrupt-store-recovery';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { fetchWithTimeout, isFetchTimeoutError } from '../utils/fetchWithTimeout';
 import { logger } from '../utils/logger';
+import { currentDownloadBase } from './download-base';
 import { getModelDownloader } from './model-downloader';
 import { remove } from './model-store';
 import { localModelsDataDir } from './paths';
@@ -172,23 +174,28 @@ async function commit(next: UserLocalModelRecord[]): Promise<void> {
 	for (const listener of listeners) listener(entries);
 }
 
-/** Ask Hugging Face to describe a repo. One request; the body is JSON. */
+/**
+ * Ask Hugging Face (or the configured download base, a mirror of it) to
+ * describe a repo. One request; the body is JSON.
+ */
 async function fetchRepoInfo(repo: string): Promise<UserModelResult<unknown>> {
+	const base = currentDownloadBase();
+	const source = downloadSourceName(base);
 	let response: Response;
 	try {
 		response = await fetchWithTimeout(
-			huggingFaceModelApiUrl(repo),
+			huggingFaceModelApiUrl(repo, base),
 			{ headers: { accept: 'application/json' } },
 			HUGGING_FACE_API_TIMEOUT_MS
 		);
 	} catch (error) {
 		if (isFetchTimeoutError(error)) {
-			return { ok: false, message: 'Hugging Face did not answer in time. Try again.' };
+			return { ok: false, message: `${source} did not answer in time. Try again.` };
 		}
 		// No route, DNS failure, a blocked network: expected, and the user's to fix.
 		return {
 			ok: false,
-			message: `Could not reach Hugging Face: ${error instanceof Error ? error.message : String(error)}`,
+			message: `Could not reach ${source}: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
 	// Hugging Face answers 401 for a repo that does not exist, so a private repo
@@ -196,16 +203,16 @@ async function fetchRepoInfo(repo: string): Promise<UserModelResult<unknown>> {
 	if (response.status === 401 || response.status === 403 || response.status === 404) {
 		return {
 			ok: false,
-			message: `Hugging Face has no public repo named ${repo}. Check the id, or the repo is private.`,
+			message: `${source} has no public repo named ${repo}. Check the id, or the repo is private.`,
 		};
 	}
 	if (!response.ok) {
-		return { ok: false, message: `Hugging Face answered HTTP ${response.status} for ${repo}.` };
+		return { ok: false, message: `${source} answered HTTP ${response.status} for ${repo}.` };
 	}
 	try {
 		return { ok: true, value: await response.json() };
 	} catch {
-		return { ok: false, message: `Hugging Face sent an answer for ${repo} that is not JSON.` };
+		return { ok: false, message: `${source} sent an answer for ${repo} that is not JSON.` };
 	}
 }
 

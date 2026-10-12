@@ -10,6 +10,7 @@ import { isWindows } from '../../shared/platformDetection';
 import { MAESTRO_FONT_STACK } from '../../shared/fontStack';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
+import { DEFAULT_DOWNLOAD_BASE } from '../../shared/local-models/download-base';
 import { DEFAULT_SPOKEN_NOTICE_MODE } from '../../shared/spokenNotices';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../shared/quickChat';
 
@@ -171,6 +172,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
 	// See shared/local-models/endpoints.ts.
 	localModelEndpoints: [],
+	// Where Local Models downloads model files from. See
+	// shared/local-models/download-base.ts.
+	localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
 	// Local Models task assignments, sparse (empty = every task on its default).
 	// See shared/local-models/tasks.ts.
 	localModelAssignments: {},

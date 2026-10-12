@@ -368,6 +368,22 @@ describe('settingsStore', () => {
 				);
 			});
 
+			it('setLocalModelsDownloadBase normalizes, persists, and reads default back to Hugging Face', () => {
+				useSettingsStore.getState().setLocalModelsDownloadBase('https://hf-mirror.com/');
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://hf-mirror.com');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'localModelsDownloadBase',
+					'https://hf-mirror.com'
+				);
+
+				useSettingsStore.getState().setLocalModelsDownloadBase('default');
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://huggingface.co');
+				expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+					'localModelsDownloadBase',
+					'https://huggingface.co'
+				);
+			});
+
 			it('setGhPath updates state and persists', () => {
 				useSettingsStore.getState().setGhPath('/usr/local/bin/gh');
 				expect(useSettingsStore.getState().ghPath).toBe('/usr/local/bin/gh');
@@ -1988,6 +2004,28 @@ describe('settingsStore', () => {
 					'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
 				});
 				expect(useSettingsStore.getState().utilityAgentId).toBe('agent-1');
+			});
+		});
+
+		describe('localModelsDownloadBase', () => {
+			it('hydrates a stored mirror in its canonical spelling', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					localModelsDownloadBase: 'https://hf-mirror.com/',
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://hf-mirror.com');
+			});
+
+			it('reads a hand-edited value that fails validation as Hugging Face', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					localModelsDownloadBase: 'ftp://nope',
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().localModelsDownloadBase).toBe('https://huggingface.co');
 			});
 		});
 

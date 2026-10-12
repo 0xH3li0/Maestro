@@ -115,6 +115,12 @@ A model you add is labeled **Not verified by Maestro**. Maestro pins the revisio
 - A gated or private repo cannot be added: Maestro downloads without an account.
 - **Remove from Library** on the row deletes the model's files and takes it out of the list. **Remove** deletes only the files.
 
+### Download source
+
+Models download from Hugging Face. If your network blocks it, set a mirror under **Models > Library > Advanced > Download source**: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. **Use Hugging Face** puts the default back.
+
+The mirror changes the host and nothing else. Every file is still checked against the hash Maestro pins (or, for a model you added, the hash Hugging Face reported), so a mirror that serves different bytes fails the download. Only `http` and `https` URLs with a host are accepted, and credentials in the URL are refused. A change applies to the next request, so a download already running keeps its host; pause and resume it to move it to the new one.
+
 ### The small text models
 
 Two small models do the housekeeping tasks. Both were run on the same requests, on the prompts Maestro ships:
@@ -442,6 +448,8 @@ maestro-cli models verify <model-id>             # re-hash; never deletes or re-
 maestro-cli models remove <model-id> [--force]   # refuses a model a task uses, unless --force
 maestro-cli models add-hf <repo> <file> [--dry-run]  # add a GGUF from Hugging Face; prints its license; downloads nothing
 maestro-cli models remove-hf <model-id> [--force]    # take an added model out of the Library and delete its files
+maestro-cli models config show                   # the download base in force
+maestro-cli models config set download-base <url|default>  # a mirror for Hugging Face; works with Maestro closed
 maestro-cli models runtimes list                 # the engines: state, size, and the models each runs
 maestro-cli models runtimes install <onnx|llama> # install or update one engine on its own
 

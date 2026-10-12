@@ -18,6 +18,11 @@ const mocks = vi.hoisted(() => ({
 	cancel: vi.fn(async () => true),
 	remove: vi.fn(async () => 1234),
 	warn: vi.fn(),
+	base: 'https://huggingface.co',
+}));
+
+vi.mock('../../../main/local-models/download-base', () => ({
+	currentDownloadBase: () => mocks.base,
 }));
 
 vi.mock('../../../main/local-models/paths', () => ({
@@ -95,6 +100,7 @@ const stored = () => JSON.parse(fs.readFileSync(storeFile(), 'utf-8'));
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-user-models-'));
+	mocks.base = 'https://huggingface.co';
 	mocks.fetch.mockResolvedValue(answer(200, repoInfo()));
 	resetUserLocalModelsForTests();
 });
@@ -121,6 +127,19 @@ describe('look up', () => {
 		);
 		expect(fs.existsSync(storeFile())).toBe(false);
 		expect(getLocalModel(ID)).toBeUndefined();
+	});
+
+	it('asks the configured download base, and names it when it cannot be reached', async () => {
+		mocks.base = 'https://hf-mirror.example';
+		const preview = await previewHuggingFaceModel(REPO, FILE);
+		expect(preview.ok).toBe(true);
+		expect(mocks.fetch.mock.calls[0][0]).toBe(
+			`https://hf-mirror.example/api/models/${REPO}?blobs=true`
+		);
+
+		mocks.fetch.mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND hf-mirror.example'));
+		const failed = await previewHuggingFaceModel(REPO, FILE);
+		expect(failed.ok ? null : failed.message).toContain('Could not reach hf-mirror.example:');
 	});
 
 	it('refuses a bad repo id or file name before any request', async () => {

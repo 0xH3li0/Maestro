@@ -39,6 +39,10 @@ import {
 } from '../../shared/typography';
 import { parseTypographySnapshot } from '../../shared/typographySnapshot';
 import {
+	DEFAULT_DOWNLOAD_BASE,
+	resolveDownloadBase,
+} from '../../shared/local-models/download-base';
+import {
 	parseLocalModelEndpoints,
 	type LocalModelEndpoint,
 } from '../../shared/local-models/endpoints';
@@ -378,6 +382,12 @@ export interface SettingsStoreState
 	 */
 	localModelAssignments: LocalModelAssignments;
 	/**
+	 * Where model files are downloaded from: Hugging Face, or a mirror of it for
+	 * networks that block it. Always a valid base (the default when unset); see
+	 * shared/local-models/download-base.ts.
+	 */
+	localModelsDownloadBase: string;
+	/**
 	 * Include Cue runs in the semantic index. Off by default: Cue runs are most
 	 * of History by volume and mostly repeat. Read by the main-process indexer.
 	 */
@@ -533,6 +543,7 @@ export interface SettingsStoreActions
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
 	setLocalModelAssignments: (value: LocalModelAssignments) => void;
+	setLocalModelsDownloadBase: (value: string) => void;
 	setSemanticIndexCue: (value: boolean) => void;
 	setGhPath: (value: string) => void;
 	setMediaModelDirectory: (value: string) => Promise<boolean>;
@@ -789,6 +800,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVarsDisabled: {},
 		localModelEndpoints: [],
 		localModelAssignments: {},
+		localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
 		semanticIndexCue: false,
 		ghPath: '',
 		mediaModelDirectory: '',
@@ -953,6 +965,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setLocalModelAssignments: (value) => {
 			set({ localModelAssignments: value });
 			window.maestro.settings.set('localModelAssignments', value);
+		},
+
+		setLocalModelsDownloadBase: (value) => {
+			const base = resolveDownloadBase(value);
+			set({ localModelsDownloadBase: base });
+			window.maestro.settings.set('localModelsDownloadBase', base);
 		},
 
 		setSemanticIndexCue: (value) => {
@@ -2087,6 +2105,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.localModelAssignments = parseLocalModelAssignments(
 				allSettings['localModelAssignments']
 			);
+
+		if (allSettings['localModelsDownloadBase'] !== undefined)
+			patch.localModelsDownloadBase = resolveDownloadBase(allSettings['localModelsDownloadBase']);
 
 		if (allSettings['semanticIndexCue'] !== undefined)
 			patch.semanticIndexCue = allSettings['semanticIndexCue'] === true;

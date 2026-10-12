@@ -152,6 +152,9 @@ export interface MaestroSettings {
 	// Local Models endpoints (Ollama, LM Studio, OpenAI-compatible servers the
 	// user runs). API keys are referenced by env-var name, never stored here.
 	localModelEndpoints: LocalModelEndpoint[];
+	// Where Local Models downloads model files from (a mirror of Hugging Face
+	// for networks that block it). See shared/local-models/download-base.ts.
+	localModelsDownloadBase: string;
 	// Which source each Local Models task runs on. Sparse: a task with no entry
 	// uses its registry default. See shared/local-models/tasks.ts.
 	localModelAssignments: LocalModelAssignments;

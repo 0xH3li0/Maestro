@@ -9,6 +9,7 @@
 import type { SettingMetadata } from './settingsMetadata';
 import { ENCORE_FEATURE_DEFAULTS } from './encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from './cue/retention';
+import { DEFAULT_DOWNLOAD_BASE } from './local-models/download-base';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from './quickChat';
 
 export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
@@ -88,6 +89,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Local Models endpoints: model servers you run (Ollama, LM Studio, any OpenAI-compatible URL). Each entry is { id, name, kind, baseUrl, apiKeyEnvVar?, enabled }. API keys are never stored here: apiKeyEnvVar names a variable in Settings -> Environment.',
 		type: 'array',
 		default: [],
+		category: 'integrations',
+	},
+	localModelsDownloadBase: {
+		description:
+			'Where Local Models downloads model files from, and where Add from Hugging Face looks a repo up. Default https://huggingface.co. Point it at a mirror that serves the same /<repo>/resolve/<revision>/<file> and /api/models/<repo> paths when a network blocks Hugging Face. Every download is still checked against the catalog hash.',
+		type: 'string',
+		default: DEFAULT_DOWNLOAD_BASE,
 		category: 'integrations',
 	},
 	localModelAssignments: {

@@ -2295,6 +2295,26 @@ Show one compressed block from the cache: a diff of what the agent sent against 
 | `--compressed` | Print only the text sent in its place | -       |
 | `--json`       | Output as JSON (for scripting)        | -       |
 
+## `maestro-cli models config`
+
+Local Models configuration: where model files are downloaded from
+
+## `maestro-cli models config show`
+
+Show the download base in force (works with Maestro closed)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli models config set <key> <value>`
+
+Set a Local Models option. Key: download-base, the host models and Hugging Face metadata are requested from (a mirror when your network blocks Hugging Face; "default" restores https://huggingface.co). Every download is still checked against its hash
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli models endpoints`
 
 Model servers you run: Ollama, LM Studio, or any OpenAI-compatible base URL
