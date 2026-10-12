@@ -32,7 +32,7 @@ import * as fs from 'fs/promises';
 import { createReadStream, type Dirent } from 'fs';
 import * as path from 'path';
 
-import { getLocalModel, LOCAL_MODEL_CATALOG } from '../../shared/local-models/model-catalog';
+import { allLocalModels, getLocalModel } from '../../shared/local-models/model-catalog';
 import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { LOCAL_MODELS_DIRNAME, localModelsDataDir } from './paths';
@@ -326,10 +326,16 @@ export async function isInstalled(id: string): Promise<boolean> {
 	return (await getStatus(id)).status === 'installed';
 }
 
-/** Status of every catalog model, in catalog order. */
-export async function listStatuses(): Promise<ModelStatus[]> {
+/**
+ * Status of every model, curated then user-added, in that order. A caller that
+ * joins the result to entries by index passes the list it joins against, so a
+ * model added in between cannot shift the two apart.
+ */
+export async function listStatuses(
+	entries: readonly LocalModelEntry[] = allLocalModels()
+): Promise<ModelStatus[]> {
 	const statuses: ModelStatus[] = [];
-	for (const entry of LOCAL_MODEL_CATALOG) statuses.push(await getStatus(entry.id));
+	for (const entry of entries) statuses.push(await getStatus(entry.id));
 	return statuses;
 }
 

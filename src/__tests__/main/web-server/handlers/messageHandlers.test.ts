@@ -241,6 +241,31 @@ import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
 // The Local Models service reads the model store and runs the downloader; the
 // handler tests only care that `maestro-cli models list|install|verify|remove`
 // reach the same service functions the Settings rows call.
+vi.mock('../../../../main/local-models/hardware', () => ({
+	resolveHardwareProfile: vi.fn().mockResolvedValue({
+		platform: 'darwin',
+		arch: 'arm64',
+		totalMemoryBytes: 16 * 1024 ** 3,
+		unifiedMemory: true,
+		gpus: [],
+	}),
+}));
+
+vi.mock('../../../../main/local-models/user-models', () => ({
+	previewHuggingFaceModel: vi.fn().mockResolvedValue({
+		ok: true,
+		value: { entry: { id: 'hf-owner-model' }, alreadyAdded: false },
+	}),
+	addHuggingFaceModel: vi.fn().mockResolvedValue({
+		ok: true,
+		value: { entry: { id: 'hf-owner-model' }, added: true },
+	}),
+	removeUserLocalModel: vi.fn().mockResolvedValue({
+		ok: true,
+		value: { id: 'hf-owner-model', displayName: 'model', bytes: 512 },
+	}),
+}));
+
 vi.mock('../../../../main/local-models/service', () => ({
 	listLocalModels: vi.fn().mockResolvedValue([{ entry: { id: 'bge-small-en-v1.5' } }]),
 	localModelsFootprint: vi.fn().mockResolvedValue({ bytes: 42, models: [] }),
@@ -279,6 +304,13 @@ import {
 	removeLocalModel,
 	verifyLocalModel,
 } from '../../../../main/local-models/service';
+
+import { resolveHardwareProfile } from '../../../../main/local-models/hardware';
+import {
+	addHuggingFaceModel,
+	previewHuggingFaceModel,
+	removeUserLocalModel,
+} from '../../../../main/local-models/user-models';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -6192,6 +6224,110 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				requestId: 'l1',
 				listings: [{ entry: { id: 'bge-small-en-v1.5' } }],
 				footprint: { bytes: 42 },
+			});
+		});
+
+		it('local_models_list reads the hardware only when the fit was asked for', async () => {
+			vi.mocked(resolveHardwareProfile).mockClear();
+			vi.mocked(addHuggingFaceModel).mockClear();
+			vi.mocked(previewHuggingFaceModel).mockClear();
+			handler.handleMessage(client, { type: 'local_models_list', requestId: 'l2' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('l2'));
+			expect(resolveHardwareProfile).not.toHaveBeenCalled();
+			expect(lastResponse().hardware).toBeUndefined();
+
+			handler.handleMessage(client, { type: 'local_models_list', requestId: 'l3', fit: true });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('l3'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				hardware: { unifiedMemory: true, totalMemoryBytes: 16 * 1024 ** 3 },
+			});
+		});
+
+		it('local_models_hf_add adds the repo file and answers with its entry', async () => {
+			vi.mocked(resolveHardwareProfile).mockClear();
+			vi.mocked(addHuggingFaceModel).mockClear();
+			vi.mocked(previewHuggingFaceModel).mockClear();
+			handler.handleMessage(client, {
+				type: 'local_models_hf_add',
+				requestId: 'hf1',
+				repo: 'owner/repo',
+				file: 'model.gguf',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_hf_add_result'));
+			expect(addHuggingFaceModel).toHaveBeenCalledWith('owner/repo', 'model.gguf');
+			expect(previewHuggingFaceModel).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'hf1',
+				added: true,
+				entry: { id: 'hf-owner-model' },
+			});
+		});
+
+		it('local_models_hf_add with dryRun describes the model and saves nothing', async () => {
+			vi.mocked(resolveHardwareProfile).mockClear();
+			vi.mocked(addHuggingFaceModel).mockClear();
+			vi.mocked(previewHuggingFaceModel).mockClear();
+			handler.handleMessage(client, {
+				type: 'local_models_hf_add',
+				requestId: 'hf2',
+				repo: 'owner/repo',
+				file: 'model.gguf',
+				dryRun: true,
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('hf2'));
+			expect(previewHuggingFaceModel).toHaveBeenCalledWith('owner/repo', 'model.gguf');
+			expect(addHuggingFaceModel).not.toHaveBeenCalled();
+			expect(lastResponse()).toMatchObject({ success: true, added: false, dryRun: true });
+		});
+
+		it('local_models_hf_add reports a refusal as success: false with its message', async () => {
+			vi.mocked(addHuggingFaceModel).mockResolvedValueOnce({
+				ok: false,
+				message: 'owner/repo is gated on Hugging Face.',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_hf_add',
+				requestId: 'hf3',
+				repo: 'owner/repo',
+				file: 'model.gguf',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('hf3'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'owner/repo is gated on Hugging Face.',
+			});
+		});
+
+		it('local_models_hf_remove answers with the bytes reclaimed, or the refusal', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_hf_remove',
+				requestId: 'hf4',
+				modelId: 'hf-owner-model',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_hf_remove_result'));
+			expect(removeUserLocalModel).toHaveBeenCalledWith('hf-owner-model');
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				id: 'hf-owner-model',
+				displayName: 'model',
+				bytes: 512,
+			});
+
+			vi.mocked(removeUserLocalModel).mockResolvedValueOnce({
+				ok: false,
+				message: 'No model you added has the id "x".',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_hf_remove',
+				requestId: 'hf5',
+				modelId: 'x',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('hf5'));
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'No model you added has the id "x".',
 			});
 		});
 

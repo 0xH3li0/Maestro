@@ -52,9 +52,12 @@ import type {
 	LocalModelSource,
 } from './types';
 
+/** Where every model's bytes come from. */
+export const HUGGING_FACE_BASE_URL = 'https://huggingface.co';
+
 /** Build the pinned resolve URL for a repo file. */
 function hfUrl(source: LocalModelSource, path: string): string {
-	return `https://huggingface.co/${source.repo}/resolve/${source.revision}/${path}`;
+	return `${HUGGING_FACE_BASE_URL}/${source.repo}/resolve/${source.revision}/${path}`;
 }
 
 interface ModelDraftBase {
@@ -67,6 +70,8 @@ interface ModelDraftBase {
 	goodAt: string;
 	files: Array<{ path: string; sha256: string; bytes: number }>;
 	pending?: string;
+	/** A model the user added from Hugging Face. See `LocalModelEntry.userAdded`. */
+	userAdded?: boolean;
 }
 
 /** What only a text model declares: its roles, size, context, and attention shape. */
@@ -79,6 +84,8 @@ interface TextGenDraft {
 	contextLength: number;
 	defaultContext: number;
 	kvLayout: LocalModelKvLayout;
+	/** True when `kvLayout` is a typical shape for the size, not the model's own. */
+	kvEstimated?: boolean;
 }
 
 /**
@@ -220,6 +227,7 @@ function freezeTextGenSpec(
 			fileBytes,
 			kvBytesPer1kTokens: kvBytesPer1kTokens(kvLayout),
 			kvLayout,
+			...(draft.kvEstimated ? { estimated: true as const } : {}),
 		}),
 	};
 }
@@ -297,6 +305,7 @@ export function defineModel(draft: LocalModelDraft): LocalModelEntry {
 		files: Object.freeze(files),
 		bytes,
 		...(draft.pending ? { pending: draft.pending } : {}),
+		...(draft.userAdded ? { userAdded: true as const } : {}),
 		...(draft.kind === 'text-gen' ? freezeTextGenSpec(draft, bytes) : {}),
 		...freezeRunSpec(draft),
 	});
@@ -1165,19 +1174,66 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 
 const CATALOG_BY_ID = new Map(LOCAL_MODEL_CATALOG.map((entry) => [entry.id, entry]));
 
-/** Look a model up by id. Undefined for an id that is not in the catalog. */
-export function getLocalModel(id: string): LocalModelEntry | undefined {
-	return CATALOG_BY_ID.get(id);
+// ---------------------------------------------------------------------------
+// Models the user added
+// ---------------------------------------------------------------------------
+
+/**
+ * Models the user added from Hugging Face, beside the curated table.
+ *
+ * `LOCAL_MODEL_CATALOG` is what Maestro ships and stays frozen. A user entry is
+ * data on this machine, so each process holds its own copy and is told what it
+ * is: the main process from its store (`src/main/local-models/user-models.ts`),
+ * a renderer from the main process, the CLI from the same file. Every lookup
+ * below reads both, so a user model is installed, verified, served and assigned
+ * through exactly the code a curated one is.
+ */
+let userModels: readonly LocalModelEntry[] = Object.freeze([]);
+let userModelsById = new Map<string, LocalModelEntry>();
+
+/**
+ * Replace this process's user models. An entry whose id a curated model already
+ * has, or that repeats an earlier one, is dropped: a user entry can never
+ * shadow the table Maestro ships.
+ */
+export function setUserLocalModels(entries: readonly LocalModelEntry[]): void {
+	const byId = new Map<string, LocalModelEntry>();
+	for (const entry of entries) {
+		if (!entry.userAdded || CATALOG_BY_ID.has(entry.id) || byId.has(entry.id)) continue;
+		byId.set(entry.id, entry);
+	}
+	userModelsById = byId;
+	userModels = Object.freeze([...byId.values()]);
 }
 
-/** True when `id` names a catalog entry. The guard every path boundary uses. */
+/** The models the user added, in the order they were added. */
+export function userLocalModels(): readonly LocalModelEntry[] {
+	return userModels;
+}
+
+/** Every model this process knows: the curated catalog, then the user's own. */
+export function allLocalModels(): readonly LocalModelEntry[] {
+	return userModels.length === 0 ? LOCAL_MODEL_CATALOG : [...LOCAL_MODEL_CATALOG, ...userModels];
+}
+
+/** Look a model up by id, curated or user-added. Undefined for an id that names neither. */
+export function getLocalModel(id: string): LocalModelEntry | undefined {
+	return CATALOG_BY_ID.get(id) ?? userModelsById.get(id);
+}
+
+/** True when `id` names a curated or user-added model. The guard every path boundary uses. */
 export function isLocalModelId(id: string): boolean {
+	return CATALOG_BY_ID.has(id) || userModelsById.has(id);
+}
+
+/** True when `id` names a model Maestro ships, which a user entry may never take. */
+export function isCuratedLocalModelId(id: string): boolean {
 	return CATALOG_BY_ID.has(id);
 }
 
-/** Every catalog model a runtime reads, in catalog order. */
+/** Every model a runtime reads, curated then user-added. */
 export function localModelsForRuntime(runtimeId: NativeRuntimeId): LocalModelEntry[] {
-	return LOCAL_MODEL_CATALOG.filter((entry) => entry.runtime === runtimeId);
+	return allLocalModels().filter((entry) => entry.runtime === runtimeId);
 }
 
 /**
@@ -1235,19 +1291,3 @@ export const LOCAL_MODEL_KIND_ORDER: readonly LocalModelKind[] = Object.freeze([
 	'tts',
 	'wake-word',
 ]);
-
-/**
- * Group items by model kind in {@link LOCAL_MODEL_KIND_ORDER}, keeping each
- * group in the order given. `kindOf` reads the kind off whatever the caller
- * holds (a catalog entry, a listing). Kinds with no item are left out, so a
- * caller never draws an empty heading.
- */
-export function groupByLocalModelKind<T>(
-	items: readonly T[],
-	kindOf: (item: T) => LocalModelKind
-): { kind: LocalModelKind; items: T[] }[] {
-	return LOCAL_MODEL_KIND_ORDER.map((kind) => ({
-		kind,
-		items: items.filter((item) => kindOf(item) === kind),
-	})).filter((group) => group.items.length > 0);
-}

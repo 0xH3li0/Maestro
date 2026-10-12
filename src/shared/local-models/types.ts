@@ -163,6 +163,12 @@ export interface LocalModelMemoryHint {
 	readonly kvBytesPer1kTokens: number;
 	/** The layout `kvBytesPer1kTokens` was computed from. */
 	readonly kvLayout: LocalModelKvLayout;
+	/**
+	 * True when `kvLayout` is the typical shape for a model of this size rather
+	 * than the model's own GGUF metadata (a model the user added by hand). The
+	 * fit rule says so in its verdict.
+	 */
+	readonly estimated?: true;
 }
 
 export interface LocalClassifierSpec extends LocalEncoderGraph {
@@ -224,6 +230,13 @@ export interface LocalModelEntry {
 	 * is the one download this table must never invite.
 	 */
 	readonly pending?: string;
+	/**
+	 * True for a model the user added from Hugging Face. Its revision is pinned
+	 * and its files are hashed on download, but against the hash Hugging Face
+	 * reports, not one Maestro read and recorded: every surface labels it
+	 * `USER_MODEL_UNVERIFIED_LABEL`. Its roles are empty, since nothing was measured.
+	 */
+	readonly userAdded?: true;
 	/** How to run the model. Present exactly when `kind` is `embedding`. */
 	readonly embedding?: LocalEmbeddingSpec;
 	/** How to run the model. Present exactly when `kind` is `classifier`. */

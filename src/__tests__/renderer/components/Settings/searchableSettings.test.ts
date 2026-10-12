@@ -300,6 +300,7 @@ describe('searchableSettings', () => {
 			// Local Models tab
 			['local models', 'local-models-models'],
 			['download model', 'local-models-models'],
+			['hugging face', 'local-models-add-hf'],
 			['model server', 'local-models-model-server'],
 			['llama-server', 'local-models-model-server'],
 			['rotate', 'local-models-model-server'],
@@ -341,6 +342,7 @@ describe('searchableSettings', () => {
 			const panelOf = Object.fromEntries(modelsEntries.map((s) => [s.id, s.subTab]));
 			expect(panelOf).toEqual({
 				'local-models-models': 'library',
+				'local-models-add-hf': 'library',
 				'local-models-model-server': 'library',
 				'local-models-endpoints': 'sources',
 				'local-models-system-one': 'system-one',

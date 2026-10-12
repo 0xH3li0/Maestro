@@ -26,7 +26,7 @@
  */
 
 import {
-	LOCAL_MODEL_CATALOG,
+	allLocalModels,
 	localModelGgufFile,
 	localModelProjectorFile,
 } from '../../../shared/local-models/model-catalog';
@@ -66,10 +66,13 @@ export function isServerModel(entry: LocalModelEntry): boolean {
 	return localModelGgufFile(entry) !== undefined;
 }
 
-/** Every installed catalog text model, as the server offers it, in catalog order. */
+/**
+ * Every installed text model, as the server offers it: the curated catalog in
+ * catalog order, then the models the user added.
+ */
 export async function collectServerModels(): Promise<ServerModelPreset[]> {
 	const models: ServerModelPreset[] = [];
-	for (const entry of LOCAL_MODEL_CATALOG) {
+	for (const entry of allLocalModels()) {
 		const gguf = localModelGgufFile(entry);
 		if (!gguf || !(await isInstalled(entry.id))) continue;
 		const projector = localModelProjectorFile(entry);

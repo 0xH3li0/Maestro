@@ -58,6 +58,27 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'local-models-add-hf',
+		...inPanel('library'),
+		label: 'Add from Hugging Face',
+		description:
+			'Add a GGUF text model the Library does not list, by repo id and file name. Not verified by Maestro',
+		keywords: [
+			'hugging face',
+			'huggingface',
+			'hf',
+			'add model',
+			'custom model',
+			'repo',
+			'gguf',
+			'file name',
+			'license',
+			'not verified',
+			'unverified',
+			'own model',
+		],
+	},
+	{
 		id: 'local-models-model-server',
 		...inPanel('library'),
 		label: 'Model server',

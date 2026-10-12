@@ -1,14 +1,19 @@
-// `maestro-cli models list|install|pause|cancel|remove|verify` - the local
-// model catalog and what is on disk.
+// `maestro-cli models list|install|pause|cancel|remove|verify|add-hf|remove-hf` -
+// the local model Library and what is on disk.
 //
 // Every verb runs in the desktop over the WS bridge, through the same service
-// functions (`src/main/local-models/service.ts`) as the `localModels:*` IPC
-// channels the Settings > Models rows call, so the CLI and the app read
-// the same model store, write through the same downloader (a download started
-// in one is joined by the other, never duplicated), and hash with the same
-// verifier. The CLI only decides what the Settings row decides before it calls:
-// which ids are real, that a pending model is never offered for download, and
-// that removing a model a task runs on is named first.
+// functions (`src/main/local-models/service.ts`, and `user-models.ts` for the
+// models the user added from Hugging Face) as the `localModels:*` IPC channels
+// the Settings > Models rows call, so the CLI and the app read the same model
+// store, write through the same downloader (a download started in one is joined
+// by the other, never duplicated), and hash with the same verifier. The CLI only
+// decides what the Settings row decides before it calls: which ids are real,
+// that a pending model is never offered for download, and that removing a model
+// a task runs on is named first.
+//
+// `list` groups the way the Library does (`groupLocalModelsForLibrary`), and
+// `list --fit` judges each model with the same `modelFit()` the rows use,
+// against the hardware profile the desktop read.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { readLocalModelAssignments } from '../services/storage';
@@ -20,14 +25,27 @@ import {
 	type LocalModelDisplayStatus,
 } from '../output/formatter';
 import { formatSize } from '../../shared/formatters';
+import { getLocalModel, LOCAL_MODEL_KIND_ORDER } from '../../shared/local-models/model-catalog';
 import {
-	getLocalModel,
-	groupByLocalModelKind,
-	LOCAL_MODEL_KIND_LABELS,
-	LOCAL_MODEL_KIND_ORDER,
-} from '../../shared/local-models/model-catalog';
+	CLOUD_ONLY_NOTE,
+	groupLocalModelsForLibrary,
+	localModelLibraryGroup,
+	localModelRoleBadges,
+} from '../../shared/local-models/library';
+import {
+	describeHardwareProfile,
+	hardwareFitCaveat,
+	MODEL_FIT_LABELS,
+	modelFit,
+	type HardwareProfile,
+	type ModelFit,
+} from '../../shared/local-models/model-fit';
 import { tasksUsingLocalModel } from '../../shared/local-models/tasks';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
+import {
+	USER_MODEL_UNVERIFIED_DETAIL,
+	USER_MODEL_UNVERIFIED_LABEL,
+} from '../../shared/local-models/user-models';
 import type { LocalModelEntry, LocalModelKind } from '../../shared/local-models/types';
 import { voiceModelUsageLabel } from '../../shared/acappella/voice-models';
 import type { LocalModelListing, LocalRuntimeEnsureResult } from '../../main/local-models/service';
@@ -49,6 +67,11 @@ interface JsonOption {
 
 interface ListOptions extends JsonOption {
 	kind?: string;
+	fit?: boolean;
+}
+
+interface AddHfOptions extends JsonOption {
+	dryRun?: boolean;
 }
 
 interface RemoveOptions extends JsonOption {
@@ -130,42 +153,73 @@ export async function modelsList(options: ListOptions): Promise<void> {
 		error?: string;
 		listings?: LocalModelListing[];
 		footprint?: ModelFootprint;
-	}>({ type: 'local_models_list' }, 'local_models_list_result', options.json);
+		hardware?: HardwareProfile;
+	}>(
+		{ type: 'local_models_list', ...(options.fit ? { fit: true } : {}) },
+		'local_models_list_result',
+		options.json
+	);
 	const listings = (reply.listings ?? []).filter(
 		(listing) => kind === undefined || listing.entry.kind === kind
 	);
 	const footprintBytes = reply.footprint?.bytes ?? 0;
+	// The same rule and the same profile the Library rows are judged with.
+	const hardware = options.fit ? reply.hardware : undefined;
+	if (options.fit && !hardware)
+		fail("The app did not report this computer's hardware", options.json);
+	const fitOf = (entry: LocalModelEntry): ModelFit | undefined =>
+		hardware ? modelFit(entry, hardware) : undefined;
+	const fitCaveat = hardware ? hardwareFitCaveat(hardware) : null;
 
 	if (options.json) {
 		console.log(
 			JSON.stringify({
 				success: true,
 				footprintBytes,
-				models: listings.map((listing) => ({
-					id: listing.entry.id,
-					displayName: listing.entry.displayName,
-					kind: listing.entry.kind,
-					status: displayStatus(listing),
-					bytes: listing.entry.bytes,
-					bytesOnDisk: listing.status.bytesOnDisk,
-					license: listing.entry.license.spdx,
-					runtime: listing.entry.runtime,
-					usedBy: usedBy(listing.entry.id),
-					...(listing.entry.pending ? { pending: listing.entry.pending } : {}),
-					...(listing.status.detail ? { detail: listing.status.detail } : {}),
-				})),
+				...(hardware
+					? {
+							hardware,
+							hardwareSummary: describeHardwareProfile(hardware),
+							...(fitCaveat ? { fitCaveat } : {}),
+						}
+					: {}),
+				models: listings.map((listing) => {
+					const fit = fitOf(listing.entry);
+					return {
+						id: listing.entry.id,
+						displayName: listing.entry.displayName,
+						kind: listing.entry.kind,
+						group: localModelLibraryGroup(listing.entry),
+						status: displayStatus(listing),
+						bytes: listing.entry.bytes,
+						bytesOnDisk: listing.status.bytesOnDisk,
+						license: listing.entry.license.spdx,
+						runtime: listing.entry.runtime,
+						goodAt: listing.entry.goodAt,
+						...(listing.entry.roles ? { roles: listing.entry.roles } : {}),
+						...(listing.entry.agentHarnesses
+							? { agentHarnesses: listing.entry.agentHarnesses }
+							: {}),
+						...(listing.entry.userAdded ? { userAdded: true, verifiedByMaestro: false } : {}),
+						...(fit ? { fit: fit.fit, fitReason: fit.reason } : {}),
+						usedBy: usedBy(listing.entry.id),
+						...(listing.entry.pending ? { pending: listing.entry.pending } : {}),
+						...(listing.status.detail ? { detail: listing.status.detail } : {}),
+					};
+				}),
 			})
 		);
 		return;
 	}
 
-	const groups = groupByLocalModelKind(listings, (listing) => listing.entry.kind);
+	const groups = groupLocalModelsForLibrary(listings, (listing) => listing.entry);
 	console.log(
 		formatLocalModels(
-			groups.map((group) => ({
-				kindLabel: LOCAL_MODEL_KIND_LABELS[group.kind],
-				models: group.items.map((listing) => {
+			groups.map(({ group, items }) => ({
+				label: group.label,
+				models: items.map((listing) => {
 					const status = displayStatus(listing);
+					const fit = fitOf(listing.entry);
 					return {
 						id: listing.entry.id,
 						displayName: listing.entry.displayName,
@@ -173,12 +227,125 @@ export async function modelsList(options: ListOptions): Promise<void> {
 						size: formatSize(listing.entry.bytes),
 						usedBy: usedBy(listing.entry.id),
 						detail: status === 'pending' ? listing.entry.pending : listing.status.detail,
+						goodAt: listing.entry.goodAt,
+						badges: [
+							...localModelRoleBadges(listing.entry),
+							...(listing.entry.userAdded ? [USER_MODEL_UNVERIFIED_LABEL] : []),
+						],
+						...(fit
+							? { fit: { level: fit.fit, label: MODEL_FIT_LABELS[fit.fit], reason: fit.reason } }
+							: {}),
 					};
 				}),
 			})),
-			formatSize(footprintBytes)
+			formatSize(footprintBytes),
+			{
+				...(hardware ? { hardware: describeHardwareProfile(hardware) } : {}),
+				...(fitCaveat ? { fitCaveat } : {}),
+				// A filtered list is an answer about one kind, not the whole Library.
+				...(kind === undefined ? { cloudOnly: CLOUD_ONLY_NOTE } : {}),
+			}
 		)
 	);
+}
+
+/**
+ * Add a Hugging Face repo file to the Library as a user entry. The desktop asks
+ * Hugging Face to describe the repo, pins its commit, and records the hash it
+ * reports; nothing is downloaded until `models install`. `--dry-run` describes
+ * the model (its license first) and saves nothing.
+ */
+export async function modelsAddHf(
+	repo: string,
+	file: string,
+	options: AddHfOptions
+): Promise<void> {
+	const reply = await send<{
+		success: boolean;
+		error?: string;
+		entry?: LocalModelEntry;
+		added?: boolean;
+	}>(
+		{ type: 'local_models_hf_add', repo, file, ...(options.dryRun ? { dryRun: true } : {}) },
+		'local_models_hf_add_result',
+		options.json
+	);
+	const entry = reply.entry;
+	if (!entry) fail('The app did not describe the model', options.json);
+	const added = reply.added === true;
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				added,
+				...(options.dryRun ? { dryRun: true } : {}),
+				id: entry.id,
+				displayName: entry.displayName,
+				repo: entry.source.repo,
+				revision: entry.source.revision,
+				license: entry.license.spdx,
+				licenseUrl: entry.license.url,
+				bytes: entry.bytes,
+				files: entry.files.map((part) => ({
+					path: part.path,
+					sha256: part.sha256,
+					bytes: part.bytes,
+				})),
+				verifiedByMaestro: false,
+			})
+		);
+		return;
+	}
+
+	if (options.dryRun) console.log(`${entry.displayName} (not added: --dry-run)`);
+	else if (added) console.log(formatSuccess(`Added ${entry.displayName} to the Library`));
+	else console.log(`${entry.displayName} was already in the Library.`);
+	console.log(`  Id:       ${entry.id}`);
+	console.log(`  License:  ${entry.license.spdx} (${entry.license.url})`);
+	console.log(
+		`  Size:     ${formatSize(entry.bytes)} in ${entry.files.length === 1 ? '1 file' : `${entry.files.length} files`}`
+	);
+	console.log(`  Source:   ${entry.source.repo}@${entry.source.revision.slice(0, 7)}`);
+	console.log(formatWarning(`${USER_MODEL_UNVERIFIED_LABEL}. ${USER_MODEL_UNVERIFIED_DETAIL}`));
+	if (!options.dryRun) console.log(`  Download it: maestro-cli models install ${entry.id}`);
+}
+
+/**
+ * Take a model the user added out of the Library and delete its files. The
+ * desktop decides which ids are user models (it owns the list), so an unknown
+ * or curated id comes back as its refusal. The in-use guard is the same one
+ * `models remove` applies.
+ */
+export async function modelsRemoveHf(modelId: string, options: RemoveOptions): Promise<void> {
+	const tasks = tasksUsingLocalModel(readLocalModelAssignments(), modelId).map(
+		(task) => task.label
+	);
+	if (tasks.length > 0 && !options.force) {
+		fail(
+			`${getLocalModel(modelId)?.displayName ?? modelId} is assigned to ${tasks.join(', ')}. Removing it makes ${tasks.length === 1 ? 'that task' : 'those tasks'} unavailable. Re-run with --force to remove it anyway.`,
+			options.json
+		);
+	}
+
+	const reply = await send<{
+		success: boolean;
+		error?: string;
+		id?: string;
+		displayName?: string;
+		bytes?: number;
+	}>({ type: 'local_models_hf_remove', modelId }, 'local_models_hf_remove_result', options.json);
+	const bytes = reply.bytes ?? 0;
+	const name = reply.displayName ?? modelId;
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, modelId, bytesReclaimed: bytes, tasks }));
+		return;
+	}
+	console.log(formatSuccess(`Removed ${name} from the Library (${formatSize(bytes)} reclaimed)`));
+	if (tasks.length > 0) {
+		console.log(formatWarning(`Now unavailable: ${tasks.join(', ')}`));
+	}
 }
 
 export async function modelsInstall(modelId: string, options: JsonOption): Promise<void> {

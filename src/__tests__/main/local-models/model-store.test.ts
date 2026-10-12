@@ -73,6 +73,7 @@ vi.mock('../../../shared/local-models/model-catalog', async (importOriginal) => 
 	return {
 		...actual,
 		LOCAL_MODEL_CATALOG: catalog,
+		allLocalModels: () => catalog,
 		getLocalModel: (id: string) => byId.get(id),
 		isLocalModelId: (id: string) => byId.has(id),
 	};

@@ -59,6 +59,14 @@ import type {
 	ModelServerStatus,
 } from '../../shared/local-models/model-server';
 import type { ServerBuildChoice } from '../../shared/local-models/server-engine';
+import type { HardwareProfile } from '../../shared/local-models/model-fit';
+import type { LocalModelEntry } from '../../shared/local-models/types';
+import type { UserModelResult } from '../../shared/local-models/user-models';
+import type {
+	HuggingFaceModelAdded,
+	HuggingFaceModelPreview,
+	UserLocalModelRemoved,
+} from '../local-models/user-models';
 
 /** Subscribe to one broadcast channel; returns the unsubscribe. */
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
@@ -115,6 +123,35 @@ function createLocalModelEndpointsApi() {
 		/** A one-token chat, reporting latency. `model` defaults to the first listed. */
 		test: (endpoint: string | LocalModelEndpoint, model?: string): Promise<EndpointTestResult> =>
 			ipcRenderer.invoke('localModels:endpoints:test', endpoint, model),
+	};
+}
+
+/**
+ * `window.maestro.localModels.huggingFace.*` - models the user adds by repo id
+ * and file name. `preview()` and `add()` ask Hugging Face to describe that one
+ * repo; neither downloads the model. A refusal the user can act on comes back
+ * as `{ ok: false, message }` rather than a rejection.
+ */
+function createHuggingFaceApi() {
+	return {
+		/** Describe the model a repo file would add: license, size, revision. Saves nothing. */
+		preview: (repo: string, file: string): Promise<UserModelResult<HuggingFaceModelPreview>> =>
+			ipcRenderer.invoke('localModels:hf:preview', repo, file),
+
+		/** Add the model to the Library as a user entry. Listed, not downloaded. */
+		add: (repo: string, file: string): Promise<UserModelResult<HuggingFaceModelAdded>> =>
+			ipcRenderer.invoke('localModels:hf:add', repo, file),
+
+		/** Take a user model out of the Library and delete its files. */
+		remove: (modelId: string): Promise<UserModelResult<UserLocalModelRemoved>> =>
+			ipcRenderer.invoke('localModels:hf:remove', modelId),
+
+		/** The models the user added. A memory read. */
+		list: (): Promise<LocalModelEntry[]> => ipcRenderer.invoke('localModels:userModels'),
+
+		/** The whole list, after every add or remove. Broadcast to every window. */
+		onChanged: (handler: (entries: LocalModelEntry[]) => void): (() => void) =>
+			subscribe('localModels:userModels:changed', handler),
 	};
 }
 
@@ -289,6 +326,14 @@ export function createLocalModelsApi() {
 
 		/** Disk used by local models, including directories no longer in the catalog. */
 		footprint: (): Promise<ModelFootprint> => ipcRenderer.invoke('localModels:footprint'),
+
+		/**
+		 * What this computer has to run a model on: RAM, unified memory, GPUs. The
+		 * input to `modelFit()`. Reads the OS and a stored file; runs nothing.
+		 */
+		hardware: (): Promise<HardwareProfile> => ipcRenderer.invoke('localModels:hardware'),
+
+		huggingFace: createHuggingFaceApi(),
 
 		/** Download progress, throttled at the source. Broadcast to every window. */
 		onProgress: (handler: (progress: DownloadProgress) => void): (() => void) =>

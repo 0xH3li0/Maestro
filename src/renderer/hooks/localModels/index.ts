@@ -8,6 +8,8 @@
 
 export { useLocalModels } from './useLocalModels';
 export type { LocalModelsSource, LocalModelsState, UseLocalModelsOptions } from './useLocalModels';
+export { useLocalModelsHardware } from './useLocalModelsHardware';
+export type { LocalModelsHardwareState } from './useLocalModelsHardware';
 export { useLocalRuntimes } from './useLocalRuntimes';
 export type {
 	LocalRuntimesSource,

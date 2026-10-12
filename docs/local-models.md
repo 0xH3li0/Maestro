@@ -37,30 +37,87 @@ A task's assignment row sits on the inner tab of its system. Every message in Ma
 
 ## Models
 
-Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. The top of the tab shows how much disk the installed models use, how many are installed, and how many need attention. Below that is the catalog, grouped by kind:
+Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. The top of the tab shows how much disk the installed models use, how many are installed, and how many need attention. It also names what this computer has to run a model on, for example "32.0 GB of unified memory (Apple Silicon)" or "32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB)".
 
-| Kind            | Model                          | Size     | License                   |
-| --------------- | ------------------------------ | -------- | ------------------------- |
-| Text generation | Qwen3 1.7B Instruct (Q4_K_M)   | 1.1 GB   | Apache-2.0                |
-| Embeddings      | BGE Small (English)            | 34.7 MB  | MIT                       |
-| Embeddings      | EmbeddingGemma 300M            | 218.7 MB | Gemma Terms of Use        |
-| Classifiers     | Llama Prompt Guard 2 22M       | 81.2 MB  | Llama 4 Community License |
-| Classifiers     | DeBERTa v3 Prompt Injection v2 | 747.2 MB | Apache-2.0                |
-| Speech-to-text  | Parakeet TDT 0.6B (English)    | 661.3 MB | CC-BY-4.0                 |
-| Speech-to-text  | Whisper Base (English)         | 208.5 MB | Apache-2.0                |
-| Text-to-speech  | Kokoro 82M                     | 326.1 MB | Apache-2.0                |
-| Wake word       | openWakeWord Base              | 2.4 MB   | Apache-2.0                |
-| Wake word       | Wake phrase: "Hey Jarvis"      | 1.3 MB   | CC-BY-NC-SA-4.0           |
+Below that is the Library, grouped by what each model is for. A text model is listed once, under its most specific role, and its other roles are badges on its row:
 
-Each kind lists what can use it, and each installed model lists what uses it right now: the tasks assigned to it, and the A Cappella voice slot when voice can use it. Each row has **Download**, **Pause**, **Cancel**, **Re-verify**, and **Remove**, with its size and status.
+| Group          | Model                             | Size     | Good at                                                                   |
+| -------------- | --------------------------------- | -------- | ------------------------------------------------------------------------- |
+| Runs agents    | Gemma 4 E4B (Q4_0)                | 5.2 GB   | Screenshots and images, many languages, fast replies on laptops           |
+| Runs agents    | gpt-oss 20B (MXFP4)               | 11.3 GB  | Reasoning with tool calls; the smallest that drives Claude Code and Codex |
+| Runs agents    | Qwen3-Coder 30B-A3B (Q4_K_M)      | 17.3 GB  | A fast coding agent with tool use                                         |
+| Runs agents    | Gemma 4 31B (Q4_K_M)              | 18.2 GB  | The strongest Gemma: tool calling and images                              |
+| Runs agents    | Qwen3-Coder-Next 80B-A3B (Q4_K_M) | 45.2 GB  | The strongest local coding agent                                          |
+| Runs agents    | gpt-oss 120B (MXFP4)              | 59.0 GB  | The strongest local reasoning and tool use                                |
+| Housekeeping   | Qwen3.5 9B (Q4_K_M)               | 5.3 GB   | Commit and PR drafts, shell commands and summaries                        |
+| Housekeeping   | Devstral Small 2 24B (Q4_K_M)     | 13.3 GB  | Multi-file edits in large repositories                                    |
+| Housekeeping   | Qwen3.6 35B-A3B (Q4_K_M)          | 19.0 GB  | General agent work: fast, with a long context                             |
+| Housekeeping   | Qwen3.8 27B (Q4_K_M)              | 17.7 GB  | Hard reasoning and coding                                                 |
+| Judge          | Qwen3 1.7B Instruct (Q4_K_M)      | 1.0 GB   | Fast, small judgments: tab names, gate answers, short summaries           |
+| Judge          | Qwen3.5 4B (Q4_K_M)               | 2.6 GB   | Fast judgments and housekeeping: routing, labels, tab names               |
+| Vision         | Gemma 4 12B (Q4_K_M)              | 6.8 GB   | Writing and multilingual work, with images                                |
+| Embeddings     | BGE Small (English)               | 33.1 MB  | Quick search by meaning in English                                        |
+| Embeddings     | EmbeddingGemma 300M               | 208.6 MB | Higher-quality search by meaning, in many languages                       |
+| Classifiers    | Llama Prompt Guard 2 22M          | 77.4 MB  | Catching prompt injection in untrusted text                               |
+| Classifiers    | DeBERTa v3 Prompt Injection v2    | 712.6 MB | The same, under a permissive license, at a larger size                    |
+| Speech-to-text | Parakeet TDT 0.6B (English)       | 630.7 MB | Dictated English: names, casing and punctuation                           |
+| Speech-to-text | Whisper Base (English)            | 198.8 MB | Plain English dictation on modest hardware                                |
+| Text-to-speech | Kokoro 82M                        | 311.0 MB | Reading replies and notices aloud                                         |
+| Wake word      | openWakeWord Base                 | 2.3 MB   | Hearing the wake and stop words with little CPU                           |
+| Wake word      | Wake phrase: "Hey Jarvis"         | 1.2 MB   | Hearing "hey jarvis" to start a hands-free session                        |
+
+The text models are all Apache-2.0. The licenses of the others are under [Licenses](#licenses).
+
+**Runs agents** is not a claim from a model card. A model is in that group only after it fixed a bug in a scratch repository through a real harness, and its badge names the harnesses it passed with ("Runs agents: Claude Code, Codex").
+
+Each row shows what the model is good at, its size, its license, and what uses it right now: the tasks assigned to it, and the A Cappella voice slot when voice can use it. Each row has **Download**, **Pause**, **Cancel**, **Re-verify**, and **Remove**.
 
 Every file comes from a pinned revision and is checked against a SHA-256 recorded in the app, so a file altered in transit fails to install rather than running. **Re-verify** hashes the files again and never deletes or re-downloads anything.
 
 **Removing a model a task uses warns first.** The warning names the tasks that would stop working, and you choose **Remove anyway** or **Keep it**.
 
+### Will it run on this computer
+
+Each row carries a fit label, judged against this computer and the context the model runs at:
+
+| Label         | Meaning                                                       |
+| ------------- | ------------------------------------------------------------- |
+| **Fits**      | The model and its context fit in the memory the GPU can use   |
+| **Tight**     | It runs, slowly or with the system squeezed. The row says why |
+| **Too large** | It does not run here. The row says how much it needs          |
+
+A model needs its file, plus memory for its context, plus room for the system. The rule depends on the machine:
+
+- **Apple Silicon.** The GPU can use about 75% of memory by default. A model fits when its file, its context and 2 GB for the system are within that. It is tight up to 90%.
+- **A PC with a graphics card.** A model fits when its file and its context are within the card's memory. A mixture-of-experts model that does not fit can keep part of itself in RAM, and is tight. A dense model that does not fit is too large.
+- **No GPU.** A model is never better than tight, and only models under 10B active parameters are offered.
+
+As examples, on a Mac: Qwen3.5 4B fits in 8 GB; Gemma 4 E4B, Qwen3.5 9B and Gemma 4 12B fit in 16 GB; the 20B to 35B models fit in 32 GB; Qwen3-Coder-Next is tight in 64 GB, and it and gpt-oss 120B fit in 128 GB.
+
+Models that are too large are hidden. **Show models too large for this machine** at the bottom of the list shows them. A model with files on disk is never hidden.
+
+On a PC, Maestro reads the graphics card's memory from the model server's engine. Until that engine is installed, the Library says so and judges each model as if it ran on the CPU. Install the engine under [Model server](#model-server) for an accurate answer.
+
+### Cloud only
+
+DeepSeek V4, Kimi K3, Kimi K2.7 Code and GLM-5.3 are too large to run on a desktop (the smallest is 155 GB), so the Library does not offer them. Use them through their provider's API, with your own key, from **Sources**.
+
+### Add from Hugging Face
+
+**Add from Hugging Face**, below the list, adds a GGUF text model the Library does not offer. Enter the repo id (`unsloth/Qwen3.5-2B-GGUF`) and the file name (`Qwen3.5-2B-Q4_K_M.gguf`), then:
+
+1. **Look up** asks Hugging Face about the repo and shows the model's license (from its model card), its size, and its fit. Nothing is saved or downloaded yet.
+2. **Add to Library** saves the model. It appears in the **Added from Hugging Face** group with its own **Download** button.
+
+A model you add is labeled **Not verified by Maestro**. Maestro pins the revision the repo was at when you added it, and checks the download against the hash Hugging Face reports for that revision, so a damaged download still fails to install. Nobody at Maestro has tested the model, so it has no role and no "good at" line, and its fit is an estimate from its size.
+
+- Naming one part of a split GGUF (`-00001-of-00003.gguf`) adds every part.
+- A gated or private repo cannot be added: Maestro downloads without an account.
+- **Remove from Library** on the row deletes the model's files and takes it out of the list. **Remove** deletes only the files.
+
 ### The text model
 
-**Qwen3 1.7B** is the one text model Maestro runs itself. It is small and fast (a tab name in about a quarter of a second on Apple Silicon), and that size decides what it is offered for:
+**Qwen3 1.7B** is the small text model the housekeeping tasks default to. It is fast (a tab name in about a quarter of a second on Apple Silicon), and that size decides what it is offered for:
 
 - **Offered for:** tab naming, summaries, the Cue gate, pull request drafts, spoken notices, tab cleanup suggestions, and the token proxy's digest.
 - **Not offered for AI command mode.** In testing it wrote a wrong command for one request, and a command that kills a process for a request to find it.
@@ -364,12 +421,14 @@ The "Hey Jarvis" wake phrase is CC-BY-NC-SA-4.0, which does not allow commercial
 Everything in the tab has a `maestro-cli models` verb, so an agent can set this up for you. Verbs that touch downloads or servers need the desktop app running; `assign` and `endpoints add` / `update` / `remove` work with it closed.
 
 ```bash
-maestro-cli models list [--kind <kind>]          # catalog by kind, with status and what uses each model
+maestro-cli models list [--kind <kind>] [--fit]  # the Library in its groups, with status, what each model is good at, and what uses it; --fit adds Fits / Tight / Too large
 maestro-cli models install <model-id>            # download and verify, with its engine; waits until done; resumes a paused download
 maestro-cli models pause <model-id>              # stop a running download, keep what arrived
 maestro-cli models cancel <model-id>             # stop a download and delete its partial files
 maestro-cli models verify <model-id>             # re-hash; never deletes or re-downloads
 maestro-cli models remove <model-id> [--force]   # refuses a model a task uses, unless --force
+maestro-cli models add-hf <repo> <file> [--dry-run]  # add a GGUF from Hugging Face; prints its license; downloads nothing
+maestro-cli models remove-hf <model-id> [--force]    # take an added model out of the Library and delete its files
 maestro-cli models runtimes list                 # the engines: state, size, and the models each runs
 maestro-cli models runtimes install <onnx|llama> # install or update one engine on its own
 

@@ -14,6 +14,7 @@ import { LayerStackProvider } from './contexts/LayerStackContext';
 // ModalProvider removed - modal state now managed by modalStore (Zustand)
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
+import { startUserLocalModelsSync } from './services/userLocalModels';
 import './index.css';
 
 // Initialize Sentry for renderer process
@@ -161,6 +162,8 @@ if (isAcappellaAudioHost) {
 		</React.StrictMode>
 	);
 } else {
+	// The models the user added from Hugging Face join this window's catalog.
+	startUserLocalModelsSync();
 	ReactDOM.createRoot(document.getElementById('root')!).render(
 		<React.StrictMode>
 			<ErrorBoundary>

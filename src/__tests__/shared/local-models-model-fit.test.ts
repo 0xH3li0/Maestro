@@ -17,8 +17,12 @@ import {
 	type LocalModelDraft,
 } from '../../shared/local-models/model-catalog';
 import {
+	describeHardwareProfile,
 	estimateKvBytesPer1kTokens,
+	estimateKvLayout,
+	hardwareFitCaveat,
 	largestVramGpu,
+	MODEL_FIT_LABELS,
 	modelFit,
 	modelMemoryNeed,
 	type HardwareProfile,
@@ -306,6 +310,61 @@ describe('modelFit', () => {
 				expect(reason.split(/\.\s+[A-Z]/)).toHaveLength(1);
 				expect(reason).not.toMatch(/[–—]/);
 			}
+		}
+	});
+
+	it('says "about" for the context share of a model whose attention shape is the typical one for its size', () => {
+		const measured = modelFit(DENSE_4B, MAC_128GB).reason;
+		expect(measured).not.toContain('about');
+		const estimated = defineModel({
+			id: 'user-4b',
+			displayName: 'user-4b',
+			kind: 'text-gen',
+			runtime: 'llama',
+			source: { repo: 'someone/model', revision: '0'.repeat(40) },
+			license: { spdx: 'Apache-2.0', url: 'https://example.invalid/license' },
+			description: 'Added by hand.',
+			goodAt: 'Not measured.',
+			roles: [],
+			parameters: { totalB: 4, activeB: 4 },
+			contextLength: 262_144,
+			defaultContext: 32_768,
+			kvLayout: estimateKvLayout(4),
+			kvEstimated: true,
+			files: [{ path: 'user-4b.gguf', sha256: SHA, bytes: 2.5 * GiB }],
+			userAdded: true,
+		});
+		expect(estimated.memoryHint?.estimated).toBe(true);
+		expect(modelMemoryNeed(estimated).kvEstimated).toBe(true);
+		expect(kvBytesPer1kTokens(estimateKvLayout(4))).toBe(estimateKvBytesPer1kTokens(4));
+		expect(modelFit(estimated, MAC_128GB).reason).toMatch(
+			/model, about [\d.]+ GB for 32,768 tokens/
+		);
+	});
+
+	it('names the hardware a verdict was judged against', () => {
+		expect(describeHardwareProfile(MAC_128GB)).toBe('128.0 GB of unified memory (Apple Silicon)');
+		expect(describeHardwareProfile(CPU_ONLY_16GB)).toBe('16.0 GB of RAM, no GPU');
+		expect(describeHardwareProfile(WINDOWS_32GB_RTX_8GB)).toBe(
+			'32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB), Intel(R) UHD Graphics 770 (memory not reported)'
+		);
+		expect(Object.keys(MODEL_FIT_LABELS).sort()).toEqual(['fits', 'tight', 'too-large']);
+	});
+
+	it('warns that a GPU with no memory reading is judged as a CPU, and only then', () => {
+		const unread: HardwareProfile = {
+			...WINDOWS_32GB_RTX_8GB,
+			gpus: [{ name: 'NVIDIA GeForce RTX 4060', vramBytes: null, source: 'electron' }],
+		};
+		const caveat = hardwareFitCaveat(unread);
+		expect(caveat).toContain('NVIDIA GeForce RTX 4060');
+		expect(caveat).toContain('model server engine');
+		expect(describeHardwareProfile(unread)).toContain('memory not reported');
+		// The verdict it explains: the same model fits once the memory is known.
+		expect(modelFit(DENSE_4B, unread).fit).toBe('tight');
+		expect(modelFit(DENSE_4B, WINDOWS_32GB_RTX_8GB).fit).toBe('fits');
+		for (const known of [WINDOWS_32GB_RTX_8GB, MAC_128GB, M_SERIES_16GB, CPU_ONLY_16GB]) {
+			expect(hardwareFitCaveat(known)).toBeNull();
 		}
 	});
 });

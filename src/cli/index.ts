@@ -116,10 +116,13 @@ import {
 	modelsEndpointsUpdate,
 } from './commands/models-endpoints';
 import { modelsAssign, modelsTasks } from './commands/models-assign';
+import { loadUserLocalModels } from './services/storage';
 import {
+	modelsAddHf,
 	modelsCancel,
 	modelsInstall,
 	modelsList,
+	modelsRemoveHf,
 	modelsPause,
 	modelsRemove,
 	modelsVerify,
@@ -2611,17 +2614,43 @@ voiceWake
 
 const models = program.command('models').description('Local Models: model sources Maestro can use');
 
+// The models the user added from Hugging Face join the catalog before any
+// `models` verb reads an id, so they resolve the way they do in the desktop.
+models.hook('preAction', () => loadUserLocalModels());
+
 models
 	.command('list')
 	.description(
-		'List the local model catalog grouped by kind, with install status, size, and what uses each model (requires the desktop app)'
+		'List the local model Library grouped by what each model is for, with install status, size, what it is good at, and what uses it (requires the desktop app)'
 	)
 	.option(
 		'-k, --kind <kind>',
 		'Only one kind: text-gen | embedding | classifier | stt | tts | wake-word'
 	)
+	.option(
+		'--fit',
+		'Say whether each model runs on this computer: Fits, Tight or Too large, with the reason'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsList);
+
+models
+	.command('add-hf <repo> <file>')
+	.description(
+		'Add a GGUF text model from Hugging Face to the Library by repo id and file name, pinned and labeled "Not verified by Maestro"; prints its license and downloads nothing (requires the desktop app)'
+	)
+	.option('--dry-run', 'Describe the model and its license without adding it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsAddHf);
+
+models
+	.command('remove-hf <model-id>')
+	.description(
+		'Take a model added with add-hf out of the Library and delete its files. Refuses a model a task is assigned to unless --force (requires the desktop app)'
+	)
+	.option('-f, --force', 'Remove it even though assigned tasks become unavailable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsRemoveHf);
 
 models
 	.command('install <model-id>')

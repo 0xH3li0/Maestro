@@ -212,6 +212,7 @@ import {
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 import { shutdownACappellaForDisable } from './ipc/handlers/acappella';
 import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
+import { hydrateUserLocalModels } from './local-models/user-models';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
@@ -3377,6 +3378,16 @@ app
 		} catch (error) {
 			void captureException(error);
 			logger.error(`Local model storage migration failed: ${error}`, 'Migration');
+		}
+
+		// Put the models the user added from Hugging Face into the catalog before
+		// any handler lists, serves or loads one: every catalog lookup is
+		// synchronous. A file that cannot be read leaves the curated catalog alone.
+		try {
+			hydrateUserLocalModels();
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Could not read the user's added models: ${error}`, 'Startup');
 		}
 
 		// Set up IPC handlers

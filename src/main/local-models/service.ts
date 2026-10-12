@@ -17,7 +17,7 @@
  */
 
 import {
-	LOCAL_MODEL_CATALOG,
+	allLocalModels,
 	getLocalModel,
 	localModelsForRuntime,
 } from '../../shared/local-models/model-catalog';
@@ -91,10 +91,14 @@ export function requireLocalRuntimeId(raw: unknown): NativeRuntimeId {
 
 // -- Models -------------------------------------------------------------------
 
-/** Every catalog model joined to its on-disk status and install paths. */
+/**
+ * Every model, curated then user-added, joined to its on-disk status and
+ * install paths.
+ */
 export async function listLocalModels(): Promise<LocalModelListing[]> {
-	const statuses = await listStatuses();
-	return LOCAL_MODEL_CATALOG.map((entry, index) => ({
+	const entries = allLocalModels();
+	const statuses = await listStatuses(entries);
+	return entries.map((entry, index) => ({
 		entry,
 		status: statuses[index],
 		installPaths: entry.files.map((file) => installPathFor(entry, file)),
@@ -141,9 +145,9 @@ export async function removeAllLocalModels(include?: ModelDirFilter): Promise<nu
 		// Cancel only what is about to be deleted: a download another consumer
 		// started must keep running.
 		await Promise.all(
-			LOCAL_MODEL_CATALOG.filter((entry) => include(entry.id)).map((entry) =>
-				downloader.cancel(entry.id)
-			)
+			allLocalModels()
+				.filter((entry) => include(entry.id))
+				.map((entry) => downloader.cancel(entry.id))
 		);
 	} else {
 		await downloader.cancelAll();

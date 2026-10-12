@@ -3,6 +3,7 @@
  *
  * Handles: local_models_list, local_models_download, local_models_pause,
  * local_models_cancel, local_models_verify, local_models_remove,
+ * local_models_hf_add, local_models_hf_remove,
  * local_models_endpoints_detect, local_models_endpoint_models,
  * local_models_endpoint_test, local_models_run_task, local_models_task_readiness, local_models_git_draft,
  * local_models_semantic_index_status, local_models_search,
@@ -42,6 +43,12 @@ import {
 	removeLocalModel,
 	verifyLocalModel,
 } from '../../../local-models/service';
+import { resolveHardwareProfile } from '../../../local-models/hardware';
+import {
+	addHuggingFaceModel,
+	previewHuggingFaceModel,
+	removeUserLocalModel,
+} from '../../../local-models/user-models';
 import { transcribeAudioFileRequest } from '../../../local-models/dictation';
 import { speakNoticeRequest } from '../../../local-models/spoken-notices';
 import { draftPullRequestRequest } from '../../../local-models/git-drafts';
@@ -86,8 +93,10 @@ async function respond(
 }
 
 /**
- * Handle local_models_list - every catalog model joined to its install state,
- * plus the disk footprint (`maestro-cli models list`). A disk read; no network.
+ * Handle local_models_list - every model (curated, then the ones the user
+ * added) joined to its install state, plus the disk footprint (`maestro-cli
+ * models list`). With `fit`, the hardware profile the fit labels are judged
+ * against comes too (`models list --fit`). A disk read; no network.
  */
 export function handleLocalModelsList(
 	ctx: MessageHandlerContext,
@@ -95,8 +104,52 @@ export function handleLocalModelsList(
 	message: WebClientMessage
 ): Promise<void> {
 	return respond(ctx, client, message, 'local_models_list_result', async () => {
-		const [listings, footprint] = await Promise.all([listLocalModels(), localModelsFootprint()]);
-		return { listings, footprint };
+		const [listings, footprint, hardware] = await Promise.all([
+			listLocalModels(),
+			localModelsFootprint(),
+			message.fit === true ? resolveHardwareProfile() : Promise.resolve(undefined),
+		]);
+		return { listings, footprint, ...(hardware ? { hardware } : {}) };
+	});
+}
+
+/**
+ * Handle local_models_hf_add - add a Hugging Face repo file to the Library as a
+ * user entry (`maestro-cli models add-hf`), or with `dryRun` only describe it.
+ * One metadata request to Hugging Face; the model is not downloaded. A refusal
+ * the user can act on is a failed round trip carrying its message.
+ */
+export function handleLocalModelsHfAdd(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_hf_add_result', async () => {
+		if (message.dryRun === true) {
+			const preview = await previewHuggingFaceModel(message.repo, message.file);
+			if (!preview.ok) throw new Error(preview.message);
+			return { entry: preview.value.entry, added: false, dryRun: true };
+		}
+		const added = await addHuggingFaceModel(message.repo, message.file);
+		if (!added.ok) throw new Error(added.message);
+		return { entry: added.value.entry, added: added.value.added };
+	});
+}
+
+/**
+ * Handle local_models_hf_remove - take a user model out of the Library and
+ * delete its files (`maestro-cli models remove-hf`). The in-use warning is the
+ * CLI's job before it sends this, as with `local_models_remove`.
+ */
+export function handleLocalModelsHfRemove(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_hf_remove_result', async () => {
+		const removed = await removeUserLocalModel(message.modelId);
+		if (!removed.ok) throw new Error(removed.message);
+		return { ...removed.value };
 	});
 }
 

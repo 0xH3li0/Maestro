@@ -119,7 +119,12 @@ export function ModelsSettingsTab({
 						>
 							{MODELS_SETTINGS_PANEL_LABELS.library}
 						</SettingsSectionHeading>
-						<LocalModelsModelsSection theme={theme} models={models} runtimes={runtimes} />
+						<LocalModelsModelsSection
+							theme={theme}
+							models={models}
+							runtimes={runtimes}
+							onOpenSources={() => setPanel('sources')}
+						/>
 					</div>
 				)}
 

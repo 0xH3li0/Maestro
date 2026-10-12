@@ -362,12 +362,14 @@ maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
 - The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
 - `--gateway-url <url|none>` rides the `update_session_config` message as `gatewayUrl` (a normalized URL, or `null` to clear). Both ends validate with `parseGatewayUrlEdit()` (`src/shared/local-models/gateway.ts`): the CLI before it contacts the app, when it can read the agent's provider, and the renderer before it writes, so a provider that cannot use a gateway or a value that is not a URL is refused instead of being stored for the launch to trip over. The handler's `setMany` flush matters here: the desktop spawn reads the gateway from the main-process sessions store. Read it back with `show agent <id> --json` (`gatewayUrl`).
 
-### `models list|install|pause|cancel|remove|verify`
+### `models list|install|pause|cancel|remove|verify|add-hf|remove-hf`
 
-The local model catalog and what is on disk. Implemented in `src/cli/commands/models-manage.ts`.
+The local model Library and what is on disk. Implemented in `src/cli/commands/models-manage.ts`.
 
 ```bash
-maestro-cli models list [-k <text-gen|embedding|classifier|stt|tts|wake-word>] [--json]
+maestro-cli models list [-k <text-gen|embedding|classifier|stt|tts|wake-word>] [--fit] [--json]
+maestro-cli models add-hf <repo> <file> [--dry-run] [--json]
+maestro-cli models remove-hf <model-id> [--force] [--json]
 maestro-cli models install <model-id> [--json]
 maestro-cli models pause <model-id> [--json]
 maestro-cli models cancel <model-id> [--json]
@@ -378,6 +380,9 @@ maestro-cli models verify <model-id> [--json]
 ```
 
 - All six run in the desktop over the WS bridge (`local_models_list`, `local_models_download`, `local_models_pause`, `local_models_cancel`, `local_models_remove`, `local_models_verify`, handlers in `src/main/web-server/handlers/messageHandlers/localModels.ts`) through the same `src/main/local-models/service.ts` functions as the `localModels:*` IPC channels the Settings -> Local Models rows call. A download started from the CLI is the same job the app shows progress for; a second `install` of a running download joins it.
+- `list` groups with `groupLocalModelsForLibrary()` (`src/shared/local-models/library.ts`), the same grouping the Library draws, and prints each model's `goodAt` line and role badges. `--fit` sends `fit: true`; the desktop adds its hardware profile (`resolveHardwareProfile()`) to the reply and the CLI runs the shared `modelFit()` on it, so a row and the CLI cannot disagree. The CLI hides nothing: the "too large" toggle is a view filter.
+- `add-hf` (`local_models_hf_add`) and `remove-hf` (`local_models_hf_remove`) call `addHuggingFaceModel()` / `removeUserLocalModel()` in `src/main/local-models/user-models.ts`, the functions behind the Library's Add from Hugging Face card and a row's Remove from Library. `add-hf` makes one request to Hugging Face's API and downloads nothing; `--dry-run` calls `previewHuggingFaceModel()` and saves nothing. A refusal (no such repo, a gated repo, a file with no reported SHA-256) comes back as `success: false` with its sentence. `remove-hf` applies the same in-use guard as `remove`.
+- The `models` group has a `preAction` hook, `loadUserLocalModels()` (`src/cli/services/storage.ts`), which reads `local-models-user.json` from the data folder into the CLI's catalog, so `install`, `remove`, `verify` and `assign` accept a user model's id.
 - Ids are checked against the shared catalog before the bridge opens. `install` refuses a `pending` model (one this build cannot run), matching the Settings row, which offers no Download button for it. It waits up to two hours for the job to settle; if the wait ends, the download keeps running in the app.
 - `pause` and `cancel` are the row's Pause and Cancel buttons (`pauseLocalModel()` / `cancelLocalModel()`). `pause` keeps the partial file; there is no `resume` verb because `install` is the same call the Resume button makes. `cancel` deletes everything the job wrote, the partial file of a paused download included, and leaves an installed model alone (that is `remove`). Both answer `paused: false` / `cancelled: false` with exit code 0 when nothing was downloading: that is an answer, not a failure.
 - `remove` refuses a model whose EFFECTIVE assignment (`tasksUsingLocalModel()`) is a task, naming the tasks, until `--force`; Settings shows the same warning inline. Voice usage is reported but does not block, as in Settings.

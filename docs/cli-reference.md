@@ -2140,12 +2140,31 @@ Local Models: model sources Maestro can use
 
 ## `maestro-cli models list`
 
-List the local model catalog grouped by kind, with install status, size, and what uses each model (requires the desktop app)
+List the local model Library grouped by what each model is for, with install status, size, what it is good at, and what uses it (requires the desktop app)
 
-| Option              | Description                                                                   | Default |
-| ------------------- | ----------------------------------------------------------------------------- | ------- |
-| `-k, --kind <kind>` | Only one kind: text-gen \| embedding \| classifier \| stt \| tts \| wake-word | -       |
-| `--json`            | Output as JSON (for scripting)                                                | -       |
+| Option              | Description                                                                             | Default |
+| ------------------- | --------------------------------------------------------------------------------------- | ------- |
+| `-k, --kind <kind>` | Only one kind: text-gen \| embedding \| classifier \| stt \| tts \| wake-word           | -       |
+| `--fit`             | Say whether each model runs on this computer: Fits, Tight or Too large, with the reason | -       |
+| `--json`            | Output as JSON (for scripting)                                                          | -       |
+
+## `maestro-cli models add-hf <repo> <file>`
+
+Add a GGUF text model from Hugging Face to the Library by repo id and file name, pinned and labeled "Not verified by Maestro"; prints its license and downloads nothing (requires the desktop app)
+
+| Option      | Description                                          | Default |
+| ----------- | ---------------------------------------------------- | ------- |
+| `--dry-run` | Describe the model and its license without adding it | -       |
+| `--json`    | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli models remove-hf <model-id>`
+
+Take a model added with add-hf out of the Library and delete its files. Refuses a model a task is assigned to unless --force (requires the desktop app)
+
+| Option        | Description                                             | Default |
+| ------------- | ------------------------------------------------------- | ------- |
+| `-f, --force` | Remove it even though assigned tasks become unavailable | -       |
+| `--json`      | Output as JSON (for scripting)                          | -       |
 
 ## `maestro-cli models install <model-id>`
 

@@ -100,6 +100,8 @@ import {
 	handleLocalModelsGitDraft,
 	handleLocalModelsTranscribe,
 	handleLocalModelsList,
+	handleLocalModelsHfAdd,
+	handleLocalModelsHfRemove,
 	handleLocalModelsPause,
 	handleLocalModelsRuntimeInstall,
 	handleLocalModelsRuntimesList,
@@ -779,6 +781,14 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_remove':
 				void handleLocalModelsRemove(this.ctx, client, message);
+				break;
+
+			case 'local_models_hf_add':
+				void handleLocalModelsHfAdd(this.ctx, client, message);
+				break;
+
+			case 'local_models_hf_remove':
+				void handleLocalModelsHfRemove(this.ctx, client, message);
 				break;
 
 			case 'local_models_endpoints_detect':

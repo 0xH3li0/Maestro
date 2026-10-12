@@ -28,7 +28,18 @@ import type { LocalModelListing } from '../../../../../main/local-models/service
 import type { VerifyResult } from '../../../../../main/local-models/model-store';
 import { formatSize } from '../../../../../shared/formatters';
 import { formatDurationHuman } from '../../../../../shared/duration';
+import { localModelRoleBadges } from '../../../../../shared/local-models/library';
+import {
+	MODEL_FIT_LABELS,
+	type ModelFit,
+	type ModelFitLevel,
+} from '../../../../../shared/local-models/model-fit';
+import {
+	USER_MODEL_UNVERIFIED_DETAIL,
+	USER_MODEL_UNVERIFIED_LABEL,
+} from '../../../../../shared/local-models/user-models';
 import type { Theme } from '../../../../types';
+import { MiniBadge } from '../../../ui/MiniBadge';
 
 export interface LocalModelRowProps {
 	theme: Theme;
@@ -54,6 +65,19 @@ export interface LocalModelRowProps {
 	 * a download the label did not name is one the user did not agree to.
 	 */
 	engineBytes?: number;
+	/**
+	 * The Library's reading of the model: its "good at" sentence in place of the
+	 * bill-of-materials description, and a badge per role. Off for the surfaces
+	 * that list a model for one fixed job (Voice Setup).
+	 */
+	showRoles?: boolean;
+	/** Whether the model runs on this computer. Omitted until the hardware is read. */
+	fit?: ModelFit;
+	/**
+	 * Take a model the user added out of the Library, files and entry. Offered
+	 * only on a user-added row; a curated model has `onRemove` alone.
+	 */
+	onRemoveFromLibrary?: (modelId: string) => void;
 }
 
 /** A download is "in flight" while queued, transferring, or verifying (not paused, not finished). */
@@ -87,11 +111,15 @@ function LocalModelRowInner({
 	onRemove,
 	usedBy,
 	engineBytes = 0,
+	showRoles = false,
+	fit,
+	onRemoveFromLibrary,
 }: LocalModelRowProps) {
 	const { entry, status, installPaths } = listing;
 	const active = isActive(progress);
 	const paused = progress?.phase === 'paused';
 	const percent = downloadPercent(progress);
+	const roleBadges = showRoles ? localModelRoleBadges(entry) : [];
 
 	return (
 		<div
@@ -100,10 +128,29 @@ function LocalModelRowInner({
 		>
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0">
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{entry.displayName}
+					<div className="flex flex-wrap items-center gap-1.5">
+						<span className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
+							{entry.displayName}
+						</span>
+						{roleBadges.map((badge) => (
+							<MiniBadge key={badge} theme={theme} label={badge} />
+						))}
+						{entry.userAdded && (
+							// Shown on every surface that lists the model, not only the Library:
+							// where the hash came from is not a detail of one screen.
+							<MiniBadge
+								theme={theme}
+								label={USER_MODEL_UNVERIFIED_LABEL}
+								color={theme.colors.warning}
+								title={USER_MODEL_UNVERIFIED_DETAIL}
+								testId={`local-model-unverified-${entry.id}`}
+							/>
+						)}
 					</div>
-					<p className="text-xs opacity-70 mt-0.5">{entry.description}</p>
+					<p className="text-xs opacity-70 mt-0.5">
+						{showRoles && entry.goodAt ? entry.goodAt : entry.description}
+					</p>
+					{fit && <FitLine theme={theme} fit={fit} modelId={entry.id} />}
 					{usedBy && usedBy.length > 0 && (
 						<p
 							className="text-xs-plus mt-0.5"
@@ -233,8 +280,41 @@ function LocalModelRowInner({
 						onClick={() => onRemove(entry.id)}
 					/>
 				)}
+				{!active && onRemoveFromLibrary && entry.userAdded && (
+					<RowButton
+						theme={theme}
+						icon={X}
+						label="Remove from Library"
+						onClick={() => onRemoveFromLibrary(entry.id)}
+					/>
+				)}
 			</div>
 		</div>
+	);
+}
+
+/**
+ * The fit verdict under a model's description. "Fits" stands alone, with its
+ * reason on hover; a verdict the user has to weigh carries its reason in line.
+ */
+function FitLine({ theme, fit, modelId }: { theme: Theme; fit: ModelFit; modelId: string }) {
+	const colors: Record<ModelFitLevel, string> = {
+		fits: theme.colors.success,
+		tight: theme.colors.warning,
+		'too-large': theme.colors.error,
+	};
+	return (
+		<p
+			className="text-xs-plus mt-0.5 select-text"
+			title={fit.fit === 'fits' ? fit.reason : undefined}
+			data-testid={`local-model-fit-${modelId}`}
+			data-fit={fit.fit}
+		>
+			<span className="font-medium" style={{ color: colors[fit.fit] }}>
+				{MODEL_FIT_LABELS[fit.fit]}
+			</span>
+			{fit.fit !== 'fits' && <span className="opacity-70">: {fit.reason}</span>}
+		</p>
 	);
 }
 

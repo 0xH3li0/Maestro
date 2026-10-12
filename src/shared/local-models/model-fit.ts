@@ -20,7 +20,7 @@
 
 import { formatSize } from '../formatters';
 import { kvBytesPer1kTokens } from './model-catalog';
-import type { LocalModelEntry } from './types';
+import type { LocalModelEntry, LocalModelKvLayout } from './types';
 
 const GiB = 1024 ** 3;
 
@@ -80,7 +80,7 @@ export interface ModelMemoryNeed {
  */
 const KV_LAYOUT_BY_SIZE: ReadonlyArray<{
 	maxTotalB: number;
-	layout: { layers: number; kvHeads: number; headDim: number };
+	layout: LocalModelKvLayout;
 }> = [
 	{ maxTotalB: 3, layout: { layers: 28, kvHeads: 8, headDim: 128 } },
 	{ maxTotalB: 10, layout: { layers: 36, kvHeads: 8, headDim: 128 } },
@@ -92,14 +92,24 @@ const KV_LAYOUT_BY_SIZE: ReadonlyArray<{
 /** Bits per weight of a Q4_K_M GGUF, to guess a size from a file when nothing else says it. */
 const Q4_K_M_BITS_PER_WEIGHT = 4.85;
 
+/** The typical attention shape for a model of `totalB` billion parameters, from the size table. */
+export function estimateKvLayout(totalB: number): LocalModelKvLayout {
+	const row = KV_LAYOUT_BY_SIZE.find((entry) => totalB <= entry.maxTotalB);
+	return (row ?? KV_LAYOUT_BY_SIZE[KV_LAYOUT_BY_SIZE.length - 1]).layout;
+}
+
 /** KV cache bytes per 1,024 tokens for a model of `totalB` billion parameters, from the size table. */
 export function estimateKvBytesPer1kTokens(totalB: number): number {
-	const row = KV_LAYOUT_BY_SIZE.find((entry) => totalB <= entry.maxTotalB);
-	return kvBytesPer1kTokens((row ?? KV_LAYOUT_BY_SIZE[KV_LAYOUT_BY_SIZE.length - 1]).layout);
+	return kvBytesPer1kTokens(estimateKvLayout(totalB));
+}
+
+/** A model's size in billions of parameters, guessed from a Q4_K_M file of `bytes`. */
+export function estimateParametersB(bytes: number): number {
+	return (bytes * 8) / Q4_K_M_BITS_PER_WEIGHT / 1e9;
 }
 
 function totalParametersB(entry: LocalModelEntry): number {
-	return entry.parameters?.totalB ?? (entry.bytes * 8) / Q4_K_M_BITS_PER_WEIGHT / 1e9;
+	return entry.parameters?.totalB ?? estimateParametersB(entry.bytes);
 }
 
 /**
@@ -118,7 +128,7 @@ export function modelMemoryNeed(entry: LocalModelEntry, context?: number): Model
 		weightsBytes,
 		kvBytes: Math.ceil((per1k * tokens) / 1024),
 		context: tokens,
-		kvEstimated: entry.memoryHint === undefined,
+		kvEstimated: entry.memoryHint === undefined || entry.memoryHint.estimated === true,
 	};
 }
 
@@ -144,8 +154,11 @@ function activeParametersB(entry: LocalModelEntry): number {
 }
 
 function needPhrase(need: ModelMemoryNeed): string {
+	// A model the user added carries no attention shape of its own, so the
+	// context share is the typical one for its size. The sentence says so.
+	const kv = need.kvEstimated ? `about ${formatSize(need.kvBytes)}` : formatSize(need.kvBytes);
 	return need.kvBytes > 0
-		? `${formatSize(need.weightsBytes + need.kvBytes)} (${formatSize(need.weightsBytes)} model, ${formatSize(need.kvBytes)} for ${need.context.toLocaleString('en-US')} tokens of context)`
+		? `${formatSize(need.weightsBytes + need.kvBytes)} (${formatSize(need.weightsBytes)} model, ${kv} for ${need.context.toLocaleString('en-US')} tokens of context)`
 		: formatSize(need.weightsBytes);
 }
 
@@ -267,4 +280,41 @@ export function modelFit(
 	const gpu = largestVramGpu(profile);
 	if (gpu) return discreteGpuFit(entry, need, profile, gpu);
 	return cpuOnlyFit(entry, need, profile);
+}
+
+/** What each verdict is called on a Library row and in the CLI. */
+export const MODEL_FIT_LABELS: Readonly<Record<ModelFitLevel, string>> = Object.freeze({
+	fits: 'Fits',
+	tight: 'Tight',
+	'too-large': 'Too large',
+});
+
+/**
+ * One line naming what the fit rule judged against: "128 GB of unified memory
+ * (Apple Silicon)", "32 GB of RAM, NVIDIA RTX 4060 (8 GB)", "16 GB of RAM, no GPU".
+ */
+export function describeHardwareProfile(profile: HardwareProfile): string {
+	const ram = formatSize(profile.totalMemoryBytes);
+	if (profile.unifiedMemory) return `${ram} of unified memory (Apple Silicon)`;
+	if (profile.gpus.length === 0) return `${ram} of RAM, no GPU`;
+	const gpus = profile.gpus.map((gpu) =>
+		gpu.vramBytes !== null && gpu.vramBytes > 0
+			? `${gpu.name} (${formatSize(gpu.vramBytes)})`
+			: `${gpu.name} (memory not reported)`
+	);
+	return `${ram} of RAM, ${gpus.join(', ')}`;
+}
+
+/**
+ * Why the verdicts on this computer are harsher than the hardware deserves, or
+ * null when they are not.
+ *
+ * A PC's GPU memory is read from the model server engine's device check, so
+ * before that engine is installed a discrete GPU has a name and no size, and
+ * every model is judged as if it ran on the CPU. A surface that shows fit
+ * labels shows this beside them, so "Too large" is not read as final.
+ */
+export function hardwareFitCaveat(profile: HardwareProfile): string | null {
+	if (profile.unifiedMemory || profile.gpus.length === 0 || largestVramGpu(profile)) return null;
+	return `Maestro cannot read how much memory ${profile.gpus[0].name} has until the model server engine is installed, so each model is judged as if it ran on the CPU. Install the engine to judge against the GPU.`;
 }

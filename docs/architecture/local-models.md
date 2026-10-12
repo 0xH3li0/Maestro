@@ -79,6 +79,9 @@ flowchart TD
 | `tasks.ts`              | `LOCAL_MODEL_TASKS` (the housekeeping jobs, each with a `system`), `tasksForSystem()`, `LocalModelAssignment`, and the `localModelAssignments` reader and validator                                                                                                                                                                                                                       |
 | `settings-location.ts`  | `MODELS_SETTINGS_PANELS`, `modelsSettingsLocation()`, `taskAssignmentLocation()`: the one source for the Models inner tabs and every sentence that names one                                                                                                                                                                                                                              |
 | `embedding-index.ts`    | `EMBEDDING_SOURCE_TYPES`, `EmbeddingSearchHit`, `EmbeddingStoreStats`: what a semantic search hands back (never a vector)                                                                                                                                                                                                                                                                 |
+| `model-fit.ts`          | `modelFit()`, `HardwareProfile`, `describeHardwareProfile()`, `hardwareFitCaveat()`, `MODEL_FIT_LABELS`: whether a model runs on a computer, and the sentence that says why                                                                                                                                                                                                               |
+| `library.ts`            | `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` group and badge models                                                                                                                                                                                                                                                     |
+| `user-models.ts`        | `huggingFaceModelRecord()`, `userLocalModelEntry()`, `parseUserLocalModels()`: a model the user adds from Hugging Face, as a record and as a catalog entry                                                                                                                                                                                                                                |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
 a consumer derives its own grouping from the models (voice does this in `voiceSlotsForRuntime()`).
@@ -137,13 +140,89 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
   one progress/download state machine. They accept a `source`, so a consumer can point them at its
   own (gated) namespace.
 
+## The Library: groups, fit, and the user's own models
+
+Settings > Models > Library and `maestro-cli models list` show the same list through the same
+three shared modules. Neither surface sorts, labels or judges a model by itself.
+
+**Groups** (`library.ts`). A text model is listed once. Housekeeping is what every text model can
+do, so a model with a more specific role is listed under the first of those in
+`LOCAL_MODEL_ROLES` order (agent, judge, vision), and every role it has is a badge
+(`localModelRoleBadges()`; the agent badge names the harnesses from `agentHarnesses`). A model
+the user added goes in its own group. Every other kind is a group by kind. Listing a model under
+each of its roles was rejected: a row carries live state (a download, a removal warning), and two
+copies of it would disagree.
+
+**Fit** (`model-fit.ts`, `main/local-models/hardware.ts`). The main process reads the hardware
+once per mount (`localModels:hardware`, or `fit: true` on `local_models_list`) and the caller runs
+`modelFit(entry, profile)`. The Library hides a model whose verdict is `too-large` behind "Show
+models too large for this machine", except one with bytes on disk or a download in flight. Before
+the hardware is read nothing is labeled and nothing is hidden. `hardwareFitCaveat()` is the
+sentence shown when a PC's GPU has a name and no memory reading (the model server engine is not
+installed yet), since every verdict is then the CPU-only one.
+
+**User models** (`user-models.ts` in shared and in main). "Add from Hugging Face" takes a repo id
+and a GGUF file name.
+
+```mermaid
+sequenceDiagram
+    participant U as Library card / models add-hf
+    participant M as main: user-models.ts
+    participant H as Hugging Face API
+    participant C as catalog (per process)
+    U->>M: preview(repo, file)
+    M->>H: GET /api/models/<repo>?blobs=true
+    H-->>M: commit sha, files with LFS sha256, card license, GGUF metadata
+    M-->>U: entry (license, size, revision). Nothing saved
+    U->>M: add(repo, file)
+    M->>M: write local-models-user.json (atomic, queued)
+    M->>C: setUserLocalModels()
+    M-->>U: localModels:userModels:changed (every window)
+```
+
+- **One request, no download.** Look up and add each make one metadata request. The model is
+  downloaded by its row's Download button or `models install`, through the ordinary downloader.
+- **What is pinned.** The revision is the repo's commit at the moment of adding, and each file's
+  hash is the LFS SHA-256 Hugging Face reports for it. The downloader hashes the file and
+  refuses a mismatch, exactly as for a curated model. That proves the bytes are the ones Hugging
+  Face described. It does not prove anyone at Maestro looked at them, so every surface shows
+  `USER_MODEL_UNVERIFIED_LABEL` ("Not verified by Maestro") on the entry (`userAdded: true`).
+- **What is refused, by name.** A repo Hugging Face does not list (it answers 401 for missing and
+  private alike), a gated or private repo (Maestro downloads without an account), a file the repo
+  does not have (the message lists its GGUF files), a file with no reported SHA-256, a vision
+  projector, a file that is not GGUF, an incomplete split set, and a repo with no GGUF metadata.
+- **What is estimated.** Hugging Face reports the parameter count and the context length, not the
+  attention shape. A user entry carries the typical KV layout for its size
+  (`estimateKvLayout()`, `memoryHint.estimated`), so its fit sentence says "about". It is treated
+  as dense (`activeB` = `totalB`), which errs toward "Too large" for a mixture-of-experts model.
+  It has no role: nothing was measured.
+- **One catalog, three processes.** `LOCAL_MODEL_CATALOG` stays the frozen curated table.
+  `setUserLocalModels()` gives a process its user entries, and `getLocalModel()`,
+  `isLocalModelId()`, `allLocalModels()` and `localModelsForRuntime()` read both, so a user model
+  is installed, verified, served by the model server and assigned to a task through the code a
+  curated one is. The main process hydrates at startup (`hydrateUserLocalModels()`, synchronous,
+  before any handler is registered), each window from `localModels:userModels` plus the change
+  broadcast (`renderer/services/userLocalModels.ts`), and the CLI from the file
+  (`loadUserLocalModels()`, a `preAction` hook on `models`). A user entry can never take a
+  curated id.
+- **The file is untrusted.** `parseUserLocalModels()` checks every field (id shape, repo id,
+  40-hex revision, 64-hex hashes, safe relative paths, an https license link) and drops a record
+  that fails, counting it. A file that is not JSON is moved aside, never overwritten. The license
+  name comes from a model card and reaches a terminal, so it is cut to printable ASCII.
+- **Not done here.** A vision projector cannot be added with a user model, and the download base
+  is still `https://huggingface.co` (`HUGGING_FACE_BASE_URL`); the mirror setting is a later task.
+
 ## Storage paths
 
 ```
 userData/models/<model-id>/      manifest.json + the model's files
 userData/runtimes/<runtime-id>/  an installed native runtime
 userData/embeddings.db           the semantic index's vectors (SQLite, WAL)
+userData/local-models-user.json  the models the user added from Hugging Face
 ```
+
+`local-models-user.json` sits beside the models root, not inside it, so "remove all models" does
+not take the list of what the user added with it.
 
 Both roots resolve through `paths.ts`. `model-store.removeAll()` deletes the whole models root;
 every catalog model today is one voice uses, so that is correct for now. It must be scoped per

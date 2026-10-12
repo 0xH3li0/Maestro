@@ -105,6 +105,40 @@ vi.mock('../../../../main/local-models/endpoint-service', () => ({
 	testLocalModelEndpoint: vi.fn(async () => ({ ok: true, model: 'm', latencyMs: 12 })),
 }));
 
+const userModels = vi.hoisted(() => ({
+	listener: null as ((entries: readonly unknown[]) => void) | null,
+	released: 0,
+}));
+
+vi.mock('../../../../main/local-models/user-models', () => ({
+	previewHuggingFaceModel: vi.fn(async () => ({
+		ok: true,
+		value: { entry: { id: 'hf-x' }, alreadyAdded: false },
+	})),
+	addHuggingFaceModel: vi.fn(async () => ({
+		ok: true,
+		value: { entry: { id: 'hf-x' }, added: true },
+	})),
+	removeUserLocalModel: vi.fn(async () => ({ ok: false, message: 'No model you added.' })),
+	listUserLocalModels: vi.fn(() => [{ id: 'hf-x' }]),
+	onUserLocalModelsChanged: vi.fn((listener: (entries: readonly unknown[]) => void) => {
+		userModels.listener = listener;
+		return () => {
+			userModels.released++;
+		};
+	}),
+}));
+
+vi.mock('../../../../main/local-models/hardware', () => ({
+	resolveHardwareProfile: vi.fn(async () => ({
+		platform: 'darwin',
+		arch: 'arm64',
+		totalMemoryBytes: 16 * 1024 ** 3,
+		unifiedMemory: true,
+		gpus: [],
+	})),
+}));
+
 vi.mock('../../../../main/local-models/task-router', () => ({
 	runLocalTaskRequest: vi.fn(async () => ({ status: 'use-utility-agent' })),
 }));
@@ -245,6 +279,12 @@ import {
 	readTokenProxyBlock,
 } from '../../../../main/local-models/proxy/service';
 import { suggestTabCleanup } from '../../../../main/local-models/tab-cleanup';
+import {
+	addHuggingFaceModel,
+	previewHuggingFaceModel,
+	removeUserLocalModel,
+} from '../../../../main/local-models/user-models';
+import { USER_LOCAL_MODELS_CHANGED_CHANNEL } from '../../../../main/ipc/handlers/local-models';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -287,6 +327,44 @@ describe('Local Models IPC handlers', () => {
 		);
 		await expect(handlerFor('localModels:footprint')({})).resolves.toEqual({ bytes: 7 });
 		await expect(handlerFor('localModels:runtimes:list')({})).resolves.not.toHaveLength(0);
+	});
+
+	it('reads the hardware the fit labels are judged against', async () => {
+		await expect(handlerFor('localModels:hardware')({})).resolves.toMatchObject({
+			unifiedMemory: true,
+			totalMemoryBytes: 16 * 1024 ** 3,
+		});
+	});
+
+	it('looks up, adds and removes a Hugging Face model through the one service', async () => {
+		await expect(
+			handlerFor('localModels:hf:preview')({}, 'owner/repo', 'model.gguf')
+		).resolves.toMatchObject({ ok: true, value: { alreadyAdded: false } });
+		expect(previewHuggingFaceModel).toHaveBeenCalledWith('owner/repo', 'model.gguf');
+
+		await expect(
+			handlerFor('localModels:hf:add')({}, 'owner/repo', 'model.gguf')
+		).resolves.toMatchObject({ ok: true, value: { added: true } });
+		expect(addHuggingFaceModel).toHaveBeenCalledWith('owner/repo', 'model.gguf');
+
+		// A refusal the user can act on is an answer, not a rejection.
+		await expect(handlerFor('localModels:hf:remove')({}, 'hf-nope')).resolves.toEqual({
+			ok: false,
+			message: 'No model you added.',
+		});
+		expect(removeUserLocalModel).toHaveBeenCalledWith('hf-nope');
+		await expect(handlerFor('localModels:userModels')({})).resolves.toEqual([{ id: 'hf-x' }]);
+	});
+
+	it('broadcasts the user models after every change, once per registration', () => {
+		userModels.listener?.([{ id: 'hf-x' }]);
+		expect(broadcasts).toContainEqual({
+			channel: USER_LOCAL_MODELS_CHANGED_CHANNEL,
+			payload: [{ id: 'hf-x' }],
+		});
+		const released = userModels.released;
+		registerLocalModelsHandlers({ safeSend: safeSend as never });
+		expect(userModels.released).toBe(released + 1);
 	});
 
 	it('lists every catalog model with its install paths', async () => {

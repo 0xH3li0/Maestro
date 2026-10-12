@@ -736,6 +736,22 @@ const mockMaestro = {
 		removeAll: vi.fn().mockResolvedValue(0),
 		footprint: vi.fn().mockResolvedValue({ bytes: 0, models: [] }),
 		onProgress: vi.fn().mockReturnValue(() => {}),
+		// A machine every catalog model fits on, so a surface that hides what is
+		// too large shows the whole catalog unless a test says otherwise.
+		hardware: vi.fn().mockResolvedValue({
+			platform: 'darwin',
+			arch: 'arm64',
+			totalMemoryBytes: 128 * 1024 ** 3,
+			unifiedMemory: true,
+			gpus: [],
+		}),
+		huggingFace: {
+			preview: vi.fn().mockResolvedValue({ ok: false, message: 'not mocked' }),
+			add: vi.fn().mockResolvedValue({ ok: false, message: 'not mocked' }),
+			remove: vi.fn().mockResolvedValue({ ok: false, message: 'not mocked' }),
+			list: vi.fn().mockResolvedValue([]),
+			onChanged: vi.fn().mockReturnValue(() => {}),
+		},
 		runtimes: {
 			list: vi.fn().mockResolvedValue([]),
 			install: vi.fn().mockResolvedValue(true),

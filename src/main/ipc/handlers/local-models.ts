@@ -20,6 +20,8 @@
  * and only for the window that asked, only while the Dictation task is ready.
  * `spokenNotices:*` makes sound on this machine: `agentFinished` only when the
  * user switched spoken notices on, `speak` because a person or an agent asked.
+ * `hf:preview` and `hf:add` ask Hugging Face to describe the one repo the user
+ * named; neither downloads a model. `hardware` reads the OS and a stored file.
  * `server:installEngine` downloads the model server engine and `server:start`
  * launches it, each because the user pressed that button; nothing here starts
  * the server on its own.
@@ -121,6 +123,20 @@ import {
 	type LocalModelInstallResult,
 	type LocalRuntimeListing,
 } from '../../local-models/service';
+import { resolveHardwareProfile } from '../../local-models/hardware';
+import {
+	addHuggingFaceModel,
+	listUserLocalModels,
+	onUserLocalModelsChanged,
+	previewHuggingFaceModel,
+	removeUserLocalModel,
+	type HuggingFaceModelAdded,
+	type HuggingFaceModelPreview,
+	type UserLocalModelRemoved,
+} from '../../local-models/user-models';
+import type { HardwareProfile } from '../../../shared/local-models/model-fit';
+import type { LocalModelEntry } from '../../../shared/local-models/types';
+import type { UserModelResult } from '../../../shared/local-models/user-models';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 
@@ -140,6 +156,9 @@ export const MODEL_SERVER_CHANGED_CHANNEL = 'localModels:server:changed';
 
 /** The push channel the model server engine's install progress goes out on. */
 export const MODEL_SERVER_PROGRESS_CHANNEL = 'localModels:server:progress';
+
+/** The push channel the user's added models go out on, whole, after every add or remove. */
+export const USER_LOCAL_MODELS_CHANGED_CHANNEL = 'localModels:userModels:changed';
 
 /** Pushed to the ONE window whose dictation ended on its own. Never broadcast. */
 export const DICTATION_INTERRUPTED_CHANNEL = 'localModels:dictation:interrupted';
@@ -229,7 +248,11 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 			safeSend(MODEL_SERVER_PROGRESS_CHANNEL, progress);
 		}
 	);
+	const releaseUserModels = onUserLocalModelsChanged((entries: readonly LocalModelEntry[]) => {
+		safeSend(USER_LOCAL_MODELS_CHANGED_CHANNEL, entries);
+	});
 	releaseProgressListeners = () => {
+		releaseUserModels();
 		releaseModel();
 		releaseRuntime();
 		releaseIndex();
@@ -301,6 +324,47 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('footprint'),
 			async (): Promise<ModelFootprint> => localModelsFootprint()
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:hardware',
+		withIpcErrorLogging(
+			handlerOpts('hardware'),
+			// What the fit labels are judged against. Reads the OS and the stored
+			// engine record; never runs a binary.
+			async (): Promise<HardwareProfile> => resolveHardwareProfile()
+		)
+	);
+	ipcMain.handle(
+		'localModels:userModels',
+		withIpcErrorLogging(
+			handlerOpts('userModels'),
+			async (): Promise<readonly LocalModelEntry[]> => listUserLocalModels()
+		)
+	);
+	ipcMain.handle(
+		'localModels:hf:preview',
+		withIpcErrorLogging(
+			handlerOpts('hf:preview'),
+			async (repo: unknown, file: unknown): Promise<UserModelResult<HuggingFaceModelPreview>> =>
+				previewHuggingFaceModel(repo, file)
+		)
+	);
+	ipcMain.handle(
+		'localModels:hf:add',
+		withIpcErrorLogging(
+			handlerOpts('hf:add'),
+			async (repo: unknown, file: unknown): Promise<UserModelResult<HuggingFaceModelAdded>> =>
+				addHuggingFaceModel(repo, file)
+		)
+	);
+	ipcMain.handle(
+		'localModels:hf:remove',
+		withIpcErrorLogging(
+			handlerOpts('hf:remove'),
+			async (id: unknown): Promise<UserModelResult<UserLocalModelRemoved>> =>
+				removeUserLocalModel(id)
 		)
 	);
 

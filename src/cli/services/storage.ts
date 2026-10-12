@@ -26,6 +26,11 @@ import {
 	parseLocalModelAssignments,
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
+import { setUserLocalModels } from '../../shared/local-models/model-catalog';
+import {
+	USER_LOCAL_MODELS_FILE,
+	parseUserLocalModels,
+} from '../../shared/local-models/user-models';
 import { resolveSyncDir } from '../../shared/syncPath';
 
 // Get the Maestro config directory path. Delegates to the shared resolver
@@ -760,6 +765,29 @@ export function readLocalModelAssignments(): LocalModelAssignments {
 /** Write the assignments back; the settings watcher reloads every window. */
 export function writeLocalModelAssignments(assignments: LocalModelAssignments): void {
 	writeSettingValue('localModelAssignments', assignments);
+}
+
+/**
+ * Put the models the user added from Hugging Face into this process's catalog,
+ * so every `models` verb knows their ids and names the way the desktop does.
+ *
+ * The file is machine-local and written only by the desktop. It is read through
+ * the same parser, so the CLI never knows a record the app would drop. No file,
+ * or one that is not JSON (the desktop moves that aside at its next start),
+ * means no added models.
+ */
+export function loadUserLocalModels(): void {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(fs.readFileSync(path.join(getConfigDir(), USER_LOCAL_MODELS_FILE), 'utf-8'));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) {
+			setUserLocalModels([]);
+			return;
+		}
+		throw error;
+	}
+	setUserLocalModels(parseUserLocalModels(raw).entries);
 }
 
 // ============================================================================

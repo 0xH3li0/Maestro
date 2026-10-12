@@ -38,7 +38,6 @@ import {
 	defineModel,
 	getLocalModel,
 	ggufSplitPart,
-	groupByLocalModelKind,
 	kvBytesPer1kTokens,
 	localModelGgufFile,
 	localModelProjectorFile,
@@ -423,17 +422,6 @@ describe('kind labels and grouping', () => {
 	it('labels and orders every kind exactly once', () => {
 		expect([...LOCAL_MODEL_KIND_ORDER].sort()).toEqual(Object.keys(LOCAL_MODEL_KIND_LABELS).sort());
 		expect(new Set(LOCAL_MODEL_KIND_ORDER).size).toBe(LOCAL_MODEL_KIND_ORDER.length);
-	});
-
-	it('groups the catalog in kind order, keeps catalog order, and drops empty kinds', () => {
-		const groups = groupByLocalModelKind(LOCAL_MODEL_CATALOG, (entry) => entry.kind);
-		expect(groups.map((group) => group.kind)).toEqual(
-			LOCAL_MODEL_KIND_ORDER.filter((kind) => LOCAL_MODEL_CATALOG.some((e) => e.kind === kind))
-		);
-		expect(groups.flatMap((group) => group.items).length).toBe(LOCAL_MODEL_CATALOG.length);
-		const embeddings = groups.find((group) => group.kind === 'embedding');
-		expect(embeddings?.items.map((entry) => entry.id)).toEqual(EMBEDDING_IDS);
-		expect(groupByLocalModelKind([], (entry: { kind: 'stt' }) => entry.kind)).toEqual([]);
 	});
 });
 
