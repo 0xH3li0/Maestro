@@ -260,33 +260,32 @@ describe('buildShortcutsSummary', () => {
 });
 
 describe('buildModelsSummary', () => {
-	it('states the requests, the sources, the share on this machine and the decisions', () => {
+	it('states the requests, the share on this machine and the decisions', () => {
 		expect(
 			buildModelsSummary({
 				requests: 124,
-				sources: 2,
 				onDeviceShare: 0.25,
 				errors: 0,
 				decisions: 90,
 			})
-		).toBe('124 requests · 2 sources · 25% on this machine · 90 System One decisions');
+		).toBe('124 requests · 25% on this machine · 90 decisions');
 	});
 
 	it('adds the failures only when there are some', () => {
-		expect(
-			buildModelsSummary({ requests: 1, sources: 1, onDeviceShare: 1, errors: 3, decisions: 0 })
-		).toBe('1 request · 1 source · 100% on this machine · 3 failed');
+		expect(buildModelsSummary({ requests: 1, onDeviceShare: 1, errors: 3, decisions: 0 })).toBe(
+			'1 request · 100% on this machine · 3 failed'
+		);
 	});
 
 	it('describes a range with decisions and no request on another model', () => {
-		expect(
-			buildModelsSummary({ requests: 0, sources: 0, onDeviceShare: 0, errors: 0, decisions: 1 })
-		).toBe('0 requests · 1 System One decision');
+		expect(buildModelsSummary({ requests: 0, onDeviceShare: 0, errors: 0, decisions: 1 })).toBe(
+			'0 requests · 1 decision'
+		);
 	});
 
 	it('has nothing to say about an empty range', () => {
 		expect(
-			buildModelsSummary({ requests: 0, sources: 0, onDeviceShare: 0, errors: 0, decisions: 0 })
+			buildModelsSummary({ requests: 0, onDeviceShare: 0, errors: 0, decisions: 0 })
 		).toBeNull();
 	});
 });

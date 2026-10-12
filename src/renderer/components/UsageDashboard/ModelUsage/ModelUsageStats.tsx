@@ -76,7 +76,6 @@ export const ModelUsageStats = memo(function ModelUsageStats({
 		const summary = summarizeModelUsage(usage);
 		return buildModelsSummary({
 			requests: summary.requests,
-			sources: summary.sourceCount,
 			onDeviceShare: summary.onDeviceShare,
 			errors: summary.errors,
 			decisions: summary.decisions,

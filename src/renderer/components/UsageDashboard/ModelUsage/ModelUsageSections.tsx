@@ -372,6 +372,7 @@ function SourceRow({
 					theme={theme}
 					color={locationColor(theme, location.tone)}
 					title={location.title}
+					className="whitespace-nowrap"
 				/>
 			</td>
 			<td className={TD_NUMBER_CLASS} style={{ color: theme.colors.textMain }}>

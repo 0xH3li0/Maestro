@@ -119,6 +119,8 @@ describe('ModelUsageStats', () => {
 			expect(server).toHaveTextContent('Maestro model server');
 			expect(server).toHaveTextContent('Model server');
 			expect(server).toHaveTextContent('This machine');
+			// A two-word location must never wrap onto two lines in a narrow cell.
+			expect(screen.getAllByText('This machine')[0]).toHaveClass('whitespace-nowrap');
 			expect(server).toHaveTextContent('36 runs, 4 turns, 1 routed');
 			expect(server).toHaveTextContent('qwen3-coder, qwen3.5-4b');
 			expect(server).toHaveTextContent('240ms');
@@ -291,7 +293,7 @@ describe('ModelUsageStats', () => {
 			await renderLoaded(BUSY_MODEL_USAGE);
 
 			expect(useFooterSummaryStore.getState().summaries.models).toBe(
-				'124 requests · 2 sources · 25% on this machine · 90 System One decisions · 3 failed'
+				'124 requests · 25% on this machine · 90 decisions · 3 failed'
 			);
 		});
 
