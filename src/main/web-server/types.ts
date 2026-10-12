@@ -225,6 +225,8 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/** Revalidate the upgrade session/current login policy before commands and delivery. */
+	isAuthorized?: () => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for

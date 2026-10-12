@@ -107,10 +107,22 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Spawn a new process for a session.
 	 *
-	 * Live AI processes own their sessionId until they exit. Terminal processes
-	 * retain replacement semantics so shell restarts continue to work.
+	 * Live AI processes own their sessionId until they exit. Canonical terminal-tab
+	 * creation attaches to a live handle; generic terminal spawn can still replace it.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		const existing = this.processes.get(config.sessionId);
+		if (
+			config.reuseTerminal &&
+			config.toolType === 'terminal' &&
+			existing?.isTerminal &&
+			(existing.ptyProcess ||
+				(existing.childProcess &&
+					existing.childProcess.exitCode === null &&
+					!existing.childProcess.signalCode))
+		) {
+			return { pid: existing.pid, success: true, attached: true };
+		}
 		// Expand a leading `~` in the working directory before spawning. node-pty
 		// and child_process hand `cwd` straight to the OS, which - unlike a shell -
 		// does not expand `~`. A session whose cwd is persisted as `~/project` (or
@@ -159,7 +171,6 @@ export class ProcessManager extends EventEmitter {
 		// handler removes the entry before emitting `exit`, which lets replay flows
 		// start the next process without racing the old process's trailing output.
 		// Terminals intentionally keep their existing restart behavior.
-		const existing = this.processes.get(config.sessionId);
 		if (existing) {
 			const childProcessRunning =
 				existing.childProcess !== undefined &&
@@ -247,7 +258,7 @@ export class ProcessManager extends EventEmitter {
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
 			// the two would otherwise see every turn here end without a start.
-			this.emitSpawn(config);
+			if (serveResult.success) this.emitSpawn(config);
 			return serveResult;
 		}
 
@@ -295,7 +306,7 @@ export class ProcessManager extends EventEmitter {
 			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 
-		this.emitSpawn(config);
+		if (result.success) this.emitSpawn(config);
 
 		return result;
 	}
@@ -742,7 +753,7 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Convenience wrapper for spawning a terminal tab PTY.
+	 * Ensure a terminal tab PTY exists, attaching to its live host handle if present.
 	 * Uses the terminal tab session ID format {sessionId}-terminal-{tabId},
 	 * which causes PtySpawner to forward raw PTY data without filtering.
 	 */
@@ -766,6 +777,7 @@ export class ProcessManager extends EventEmitter {
 		return this.spawn({
 			sessionId: config.sessionId,
 			toolType: 'terminal',
+			reuseTerminal: true,
 			cwd: config.cwd,
 			command: shell,
 			args: [],

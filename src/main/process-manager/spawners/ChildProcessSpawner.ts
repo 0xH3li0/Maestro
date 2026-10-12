@@ -2,7 +2,9 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import * as fs from 'fs';
 import * as os from 'os';
+import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -16,7 +18,7 @@ import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder
 import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
-import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
+import { saveImageToTempFile, buildImagePromptPrefix, cleanupTempFiles } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
@@ -119,7 +121,7 @@ export class ChildProcessSpawner {
 		// Build final args based on batch mode and images
 		// Track whether the prompt was added to CLI args (used later to decide stdin behavior)
 		let finalArgs: string[];
-		let tempImageFiles: string[] = [];
+		let tempFiles: string[] = [];
 		// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
 		let effectivePrompt = prompt;
 		// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
@@ -140,11 +142,11 @@ export class ChildProcessSpawner {
 			// For agents that use file-based image args (like Codex, OpenCode) or
 			// prompt-embedded image mentions (like Copilot's @path syntax)
 			finalArgs = [...args];
-			tempImageFiles = [];
+			tempFiles = [];
 			for (let i = 0; i < images.length; i++) {
 				const tempPath = saveImageToTempFile(images[i], i);
 				if (tempPath) {
-					tempImageFiles.push(tempPath);
+					tempFiles.push(tempPath);
 				}
 			}
 
@@ -156,8 +158,8 @@ export class ChildProcessSpawner {
 				// Some agents consume images by mentioning temp file paths inside the prompt
 				// instead of accepting a dedicated CLI image flag.
 				const imagePrefix = imagePromptBuilder
-					? imagePromptBuilder(tempImageFiles)
-					: buildImagePromptPrefix(tempImageFiles);
+					? imagePromptBuilder(tempFiles)
+					: buildImagePromptPrefix(tempFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
 					finalArgs = [
@@ -169,13 +171,13 @@ export class ChildProcessSpawner {
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
 					sessionId,
 					imageCount: images.length,
-					tempFiles: tempImageFiles,
+					tempFiles: tempFiles,
 					embedMode: imagePromptBuilder ? 'prompt-builder' : 'resume-prompt-embed',
 					promptViaStdin,
 				});
 			} else {
 				// Initial spawn: use -i flag as before
-				for (const tempPath of tempImageFiles) {
+				for (const tempPath of tempFiles) {
 					if (!imageArgs) {
 						continue;
 					}
@@ -188,7 +190,7 @@ export class ChildProcessSpawner {
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
 					sessionId,
 					imageCount: images.length,
-					tempFiles: tempImageFiles,
+					tempFiles: tempFiles,
 					promptViaStdin,
 				});
 			}
@@ -224,7 +226,7 @@ export class ChildProcessSpawner {
 			promptLength: prompt?.length,
 			hasImages,
 			hasImageArgs: !!imageArgs,
-			tempImageFilesCount: tempImageFiles.length,
+			tempFilesCount: tempFiles.length,
 			command,
 			commandHasExtension: path.extname(command).length > 0,
 			baseArgsCount: args.length,
@@ -232,6 +234,29 @@ export class ChildProcessSpawner {
 		});
 
 		try {
+			// OMP expands @file attachments, including on resume. Keep its full prompt
+			// out of the Windows command line without assuming stdin support.
+			const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
+			if (
+				isWindows() &&
+				effectivePrompt &&
+				promptAddedToArgs &&
+				promptFileArgs &&
+				!config.sshStdinScript &&
+				!config.promptAlreadyInArgs
+			) {
+				const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
+				tempFiles.push(promptFile);
+				fs.writeFileSync(promptFile, effectivePrompt, {
+					encoding: 'utf8',
+					mode: 0o600,
+					flag: 'wx',
+				});
+				// `--` makes OMP treat @file as a literal message, not an attachment.
+				const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
+				finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
+			}
+
 			// Build environment
 			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
@@ -534,7 +559,7 @@ export class ChildProcessSpawner {
 				stdoutBuffer: '',
 				contextWindow,
 				ompModelCatalogKey,
-				tempImageFiles: tempImageFiles.length > 0 ? tempImageFiles : undefined,
+				tempFiles: tempFiles.length > 0 ? tempFiles : undefined,
 				command,
 				args: finalArgs,
 				querySource: config.querySource,
@@ -593,6 +618,7 @@ export class ChildProcessSpawner {
 						exitCode: exit.exitCode,
 						error: exit.spawnError ? String(exit.spawnError) : undefined,
 					});
+					cleanupTempFiles(managedProcess.tempFiles ?? []);
 					return;
 				}
 				if (exit.spawnError) {
@@ -649,13 +675,18 @@ export class ChildProcessSpawner {
 				},
 			});
 
-			return { pid: childProcess.pid || -1, success: true };
+			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
 			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});
-			return { pid: -1, success: false };
+			cleanupTempFiles(tempFiles);
+			return {
+				pid: -1,
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
 		}
 	}
 }

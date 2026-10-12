@@ -1029,6 +1029,11 @@ async function handleProcessSpawnImpl(
 			}),
 		}
 	);
+	if (!result.success) {
+		throw new Error(
+			result.error || `Failed to spawn ${config.toolType}: agent process did not start`
+		);
+	}
 
 	// A `claude --print` turn names the folder's slash commands in its init
 	// event; a maestro-p turn drives the TUI, which names none. Probe for them
