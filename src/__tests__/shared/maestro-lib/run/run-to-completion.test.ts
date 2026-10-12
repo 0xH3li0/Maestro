@@ -27,6 +27,7 @@ import {
 	CAPTURED_OPENCODE_SESSION_ID,
 } from '../../../main/process-manager/recordings/captured';
 import { createScratchDir, fakeAgentSpec, fakeTurnFromRecording } from './fakeAgent';
+import { clearRememberedClaudeSessionCosts } from '../../../../shared/claudeCostTracker';
 
 const SESSION_LABEL = 'agent-1-ai-tab-1';
 const ALL_RECORDINGS: TurnRecording[] = [
@@ -87,7 +88,12 @@ describe('runTurn over the turn recordings', () => {
 	it.each(REPLAYABLE.map((recording) => [recording.name, recording] as const))(
 		'%s: a real process reports the same turn as an in-process replay',
 		async (_name, recording) => {
+			// The Claude parser remembers the session total each result reports and
+			// uses it as the next turn's baseline (see src/shared/claudeCostTracker.ts).
+			// Both runs here are the SAME turn, so each starts from no memory.
+			clearRememberedClaudeSessionCosts();
 			const expected = replayInProcess(recording);
+			clearRememberedClaudeSessionCosts();
 
 			const turn = await runToCompletion(
 				fakeAgentSpec(scratch.dir, fakeTurnFromRecording(recording)),
