@@ -33,6 +33,7 @@ import {
 	type FetchLike,
 } from '../runtime/runtime-installer';
 import { exists } from '../runtime/runtime-store';
+import { checkServerAccelerator, type AcceleratorCheckOptions } from './accelerator';
 import {
 	serverEngineDir,
 	serverEngineStagingDir,
@@ -60,6 +61,8 @@ export interface ServerEngineInstallOptions {
 	/** Default to the running process. Tests pass other values to install a foreign layout. */
 	platform?: string;
 	arch?: string;
+	/** Injected in tests, where the "binary" is a text file. */
+	runListDevices?: AcceleratorCheckOptions['runListDevices'];
 }
 
 /** A choice that has no build on this platform. Names the platform and the choice. */
@@ -128,6 +131,19 @@ export async function installServerEngine(
 		await fs.rm(target, { recursive: true, force: true });
 		await fs.rename(staging, target);
 
+		// Ask the engine what it will compute on, while the user is still looking at
+		// the install. A Vulkan build with no driver behind it is reported here, not
+		// discovered later as a server that is mysteriously slow.
+		const accelerator = await checkServerAccelerator(
+			path.join(target, selected.binary),
+			selected.kind,
+			{
+				runListDevices: options.runListDevices,
+				platform,
+				arch,
+			}
+		);
+
 		const manifest: ServerEngineManifest = {
 			release: LLAMA_SERVER_RELEASE,
 			platform: selected.platform,
@@ -138,6 +154,7 @@ export async function installServerEngine(
 			binary: selected.binary,
 			installedAt: Date.now(),
 			bytes: await directoryBytes(target),
+			accelerator,
 		};
 		await writeServerEngineManifest(manifest);
 

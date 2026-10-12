@@ -16,9 +16,18 @@ import * as os from 'os';
 import * as path from 'path';
 import * as tar from 'tar';
 
-const { state } = vi.hoisted(() => ({
+const { state, execFileNoThrow } = vi.hoisted(() => ({
 	state: { build: null as unknown },
+	// The "binary" in these archives is a text file. The device check runs it, so
+	// the run is stubbed with what the real CPU build prints.
+	execFileNoThrow: vi.fn(async () => ({
+		stdout: 'Available devices:\n  (none)\n',
+		stderr: '',
+		exitCode: 0 as number | string,
+	})),
 }));
+
+vi.mock('../../../../main/utils/execFile', () => ({ execFileNoThrow }));
 
 vi.mock('../../../../shared/local-models/server-engine', async (importOriginal) => ({
 	...(await importOriginal<object>()),
@@ -157,6 +166,45 @@ describe('installServerEngine', () => {
 			expect((await fs.stat(binary!)).mode & 0o111).not.toBe(0);
 		}
 		expect(await exists(serverEngineStagingDir())).toBe(false);
+	});
+
+	it('runs the device check against the installed binary and stores its answer', async () => {
+		const bytes = await tarAsset('llama-b0', { 'llama-server': '#!/bin/sh\n' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+
+		const manifest = await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+		});
+
+		expect(execFileNoThrow).toHaveBeenCalledWith(
+			path.join(serverEngineDir(), 'llama-server'),
+			['--list-devices'],
+			serverEngineDir(),
+			expect.objectContaining({ timeout: expect.any(Number) })
+		);
+		expect(manifest.accelerator).toMatchObject({ status: 'cpu', label: 'CPU', problem: null });
+		expect((await readServerEngineManifest())?.accelerator?.label).toBe('CPU');
+	});
+
+	it('keeps the install when the device check cannot run the binary', async () => {
+		execFileNoThrow.mockResolvedValueOnce({
+			stdout: '',
+			stderr: 'spawn EACCES',
+			exitCode: 'EACCES',
+		});
+		const bytes = await tarAsset('llama-b0', { 'llama-server': '#!/bin/sh\n' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+
+		const manifest = await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+		});
+
+		expect(await isServerEngineInstalled()).toBe(true);
+		expect(manifest.accelerator).toMatchObject({ status: 'failed', problem: 'failed-to-run' });
 	});
 
 	it('installs a flat zip for a Windows layout', async () => {

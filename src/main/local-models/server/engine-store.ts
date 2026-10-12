@@ -21,6 +21,7 @@ import {
 	type ServerBuildChoice,
 	type ServerBuildKind,
 } from '../../../shared/local-models/server-engine';
+import type { ServerAcceleratorReport } from '../../../shared/local-models/server-accelerator';
 import { exists, runtimesRoot } from '../runtime/runtime-store';
 
 /** Directory name under `runtimes/`. Not a `NativeRuntimeId`: see `server-engine.ts`. */
@@ -49,6 +50,12 @@ export interface ServerEngineManifest {
 	installedAt: number;
 	/** Bytes the extracted tree occupies. Not the download size. */
 	bytes: number;
+	/**
+	 * What `llama-server --list-devices` found right after the install: the GPU it
+	 * will use, or that it will run on the CPU and why. Absent on a manifest written
+	 * before the check existed; `recheckServerAccelerator()` fills it in.
+	 */
+	accelerator?: ServerAcceleratorReport;
 }
 
 export function serverEngineDir(): string {
