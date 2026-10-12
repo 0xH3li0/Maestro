@@ -86,6 +86,7 @@ import {
 } from '../services/system-one-input';
 import { resolveCliPath } from '../utils/parse';
 import { fail } from './system-one';
+import { systemOneExamples, systemOneGuide } from './system-one-guide';
 import { systemOneCost, systemOneUsage } from './system-one-spend';
 
 /** The id of the one question `yes`, `pick` and `rate` ask. It is not sent to the engine. */
@@ -795,9 +796,10 @@ function withCommonFlags(command: Command): Command {
 const IN_APP = '(requires the desktop app)';
 
 /**
- * Add the verbs an agent asks System One with to `maestro-cli s1`. The flag
- * grammar lives here, beside the handlers it feeds, so a test can drive both
- * through the real option parser.
+ * Add the verbs an agent asks System One with to `maestro-cli s1`, and the
+ * guide that teaches them (`guide`, `examples`). The flag grammar lives here,
+ * beside the handlers it feeds, so a test can drive both through the real
+ * option parser, and the guide's own examples can be checked against it.
  */
 export function registerSystemOneAgentCommands(systemOne: Command): void {
 	withCommonFlags(
@@ -937,4 +939,21 @@ export function registerSystemOneAgentCommands(systemOne: Command): void {
 	)
 		.option('--json', 'Output as JSON (for scripting)')
 		.action(systemOneCost);
+
+	systemOne
+		.command('guide [topic]')
+		.description(
+			'The System One playbook for agents: when to reach for it, how to ask, how to read the answer. Read it once per session before the first request; name a topic for depth (works with Maestro closed)'
+		)
+		.option('--list', 'List the topics')
+		.option('--json', 'Output as JSON (for scripting)')
+		.action(systemOneGuide);
+
+	systemOne
+		.command('examples [name]')
+		.description(
+			'System One recipes ready to paste: gutcheck, triage, rank, verify, screen, dedupe. With no name, list them; all prints every one (works with Maestro closed)'
+		)
+		.option('--json', 'Output as JSON (for scripting)')
+		.action(systemOneExamples);
 }

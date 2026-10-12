@@ -2590,6 +2590,23 @@ Estimate a request or a job before it is run: its tokens against the request lim
 | `--field <key=value>`  | Build an object state, one field per flag; the value may be @path or JSON; with --state the text becomes the field "text" | `[]`    |
 | `--json`               | Output as JSON (for scripting)                                                                                            | -       |
 
+## `maestro-cli s1 guide [topic]`
+
+The System One playbook for agents: when to reach for it, how to ask, how to read the answer. Read it once per session before the first request; name a topic for depth (works with Maestro closed)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--list` | List the topics                | -       |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli s1 examples [name]`
+
+System One recipes ready to paste: gutcheck, triage, rank, verify, screen, dedupe. With no name, list them; all prints every one (works with Maestro closed)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli models config`
 
 Local Models configuration: where model files are downloaded from

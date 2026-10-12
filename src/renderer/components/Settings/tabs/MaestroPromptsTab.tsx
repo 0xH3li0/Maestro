@@ -42,6 +42,7 @@ import { TemplateAutocompleteDropdown } from '../../TemplateAutocompleteDropdown
 import { TEMPLATE_VARIABLES, substituteTemplateVariables } from '../../../utils/templateVariables';
 import { useAvailableTemplateVariables } from '../../../hooks/input/useAvailableTemplateVariables';
 import { isPromptAvailable } from '../../../../shared/promptDefinitions';
+import { SYSTEM_ONE_GUIDE_PROMPT_CATEGORY } from '../../../../shared/local-models/system-one-guide';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
@@ -134,6 +135,7 @@ const CATEGORY_INFO: Record<string, { label: string }> = {
 	pianola: { label: 'Pianola' },
 	[PLUGIN_PROMPT_CATEGORY]: { label: 'Plugin Prompts' },
 	system: { label: 'System' },
+	[SYSTEM_ONE_GUIDE_PROMPT_CATEGORY]: { label: 'System One' },
 	wizard: { label: 'Wizard' },
 };
 
@@ -163,6 +165,8 @@ const CATEGORY_HELP: Record<string, string> = {
 	concerto: 'The routing section appended to every agent system prompt while Concerto is on.',
 	'maestro-run':
 		'The section appended to every local agent system prompt once the MaestroRun launcher is installed and granted.',
+	[SYSTEM_ONE_GUIDE_PROMPT_CATEGORY]:
+		'The guide agents read before they ask System One: one prompt per topic of `maestro-cli s1 guide`, and one per recipe of `maestro-cli s1 examples`. The CLI prints them as written, so template variables are not filled in here.',
 };
 
 // Group template variables by prefix for the help panel. `variables` is the

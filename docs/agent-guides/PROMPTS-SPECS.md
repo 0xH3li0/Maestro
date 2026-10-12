@@ -94,6 +94,17 @@ An earlier build step compiled these templates into `src/generated/prompts.ts`. 
 > [!NOTE]
 > `director-notes.md` is only the BASE of the synopsis prompt. `buildDirectorNotesSynopsisPrompt()` (`src/main/utils/director-notes-prompt.ts`) appends the session-history manifest and, when the conductor has configured an Ideal End State, the block built by `buildIdealEndStateBlock()` in `src/shared/directorNotesEndState.ts`. That block lives in code rather than in the prompt file on purpose: prompt files are user-customizable and persisted to `userData/core-prompts-customizations.json`, so anyone running a customized copy would never receive an edit made to the `.md`. Add conditional prompt sections in the builder, not in the customizable base.
 
+#### System One Guide Prompts
+
+Read by agents through `maestro-cli s1 guide [topic]` and `maestro-cli s1 examples [name]`, not injected into any prompt. The list of topics and recipes is `SYSTEM_ONE_GUIDE_TOPICS` and `SYSTEM_ONE_EXAMPLES` in `src/shared/local-models/system-one-guide.ts`; `CORE_PROMPTS` registers one prompt per entry from it.
+
+| File                           | Purpose                                                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `system-one-guide-<topic>.md`  | One guide topic: `when` (the playbook), `questions`, `noul`, `choice`, `score`, `state`, `confidence`, `patterns`, `pitfalls`, `limits` |
+| `system-one-example-<name>.md` | One copy-paste recipe: `gutcheck`, `triage`, `rank`, `verify`, `screen`, `dedupe`                                                       |
+
+The CLI prints these files as written, so they hold no template variables, and every shell example sits in a `bash` code fence. `src/__tests__/cli/commands/system-one-guide.test.ts` checks each fenced `maestro-cli s1` command against the real option parser.
+
 ## Template Variables
 
 Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` syntax and are case-insensitive.

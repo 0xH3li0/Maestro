@@ -7,6 +7,7 @@
  */
 
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+import { systemOneGuidePromptDefinitions } from './local-models/system-one-guide';
 
 // ============================================================================
 // Types
@@ -176,6 +177,10 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'System One local judge for a small local model or endpoint: reads a state and one typed question (yes or no, pick one, rate on a rubric), and answers as JSON',
 		category: 'commands',
 	},
+	// System One guide for agents: one prompt per topic (`system-one-guide-<topic>`)
+	// and per recipe (`system-one-example-<name>`), declared once in
+	// `SYSTEM_ONE_GUIDE_TOPICS` and `SYSTEM_ONE_EXAMPLES`.
+	...systemOneGuidePromptDefinitions(),
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
