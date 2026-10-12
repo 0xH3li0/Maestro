@@ -31,9 +31,15 @@ import { describe, expect, it } from 'vitest';
 // The rule: the patterns, and the paths they are held against
 // ============================================================================
 
-/** What no walked file may contain. The search ignores case. */
+/**
+ * What no walked file may contain. The search ignores case.
+ *
+ * The person sees the feature as the "Audit Log". "audit log" alone is not
+ * forbidden: the docs and the CLI use it for Pianola and for git history. Only
+ * the phrasings that tie an audit log to an agent are.
+ */
 const FORBIDDEN =
-	/cot[-_ ]?export|chain[- ]of[- ]thought export|cotExport|maestro[-.]device-state/i;
+	/cot[-_ ]?export|chain[- ]of[- ]thought export|cotExport|maestro[-.]device-state|keep an audit log|per[- ]agent audit log|audit log (for|of) (this|an?|each|every|the) agent|audit log section/i;
 
 /**
  * Where an agent or a contributor would look, relative to the repo root. A
@@ -183,6 +189,11 @@ describe('the rule', () => {
 			'maestro-device-state.json',
 			// The service name of the anchor in the OS credential store.
 			'com.maestro.device-state',
+			// The name the person sees in the Edit Agent dialog.
+			'Keep an audit log for this agent',
+			'The audit log of an agent is failing',
+			'Turn on the per-agent audit log',
+			'Open the Audit Log section of Edit Agent',
 			"import x from '../cot-export/runtime'",
 		]) {
 			expect(FORBIDDEN.test(spelling), spelling).toBe(true);
@@ -195,6 +206,8 @@ describe('the rule', () => {
 			'Export the transcript as HTML.',
 			'Settings are stored in maestro-settings.json.',
 			'cost export',
+			'Show recent Pianola decisions from the audit log',
+			'**Git as audit log.** Every applied proposal is a commit.',
 		]) {
 			expect(FORBIDDEN.test(text), text).toBe(false);
 		}
