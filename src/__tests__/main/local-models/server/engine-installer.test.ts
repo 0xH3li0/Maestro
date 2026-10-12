@@ -1,0 +1,318 @@
+/**
+ * @file engine-installer.test.ts
+ *
+ * The llama-server install transaction against real archives and no network: a
+ * tar.gz for the POSIX layout, a zip for the Windows layout, and a two-asset build
+ * for the CUDA case. The pinned table is replaced with synthetic builds so the
+ * real streaming download, SHA-256 check, node-tar and zip extraction, and
+ * promote-then-commit ordering all run.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHash } from 'crypto';
+import { zipSync } from 'fflate';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import * as tar from 'tar';
+
+const { state } = vi.hoisted(() => ({
+	state: { build: null as unknown },
+}));
+
+vi.mock('../../../../shared/local-models/server-engine', async (importOriginal) => ({
+	...(await importOriginal<object>()),
+	selectServerBuild: () => state.build,
+}));
+
+import {
+	installServerEngine,
+	ServerBinaryMissingError,
+	ServerBuildUnavailableError,
+} from '../../../../main/local-models/server/engine-installer';
+import {
+	installedServerBinary,
+	isServerEngineInstalled,
+	readServerEngineManifest,
+	removeServerEngine,
+	serverEngineDir,
+	serverEngineStagingDir,
+} from '../../../../main/local-models/server/engine-store';
+import { RuntimeHashMismatchError } from '../../../../main/local-models/runtime/runtime-installer';
+
+let tempRoot: string;
+
+function sha(bytes: Buffer | Uint8Array): string {
+	return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function exists(target: string): Promise<boolean> {
+	try {
+		await fs.access(target);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** A tar.gz wrapped in one top-level directory, like the real macOS and Linux assets. */
+async function tarAsset(
+	wrapper: string,
+	files: Record<string, string>,
+	mode?: number
+): Promise<Buffer> {
+	const source = await fs.mkdtemp(path.join(os.tmpdir(), 'engine-tar-'));
+	for (const [name, contents] of Object.entries(files)) {
+		const target = path.join(source, wrapper, name);
+		await fs.mkdir(path.dirname(target), { recursive: true });
+		await fs.writeFile(target, contents, { mode: mode ?? 0o644 });
+	}
+	const file = path.join(source, 'asset.tgz');
+	await tar.c({ file, cwd: source, gzip: true }, [wrapper]);
+	const bytes = await fs.readFile(file);
+	await fs.rm(source, { recursive: true, force: true });
+	return bytes;
+}
+
+/** A flat zip, like the real Windows assets. */
+function zipAsset(files: Record<string, string>): Buffer {
+	const entries: Record<string, Uint8Array> = {};
+	for (const [name, contents] of Object.entries(files)) entries[name] = Buffer.from(contents);
+	return Buffer.from(zipSync(entries));
+}
+
+/** A fetch that serves a different body per URL. */
+function serve(bodies: Record<string, Buffer>): typeof globalThis.fetch {
+	return (async (url: string) => {
+		const body = bodies[url];
+		return {
+			ok: body !== undefined,
+			status: body ? 200 : 404,
+			body: body
+				? new ReadableStream({
+						start(controller) {
+							controller.enqueue(new Uint8Array(body));
+							controller.close();
+						},
+					})
+				: null,
+		} as unknown as Response;
+	}) as unknown as typeof globalThis.fetch;
+}
+
+function makeBuild(
+	assets: Array<{ name: string; bytes: Buffer; format: 'tar.gz' | 'zip' }>,
+	over: Record<string, unknown> = {}
+) {
+	return {
+		platform: 'linux-x64',
+		kind: 'cpu',
+		variant: null,
+		label: 'CPU',
+		answers: ['default'],
+		stripComponents: 1,
+		binary: 'llama-server',
+		assets: assets.map((entry) => ({
+			name: entry.name,
+			url: `https://example.test/${entry.name}`,
+			sha256: sha(entry.bytes),
+			bytes: entry.bytes.length,
+			format: entry.format,
+		})),
+		...over,
+	};
+}
+
+beforeEach(async () => {
+	tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'engine-userdata-'));
+	process.env.MAESTRO_USER_DATA = tempRoot;
+});
+
+afterEach(async () => {
+	delete process.env.MAESTRO_USER_DATA;
+	await fs.rm(tempRoot, { recursive: true, force: true });
+});
+
+describe('installServerEngine', () => {
+	it('installs a verified tar.gz, strips the wrapper and makes the binary executable', async () => {
+		const bytes = await tarAsset('llama-b0', {
+			'llama-server': '#!/bin/sh\n',
+			'libllama.so': 'LIB',
+		});
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+
+		const manifest = await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+		});
+
+		expect(manifest).toMatchObject({ choice: 'default', kind: 'cpu', binary: 'llama-server' });
+		expect(await isServerEngineInstalled()).toBe(true);
+		const binary = await installedServerBinary();
+		expect(binary).toBe(path.join(serverEngineDir(), 'llama-server'));
+		expect(await exists(path.join(serverEngineDir(), 'libllama.so'))).toBe(true);
+		expect(await exists(path.join(serverEngineDir(), 'llama-b0'))).toBe(false);
+		if (process.platform !== 'win32') {
+			expect((await fs.stat(binary!)).mode & 0o111).not.toBe(0);
+		}
+		expect(await exists(serverEngineStagingDir())).toBe(false);
+	});
+
+	it('installs a flat zip for a Windows layout', async () => {
+		const bytes = zipAsset({ 'llama-server.exe': 'MZ', 'ggml.dll': 'DLL' });
+		state.build = makeBuild([{ name: 'w.zip', bytes, format: 'zip' }], {
+			platform: 'win32-x64',
+			binary: 'llama-server.exe',
+			stripComponents: 0,
+		});
+
+		await installServerEngine('default', {
+			platform: 'win32',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/w.zip': bytes }),
+		});
+
+		expect(await exists(path.join(serverEngineDir(), 'llama-server.exe'))).toBe(true);
+		expect(await exists(path.join(serverEngineDir(), 'ggml.dll'))).toBe(true);
+		expect(await exists(path.join(serverEngineDir(), 'asset-0.zip'))).toBe(false);
+	});
+
+	it('extracts a companion asset into the same directory', async () => {
+		const main = await tarAsset('llama-b0', { 'llama-server': 'BIN', 'libggml-cuda.so': 'CUDA' });
+		const companion = await tarAsset('cudart-b0', { 'libcudart.so.12': 'RT' });
+		state.build = makeBuild([
+			{ name: 'main.tar.gz', bytes: main, format: 'tar.gz' },
+			{ name: 'cudart.tar.gz', bytes: companion, format: 'tar.gz' },
+		]);
+
+		const manifest = await installServerEngine('cuda', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({
+				'https://example.test/main.tar.gz': main,
+				'https://example.test/cudart.tar.gz': companion,
+			}),
+		});
+
+		expect(await exists(path.join(serverEngineDir(), 'libggml-cuda.so'))).toBe(true);
+		expect(await exists(path.join(serverEngineDir(), 'libcudart.so.12'))).toBe(true);
+		expect(manifest.assets.map((entry) => entry.name)).toEqual(['main.tar.gz', 'cudart.tar.gz']);
+	});
+
+	it('refuses a hash mismatch and leaves nothing behind', async () => {
+		const bytes = await tarAsset('llama-b0', { 'llama-server': 'BIN' });
+		const build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+		build.assets[0].sha256 = 'f'.repeat(64);
+		state.build = build;
+
+		await expect(
+			installServerEngine('default', {
+				platform: 'linux',
+				arch: 'x64',
+				fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+			})
+		).rejects.toBeInstanceOf(RuntimeHashMismatchError);
+
+		expect(await exists(serverEngineDir())).toBe(false);
+		expect(await exists(serverEngineStagingDir())).toBe(false);
+		expect(await readServerEngineManifest()).toBeNull();
+	});
+
+	it('fails by name when the archive lacks the executable it promised', async () => {
+		const bytes = await tarAsset('llama-b0', { 'other-tool': 'X' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+
+		await expect(
+			installServerEngine('default', {
+				platform: 'linux',
+				arch: 'x64',
+				fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+			})
+		).rejects.toBeInstanceOf(ServerBinaryMissingError);
+		expect(await isServerEngineInstalled()).toBe(false);
+	});
+
+	it('refuses a choice with no build, naming the platform and choice', async () => {
+		state.build = null;
+		await expect(
+			installServerEngine('cuda', { platform: 'darwin', arch: 'arm64' })
+		).rejects.toThrow(/"cuda" model server build for darwin-arm64/);
+		await expect(
+			installServerEngine('cuda', { platform: 'darwin', arch: 'arm64' })
+		).rejects.toBeInstanceOf(ServerBuildUnavailableError);
+	});
+
+	it('replaces an earlier install rather than merging with it', async () => {
+		const first = await tarAsset('llama-b0', { 'llama-server': 'OLD', 'stale.so': 'S' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes: first, format: 'tar.gz' }]);
+		await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': first }),
+		});
+
+		const second = await tarAsset('llama-b1', { 'llama-server': 'NEW' });
+		state.build = makeBuild([{ name: 'b.tar.gz', bytes: second, format: 'tar.gz' }]);
+		await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/b.tar.gz': second }),
+		});
+
+		expect(await exists(path.join(serverEngineDir(), 'stale.so'))).toBe(false);
+		expect(await fs.readFile(path.join(serverEngineDir(), 'llama-server'), 'utf8')).toBe('NEW');
+	});
+
+	it('reports progress ending on done at the full size', async () => {
+		const bytes = await tarAsset('llama-b0', { 'llama-server': 'BIN' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+		const phases: string[] = [];
+		let last = { bytes: 0, totalBytes: 0 };
+
+		await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+			onProgress: (progress) => {
+				phases.push(progress.phase);
+				last = progress;
+			},
+		});
+
+		expect(phases).toContain('extracting');
+		expect(phases.at(-1)).toBe('done');
+		expect(last.bytes).toBe(last.totalBytes);
+	});
+});
+
+describe('the store', () => {
+	it('treats a manifest without its binary as not installed', async () => {
+		const bytes = await tarAsset('llama-b0', { 'llama-server': 'BIN' });
+		state.build = makeBuild([{ name: 'a.tar.gz', bytes, format: 'tar.gz' }]);
+		await installServerEngine('default', {
+			platform: 'linux',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/a.tar.gz': bytes }),
+		});
+		await fs.rm(path.join(serverEngineDir(), 'llama-server'));
+
+		expect(await readServerEngineManifest()).not.toBeNull();
+		expect(await isServerEngineInstalled()).toBe(false);
+	});
+
+	it('refuses a manifest whose binary climbs out of the install directory', async () => {
+		await fs.mkdir(serverEngineDir(), { recursive: true });
+		await fs.writeFile(
+			path.join(serverEngineDir(), 'manifest.json'),
+			JSON.stringify({ release: 'b0', binary: '../../escape' })
+		);
+		expect(await installedServerBinary()).toBeNull();
+	});
+
+	it('removes the engine and is safe to call twice', async () => {
+		await removeServerEngine();
+		await removeServerEngine();
+		expect(await isServerEngineInstalled()).toBe(false);
+	});
+});

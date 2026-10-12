@@ -130,7 +130,7 @@ export class RuntimeHashMismatchError extends Error {
 	readonly expected: string;
 	readonly actual: string;
 
-	constructor(runtimeId: NativeRuntimeId, expected: string, actual: string) {
+	constructor(runtimeId: string, expected: string, actual: string) {
 		super(
 			`Downloaded ${runtimeId} runtime does not match the expected checksum. ` +
 				`Expected ${expected}, got ${actual}.`
@@ -290,15 +290,17 @@ async function downloadPayload(
  *
  * Shared by the runtime payload and its dependency payloads: both are code that
  * will later be imported into the main process, so both get the same treatment.
+ * The model server's engine installer reuses it too, because its binaries are code
+ * the app executes.
  * Hashing DURING the stream rather than re-reading afterwards means a mismatched
  * payload is never on disk in a readable state for longer than the write itself.
  */
-async function downloadVerified(
+export async function downloadVerified(
 	source: { url: string; sha256: string },
-	runtimeId: NativeRuntimeId,
+	runtimeId: string,
 	destination: string,
-	options: RuntimeInstallOptions,
-	progress: InstallProgressTracker
+	options: Pick<RuntimeInstallOptions, 'fetchImpl' | 'signal'>,
+	progress: Pick<InstallProgressTracker, 'add'>
 ): Promise<void> {
 	const fetchImpl = options.fetchImpl ?? (globalThis.fetch as FetchLike);
 	const response = await fetchImpl(source.url, { signal: options.signal });
@@ -433,7 +435,7 @@ async function pathExists(target: string): Promise<boolean> {
 	}
 }
 
-async function directoryBytes(target: string): Promise<number> {
+export async function directoryBytes(target: string): Promise<number> {
 	let total = 0;
 	const entries = await fs.readdir(target, { withFileTypes: true }).catch(() => []);
 	for (const entry of entries) {

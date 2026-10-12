@@ -116,7 +116,7 @@ export function artifactForThisPlatform(id: NativeRuntimeId): NativeRuntimeArtif
 	return nativeRuntimeArtifact(id, key);
 }
 
-async function exists(target: string): Promise<boolean> {
+export async function exists(target: string): Promise<boolean> {
 	try {
 		await fs.access(target);
 		return true;
