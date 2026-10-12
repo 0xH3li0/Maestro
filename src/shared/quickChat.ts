@@ -13,10 +13,19 @@
  * setting, and history rule works the same as in the main window, and nothing
  * here re-implements a spawn path.
  *
- * Two modes, switchable per chat:
- * - Ephemeral: the tab is hidden (no chip in the tab strip). Starting a new
- *   chat deletes it. Whether its turns reach History is a setting.
- * - Persistent: the tab is visible on the agent and stays when a new chat
+ * One chat is a THREAD of messages, and each message is routed on its own: to an
+ * open tab of the agent that is already about its subject, to a conversation
+ * closed in the last two weeks (reopened for it), or to a new tab. So one thread
+ * can move between tabs, and two messages sent back to back can run in two tabs
+ * at once. Each message carries a {@link QuickChatRoute} saying where it went.
+ * See src/shared/quickChatRouting.ts for how a tab is chosen.
+ *
+ * Two modes, switchable per chat. They apply to the tabs the chat CREATES; a tab
+ * the agent already had, or one reopened for a message, is the user's own and is
+ * never hidden or deleted:
+ * - Ephemeral: a created tab is hidden (no chip in the tab strip). Starting a
+ *   new chat deletes it. Whether its turns reach History is a setting.
+ * - Persistent: a created tab is visible on the agent and stays when a new chat
  *   starts, like any other tab.
  */
 
@@ -69,11 +78,66 @@ export function resolveQuickChatSettings(raw: unknown): QuickChatSettings {
 	};
 }
 
+/**
+ * What became of a message sent from Quick Chat:
+ * - `searching`: a tab is being chosen for it.
+ * - `queued`: it is waiting in the agent's queue, because the tab it belongs in
+ *   is mid-reply.
+ * - `running`: the agent is answering it.
+ * - `done`: the reply finished (or the tab it ran in is gone).
+ * - `cancelled`: stopped, or removed from the queue, before it ran.
+ * - `failed`: no tab could be reached; an error message follows it.
+ */
+export type QuickChatRouteStatus =
+	| 'searching'
+	| 'queued'
+	| 'running'
+	| 'done'
+	| 'cancelled'
+	| 'failed';
+
+/** How the tab a message went to came to be: already open, reopened, or created. */
+export type QuickChatRouteOrigin = 'open' | 'reopened' | 'new';
+
+/** Where one message went. Rendered as the pill under it. */
+export interface QuickChatRoute {
+	status: QuickChatRouteStatus;
+	/** The tab it went to. Null while searching, and when none was reached. */
+	tabId: string | null;
+	/** That tab's name as last seen, so the pill survives the tab closing. */
+	tabName: string | null;
+	origin: QuickChatRouteOrigin | null;
+	/** Whether the tab still exists to jump to. */
+	tabOpen: boolean;
+	/** When the running reply started (ms epoch), for the elapsed counter. */
+	since: number | null;
+}
+
+/** One line saying where a message went, for `maestro-cli quick-chat status`. */
+export function describeQuickChatRoute(route: QuickChatRoute): string {
+	if (route.status === 'searching') return 'searching for a tab';
+	if (!route.tabId || !route.origin) return route.status;
+	const how = { open: 'open tab', reopened: 'reopened tab', new: 'new tab' }[route.origin];
+	const tab = `${how} "${route.tabName ?? route.tabId}"`;
+	switch (route.status) {
+		case 'queued':
+			return `queued for ${tab}`;
+		case 'running':
+			return `running in ${tab}`;
+		case 'cancelled':
+			return `cancelled, was for ${tab}`;
+		default:
+			return `sent to ${tab}`;
+	}
+}
+
 export interface QuickChatMessage {
 	id: string;
 	role: 'user' | 'assistant' | 'error';
 	text: string;
 	timestamp: number;
+	/** On a message the user sent from Quick Chat: where it went. */
+	route?: QuickChatRoute;
 }
 
 export interface QuickChatAgentOption {
@@ -90,11 +154,12 @@ export interface QuickChatSnapshot {
 	/** Agent the chat runs on, or null when no agent could be resolved. */
 	agentId: string | null;
 	agentName: string | null;
-	/** The tab backing the current chat; null before the first message. */
+	/** The tab the latest message went to; null before the first one lands. */
 	tabId: string | null;
 	persistent: boolean;
+	/** Whether any message is still searching, queued, or being answered. */
 	busy: boolean;
-	/** When the running turn started (ms epoch), for the elapsed counter. */
+	/** When the oldest running reply started (ms epoch); null when none is running. */
 	busySince: number | null;
 	messages: QuickChatMessage[];
 	/** Agents the user can switch the chat to. */
@@ -121,8 +186,16 @@ export type QuickChatCommand =
 	| { type: 'new' }
 	| { type: 'setPersistent'; persistent: boolean }
 	| { type: 'setAgent'; agentId: string }
-	| { type: 'reveal' }
+	/** Open a tab in Maestro: the one `messageId` went to, else the latest. */
+	| { type: 'reveal'; messageId?: string }
+	/** Stop every reply in progress and withdraw every message still queued. */
 	| { type: 'stop' }
+	/**
+	 * Take a QUEUED message out of the queue and send it to a new tab instead, so
+	 * it stops waiting on the tab it was routed to. `messageId` defaults to the
+	 * latest queued message.
+	 */
+	| { type: 'moveToNewTab'; messageId?: string }
 	| { type: 'sync' };
 
 /** The engine's answer to a command. `snapshot` is the state after it ran. */

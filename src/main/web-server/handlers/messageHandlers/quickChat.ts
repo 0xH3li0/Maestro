@@ -17,6 +17,13 @@ import { logger } from '../../../utils/logger';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
+/** The message a command is about, when the caller named one. */
+function messageIdOf(message: WebClientMessage): { messageId?: string } {
+	return typeof message.messageId === 'string' && message.messageId
+		? { messageId: message.messageId }
+		: {};
+}
+
 /** Map a CLI action onto an engine command; null for window actions and status. */
 function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error: string } | null {
 	switch (message.action) {
@@ -35,9 +42,11 @@ function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error:
 			return { type: 'setAgent', agentId };
 		}
 		case 'reveal':
-			return { type: 'reveal' };
+			return { type: 'reveal', ...messageIdOf(message) };
 		case 'stop':
 			return { type: 'stop' };
+		case 'new-tab':
+			return { type: 'moveToNewTab', ...messageIdOf(message) };
 		default:
 			return null;
 	}

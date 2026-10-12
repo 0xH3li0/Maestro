@@ -225,4 +225,48 @@ describe('quick_chat handler', () => {
 		expect(controller.setFontScale).not.toHaveBeenCalled();
 		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'r15' });
 	});
+
+	it('opens the tab a named message went to', async () => {
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'reveal',
+			messageId: 'm1',
+			requestId: 'r16',
+		});
+		await flush();
+		expect(controller.runCommand).toHaveBeenCalledWith({ type: 'reveal', messageId: 'm1' });
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'r16' });
+	});
+
+	it('moves a queued message to a new tab, the latest when none is named', async () => {
+		handler.handleMessage(client, { type: 'quick_chat', action: 'new-tab', requestId: 'r17' });
+		await flush();
+		expect(controller.runCommand).toHaveBeenLastCalledWith({ type: 'moveToNewTab' });
+
+		handler.handleMessage(client, {
+			type: 'quick_chat',
+			action: 'new-tab',
+			messageId: 'm7',
+			requestId: 'r18',
+		});
+		await flush();
+		expect(controller.runCommand).toHaveBeenLastCalledWith({
+			type: 'moveToNewTab',
+			messageId: 'm7',
+		});
+	});
+
+	it('reports why a message could not be moved', async () => {
+		controller.runCommand.mockResolvedValue({
+			ok: false,
+			error: 'That message is no longer waiting: it already started',
+			snapshot: EMPTY_QUICK_CHAT_SNAPSHOT,
+		});
+		handler.handleMessage(client, { type: 'quick_chat', action: 'new-tab', requestId: 'r19' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'That message is no longer waiting: it already started',
+		});
+	});
 });

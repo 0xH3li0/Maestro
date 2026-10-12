@@ -7,6 +7,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { parseCliBool } from '../utils/parse';
 import {
+	describeQuickChatRoute,
 	validateQuickChatBoundsRequest,
 	type QuickChatBoundsRequest,
 	type QuickChatFontScaleRequest,
@@ -43,6 +44,7 @@ export type QuickChatAction =
 	| 'agent'
 	| 'reveal'
 	| 'stop'
+	| 'new-tab'
 	| 'bounds';
 
 const FONT_STEP_UP = new Set(['in', 'up', 'bigger', 'larger', '+']);
@@ -105,13 +107,18 @@ function printStatus(status: QuickChatStatus): void {
 	);
 	for (const message of snapshot.messages) {
 		const who = message.role === 'user' ? 'You' : message.role === 'error' ? 'Error' : 'Agent';
-		console.log(`\n${who}: ${message.text}`);
+		// A message the user sent names where it went, and its id is what
+		// `reveal <id>` and `new-tab <id>` take.
+		const route = message.route
+			? ` [${message.id}] (${describeQuickChatRoute(message.route)})`
+			: '';
+		console.log(`\n${who}${route}: ${message.text}`);
 	}
 }
 
 export async function quickChat(
 	action: QuickChatAction,
-	args: { text?: string; state?: string; agent?: string },
+	args: { text?: string; state?: string; agent?: string; messageId?: string },
 	options: QuickChatOptions
 ): Promise<void> {
 	const message: Record<string, unknown> = { type: 'quick_chat', action };
@@ -135,6 +142,9 @@ export async function quickChat(
 			}
 		}
 		message[action === 'keep' ? 'persistent' : 'pinned'] = on;
+	}
+	if ((action === 'reveal' || action === 'new-tab') && args.messageId) {
+		message.messageId = args.messageId;
 	}
 	if (action === 'font' && args.state !== undefined) {
 		try {
@@ -183,7 +193,14 @@ export async function quickChat(
 		}
 		if (action === 'font' && result.status) {
 			console.log(`Text size: ${Math.round(result.status.fontScale * 100)}%`);
-		} else if ((action === 'status' || action === 'bounds' || action === 'pin') && result.status) {
+		} else if (
+			(action === 'status' ||
+				action === 'bounds' ||
+				action === 'pin' ||
+				action === 'send' ||
+				action === 'new-tab') &&
+			result.status
+		) {
 			printStatus(result.status);
 		} else console.log(`Quick Chat: ${action} done`);
 	} catch (error) {

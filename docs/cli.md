@@ -1192,6 +1192,8 @@ maestro-cli quick-chat send "summarize the last commit"
 maestro-cli quick-chat status --json         # window state, agent, mode, and the conversation
 maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
 maestro-cli quick-chat pin                   # float the window on top ("pin off" lets it fall behind)
+maestro-cli quick-chat reveal [message-id]   # open a message's tab in Maestro (default: the latest)
+maestro-cli quick-chat new-tab [message-id]  # send a queued message to a new tab instead of waiting
 maestro-cli quick-chat font in               # bigger conversation text (out, reset, or a size such as 120%)
 maestro-cli quick-chat new                   # start over; an ephemeral chat's hidden tab is deleted
 maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)

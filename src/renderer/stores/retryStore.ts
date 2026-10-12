@@ -338,6 +338,15 @@ export function registerDispatchDepsProvider(fn: (() => ProcessQueuedItemDeps) |
 }
 
 /**
+ * The deps a dispatch needs right now, or null before `useQueueProcessing` has
+ * registered them (app still mounting, or a test). For a service that runs a
+ * queued item itself, outside the hook that normally owns the dispatch.
+ */
+export function getDispatchDeps(): ProcessQueuedItemDeps | null {
+	return dispatchDepsProvider ? dispatchDepsProvider() : null;
+}
+
+/**
  * Snapshot a prompt that is being spawned DIRECTLY rather than through
  * `agentStore.processQueuedItem` (which calls `noteDispatch` itself).
  *
