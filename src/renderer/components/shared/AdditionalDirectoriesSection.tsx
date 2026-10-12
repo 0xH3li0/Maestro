@@ -41,7 +41,7 @@ export interface AdditionalDirectoriesSectionProps {
 	nativelyEnforced?: boolean;
 }
 
-interface PermissionSquareProps {
+export interface PermissionSquareProps {
 	theme: Theme;
 	label: string;
 	title: string;
@@ -49,8 +49,11 @@ interface PermissionSquareProps {
 	onToggle: () => void;
 }
 
-/** One square permission toggle (R or W). Lit = granted. */
-function PermissionSquare({
+/**
+ * One square permission toggle (R or W). Lit = granted.
+ * Exported because PeerAgentsSection draws its R/W squares with it too; do not re-privatize.
+ */
+export function PermissionSquare({
 	theme,
 	label,
 	title,
