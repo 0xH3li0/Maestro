@@ -374,6 +374,41 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.sshRemoteId).toBe('my-remote-server');
 			expect(proc?.sshRemoteHost).toBe('dev.example.com');
 		});
+
+		// Stop over SSH used to signal only the local ssh client, leaving the remote
+		// agent running. The launch script records the remote pid so Stop can reach it.
+		it('records the remote agent pid ahead of a stdin launch script', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					command: '/usr/bin/ssh',
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					sshStdinScript: 'cd /project\nexec claude --print\n',
+				})
+			);
+
+			const pidFile = processes.get('test-session')?.sshRemotePidFile;
+			expect(pidFile).toMatch(/^\/tmp\/maestro-agent-[0-9a-f-]+\.pid$/);
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toContain(`printf '%s %s\\n' "$$"`);
+			expect(written).toContain(pidFile);
+			expect(written.endsWith('cd /project\nexec claude --print\n')).toBe(true);
+		});
+
+		it('records nothing when the args are not a stdin-script ssh invocation', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash'],
+					sshStdinScript: 'exec claude',
+				})
+			);
+
+			expect(processes.get('test-session')?.sshRemotePidFile).toBeUndefined();
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledWith('exec claude');
+		});
 	});
 
 	describe('image input-format flag (regression: commit 2d227ed0)', () => {

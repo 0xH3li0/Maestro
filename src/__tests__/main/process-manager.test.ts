@@ -52,6 +52,12 @@ const { mockIsPidAlive } = vi.hoisted(() => ({
 	mockIsPidAlive: vi.fn<(pid: number | undefined) => boolean>().mockReturnValue(true),
 }));
 
+const { mockSignalRemoteAgent } = vi.hoisted(() => ({ mockSignalRemoteAgent: vi.fn() }));
+vi.mock('../../main/utils/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../main/utils/ssh-remote-signal')>()),
+	signalRemoteAgent: mockSignalRemoteAgent,
+}));
+
 vi.mock('../../main/process-manager/utils/childProcessInfo', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('../../main/process-manager/utils/childProcessInfo')>();
@@ -648,6 +654,44 @@ describe('process-manager.ts', () => {
 
 				expect(child.kill).toHaveBeenCalledTimes(1);
 				expect(processes.has('int-session')).toBe(true);
+			});
+
+			// The local child of an SSH spawn is only the ssh client: signalling it
+			// left the remote agent running (48 minutes, 2026-10-12).
+			it('asks the remote host to interrupt, then terminate, an SSH agent', () => {
+				mockIsWindows.mockReturnValue(false);
+				vi.useFakeTimers();
+				mockSignalRemoteAgent.mockClear();
+				const { processes } = registerChild('ssh-session');
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				Object.assign(processes.get('ssh-session'), {
+					command: '/usr/bin/ssh',
+					args: sshArgs,
+					sshRemotePidFile: '/tmp/maestro-agent-1.pid',
+				});
+				const target = {
+					sshCommand: '/usr/bin/ssh',
+					sshArgs,
+					pidFile: '/tmp/maestro-agent-1.pid',
+					sessionId: 'ssh-session',
+				};
+
+				processManager.interrupt('ssh-session');
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(target, 'interrupt');
+
+				vi.advanceTimersByTime(2100);
+				expect(mockSignalRemoteAgent).toHaveBeenLastCalledWith(target, 'terminate');
+			});
+
+			it('does not reach for a remote host for a local agent', () => {
+				mockIsWindows.mockReturnValue(false);
+				mockSignalRemoteAgent.mockClear();
+				registerChild('local-session');
+
+				processManager.interrupt('local-session');
+				processManager.kill('local-session');
+
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
 			});
 		});
 

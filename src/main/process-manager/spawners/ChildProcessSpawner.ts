@@ -19,6 +19,12 @@ import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+} from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
@@ -428,6 +434,11 @@ export class ChildProcessSpawner {
 				argsCount: finalArgs.length,
 			});
 
+			// A stdin-script SSH spawn records the remote agent's pid so Stop can
+			// reach it: signalling only the local ssh client leaves it running.
+			const sshRemotePidFile =
+				config.sshStdinScript && sshConnectionArgs(finalArgs) ? newRemotePidFilePath() : undefined;
+
 			const managedProcess: ManagedProcess = {
 				sessionId,
 				toolType,
@@ -453,6 +464,7 @@ export class ChildProcessSpawner {
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
 				sshRemoteCommand: config.sshRemoteCommand,
+				sshRemotePidFile,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream
@@ -619,6 +631,15 @@ export class ChildProcessSpawner {
 						'ProcessManager',
 						{ sessionId, pid: childProcess.pid }
 					);
+					// For SSH the open stdio usually means the remote agent is still
+					// running behind a ControlMaster. Settling the turn while it keeps
+					// working would put a second writer on the session next turn.
+					if (sshRemotePidFile) {
+						signalRemoteAgent(
+							{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
+							'terminate'
+						);
+					}
 				},
 			});
 
@@ -642,7 +663,11 @@ export class ChildProcessSpawner {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
 				});
-				childProcess.stdin?.write(config.sshStdinScript);
+				childProcess.stdin?.write(
+					sshRemotePidFile
+						? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile)
+						: config.sshStdinScript
+				);
 				childProcess.stdin?.end();
 			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
 				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
