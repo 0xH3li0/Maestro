@@ -62,6 +62,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Formatting, IDs, and pricing
 
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
+- **Browser relay text chunks:** `chunkBrowserRelayText()` in `src/shared/browserRelay.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`

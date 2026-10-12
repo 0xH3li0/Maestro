@@ -175,7 +175,8 @@ describe('set_setting cannot flip Computer History from a browser', () => {
 			requestId: 's2',
 		} as never);
 		await flush();
-		expect(setSetting).toHaveBeenCalledTimes(1);
+		expect(setSetting).not.toHaveBeenCalled();
+		expect(lastResponse(browser).type).toBe('error');
 
 		handler.handleMessage(client(true), {
 			type: 'set_setting',
@@ -184,7 +185,23 @@ describe('set_setting cannot flip Computer History from a browser', () => {
 			requestId: 's3',
 		} as never);
 		await flush();
+		expect(setSetting).toHaveBeenCalledTimes(1);
+		expect(setSetting).toHaveBeenLastCalledWith('encoreFeatures', { computerHistory: false });
+
+		handler.handleMessage(browser, {
+			type: 'set_setting',
+			key: 'activeThemeId',
+			value: 'dracula',
+			requestId: 's4',
+		} as never);
+		await flush();
 		expect(setSetting).toHaveBeenCalledTimes(2);
+		expect(lastResponse(browser)).toMatchObject({
+			type: 'set_setting_result',
+			success: true,
+			key: 'activeThemeId',
+			requestId: 's4',
+		});
 		setBridgeGuardContextProvider(null);
 	});
 });

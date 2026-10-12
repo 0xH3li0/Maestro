@@ -719,7 +719,7 @@ export class StdoutHandler {
 			// Thinking panel routing:
 			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
 			//   and flush once at exit).
-			// - Grok / Codex / OpenCode: only isReasoning deltas → thinking-chunk.
+			// - Grok / Codex / OpenCode / OMP: only isReasoning deltas → thinking-chunk.
 			//   These stream the final answer as partial `text` WITHOUT isReasoning;
 			//   dumping those into the thinking panel makes the wizard look finished
 			//   while tools still run (Grok emits no tool events on the stream).
@@ -733,7 +733,10 @@ export class StdoutHandler {
 			const toolType = managedProcess.toolType;
 			if (toolType !== 'copilot-cli') {
 				const requiresReasoningTag =
-					toolType === 'grok' || toolType === 'codex' || toolType === 'opencode';
+					toolType === 'grok' ||
+					toolType === 'codex' ||
+					toolType === 'opencode' ||
+					toolType === 'omp';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}

@@ -8,6 +8,172 @@ icon: book
 
 > Generated from the CLI command tree by `maestro-cli reference`. Do not edit by hand - run `npm run gen:cli-reference` to refresh.
 
+## `maestro-cli lite`
+
+Control a running isolated Maestro Lite client through its native connection actions (JSON output)
+
+| Option               | Description                                                                       | Default |
+| -------------------- | --------------------------------------------------------------------------------- | ------- |
+| `--user-data <path>` | Final isolated Lite user-data directory (same as Maestro --lite --lite-user-data) | -       |
+| `--json`             | Output JSON (Lite controls always return JSON)                                    | -       |
+
+## `maestro-cli lite profile`
+
+Read and manage local Lite connection profiles through the running client
+
+## `maestro-cli lite profile list`
+
+Read saved Lite profiles and current connection state
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite profile read <id>`
+
+Read one saved profile, including validated host identity
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite profile save`
+
+Save a complete profile JSON using native URL, SSH, and identity validation; returns the saved profile
+
+| Option          | Description                                                                                | Default |
+| --------------- | ------------------------------------------------------------------------------------------ | ------- |
+| `--file <path>` | Profile JSON file (same fields as profile read; id, name, transport, url, and ssh for SSH) | -       |
+| `--json`        | Output JSON                                                                                | -       |
+
+## `maestro-cli lite profile remove <id>`
+
+Remove local connection preferences only; never stops host work
+
+| Option   | Description                                                 | Default |
+| -------- | ----------------------------------------------------------- | ------- |
+| `--yes`  | Explicitly confirm profile deletion without a native dialog | -       |
+| `--json` | Output JSON                                                 | -       |
+
+## `maestro-cli lite profile reset-identity <id>`
+
+Disconnect and forget the validated host identity; verify the host out of band before connecting again
+
+| Option   | Description                                               | Default |
+| -------- | --------------------------------------------------------- | ------- |
+| `--yes`  | Explicitly confirm identity reset without a native dialog | -       |
+| `--json` | Output JSON                                               | -       |
+
+## `maestro-cli lite connect <id>`
+
+Connect to a saved profile using the native TLS, SSH, authentication, and identity checks
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite discovery`
+
+Local-network and consented Tailscale peer or advertised Service discovery
+
+## `maestro-cli lite discovery show`
+
+## `maestro-cli lite discovery status`
+
+## `maestro-cli lite discovery stop`
+
+## `maestro-cli lite discovery start`
+
+| Option               | Description                                                                                                        | Default |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--interface <ipv4>` | Advanced override: use one approved LAN interface instead of automatic selection                                   | -       |
+| `--no-lan`           | Do not browse local-network advertisements                                                                         | -       |
+| `--no-tailscale`     | Do not read existing Tailscale client service metadata                                                             | -       |
+| `--tailscale-peers`  | Allow direct HTTP Maestro checks on Tailscale TCP 56036 for up to 32 existing peers per refresh; no login or trust | -       |
+
+## `maestro-cli lite discovery import`
+
+Read an expiring host invitation from stdin; never connect or save trust
+
+## `maestro-cli lite pair`
+
+Attended metadata-only PIN proof; never creates a full Maestro login
+
+## `maestro-cli lite pair request <key>`
+
+| Option             | Description                      | Default |
+| ------------------ | -------------------------------- | ------- |
+| `--generation <n>` | Generation from discovery status | -       |
+| `--name <label>`   | Self-asserted client label       | -       |
+
+## `maestro-cli lite pair submit`
+
+| Option        | Description                                          | Default |
+| ------------- | ---------------------------------------------------- | ------- |
+| `--pin-stdin` | Read six-digit PIN from stdin, not process arguments | -       |
+
+## `maestro-cli lite pair read`
+
+## `maestro-cli lite pair cancel`
+
+## `maestro-cli lite status`
+
+Read connection status, errors, selected profile, and local presentation state
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite reconnect`
+
+Reconnect the selected profile without replaying host commands
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite disconnect`
+
+Disconnect this client and stop only its owned SSH tunnel; host work continues
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite connections`
+
+Show the native connection picker
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite commands`
+
+Show the native connection command palette
+
+| Option   | Description | Default |
+| -------- | ----------- | ------- |
+| `--json` | Output JSON | -       |
+
+## `maestro-cli lite dismiss`
+
+Return to the remote view or stay on setup; never close Lite
+
+| Option   | Description                                           | Default |
+| -------- | ----------------------------------------------------- | ------- |
+| `--json` | Output JSON                                           | -       |
+| `--yes`  | Accepted for compatibility; dismiss never closes Lite | -       |
+
+## `maestro-cli lite close`
+
+Close Maestro Lite only; host work continues
+
+| Option   | Description                                                    | Default |
+| -------- | -------------------------------------------------------------- | ------- |
+| `--json` | Output JSON                                                    | -       |
+| `--yes`  | Explicitly confirm closing this client without a native dialog | -       |
+
 ## `maestro-cli agent-run`
 
 Record and inspect agent runs
@@ -1374,7 +1540,7 @@ Test an SSH remote connection and report what the remote answered
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
+| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
 `test-ssh-remote` uses the same connection options as agent spawning and prints the remote hostname, so tunnel and `ProxyCommand` errors can be caught during setup. It also works while the desktop is closed.

@@ -34,6 +34,7 @@ import {
 import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
+import * as runtimeContext from '../../../renderer/utils/runtimeContext';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
 // Deep-cloned so test mutations can't affect the captured reference.
@@ -1947,6 +1948,31 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		it('hydrates remote tool visibility and preferences without native log-buffer access', async () => {
+			vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+			const nativeGetMaxLogBuffer = window.maestro.logger.getMaxLogBuffer;
+			window.maestro.logger.getMaxLogBuffer = vi
+				.fn()
+				.mockRejectedValue(
+					new Error('Channel "logger:getMaxLogBuffer" is not available over web interface')
+				);
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				showToolCalls: true,
+				defaultShowThinking: 'sticky',
+				fontSize: 18,
+			});
+			try {
+				await loadAllSettings();
+				expect(useSettingsStore.getState()).toMatchObject({
+					settingsLoaded: true,
+					showToolCalls: true,
+					defaultShowThinking: 'sticky',
+					fontSize: 18,
+				});
+			} finally {
+				window.maestro.logger.getMaxLogBuffer = nativeGetMaxLogBuffer;
+			}
+		});
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				fontFamily: 'JetBrains Mono',

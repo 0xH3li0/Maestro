@@ -17,6 +17,7 @@
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
+import { isWebDesktop } from '../utils/runtimeContext';
 import type {
 	CustomAICommand,
 	AchievementTimeSource,
@@ -2004,7 +2005,10 @@ export async function loadAllSettings(): Promise<void> {
 
 		// Logger settings need separate calls (different IPC channel)
 		const savedLogLevel = await window.maestro.logger.getLogLevel();
-		const savedMaxLogBuffer = await window.maestro.logger.getMaxLogBuffer();
+		// The native logger buffer is not exposed through the remote IPC bridge.
+		const savedMaxLogBuffer = isWebDesktop()
+			? undefined
+			: await window.maestro.logger.getMaxLogBuffer();
 
 		// Build a single patch to apply to the store
 		const patch: Partial<SettingsStoreState> = {};
