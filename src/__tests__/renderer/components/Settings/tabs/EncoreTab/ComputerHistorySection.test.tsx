@@ -92,16 +92,21 @@ describe('ComputerHistorySection', () => {
 		await waitFor(() => expect(api.requestAccessibility).toHaveBeenCalled());
 	});
 
-	it("macOS without a helper: the button reflects Maestro's own grant", async () => {
-		const denied = makeApi('macos', null, 'denied');
-		install(denied);
-		const { unmount } = render(<ComputerHistorySection theme={mockTheme} />);
-		expect(await screen.findByText('Request Accessibility access')).toBeTruthy();
-		unmount();
-
-		const granted = makeApi('macos', null, 'granted');
-		install(granted);
+	it("macOS without a helper: follows Maestro's own grant and re-reads it on focus", async () => {
+		const api = makeApi('macos', null, 'denied');
+		const denied = await api.status();
+		api.status.mockClear();
+		install(api);
 		render(<ComputerHistorySection theme={mockTheme} />);
+		expect(await screen.findByText('Request Accessibility access')).toBeTruthy();
+
+		// The user grants access in System Settings; no helper event follows.
+		api.status.mockResolvedValue({ ...denied, appAccessibility: 'granted' });
+		const readsBefore = api.status.mock.calls.length;
+		act(() => {
+			window.dispatchEvent(new Event('focus'));
+		});
+		await waitFor(() => expect(api.status.mock.calls.length).toBeGreaterThan(readsBefore));
 		expect(await screen.findByText('Accessibility access is granted.')).toBeTruthy();
 		expect(screen.queryByText('Request Accessibility access')).toBeNull();
 	});

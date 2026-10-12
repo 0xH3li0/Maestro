@@ -724,7 +724,15 @@ export class ComputerHistoryService {
 			// user dismisses it, or when a stale entry exists, asking again does
 			// nothing. Opening the pane gives a visible next step either way.
 			check?.(true);
-			await this.deps.openMacAccessibilitySettings?.();
+			try {
+				await this.deps.openMacAccessibilitySettings?.();
+			} catch (err) {
+				// Best effort: the returned instructions name the pane either way.
+				this.deps.log?.(
+					'warn',
+					`Could not open the Accessibility settings pane: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
 			return {
 				platform: 'macos',
 				outcome: 'prompted',

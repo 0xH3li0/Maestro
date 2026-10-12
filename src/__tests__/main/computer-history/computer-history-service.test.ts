@@ -521,6 +521,21 @@ describe('requestAccessibility', () => {
 		expect(grantedPane).not.toHaveBeenCalled();
 	});
 
+	it('macOS still returns the instructions when the settings pane cannot open', async () => {
+		const log = vi.fn();
+		const service = makeService({
+			isMacAccessibilityTrusted: () => false,
+			openMacAccessibilitySettings: async () => {
+				throw new Error('no handler');
+			},
+			log,
+		});
+		const result = await service.requestAccessibility();
+		expect(result.outcome).toBe('prompted');
+		expect(result.detail).toContain('Privacy & Security > Accessibility');
+		expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('no handler'));
+	});
+
 	it("status reports Maestro's own macOS trust even with no helper", () => {
 		let trusted = false;
 		const service = makeService({ isMacAccessibilityTrusted: () => trusted });
