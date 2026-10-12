@@ -4,7 +4,7 @@ description: Run Maestro's housekeeping tasks on models that live on your machin
 icon: hard-drive
 ---
 
-Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio.
+Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Run on](#run-on).
 
 Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `library`, `sources`, `system-two`, `gateway`) lands on one of its inner tabs. The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty.
 
@@ -305,7 +305,7 @@ Choose Network only on a network you trust. The key travels in clear text over p
 
 ### Point a harness at it by hand
 
-Maestro does not yet set an agent up for you. Until it does, read the address with `maestro-cli models server status` and the key with `maestro-cli models server key`, then use the model's catalog id (for example `qwen3-1.7b-instruct-q4km`) as the model name.
+To make one of your agents use the server, set its [Run on](#run-on) target: Maestro then sets the variables and arguments below for you, on every launch. Do it by hand only for a harness that Maestro does not run. Read the address with `maestro-cli models server status` and the key with `maestro-cli models server key`, then use the model's catalog id (for example `qwen3-1.7b-instruct-q4km`) as the model name.
 
 ```bash
 # Claude Code
@@ -339,6 +339,121 @@ maestro-cli models server set --bind local      # or network; --max-models <n>; 
 maestro-cli models server key                   # prints only the key, for $(...)
 ```
 
+## Run on
+
+**Run on** keeps an agent's provider CLI and changes the model behind it. The agent is still Claude Code, Codex, OpenCode, or Copilot CLI. Its tool loop, permission prompts, transcripts and Maestro's session handling are the same. Only the model that answers changes, from the provider's cloud model to a model on one of your [sources](#endpoints): the [Maestro model server](#model-server), a server you run (Ollama, LM Studio), or a cloud endpoint you added.
+
+Set it in the agent's **Models** tab, in **New Agent** or **Edit Agent**. The picker lists **Provider (default)**, then the models of each source, grouped by source. The Maestro model server comes first and lists the models you have installed. A saved source is listed only while it is enabled. Opening the tab starts nothing: the server's list comes from disk and the server is never started for it, and each enabled saved source is asked for its models.
+
+| Control     | What it does                                                                                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Run on**  | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Runs agents** when it passed with this agent's provider. |
+| **Context** | The window the harness is told it has. It starts at the model's context on the server (40,960 for any other source) and cannot be lower than 40,960.                               |
+| **Test**    | Sends one short, read-only turn through the agent's real launch and shows the reply or the reason it failed.                                                                       |
+
+Under the picker, Maestro says what the launch will do: that a source was removed or is disabled, that a loopback source cannot be reached from the agent's SSH remote, or that the agent's own variable takes precedence. A model without the **Runs agents** badge shows "Not tested as an agent. Turns may fail or loop."
+
+A turn's pill names where it ran, in place of the model: `gpt-oss 20B (MXFP4) · Maestro`, `qwen3:latest · Ollama`.
+
+### Which providers can run on a source
+
+Maestro maps a provider only after the recipe ran against the real CLI. A provider without a recipe keeps its picker disabled and says why.
+
+| Provider                      | Runs on a source   | How Maestro points it at the source                                                                                                                                                                                                                                                     |
+| ----------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code                   | Yes                | `ANTHROPIC_BASE_URL` (the server root, no `/v1`), `ANTHROPIC_AUTH_TOKEN`, the Haiku, Sonnet and Opus model variables, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, and `ANTHROPIC_API_KEY` set blank. Runs as `claude --print`. Uses the Anthropic Messages route |
+| Codex                         | Yes                | A provider named `maestro` through `-c model_providers.maestro=...`, `-c model_provider="maestro"` and `-c model_context_window=<n>`, the key in `MAESTRO_RUN_ON_KEY`, and `-m <model>`. Runs as `codex exec`. Uses the Responses route                                                 |
+| OpenCode                      | Yes (2.0 or newer) | A `maestro` provider added to `OPENCODE_CONFIG_CONTENT`, `--standalone`, `--model maestro/<model>`, and the key in `MAESTRO_RUN_ON_KEY`. Your config file is not touched. Uses the Chat Completions route                                                                               |
+| Copilot CLI                   | Yes                | The `COPILOT_PROVIDER_*` variables (base URL, key, wire model, token limits, and a neutral `COPILOT_PROVIDER_MODEL_ID`) and `--model`. GitHub sign-in is not used. Uses the Chat Completions route                                                                                      |
+| Qwen3 Coder, Oh My Pi, Hermes | No                 | Each documents a way to use another server. Maestro has not run it against the real CLI, so it stays off                                                                                                                                                                                |
+| Factory Droid, Pi             | No                 | They take another model server only from a settings or models file, and Maestro does not write one for a launch                                                                                                                                                                         |
+| Antigravity CLI, Gemini CLI   | No                 | They speak only the Gemini API, which no source serves                                                                                                                                                                                                                                  |
+| Grok CLI                      | No                 | It has a base-URL variable but no way to give a launch a key for it                                                                                                                                                                                                                     |
+
+Copilot CLI picks its tools from the model's name, and a name it takes for a GPT model gets a tool that `llama-server` rejects. Maestro therefore tells Copilot CLI the model is called `maestro-run-on` and sends the source the model's real name.
+
+Maestro checks that the source lists the model. It does not check that the source speaks the route the harness uses. Ollama and LM Studio serve the routes above; a server that serves only Chat Completions works with OpenCode and Copilot CLI, and a turn from the others fails with the harness's own error. Claude Code was measured against Ollama and the Maestro model server, Codex against the Maestro model server, and OpenCode and Copilot CLI against the Maestro model server with `gpt-oss 20B`.
+
+An agent on a source keeps to the mode its recipe was measured in. Claude Code runs as `claude --print`, never through the maestro-p TUI, so the **Token source** setting on the Provider tab does not apply. Codex runs as `codex exec`, so the **Codex transport** setting does not apply.
+
+### The rules
+
+- **It never falls back to the provider.** A target that cannot run refuses the launch and names the reason. Silently sending the turn to the provider's cloud model would spend money you chose not to spend and send the conversation where you chose not to send it.
+- **Your own variable wins, one variable at a time.** If the agent's environment variables already set a variable the recipe sets, Maestro leaves yours. If you set the base-URL variable yourself, the source's key is withheld, so a key is never sent to an address its source does not own, and Maestro does not ask the source or start the model server for that launch.
+- **The provider's own key never goes to the source.** Claude Code sends `ANTHROPIC_API_KEY` to its base URL beside the source's token (measured with 2.1.296). Maestro sets it blank for the launch, whoever set it. Copilot CLI's bearer token, key command and headers for another provider are set blank in the same way.
+- **A launch refused for the target starts nothing.** Maestro decides the refusals that need no network first, so a launch that will be refused does not start the model server or load a model.
+- **The Maestro model server starts for the launch.** An agent set to run on it is something you turned on, so its first turn starts the server and loads the model, as an assignment does.
+- **A saved source is asked on every launch.** Maestro reads its model list (5 second budget) to know it answers and serves the model.
+
+| What is wrong                                            | What you see                                                                  | Code                          |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------- |
+| The provider has no recipe                               | The provider's reason, and "Set Run on to Provider to run the agent"          | `run-on-unsupported-provider` |
+| The stored target is not a source and a model            | What is missing. Pick a model again                                           | `run-on-invalid-target`       |
+| The source was removed                                   | "its source (`<id>`) is no longer configured"                                 | `run-on-source-missing`       |
+| The source is disabled                                   | The source's name, and to enable it                                           | `run-on-source-disabled`      |
+| The agent is on an SSH remote and the source is loopback | The remote's name and the address it cannot reach                             | `run-on-loopback-on-remote`   |
+| The source did not answer                                | The source's name and what it said                                            | `run-on-source-unreachable`   |
+| The source does not serve the model                      | The model, and up to five that the source does serve                          | `run-on-model-not-served`     |
+| The Maestro model server could not serve it              | The server's own reason: engine not installed, port in use, not enough memory | `run-on-server-failed`        |
+
+Every refusal says how to recover, and every one offers to set Run on to Provider. The same message is what a Cue run, an Auto Run and `maestro-cli send` report.
+
+### What it covers
+
+The target applies to the turns the agent runs: chat, Auto Run, Cue runs, `maestro-cli send`, the agent's turns as a Group Chat participant, its answers to another agent's `@mention` or `maestro-cli ask`, and the History synopsis, which resumes the same session and so runs on the same target.
+
+<Warning>
+	**Some short jobs still reach the provider.** Tab naming, context grooming, the Group Chat
+	moderator, and the A Cappella voice Conductor are separate spawns, and they do not follow an
+	agent's Run on target. For an agent on a source, the text they read can still reach the
+	provider's cloud model. To keep tab naming and summaries on your machine, assign them to a
+	local model on **Models -> System Two**.
+</Warning>
+
+### SSH remote agents
+
+A remote host cannot reach `127.0.0.1` on this machine, so an agent on an SSH remote is refused when its source is a loopback address, with the same wording as the [gateway's](#gateway) refusal. The Maestro model server is always reached at `127.0.0.1`, so a remote agent cannot run on it, even in Network mode. Give the agent a source the remote host can reach, such as an Ollama server on your network.
+
+Over SSH a blank variable is not exported. A provider key that the remote host's own shell profile exports (`ANTHROPIC_API_KEY`, or Copilot CLI's `COPILOT_PROVIDER_BEARER_TOKEN`, `COPILOT_PROVIDER_API_KEY_COMMAND` and `COPILOT_PROVIDER_HEADERS`) is outside what a launch controls.
+
+### Run on and the gateway
+
+Run on and the [gateway](#gateway) do not combine. A gateway routes requests to a cloud provider, and an agent on a source sends its requests to the source. While the target is a source, both gateway controls on the Models tab are disabled with that reason. A stored gateway URL stays in the field, and is used again when you set Run on back to Provider. The launch skips the gateway and logs that it did. `maestro-cli update-agent --gateway-url` and `--proxy-mode` are refused for such an agent, but clearing them is allowed.
+
+### Which model should I pick?
+
+- **Start with the Library's Runs agents group.** A model is in it only after it fixed a bug in a scratch repository through a real harness, and its badge names the harnesses it passed with. The picker shows the badge for this agent's provider, so a model that passed with Claude Code only carries no badge on a Codex agent.
+- **Pick by what fits.** `gpt-oss 20B (MXFP4)` is the smallest that drives Claude Code and Codex (11.3 GB). `Gemma 4 E4B` (5.2 GB) is the one that fits a 16 GB computer, where `gpt-oss 20B` needs 32 GB. `Qwen3-Coder 30B-A3B` and `Qwen3-Coder-Next 80B-A3B` are the coding agents, and `gpt-oss 120B` is the strongest reasoner. The fit label is judged for the context you set.
+- **A model outside that group is a bet.** Some of the Housekeeping models cannot start a turn through the server today: their chat templates reject a system message that arrives after the first, and Claude Code and Codex send one. The picker's warning is the signal.
+- **Raise the context for a project with large instruction files.** At 40,960 tokens, OpenCode compacted before its first turn and Copilot CLI refused ("Static system messages and tool definitions exceed the model's usable context budget") in a repository whose instruction files and skills made a system prompt of about 290,000 characters. Both completed at a larger window. A larger context needs more memory.
+- **Keep the context at or below what the model runs at.** The Maestro model server runs a model at its catalog context. A larger number tells the harness about a window the server does not have, and Maestro does not check it today.
+- **Expect a smaller model to wander on a long task.** A short, well-bounded turn works. Use **Test** before you hand the agent real work.
+
+On the same `gpt-oss 20B` at 40,960 tokens on an Apple M5 Max (128 GB), a one-word turn took 2.7 s with Claude Code, 2.2 s with Codex, 5.8 s with OpenCode and 6.1 s with Copilot CLI.
+
+### Testing a target
+
+**Test** sends `Reply with the single word: ready` through the agent's own launch: its provider, directory, path, arguments, variables and SSH remote, with the form's unsaved values on top. The turn is read-only, because the model may be one nobody has run as an agent in your project directory. It waits at most 5 minutes for the turn, and loading a model is outside that budget. A Provider target has nothing to test and is refused. A test leaves one short session in the provider's own session store for the agent's directory.
+
+From the command line the test runs on what is stored, so set the target first.
+
+### From the command line
+
+```bash
+maestro-cli models endpoints list                                           # source ids
+maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id>      # the Maestro model server
+maestro-cli update-agent <agent-id> --run-on <source-id>:qwen3:latest --run-on-context 65536
+maestro-cli update-agent <agent-id> --run-on-context 131072                 # the context alone
+maestro-cli agent test-run-on <agent-id> [--json]                           # one short turn on the stored target
+maestro-cli update-agent <agent-id> --run-on provider                       # back to the provider's model
+maestro-cli create-agent "Local Coder" -d . -t claude-code --run-on maestro-server:<model-id>
+maestro-cli show agent <agent-id> --json   # runOn, runOnSpec, runOnLabel, runOnProblem
+```
+
+A target is written `provider` or `<source id>:<model>`. The source id ends at the first colon, so a model name may hold one. `maestro-server` is the Maestro model server; other ids are in `models endpoints list`. A source id that names nothing, a provider with no recipe, and a context under 40,960 are refused at the write. Whether the source serves the model is not asked at the write: `agent test-run-on` asks. A disabled source is accepted and is refused by name at launch until you enable it.
+
+Two rules for what changes around a target. Switching an agent's provider keeps the target when the new provider has a recipe, and clears it when it has none. A worktree agent inherits its parent's target, for the reason it inherits the gateway.
+
 ## Gateway
 
 A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
@@ -354,6 +469,8 @@ The gateway table is on **Models -> Gateway**. A gateway is set per agent and is
 | Others      | Nothing known to Maestro. The field is disabled and says so.               |
 
 Codex gets both because Codex CLI does not read `OPENAI_BASE_URL` on a ChatGPT login (tested with 0.162.1); the argument is what it honors.
+
+A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, use [Run on](#run-on). The two do not combine: while an agent's Run on target is a source, its gateway is not applied.
 
 Four rules:
 
@@ -416,6 +533,8 @@ maestro-cli models proxy block <hash>                       # a diff of one shor
 A downloaded model runs inside Maestro, so the text it reads never leaves your machine. An endpoint at a loopback address (`127.0.0.1`, `localhost`, `::1`) is also on your machine.
 
 An endpoint at any other address is a network service. Text sent to it leaves this machine, the same as text sent to an agent's provider. Point a task at a remote endpoint only if you would send that text there yourself.
+
+An agent set to [Run on](#run-on) a source sends it the whole conversation: your prompts, the files the agent reads, and every tool result. A model on this machine keeps that text here. A cloud endpoint, or a server at another address, receives it, so choose one only if you would send that text there yourself.
 
 ## Disk and memory
 
