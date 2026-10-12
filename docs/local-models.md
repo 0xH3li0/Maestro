@@ -454,6 +454,86 @@ A target is written `provider` or `<source id>:<model>`. The source id ends at t
 
 Two rules for what changes around a target. Switching an agent's provider keeps the target when the new provider has a recipe, and clears it when it has none. A worktree agent inherits its parent's target, for the reason it inherits the gateway.
 
+## Tiers
+
+A **tier** says how much model a job needs: `low`, `medium` or `high`. An Auto Run task asks for one with `<!-- MAESTRO:MODEL tier="low" -->` (see [Model Tier and Effort](./autorun-playbooks#model-tier-and-effort)), and a Cue subscription with `tier: low`. Maestro turns the tier into a model when the task launches.
+
+Run on gives an agent one target. Tiers let one agent use several: a `low` task can launch on a model on this machine, and the next `high` task on the provider. A switch happens only between tasks, because each task is a new process.
+
+A tier's **target** is one of two things:
+
+| Target              | Spelling                          | What launches                                                                      |
+| ------------------- | --------------------------------- | ---------------------------------------------------------------------------------- |
+| A provider model    | `provider:<model>`, or `provider` | The provider's own model. `provider` alone means the agent's own model             |
+| A model on a source | `<source id>:<model>`             | The same harness, running on that model, as if the agent's Run on target were that |
+
+### Where a tier's target comes from
+
+Maestro reads three layers when the task launches, and the first one that sets the tier wins.
+
+| Layer               | Where you set it                                      | How it applies                                                                                                                                                 |
+| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent**           | **Edit Agent -> Models -> Tiers**                     | Wins for the tiers it sets. A tier left on **Harness default** falls through                                                                                   |
+| **Harness default** | **Settings -> Models -> System Two -> Tier defaults** | Every agent on that harness that does not set the tier follows it, and a change applies at the next launch                                                     |
+| **Built-in**        | Maestro's own table                                   | The starting value of the harness default, and what **Reset** goes back to. Claude Code `haiku`, `sonnet` and `opus`; Codex Luna, Sol and Astra; Factory Droid |
+
+If no layer maps a tier (OpenCode and Copilot CLI have no built-in row), the task runs on the agent's own model and its log says the tier was ignored. Maestro does not guess a model for it.
+
+Every surface that shows a tier also shows which layer it came from: **Agent**, **Harness default** or **Built-in**.
+
+### Tier defaults
+
+**Settings -> Models -> System Two -> Tier defaults** has one row per installed harness that can select a model, with a picker for each of `low`, `medium` and `high`, and the layer beside each value. A picker lists what that harness can run on this computer:
+
+- the harness's own list of models (Maestro reads it from the harness, for example Codex's model cache or `opencode models`), and
+- every [Run on](#run-on) target the harness can use: the Maestro model server and each enabled source.
+
+Opening System Two reads those lists. Nothing is written until you press **Save** on a row, because a document has to resolve the same way until you change it.
+
+| Button      | What it does                                                              |
+| ----------- | ------------------------------------------------------------------------- |
+| **Suggest** | Fills the pickers from what the harness lists, with the reason under each |
+| **Reset**   | Puts the pickers back on the built-in table                               |
+| **Discard** | Drops your edits to the row                                               |
+| **Save**    | Stores the row. Suggest and Reset change the pickers only                 |
+
+**Suggest** uses a family Maestro knows for that harness (Claude Code's aliases, the newest Codex Luna, Sol and Astra), then the built-in model when the list holds it, then a description that says "fast" or "frontier", and, for `medium`, the model listed first. It does not pick a family out of another harness's list: OpenCode and Copilot CLI list several Claude and GPT models at once, so those tiers stay blank with the reason. A tier with no suggestion keeps the value it has.
+
+A value the harness no longer lists is flagged on its row, with the model **Suggest** would put in its place.
+
+### Per agent
+
+**Edit Agent -> Models -> Tiers** has one picker per tier. The first choice is **Harness default (`<value>`)**, which follows the table above. The others are the same targets the Tier defaults table offers. Tiers save with the dialog, like Run on. Switching an agent's provider starts its tiers over, because a tier names a model. New Agent has no Tiers block: a new agent follows the harness defaults, and you can edit it afterwards.
+
+### The rules
+
+- **A tier that names a target that cannot run fails the task by name.** The task does not start, and it does not fall through to the next layer or to the provider. A layer you wrote is never replaced by one you did not.
+- **The built-in table does not apply to an agent that runs on a source.** The table names the provider's cloud models, and sending that agent there is the spend Run on is meant to prevent. Such an agent keeps its own Run on target, and the task says the tier was ignored. A tier you set on the agent or in the harness default does move it.
+- **A source target launches at the default context**, 40,960 tokens. The tiers have no context field.
+- **The pill names the target.** An Auto Run marker reads `low · qwen3.5-4b · Maestro` or `high · opus`. A tier no layer maps keeps the plain `low model`.
+- **Auto Run splits a document where the model or the place changes.** A `low` task on the Maestro model server and a `high` task on the provider run as two dispatches.
+
+### What it covers
+
+Tiers apply to Auto Run (in the app and from `maestro-cli`) and to Cue subscriptions. Tab naming, summaries and context grooming are not tiered: they ask for the provider's own cheap model and run on the agent's own target. `maestro-cli send` takes no `--tier`.
+
+### From the command line
+
+```bash
+maestro-cli models tiers list [--harness <id>]            # each tier, its value and the layer
+maestro-cli models tiers options <harness> [--refresh]    # what the harness can launch a tier on
+maestro-cli models tiers suggest <harness> [--apply]      # a suggestion per tier, with the reason
+maestro-cli models tiers set <harness> low maestro-server:<model-id>
+maestro-cli models tiers set <harness> high provider:opus
+maestro-cli models tiers reset <harness> [--tier low]     # back to the built-in table
+
+maestro-cli update-agent <agent-id> --tier low=<source id>:<model> --tier high=provider:opus
+maestro-cli update-agent <agent-id> --tier low=default    # back to the harness default
+maestro-cli show agent <agent-id> --json                  # tiers: value, spelling and layer of each
+```
+
+A target is written `default`, `provider`, `provider:<model>` or `<source id>:<model>`. The source id ends at the first colon. `--tier` is repeatable and changes only the tiers it names. `models tiers set` and `reset` write at once; the table in Settings writes on **Save**.
+
 ## Gateway
 
 A gateway is an HTTP proxy that an agent's requests go through on the way to its provider. People run one to cut the tokens an agent sends ([Headroom](https://github.com/chopratejas/headroom) compresses large tool results), or to route and meter traffic ([LiteLLM](https://github.com/BerriAI/litellm)). The Gateway section lists your agents and lets you give each one a gateway URL. The same field is in each agent's **Edit Agent** dialog.
@@ -528,6 +608,55 @@ maestro-cli models proxy status                             # the listener, agen
 maestro-cli models proxy block <hash>                       # a diff of one shortened block
 ```
 
+### Background requests
+
+Claude Code sends work that is not your conversation on its small model: a session title, and the summary of a web page the agent fetched. **Background requests** sends exactly those to a model on one of your [sources](#endpoints), while the agent's own turns keep going to the provider. It is off until you pick a target.
+
+It is on **Edit Agent -> Models**, under the Maestro proxy mode, and is shown only for a Claude Code agent whose proxy mode is not Off. The picker lists the models of the sources that serve the Anthropic Messages route: the [Maestro model server](#model-server), Ollama and LM Studio. An OpenAI-compatible source is not listed, because Maestro cannot tell that it serves that route. Like the mode above it, the choice applies at once, with no restart.
+
+**What is routed.** The proxy decides per request. A request goes to the target only when it names the provider's small model and shows no sign of being a turn. Everything else reaches the provider exactly as it arrived.
+
+| A request that...                                       | Goes to      |
+| ------------------------------------------------------- | ------------ |
+| Does not name the small model (Claude's `haiku`)        | The provider |
+| Carries a `thinking` or `redacted_thinking` block       | The provider |
+| Has a cache breakpoint anywhere but the system prompt   | The provider |
+| Carries a tool result, or declares tools                | The provider |
+| Asks for one token or fewer (Claude Code's quota probe) | The provider |
+| Is none of the above                                    | The target   |
+
+The agent's main loop never changes model in the middle of a session. A routed request is the client's request with one value changed, the model's name.
+
+**The rules.**
+
+- **A target that cannot answer fails the request, and it is not retried on the provider.** The agent sees the target's own error, or a `502 background-target-unavailable` from the proxy that names the target when it cannot be used at all (the source was removed or disabled, the model server cannot serve the model). Retrying on the provider would hide the failure and spend the money you chose to save.
+- **The provider's credentials never go to the target.** A routed request carries the target's key as a bearer token. The client's `Authorization`, `x-api-key` and `cookie` headers are removed from it.
+- **Nothing starts for a turn.** The target is looked up, and the Maestro model server started, only for a request already decided to be a background request.
+- **A model that thinks makes a page take a minute.** The request states no thinking setting, so the server applies the model's own template, and a thinking model reasons first. Pick a model that answers without thinking.
+- **The target leaves with the proxy.** Turning the proxy mode Off, setting another gateway URL, or switching the agent's provider clears the background target. An agent whose [Run on](#run-on) is a source is not on the proxy, so it cannot have one.
+
+**What a session showed.** Measured on Claude Code 2.1.296 with a three-turn session (a build log, a fetched page, a one word reply) and Qwen3.5 4B on the Maestro model server:
+
+| Mode             | Requests | Routed                                 | Share of the prompt cost |
+| ---------------- | -------- | -------------------------------------- | ------------------------ |
+| `claude --print` | 7        | 1 (the page summary)                   | 0.7%                     |
+| The TUI          | 13       | 2 (the session title and page summary) | 2.1%                     |
+
+- **Print mode, which is how Maestro starts Claude Code unless the agent uses the TUI token source, routes one kind of request: the page summary.** A session that fetches no page routes nothing. The TUI also sends a session title, and in a `maestro-p` turn nothing reads it, because the TUI exits when the turn ends.
+- **The agent reads the local model's summary of the page.** The summary is the web fetch tool's result, so it is not a side effect. Every summary was right on a one paragraph page.
+- **The saving per session is small.** It is the provider's own count for the requests that were routed, so it grows with the size and number of the pages fetched.
+- **The cost is time, and it depends on the model.** A page summary took 1 to 3 s on the provider, 0.56 s on Qwen3 Coder 30B, 2.1 s on gpt-oss 20B, and 49 to 84 s on Qwen3.5 4B, which wrote 4,860 to 8,241 tokens of reasoning first.
+
+A permission check on the small model was not seen in either session. The only shell command, `cat`, was allowed by a rule, so this is "not sent here", not "never sent".
+
+```bash
+maestro-cli update-agent <agent-id> --proxy-mode passthrough --background-requests maestro-server:<model-id>
+maestro-cli update-agent <agent-id> --background-requests none
+maestro-cli show agent <agent-id> --json   # backgroundRequests, backgroundRequestsSpec, backgroundRequestsProblem
+```
+
+A target is written `<source id>:<model>`, or `none`. A target is refused for an agent that is not on the proxy, and for a provider other than Claude Code. The app's system log names each routed request and its target.
+
 ## Privacy
 
 A downloaded model runs inside Maestro, so the text it reads never leaves your machine. An endpoint at a loopback address (`127.0.0.1`, `localhost`, `::1`) is also on your machine.
@@ -535,6 +664,8 @@ A downloaded model runs inside Maestro, so the text it reads never leaves your m
 An endpoint at any other address is a network service. Text sent to it leaves this machine, the same as text sent to an agent's provider. Point a task at a remote endpoint only if you would send that text there yourself.
 
 An agent set to [Run on](#run-on) a source sends it the whole conversation: your prompts, the files the agent reads, and every tool result. A model on this machine keeps that text here. A cloud endpoint, or a server at another address, receives it, so choose one only if you would send that text there yourself.
+
+An agent with [tiers](#tiers) set to a source sends that source each task that asks for the tier, with the same conversation. An agent with [background requests](#background-requests) sends its target the page a web fetch read, or the text a session title is made from. Both go where you picked, and neither goes to the provider as well.
 
 ## Disk and memory
 

@@ -1788,7 +1788,14 @@ different response, and it wants a total timeout while a model stream runs for m
    `forwardableHeaders()` drops only hop-by-hop headers (RFC 9110 section 7.6.1, plus anything the
    `Connection` header names). `Host` is rewritten to the upstream's, which TLS virtual hosting
    requires. `Authorization`, `x-api-key` and every other credential pass through, and the proxy
-   adds none of its own.
+   adds none of its own. One exception: a request routed to an agent's background target (see
+   "Real run: 2026-10-12, background requests") loses the client's `Authorization`, `x-api-key` and
+   `cookie` and carries the target's key as a bearer token. The target's key is a credential the
+   proxy adds, so a local process that knows an agent id with a target can reach that target by
+   posting a small-model request to `/agent/<id>/anthropic/v1/messages`. A web page cannot guess
+   the id; a local process can read it from the sessions store, which also holds Settings
+   environment keys in clear text. The model server's key is the one credential it could not read
+   before. Low, and stated here so the sentence above is not read as absolute.
 2. **Bodies are never decoded.** A request with `content-encoding: zstd` (Codex has sent one) is
    forwarded as the bytes it is. So is a compressed response. The path and query string are carried
    as text, never re-serialized.

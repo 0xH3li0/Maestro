@@ -510,6 +510,8 @@ Write the Maestro level, not the provider's word. A playbook that says `effort="
 
 Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex maps by model family: `low` is the newest Luna model (fast and affordable), `medium` the newest Sol (the coding workhorse), and `high` the newest Astra (frontier). Its slugs change each generation, so if one is no longer offered to your account, Codex refuses the turn by name and Maestro's log names the replacement. Copilot-CLI discovers its catalogue at runtime with no stable families, and OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
 
+A tier does not have to mean a provider model. Settings -> Models -> System Two -> Tier defaults sets what `low`, `medium` and `high` launch on for each harness, and Edit Agent -> Models -> Tiers sets it for one agent. Either can name a model on a Local Models source, so a `low` task runs on a model on your machine and a `high` task on the provider. This is also how OpenCode and Copilot-CLI get a tier mapping. See [Tiers](./local-models#tiers).
+
 ### Recording why
 
 A marker can carry a `reason` explaining the choice:
