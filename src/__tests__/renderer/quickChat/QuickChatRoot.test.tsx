@@ -91,6 +91,30 @@ describe('keyboard chords', () => {
 		expect(window.maestro.quickChat.setPinned).toHaveBeenCalledWith(false);
 	});
 
+	it('acts once on a held chord, ignoring auto-repeat', async () => {
+		vi.mocked(window.maestro.quickChat.setPinned).mockClear();
+		await renderWith(snapshot());
+		await act(async () => {
+			fireEvent.keyDown(window, { key: 'p', metaKey: true });
+			fireEvent.keyDown(window, { key: 'p', metaKey: true, repeat: true });
+			fireEvent.keyDown(window, { key: 'p', metaKey: true, repeat: true });
+		});
+		expect(window.maestro.quickChat.setPinned).toHaveBeenCalledTimes(1);
+	});
+
+	it('answers chords typed in the agent picker filter', async () => {
+		vi.mocked(window.maestro.quickChat.setPinned).mockClear();
+		await renderWith(snapshot({ agents: [{ id: 'a', name: 'Pedsidian' }] }));
+		await act(async () => fireEvent.keyDown(window, { key: 'k', metaKey: true }));
+		const filter = screen.getByTestId('quick-chat-agent-filter');
+		await act(async () => fireEvent.keyDown(filter, { key: 'p', metaKey: true }));
+		expect(window.maestro.quickChat.setPinned).toHaveBeenCalledWith(false);
+
+		// Cmd+K from the filter closes the picker again.
+		await act(async () => fireEvent.keyDown(filter, { key: 'k', metaKey: true }));
+		expect(screen.queryByTestId('quick-chat-agent-filter')).toBeNull();
+	});
+
 	it('leaves Shift chords to the composer', async () => {
 		vi.mocked(window.maestro.quickChat.setPinned).mockClear();
 		await renderWith(snapshot());

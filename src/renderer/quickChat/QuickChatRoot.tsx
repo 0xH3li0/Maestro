@@ -310,6 +310,8 @@ export function QuickChatRoot() {
 			const action = chords[e.key.toLowerCase()];
 			if (!action) return;
 			e.preventDefault();
+			// A held chord auto-repeats; acting on each repeat flips a toggle back.
+			if (e.repeat) return;
 			action();
 		};
 		window.addEventListener('keydown', onKeyDown);
