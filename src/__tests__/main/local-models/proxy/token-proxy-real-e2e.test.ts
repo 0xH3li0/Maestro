@@ -35,7 +35,6 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFile } from 'child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -48,6 +47,7 @@ import {
 	type TokenProxyServer,
 } from '../../../../main/local-models/proxy/server';
 import type { TokenProxyRequestMode } from '../../../../shared/local-models/token-proxy';
+import { providerCliEnv, runProviderCli } from '../../../helpers/providerCli';
 
 const RUN = process.env.MAESTRO_TOKEN_PROXY_E2E === '1';
 const RUN_CODEX = RUN && process.env.MAESTRO_TOKEN_PROXY_E2E_CODEX !== '0';
@@ -94,49 +94,6 @@ function buildLog(): string {
 		'npm ERR! errno 2'
 	);
 	return `${lines.join('\n')}\n`;
-}
-
-/**
- * The environment for a provider CLI: this process's, minus what an agent
- * shell leaks. A `CLAUDE_CODE_*` variable from a parent Claude Code session
- * makes the child behave as a nested session, and a Maestro variable would
- * point it at live app data.
- */
-function providerEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = {};
-	for (const [key, value] of Object.entries(process.env)) {
-		if (key === 'CLAUDECODE' || key === 'CLAUDE_PID' || key === 'CLAUDE_EFFORT') continue;
-		if (key.startsWith('CLAUDE_CODE_') || key.startsWith('MAESTRO_')) continue;
-		if (key === 'ANTHROPIC_BASE_URL' || key === 'OPENAI_BASE_URL') continue;
-		env[key] = value;
-	}
-	return { ...env, ...extra };
-}
-
-function run(
-	command: string,
-	args: string[],
-	options: { cwd: string; env: NodeJS.ProcessEnv; stdin?: string }
-): Promise<{ code: number; stdout: string; stderr: string }> {
-	return new Promise((resolve) => {
-		const child = execFile(
-			command,
-			args,
-			{
-				cwd: options.cwd,
-				env: options.env,
-				timeout: TURN_TIMEOUT_MS,
-				maxBuffer: 64 * 1024 * 1024,
-			},
-			(error, stdout, stderr) => {
-				const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-				resolve({ code, stdout: String(stdout), stderr: String(stderr) });
-			}
-		);
-		// Always closed: an open pipe makes Codex wait for a prompt it was given as
-		// an argument.
-		child.stdin?.end(options.stdin ?? '');
-	});
 }
 
 /** One request to the provider, by the provider's own count. */
@@ -226,9 +183,10 @@ async function claudeTurn(
 	];
 	// The prompt goes on stdin: `--allowedTools` takes a list, so a prompt placed
 	// after it is read as one more tool name.
-	const result = await run('claude', args, {
+	const result = await runProviderCli('claude', args, {
 		cwd: options.cwd,
-		env: providerEnv({ ANTHROPIC_BASE_URL: options.baseUrl }),
+		timeoutMs: TURN_TIMEOUT_MS,
+		env: providerCliEnv({ ANTHROPIC_BASE_URL: options.baseUrl }),
 		stdin: prompt,
 	});
 	if (result.code !== 0) {
@@ -417,7 +375,7 @@ describe.skipIf(!RUN)('token proxy against real providers (MAESTRO_TOKEN_PROXY_E
 			// The argument `resolveAgentGateway()` adds for Codex, in the place the
 			// launch puts it: ahead of the subcommand.
 			const started = Date.now();
-			const result = await run(
+			const result = await runProviderCli(
 				'codex',
 				[
 					'-c',
@@ -426,7 +384,7 @@ describe.skipIf(!RUN)('token proxy against real providers (MAESTRO_TOKEN_PROXY_E
 					'--skip-git-repo-check',
 					'Reply with the single word: ok',
 				],
-				{ cwd, env: providerEnv({ OPENAI_BASE_URL: url }) }
+				{ cwd, timeoutMs: TURN_TIMEOUT_MS, env: providerCliEnv({ OPENAI_BASE_URL: url }) }
 			);
 			await stopProxy();
 

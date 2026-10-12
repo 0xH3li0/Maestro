@@ -2242,6 +2242,55 @@ environment and are not given the id of a Left Bar agent, and the Group Chat mod
 agent. Someone who runs a gateway as a REQUIRED route (a company proxy that holds the key) should
 know those calls reach the provider direct. The user docs say which is which.
 
+## Model server
+
+The Maestro model server is llama.cpp's own `llama-server`, downloaded as an engine and run in
+router mode by `src/main/local-models/server/`.
+
+### Model server on real hardware
+
+The on-device check is `src/__tests__/main/local-models/model-server-e2e.test.ts`, skipped unless
+`MAESTRO_LOCAL_MODEL_E2E=1`:
+
+```bash
+MAESTRO_LOCAL_MODEL_E2E=1 env -u MAESTRO_USER_DATA npx vitest run src/__tests__/main/local-models/model-server-e2e.test.ts
+```
+
+It installs the `default` build through `installModelServerEngine()` into the same scratch data dir
+as the other e2e suites, starts the server against the smallest installed text model, and checks
+that `/v1/chat/completions`, `/v1/messages` and `/v1/responses` each answer 200 with the key and 401
+`authentication_error` without it. It then runs one real Claude Code turn and one real Codex turn
+against the server when each CLI is on PATH, and skips that turn by name when it is not. Last, it
+switches to Network and takes the key store away: the start must be refused as `key-unavailable`
+with the port still free. Claude Code runs with a scratch `CLAUDE_CONFIG_DIR` and
+`--strict-mcp-config`, so the prompt has no hooks, MCP servers or user memory. Results are written
+to `model-server-e2e-results.json` in the scratch dir.
+
+### Result: 2026-10-11, darwin-arm64 (Apple M5 Max, 128 GB unified memory)
+
+Build `b11559`, `Metal` build, against `qwen3-1.7b-instruct-q4km` (1.06 GB GGUF) at a 40,960-token
+context.
+
+| Measurement                            | Value                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| Engine install (12.1 MB download)      | 6.1 s on the first run, including the accelerator check; 52 MB installed |
+| Accelerator                            | `Metal (Apple M5 Max)`, no problem                                       |
+| Start (spawn to `/health` + `/models`) | 0.27 to 0.28 s                                                           |
+| Model load (`ensureModelServerFor`)    | 4.8 s cold from disk, 1.0 s with the file in the page cache              |
+| First token, warm, 25-token prompt     | 20 to 21 ms (streamed `/v1/chat/completions`)                            |
+| Prompt processing                      | about 1,400 tokens/s on a 25-token prompt (`cache_prompt: false`)        |
+| Generation                             | 62 tokens at 239 to 244 tokens/s (server `timings`)                      |
+| Protocols with the key                 | 200 on all three                                                         |
+| Protocols without the key              | 401 `authentication_error` on all three                                  |
+| Claude Code 2.1.296 turn               | `pong` in 3.5 to 5.2 s; about 10,560 input tokens, 1 turn                |
+| Codex CLI 0.162.1 turn                 | `pong` in 8.4 to 9.1 s; about 14,200 tokens used                         |
+| Network start with no usable key       | refused, `key-unavailable`, nothing listening                            |
+
+The prompt rate above is for a tiny prompt and understates long prompts, where an earlier
+manual check measured about 3,000 tokens/s on Claude Code's first request. With no user hooks or
+MCP servers, Claude Code's prompt is about 10,560 tokens, well under the 40,960 floor; a real user
+configuration adds to it, which is why the floor is not lower.
+
 ## Verification
 
 ### Smoke test: 2026-10-11, dev build at `2f019d8881`, darwin-arm64
