@@ -329,6 +329,46 @@ describe('snapshot', () => {
 		expect(next.messages.map((m) => m.text)).toEqual(['hi', 'hello']);
 	});
 
+	it("falls back to the agent's start time when the busy tab carries none", async () => {
+		const { snapshot } = await runQuickChatCommand({ type: 'send', text: 'hi' });
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s) =>
+				s.id === 'b'
+					? {
+							...s,
+							thinkingStartTime: 77,
+							aiTabs: s.aiTabs.map((t) =>
+								t.id === snapshot.tabId
+									? { ...t, state: 'busy' as const, thinkingStartTime: undefined }
+									: t
+							),
+						}
+					: s
+			),
+		});
+		expect(buildQuickChatSnapshot().busySince).toBe(77);
+	});
+
+	it("does not borrow the agent's start time while another tab is busy too", async () => {
+		const { snapshot } = await runQuickChatCommand({ type: 'send', text: 'hi' });
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s) =>
+				s.id === 'b'
+					? {
+							...s,
+							thinkingStartTime: 77,
+							aiTabs: s.aiTabs.map((t) => ({
+								...t,
+								state: 'busy' as const,
+								thinkingStartTime: t.id === snapshot.tabId ? undefined : 50,
+							})),
+						}
+					: s
+			),
+		});
+		expect(buildQuickChatSnapshot().busySince).toBeNull();
+	});
+
 	it('drops a chat whose tab was closed elsewhere', async () => {
 		const { snapshot } = await runQuickChatCommand({ type: 'send', text: 'hi' });
 		useSessionStore.setState({
