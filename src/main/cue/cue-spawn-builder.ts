@@ -299,6 +299,9 @@ export async function buildSpawnSpec(
 			promptArgs: agentDef.promptArgs,
 			noPromptSeparator: agentDef.noPromptSeparator,
 			querySource: 'cue',
+			// Every Cue SSH run records its remote pid, so Stop, the timeout and
+			// shutdown reach the agent on its host (cue-process-lifecycle.ts).
+			launchViaStdinScript: true,
 		};
 
 		const sshResult = await wrapSpawnWithSsh(sshWrapConfig, sshRemoteConfig, sshStore);

@@ -289,6 +289,47 @@ User docs (`docs/maestro-cue-events.md`, `docs/maestro-cue-server.md`,
 `CLI-HEADLESS.md`) were read against the three fixes and agree with them and
 with each other; no change was needed.
 
+### Merge of `origin/rc` at `6d3512c37`, 2026-10-12
+
+`origin/rc` (13 commits since `4751ef9aa`) was merged into `feat/cue-server`
+with a normal merge commit. The one conflict, `cue-process-lifecycle.ts`, was
+only the import block: rc's copy of the file was already on `startTurn`, so
+rc's SSH Stop fix (`7b1665fa5`) merged onto this branch's run path as written.
+Both sides' imports were kept.
+
+How rc's SSH Stop fix reaches Cue here:
+
+- The pid record is written by `runProcess` itself, not by a launch-script
+  builder, so the desktop and the standalone engine (which loads the same
+  module) both write it, and Stop, the timeout and shutdown
+  (`stopAllProcesses`, which is also the standalone drain's forced kill) all
+  signal the remote agent through `ssh-remote-signal.ts`. That module is plain
+  Node (logger and shell escaping only), so the standalone engine loads it
+  without Electron. maestro-lib gains no import.
+- **Gap closed in this merge.** The record only fits a stdin-script spawn
+  (`ssh ... /bin/bash --norc --noprofile -s`). Cue's SSH wrapper used that
+  form only for prompts over 4000 characters; a shorter prompt went out as an
+  inline `ssh host 'cd ... && exec agent ...'` and recorded nothing, so on rc
+  as well Stop still reached only the local ssh client for most Cue runs.
+  `wrapSpawnWithSsh` now takes `launchViaStdinScript`, and the Cue spawn
+  builder sets it, so every Cue SSH agent run launches through the stdin
+  script (the prompt still travels as an argument) and records its pid. Other
+  callers of the wrapper are unchanged.
+- **Open, not changed:** a Cue `action: command` shell run over SSH is still
+  launched inline, so its Stop still reaches only the local ssh client. rc did
+  not change it either.
+- **Open, not changed:** the signal is a detached one-shot ssh whose script is
+  written to its stdin. If the process exits in the same tick (a forced drain
+  followed by an immediate exit), the script may not be written. The desktop
+  has the same limit at quit.
+
+Tests: rc's Stop test came across unchanged; added the timeout and shutdown
+cases, a spawn that records no pid, the wrapper flag, the Cue builder setting
+it, and `cue-standalone-ssh-stop.test.ts`, which drives Stop and the forced
+kill through the standalone engine's own deps down to the real lifecycle module
+(it fails with the remote signal removed). **Not live-tested against a real SSH
+remote**; the VM was not touched (a stability run was in progress).
+
 ## Current state, 2026-10-09
 
 Where the work stands on `feat/cue-server` at `40767c62f`: eleven local

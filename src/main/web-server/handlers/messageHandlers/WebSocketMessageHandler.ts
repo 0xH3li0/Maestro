@@ -76,6 +76,7 @@ import {
 	handleFeedbackCheckAuth,
 	handleFeedbackGhLoginCommand,
 	handleFeedbackAccounts,
+	handleFeedbackDiagnose,
 	handleFeedbackSearch,
 	handleFeedbackSubmit,
 	handleFeedbackSubscribe,
@@ -715,6 +716,10 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_accounts':
 				void handleFeedbackAccounts(this.ctx, client, message);
+				break;
+
+			case 'feedback_diagnose':
+				void handleFeedbackDiagnose(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

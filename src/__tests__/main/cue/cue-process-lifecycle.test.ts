@@ -93,6 +93,12 @@ vi.mock('child_process', async (importOriginal) => {
 	};
 });
 
+const { mockSignalRemoteAgent } = vi.hoisted(() => ({ mockSignalRemoteAgent: vi.fn() }));
+vi.mock('../../../main/utils/ssh-remote-signal', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/utils/ssh-remote-signal')>()),
+	signalRemoteAgent: mockSignalRemoteAgent,
+}));
+
 // Must import after mocks
 import {
 	runProcess,
@@ -395,6 +401,100 @@ describe('cue-process-lifecycle', () => {
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			// Killing the local ssh client alone leaves the remote agent running, so a
+			// stop must also reach the remote host.
+			it('records the remote pid and terminates the remote agent on stop', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const written = mockChild.stdin.write.mock.calls[0][0] as string;
+				const pidFile = getActiveProcessMap().get('run-ssh')?.sshRemotePidFile;
+				expect(pidFile).toMatch(/^\/tmp\/maestro-agent-/);
+				expect(written).toContain(pidFile);
+				expect(written.endsWith('exec claude\n')).toBe(true);
+
+				expect(stopProcess('run-ssh')).toBe(true);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			it('terminates the remote agent when the run times out', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh-timeout',
+					spec,
+					createOptions({
+						sshRemoteEnabled: true,
+						sshStdinScript: 'exec claude\n',
+						timeoutMs: 5000,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				const pidFile = getActiveProcessMap().get('run-ssh-timeout')?.sshRemotePidFile;
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+
+				await vi.advanceTimersByTimeAsync(5000);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh-timeout' },
+					'terminate'
+				);
+
+				mockChild.emit('close', null);
+				expect((await resultPromise).status).toBe('timeout');
+			});
+
+			it('terminates the remote agent on shutdown', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh-shutdown',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				const pidFile = getActiveProcessMap().get('run-ssh-shutdown')?.sshRemotePidFile;
+
+				stopAllProcesses();
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh-shutdown' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			// The pid record only fits a script piped to `bash -s`; any other spawn
+			// keeps its stdin byte for byte and has nothing remote to signal.
+			it('records no remote pid for a spawn that is not a stdin-script ssh', async () => {
+				const resultPromise = runProcess(
+					'run-local',
+					createSpec(),
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(getActiveProcessMap().get('run-local')?.sshRemotePidFile).toBeUndefined();
+				expect(mockChild.stdin.write.mock.calls[0][0]).toBe('exec claude\n');
+				stopProcess('run-local');
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+
+				mockChild.emit('close', 143);
 				await resultPromise;
 			});
 
