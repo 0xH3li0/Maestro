@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+	AArrowDown,
+	AArrowUp,
 	ArrowUp,
 	Bookmark,
 	BookmarkCheck,
@@ -35,6 +37,7 @@ import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { useFontScale } from '../hooks/ui/useFontScale';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -58,6 +61,22 @@ const QUICK_CHAT_KEYS = {
 	pin: 'p',
 	openTab: 't',
 } as const;
+
+/**
+ * Text zoom for the conversation, like a browser: Cmd+= / Cmd+- step it and
+ * Cmd+0 resets. `+` and `_` are the same keys with Shift, so either hand works.
+ */
+const FONT_ZOOM_KEYS: Record<string, 1 | -1 | 0> = { '=': 1, '+': 1, '-': -1, _: -1, '0': 0 };
+
+/**
+ * Where the conversation's text zoom is remembered. localStorage in this window
+ * is the app's own origin, so it survives a hidden window, a closed one, and a
+ * restart.
+ */
+const FONT_SCALE_STORAGE_KEY = 'quickChat.fontScale';
+
+/** The conversation's base size (`prose-sm`), which the zoom multiplies. */
+const MESSAGES_BASE_REM = 0.875;
 
 /**
  * The grip the whole window is dragged by. The composer-only shape is all
@@ -185,10 +204,7 @@ function MessageView({ message, theme }: { message: QuickChatMessage; theme: The
 	}
 	if (message.role === 'error') {
 		return (
-			<div
-				className="text-sm whitespace-pre-wrap select-text"
-				style={{ color: theme.colors.error }}
-			>
+			<div className="whitespace-pre-wrap select-text" style={{ color: theme.colors.error }}>
 				{message.text}
 			</div>
 		);
@@ -326,6 +342,8 @@ function QuickChatWindow() {
 		if (snapshot.tabId) void run({ type: 'reveal' });
 	}, [run, snapshot.tabId]);
 	const zoomOpen = useZoomViewerStore((s) => s.request !== null);
+	const fontScale = useFontScale(FONT_SCALE_STORAGE_KEY);
+	const { adjustFontScale, resetFontScale } = fontScale;
 
 	// A diagram opened full screen needs the whole display, not the chat-sized window.
 	useEffect(() => {
@@ -352,7 +370,16 @@ function QuickChatWindow() {
 				else hide();
 				return;
 			}
-			if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+			if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+			// Text zoom first: it takes Shift (`+`), and a held key keeps stepping.
+			const zoom = FONT_ZOOM_KEYS[e.key];
+			if (zoom !== undefined) {
+				e.preventDefault();
+				if (zoom === 0) resetFontScale();
+				else adjustFontScale(zoom);
+				return;
+			}
+			if (e.shiftKey) return;
 			const action = chords[e.key.toLowerCase()];
 			if (!action) return;
 			e.preventDefault();
@@ -372,10 +399,17 @@ function QuickChatWindow() {
 		togglePinned,
 		openInMaestro,
 		zoomOpen,
+		adjustFontScale,
+		resetFontScale,
 	]);
 
+	// The zoom sets the conversation's size once; the bubbles and status lines
+	// inherit it, and the markdown (whose own sizes are all em) follows.
+	const messagesFontSize = `${Math.round(MESSAGES_BASE_REM * fontScale.fontScale * 1000) / 1000}rem`;
 	const proseStyles = useMemo(
-		() => generateTerminalProseStyles(theme, '.quick-chat-messages'),
+		() =>
+			`${generateTerminalProseStyles(theme, '.quick-chat-messages')}
+.quick-chat-messages .prose { font-size: inherit !important; }`,
 		[theme]
 	);
 	const agentName = snapshot.agentName ?? 'your agent';
@@ -445,6 +479,45 @@ function QuickChatWindow() {
 				style={{ color: c.textMain }}
 			/>
 			<div className="flex items-center gap-2">
+				{hasConversation && (
+					<div className="flex items-center gap-0.5" data-testid="quick-chat-font-scale">
+						<IconButton
+							theme={theme}
+							label="Smaller text"
+							shortcut={formatShortcutKeys(['Meta', '-'])}
+							onClick={() => adjustFontScale(-1)}
+							disabled={!fontScale.canDecrease}
+						>
+							<AArrowDown className="w-4 h-4" />
+						</IconButton>
+						{fontScale.fontScale !== 1 && (
+							<QuickChatTooltip
+								theme={theme}
+								label="Reset text size"
+								shortcut={formatShortcutKeys(['Meta', '0'])}
+							>
+								<button
+									type="button"
+									aria-label="Reset text size"
+									onClick={resetFontScale}
+									className="px-1 text-xs tabular-nums rounded-md opacity-70 hover:opacity-100"
+									style={{ ...NO_DRAG_REGION, color: c.textDim }}
+								>
+									{Math.round(fontScale.fontScale * 100)}%
+								</button>
+							</QuickChatTooltip>
+						)}
+						<IconButton
+							theme={theme}
+							label="Larger text"
+							shortcut={formatShortcutKeys(['Meta', '='])}
+							onClick={() => adjustFontScale(1)}
+							disabled={!fontScale.canIncrease}
+						>
+							<AArrowUp className="w-4 h-4" />
+						</IconButton>
+					</div>
+				)}
 				<div className="flex-1" />
 				<IconButton
 					theme={theme}
@@ -571,13 +644,13 @@ function QuickChatWindow() {
 				<div
 					ref={stickRef}
 					className="quick-chat-messages flex-1 overflow-y-auto px-5 pb-3 flex flex-col gap-4"
-					style={NO_DRAG_REGION}
+					style={{ ...NO_DRAG_REGION, fontSize: messagesFontSize }}
 				>
 					{snapshot.messages.map((message) => (
 						<MessageView key={message.id} message={message} theme={theme} />
 					))}
 					{snapshot.busy && (
-						<div className="text-sm" style={{ color: c.textDim }}>
+						<div style={{ color: c.textDim }}>
 							{/* No known start: say so rather than freeze a "0s" that never moves. */}
 							{snapshot.busySince === null
 								? 'Working…'
