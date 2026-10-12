@@ -183,10 +183,6 @@
 					"to": "prompts/bmad"
 				},
 				{
-					"from": "examples/plugins/agent-flow",
-					"to": "plugins/agent-flow"
-				},
-				{
 					"from": "dist/native/darwin-${arch}",
 					"to": "native",
 					"filter": [
@@ -249,10 +245,6 @@
 					"to": "prompts/bmad"
 				},
 				{
-					"from": "examples/plugins/agent-flow",
-					"to": "plugins/agent-flow"
-				},
-				{
 					"from": "dist/native/win32-${arch}",
 					"to": "native",
 					"filter": [
@@ -310,10 +302,6 @@
 				{
 					"from": "src/prompts/bmad",
 					"to": "prompts/bmad"
-				},
-				{
-					"from": "examples/plugins/agent-flow",
-					"to": "plugins/agent-flow"
 				},
 				{
 					"from": "dist/native/linux-${arch}",

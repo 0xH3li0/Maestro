@@ -428,7 +428,7 @@ describe('ui.panelPost', () => {
 					id: 'p/flow',
 					localId: 'flow',
 					pluginId: 'p',
-					title: 'Agent Flow',
+					title: 'Example Panel',
 					entry: 'panel.html',
 					placement: 'modal' as const,
 				}
@@ -524,7 +524,7 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 				id: 'p/flow',
 				localId: 'flow',
 				pluginId: 'p',
-				title: 'Agent Flow',
+				title: 'Example Panel',
 				entry: 'panel.html',
 				placement: 'modal' as const,
 				size: 'full' as const,

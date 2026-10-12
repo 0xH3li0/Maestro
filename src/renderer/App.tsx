@@ -245,6 +245,7 @@ import { useSettingsStore } from './stores/settingsStore';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 
+/** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
@@ -2489,7 +2490,7 @@ function MaestroConsoleInner() {
 		}
 	});
 
-	// Plugin `sessions.focus` (e.g. Agent Flow node-jump) writes main's store,
+	// Plugin `sessions.focus` writes main's store,
 	// which is invisible to the live renderer store - apply it via canonical helpers.
 	usePluginFocusRequestListener();
 
