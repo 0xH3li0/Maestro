@@ -1,7 +1,8 @@
 import { createSocket, type Socket } from 'node:dgram';
 import { isIPv4 } from 'node:net';
 import * as dns from 'dns-packet';
-import { candidate, httpsOrigin, type Candidate, type DiscoveryAdapter } from './types';
+import { candidate, httpsOrigin, type DiscoveryAdapter } from './types';
+import type { Candidate } from '../../../shared/lite-discovery';
 export const SERVICE = '_maestro._tcp.local';
 const GROUP = '224.0.0.251';
 const normalize = (name: string) => name.replace(/\.$/, '').toLowerCase();

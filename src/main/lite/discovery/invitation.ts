@@ -1,4 +1,5 @@
-import { candidate, httpsOrigin, type Candidate } from './types';
+import { candidate, httpsOrigin } from './types';
+import type { Candidate } from '../../../shared/lite-discovery';
 
 const MAX_LIFETIME = 5 * 60000;
 const PREFIX = '#maestro-invite=';

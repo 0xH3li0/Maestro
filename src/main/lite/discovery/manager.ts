@@ -9,14 +9,13 @@ import {
 	type StatusReader,
 } from './tailscale';
 import { probeService, type ServiceProbe } from './probe';
+import type { DiscoveryAdapter, DiscoveryConfig } from './types';
 import type {
 	Candidate,
-	DiscoveryAdapter,
-	DiscoveryConfig,
 	DiscoverySource,
 	DiscoveryState,
 	SourceState,
-} from './types';
+} from '../../../shared/lite-discovery';
 
 interface DiscoveryDependencies {
 	lan?: (address: string) => DiscoveryAdapter;

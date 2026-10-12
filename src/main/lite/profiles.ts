@@ -1,20 +1,10 @@
 import { createHash } from 'crypto';
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import path from 'path';
-import type { SshRemoteConfig } from '../../shared/types';
+import type { LiteProfile } from '../../shared/lite-control';
 import { validateSshOption } from '../../shared/sshOptions';
 import { CONNECT_PATH } from './pairing/protocol';
 import { directTailnetOrigin } from './tailnet-origin';
-
-export interface LiteProfile {
-	id: string;
-	name: string;
-	transport: 'ssh' | 'https' | 'tailscale';
-	url: string;
-	ssh?: SshRemoteConfig;
-	instanceId?: string;
-	localPort?: number;
-}
 
 export function normalizeRemoteUrl(input: string, transport: LiteProfile['transport']): URL {
 	if (typeof input !== 'string' || /[\s\\\x00-\x1f]/.test(input))

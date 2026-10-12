@@ -2,8 +2,18 @@ import * as path from 'path';
 import * as os from 'os';
 import { getConfigDir } from './cli-server-discovery';
 import { expandTilde } from './pathUtils';
-import type { LiteProfile } from '../main/lite/profiles';
+import type { SshRemoteConfig } from './types';
 import type { DiscoveryPairingState } from './lite-discovery';
+
+export interface LiteProfile {
+	id: string;
+	name: string;
+	transport: 'ssh' | 'https' | 'tailscale';
+	url: string;
+	ssh?: SshRemoteConfig;
+	instanceId?: string;
+	localPort?: number;
+}
 
 export const LITE_CONTROL_PROTOCOL_VERSION = 1;
 export const LITE_CONTROL_DISCOVERY_FILE = 'lite-control.json';

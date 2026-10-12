@@ -21,10 +21,9 @@ import {
 	type Descriptor,
 	type Challenge,
 	type Grant,
-	type Metadata,
 	type RemoteStatus,
 } from './protocol';
-import type { ClientState } from '../../../shared/lite-discovery';
+import type { ClientState, Metadata } from '../../../shared/lite-discovery';
 /** Client holds no host object and has no PIN-display or approval API. Never persists trust or credentials. */
 export class PairingClient {
 	private challenge?: Challenge;

@@ -11,7 +11,7 @@ import {
 	hostPartition,
 	validateProfile,
 } from '../../../main/lite/profiles';
-import type { LiteProfile } from '../../../main/lite/profiles';
+import type { LiteProfile } from '../../../shared/lite-control';
 import { tunnelArgs, OwnedTunnel } from '../../../main/lite/tunnel';
 import { validateHandshake } from '../../../main/lite/handshake';
 import type { MaestroRemoteHandshake } from '../../../shared/maestroRemote';

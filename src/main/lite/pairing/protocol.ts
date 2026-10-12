@@ -1,19 +1,13 @@
 import { randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import type { DiscoverySource } from '../discovery/types';
+import type { DiscoverySource, ConnectionDescriptor } from '../../../shared/lite-discovery';
 export const PROTOCOL = 'maestro-device-pairing/1';
 /** Explicit host approval grants full operator access to a revocable paired device. */
 export const SCOPE = 'host.control';
 export const PIN_TTL = 120000;
 export const GRANT_TTL = 8 * 60 * 60 * 1000;
-export const CONNECT_PATH = '/.well-known/maestro/connect';
+export const CONNECT_PATH: ConnectionDescriptor['path'] = '/.well-known/maestro/connect';
 export const ADMISSION_HEADER = 'x-maestro-device-credential';
 export const CONNECTION_CAPABILITIES = ['sessions', 'terminal', 'files', 'browserRelay'] as const;
-export interface ConnectionDescriptor {
-	path: typeof CONNECT_PATH;
-	authentication: 'device-pairing';
-	admission: 'device';
-	capabilities: readonly string[];
-}
 export const CONNECTION: ConnectionDescriptor = {
 	path: CONNECT_PATH,
 	authentication: 'device-pairing',
@@ -55,12 +49,6 @@ export interface Grant {
 	scope: typeof SCOPE;
 	expiresAt: number;
 	binding: string;
-}
-export interface Metadata {
-	name: string;
-	instanceId: string;
-	hostKey: string;
-	connection: ConnectionDescriptor;
 }
 export type Phase =
 	| 'awaiting-host'

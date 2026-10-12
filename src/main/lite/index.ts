@@ -16,7 +16,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { LiteProfiles, normalizeRemoteUrl, hostPartition } from './profiles';
-import type { LiteProfile } from './profiles';
+import type { LiteProfile } from '../../shared/lite-control';
 import { openTunnel } from './tunnel';
 import { openTailnetRelay } from './tailnet-relay';
 import { validateHandshake, HostConnectionError } from './handshake';

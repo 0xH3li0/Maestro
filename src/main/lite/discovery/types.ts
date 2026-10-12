@@ -1,31 +1,5 @@
 import { directTailnetOrigin } from '../tailnet-origin';
-export type DiscoverySource = 'lan' | 'tailscale' | 'cloudflare';
-export interface Candidate {
-	key: string;
-	id: string;
-	name: string;
-	endpoint: string;
-	source: DiscoverySource;
-	expiresAt: number;
-	availability:
-		| 'unmeasured'
-		| 'ready'
-		| 'peer-offline'
-		| 'unreachable'
-		| 'auth-required'
-		| 'incompatible'
-		| 'pairing-disabled';
-	sources?: DiscoverySource[];
-	detail?: string;
-	version?: string;
-	/** Identity from the local Tailscale daemon, never from the remote manifest. */
-	peerId?: string;
-	connection?: import('../pairing/protocol').ConnectionDescriptor;
-	/** DNS-SD/invitation identity hint; never saved trust. Named Services have no instance ID. */
-	identityHint?: string;
-	/** Unadvertised peer hints stay hidden until a valid Maestro manifest is returned. */
-	requiresManifest?: boolean;
-}
+import type { Candidate, DiscoverySource } from '../../../shared/lite-discovery';
 export interface DiscoveryAdapter {
 	start(publish: (rows: Candidate[]) => void, failed: (message: string) => void): Promise<void>;
 	stop(): void;
@@ -36,25 +10,6 @@ export interface DiscoveryConfig {
 	tailscale?: boolean;
 	/** Explicit consent for fixed-port checks of existing Tailscale peers. */
 	tailscalePeers?: boolean;
-}
-export interface DiscoveryState {
-	running: boolean;
-	generation: number;
-	candidates: Candidate[];
-	errors: string[];
-	sources: Partial<Record<DiscoverySource, SourceState>>;
-}
-export interface SourceState {
-	status:
-		| 'searching'
-		| 'ready'
-		| 'empty'
-		| 'offline'
-		| 'permission-denied'
-		| 'unavailable'
-		| 'invitation-required'
-		| 'stopped';
-	message: string;
 }
 export const DISCOVERY_PATH = '/.well-known/maestro/discovery';
 export const DISCOVERY_PROTOCOL = 'maestro-discovery';

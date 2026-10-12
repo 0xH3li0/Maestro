@@ -1,7 +1,6 @@
 import { installDiscoveryControls, readableError } from './discovery/preload';
 import { ipcRenderer } from 'electron';
-import type { LiteProfile } from './profiles';
-import type { LiteControlState } from '../../shared/lite-control';
+import type { LiteProfile, LiteControlState } from '../../shared/lite-control';
 import { generateUUID } from '../../shared/uuid';
 
 window.addEventListener('DOMContentLoaded', () => {

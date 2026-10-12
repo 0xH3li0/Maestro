@@ -1,8 +1,9 @@
 import { DiscoveryManager } from './manager';
-import type { DiscoveryConfig, Candidate } from './types';
+import type { DiscoveryConfig } from './types';
+import type { Candidate } from '../../../shared/lite-discovery';
 import { PairingClient } from '../pairing/client';
 import { pairingTransport } from '../pairing/transport';
-import type { LiteProfile } from '../profiles';
+import type { LiteProfile } from '../../../shared/lite-control';
 import type { DeviceCredentials } from '../device-credentials';
 import type { DiscoveryPairingState } from '../../../shared/lite-discovery';
 import { tailnetDestination } from '../tailnet';

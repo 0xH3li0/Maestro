@@ -129,6 +129,28 @@ function seedSessions(sessions: Session[]) {
 	useSessionStore.setState({ sessions });
 }
 
+function mockPersistedSessions(initial: Session[]) {
+	let stored = structuredClone(initial);
+	const save = async (updates: Session[], removedIds: string[], baselines?: Session[]) => {
+		stored = stored.filter((session) => !removedIds.includes(session.id));
+		for (const update of updates) {
+			const index = stored.findIndex((session) => session.id === update.id);
+			if (index < 0) stored.push(update);
+			else {
+				const baseline = baselines?.find((session) => session.id === update.id);
+				if (!baseline) throw new Error('Session save rejected: missing observed baseline');
+				stored[index] = mergeSessionPersistenceChanges(update, stored[index], baseline, true);
+			}
+		}
+		return true;
+	};
+	vi.mocked(window.maestro.sessions.setAll).mockImplementation((updates, baselines) =>
+		save(updates, [], baselines)
+	);
+	vi.mocked(window.maestro.sessions.setMany).mockImplementation(save);
+	return () => stored;
+}
+
 function renderPersistence(initialLoadRef: { current: boolean }, delay?: number) {
 	return renderHook(() =>
 		delay === undefined
@@ -1413,6 +1435,10 @@ describe('useDebouncedPersistence', () => {
 	// -----------------------------------------------------------------------
 	describe('hook behavior', () => {
 		describe('initialLoadComplete gate', () => {
+			afterEach(() => {
+				vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(true);
+				vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
+			});
 			it('should not persist before initialLoadComplete is true', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(false);
@@ -1433,6 +1459,7 @@ describe('useDebouncedPersistence', () => {
 			it('should use the loaded tree as the first incremental baseline', () => {
 				const session = makeSession();
 				const secondSession = makeSession({ id: 'second-session' });
+				const persisted = mockPersistedSessions([session, secondSession]);
 				const initialLoadRef = makeInitialLoadRef(false);
 
 				renderPersistence(initialLoadRef);
@@ -1457,16 +1484,13 @@ describe('useDebouncedPersistence', () => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
-				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
-					[expect.objectContaining({ id: session.id, name: 'Updated' })],
-					['second-session']
-				);
+				expect(persisted()).toMatchObject([{ id: session.id, name: 'Updated' }]);
 			});
 
 			it('should persist untouched startup repairs on the first flush', () => {
 				const first = makeSession({ id: 'first', name: 'Stored First' });
 				const second = makeSession({ id: 'second', name: 'Stored Second' });
+				const persisted = mockPersistedSessions([first, second]);
 				const initialLoadRef = makeInitialLoadRef(false);
 
 				renderPersistence(initialLoadRef);
@@ -1489,18 +1513,16 @@ describe('useDebouncedPersistence', () => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
-					[
-						expect.objectContaining({ id: 'first', name: 'Repaired First' }),
-						expect.objectContaining({ id: 'second', name: 'Repaired Second' }),
-					],
-					[]
-				);
+				expect(persisted()).toMatchObject([
+					{ id: 'first', name: 'Repaired First' },
+					{ id: 'second', name: 'Repaired Second' },
+				]);
 			});
 
 			it('should preserve a deletion when the loaded tree predates the subscription', () => {
 				const first = makeSession({ id: 'first' });
 				const second = makeSession({ id: 'second' });
+				const persisted = mockPersistedSessions([first, second]);
 				seedSessions([first, second]);
 
 				renderPersistence(makeInitialLoadRef(true));
@@ -1511,11 +1533,7 @@ describe('useDebouncedPersistence', () => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
-				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
-					[expect.objectContaining({ id: 'first' })],
-					['second']
-				);
+				expect(persisted().map((session) => session.id)).toEqual(['first']);
 			});
 
 			it('should tombstone an agent removed right after a restore that marks the read ok last', () => {
@@ -1526,6 +1544,7 @@ describe('useDebouncedPersistence', () => {
 				useSessionStore.setState({ sessionsReadOk: false });
 				const parent = makeSession({ id: 'parent' });
 				const child = makeSession({ id: 'stale-child' });
+				const persisted = mockPersistedSessions([parent, child]);
 				const initialLoadRef = makeInitialLoadRef(false);
 
 				renderPersistence(initialLoadRef);
@@ -1544,11 +1563,7 @@ describe('useDebouncedPersistence', () => {
 					vi.advanceTimersByTime(2000);
 				});
 
-				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
-				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
-					[expect.objectContaining({ id: 'parent' })],
-					['stale-child']
-				);
+				expect(persisted().map((session) => session.id)).toEqual(['parent']);
 			});
 		});
 
@@ -2848,6 +2863,9 @@ describe('useDebouncedPersistence', () => {
 			stored = mergeSessionPersistenceChanges(updates[0], stored, baseline, true);
 			return true;
 		});
+		vi.mocked(window.maestro.sessions.setMany).mockImplementation((updates, _removed, baselines) =>
+			vi.mocked(window.maestro.sessions.setAll)(updates, baselines)
+		);
 		const view = renderHook(() => useDebouncedPersistence(initialLoad));
 		try {
 			await act(async () => {
@@ -2869,6 +2887,7 @@ describe('useDebouncedPersistence', () => {
 		} finally {
 			view.unmount();
 			vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(true);
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
 		}
 	});
 });

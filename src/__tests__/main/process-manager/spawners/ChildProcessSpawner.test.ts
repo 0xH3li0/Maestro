@@ -1095,7 +1095,9 @@ describe('ChildProcessSpawner', () => {
 			)[1];
 			errorHandler(new Error('spawn ENOENT'));
 			closeHandler(-1);
-			expect(exit).toHaveBeenCalledExactlyOnceWith('test-session', 1);
+			await vi.waitFor(() => expect(exit).toHaveBeenCalledTimes(1));
+			expect(exit.mock.calls[0].slice(0, 2)).toEqual(['test-session', 1]);
+			expect(exit.mock.calls[0][3]).toMatchObject({ outcome: 'crashed', answerCaptured: false });
 			expect(processes.has('test-session')).toBe(false);
 			await vi.waitFor(() => expect(existsSync(promptFile)).toBe(false));
 		});

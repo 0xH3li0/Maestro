@@ -1,14 +1,8 @@
-import { LITE_SETUP_REVISION } from '../../../shared/lite-discovery';
+import { LITE_SETUP_REVISION, type Candidate } from '../../../shared/lite-discovery';
 import { request } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { tailnetDestination } from '../tailnet';
-import {
-	candidate,
-	DISCOVERY_PATH,
-	DISCOVERY_PROTOCOL,
-	DISCOVERY_VERSION,
-	type Candidate,
-} from './types';
+import { candidate, DISCOVERY_PATH, DISCOVERY_PROTOCOL, DISCOVERY_VERSION } from './types';
 import { PROTOCOL, SCOPE, CONNECT_PATH, CONNECTION_CAPABILITIES } from '../pairing/protocol';
 const CLIENT_VERSION: string = require('../../../../package.json').version;
 

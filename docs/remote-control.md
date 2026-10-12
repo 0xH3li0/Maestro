@@ -166,6 +166,8 @@ thinking panel. History loading removes Maestro's OMP prompt-file transport
 wrapper before matching imported messages to live rows, so backfilling a live
 conversation does not prepend its existing greeting again. These changes prevent
 new duplicates; they do not rewrite copies already saved in a transcript.
+On Windows, OMP prompts use UTF-8 file attachments instead of the command line;
+the temporary attachment is removed when the turn exits or fails to start.
 
 Tool activity is recorded independently of thinking mode. To display recorded
 tool badges and their input/output, enable **Settings → General → Show tool calls

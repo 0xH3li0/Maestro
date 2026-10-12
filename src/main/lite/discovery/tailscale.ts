@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { TAILNET_PORT, tailnetIPv4 } from '../tailnet-origin';
-import { candidate, displayName, type Candidate, type SourceState } from './types';
+import { candidate, displayName } from './types';
+import type { Candidate, SourceState } from '../../../shared/lite-discovery';
 import { tailscaleExecutable } from './tailscale-command';
 
 export type StatusReader = (signal: AbortSignal) => Promise<string>;

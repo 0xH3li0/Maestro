@@ -1,6 +1,6 @@
 import { MAESTRO_REMOTE_PROTOCOL_VERSION } from '../../shared/maestroRemote';
 import type { MaestroRemoteHandshake } from '../../shared/maestroRemote';
-import type { LiteProfile } from './profiles';
+import type { LiteProfile } from '../../shared/lite-control';
 
 export class HostConnectionError extends Error {
 	name = 'HostConnectionError';
