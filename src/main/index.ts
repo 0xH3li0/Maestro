@@ -2748,9 +2748,13 @@ app
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
 			// This builder runs in the main process here, so it asks the System One
-			// service directly instead of the WS bridge the CLI goes through.
+			// service directly instead of the WS bridge the CLI goes through, and it
+			// reads the agent list from the store instead of the sessions file.
 			prepareSystemPrompt: (agent) =>
-				prepareMaestroSystemPromptCli(agent, { readSystemOneAccess: localSystemOneAccess }),
+				prepareMaestroSystemPromptCli(agent, {
+					readSystemOneAccess: localSystemOneAccess,
+					readAgents: () => sessionsStore.get('sessions', []) as SessionInfo[],
+				}),
 			issueRunToken: (agentId, ttlMs, receiptToolId) =>
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),

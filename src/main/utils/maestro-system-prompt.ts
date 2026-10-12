@@ -23,6 +23,7 @@ import {
 	systemPromptSectionsFor,
 	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
+import { resolvePeerRosterForPrompt } from '../../shared/peerAgents';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { StoredSession } from '../stores/types';
 import { getPrompt } from '../prompt-manager';
@@ -97,17 +98,21 @@ function isSshRecord(record: StoredSession): boolean {
 	return !!record.sessionSshRemoteConfig?.enabled || !!record.sshRemoteId;
 }
 
-function findStoredSession(sessionId: string): StoredSession | undefined {
+/** Every persisted agent, or none (logged) when the store cannot be read. */
+function readStoredSessions(sessionId: string): StoredSession[] {
 	try {
-		const sessions = getSessionsStore().get('sessions', []) as StoredSession[];
-		return sessions.find((s) => s.id === sessionId);
+		return getSessionsStore().get('sessions', []) as StoredSession[];
 	} catch (err) {
 		logger.warn('Sessions store unavailable while building system prompt', LOG_CONTEXT, {
 			sessionId,
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return undefined;
+		return [];
 	}
+}
+
+function findStoredSession(sessionId: string): StoredSession | undefined {
+	return readStoredSessions(sessionId).find((s) => s.id === sessionId);
 }
 
 async function localGitBranch(cwd: string): Promise<string | undefined> {
@@ -190,8 +195,8 @@ function loadPluginSections(
 /**
  * The full Maestro system prompt for one persisted agent: the base template
  * with that agent's identity, git branch (local only), history file (local
- * only), conductor profile, the Pianola role section when it is the Pianola
- * agent, the core sections that are ready for it (System One, local agents
+ * only), conductor profile, its Peer Agents roster, the Pianola role section
+ * when it is the Pianola agent, the core sections that are ready for it (System One, local agents
  * only), and every enabled plugin section (`localOnly` ones skipped over SSH).
  *
  * Accepts the session id or the already-loaded stored record. Returns undefined
@@ -249,6 +254,10 @@ export async function buildMaestroSystemPromptForSession(
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
 		maestroRunPath,
 		maestroCliPath: resolvedCliPath(),
+		// {{PEER_AGENTS}}. The grants are read from `record`: the `session` literal
+		// above is hand-built and does not carry them. The agent list is read only
+		// when the agent has a grant.
+		peerRoster: resolvePeerRosterForPrompt(record, () => readStoredSessions(record.id)),
 		...coreSystemPromptContext(core),
 	};
 

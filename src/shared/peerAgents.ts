@@ -20,7 +20,9 @@
  *      by the group and worktree grants.
  *   3. `resolvePeerRoster` - who an agent's peers are right now. The one place
  *      the precedence between explicit rows, the group grant, and the worktree
- *      grant lives. `hasPeerGrant` is its cheap pre-check.
+ *      grant lives. `hasPeerGrant` is its cheap pre-check, and
+ *      `resolvePeerRosterForPrompt` is the one call every system prompt
+ *      builder makes, so the builders cannot disagree either.
  *   4. `formatPeerAgentsForPrompt` - the markdown block substituted into
  *      `{{PEER_AGENTS}}` in the Maestro system prompt: the roster plus the
  *      shell commands that reach it. A roster with no instructions is inert.
@@ -235,6 +237,26 @@ export function resolvePeerRoster(
 	return [...roster.values()]
 		.filter(hasAnyPeerAccess)
 		.sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
+}
+
+/**
+ * The roster a system prompt builder puts in its template context
+ * (`TemplateContext.peerRoster`), or undefined when the agent has no peer
+ * configuration.
+ *
+ * Every builder of the Maestro system prompt calls this and nothing else, each
+ * with its own way to read the agent list (the renderer's store, the main
+ * process's store, the CLI's sessions file). The grants come from `session`,
+ * the record of the agent being spawned. `readAgents` runs only past the
+ * `hasPeerGrant` guard, so an agent with no peers costs one check per spawn
+ * and not a read of every agent.
+ */
+export function resolvePeerRosterForPrompt(
+	session: PeerRosterSubject,
+	readAgents: () => readonly PeerRosterInput[]
+): ResolvedPeer[] | undefined {
+	if (!hasPeerGrant(session)) return undefined;
+	return resolvePeerRoster(session, readAgents());
 }
 
 /** What the prompt block needs to know about the agent it is rendered for. */

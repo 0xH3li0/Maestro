@@ -2,12 +2,7 @@ import { gitService } from '../services/git';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
-import {
-	hasPeerGrant,
-	resolvePeerRoster,
-	type PeerRosterSubject,
-	type ResolvedPeer,
-} from '../../shared/peerAgents';
+import { resolvePeerRosterForPrompt } from '../../shared/peerAgents';
 import type { SystemOneAgentAccess } from '../../shared/local-models/system-one-agent';
 import {
 	assembleMaestroSystemPrompt,
@@ -70,18 +65,6 @@ async function getSystemOneAccess(agentId: string): Promise<SystemOneAgentAccess
 		// Older preload or main not ready: no answer, so the section stays out.
 		return undefined;
 	}
-}
-
-/**
- * The peers this agent may reach, for `{{PEER_AGENTS}}`, or undefined when it
- * has no peer configuration. The grants come from the session being spawned;
- * the fleet comes from the store, because a group grant needs every agent and
- * the session carries only itself. The store is read only past the guard, so
- * an agent with no peers costs one check per spawn.
- */
-function resolveSpawnPeerRoster(session: PeerRosterSubject): ResolvedPeer[] | undefined {
-	if (!hasPeerGrant(session)) return undefined;
-	return resolvePeerRoster(session, useSessionStore.getState().sessions);
 }
 
 /** A core prompt's text, or undefined when it cannot be loaded. */
@@ -188,7 +171,14 @@ export async function prepareMaestroSystemPrompt(opts: {
 			conductorProfile,
 			computerHistoryDir,
 			maestroRunPath,
-			peerRoster: resolveSpawnPeerRoster(opts.session),
+			// {{PEER_AGENTS}}. The grants come from the session being spawned; the
+			// agent list comes from the store, because a group grant needs every
+			// agent and the session carries only itself. The store is read only
+			// when the agent has a grant.
+			peerRoster: resolvePeerRosterForPrompt(
+				opts.session,
+				() => useSessionStore.getState().sessions
+			),
 			...coreSystemPromptContext(core),
 		},
 		roleSections,

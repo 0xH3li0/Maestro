@@ -271,6 +271,17 @@ export interface SessionInfo {
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
 	/**
+	 * Peer Agents: the stored sources of the agents this one may reach on its
+	 * own (explicit rows, the group grant, the worktree family grant). The roster
+	 * is resolved from them at prompt-build time by `resolvePeerRosterForPrompt`
+	 * (see `shared/peerAgents.ts`); the desktop `Session` documents each field.
+	 */
+	peerAgents?: PeerAgent[];
+	groupPeerAccess?: PeerAccess;
+	worktreePeerAccess?: PeerAccess;
+	/** Set on a worktree child: the id of the parent agent. Read by the worktree family grant. */
+	parentSessionId?: string;
+	/**
 	 * Per-agent worktree settings (Worktree Directory, watcher, setup script).
 	 * Set on parent agents from the Git menu's Configure Worktrees dialog.
 	 */

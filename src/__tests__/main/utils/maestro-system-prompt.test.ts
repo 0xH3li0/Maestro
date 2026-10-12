@@ -5,7 +5,7 @@
  * variant).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('electron', () => ({
 	app: { getPath: vi.fn(() => '/data') },
@@ -21,8 +21,16 @@ vi.mock('../../../main/prompt-manager', () => ({
 
 let storedSessions: Array<Record<string, any>> = [];
 let settings: Record<string, unknown> = {};
+/** Counts reads of the sessions store; `throws` makes the next reads fail. */
+const sessionsStoreRead = vi.hoisted(() => ({ count: 0, throws: false }));
 vi.mock('../../../main/stores/getters', () => ({
-	getSessionsStore: vi.fn(() => ({ get: vi.fn(() => storedSessions) })),
+	getSessionsStore: vi.fn(() => ({
+		get: vi.fn(() => {
+			sessionsStoreRead.count += 1;
+			if (sessionsStoreRead.throws) throw new Error('store unreadable');
+			return storedSessions;
+		}),
+	})),
 	getSettingsStore: vi.fn(() => ({ get: vi.fn((key: string) => settings[key]) })),
 }));
 
@@ -74,6 +82,7 @@ import {
 } from '../../../main/utils/maestro-system-prompt';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
+import { formatPeerAgentsForPrompt, resolvePeerRoster } from '../../../shared/peerAgents';
 import {
 	SYSTEM_ONE_GATES,
 	refusedSystemOneAccess,
@@ -166,6 +175,104 @@ describe('buildMaestroSystemPromptForSession', () => {
 		await expect(buildMaestroSystemPromptForSession('nobody')).resolves.toBeUndefined();
 		delete prompts['maestro-system-prompt'];
 		await expect(buildMaestroSystemPromptForSession('agent-1')).resolves.toBeUndefined();
+	});
+});
+
+describe('the Peer Agents roster (main builder)', () => {
+	const R = { read: true, write: false };
+	const RW = { read: true, write: true };
+	const me = (overrides: Record<string, any> = {}) =>
+		agent({ id: 'me', name: 'Me', groupId: 'group-1', ...overrides });
+	const alpha = agent({ id: 'peer-a', name: 'Alpha', groupId: 'group-1' });
+	const bravo = agent({ id: 'peer-b', name: 'Bravo', groupId: 'group-2' });
+	const child = agent({ id: 'peer-c', name: 'Charlie', parentSessionId: 'me' });
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		for (const key of Object.keys(prompts)) delete prompts[key];
+		prompts['maestro-system-prompt'] = 'BASE\n\n{{PEER_AGENTS}}';
+		storedSessions = [me(), alpha, bravo, child];
+		settings = {};
+		sessionsStoreRead.count = 0;
+	});
+
+	// The store is shared by every describe in this file: never leave it failing.
+	afterEach(() => {
+		sessionsStoreRead.throws = false;
+	});
+
+	it('renders nothing, and reads the store once (to find the agent), with no peer configuration', async () => {
+		expect(await buildMaestroSystemPromptForSession('me')).toBe('BASE\n\n');
+		expect(sessionsStoreRead.count).toBe(1);
+	});
+
+	it('never reads the store for a loaded record with no peer configuration', async () => {
+		expect(await buildMaestroSystemPromptForSession(me() as any)).toBe('BASE\n\n');
+		// An exclusion with no grant to exclude from is no configuration either.
+		const excluded = me({ peerAgents: [{ sessionId: 'peer-a', read: false, write: false }] });
+		expect(await buildMaestroSystemPromptForSession(excluded as any)).toBe('BASE\n\n');
+		expect(sessionsStoreRead.count).toBe(0);
+	});
+
+	it('reads the grants from the stored record and renders an explicit peer', async () => {
+		storedSessions[0] = me({ peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }] });
+		const result = await buildMaestroSystemPromptForSession('me');
+		expect(result).toContain('## Peer Agents');
+		expect(result).toContain('| Bravo | `peer-b` | Consult only | docs |');
+		expect(result).not.toContain('Alpha');
+	});
+
+	it('resolves a group grant against the whole store, for a loaded record too', async () => {
+		const result = await buildMaestroSystemPromptForSession(me({ groupPeerAccess: RW }) as any);
+		expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate |');
+		expect(result).not.toContain('Bravo');
+		expect(result).not.toContain('| Me |');
+		expect(sessionsStoreRead.count).toBe(1);
+	});
+
+	it('resolves the worktree family grant from parentSessionId', async () => {
+		storedSessions[0] = me({ worktreePeerAccess: R });
+		const result = await buildMaestroSystemPromptForSession('me');
+		expect(result).toContain('| Charlie | `peer-c` | Consult only |');
+		expect(result).not.toContain('Alpha');
+	});
+
+	it('teaches the delegate command with the agent id and the CLI the app resolved', async () => {
+		storedSessions[0] = me({ groupPeerAccess: RW });
+		bundledCliPath = '/work/maestro/dist/cli/maestro-cli.js';
+		try {
+			const result = await buildMaestroSystemPromptForSession('me');
+			expect(result).toContain(
+				'`node "/work/maestro/dist/cli/maestro-cli.js" dispatch <agent-id> "<task>" --new-tab --notify-on-complete me`'
+			);
+			expect(result).not.toContain('{{');
+		} finally {
+			bundledCliPath = null;
+		}
+	});
+
+	it('gives a Cue run, a consult and a group chat turn the roster a desktop tab resolves', async () => {
+		// The renderer builder resolves with `resolvePeerRoster` over its store.
+		// Same agent and same agent list here must list the same peers.
+		const session = me({
+			groupPeerAccess: RW,
+			worktreePeerAccess: R,
+			peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }],
+		});
+		storedSessions = [session, alpha, bravo, child];
+		const roster = resolvePeerRoster(session as any, storedSessions as any);
+		expect(roster.map((peer) => peer.sessionId)).toEqual(['peer-a', 'peer-b', 'peer-c']);
+
+		const result = await buildMaestroSystemPromptForSession('me');
+		const table = (text: string) => text.split('\n').filter((line) => line.startsWith('| '));
+		expect(table(result ?? '')).toEqual(table(formatPeerAgentsForPrompt(roster)));
+	});
+
+	it('renders no roster (never throws) when the store cannot be read for the agent list', async () => {
+		sessionsStoreRead.throws = true;
+		const result = await buildMaestroSystemPromptForSession(me({ groupPeerAccess: RW }) as any);
+		expect(result).toBe('BASE\n\n');
+		expect(logger.warn).toHaveBeenCalled();
 	});
 });
 

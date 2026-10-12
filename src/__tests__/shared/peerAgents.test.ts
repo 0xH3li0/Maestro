@@ -7,7 +7,7 @@
  * rule is asserted on directly.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import {
 	normalizePeerAgents,
@@ -16,6 +16,7 @@ import {
 	hasPeerGrant,
 	mergePeerAccess,
 	resolvePeerRoster,
+	resolvePeerRosterForPrompt,
 } from '../../shared/peerAgents';
 import type { PeerRosterInput } from '../../shared/peerAgents';
 import type { PeerAccess, PeerAgent } from '../../shared/types';
@@ -161,6 +162,39 @@ describe('hasPeerGrant', () => {
 		const me = agent('me', 'Me', { groupId: 'g1', peerAgents: [{ sessionId: 'a', ...NONE }] });
 		expect(hasPeerGrant(me)).toBe(false);
 		expect(resolvePeerRoster(me, [me, agent('a', 'Alpha', { groupId: 'g1' })])).toEqual([]);
+	});
+});
+
+describe('resolvePeerRosterForPrompt', () => {
+	const fleet = [
+		agent('me', 'Me', { groupId: 'g1' }),
+		agent('a', 'Alpha', { groupId: 'g1' }),
+		agent('b', 'Bravo', { groupId: 'g2' }),
+	];
+
+	it('returns undefined, and never reads the agent list, for an agent with no grant', () => {
+		const readAgents = vi.fn(() => fleet);
+		expect(resolvePeerRosterForPrompt({ id: 'me', groupId: 'g1' }, readAgents)).toBeUndefined();
+		// An exclusion with no grant to exclude from is no grant either.
+		expect(
+			resolvePeerRosterForPrompt(
+				{ id: 'me', peerAgents: [{ sessionId: 'a', ...NONE }] },
+				readAgents
+			)
+		).toBeUndefined();
+		expect(readAgents).not.toHaveBeenCalled();
+	});
+
+	it('reads the agent list once and resolves the roster against it', () => {
+		const me = { id: 'me', groupId: 'g1', groupPeerAccess: RW };
+		const readAgents = vi.fn(() => fleet);
+		expect(resolvePeerRosterForPrompt(me, readAgents)).toEqual(resolvePeerRoster(me, fleet));
+		expect(readAgents).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns an empty roster, not undefined, when a grant reaches nobody', () => {
+		const me = { id: 'me', peerAgents: [{ sessionId: 'gone', ...R }] };
+		expect(resolvePeerRosterForPrompt(me, () => fleet)).toEqual([]);
 	});
 });
 

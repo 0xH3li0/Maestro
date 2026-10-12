@@ -16,6 +16,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: vi.fn(() => '/mock/config'),
+	readSessions: vi.fn(() => []),
 	readSettingValue: vi.fn(),
 	resolveSessionHistoryFilePath: vi.fn(),
 }));
@@ -54,7 +55,12 @@ import {
 	systemOneAccess,
 } from '../../helpers/systemOneAccess';
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
-import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
+import {
+	readSessions,
+	readSettingValue,
+	resolveSessionHistoryFilePath,
+} from '../../../cli/services/storage';
+import { formatPeerAgentsForPrompt, resolvePeerRoster } from '../../../shared/peerAgents';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
 import { readMaestroRunReadyPath } from '../../../shared/maestro-run/state-file';
 
@@ -77,6 +83,8 @@ describe('prepareMaestroSystemPromptCli', () => {
 		vi.mocked(isGitRepo).mockReturnValue(true);
 		vi.mocked(getGitBranch).mockReturnValue('main');
 		vi.mocked(readSettingValue).mockReturnValue('');
+		// Default: no other agent on disk.
+		vi.mocked(readSessions).mockReturnValue([]);
 		// Default: history file does NOT exist (fresh session)
 		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
 		// Default: the app has not recorded MaestroRun as ready.
@@ -184,6 +192,99 @@ describe('prepareMaestroSystemPromptCli', () => {
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
 		expect(result).toBe('cond=[]');
+	});
+
+	describe('Peer Agents', () => {
+		const R = { read: true, write: false };
+		const RW = { read: true, write: true };
+		const me = (overrides: Partial<SessionInfo> = {}) =>
+			mockSession({ id: 'me', name: 'Me', groupId: 'group-1', ...overrides });
+		const alpha = mockSession({ id: 'peer-a', name: 'Alpha', groupId: 'group-1' });
+		const bravo = mockSession({ id: 'peer-b', name: 'Bravo', groupId: 'group-2' });
+		const child = mockSession({ id: 'peer-c', name: 'Charlie', parentSessionId: 'me' });
+
+		beforeEach(() => {
+			vi.mocked(getCliPrompt).mockResolvedValue('BASE\n\n{{PEER_AGENTS}}');
+			vi.mocked(readSessions).mockReturnValue([me(), alpha, bravo, child]);
+		});
+
+		it('renders nothing, and never reads the sessions file, for an agent with no peer configuration', async () => {
+			expect(await prepareMaestroSystemPromptCli(me())).toBe('BASE\n\n');
+			expect(readSessions).not.toHaveBeenCalled();
+		});
+
+		it('does not read the sessions file for a row that grants nothing and has no grant to exclude from', async () => {
+			const result = await prepareMaestroSystemPromptCli(
+				me({ peerAgents: [{ sessionId: 'peer-a', read: false, write: false }] })
+			);
+			expect(result).toBe('BASE\n\n');
+			expect(readSessions).not.toHaveBeenCalled();
+		});
+
+		it('renders an explicit peer with its live name, its id and its note', async () => {
+			const result = await prepareMaestroSystemPromptCli(
+				me({ peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }] })
+			);
+			expect(result).toContain('## Peer Agents');
+			expect(result).toContain('| Bravo | `peer-b` | Consult only | docs |');
+			expect(result).not.toContain('Alpha');
+		});
+
+		it('resolves a group grant against every agent on disk, leaving out the agent itself', async () => {
+			const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }));
+			expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate |');
+			expect(result).not.toContain('Bravo');
+			expect(result).not.toContain('| Me |');
+			expect(readSessions).toHaveBeenCalledTimes(1);
+		});
+
+		it('resolves the worktree family grant from parentSessionId', async () => {
+			const result = await prepareMaestroSystemPromptCli(me({ worktreePeerAccess: R }));
+			expect(result).toContain('| Charlie | `peer-c` | Consult only |');
+			expect(result).not.toContain('Alpha');
+		});
+
+		it('puts the spawning agent in the delegate command', async () => {
+			const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }));
+			expect(result).toContain('--new-tab --notify-on-complete me`');
+			expect(result).not.toContain('{{');
+		});
+
+		it('renders nothing when every configured peer has been deleted', async () => {
+			const result = await prepareMaestroSystemPromptCli(
+				me({ peerAgents: [{ sessionId: 'gone', ...RW }] })
+			);
+			expect(result).toBe('BASE\n\n');
+		});
+
+		it('gives a headless spawn the roster a desktop spawn resolves for the same agent', async () => {
+			// The desktop builders resolve with `resolvePeerRoster` over their store.
+			// Same agent and same agent list here must list the same peers.
+			const session = me({
+				groupPeerAccess: RW,
+				worktreePeerAccess: R,
+				peerAgents: [{ sessionId: 'peer-b', ...R, description: 'docs' }],
+			});
+			const fleet = [session, alpha, bravo, child];
+			vi.mocked(readSessions).mockReturnValue(fleet);
+			const roster = resolvePeerRoster(session, fleet);
+			expect(roster.map((peer) => peer.sessionId)).toEqual(['peer-a', 'peer-b', 'peer-c']);
+
+			const result = await prepareMaestroSystemPromptCli(session);
+			const table = (text: string) => text.split('\n').filter((line) => line.startsWith('| '));
+			expect(table(result ?? '')).toEqual(table(formatPeerAgentsForPrompt(roster)));
+		});
+
+		it('reads the agent list from the reader it is handed (the builder inside the app)', async () => {
+			vi.mocked(readSessions).mockReturnValue([]);
+			const readAgents = vi.fn(() => [me(), alpha]);
+			const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: R }), {
+				readAgents,
+			});
+			expect(result).toContain('| Alpha | `peer-a` | Consult only |');
+			expect(readAgents).toHaveBeenCalledTimes(1);
+			expect(readSessions).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('role and plugin sections', () => {

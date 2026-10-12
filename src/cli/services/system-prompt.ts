@@ -8,6 +8,7 @@
 // Maestro and what can I do with it" preamble.
 
 import type { SessionInfo } from '../../shared/types';
+import { resolvePeerRosterForPrompt, type PeerRosterInput } from '../../shared/peerAgents';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { computerHistoryDir } from '../../shared/computer-history/paths';
 import { readMaestroRunReadyPath } from '../../shared/maestro-run/state-file';
@@ -20,7 +21,12 @@ import {
 } from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
 import { readSystemOneAccessFromDesktop, type SystemOneAccessReader } from './system-one-access';
-import { getConfigDirectory, readSettingValue, resolveSessionHistoryFilePath } from './storage';
+import {
+	getConfigDirectory,
+	readSessions,
+	readSettingValue,
+	resolveSessionHistoryFilePath,
+} from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
 
 /** True for the known "no readable prompt file" failure from `getCliPrompt`. */
@@ -58,6 +64,14 @@ export interface PrepareMaestroSystemPromptCliOptions {
 	 * function itself, so the app does not open a socket to itself.
 	 */
 	readSystemOneAccess?: SystemOneAccessReader;
+	/**
+	 * How to read every agent, for the Peer Agents roster (a group grant needs
+	 * the whole list, and `session` is one agent). The CLI reads the sessions
+	 * file (the default). A caller that runs INSIDE the desktop's main process
+	 * passes its store, which is ahead of the file while a write is deferred.
+	 * Called only when the agent has a peer grant.
+	 */
+	readAgents?: () => readonly PeerRosterInput[];
 }
 
 /**
@@ -148,6 +162,9 @@ export async function prepareMaestroSystemPromptCli(
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,
+			// {{PEER_AGENTS}}: the same call the desktop builders make, so a headless
+			// run and a desktop tab of one agent are told about the same peers.
+			peerRoster: resolvePeerRosterForPrompt(session, options.readAgents ?? readSessions),
 			...coreSystemPromptContext(core),
 		},
 		roleSections,
