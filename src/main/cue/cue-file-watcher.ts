@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as chokidar from 'chokidar';
 import picomatch from 'picomatch';
+import { isMacOS, isWindows } from '../../shared/platformDetection';
 import { createCueEvent, type CueEvent } from './cue-types';
 
 export interface CueFileWatcherConfig {
@@ -143,13 +144,25 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 		const base = staticWatchBase(watchGlob);
 		if (!base) return null;
 
+		// Windows and default macOS volumes are case-insensitive, so a glob
+		// written `Inbox/*.txt` names a folder created as `inbox`, while
+		// chokidar reports the folder in its on-disk case. Compare chain paths
+		// case-folded there; every match is confirmed with fs.existsSync on the
+		// glob's own spelling before the glob watcher is re-attached.
+		const foldCase = isWindows() || isMacOS();
+		const chainKey = (p: string) => {
+			const resolved = path.resolve(p);
+			return foldCase ? resolved.toLowerCase() : resolved;
+		};
+
 		const rootAbs = path.resolve(projectRoot);
 		const segments = base.split('/').filter(Boolean);
-		const chain = new Set<string>([rootAbs]);
+		const chain = new Set<string>([chainKey(rootAbs)]);
 		for (let i = 1; i <= segments.length; i++) {
-			chain.add(path.resolve(rootAbs, ...segments.slice(0, i)));
+			chain.add(chainKey(path.resolve(rootAbs, ...segments.slice(0, i))));
 		}
 		const baseAbs = path.resolve(rootAbs, ...segments);
+		const baseKey = chainKey(baseAbs);
 
 		// Whether the glob watcher currently sits on an existing base folder.
 		// Recorded synchronously, so a folder created before this watcher's
@@ -171,13 +184,13 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 			ignoreInitial: true,
 			persistent: true,
 			depth: segments.length - 1,
-			ignored: (candidate: string) => !chain.has(path.resolve(candidate)),
+			ignored: (candidate: string) => !chain.has(chainKey(candidate)),
 		});
 		chainWatcher.on('addDir', (dirPath: string) => {
-			if (ready && path.resolve(dirPath) === baseAbs) onBaseAppeared();
+			if (ready && chainKey(dirPath) === baseKey && fs.existsSync(baseAbs)) onBaseAppeared();
 		});
 		chainWatcher.on('unlinkDir', (dirPath: string) => {
-			if (path.resolve(dirPath) !== baseAbs || !basePresent) return;
+			if (chainKey(dirPath) !== baseKey || !basePresent) return;
 			basePresent = false;
 			// Release the handle on the deleted folder (Windows keeps a watched
 			// folder pending-delete) and wait for it to come back.

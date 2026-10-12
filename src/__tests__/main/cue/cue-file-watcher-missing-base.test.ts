@@ -23,6 +23,11 @@ const DEBOUNCE_MS = 50;
 const SETTLE_MS = 400;
 const WAIT_TIMEOUT_MS = 8000;
 const RM_OPTIONS = { recursive: true, force: true, maxRetries: 10, retryDelay: 50 } as const;
+// Each test can wait up to WAIT_TIMEOUT_MS on top of several SETTLE_MS pauses,
+// which a slow Windows runner can push past the suite's 10s default.
+const TEST_TIMEOUT_MS = 30000;
+// Windows and default macOS volumes match folder names case-insensitively.
+const CASE_INSENSITIVE_FS = process.platform === 'win32' || process.platform === 'darwin';
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,7 +54,7 @@ async function mkdirWithRetry(dir: string): Promise<void> {
 	}
 }
 
-describe('cue-file-watcher with a missing static folder', () => {
+describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOUT_MS }, () => {
 	let root: string;
 	let events: CueEvent[];
 	let cleanup: (() => void) | null;
@@ -75,7 +80,13 @@ describe('cue-file-watcher with a missing static folder', () => {
 		cleanup = null;
 		// Watchers close asynchronously; give the handles a moment on Windows.
 		await delay(50);
-		fs.rmSync(root, RM_OPTIONS);
+		try {
+			fs.rmSync(root, RM_OPTIONS);
+		} catch (error) {
+			// A handle Windows has not released yet only leaves a temp folder
+			// behind; it says nothing about the watcher under test.
+			if (process.platform !== 'win32') throw error;
+		}
 	});
 
 	it('fires once for a file written into a folder created after the watcher is ready', async () => {
@@ -169,6 +180,23 @@ describe('cue-file-watcher with a missing static folder', () => {
 		expect(events).toHaveLength(1);
 		expect(events[0].payload).toMatchObject({ filename: 'back.md', changeType: 'add' });
 	});
+
+	it.runIf(CASE_INSENSITIVE_FS)(
+		'fires for a folder created in a different case than the glob spells it',
+		async () => {
+			start('Inbox/*.txt');
+			await delay(SETTLE_MS);
+
+			await mkdirWithRetry(path.join(root, 'inbox'));
+			await delay(SETTLE_MS);
+			fs.writeFileSync(path.join(root, 'inbox', 'cased.txt'), 'cased');
+
+			await waitFor(() => events.length >= 1);
+			await delay(SETTLE_MS);
+			expect(events).toHaveLength(1);
+			expect(events[0].payload).toMatchObject({ filename: 'cased.txt', changeType: 'add' });
+		}
+	);
 
 	it('does not report files already in a folder present at start', async () => {
 		await mkdirWithRetry(path.join(root, 'inbox'));
