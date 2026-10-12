@@ -64,6 +64,7 @@ export type {
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { RunOnTarget } from '../../shared/local-models/run-on';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -1623,6 +1624,10 @@ export interface Session {
 	// How the Maestro token proxy carries this agent's requests when gatewayUrl
 	// points at it. Absent means passthrough. See shared/local-models/token-proxy.ts.
 	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
+	// Run on: where this agent's model runs. Absent (or provider) is the
+	// provider's own model; a source target points the same harness at a model on
+	// a Local Models source at launch. See shared/local-models/run-on.ts.
+	runOn?: RunOnTarget;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

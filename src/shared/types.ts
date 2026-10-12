@@ -5,6 +5,7 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 import type { CodexTransport } from './codexTransport';
+import type { RunOnTarget } from './local-models/run-on';
 
 /**
  * Union type of all valid agent IDs.
@@ -305,6 +306,14 @@ export interface SessionInfo {
 	 * `resolveTokenProxyMode` in `shared/local-models/token-proxy.ts`).
 	 */
 	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
+	/**
+	 * Run on: where this agent's model runs. Absent (or `provider`) is the
+	 * provider's own cloud model; a `source` target points the same harness at a
+	 * model on a Local Models source, resolved at launch by `resolveRunOnLaunch`
+	 * (see `shared/local-models/run-on.ts`). A source target means the gateway
+	 * above does not apply.
+	 */
+	runOn?: RunOnTarget;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

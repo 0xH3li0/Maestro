@@ -128,6 +128,10 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// that went direct while its parent was proxied would be a silent change.
 		gatewayUrl: params.parentSession.gatewayUrl,
 		tokenProxyMode: params.parentSession.tokenProxyMode,
+		// And the same Run on target: a worktree agent on the provider's cloud
+		// model while its parent runs on a local one would spend money the user
+		// chose not to spend.
+		runOn: params.parentSession.runOn,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
