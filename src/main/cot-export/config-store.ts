@@ -707,7 +707,8 @@ export function createCotConfigStore(deps: CotConfigStoreDeps): CotConfigStore {
 
 			let folder: string | null = null;
 			if (asked === null) {
-				if (enabled) return { ok: false, reason: 'Choose a folder before you turn export on.' };
+				if (enabled)
+					return { ok: false, reason: 'Choose a folder before you turn the audit log on.' };
 			} else if (
 				stored !== null &&
 				isSameFolder(asked, stored) &&

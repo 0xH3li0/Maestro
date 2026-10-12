@@ -159,7 +159,7 @@ export function createCotFailureNotifier(
 		const name = getAgentName(agentId)?.trim() || 'an agent';
 		const notice = new Notification({
 			title: 'Maestro',
-			body: `Chain of thought export for ${name} is failing: ${shortFailureReason(error.message)}`,
+			body: `The audit log of ${name} is failing: ${shortFailureReason(error.message)}`,
 		});
 		notice.show();
 		shown.set(agentId, { at: error.at, notice });
@@ -176,11 +176,11 @@ export const COT_STATE_ANCHOR_CHECK_DELAY_MS = 5 * DURATION_MS.second;
 /** What the person is told at start, by what is wrong with the saved state. */
 const STATE_PROBLEM_NOTICES: Record<CotStateProblemKind, string> = {
 	unreadable:
-		'Chain of thought export is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
+		'The audit log is off for every agent: its saved settings could not be read. Open Edit Agent to turn it on again.',
 	missing:
-		'Chain of thought export is off for every agent: its saved settings are missing. Open Edit Agent to turn it on again.',
+		'The audit log is off for every agent: its saved settings are missing. Open Edit Agent to turn it on again.',
 	replaced:
-		'The saved settings of chain of thought export were replaced with an older copy. Open Edit Agent to check which agents are recorded.',
+		'The saved settings of the audit log were replaced with an older copy. Open Edit Agent to check which agents are recorded.',
 };
 
 /** Kept for the reason given in `createCotFailureNotifier`. Null until one was shown. */
