@@ -7,7 +7,7 @@ System One is a judgment tool the user turned on for you. It answers typed quest
 
 **Reach for it when** one judgment repeats over many items you should not read into your context (classify, filter, rank, dedupe, triage: `s1 rank` and `s1 batch` take the file), you want a check before you act that is not your own confidence, you are verifying your own output against a source or a rule, or you are screening untrusted text for instructions aimed at an agent.
 
-**Do not use it for** generation, math, counting, dates, chained reasoning, or one item you can judge at a glance.
+**Do not use it for** generation, math, counting, dates, chained reasoning, or anything short enough to read and judge yourself (one item, or a few dozen one-liners).
 
 - **Key the items. Never ask about a position in a list:** it is wrong 27% of the time at 150 items. `s1 rank` and `s1 batch` key every item for you.
 - **Single-quote a question that holds backticks,** or the shell runs the field name as a command: ``s1 yes 'Does `text` ask for a refund?' -s @msg.txt``.
@@ -15,4 +15,4 @@ System One is a judgment tool the user turned on for you. It answers typed quest
 - **A refusal is final** (exit 6: System One is off, or the budget is spent). Continue without System One. Do not retry, and do not route around it.
 - If the `jev` CLI is also installed, prefer `maestro-cli s1` inside Maestro: it uses Maestro's key, budget and ledger.
 
-Run `{{MAESTRO_CLI_PATH}} s1 guide` once per session before first use. Full reference: {{REF:_system-one}}
+Size the job first. When it suits, run `{{MAESTRO_CLI_PATH}} s1 guide` once per session, before your first request. Do not read the guide for a job you will do yourself. Full reference: {{REF:_system-one}}

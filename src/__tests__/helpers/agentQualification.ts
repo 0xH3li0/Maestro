@@ -23,6 +23,7 @@ import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import type { LocalModelAgentHarness } from '../../shared/local-models/types';
+import { jsonLines, toolResultText } from './streamJson';
 
 /** The most model turns a passing run may take. */
 export const QUALIFICATION_MAX_TURNS = 10;
@@ -289,32 +290,6 @@ const CODEX_MALFORMED_ERROR =
 
 function trimEvidence(text: string): string {
 	return text.replace(/\s+/g, ' ').trim().slice(0, 200);
-}
-
-/** Parse a stream of JSON lines, skipping anything that is not JSON (a stray log line). */
-function jsonLines(stdout: string): Array<Record<string, unknown>> {
-	const events: Array<Record<string, unknown>> = [];
-	for (const line of stdout.split('\n')) {
-		const trimmed = line.trim();
-		if (!trimmed.startsWith('{')) continue;
-		try {
-			events.push(JSON.parse(trimmed) as Record<string, unknown>);
-		} catch {
-			// A partial line from a killed process; the rest of the stream still counts.
-		}
-	}
-	return events;
-}
-
-/** The text of a tool result, which Claude Code sends as a string or a list of text blocks. */
-function toolResultText(content: unknown): string {
-	if (typeof content === 'string') return content;
-	if (!Array.isArray(content)) return '';
-	return content
-		.map((block) =>
-			block && typeof block === 'object' && 'text' in block ? String(block.text) : ''
-		)
-		.join('\n');
 }
 
 /** Read Claude Code's `--output-format stream-json --verbose` output. */

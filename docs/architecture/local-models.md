@@ -1580,6 +1580,140 @@ should add the overhead or label the number as a floor.
   grammar and the parser still enforces the range.
 - The engine card, the picker and the ledger view in the running app: component tests only.
 
+### Does an agent use it? Real run: 2026-10-12, Claude Code 2.1.296
+
+Everything above says an agent CAN ask. `src/__tests__/main/local-models/system-one/agent-use-e2e.test.ts`
+asks whether an agent that is only TOLD about System One (the L0 section of its system prompt) uses
+it, and uses it well. It is opt-in under its own flag, because it starts a real agent with full
+permissions in a scratch directory and spends real tokens on the account `claude` is logged in to:
+
+```bash
+npm run build:cli
+MAESTRO_S1_AGENT_E2E=1 env -u MAESTRO_USER_DATA npx vitest run src/__tests__/main/local-models/system-one/agent-use-e2e.test.ts
+```
+
+`MAESTRO_S1_AGENT_E2E_ITEMS` sets the length of the list (40, or a multiple up to 400),
+`MAESTRO_S1_AGENT_E2E_MODEL` the model, `MAESTRO_S1_AGENT_E2E_ATTEMPTS` the turns per arm and
+`MAESTRO_S1_AGENT_E2E_LABEL` a name for the run. Every run is appended to
+`$TMPDIR/maestro-s1-agent-e2e/agent-use-e2e-results.json`, and each run keeps its agents' directories
+and their raw `stream-json` beside it.
+
+**The job** (`helpers/systemOneAgentTask.ts`): "Here are 40 one-line commit messages in `commits.txt`.
+Which ones describe a security fix? Write the line numbers to `security.txt`." 12 of the 40 are
+security fixes; 10 of the rest use a security word without fixing anything (a typo in SECURITY.md, a
+rename of an auth class). The prompt names no tool. The same job is run by two agents: one whose
+prompt holds the section, and one with System One switched off in its own settings
+(`systemOneOptOut`), whose prompt does not.
+
+**What is real.** The system prompt is `buildMaestroSystemPromptForSession()` over the real prompt
+files, gated by the real `getSystemOneAgentAccess()`. The launch is `executeCuePrompt()`: the stored
+agent, `buildSpawnSpec()`, `buildAgentLaunchPlan()`, the real `claude`. The agent's
+`maestro-cli s1 ...` is the built CLI of the checkout. It reaches the product's own
+`WebSocketMessageHandler` over a loopback WebSocket (`helpers/cliBridge.ts`), which calls
+`runAgentSystemOneRequest()`. The engine is the hosted Jev, the answer cache is the real one in a new
+folder for each run, and the ledger is the real `s1_decisions` SQL.
+
+**What stands in.** The WebSocket's host is the test, not the app's web server. The caller identity
+is put in the agent's environment by the test, the way `process:spawn` stamps it for a tab. The
+harness runs with `--setting-sources local`, so the user's own hooks, skills (a `jev` skill among
+them on this machine), plugins and memory are left out: the section is the only thing that tells the
+agent about System One.
+
+**Asserted** (the wiring): the section is in one prompt and not in the other, both turns complete,
+every `system_one_agent_request` names the agent and its tab, every ledger row is `agent:<verb>` under
+that tab, and the agent that is switched off causes no row. **Recorded, never asserted** (what the
+agent chose): the table below.
+
+Model `claude-opus-5-5`, engine `jev-1.13.0`, one turn per cell. "Turn cost" is the harness's own
+`total_cost_usd` at list price.
+
+| L0 wording | Lines | System One | Ran `s1 guide`          | Verbs                        | Items reached the engine | Read the list itself | Ledger rows               | System One cost | Correct    | Model turns | Turn cost |
+| ---------- | ----- | ---------- | ----------------------- | ---------------------------- | ------------------------ | -------------------- | ------------------------- | --------------- | ---------- | ----------- | --------- |
+| First      | 40    | on         | Yes, then asked nothing | none                         | not at all               | Yes                  | 0                         | $0              | 12 of 12   | 4           | $0.2509   |
+| First      | 40    | off        | No section              | none                         | not at all               | Yes                  | 0                         | $0              | 12 of 12   | 3           | $0.2120   |
+| First      | 400   | on         | Yes, first              | `rank` twice (second cached) | keyed by line            | No                   | 4 `agent:rank` (2 cached) | $0.000732       | 120 of 120 | 4           | $0.3037   |
+| First      | 400   | off        | No section              | none                         | not at all               | Yes                  | 0                         | $0              | 120 of 120 | 3           | $0.3054   |
+| Revised    | 40    | on         | No                      | none                         | not at all               | Yes                  | 0                         | $0              | 12 of 12   | 3           | $0.2215   |
+| Revised    | 40    | off        | No section              | none                         | not at all               | Yes                  | 0                         | $0              | 12 of 12   | 3           | $0.2153   |
+| Revised    | 400   | on         | Yes, first              | `rank` once                  | keyed by line            | No (first 5 lines)   | 2 `agent:rank`            | $0.000732       | 120 of 120 | 5           | $0.3049   |
+| Revised    | 400   | off        | No section              | none                         | not at all               | Yes                  | 0                         | $0              | 120 of 120 | 3           | $0.2986   |
+
+Tokens of each turn, by the harness's count (uncached input was 6 to 10 tokens in every turn):
+
+| L0 wording | Lines | System One | Output | Cache read | Cache write | Tool calls | Wall time |
+| ---------- | ----- | ---------- | ------ | ---------- | ----------- | ---------- | --------- |
+| First      | 40    | on         | 1,197  | 80,002     | 26,364      | 3          | 13.5 s    |
+| First      | 40    | off        | 804    | 75,519     | 22,604      | 2          | 9.2 s     |
+| First      | 400   | on         | 1,538  | 119,408    | 31,131      | 3          | 20.5 s    |
+| First      | 400   | off        | 1,530  | 83,780     | 32,249      | 2          | 16.3 s    |
+| Revised    | 40    | on         | 894    | 77,187     | 23,523      | 2          | 10.4 s    |
+| Revised    | 40    | off        | 907    | 73,911     | 22,793      | 2          | 9.8 s     |
+| Revised    | 400   | on         | 1,839  | 155,418    | 29,622      | 4          | 21.4 s    |
+| Revised    | 400   | off        | 1,360  | 83,763     | 31,825      | 2          | 15.7 s    |
+
+**Findings.**
+
+1. **At 40 lines the agent does not ask, and that is the right call.** It said so in both wordings
+   ("40 one-liners was small enough to judge directly"). Reading the list costs it about 600 tokens and
+   it sorted all 40 correctly. System One could not have been more correct, and the guide alone is
+   about 2,100 tokens. A job this size does not suit System One for an Opus-class agent, whatever the
+   shape of the job.
+2. **The first wording still cost that turn 18%.** "Run `s1 guide` once per session before first
+   use" was read as "run it now": the agent read the guide in the same step as the list, then did the
+   job itself. One more model turn and $0.039 for a tool it did not use.
+3. **At 400 lines the agent used it, and used it well, under both wordings.** It sized the job
+   (`wc -l`), read the guide before its first question, and handed the FILE to `s1 rank`, so every
+   item was keyed by its line and the list never entered its context. It read the completeness marker
+   (`End s1 rank: 400/400 candidates judged in 2 request(s)`) and the engine line, looked at where the
+   probabilities split (lowest fix 0.79, highest other 0.57), cut at 0.7 or 0.8, and wrote the file
+   with `awk` or a short script. All 120 correct. 400 questions went out in 2 requests: 17,436 input tokens, about 250 ms a request, $0.000732.
+4. **System One made the 400-line turn no cheaper here.** $0.3037 against $0.3054, then $0.3049
+   against $0.2986: inside the 2% the same job varied by between two runs with no System One. The
+   agent's turn is dominated by its own system prompt, and the guide costs about what the list would
+   have. The test list also flatters the other arm: see the limits below.
+5. **Off is off, and every request is attributed.** The switched-off agent's prompt had no section
+   and it caused no ledger row in any run. Every request from the other agent carried its agent id
+   and tab id, and its rows are `agent:rank` under that tab.
+
+**The one revision** (`src/prompts/system-one-system.md`), made after the first two runs:
+
+| Line           | First                                               | Revised                                                                                                                                                |
+| -------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Do not use for | "... or one item you can judge at a glance."        | "... or anything short enough to read and judge yourself (one item, or a few dozen one-liners)."                                                       |
+| The pointer    | "Run `s1 guide` once per session before first use." | "Size the job first. When it suits, run `s1 guide` once per session, before your first request. Do not read the guide for a job you will do yourself." |
+
+It was not written to make the agent ask at 40 lines: finding 1 says it should not. It removes the
+guide read that finding 2 measured. After it, the agent with the section did the 40-line job in the
+same three turns as the agent without it, for $0.2215 against $0.2153. The 3% that remains is the
+section itself in the prompt (about 2,270 characters on every spawn, once its variables are filled). At 400 lines it changed nothing that
+matters: the agent still sized the job, read the guide first and ranked the file.
+
+**Limits of this result.**
+
+- **One turn per cell, one model.** Claude Opus 5.5 only. A smaller model may not hold the same line
+  at 40 items, or may not find `rank` at 400. Run it with `MAESTRO_S1_AGENT_E2E_MODEL` and
+  `MAESTRO_S1_AGENT_E2E_ATTEMPTS` before trusting it for another model.
+- **The 400-line list is 40 messages under 10 area prefixes**, shuffled. Both agents noticed. The
+  agent without System One read all 400 lines, then matched the 12 messages with one `grep`. A list of
+  400 distinct messages cannot be collapsed that way, so the accuracy of the two arms is not
+  separated here and the cost at 400 lines is the best case for doing without.
+- **The agent's own setup was left out.** With the user's skills loaded, an agent on this machine
+  also has a `jev` skill. Whether it then picks `maestro-cli s1`, as the section asks, was not run.
+- **A tab spawn was not driven.** The renderer's builder (`prepareMaestroSystemPrompt`) and
+  `process:spawn` are covered by their unit tests; this run goes through the main-process builder and
+  the Cue launch.
+- **The local judge was not run.** Every answer here is from the hosted Jev. Whether an agent reads a
+  local judge's number as a calibrated probability is still open.
+- **No refusal was met.** The budget was $1.00 and about $0.0015 was spent across the four runs.
+
+**Found while building it.** Only `process:spawn` puts the caller identity
+(`MAESTRO_CALLER_AGENT_ID`, `MAESTRO_CALLER_TAB_ID`) in an agent's environment. A Cue run, a Group
+Chat participant and a consulted agent are started in the main process without it, so an `s1` request
+from one of them reaches the service as a caller that names no agent: the global switches and the
+daily budget hold, the per-agent cap and the per-agent switch do not, and the ledger row has no
+agent. Their prompt is gated correctly (the builder knows the agent), so an agent that is switched
+off is not told about System One; it is only not stopped if it asks anyway. Not fixed here: stamping the identity there also makes a `dispatch` or an `ask` from those runs write a delegation notice into the agent's transcript, and what that does for a run with no tab was not checked.
+
 ## Speech-to-text and dictation
 
 The local speech models (Parakeet TDT, Whisper Base) are core models with three consumers: a voice

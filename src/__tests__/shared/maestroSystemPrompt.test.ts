@@ -207,7 +207,7 @@ describe('the System One section, assembled from the real prompt', () => {
 		expect(result).toContain(
 			'**Budget:** $1.00 a day across all agents; more than half is left today.'
 		);
-		expect(result).toContain('Run `node "/app/maestro-cli.js" s1 guide` once per session');
+		expect(result).toContain('run `node "/app/maestro-cli.js" s1 guide` once per session');
 		// Every variable the section names was filled.
 		expect(result).not.toMatch(/\{\{(?!REF:)/);
 	});

@@ -476,8 +476,12 @@ describe('the System One section of the system prompt', () => {
 
 	it('gives one pointer to the guide and one to the reference', () => {
 		expect(section()).toContain(
-			'Run `{{MAESTRO_CLI_PATH}} s1 guide` once per session before first use.'
+			'run `{{MAESTRO_CLI_PATH}} s1 guide` once per session, before your first request.'
 		);
+		// Measured (agent-use-e2e): told only "before first use", an agent read the
+		// guide for a 40-line job it then did itself, at 18% more for the turn.
+		expect(section()).toContain('Size the job first. When it suits,');
+		expect(section()).toContain('Do not read the guide for a job you will do yourself.');
 		expect(section()).toContain(`Full reference: {{REF:${SYSTEM_ONE_REFERENCE_PROMPT_ID}}}`);
 	});
 
@@ -487,7 +491,7 @@ describe('the System One section of the system prompt', () => {
 			expect(text, use).toContain(use);
 		}
 		expect(text).toMatch(
-			/Do not use it for\*\* generation, math, counting, dates, chained reasoning, or one item you can judge at a glance/
+			/Do not use it for\*\* generation, math, counting, dates, chained reasoning, or anything short enough to read and judge yourself \(one item, or a few dozen one-liners\)/
 		);
 	});
 
