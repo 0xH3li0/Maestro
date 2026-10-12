@@ -161,6 +161,7 @@ export function ThemedSelect({
 					}
 					break;
 				case 'Escape':
+					e.stopPropagation();
 					closeAndRefocus();
 					break;
 			}
@@ -238,6 +239,9 @@ export function ThemedSelect({
 				>
 					{filterable && (
 						<div
+							onKeyDown={(e) => {
+								if (e.key === 'Escape') handleNavKeyDown(e);
+							}}
 							style={{
 								display: 'flex',
 								alignItems: 'center',

@@ -268,6 +268,52 @@ describe('CueSelect', () => {
 			expect(screen.getByPlaceholderText('Filter…')).toHaveValue('');
 			expect(screen.getAllByRole('option')).toHaveLength(3);
 		});
+
+		it('closes on Escape from the close button and restores the unfiltered dropdown', () => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			const trigger = screen.getByRole('button', { name: 'Alpha' });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			const closeButton = screen.getByRole('button', { name: 'Close filter (Esc)' });
+			closeButton.focus();
+			expect(closeButton).toHaveFocus();
+
+			fireEvent.keyDown(closeButton, { key: 'Escape' });
+
+			expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+			expect(trigger).toHaveFocus();
+			expect(onChange).not.toHaveBeenCalled();
+			fireEvent.click(trigger);
+			expect(screen.getByPlaceholderText('Filter…')).toHaveValue('');
+			expect(screen.getAllByRole('option')).toHaveLength(3);
+		});
+
+		it.each([
+			{ label: 'Enter', key: 'Enter' },
+			{ label: 'Space', key: ' ' },
+		])('activates the close button with $label without selecting an option', ({ key }) => {
+			render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			const trigger = screen.getByRole('button', { name: 'Alpha' });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			const closeButton = screen.getByRole('button', { name: 'Close filter (Esc)' });
+			closeButton.focus();
+
+			// Keep the button's native keyboard action available. jsdom does not
+			// synthesize its click, so send that activation after the key events.
+			expect(fireEvent.keyDown(closeButton, { key })).toBe(true);
+			expect(fireEvent.keyUp(closeButton, { key })).toBe(true);
+			expect(onChange).not.toHaveBeenCalled();
+			fireEvent.click(closeButton);
+
+			expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+			expect(trigger).toHaveFocus();
+			expect(onChange).not.toHaveBeenCalled();
+		});
 	});
 
 	it('forwards id and aria-label to trigger button', () => {
