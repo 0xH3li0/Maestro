@@ -93,6 +93,17 @@ function saveToHistoryFor(persistent: boolean): boolean {
 		: quickChatSettings().ephemeralHistory;
 }
 
+/**
+ * When the chat's turn started. The tab's own stamp, else the agent's, but only
+ * while this is the agent's ONLY busy tab: with two turns running, the agent's
+ * stamp may be the other one's, and no time beats a wrong one.
+ */
+function tabBusySince(session: Session | null, tab: AITab): number | null {
+	if (tab.thinkingStartTime) return tab.thinkingStartTime;
+	const busyTabs = session?.aiTabs.filter((t) => t.state === 'busy').length ?? 0;
+	return busyTabs === 1 ? (session?.thinkingStartTime ?? null) : null;
+}
+
 export function buildQuickChatSnapshot(error: string | null = null): QuickChatSnapshot {
 	const session = resolveAgent();
 	const tab = currentTab(session);
@@ -115,10 +126,7 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 		tabId: tab?.id ?? null,
 		persistent: isPersistent(),
 		busy: tab?.state === 'busy',
-		// The tab's own start; the agent's is the fallback for a turn something
-		// else marked busy without stamping the tab.
-		busySince:
-			tab?.state === 'busy' ? (tab.thinkingStartTime ?? session?.thinkingStartTime ?? null) : null,
+		busySince: tab?.state === 'busy' ? tabBusySince(session, tab) : null,
 		messages: tab ? logsToQuickChatMessages(tab.logs) : [],
 		agents: agents.map((s) => ({
 			id: s.id,
