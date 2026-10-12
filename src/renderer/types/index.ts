@@ -17,6 +17,8 @@ export type {
 	AgentConfig,
 	AgentConfigOption,
 	DirectoryEntry,
+	PeerAccess,
+	PeerAgent,
 	ShellInfo,
 	UpdateStatus,
 	ToolType,
@@ -39,6 +41,8 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import for extension in this file
 import type {
 	AdditionalDirectory,
+	PeerAccess,
+	PeerAgent,
 	SessionWorktreeConfig,
 	WorktreeConfig as BaseWorktreeConfig,
 	WorktreeRunTarget,
@@ -1435,6 +1439,21 @@ export interface Session {
 	// working directory. Prompt-level grants: rendered into the Maestro system
 	// prompt as {{ADDITIONAL_DIRECTORIES}}, not enforced by a sandbox.
 	additionalDirectories?: AdditionalDirectory[];
+	// Peer agents this agent may reach on its own, without an @mention. The three
+	// fields below are the stored SOURCES only. The roster the agent sees is
+	// resolved from them at prompt-build time (group and worktree membership are
+	// read live), so moving, renaming, or deleting an agent reshapes it with no
+	// further configuration.
+	//
+	// Explicit rows. A row replaces any derived grant for that peer, so a row with
+	// neither bit set is a deliberate exclusion.
+	peerAgents?: PeerAgent[];
+	// "Peers in my group": every other agent sharing this agent's groupId is a
+	// peer at this access. Absent means the checkbox is off.
+	groupPeerAccess?: PeerAccess;
+	// "Worktree family": the agent's worktree parent and sibling worktree children
+	// are peers at this access. Absent means the checkbox is off.
+	worktreePeerAccess?: PeerAccess;
 	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs - terminal tabs use xterm.js with direct PTY streaming

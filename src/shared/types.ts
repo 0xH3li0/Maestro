@@ -672,6 +672,28 @@ export interface AdditionalDirectory {
 	description?: string;
 }
 
+/** Read/write access bits, shared by explicit peer rows and derived grants. */
+export interface PeerAccess {
+	/** May CONSULT this peer: ask a question, get an answer back. */
+	read: boolean;
+	/** May DELEGATE to this peer: put work into their live tab. */
+	write: boolean;
+}
+
+/**
+ * One explicit peer row. Stores the peer's session id, never its name: names
+ * change and agents get deleted, so the display name is resolved at render time.
+ *
+ * A row with neither bit set is an explicit EXCLUSION - it overrides any group or
+ * worktree grant that would otherwise cover this peer. This differs from
+ * AdditionalDirectory, where a row with neither toggle is merely inert.
+ */
+export interface PeerAgent extends PeerAccess {
+	sessionId: string;
+	/** Optional Conductor hint on when this peer is worth consulting. */
+	description?: string;
+}
+
 // Git worktree configuration for Auto Run
 export interface WorktreeConfig {
 	enabled: boolean;
