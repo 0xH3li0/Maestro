@@ -14,7 +14,9 @@ import { buildRoutePrompt, type RouteCandidate } from '../../shared/quickChatRou
 import { CORE_PROMPTS, PROMPT_IDS } from '../../shared/promptDefinitions';
 
 const PROMPT_PATH = path.join(__dirname, '../../prompts/quick-chat-route.md');
-const prompt = readFileSync(PROMPT_PATH, 'utf-8');
+// A Windows checkout gives the file CRLF line endings. The assertions below are
+// about what the prompt says, so they read it with one kind of line ending.
+const prompt = readFileSync(PROMPT_PATH, 'utf-8').replace(/\r\n/g, '\n');
 
 const tab: RouteCandidate = {
 	key: 'tab:1',
