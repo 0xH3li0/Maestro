@@ -15,6 +15,12 @@
  * leave the monotonic timer clock running; a Linux or macOS suspend stops
  * it), and this check gives the same result either way. The reverse order,
  * the tick first and the catch-up second, is handled in `cue-reconciler.ts`.
+ *
+ * A cue.yaml reload that leaves the subscription unchanged hands this source
+ * the old one's schedule (`ctx.carry`): no fire on start, and the next run
+ * stays where it was. A carried run that is already due (a slow reload, or a
+ * reload right after a wake) runs once at start through the same tick, so
+ * the catch-up check above still keeps it to one run per window.
  */
 
 import { createCueEvent } from '../cue-types';
@@ -99,9 +105,36 @@ export function createCueHeartbeatTriggerSource(
 		fire('time.heartbeat');
 	}
 
+	/** Resume the schedule of the source this one replaces on a reload. */
+	function resume(carry: NonNullable<CueTriggerSourceContext['carry']>): void {
+		if (carry.lastFiredMs !== undefined) {
+			ctx.registry.markHeartbeatFired(ctx.session.id, ctx.subscription.name, carry.lastFiredMs);
+		}
+		ownFiredAtMs = carry.ownFiredMs;
+		nextFireMs = carry.nextFireMs;
+		const remainingMs = carry.nextFireMs - Date.now();
+		if (remainingMs > 0) {
+			rearmTimer = setTimeout(() => {
+				rearmTimer = null;
+				startInterval();
+				tick();
+			}, remainingMs);
+			return;
+		}
+		// Already due: run it now (unless a catch-up already did) and carry on
+		// at the normal interval from here.
+		startInterval();
+		tick();
+	}
+
 	return {
 		start() {
 			if (timer || rearmTimer) return; // idempotent
+
+			if (ctx.carry) {
+				resume(ctx.carry);
+				return;
+			}
 
 			// Fire once immediately on start, mirroring the legacy behaviour where
 			// users expect a heartbeat to run as soon as Cue picks up the config.
@@ -125,6 +158,15 @@ export function createCueHeartbeatTriggerSource(
 
 		nextTriggerAt() {
 			return nextFireMs;
+		},
+
+		scheduleCarry() {
+			if (nextFireMs === null || (!timer && !rearmTimer)) return null;
+			return {
+				nextFireMs,
+				lastFiredMs: ctx.registry.heartbeatFiredAt(ctx.session.id, ctx.subscription.name),
+				ownFiredMs: ownFiredAtMs,
+			};
 		},
 	};
 }

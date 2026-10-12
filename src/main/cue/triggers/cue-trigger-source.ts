@@ -81,6 +81,32 @@ export interface CueTriggerSource {
 	 * guard is asynchronous (`cue-guarded-emit.ts`). Must not reject.
 	 */
 	settle?(): Promise<void>;
+
+	/**
+	 * Optional: this source's schedule, for a cue.yaml reload to hand to the
+	 * source that replaces it (`CueTriggerSourceContext.carry`). Called just
+	 * before the reload stops this source. `null` when there is no schedule to
+	 * keep (not started, or already stopped). Only `time.heartbeat` has one: a
+	 * reload that rebuilt it from scratch fired it again as if the engine had
+	 * just started.
+	 */
+	scheduleCarry?(): CueScheduleCarry | null;
+}
+
+/**
+ * A running heartbeat's schedule, carried across a cue.yaml reload when the
+ * subscription's name and trigger config (`triggerGroupKey`) did not change.
+ */
+export interface CueScheduleCarry {
+	/** When the old source would have fired next (ms since epoch). */
+	nextFireMs: number;
+	/** The registry's last-run record for the subscription, which may be a
+	 *  sleep catch-up rather than the source's own run. The reload unregisters
+	 *  the session and that drops the record, so it travels here. */
+	lastFiredMs: number | undefined;
+	/** The old source's own last run, so the new one can tell its predecessor's
+	 *  run apart from a catch-up the way the old one did. */
+	ownFiredMs: number | undefined;
 }
 
 /**
@@ -121,4 +147,11 @@ export interface CueTriggerSourceContext {
 		subscriptionName: string,
 		reason: 'missed-grace' | 'filtered' | 'completed' | 'failed'
 	): void;
+	/**
+	 * Optional: the schedule of the source this one replaces on a cue.yaml
+	 * reload. Set only when the subscription's name and trigger config are
+	 * unchanged; a source that receives it resumes that schedule instead of
+	 * firing on start.
+	 */
+	carry?: CueScheduleCarry;
 }

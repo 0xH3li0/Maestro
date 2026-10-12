@@ -303,7 +303,17 @@ export interface CueRunManager {
 	getActiveRunCount(sessionId: string): number;
 	getActiveRunMap(): Map<string, ActiveRun>;
 	getQueueStatus(): Map<string, number>;
-	clearQueue(sessionId: string, preserveStartup?: boolean): void;
+	/**
+	 * Drop a session's queued events. `preserveStartup` keeps `app.startup`
+	 * entries; `preserveHeartbeats` also keeps the `time.heartbeat` entries of
+	 * the named subscriptions (the ones a cue.yaml reload carried over with
+	 * their schedule, so their waiting run is not lost).
+	 */
+	clearQueue(
+		sessionId: string,
+		preserveStartup?: boolean,
+		preserveHeartbeats?: ReadonlySet<string>
+	): void;
 	reset(): void;
 }
 
@@ -1248,7 +1258,11 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			return result;
 		},
 
-		clearQueue(sessionId: string, preserveStartup = false): void {
+		clearQueue(
+			sessionId: string,
+			preserveStartup = false,
+			preserveHeartbeats?: ReadonlySet<string>
+		): void {
 			if (!preserveStartup) {
 				// Mirror the in-memory clear on disk so persisted rows don't
 				// outlive the live queue they represent.
@@ -1263,10 +1277,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			}
 			const queue = eventQueue.get(sessionId);
 			if (!queue) return;
-			const kept = queue.filter((e) => e.event.type === 'app.startup');
-			// Remove persisted rows for entries we are dropping (non-startup).
+			const keep = (e: QueuedEvent) =>
+				e.event.type === 'app.startup' ||
+				(e.event.type === 'time.heartbeat' && preserveHeartbeats?.has(e.subscriptionName) === true);
+			const kept = queue.filter(keep);
+			// Remove persisted rows for entries we are dropping.
 			for (const entry of queue) {
-				if (entry.event.type !== 'app.startup' && entry.persistId) {
+				if (!keep(entry) && entry.persistId) {
 					deps.queuePersistence?.remove(entry.persistId);
 				}
 			}

@@ -545,8 +545,8 @@ export class CueEngine {
 					chainDepth
 				);
 			},
-			clearQueue: (sessionId, preserveStartup) => {
-				this.runManager.clearQueue(sessionId, preserveStartup);
+			clearQueue: (sessionId, preserveStartup, preserveHeartbeats) => {
+				this.runManager.clearQueue(sessionId, preserveStartup, preserveHeartbeats);
 			},
 			clearFanInState: (sessionId) => {
 				this.fanInTracker.clearForSession(sessionId);

@@ -208,7 +208,7 @@ target passed.
 | Docs: not-ready start loops, crash kills the run's children, Compose secret mode, `docker stop` timeout, unhealthy, and more | Stage B, container, GitHub                    | Fixed, see [Docs fixes](#docs-fixes-from-the-live-runs)                                                                          |
 | `file.changed` misses a watched folder created after the engine started                                                      | Pre-existing, desktop too                     | **Open**                                                                                                                         |
 | `cue trigger <name>` also fires same-pipeline siblings with the same trigger                                                 | Pre-existing, by design                       | **Open** (docs only)                                                                                                             |
-| A `cue.yaml` reload fires that workspace's `time.heartbeat` subscriptions again ("initial")                                  | Pre-existing; seen again today                | **Open**, not yet judged a bug                                                                                                   |
+| A `cue.yaml` reload fires that workspace's `time.heartbeat` subscriptions again ("initial")                                  | Pre-existing; seen again today; desktop too   | Fixed: an unchanged heartbeat keeps its schedule across a reload, **tests only**. **Desktop behaviour change**                   |
 
 ### Checks, latest result
 
@@ -241,7 +241,6 @@ target passed.
 
 ### Open items
 
-- A `cue.yaml` reload fires the workspace's `time.heartbeat` subscriptions again ("initial").
 - `file.changed` misses a folder created after the engine starts (pre-existing, desktop too).
 - `cue trigger <name>` also fires same-pipeline siblings with the same trigger; the `cli.trigger` docs do not say so.
 - No committed container end-to-end test (the plan's automated test); today's container runs were manual.

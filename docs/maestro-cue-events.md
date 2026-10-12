@@ -54,7 +54,8 @@ Fires on a periodic timer. The subscription triggers immediately when the engine
 
 **Behavior:**
 
-- Fires immediately on engine start (or when the subscription is first loaded)
+- Fires immediately on engine start, when Cue is turned on, and when the subscription is first loaded
+- Saving or reloading `cue.yaml` does not fire a heartbeat whose name and trigger settings (`interval_minutes`, `filter`, `label`) are unchanged: it keeps its schedule, so the next run stays where it was. Editing only its `prompt` or targets keeps the schedule too, and the next run uses the new prompt. A heartbeat that is new, renamed, turned back on, or has a changed interval, filter or label fires on load. A reload that removes a heartbeat stops it. If a kept heartbeat's next run fell due while the reload was happening (for example right after the machine wakes), it runs once at load
 - Reconciles missed intervals after system sleep - if your machine sleeps through one or more intervals, Cue fires a catch-up event on wake
 - The interval resets after each trigger, not after each run completes
 
