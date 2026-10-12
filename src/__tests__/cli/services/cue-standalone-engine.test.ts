@@ -38,10 +38,26 @@ vi.mock('../../../cli/services/storage', () => ({
 			projectRoot: '/p',
 			runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' },
 		},
+		{
+			// Sends `low` to a local model and leaves `high` to the harness default.
+			id: 'agent-3',
+			name: 'gamma',
+			toolType: 'claude-code',
+			cwd: '/p',
+			projectRoot: '/p',
+			customModel: 'sonnet',
+			tierTargets: {
+				low: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+				medium: { type: 'source' },
+			},
+		},
 	],
 	readSshRemotes: () => [],
 	getAgentCustomPath: () => undefined,
 	readAgentConfig: () => ({}),
+	readHarnessTierDefaults: () => ({
+		'claude-code': { high: { type: 'provider-model', model: 'opus[1m]' } },
+	}),
 }));
 
 import { buildStandaloneCueEngineDeps } from '../../../cli/services/cue-standalone-engine';
@@ -140,5 +156,56 @@ describe('buildStandaloneCueEngineDeps', () => {
 
 		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
 		expect(executeCuePrompt.mock.calls[0][0]).toMatchObject({ runOn: RUN_ON });
+	});
+
+	describe('a subscription tier', () => {
+		const runTier = async (sessionId: string, tier: string) => {
+			executeCuePrompt.mockReset();
+			executeCuePrompt.mockResolvedValue({ status: 'completed' } as CueRunResult);
+			const deps = buildStandaloneCueEngineDeps({ onLog: vi.fn() });
+			await deps.onCueRun({
+				runId: `run-${tier}`,
+				sessionId,
+				prompt: 'Say pong',
+				subscriptionName: 'ask',
+				event,
+				timeoutMs: 1000,
+				turnSettings: { tier },
+			} as Parameters<typeof deps.onCueRun>[0]);
+			return executeCuePrompt.mock.calls[0][0];
+		};
+
+		it("launches on the agent's own tier target", async () => {
+			const config = await runTier('agent-3', 'low');
+			expect(config).toMatchObject({
+				customModel: 'qwen3.5-4b',
+				runOn: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+			});
+			expect(config.launchRefusal).toBeUndefined();
+		});
+
+		it('launches on the harness default when the agent sets no target for the tier', async () => {
+			expect(await runTier('agent-3', 'high')).toMatchObject({
+				customModel: 'opus[1m]',
+				runOn: { type: 'provider' },
+			});
+		});
+
+		it("sends a source agent's tier to the provider when a layer the user wrote says so", async () => {
+			// agent-2 runs on Ollama; the harness default names the provider for `high`.
+			expect(await runTier('agent-2', 'high')).toMatchObject({
+				customModel: 'opus[1m]',
+				runOn: { type: 'provider' },
+			});
+		});
+
+		it('keeps a source agent on its own target for a tier only the built-in table maps', async () => {
+			expect(await runTier('agent-2', 'low')).toMatchObject({ runOn: RUN_ON });
+		});
+
+		it('hands the run a refusal for a tier target that cannot be used', async () => {
+			const config = await runTier('agent-3', 'medium');
+			expect(config.launchRefusal).toContain('"medium" tier target cannot be used');
+		});
 	});
 });

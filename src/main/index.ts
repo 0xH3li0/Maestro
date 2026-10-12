@@ -138,7 +138,8 @@ import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
 import { resolveCueTurnSettings } from '../shared/cue/turn-settings';
-import { describeTurnSettings } from '../shared/autorunTurnSettings';
+import { describeTurnSettings, turnRunOnTarget } from '../shared/autorunTurnSettings';
+import { parseHarnessTierDefaults } from '../shared/modelTiers';
 import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
@@ -1619,11 +1620,18 @@ app
 				// config for this run only. A tier or effort the provider cannot
 				// honor falls back to the agent's value and is logged as a warning,
 				// so a run never silently lands on a different model than asked.
+				// A tier launches on its target (the agent's own, then the harness
+				// default), and a target that cannot be used fails the run by name.
 				const turn = resolveCueTurnSettings(
 					storedSession.toolType,
 					turnSettings,
 					storedSession.customModel,
-					storedSession.customEffort
+					storedSession.customEffort,
+					{
+						tierTargets: storedSession.tierTargets,
+						runOn: storedSession.runOn,
+						harnessDefaults: parseHarnessTierDefaults(store.get('harnessTierDefaults')),
+					}
 				);
 				const turnNote = describeTurnSettings(turn);
 				if (turnNote) {
@@ -1659,7 +1667,8 @@ app
 					customArgs: storedSession.customArgs,
 					customEnvVars: storedSession.customEnvVars,
 					gatewayUrl: storedSession.gatewayUrl,
-					runOn: storedSession.runOn,
+					runOn: turnRunOnTarget(turn, storedSession.runOn),
+					launchRefusal: turn.refusal?.message,
 					customModel: turn.model,
 					customEffort: turn.effort,
 					// Claude token-source selection (TUI / API / dynamic), read from

@@ -1756,6 +1756,9 @@ export interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// The Run on target this turn launches on in place of the agent's stored
+	// one: a tier's target, set only by a spawn that resolved a tier.
+	runOnOverride?: RunOnTarget;
 	// Session's Additional Directories. Providers that declare
 	// `supportsAdditionalDirectories` turn these into native grant flags
 	// (e.g. --add-dir); every agent also gets them via the system prompt.

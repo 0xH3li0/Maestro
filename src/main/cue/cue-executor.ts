@@ -80,6 +80,12 @@ export interface CueExecutionConfig {
 	 * it). One that names a source replaces `customModel` and the gateway.
 	 */
 	runOn?: unknown;
+	/**
+	 * Set when the run's tier names a target that cannot be used
+	 * (`ResolvedTurnSettings.refusal`). The run fails with this message and no
+	 * process is started: it never runs on the agent's own model in its place.
+	 */
+	launchRefusal?: string;
 	customModel?: string;
 	customEffort?: string;
 	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */
@@ -170,6 +176,13 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		startedAt,
 		endedAt: new Date().toISOString(),
 	});
+
+	// A tier target that cannot be used: refused before anything else, so the
+	// run's record names it.
+	if (config.launchRefusal) {
+		onLog('error', config.launchRefusal);
+		return failedResult(config.launchRefusal);
+	}
 
 	// 1. Validate prompt content
 	const trimmedPrompt = promptPath?.trim();

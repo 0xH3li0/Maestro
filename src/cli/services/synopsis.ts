@@ -21,6 +21,11 @@ export interface CliSynopsisRequest {
 	 */
 	model?: string;
 	effort?: string;
+	/**
+	 * Where the summarized turn ran, as data, when a tier's target decided it
+	 * (`turnRunOnTarget`). Absent means the agent's own Run on target.
+	 */
+	runOn?: unknown;
 	/** True when the summarized turn was read-only. */
 	readOnlyMode?: boolean;
 	/** Stops the synopsis turn, e.g. on Ctrl+C. */
@@ -82,9 +87,10 @@ export async function requestCliSynopsis(
 					customEnvVars: session.customEnvVars,
 					gatewayUrl: session.gatewayUrl,
 					// The synopsis resumes the agent's own conversation, so it runs
-					// where that conversation runs. On the provider's model it would
-					// send the conversation to the provider's cloud.
-					runOn: session.runOn,
+					// where that conversation ran: the turn's tier target when it had
+					// one, else the agent's own. On the provider's model it would send
+					// a conversation held on a source to the provider's cloud.
+					runOn: request.runOn ?? session.runOn,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					// A synopsis is never someone typing, whatever turn it summarizes.
 					querySource: 'auto',

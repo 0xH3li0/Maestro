@@ -43,6 +43,7 @@ import {
 	parseRunOnSpec,
 	parseRunOnTarget,
 	RUN_ON_PROVIDER_SPEC,
+	runOnPillLabel,
 	runOnTargetLabel,
 	storedRunOnNamesSource,
 	type RunOnSourceTarget,
@@ -503,6 +504,33 @@ export function tierLaunchKey(
 				? `${place.endpointId}\u0000${place.model}\u0000${place.contextTokens ?? ''}`
 				: '';
 	return `${launch.model ?? ''}\u0000${where}`;
+}
+
+/**
+ * A tier as a pill names it for this agent: the tier, the model it launches,
+ * and the source when it launches on one (`low · qwen3.5-4b · Maestro`,
+ * `high · opus`). It reads the same resolution a launch does, so a pill cannot
+ * name a target the task will not run on. `undefined` when the tier names no
+ * target here (no layer maps it, or the target cannot be used): the caller
+ * keeps its own wording, and the launch says why.
+ */
+export function tierPillLabel(
+	toolType: ToolType,
+	tier: ModelTier,
+	agentModel?: string,
+	routing?: TierRouting,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
+): string | undefined {
+	const resolved = resolveTierTarget(
+		{ toolType, tierTargets: routing?.tierTargets, runOn: routing?.runOn },
+		tier,
+		routing?.harnessDefaults
+	);
+	if (resolved.kind !== 'resolved') return undefined;
+	const launch = tierTargetLaunch(resolved, agentModel);
+	const target =
+		launch.runOn?.type === 'source' ? runOnPillLabel(launch.runOn, endpoints) : launch.model;
+	return target ? `${tier} · ${target}` : undefined;
 }
 
 /**

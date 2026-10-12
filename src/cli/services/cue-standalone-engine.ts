@@ -61,8 +61,14 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { CueRunResult } from '../../shared/cue/contracts';
 import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
-import { describeTurnSettings } from '../../shared/autorunTurnSettings';
-import { readSessions, readSshRemotes, getAgentCustomPath, readAgentConfig } from './storage';
+import { describeTurnSettings, turnRunOnTarget } from '../../shared/autorunTurnSettings';
+import {
+	readSessions,
+	readSshRemotes,
+	getAgentCustomPath,
+	readAgentConfig,
+	readHarnessTierDefaults,
+} from './storage';
 
 /** Lazily import every executor module once, cached for the process lifetime - see the module doc above for why these are dynamic rather than top-level imports. */
 let executorsPromise: ReturnType<typeof loadExecutorsUncached> | undefined;
@@ -253,11 +259,18 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 		// tier / model / effort outranks the agent's own config for this run only,
 		// and one the provider cannot honor falls back to the agent's value with a
 		// warning, so a headless run never lands on a different model than asked.
+		// A tier launches on its target (the agent's own, then the harness
+		// default), and a target that cannot be used fails the run by name.
 		const turn = resolveCueTurnSettings(
 			storedSession.toolType,
 			turnSettings,
 			storedSession.customModel,
-			storedSession.customEffort
+			storedSession.customEffort,
+			{
+				tierTargets: storedSession.tierTargets,
+				runOn: storedSession.runOn,
+				harnessDefaults: readHarnessTierDefaults(),
+			}
 		);
 		const turnNote = describeTurnSettings(turn);
 		if (turnNote) {
@@ -284,7 +297,8 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			customArgs: storedSession.customArgs,
 			customEnvVars: storedSession.customEnvVars,
 			gatewayUrl: storedSession.gatewayUrl,
-			runOn: storedSession.runOn,
+			runOn: turnRunOnTarget(turn, storedSession.runOn),
+			launchRefusal: turn.refusal?.message,
 			customModel: turn.model,
 			customEffort: turn.effort,
 			enableMaestroP: storedSession.enableMaestroP,

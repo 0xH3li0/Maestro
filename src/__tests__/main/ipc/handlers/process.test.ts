@@ -895,6 +895,74 @@ describe('process IPC handlers', () => {
 				expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
 			});
 
+			describe("a turn's Run on override (a tier target)", () => {
+				const BATCH = 'agent-ro-batch-1760000000000';
+
+				it('launches a provider agent on the source a tier names', async () => {
+					storeAgent({ id: 'agent-ro' });
+
+					// The renderer resolved `low` to a local model and sends both halves:
+					// the model and the place.
+					await spawnClaude({
+						sessionId: BATCH,
+						args: ['--print', '--model', 'qwen3:latest'],
+						runOnOverride: QWEN,
+					});
+
+					expect(spawned().customEnvVars).toMatchObject({
+						ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+						ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:latest',
+					});
+					expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
+				});
+
+				it('launches a source agent on the provider when a tier names it, with nothing of the source', async () => {
+					storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+					await spawnClaude({
+						sessionId: BATCH,
+						args: ['--print', '--model', 'opus'],
+						runOnOverride: { type: 'provider' },
+					});
+
+					expect(spawned().args).toEqual(['--print', '--model', 'opus']);
+					expect(spawned().customEnvVars ?? {}).not.toHaveProperty('ANTHROPIC_BASE_URL');
+					expect(runOnDeps.endpoints).not.toHaveBeenCalled();
+				});
+
+				it("keeps the agent's own target for a spawn that names none", async () => {
+					storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+					await spawnClaude({ sessionId: BATCH, runOnOverride: undefined });
+
+					expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
+				});
+
+				it('refuses a malformed override: it never falls back to the stored target', async () => {
+					storeAgent({ id: 'agent-ro' });
+
+					const result = await spawnClaude({ sessionId: BATCH, runOnOverride: { type: 'source' } });
+
+					expect(result).toEqual({ success: false, pid: 0 });
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				});
+
+				it('refuses an override whose source cannot serve the model', async () => {
+					storeAgent({ id: 'agent-ro' });
+					runOnDeps.listModels.mockResolvedValue([{ id: 'some-other-model' }]);
+
+					const result = await spawnClaude({ sessionId: BATCH, runOnOverride: QWEN });
+
+					expect(result).toEqual({ success: false, pid: 0 });
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+					expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+						'process:data',
+						BATCH,
+						expect.stringContaining('does not serve "qwen3:latest"')
+					);
+				});
+			});
+
 			it('gives Codex a provider of its own ahead of its arguments, and the model after exec', async () => {
 				storeAgent({ id: 'agent-ro', runOn: ON_SERVER });
 

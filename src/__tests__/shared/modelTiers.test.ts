@@ -19,6 +19,7 @@ import {
 	supportsEffortSelection,
 	supportsTierSelection,
 	tierLaunchKey,
+	tierPillLabel,
 	tierTargetLaunch,
 	type TierTarget,
 } from '../../shared/modelTiers';
@@ -381,6 +382,61 @@ describe('what a resolved tier does to a launch', () => {
 		expect(
 			tierTargetLaunch({ kind: 'resolved', target: LOCAL, source: 'agent' }, 'sonnet')
 		).toEqual({ model: 'qwen3.5-4b', runOn: LOCAL });
+	});
+});
+
+describe('tierPillLabel', () => {
+	const OLLAMA = { id: 'ep-ollama', name: 'Ollama' };
+	const ON_OLLAMA: TierTarget = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' };
+
+	it('names the tier, the model and the source for a tier on a source', () => {
+		expect(
+			tierPillLabel('claude-code', 'low', 'sonnet', { tierTargets: { low: ON_OLLAMA } }, [OLLAMA])
+		).toBe('low · qwen3:latest · Ollama');
+	});
+
+	it('names the Maestro model server as Maestro', () => {
+		expect(
+			tierPillLabel('claude-code', 'low', 'sonnet', {
+				harnessDefaults: { 'claude-code': { low: LOCAL } },
+			})
+		).toBe(`low · ${LOCAL.model} · Maestro`);
+	});
+
+	it('names the tier and the model for a tier on the provider', () => {
+		expect(tierPillLabel('claude-code', 'high', 'sonnet')).toBe('high · opus');
+		expect(
+			tierPillLabel('claude-code', 'high', 'sonnet', {
+				tierTargets: { high: { type: 'provider-model', model: 'opus[1m]' } },
+			})
+		).toBe('high · opus[1m]');
+	});
+
+	it("names the agent's own model for a target that names only the provider", () => {
+		expect(
+			tierPillLabel('claude-code', 'medium', 'sonnet', {
+				tierTargets: { medium: { type: 'provider' } },
+			})
+		).toBe('medium · sonnet');
+	});
+
+	it('names nothing for a tier that has no target on this agent', () => {
+		// No layer maps it.
+		expect(tierPillLabel('opencode', 'high', 'some-model')).toBeUndefined();
+		// The stored target cannot be used: the launch refuses, and says why.
+		expect(
+			tierPillLabel('claude-code', 'low', 'sonnet', {
+				tierTargets: { low: { type: 'source' } as TierTarget },
+			})
+		).toBeUndefined();
+		// Only the built-in table maps it, and the agent runs on a source.
+		expect(tierPillLabel('claude-code', 'high', 'sonnet', { runOn: ON_OLLAMA })).toBeUndefined();
+		// The provider, on a model nobody named.
+		expect(
+			tierPillLabel('claude-code', 'medium', undefined, {
+				tierTargets: { medium: { type: 'provider' } },
+			})
+		).toBeUndefined();
 	});
 });
 

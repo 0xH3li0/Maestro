@@ -149,6 +149,17 @@ export function resolveTurnSettings(
 	};
 }
 
+/**
+ * The Run on target a resolved turn launches on, as data for the Run on path
+ * (`prepareLaunchRunOn`, which validates it): the tier's target when a layer
+ * the user wrote decided the place, else the agent's own stored one. Every
+ * surface that launches a resolved turn passes this, never the agent's `runOn`
+ * alone: that would launch a source tier's model name on the provider.
+ */
+export function turnRunOnTarget(turn: { runOn?: unknown }, agentRunOn: unknown): unknown {
+	return turn.runOn ?? agentRunOn;
+}
+
 /** What a tier resolved to, for a note: the model, and the source when it names one. */
 function describeTierLaunch(launch: { model: string | undefined; runOn?: RunOnTarget }): string {
 	if (launch.runOn?.type === 'source') {

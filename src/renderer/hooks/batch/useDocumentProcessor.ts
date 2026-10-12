@@ -17,7 +17,11 @@ import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
 import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
-import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
+import type {
+	AgentSpawnErrorKind,
+	SpawnAgentOptions,
+	SpawnAgentRunOverrides,
+} from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
@@ -202,13 +206,14 @@ export interface DocumentReadResult {
 }
 
 /**
- * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint.
- * Undefined on either axis means the agent's configured value stands.
+ * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint, and
+ * the Run on target when the hint's tier names a place. Undefined on an axis
+ * means the agent's configured value stands.
  */
-export interface AutoRunTurnOverrides {
-	modelOverride?: string;
-	effortOverride?: string;
-}
+export type AutoRunTurnOverrides = Pick<
+	SpawnAgentOptions,
+	'modelOverride' | 'effortOverride' | 'runOnOverride'
+>;
 
 /**
  * The run-scoped settings a BatchRunConfig hands the document processor: the
@@ -512,7 +517,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						session.id,
 						finalPrompt,
 						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
-						{ modelOverride: turnSettings.model, effortOverride: turnSettings.effort }
+						{
+							modelOverride: turnSettings.model,
+							effortOverride: turnSettings.effort,
+							runOnOverride: turnSettings.runOn,
+						}
 					);
 
 			// Capture elapsed time (machine sleep excluded)

@@ -90,6 +90,30 @@ describe('useDocumentProcessor - tier targets', () => {
 		expect(spawnedModel()).toBe('opus');
 	});
 
+	const spawnedRunOn = () => onSpawnAgent.mock.calls[0][3]?.runOnOverride;
+
+	it('sends the place with the model when the tier names a source', async () => {
+		const local = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+		await runTask('low', { tierTargets: { low: local } });
+		expect(spawnedModel()).toBe('qwen3.5-4b');
+		expect(spawnedRunOn()).toEqual(local);
+	});
+
+	it("sends a source agent's task to the provider when a layer the user wrote names it", async () => {
+		await runTask('high', {
+			runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' },
+			tierTargets: { high: { type: 'provider-model', model: 'opus' } },
+		});
+		expect(spawnedModel()).toBe('opus');
+		expect(spawnedRunOn()).toEqual({ type: 'provider' });
+	});
+
+	it("names no place for a tier only the built-in table maps: the agent's own target stands", async () => {
+		await runTask('high');
+		expect(spawnedModel()).toBe('opus');
+		expect(spawnedRunOn()).toBeUndefined();
+	});
+
 	it('fails the task by name, without a spawn, when the tier target cannot be used', async () => {
 		const result = await runTask('low', { tierTargets: { low: { type: 'source' } as never } });
 		expect(onSpawnAgent).not.toHaveBeenCalled();

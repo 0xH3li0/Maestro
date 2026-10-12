@@ -11,7 +11,7 @@ import {
 	countTasksUnderActiveHint,
 	describeSegmentLimit,
 } from '../../shared/autorunModelHints';
-import { resolveTurnSettings } from '../../shared/autorunTurnSettings';
+import { resolveTurnSettings, turnRunOnTarget } from '../../shared/autorunTurnSettings';
 
 describe('findActiveModelHint', () => {
 	it('returns null when the document sets no hint', () => {
@@ -460,6 +460,41 @@ describe('resolveTurnSettings', () => {
 				expect(resolved.refusal).toBeUndefined();
 			}
 		});
+	});
+});
+
+describe('turnRunOnTarget', () => {
+	const OWN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it("is the agent's own target for a turn whose tier names no place", () => {
+		// No hint, and a tier only the built-in table maps: both leave `runOn` unset.
+		expect(turnRunOnTarget(resolveTurnSettings('claude-code', null, 'sonnet'), OWN)).toBe(OWN);
+		const builtIn = resolveTurnSettings('claude-code', { tier: 'high', line: 0 }, 'sonnet');
+		expect(turnRunOnTarget(builtIn, undefined)).toBeUndefined();
+	});
+
+	it("is the tier's target when a layer the user wrote names the place", () => {
+		const toProvider = resolveTurnSettings(
+			'claude-code',
+			{ tier: 'high', line: 0 },
+			'sonnet',
+			undefined,
+			{ runOn: OWN, tierTargets: { high: { type: 'provider-model', model: 'opus' } } }
+		);
+		// A source agent's `high` task goes to the provider, not to its own source.
+		expect(turnRunOnTarget(toProvider, OWN)).toEqual({ type: 'provider' });
+
+		const local = { type: 'source' as const, endpointId: 'ep-lm', model: 'qwen3.5-4b' };
+		const toSource = resolveTurnSettings(
+			'claude-code',
+			{ tier: 'low', line: 0 },
+			'sonnet',
+			undefined,
+			{
+				tierTargets: { low: local },
+			}
+		);
+		expect(turnRunOnTarget(toSource, undefined)).toEqual(local);
 	});
 });
 

@@ -17,6 +17,7 @@
 
 import type { ToolType } from '../types';
 import { resolveTurnSettings, type ResolvedTurnSettings } from '../autorunTurnSettings';
+import type { TierRouting } from '../modelTiers';
 import type { CueSubscription } from './contracts';
 
 /** The three per-subscription model fields, carried from dispatch to spawn. */
@@ -37,13 +38,17 @@ export function cueTurnSettingsOf(sub: CueTurnSettings): CueTurnSettings | undef
 
 /**
  * Resolve a subscription's settings against the agent that runs it.
- * `agentModel` / `agentEffort` are the agent's own configured values.
+ * `agentModel` / `agentEffort` are the agent's own configured values, and
+ * `routing` its tier targets and the harness defaults, so a subscription's
+ * tier launches where the same tier launches in a playbook. A pinned model
+ * names the model only: the run stays on the agent's own Run on target.
  */
 export function resolveCueTurnSettings(
 	toolType: ToolType,
 	settings: CueTurnSettings | undefined,
 	agentModel?: string,
-	agentEffort?: string
+	agentEffort?: string,
+	routing?: TierRouting
 ): ResolvedTurnSettings {
 	const pinnedModel = settings?.model?.trim();
 	// A pinned model replaces the tier outright. The validator refuses both on
@@ -57,7 +62,8 @@ export function resolveCueTurnSettings(
 			? { tier, effort, line: 0, scopes: { tier: 'subscription', effort: 'subscription' } }
 			: null,
 		agentModel,
-		agentEffort
+		agentEffort,
+		routing
 	);
 	if (pinnedModel) {
 		resolved.model = pinnedModel;

@@ -129,6 +129,18 @@ describe('requestCliSynopsis', () => {
 		expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn });
 	});
 
+	it("runs where the summarized turn ran when a tier's target decided it", async () => {
+		const own = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		// A `high` task of a source agent ran on the provider: so does its synopsis.
+		await requestCliSynopsis(mockSession({ runOn: own } as never), 's', {
+			source: 'cli:autorun-synopsis',
+			runOn: { type: 'provider' },
+		});
+
+		expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn: { type: 'provider' } });
+	});
+
 	it('keeps a read-only turn read-only', async () => {
 		await requestCliSynopsis(mockSession(), 's', {
 			source: 'cli:send-synopsis',

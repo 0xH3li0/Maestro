@@ -378,6 +378,20 @@ describe('cue-executor', () => {
 			expect(result.exitCode).toBeNull();
 		});
 
+		it('fails the run with the tier refusal it is handed, and spawns nothing', async () => {
+			const onLog = vi.fn();
+			const refusal = 'This agent\'s "low" tier target cannot be used: pick a target again.';
+			const result = await executeCuePrompt(
+				createExecutionConfig({ launchRefusal: refusal, onLog })
+			);
+
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toBe(refusal);
+			expect(result.exitCode).toBeNull();
+			expect(onLog).toHaveBeenCalledWith('error', refusal);
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
 		it('should populate Cue event data in template context', async () => {
 			const event = createMockEvent({
 				type: 'file.changed',

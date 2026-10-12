@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
+import type { RunOnTarget } from '../../../shared/local-models/run-on';
 import {
 	getActiveTab,
 	markTabRunningQueuedItem,
@@ -63,6 +64,12 @@ export interface SpawnAgentOptions {
 	modelOverride?: string;
 	/** Overrides session.customEffort for this spawn only */
 	effortOverride?: string;
+	/**
+	 * The Run on target this spawn launches on in place of the agent's own: the
+	 * target of the tier an Auto Run task resolved (`ResolvedTurnSettings.runOn`).
+	 * Absent means the agent's stored target, which the spawn handler reads.
+	 */
+	runOnOverride?: RunOnTarget;
 }
 
 /**
@@ -629,6 +636,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
+							// A tier that names a place (a local source for `low`, the provider
+							// for `high`) launches there, through the Run on path. Sent with
+							// the model above: a source's model name means nothing to the
+							// provider, so one without the other would fail the task.
+							runOnOverride: options?.runOnOverride,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 							// Origin of the turn. Auto Run is the one dispatcher that reaches

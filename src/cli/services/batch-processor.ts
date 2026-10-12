@@ -30,7 +30,11 @@ import { getCliPrompt, getCliTaskSelectionBlock } from './prompt-loader';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../shared/autorunModelHints';
-import { resolveTurnSettings, describeTurnSettings } from '../../shared/autorunTurnSettings';
+import {
+	resolveTurnSettings,
+	describeTurnSettings,
+	turnRunOnTarget,
+} from '../../shared/autorunTurnSettings';
 import type { TierRouting } from '../../shared/modelTiers';
 
 // Halt detection lives in `shared/autorunMarkers` so the desktop renderer can
@@ -653,6 +657,7 @@ export async function* runPlaybook(
 					// A tier target that cannot be used fails the task by name. It is
 					// never launched on the agent's own model in its place.
 					const tierRefusal = turnSettings.refusal;
+					const taskRunOn = turnRunOnTarget(turnSettings, session.runOn);
 					const result: AgentResult = tierRefusal
 						? { success: false, error: tierRefusal.message }
 						: await captureCliRun(
@@ -672,7 +677,10 @@ export async function* runPlaybook(
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
 										gatewayUrl: session.gatewayUrl,
-										runOn: session.runOn,
+										// The tier's target when a layer set one for this task, else
+										// the agent's own: a `low` task can launch on a local source
+										// and the next `high` task on the provider.
+										runOn: taskRunOn,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
 										appendSystemPrompt: playbookSystemPrompt,
 										// This is Auto Run, not someone typing. Marks the turn so delegation
@@ -747,6 +755,7 @@ export async function* runPlaybook(
 							source: 'cli:autorun-synopsis',
 							model: turnSettings.model,
 							effort: turnSettings.effort,
+							runOn: taskRunOn,
 							signal,
 						});
 

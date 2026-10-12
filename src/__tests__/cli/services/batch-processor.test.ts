@@ -2222,6 +2222,71 @@ describe('batch-processor', () => {
 			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus');
 		});
 
+		it('launches a low task and a high task of one document on their own targets', async () => {
+			// The document as the engine re-reads it: each task spawn checks one box.
+			let content = [
+				'<!-- MAESTRO:MODEL tier="low" -->',
+				'- [ ] Rename the helper',
+				'',
+				'<!-- MAESTRO:MODEL tier="high" -->',
+				'- [ ] Design the migration',
+			].join('\n');
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => ({
+				content,
+				taskCount: (content.match(/- \[ \]/g) ?? []).length,
+			}));
+			vi.mocked(spawnAgent).mockImplementation(async (_tool, _cwd, _prompt, resumeId) => {
+				// A resume is the task's synopsis; only the task itself does the work.
+				if (!resumeId) content = content.replace('- [ ]', '- [x]');
+				return {
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				};
+			});
+
+			// The agent's own turns run on Ollama. It sends `low` to another local
+			// model and `high` to the provider.
+			const own = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			const low = { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+			const session = mockSession({
+				toolType: 'claude-code',
+				customModel: 'sonnet',
+				runOn: own,
+				tierTargets: { low, high: { type: 'provider-model', model: 'opus' } },
+			} as never);
+			await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks', {}));
+
+			const spawns = vi.mocked(spawnAgent).mock.calls;
+			const tasks = spawns.filter((call) => !call[3]).map((call) => call[4]);
+			const synopses = spawns.filter((call) => call[3]).map((call) => call[4]);
+			expect(tasks).toHaveLength(2);
+			expect(tasks[0]).toMatchObject({ customModel: 'qwen3.5-4b', runOn: low });
+			expect(tasks[1]).toMatchObject({ customModel: 'opus', runOn: { type: 'provider' } });
+			// Each synopsis resumes its task's conversation where that task ran, not
+			// on the agent's own target.
+			expect(synopses).toHaveLength(2);
+			expect(synopses[0]?.runOn).toEqual(low);
+			expect(synopses[1]?.runOn).toEqual({ type: 'provider' });
+		});
+
+		it("keeps the agent's own Run on target for a tier that names no place", async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			// On the provider, only the built-in table maps `high`: a model, no place.
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook(),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+			const spawned = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(spawned?.customModel).toBe('opus');
+			expect(spawned?.runOn).toBeUndefined();
+		});
+
 		it('fails the task by name, without a spawn, when the tier target cannot be used', async () => {
 			singleTaskDocument('<!-- MAESTRO:MODEL tier="low" -->\n- [ ] Task one');
 

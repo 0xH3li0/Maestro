@@ -73,6 +73,50 @@ describe('resolveCueTurnSettings', () => {
 	});
 });
 
+describe('resolveCueTurnSettings with tier targets', () => {
+	const LOCAL = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it("launches a subscription's tier on the agent's own tier target", () => {
+		const resolved = resolveCueTurnSettings('claude-code', { tier: 'low' }, 'sonnet', undefined, {
+			tierTargets: { low: LOCAL },
+		});
+		expect(resolved).toMatchObject({ model: LOCAL.model, runOn: LOCAL, tierSource: 'agent' });
+		expect(resolved.notes[0]).toContain('(subscription)');
+	});
+
+	it('reads the harness default when the agent sets no target for the tier', () => {
+		const resolved = resolveCueTurnSettings('claude-code', { tier: 'high' }, 'sonnet', undefined, {
+			harnessDefaults: { 'claude-code': { high: { type: 'provider-model', model: 'opus[1m]' } } },
+		});
+		expect(resolved).toMatchObject({
+			model: 'opus[1m]',
+			runOn: { type: 'provider' },
+			tierSource: 'harness-default',
+		});
+	});
+
+	it('refuses a tier target that cannot be used', () => {
+		const resolved = resolveCueTurnSettings('claude-code', { tier: 'low' }, 'sonnet', undefined, {
+			tierTargets: { low: { type: 'source' } as never },
+		});
+		expect(resolved.refusal?.code).toBe('tier-invalid-target');
+		expect(resolved.runOn).toBeUndefined();
+	});
+
+	it('leaves the place alone for a pinned model: it names the model only', () => {
+		const resolved = resolveCueTurnSettings(
+			'claude-code',
+			{ tier: 'low', model: 'opus' },
+			'sonnet',
+			undefined,
+			{ tierTargets: { low: LOCAL } }
+		);
+		expect(resolved.model).toBe('opus');
+		expect(resolved.runOn).toBeUndefined();
+		expect(resolved.refusal).toBeUndefined();
+	});
+});
+
 describe('sameCueTurnSettings', () => {
 	it('treats absent as matching absent and blank model as absent', () => {
 		expect(sameCueTurnSettings({}, {})).toBe(true);

@@ -603,6 +603,48 @@ describe('useAgentExecution', () => {
 			expect(session.customEffort).toBe('low');
 		});
 
+		it("sends a tier's Run on target with the spawn, and nothing when the task names none", async () => {
+			const local = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+			const session = createMockSession({
+				state: 'busy',
+				customModel: 'session-model',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+
+			const { result } = renderExecution(session);
+
+			const lowTask = result.current.spawnAgentForSession(session.id, 'Low task', undefined, {
+				isAutoRun: true,
+				modelOverride: local.model,
+				runOnOverride: local,
+			});
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const lowConfig = mockProcess.spawn.mock.calls[0][0];
+			// Both halves travel together: the source's model and the source.
+			expect(lowConfig.sessionCustomModel).toBe(local.model);
+			expect(lowConfig.runOnOverride).toEqual(local);
+			act(() => {
+				onExitHandler?.(lowConfig.sessionId as string);
+			});
+			await lowTask;
+
+			const plainTask = result.current.spawnAgentForSession(session.id, 'Plain task', undefined, {
+				isAutoRun: true,
+			});
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+			});
+			const plainConfig = mockProcess.spawn.mock.calls[1][0];
+			// The spawn handler reads the agent's own target from the store.
+			expect(plainConfig.runOnOverride).toBeUndefined();
+			act(() => {
+				onExitHandler?.(plainConfig.sessionId as string);
+			});
+			await plainTask;
+		});
+
 		it('keeps the session values when no overrides are supplied', async () => {
 			const session = createMockSession({
 				state: 'busy',

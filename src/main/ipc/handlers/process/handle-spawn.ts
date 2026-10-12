@@ -67,6 +67,7 @@ import {
 	buildAgentLaunchPlan,
 	type LaunchPlanRunOn,
 } from '../../../../shared/maestro-lib/launch/launch-plan';
+import { turnRunOnTarget } from '../../../../shared/autorunTurnSettings';
 import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
 import { logRunOnLaunch, prepareLaunchRunOn } from '../../../local-models/run-on';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
@@ -216,13 +217,18 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	};
 
-	// The agent this spawn runs AS, and its stored Run on target. Looked up by
+	// The agent this spawn runs AS, and the Run on target it launches on. Looked up by
 	// `agentIdFromProcessId`, which strips every process suffix: an Auto Run task
 	// (`{agentId}-batch-{ts}`) and the History synopsis (`{agentId}-synopsis-{ts}`)
 	// are the agent's own work and run where its typed turns run. The synopsis
 	// resumes the agent's conversation, so missing it here would send that
 	// conversation to the provider's cloud. Read from the store, not from the
 	// renderer's spawn request, for the reason the gateway is (see below).
+	// The one thing the request may say is `runOnOverride`: a tier's target for
+	// this turn (an Auto Run task on a tier the agent or the harness default
+	// sends elsewhere). A caller that leaves it out gets the agent's own target,
+	// and one that sets it is checked like a stored one, so it cannot name a
+	// place the Run on path would not launch on.
 	const launchAgentId = agentIdFromProcessId(config.sessionId);
 	const launchAgent = (
 		deps.sessionsStore.get('sessions', []) as Array<{
@@ -231,13 +237,13 @@ async function handleProcessSpawnImpl(
 			runOn?: unknown;
 		}>
 	).find((s) => s?.id === launchAgentId);
-	const storedRunOn = launchAgent?.runOn;
+	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, launchAgent?.runOn);
 
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
 		envLayers: claudeEnvLayers,
-		runOn: storedRunOn,
+		runOn: launchRunOn,
 	});
 	const {
 		baseSessionId,
@@ -253,7 +259,7 @@ async function handleProcessSpawnImpl(
 	// An agent that runs on a source keeps to `codex exec`, the transport its
 	// recipe was measured on.
 	const codexTransport = runOnHarnessMode(
-		storedRunOn,
+		launchRunOn,
 		resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore),
 		'exec'
 	);
@@ -358,7 +364,7 @@ async function handleProcessSpawnImpl(
 		// name; it never runs the turn on the provider's model.
 		const preparedRunOn = await prepareLaunchRunOn({
 			toolType: config.toolType,
-			target: storedRunOn,
+			target: launchRunOn,
 			userEnvVars: config.sessionCustomEnvVars ?? providerCustomEnvVars,
 			sshRemoteConfig: config.sessionSshRemoteConfig,
 			sshStore,
