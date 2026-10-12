@@ -14,6 +14,7 @@ import {
 	isQuickChatTab,
 	resetQuickChatEngineForTests,
 	runQuickChatCommand,
+	startQuickChatEngine,
 } from '../../../renderer/services/quickChatEngine';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../../shared/quickChat';
 import type { Session } from '../../../renderer/types';
@@ -94,6 +95,24 @@ describe('agent resolution', () => {
 			{ id: 'a', name: 'Agent a', groupName: 'Backend', provider: 'Codex' },
 			{ id: 'b', name: 'Agent b', groupName: undefined, provider: 'Claude Code' },
 		]);
+	});
+
+	it('lists agents in Left Bar order and leaves worktree children out', () => {
+		useSessionStore.setState({
+			sessions: [
+				agent('loose', { name: 'Loose', groupId: undefined }),
+				agent('z', { name: 'Zed', groupId: 'g-alpha' }),
+				agent('wt', { name: 'Zed: feature', groupId: 'g-alpha', parentSessionId: 'z' }),
+				agent('m', { name: 'Mid', groupId: 'g-beta' }),
+				agent('y', { name: 'Yak', groupId: 'g-alpha' }),
+			],
+			groups: [
+				{ id: 'g-beta', name: 'Beta', emoji: '', collapsed: false },
+				{ id: 'g-alpha', name: 'Alpha', emoji: '', collapsed: false },
+			],
+			activeSessionId: 'loose',
+		});
+		expect(buildQuickChatSnapshot().agents.map((x) => x.id)).toEqual(['y', 'z', 'm', 'loose']);
 	});
 });
 
@@ -320,6 +339,48 @@ describe('snapshot', () => {
 				),
 		});
 		expect(buildQuickChatSnapshot().tabId).toBeNull();
+	});
+});
+
+describe('snapshot streaming', () => {
+	afterEach(() => vi.useRealTimers());
+
+	async function startOwningEngine() {
+		vi.useFakeTimers();
+		let handler: ((command: { type: 'sync' }) => unknown) | undefined;
+		vi.mocked(window.maestro.quickChat.onCommand).mockImplementationOnce((cb) => {
+			handler = cb as typeof handler;
+			return () => {};
+		});
+		const stop = startQuickChatEngine();
+		// Only a window that has received a command streams snapshots.
+		await handler?.({ type: 'sync' });
+		vi.mocked(window.maestro.quickChat.pushSnapshot).mockClear();
+		return stop;
+	}
+
+	it('re-pushes the picker list when Show Hidden changes in the main window', async () => {
+		useSessionStore.setState({
+			sessions: [agent('a'), agent('h', { groupId: 'hid' })],
+			groups: [{ id: 'hid', name: 'Hidden', emoji: '', collapsed: false, hidden: true }],
+			activeSessionId: 'a',
+		});
+		useSettingsStore.setState({ showHiddenGroups: false });
+		const stop = await startOwningEngine();
+
+		useSettingsStore.setState({ showHiddenGroups: true });
+		vi.advanceTimersByTime(500);
+		const pushed = vi.mocked(window.maestro.quickChat.pushSnapshot).mock.calls.at(-1)?.[0];
+		expect(pushed?.agents.map((x) => x.id)).toEqual(['h', 'a']);
+		stop();
+	});
+
+	it('re-pushes when the active agent changes', async () => {
+		const stop = await startOwningEngine();
+		useSessionStore.setState({ activeSessionId: 'a' });
+		vi.advanceTimersByTime(500);
+		expect(window.maestro.quickChat.pushSnapshot).toHaveBeenCalled();
+		stop();
 	});
 });
 

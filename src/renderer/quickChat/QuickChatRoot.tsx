@@ -39,6 +39,7 @@ import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { HoverTooltip } from '../components/ui/HoverTooltip';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
 
@@ -78,31 +79,79 @@ function useElapsedSeconds(since: number | null): number {
 	return since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
 }
 
+/** Widest a hover overlay gets before its explanation wraps. */
+const TOOLTIP_MAX_WIDTH = 260;
+
+/**
+ * A hover overlay naming the control and, when it is not obvious, what it does.
+ * Not the native `title`: macOS does not show one in this window while another
+ * app is active, which is exactly when the window is summoned.
+ */
+function QuickChatTooltip({
+	label,
+	hint,
+	shortcut,
+	theme,
+	children,
+}: {
+	label: string;
+	hint?: string;
+	shortcut?: string;
+	theme: Theme;
+	children: React.ReactNode;
+}) {
+	return (
+		<HoverTooltip
+			theme={theme}
+			shortcut={shortcut}
+			maxWidth={hint ? TOOLTIP_MAX_WIDTH : undefined}
+			triggerStyle={NO_DRAG_REGION}
+			label={
+				hint ? (
+					<span className="flex flex-col gap-0.5">
+						<span className="font-medium">{label}</span>
+						<span style={{ color: theme.colors.textDim }}>{hint}</span>
+					</span>
+				) : (
+					label
+				)
+			}
+		>
+			{children}
+		</HoverTooltip>
+	);
+}
+
 function IconButton({
 	label,
+	hint,
+	shortcut,
 	onClick,
 	theme,
 	children,
 	disabled,
 }: {
 	label: string;
+	hint?: string;
+	shortcut?: string;
 	onClick: () => void;
 	theme: Theme;
 	children: React.ReactNode;
 	disabled?: boolean;
 }) {
 	return (
-		<button
-			type="button"
-			title={label}
-			aria-label={label}
-			onClick={onClick}
-			disabled={disabled}
-			className="p-1.5 rounded-md transition-opacity hover:opacity-100 opacity-70 disabled:opacity-30"
-			style={{ ...NO_DRAG_REGION, color: theme.colors.textMain }}
-		>
-			{children}
-		</button>
+		<QuickChatTooltip label={label} hint={hint} shortcut={shortcut} theme={theme}>
+			<button
+				type="button"
+				aria-label={hint ? `${label}. ${hint}` : label}
+				onClick={onClick}
+				disabled={disabled}
+				className="p-1.5 rounded-md transition-opacity hover:opacity-100 opacity-70 disabled:opacity-30"
+				style={{ ...NO_DRAG_REGION, color: theme.colors.textMain }}
+			>
+				{children}
+			</button>
+		</QuickChatTooltip>
 	);
 }
 
@@ -317,10 +366,11 @@ export function QuickChatRoot() {
 				<div className="flex-1" />
 				<IconButton
 					theme={theme}
-					label={
+					label={snapshot.persistent ? 'Kept as a tab' : 'Keep as a tab'}
+					hint={
 						snapshot.persistent
-							? `Kept as a tab on ${agentName}. Click to make it ephemeral.`
-							: 'Ephemeral: deleted when you start a new chat. Click to keep it as a tab.'
+							? `This chat stays as a tab on ${agentName} after you start a new one. Click to make it temporary again.`
+							: `Temporary: this chat is deleted when you start a new one. Click to keep it as a tab on ${agentName}.`
 					}
 					onClick={() => void run({ type: 'setPersistent', persistent: !snapshot.persistent })}
 				>
@@ -332,10 +382,11 @@ export function QuickChatRoot() {
 				</IconButton>
 				<IconButton
 					theme={theme}
-					label={
+					label={pinned ? 'Pinned on top' : 'Not pinned'}
+					hint={
 						pinned
-							? 'Pinned: floats above other windows. Click to let it fall behind them.'
-							: 'Not pinned: falls behind other windows. Click to float it on top.'
+							? 'Floats above other windows. Click to let it fall behind them.'
+							: 'Falls behind other windows when you click away. Click to float it on top.'
 					}
 					onClick={togglePinned}
 				>
@@ -346,28 +397,30 @@ export function QuickChatRoot() {
 					)}
 				</IconButton>
 				{snapshot.busy ? (
-					<button
-						type="button"
-						title="Stop the reply"
-						aria-label="Stop the reply"
-						onClick={() => void run({ type: 'stop' })}
-						className="w-9 h-9 rounded-full flex items-center justify-center"
-						style={{ backgroundColor: c.textMain, color: c.bgMain }}
-					>
-						<Square className="w-3.5 h-3.5" fill="currentColor" />
-					</button>
+					<QuickChatTooltip label="Stop the reply" theme={theme}>
+						<button
+							type="button"
+							aria-label="Stop the reply"
+							onClick={() => void run({ type: 'stop' })}
+							className="w-9 h-9 rounded-full flex items-center justify-center"
+							style={{ backgroundColor: c.textMain, color: c.bgMain }}
+						>
+							<Square className="w-3.5 h-3.5" fill="currentColor" />
+						</button>
+					</QuickChatTooltip>
 				) : (
-					<button
-						type="button"
-						title="Send (Enter)"
-						aria-label="Send"
-						onClick={() => void send()}
-						disabled={!draft.trim()}
-						className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
-						style={{ backgroundColor: c.accent, color: c.accentForeground }}
-					>
-						<ArrowUp className="w-4 h-4" />
-					</button>
+					<QuickChatTooltip label="Send" shortcut="Enter" theme={theme}>
+						<button
+							type="button"
+							aria-label="Send"
+							onClick={() => void send()}
+							disabled={!draft.trim()}
+							className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
+							style={{ backgroundColor: c.accent, color: c.accentForeground }}
+						>
+							<ArrowUp className="w-4 h-4" />
+						</button>
+					</QuickChatTooltip>
 				)}
 			</div>
 		</div>
@@ -394,20 +447,29 @@ export function QuickChatRoot() {
 					</div>
 					<IconButton
 						theme={theme}
-						label={`New chat (${formatShortcutKeys(['Meta', 'n'])})`}
+						label="New chat"
+						shortcut={formatShortcutKeys(['Meta', 'n'])}
 						onClick={newChat}
 					>
 						<PenSquare className="w-4 h-4" />
 					</IconButton>
 					<IconButton
 						theme={theme}
-						label="Open as a tab in Maestro"
+						label="Open in Maestro"
+						hint="Shows this chat as a tab in the main window."
 						onClick={() => void run({ type: 'reveal' })}
 						disabled={!snapshot.tabId}
 					>
 						<ExternalLink className="w-4 h-4" />
 					</IconButton>
-					<IconButton theme={theme} label="Close (Esc). The chat is kept." onClick={hide}>
+					<IconButton
+						theme={theme}
+						label="Close"
+						hint="The chat is kept. The hotkey brings it back."
+						// Escape backs out of the picker first, so it only closes without it.
+						shortcut={pickerOpen ? undefined : 'Esc'}
+						onClick={hide}
+					>
 						<X className="w-4 h-4" />
 					</IconButton>
 				</div>

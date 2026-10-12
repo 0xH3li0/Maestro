@@ -20,11 +20,12 @@ import {
 	type QuickChatSnapshot,
 } from '../../shared/quickChat';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
-import { useSettingsStore } from '../stores/settingsStore';
+import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
 import type { AITab, Session } from '../types';
 import { closeTab, createTab, revealAiTab } from '../utils/tabHelpers';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
+import { leftBarAgentOrder } from '../utils/leftBarOrder';
 import { jumpToAgent } from './agentNavigation';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 
@@ -95,8 +96,18 @@ function saveToHistoryFor(persistent: boolean): boolean {
 export function buildQuickChatSnapshot(error: string | null = null): QuickChatSnapshot {
 	const session = resolveAgent();
 	const tab = currentTab(session);
-	const { sessions, groups } = useSessionStore.getState();
+	const { sessions, groups, activeSessionId } = useSessionStore.getState();
+	const settings = useSettingsStore.getState();
 	const groupNames = new Map(groups.map((g) => [g.id, g.name]));
+	// The Left Bar's order and membership: no worktree children, no hidden groups.
+	const agents = leftBarAgentOrder({
+		sessions,
+		groups,
+		nestedGroups: selectGroupsPlusEnabled(settings),
+		pianolaEnabled: settings.encoreFeatures?.pianola === true,
+		showHiddenGroups: settings.showHiddenGroups,
+		activeSessionId,
+	}).filter(canChat);
 	return {
 		...EMPTY_QUICK_CHAT_SNAPSHOT,
 		agentId: session?.id ?? null,
@@ -106,7 +117,7 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 		busy: tab?.state === 'busy',
 		busySince: tab?.state === 'busy' ? (tab.thinkingStartTime ?? null) : null,
 		messages: tab ? logsToQuickChatMessages(tab.logs) : [],
-		agents: sessions.filter(canChat).map((s) => ({
+		agents: agents.map((s) => ({
 			id: s.id,
 			name: s.name,
 			groupName: (s.groupId && groupNames.get(s.groupId)) || undefined,
@@ -323,13 +334,34 @@ export function startQuickChatEngine(): () => void {
 		owner = true;
 		return runQuickChatCommand(command);
 	});
-	const offSessions = useSessionStore.subscribe((state, previous) => {
-		if (!owner || state.sessions === previous.sessions || pushTimer) return;
+	const schedulePush = () => {
+		if (!owner || pushTimer) return;
 		pushTimer = setTimeout(pushIfChanged, PUSH_THROTTLE_MS);
+	};
+	// The picker follows the Left Bar (see leftBarAgentOrder), so anything that
+	// reorders or hides a row there is news too: groups, the active agent (whose
+	// hidden group is exempt), Show Hidden, and the Groups+ / Pianola features.
+	const offSessions = useSessionStore.subscribe((state, previous) => {
+		if (
+			state.sessions !== previous.sessions ||
+			state.groups !== previous.groups ||
+			state.activeSessionId !== previous.activeSessionId
+		) {
+			schedulePush();
+		}
+	});
+	const offSettings = useSettingsStore.subscribe((state, previous) => {
+		if (
+			state.showHiddenGroups !== previous.showHiddenGroups ||
+			state.encoreFeatures !== previous.encoreFeatures
+		) {
+			schedulePush();
+		}
 	});
 	return () => {
 		offCommand();
 		offSessions();
+		offSettings();
 		if (pushTimer) clearTimeout(pushTimer);
 		pushTimer = null;
 	};

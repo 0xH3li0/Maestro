@@ -161,6 +161,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a PR is being opened right now:** `usePRCreationActive()`, `startPRCreation()` in `src/renderer/stores/prCreationStore.ts`
 - **Taking the user to an agent:** `jumpToAgent()`, `revealAgentInSidebar()`, `openAgentSettings()` in `src/renderer/services/agentNavigation.ts`
 - **Whether an agent is drawn in the Left Bar:** `sessionMatchesFilter()`, `passesUnreadFilter()`, `passesHiddenGroupFilter()` in `src/renderer/utils/sidebarMembership.ts`; attention via `sessionNeedsAttention()` in `src/renderer/utils/sessionAttention.ts`
+- **Listing agents in the Left Bar's order:** `leftBarAgentOrder()`, `orderLeftBarGroups()` in `src/renderer/utils/leftBarOrder.ts`
 - **Whether an agent is answering a consult right now:** `useSessionIsBeingConsulted(sessionId)`, `useConsultedSessionIds()` in `src/renderer/stores/crossAgentInFlightStore.ts`
 - **Dismissing a drawer after the user picks something in it:** `closeLeftSidebarForNavigation()`, `closeRightPanelForNavigation()` in `src/renderer/stores/uiStore.ts` (call at the tap, never from an effect)
 - **Which agents own an Opt+Cmd+# slot:** `buildSessionJumpSlotMap(visibleSessions)`, `sessionJumpShortcut(digit)` in `src/renderer/utils/sessionJumpSlots.ts`
