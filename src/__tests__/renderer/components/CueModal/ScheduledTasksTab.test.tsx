@@ -24,7 +24,10 @@ vi.mock('../../../../renderer/services/cue', () => ({
 }));
 
 const showConfirmation = vi.fn();
-vi.mock('../../../../renderer/stores/modalStore', () => ({
+// Partial mock: the form's Model selector pulls in stores that register with
+// modalStore at import time, so the rest of the module has to stay real.
+vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/modalStore')>()),
 	getModalActions: () => ({ showConfirmation }),
 }));
 
