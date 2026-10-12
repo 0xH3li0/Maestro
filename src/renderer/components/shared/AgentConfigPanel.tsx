@@ -62,8 +62,8 @@ const CLAUDE_TOKEN_MODE_HINTS: Record<ClaudeTokenMode, string> = {
 // Codex transport selector (codex only). Labels follow CODEX_TRANSPORTS order,
 // so the default (`exec`) is always the first segment.
 const CODEX_TRANSPORT_LABELS: Record<CodexTransport, string> = {
-	exec: 'Standard (codex exec)',
-	'app-server': 'App server (experimental, enables steering)',
+	exec: 'codex exec',
+	'app-server': 'codex app-server',
 };
 
 const CODEX_TRANSPORT_OPTIONS: { value: CodexTransport; label: string }[] = CODEX_TRANSPORTS.map(
@@ -838,9 +838,9 @@ export function AgentConfigPanel({
 						theme={theme}
 					/>
 					<p className="text-xs opacity-50 mt-2">
-						Standard runs every turn through codex exec. App server is experimental: it runs local
-						interactive chat turns through codex app-server so a queued message can steer a turn
-						that is already running. SSH, image, Auto Run, and Cue turns keep using codex exec.
+						codex exec is the default and runs every turn. codex app-server is experimental: it runs
+						local interactive chat turns so a queued message can steer a turn that is already
+						running. SSH, image, Auto Run, and Cue turns keep using codex exec.
 						{isSshEnabled && codexTransport === 'app-server'
 							? ' This agent runs over SSH, so its turns use codex exec.'
 							: ''}
