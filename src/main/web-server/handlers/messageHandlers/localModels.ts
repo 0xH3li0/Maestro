@@ -11,7 +11,8 @@
  * local_models_proxy_block, local_models_runtimes_list,
  * local_models_runtime_install, local_models_server_status,
  * local_models_server_start, local_models_server_stop, local_models_server_set,
- * local_models_server_key, local_models_server_ensure, notify_speak.
+ * local_models_server_key, local_models_server_ensure,
+ * local_models_run_on_test, notify_speak.
  * These are the CLI's route to the same service functions the `localModels:*`
  * IPC channels call, so
  * `maestro-cli models install` and Settings' Download button write the same
@@ -69,6 +70,7 @@ import {
 	updateModelServerConfigRequest,
 } from '../../../local-models/server/service';
 import { modelServerForHarness } from '../../../local-models/server/server-endpoint';
+import { testAgentRunOn } from '../../../local-models/run-on-test';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -504,6 +506,26 @@ export function handleLocalModelsServerEnsure(
 		const server = await modelServerForHarness(model);
 		if (!server.ok) throw new Error(server.error);
 		return { baseUrl: server.baseUrl, key: server.key };
+	});
+}
+
+/**
+ * Handle local_models_run_on_test - one short read-only turn through a stored
+ * agent's harness on its Run on target (`maestro-cli agent test-run-on`), by
+ * the function the picker's Test button calls. Only the agent's id crosses the
+ * bridge: the test launches what is stored, never values a caller supplies. A
+ * target that cannot run is a successful round trip with the verdict in
+ * `result`.
+ */
+export function handleLocalModelsRunOnTest(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return respond(ctx, client, message, 'local_models_run_on_test_result', async () => {
+		const agentId = typeof message.agentId === 'string' ? message.agentId.trim() : '';
+		if (agentId === '') throw new Error('Name the agent to test.');
+		return { result: await testAgentRunOn({ agentId }) };
 	});
 }
 

@@ -209,6 +209,14 @@ vi.mock('../../../../main/local-models/work-search', () => ({
 	searchPastWorkRequest: vi.fn(async () => ({ status: 'off' })),
 }));
 
+vi.mock('../../../../main/local-models/run-on-test', () => ({
+	testAgentRunOn: vi.fn(async () => ({
+		ok: false,
+		code: 'run-on-source-disabled',
+		message: 'The source "Ollama" is disabled.',
+	})),
+}));
+
 const dictation = vi.hoisted(() => {
 	const listeners = new Set<(ownerId: string, interruption: unknown) => void>();
 	return {
@@ -259,6 +267,7 @@ import type { LocalRuntimeListing } from '../../../../main/local-models/service'
 import { LOCAL_MODEL_CATALOG, getLocalModel } from '../../../../shared/local-models/model-catalog';
 import { remove, removeAll, verify } from '../../../../main/local-models/model-store';
 import { installNativeRuntime } from '../../../../main/local-models/runtime/runtime-installer';
+import { testAgentRunOn } from '../../../../main/local-models/run-on-test';
 import {
 	artifactForThisPlatform,
 	isRuntimeInstalled,
@@ -617,6 +626,20 @@ describe('task router channel', () => {
 			error: 'Tab cleanup suggestions is off.',
 		});
 		expect(suggestTabCleanup).toHaveBeenCalledWith();
+	});
+
+	it('hands a Run on test its request untouched and returns the verdict', async () => {
+		const request = {
+			agentId: 'agent-1',
+			target: { type: 'source', endpointId: 'ep-1', model: 'm' },
+			subject: { toolType: 'codex' },
+		};
+		await expect(handlerFor('localModels:runOn:test')({}, request)).resolves.toEqual({
+			ok: false,
+			code: 'run-on-source-disabled',
+			message: 'The source "Ollama" is disabled.',
+		});
+		expect(testAgentRunOn).toHaveBeenCalledWith(request);
 	});
 
 	it('hands search its request untouched and returns the verdict', async () => {

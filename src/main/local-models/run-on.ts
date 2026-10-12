@@ -107,9 +107,14 @@ function requireDeps(): AgentRunOnDeps {
 	return deps;
 }
 
+/** One stored agent record, as data. Undefined for no agent, and before the stores are wired. */
+export function storedAgentRecord(agentId: string): Record<string, unknown> | undefined {
+	return deps?.sessions().find((record) => record?.id === agentId);
+}
+
 /** The stored `runOn` of one agent, as data. Undefined for no agent and no target. */
 export function storedAgentRunOn(agentId: string): unknown {
-	return deps?.sessions().find((record) => record?.id === agentId)?.runOn;
+	return storedAgentRecord(agentId)?.runOn;
 }
 
 export interface AgentRunOnRequest {
@@ -347,7 +352,7 @@ export async function applyAgentRunOnToSpawn(input: SpawnRunOnInput): Promise<Sp
 }
 
 function storedGatewayUrl(agentId: string): string | undefined {
-	const url = deps?.sessions().find((record) => record?.id === agentId)?.gatewayUrl;
+	const url = storedAgentRecord(agentId)?.gatewayUrl;
 	return typeof url === 'string' ? url : undefined;
 }
 

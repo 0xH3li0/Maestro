@@ -172,6 +172,7 @@ import { configureTabCleanup } from './local-models/tab-cleanup';
 import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
 import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
 import { configureAgentRunOn } from './local-models/run-on';
+import { configureRunOnTest } from './local-models/run-on-test';
 import { getConfiguredLocalModelEndpoints } from './local-models/endpoint-service';
 import { modelServerForHarness } from './local-models/server/server-endpoint';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
@@ -3711,6 +3712,17 @@ app
 			endpoints: getConfiguredLocalModelEndpoints,
 			shellEnvVars: () => store.get('shellEnvVars', {}) as Record<string, string>,
 			modelServer: modelServerForHarness,
+		});
+		// The Run on Test button and `maestro-cli agent test-run-on`. Wiring it
+		// spawns nothing: a test runs only when a person asks for one.
+		configureRunOnTest({
+			agentConfig: getAgentConfigForAgent,
+			detectedAgentPath: async (toolType) => {
+				const detected = await agentDetector?.getAgent(toolType);
+				return detected?.available ? detected.path : undefined;
+			},
+			sshStore: () => createSshRemoteStoreAdapter(store),
+			shellEnvVars: () => store.get('shellEnvVars', {}) as Record<string, string>,
 		});
 
 		// Start watching for system timezone changes (laptop crossing zones).

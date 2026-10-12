@@ -25,6 +25,7 @@ import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
+import { RunOnField } from '../shared/RunOnField';
 import {
 	AGENT_FORM_TAB_IDS,
 	buildAgentSettingsTabs,
@@ -38,6 +39,14 @@ import {
 } from '../AgentSettings';
 import { AgentTokenProxyModeControl } from './AgentTokenProxyModeControl';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import {
+	agentRunOnSupport,
+	isRunOnSourceTarget,
+	parseRunOnTarget,
+	RUN_ON_GATEWAY_SKIPPED_REASON,
+	type RunOnSourceTarget,
+	type RunOnTarget,
+} from '../../../shared/local-models/run-on';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
@@ -93,6 +102,9 @@ export function EditAgentModal({
 	// Local Models gateway URL, and the reason the last save refused it.
 	const [gatewayUrl, setGatewayUrl] = useState('');
 	const [gatewayUrlError, setGatewayUrlError] = useState<string | undefined>(undefined);
+	// Where the agent's model runs, and the reason the last save refused it.
+	const [runOn, setRunOn] = useState<RunOnTarget>({ type: 'provider' });
+	const [runOnError, setRunOnError] = useState<string | undefined>(undefined);
 	// A save was refused: an empty name now says so instead of blocking silently.
 	const [saveAttempted, setSaveAttempted] = useState(false);
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
@@ -343,6 +355,12 @@ export function EditAgentModal({
 			// A gateway URL is provider-specific (it names a proxy that speaks one
 			// provider's API), so it does not carry across a switch.
 			setGatewayUrl('');
+			// A Run on target names a source and a model, not a provider, so it is
+			// carried across. A provider whose harness cannot use one starts over.
+			if (!agentRunOnSupport(activeToolType).supported) {
+				setRunOn({ type: 'provider' });
+				setRunOnError(undefined);
+			}
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -354,6 +372,15 @@ export function EditAgentModal({
 			setCustomEnvVars(session.customEnvVars ?? {});
 			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
 			setGatewayUrl(session.gatewayUrl ?? '');
+			// A stored target that cannot be read is shown as Provider with the
+			// reason, so the launch's refusal is visible where it can be fixed.
+			const storedRunOn = parseRunOnTarget(session.runOn);
+			setRunOn(storedRunOn.ok ? storedRunOn.target : { type: 'provider' });
+			setRunOnError(
+				storedRunOn.ok
+					? undefined
+					: `The stored Run on target cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
+			);
 			// Preserve the tri-state (undefined stays undefined) so an unconfigured
 			// SSH agent keeps its "unset" signal instead of looking like explicit API.
 			setEnableMaestroP(session.enableMaestroP);
@@ -544,6 +571,21 @@ export function EditAgentModal({
 			return;
 		}
 
+		// The Run on target goes through the validator every writer shares, so
+		// nothing is stored that the launch would refuse as malformed.
+		const runOnEdit = parseRunOnTarget(runOn);
+		const runOnSupport = agentRunOnSupport(selectedToolType);
+		const runOnProblem = !runOnEdit.ok
+			? runOnEdit.error
+			: runOnEdit.target.type === 'source' && !runOnSupport.supported
+				? runOnSupport.reason
+				: undefined;
+		if (!runOnEdit.ok || runOnProblem) {
+			setRunOnError(runOnProblem);
+			setActiveTab('models');
+			return;
+		}
+
 		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
 		const modelValue = agentConfig.model?.trim() ?? undefined;
@@ -617,7 +659,9 @@ export function EditAgentModal({
 			workingDirChanged ? trimmedWorkingDir : undefined,
 			codexAutoReset,
 			codexTransport,
-			gatewayEdit.gatewayUrl ?? undefined
+			gatewayEdit.gatewayUrl ?? undefined,
+			// Provider is the absence of a target on the agent record.
+			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined
 		);
 		onClose();
 	}, [
@@ -636,6 +680,7 @@ export function EditAgentModal({
 		customEnvVars,
 		customEnvVarsDisabled,
 		gatewayUrl,
+		runOn,
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
@@ -710,8 +755,16 @@ export function EditAgentModal({
 		}
 		if (workingDirError) fields.push('workingDir');
 		if (gatewayUrlError) fields.push('gatewayUrl');
+		if (runOnError) fields.push('runOn');
 		return fields;
-	}, [nameError, validation.valid, validation.errorField, workingDirError, gatewayUrlError]);
+	}, [
+		nameError,
+		validation.valid,
+		validation.errorField,
+		workingDirError,
+		gatewayUrlError,
+		runOnError,
+	]);
 	const tabs = useMemo(
 		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
 		[errorFields]
@@ -752,6 +805,48 @@ export function EditAgentModal({
 		setGatewayUrlError(undefined);
 	}, []);
 
+	// One test turn on the target the picker shows, launched with the form as
+	// it stands: a provider, path, variable or remote that is not saved yet is
+	// what the next turn would use once it is.
+	const handleTestRunOn = useCallback(
+		(target: RunOnSourceTarget) => {
+			if (!session) throw new Error('No agent to test.');
+			return window.maestro.localModels.runOn.test({
+				agentId: session.id,
+				target,
+				subject: {
+					toolType: selectedToolType,
+					cwd:
+						(workingDirChanged ? trimmedWorkingDir : undefined) ||
+						(isSshEnabled ? sshRemoteConfig?.workingDirOverride : undefined) ||
+						session.projectRoot,
+					customPath: customPath.trim() || undefined,
+					customArgs: customArgs.trim() || undefined,
+					customEnvVars,
+					sshRemoteConfig:
+						isSshEnabled && sshRemoteConfig?.remoteId
+							? {
+									enabled: true,
+									remoteId: sshRemoteConfig.remoteId,
+									workingDirOverride: sshRemoteConfig.workingDirOverride,
+								}
+							: { enabled: false, remoteId: null },
+				},
+			});
+		},
+		[
+			session,
+			selectedToolType,
+			workingDirChanged,
+			trimmedWorkingDir,
+			isSshEnabled,
+			sshRemoteConfig,
+			customPath,
+			customArgs,
+			customEnvVars,
+		]
+	);
+
 	// Shared by the Provider tab's config panel (which hides them) and the
 	// Environment tab (which draws them): one set of handlers over two records.
 	const envVarProps = agentEnvVarHandlers({
@@ -771,6 +866,16 @@ export function EditAgentModal({
 	const usesInteractiveTokenSource =
 		selectedToolType === 'claude-code' &&
 		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
+	// The agent's own vars replace the provider-level set, so the provider-level
+	// set only counts when the agent has none.
+	const effectiveEnvVars =
+		Object.keys(customEnvVars).length > 0
+			? customEnvVars
+			: (globalConfigRef.current.customEnvVars as Record<string, string> | undefined);
+	// A Run on target takes the gateway's place: both gateway controls say so.
+	const gatewaySkippedReason = isRunOnSourceTarget(runOn)
+		? RUN_ON_GATEWAY_SKIPPED_REASON
+		: undefined;
 
 	return (
 		<Modal
@@ -1082,6 +1187,24 @@ export function EditAgentModal({
 					<ModelsTab
 						theme={theme}
 						idPrefix="edit-agent"
+						runOn={
+							<div data-testid="edit-agent-run-on">
+								<RunOnField
+									theme={theme}
+									toolType={selectedToolType}
+									value={runOn}
+									onChange={(target) => {
+										setRunOn(target);
+										setRunOnError(undefined);
+									}}
+									userEnvVars={effectiveEnvVars}
+									sshRemoteName={sshRemoteName}
+									error={runOnError}
+									onTest={handleTestRunOn}
+									testId="edit-agent-run-on-field"
+								/>
+							</div>
+						}
 						gateway={
 							<>
 								{/* Maestro token proxy mode. Applies at once; the gateway draft
@@ -1095,9 +1218,10 @@ export function EditAgentModal({
 									storedMode={(liveSession ?? session).tokenProxyMode}
 									sshRemoteName={sshRemoteName}
 									pendingReason={
-										providerChanged
+										gatewaySkippedReason ??
+										(providerChanged
 											? 'Save the provider change first: the proxy route depends on the provider.'
-											: undefined
+											: undefined)
 									}
 									onGatewayUrlChange={handleProxyGatewayUrl}
 								/>
@@ -1114,17 +1238,10 @@ export function EditAgentModal({
 											setGatewayUrl(value);
 											setGatewayUrlError(undefined);
 										}}
-										// The agent's own vars replace the provider-level set, so the
-										// provider-level set only counts when the agent has none.
-										userEnvVars={
-											Object.keys(customEnvVars).length > 0
-												? customEnvVars
-												: (globalConfigRef.current.customEnvVars as
-														| Record<string, string>
-														| undefined)
-										}
+										userEnvVars={effectiveEnvVars}
 										sshRemoteName={sshRemoteName}
 										error={gatewayUrlError}
+										disabledReason={gatewaySkippedReason}
 										testId="edit-agent-gateway-url"
 									/>
 								</div>

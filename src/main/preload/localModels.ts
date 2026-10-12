@@ -17,6 +17,8 @@
  * is the one call that opens a device: the microphone, for this window only.
  * `spokenNotices.*` makes sound on this machine's speakers. `server.start()`
  * launches the model server and `server.installEngine()` downloads its engine.
+ * `runOn.test()` starts an agent's harness for one short turn on its Run on
+ * target.
  */
 
 import { ipcRenderer } from 'electron';
@@ -31,6 +33,7 @@ import type {
 	EndpointTestResult,
 } from '../local-models/endpoint-client';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import type { RunOnTestRequest, RunOnTestResult } from '../../shared/local-models/run-on';
 import type {
 	TokenProxyBlockDetail,
 	TokenProxyReport,
@@ -123,6 +126,23 @@ function createLocalModelEndpointsApi() {
 		/** A one-token chat, reporting latency. `model` defaults to the first listed. */
 		test: (endpoint: string | LocalModelEndpoint, model?: string): Promise<EndpointTestResult> =>
 			ipcRenderer.invoke('localModels:endpoints:test', endpoint, model),
+	};
+}
+
+/**
+ * `window.maestro.localModels.runOn.*` - an agent's Run on target. The target
+ * itself is a field of the agent record; this is the one call that needs the
+ * main process.
+ */
+function createRunOnApi() {
+	return {
+		/**
+		 * Send one short read-only turn through the agent's harness on its Run on
+		 * target (the stored one, or `request.target` for a form not saved yet). A
+		 * target that cannot run comes back as `{ ok: false, code, message }`.
+		 */
+		test: (request: RunOnTestRequest): Promise<RunOnTestResult> =>
+			ipcRenderer.invoke('localModels:runOn:test', request),
 	};
 }
 
@@ -396,6 +416,8 @@ export function createLocalModelsApi() {
 		runtimes: createLocalRuntimesApi(),
 
 		endpoints: createLocalModelEndpointsApi(),
+
+		runOn: createRunOnApi(),
 	};
 }
 

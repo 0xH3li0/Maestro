@@ -304,6 +304,7 @@ export function useBatchedSessionUpdates(
 								const turnSettings = {
 									...(tab.turnModel ? { turnModel: tab.turnModel } : {}),
 									...(tab.turnEffort ? { turnEffort: tab.turnEffort } : {}),
+									...(tab.turnRunOn ? { turnRunOn: tab.turnRunOn } : {}),
 								};
 
 								let updatedLogs: LogEntry[];

@@ -9,6 +9,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
+import { RUN_ON_MIN_CONTEXT_TOKENS } from '../../../../shared/local-models/run-on';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -82,6 +85,7 @@ const SAVE_ARG = {
 	codexAutoResetOnExhaustion: 21,
 	codexTransport: 22,
 	gatewayUrl: 23,
+	runOn: 24,
 } as const;
 
 /** Show one tab of the form. Only the active tab's fields are rendered. */
@@ -543,7 +547,8 @@ describe('EditAgentModal', () => {
 				undefined, // workingDirectory unchanged
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: no Local Models gateway set
+				undefined, // gatewayUrl: no Local Models gateway set
+				undefined // runOn: the provider's own model
 			);
 		});
 
@@ -647,7 +652,8 @@ describe('EditAgentModal', () => {
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
-			undefined // gatewayUrl: no Local Models gateway set
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined // runOn: the provider's own model
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -886,7 +892,8 @@ describe('EditAgentModal', () => {
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
-			undefined // gatewayUrl: no Local Models gateway set
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined // runOn: the provider's own model
 		);
 	});
 
@@ -965,7 +972,8 @@ describe('EditAgentModal', () => {
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
-			undefined // gatewayUrl: no Local Models gateway set
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined // runOn: the provider's own model
 		);
 	});
 
@@ -1051,7 +1059,8 @@ describe('EditAgentModal', () => {
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
 			'exec', // codexTransport: Standard by default
-			undefined // gatewayUrl: no Local Models gateway set
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined // runOn: the provider's own model
 		);
 	});
 
@@ -2179,6 +2188,220 @@ describe('EditAgentModal', () => {
 				expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent('Dev Box')
 			);
 			expect(modeSelect()).toBeDisabled();
+		});
+	});
+	describe('Run on', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = {
+			type: 'source' as const,
+			endpointId: OLLAMA.id,
+			model: 'qwen3:latest',
+			contextTokens: 65_536,
+		};
+		let savedEndpoints: LocalModelEndpoint[];
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			// The Maestro model server lists nothing; Ollama lists one model.
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:latest' }] }
+			);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+				ok: true,
+				models: [],
+			});
+		});
+
+		function renderOnModels(session: Session) {
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const picker = () => screen.getByTestId('edit-agent-run-on-field-select') as HTMLSelectElement;
+		const contextInput = () =>
+			screen
+				.getByTestId('edit-agent-run-on-field-context')
+				.querySelector('input') as HTMLInputElement;
+		const listed = () =>
+			waitFor(() =>
+				expect(
+					Array.from(picker().options).some((option) => option.value === 'ep-ollama:qwen3:latest')
+				).toBe(true)
+			);
+
+		it('reads Provider for an agent with no target, and saves none', async () => {
+			renderOnModels(createSession());
+
+			expect(picker().value).toBe('provider');
+			expect(screen.queryByTestId('edit-agent-run-on-field-context')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+		});
+
+		it("shows the agent's stored target and saves it unchanged", async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			expect(contextInput().value).toBe('65536');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual(QWEN);
+		});
+
+		it('saves a model picked from a source, at the smallest agent context', async () => {
+			renderOnModels(createSession());
+
+			await listed();
+			fireEvent.change(picker(), { target: { value: 'ep-ollama:qwen3:latest' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({
+				type: 'source',
+				endpointId: OLLAMA.id,
+				model: 'qwen3:latest',
+				contextTokens: RUN_ON_MIN_CONTEXT_TOKENS,
+			});
+		});
+
+		it('clears the target when Provider is chosen', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			fireEvent.change(picker(), { target: { value: 'provider' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+		});
+
+		it('saves a context size typed into the field', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(contextInput().value).toBe('65536'));
+			fireEvent.change(contextInput(), { target: { value: '131072' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({ ...QWEN, contextTokens: 131_072 });
+		});
+
+		it('refuses a context under the agent minimum, on the Models tab, without saving', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(contextInput().value).toBe('65536'));
+			fireEvent.change(contextInput(), { target: { value: '8192' } });
+			openTab('General');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-run-on-field-status')).toHaveTextContent(
+				`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
+			);
+			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
+		});
+
+		it('shows a stored target that cannot be read as Provider, with the reason', async () => {
+			renderOnModels(createSession({ runOn: { type: 'source', endpointId: OLLAMA.id } as never }));
+
+			expect(picker().value).toBe('provider');
+			expect(screen.getByTestId('edit-agent-run-on-field-status')).toHaveTextContent(
+				'The stored Run on target cannot be used'
+			);
+		});
+
+		it('disables both gateway controls while a source is chosen, and says why', async () => {
+			renderOnModels(createSession({ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			const gateway = screen
+				.getByTestId('edit-agent-gateway')
+				.querySelector('input') as HTMLInputElement;
+			expect(gateway).toBeDisabled();
+			// The stored URL is kept: it applies again when Run on is Provider.
+			expect(gateway.value).toBe('http://127.0.0.1:8787');
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+				'Not applied while Run on is a source'
+			);
+			expect(screen.getByTestId('edit-agent-proxy-mode')).toBeDisabled();
+
+			fireEvent.change(picker(), { target: { value: 'provider' } });
+			expect(gateway).not.toBeDisabled();
+		});
+
+		it('tests the target shown with the form as it stands, and shows the reply', async () => {
+			vi.mocked(window.maestro.localModels.runOn.test).mockResolvedValueOnce({
+				ok: true,
+				model: 'qwen3:latest',
+				label: 'qwen3:latest on Ollama',
+				reply: 'ready',
+				durationMs: 4200,
+				contextTokens: 65_536,
+			});
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			fireEvent.click(screen.getByTestId('edit-agent-run-on-field-test'));
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-run-on-field-test-result')).toHaveTextContent(
+					'qwen3:latest on Ollama answered in 4.2 s: ready'
+				)
+			);
+			expect(window.maestro.localModels.runOn.test).toHaveBeenCalledWith({
+				agentId: 'session-123',
+				target: QWEN,
+				subject: {
+					toolType: 'claude-code',
+					cwd: '/home/user/project',
+					customPath: '/custom/claude',
+					customArgs: '--verbose',
+					customEnvVars: { API_KEY: 'test-key' },
+					sshRemoteConfig: { enabled: false, remoteId: null },
+				},
+			});
+			// Testing saves nothing.
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows why a test failed', async () => {
+			vi.mocked(window.maestro.localModels.runOn.test).mockResolvedValueOnce({
+				ok: false,
+				code: 'run-on-model-not-served',
+				message: 'The source "Ollama" does not serve "qwen3:latest".',
+			});
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			fireEvent.click(screen.getByTestId('edit-agent-run-on-field-test'));
+
+			const result = await screen.findByTestId('edit-agent-run-on-field-test-result');
+			expect(result).toHaveAttribute('data-ok', 'false');
+			expect(result).toHaveTextContent('does not serve "qwen3:latest"');
 		});
 	});
 });

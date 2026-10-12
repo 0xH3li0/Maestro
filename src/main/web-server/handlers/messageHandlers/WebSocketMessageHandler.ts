@@ -106,6 +106,7 @@ import {
 	handleLocalModelsRuntimeInstall,
 	handleLocalModelsRuntimesList,
 	handleLocalModelsRemove,
+	handleLocalModelsRunOnTest,
 	handleLocalModelsRunTask,
 	handleLocalModelsSemanticIndexStatus,
 	handleLocalModelsProxyStatus,
@@ -862,6 +863,10 @@ export class WebSocketMessageHandler {
 
 			case 'local_models_server_ensure':
 				void handleLocalModelsServerEnsure(this.ctx, client, message);
+				break;
+
+			case 'local_models_run_on_test':
+				void handleLocalModelsRunOnTest(this.ctx, client, message);
 				break;
 
 			case 'local_models_search':

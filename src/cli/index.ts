@@ -192,6 +192,7 @@ import {
 } from './commands/auto-run-control';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
+import { agentTestRunOn } from './commands/agent-test-run-on';
 import {
 	tabNew,
 	tabClose,
@@ -1633,6 +1634,17 @@ program
 	.option('--force', 'Confirm a destructive change (required for --provider)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
+
+// Agent verbs that act on one agent and are not a setting of it.
+const agentCmd = program.command('agent').description('Act on one agent');
+
+agentCmd
+	.command('test-run-on <agent-id>')
+	.description(
+		"Send one short read-only turn through the agent's harness on its Run on target and report the reply (requires the desktop app)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => agentTestRunOn(agentId, options));
 
 // Rename agent command - change an agent's display name in the desktop app
 program

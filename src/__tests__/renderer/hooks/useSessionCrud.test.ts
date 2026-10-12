@@ -599,6 +599,26 @@ describe('useSessionCrud', () => {
 			expect(session.gatewayUrl).toBe(stored);
 			expect(session.tokenProxyMode).toBeUndefined();
 		});
+
+		// The New Agent Models tab's Run on target. Absent means the provider's
+		// own model, which is how every agent created before it reads.
+		it.each([
+			[{ type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest', contextTokens: 40960 }],
+			[undefined],
+		] as const)('stores runOn %j as chosen', async (chosen) => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// runOn is the 24th positional argument.
+			const args: unknown[] = ['claude-code', '/test/project', 'Run On Session'];
+			args[23] = chosen;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+
+			expect(useSessionStore.getState().sessions[0].runOn).toEqual(chosen);
+		});
 	});
 
 	// ========================================================================

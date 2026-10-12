@@ -17,6 +17,9 @@
 
 import type { AITab, ProviderTabSession, QueuedItem, QueuedTurnSettings, Session } from '../types';
 import type { ToolType } from '../../shared/types';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import { parseRunOnTarget, runOnPillLabel } from '../../shared/local-models/run-on';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * Move a tab's live provider-specific state into `providerSessions` under
@@ -88,16 +91,41 @@ export function resolveTurnProvider(tab: AITab | undefined, session: Session): T
  * actually passes to the agent (tab override, then agent override); a value
  * left undefined means the agent's own default applies, and consumers render
  * nothing rather than inventing a label.
+ *
+ * `turnRunOn` is where the turn ran when the agent's Run on target is a source
+ * (`qwen3:latest · Ollama`). It is a label for the transcript, kept apart from
+ * `turnModel` on purpose: `turnModel` is handed to the spawn as the agent's
+ * model, and the launch replaces it with the target's own.
  */
 export function codifyTurnSettings(
 	tab: AITab | undefined,
 	session: Session
-): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort'> {
+): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort' | 'turnRunOn'> {
 	return {
 		turnProvider: session.toolType,
 		turnModel: tab?.customModel ?? session.customModel,
 		turnEffort: tab?.customEffort ?? session.customEffort,
+		turnRunOn: turnRunOnLabel(session),
 	};
+}
+
+/**
+ * Where a turn of this agent runs, for its pill: undefined on the provider's
+ * own model. A stored target that cannot be read names nothing, because its
+ * launch is refused and no turn runs on it. `endpoints` defaults to the saved
+ * sources, which are read only for an agent that has a target.
+ */
+export function turnRunOnLabel(
+	session: Pick<Session, 'runOn'>,
+	endpoints?: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[]
+): string | undefined {
+	if (!session.runOn) return undefined;
+	const parsed = parseRunOnTarget(session.runOn);
+	if (!parsed.ok || parsed.target.type !== 'source') return undefined;
+	return runOnPillLabel(
+		parsed.target,
+		endpoints ?? useSettingsStore.getState().localModelEndpoints ?? []
+	);
 }
 
 /**
@@ -129,19 +157,21 @@ export function captureQueuedTurnSettings(
  *
  * The provider always comes from the live session: a queued turn spawns on
  * whatever provider the agent is on now, since its resume token and agent
- * binary belong to that provider.
+ * binary belong to that provider. So does the Run on label: the launch reads
+ * the agent's target when the turn spawns, not when it was queued.
  */
 export function codifyQueuedTurnSettings(
 	item: Pick<QueuedItem, 'turnSettings'>,
 	tab: AITab | undefined,
 	session: Session
-): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort'> {
+): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort' | 'turnRunOn'> {
 	const live = codifyTurnSettings(tab, session);
 	if (!item.turnSettings) return live;
 	return {
 		turnProvider: live.turnProvider,
 		turnModel: item.turnSettings.model,
 		turnEffort: item.turnSettings.effort,
+		turnRunOn: live.turnRunOn,
 	};
 }
 

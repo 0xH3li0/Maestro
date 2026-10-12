@@ -26,6 +26,15 @@ import {
 	SshTab,
 } from '../AgentSettings';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import {
+	agentRunOnSupport,
+	isRunOnSourceTarget,
+	parseRunOnTarget,
+	RUN_ON_GATEWAY_SKIPPED_REASON,
+	type RunOnSourceTarget,
+	type RunOnTarget,
+} from '../../../shared/local-models/run-on';
+import { RunOnField } from '../shared/RunOnField';
 import { TOKEN_PROXY_NAME } from '../../../shared/local-models/token-proxy';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -125,6 +134,11 @@ export function NewInstanceModal({
 	// variable and route differ. Validated against the provider on create.
 	const [gatewayUrlByAgent, setGatewayUrlByAgent] = useState<Record<string, string>>({});
 	const [gatewayUrlError, setGatewayUrlError] = useState<string | undefined>(undefined);
+	// Where the new agent's model runs. One value for the form, not one per
+	// provider: a target names a source and a model, which every harness with a
+	// recipe can use. A provider with none reads as Provider (`effectiveRunOn`).
+	const [runOn, setRunOn] = useState<RunOnTarget>({ type: 'provider' });
+	const [runOnError, setRunOnError] = useState<string | undefined>(undefined);
 	// Set by a create attempt the form refused. From then on a required field
 	// left empty shows its error, and its tab shows the dot.
 	const [createAttempted, setCreateAttempted] = useState(false);
@@ -413,6 +427,10 @@ export function NewInstanceModal({
 					...prev,
 					[source.toolType]: source.gatewayUrl ?? '',
 				}));
+				// And on the same model. A stored target that cannot be read is not
+				// copied: the copy starts on its provider's model.
+				const sourceRunOn = parseRunOnTarget(source.runOn);
+				setRunOn(sourceRunOn.ok ? sourceRunOn.target : { type: 'provider' });
 
 				// Pre-fill SSH remote configuration if source session has it
 				if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
@@ -575,6 +593,46 @@ export function NewInstanceModal({
 		[agents, dynamicOptions]
 	);
 
+	// A provider whose harness has no Run on recipe runs on its own model, so a
+	// target chosen under another provider is neither shown nor stored for it.
+	const effectiveRunOn: RunOnTarget = useMemo(
+		() => (agentRunOnSupport(selectedAgent).supported ? runOn : { type: 'provider' }),
+		[selectedAgent, runOn]
+	);
+
+	// One test turn on the target the picker shows, launched with the form as it
+	// stands. No agent exists yet, so every launch setting comes from the form.
+	const handleTestRunOn = useCallback(
+		(target: RunOnSourceTarget) => {
+			const sshConfig = agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'];
+			const remoteId = sshConfig?.enabled ? sshConfig.remoteId : null;
+			// A remote path keeps its `~`: only the remote shell can expand it.
+			const cwd = remoteId ? workingDir.trim() : expandTilde(workingDir.trim());
+			return window.maestro.localModels.runOn.test({
+				target,
+				subject: {
+					toolType: selectedAgent,
+					cwd,
+					customPath: customAgentPaths[selectedAgent]?.trim() || undefined,
+					customArgs: customAgentArgs[selectedAgent]?.trim() || undefined,
+					customEnvVars: customAgentEnvVars[selectedAgent],
+					sshRemoteConfig: remoteId
+						? { enabled: true, remoteId, workingDirOverride: cwd }
+						: { enabled: false, remoteId: null },
+				},
+			});
+		},
+		[
+			agentSshRemoteConfigs,
+			selectedAgent,
+			workingDir,
+			expandTilde,
+			customAgentPaths,
+			customAgentArgs,
+			customAgentEnvVars,
+		]
+	);
+
 	const handleCreate = React.useCallback(() => {
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
@@ -605,6 +663,15 @@ export function NewInstanceModal({
 		const gatewayEdit = parseGatewayUrlEdit(selectedAgent, gatewayUrlByAgent[selectedAgent] ?? '');
 		if (!gatewayEdit.ok) {
 			setGatewayUrlError(gatewayEdit.error);
+			setActiveTab('models');
+			return;
+		}
+
+		// The Run on target goes through the validator every writer shares. A
+		// refusal shows on the Models tab.
+		const runOnEdit = parseRunOnTarget(effectiveRunOn);
+		if (!runOnEdit.ok) {
+			setRunOnError(runOnEdit.error);
 			setActiveTab('models');
 			return;
 		}
@@ -700,7 +767,9 @@ export function NewInstanceModal({
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
 			codexAutoResetByAgent[selectedAgent] ?? false,
 			codexTransportByAgent[selectedAgent] ?? 'exec',
-			gatewayEdit.gatewayUrl ?? undefined
+			gatewayEdit.gatewayUrl ?? undefined,
+			// Provider is the absence of a target on the agent record.
+			isRunOnSourceTarget(runOnEdit.target) ? runOnEdit.target : undefined
 		);
 		onClose();
 
@@ -749,6 +818,8 @@ export function NewInstanceModal({
 			delete next[selectedAgent];
 			return next;
 		});
+		setRunOn({ type: 'provider' });
+		setRunOnError(undefined);
 	}, [
 		instanceName,
 		selectedAgent,
@@ -776,6 +847,7 @@ export function NewInstanceModal({
 		codexAutoResetByAgent,
 		codexTransportByAgent,
 		gatewayUrlByAgent,
+		effectiveRunOn,
 		setActiveTab,
 	]);
 
@@ -830,8 +902,9 @@ export function NewInstanceModal({
 		if (nameError) fields.push('name');
 		if (directoryError) fields.push('directory');
 		if (gatewayUrlError) fields.push('gatewayUrl');
+		if (runOnError) fields.push('runOn');
 		return fields;
-	}, [nameError, directoryError, gatewayUrlError]);
+	}, [nameError, directoryError, gatewayUrlError, runOnError]);
 	const tabs = useMemo(
 		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
 		[errorFields]
@@ -1418,6 +1491,31 @@ export function NewInstanceModal({
 					<ModelsTab
 						theme={theme}
 						idPrefix="new-agent"
+						runOn={
+							selectedAgent ? (
+								<div data-testid="new-agent-run-on">
+									<RunOnField
+										theme={theme}
+										toolType={selectedAgent}
+										value={effectiveRunOn}
+										onChange={(target) => {
+											setRunOn(target);
+											setRunOnError(undefined);
+										}}
+										userEnvVars={customAgentEnvVars[selectedAgent]}
+										sshRemoteName={sshRemoteName}
+										error={runOnError}
+										onTest={handleTestRunOn}
+										testBlockedReason={
+											workingDir.trim() === ''
+												? 'Choose a working directory on the General tab first.'
+												: undefined
+										}
+										testId="new-agent-run-on-field"
+									/>
+								</div>
+							) : undefined
+						}
 						gateway={
 							selectedAgent ? (
 								// Local Models gateway, for the selected provider. Rendered for
@@ -1437,6 +1535,11 @@ export function NewInstanceModal({
 										userEnvVars={customAgentEnvVars[selectedAgent]}
 										sshRemoteName={sshRemoteName}
 										error={gatewayUrlError}
+										disabledReason={
+											isRunOnSourceTarget(effectiveRunOn)
+												? RUN_ON_GATEWAY_SKIPPED_REASON
+												: undefined
+										}
 										testId="new-agent-gateway-url"
 									/>
 									<p className="text-xs" style={{ color: theme.colors.textDim }}>

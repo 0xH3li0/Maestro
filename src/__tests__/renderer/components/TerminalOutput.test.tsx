@@ -4301,6 +4301,31 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('low')).toBeInTheDocument();
 		});
 
+		it('names where a Run on turn ran in place of its model', () => {
+			// The agent's own model was not the one asked, so the pill names the
+			// source's model and the source.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by a source',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnRunOn: 'qwen3:latest · Ollama',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-run-on-pill')).toHaveTextContent('qwen3:latest · Ollama');
+			expect(screen.queryByText('opus')).not.toBeInTheDocument();
+		});
+
 		it('renders on non-Claude agents, which have no token-source pill', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),

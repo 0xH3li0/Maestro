@@ -196,6 +196,18 @@ vi.mock('../../../../main/local-models/server/server-endpoint', () => ({
 }));
 import { modelServerForHarness } from '../../../../main/local-models/server/server-endpoint';
 
+vi.mock('../../../../main/local-models/run-on-test', () => ({
+	testAgentRunOn: vi.fn(async () => ({
+		ok: true,
+		model: 'qwen3:latest',
+		label: 'qwen3:latest on Ollama',
+		reply: 'ready',
+		durationMs: 4200,
+		contextTokens: 40960,
+	})),
+}));
+import { testAgentRunOn } from '../../../../main/local-models/run-on-test';
+
 vi.mock('../../../../main/local-models/server/service', () => ({
 	getModelServerReport: vi.fn(async () => ({
 		status: { state: 'running', baseUrl: 'http://127.0.0.1:47811' },
@@ -6208,6 +6220,51 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-10'));
 			expect(lastResponse()).toMatchObject({ success: false });
 			expect(modelServerForHarness).not.toHaveBeenCalled();
+		});
+
+		it('local_models_run_on_test tests the stored agent and answers with the verdict', async () => {
+			handler.handleMessage(client, {
+				type: 'local_models_run_on_test',
+				agentId: ' agent-1 ',
+				// Only the agent's id crosses the bridge: a caller cannot hand the
+				// test a command, a directory or a target of its own.
+				target: { type: 'source', endpointId: 'ep-other', model: 'm' },
+				subject: { customPath: '/tmp/evil' },
+				requestId: 'ro-1',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('local_models_run_on_test_result'));
+			expect(testAgentRunOn).toHaveBeenCalledWith({ agentId: 'agent-1' });
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				requestId: 'ro-1',
+				result: { ok: true, model: 'qwen3:latest', reply: 'ready' },
+			});
+		});
+
+		it('local_models_run_on_test carries a refusal as a successful round trip', async () => {
+			vi.mocked(testAgentRunOn).mockResolvedValueOnce({
+				ok: false,
+				code: 'run-on-source-disabled',
+				message: 'The source "Ollama" is disabled.',
+			});
+			handler.handleMessage(client, {
+				type: 'local_models_run_on_test',
+				agentId: 'agent-1',
+				requestId: 'ro-2',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ro-2'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				result: { ok: false, code: 'run-on-source-disabled' },
+			});
+		});
+
+		it('local_models_run_on_test refuses a request that names no agent', async () => {
+			vi.mocked(testAgentRunOn).mockClear();
+			handler.handleMessage(client, { type: 'local_models_run_on_test', requestId: 'ro-3' });
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ro-3'));
+			expect(lastResponse()).toMatchObject({ success: false });
+			expect(testAgentRunOn).not.toHaveBeenCalled();
 		});
 
 		it('local_models_proxy_block answers with both sides of the block', async () => {

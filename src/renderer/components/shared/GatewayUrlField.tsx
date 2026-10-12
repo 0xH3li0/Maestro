@@ -10,7 +10,9 @@
  *   reason (Copilot CLI ignores base-URL variables);
  * - an agent that sets the variable itself is told the gateway is not applied;
  * - a loopback URL on an SSH-remote agent is flagged before the launch
- *   refuses it.
+ *   refuses it;
+ * - an agent whose Run on target is a source shows the field DISABLED with the
+ *   reason the host gives (`disabledReason`): the gateway is not applied.
  *
  * Controlled, and it stores nothing: the host decides when a value is saved
  * (`onCommit` fires on Enter and on blur).
@@ -44,6 +46,12 @@ export interface GatewayUrlFieldProps {
 	label?: string;
 	/** A save error from the host, shown in place of the status line. */
 	error?: string;
+	/**
+	 * Why the gateway does not apply to this agent at all (its Run on target is a
+	 * source). Disables the field and takes the status line's place. The stored
+	 * URL stays in the field: it applies again when the reason goes away.
+	 */
+	disabledReason?: string;
 	testId?: string;
 }
 
@@ -81,6 +89,7 @@ export function GatewayUrlField({
 	sshRemoteName,
 	label,
 	error,
+	disabledReason,
 	testId = 'gateway-url-field',
 }: GatewayUrlFieldProps) {
 	const support = agentGatewaySupport(toolType);
@@ -103,7 +112,9 @@ export function GatewayUrlField({
 		? { tone: 'error' as const, text: error }
 		: !support.supported
 			? { tone: 'dim' as const, text: support.reason }
-			: status;
+			: disabledReason
+				? { tone: 'dim' as const, text: disabledReason }
+				: status;
 	const lineColor =
 		line?.tone === 'error'
 			? theme.colors.error
@@ -120,7 +131,7 @@ export function GatewayUrlField({
 				onChange={onChange}
 				onSubmit={onCommit}
 				placeholder={support.supported ? 'http://127.0.0.1:8787' : 'Not available'}
-				disabled={!support.supported}
+				disabled={!support.supported || disabledReason !== undefined}
 				monospace
 				heightClass="!p-2"
 				testId={`${testId}-input`}

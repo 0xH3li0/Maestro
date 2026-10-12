@@ -6,6 +6,7 @@
 
 import type React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
@@ -907,7 +908,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 
@@ -965,7 +967,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 
@@ -1023,7 +1026,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 	});
@@ -1082,7 +1086,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1646,7 +1651,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 
@@ -1810,7 +1816,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 	});
@@ -2998,7 +3005,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 
@@ -3237,7 +3245,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 
@@ -3554,7 +3563,8 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
-				undefined // gatewayUrl: none unless set on the Models tab
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined // runOn: the provider's own model unless chosen on the Models tab
 			);
 		});
 
@@ -3968,6 +3978,120 @@ describe('NewInstanceModal', () => {
 			// Editing the field clears the refusal and its dot.
 			fireEvent.change(await gatewayInput(), { target: { value: '' } });
 			expect(screen.queryByTestId('new-agent-tab-models-error')).not.toBeInTheDocument();
+		});
+
+		describe('Run on', () => {
+			const OLLAMA = {
+				id: 'ep-ollama',
+				name: 'Ollama',
+				kind: 'ollama' as const,
+				baseUrl: 'http://127.0.0.1:11434',
+				enabled: true,
+			};
+			const QWEN = {
+				type: 'source' as const,
+				endpointId: OLLAMA.id,
+				model: 'qwen3:latest',
+				contextTokens: 40_960,
+			};
+			// runOn is the 24th argument of onCreate.
+			const RUN_ON_ARG = 23;
+			let savedEndpoints: ReturnType<typeof useSettingsStore.getState>['localModelEndpoints'];
+
+			beforeEach(() => {
+				savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+				useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+				vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+					async (endpoint) =>
+						typeof endpoint === 'string'
+							? { ok: true, models: [] }
+							: { ok: true, models: [{ id: 'qwen3:latest' }] }
+				);
+			});
+
+			afterEach(() => {
+				useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+				vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+					ok: true,
+					models: [],
+				});
+			});
+
+			const picker = async () =>
+				(await screen.findByTestId('new-agent-run-on-field-select')) as HTMLSelectElement;
+			const pickQwen = async () => {
+				const select = await picker();
+				await waitFor(() =>
+					expect(
+						Array.from(select.options).some((option) => option.value === 'ep-ollama:qwen3:latest')
+					).toBe(true)
+				);
+				fireEvent.change(select, { target: { value: 'ep-ollama:qwen3:latest' } });
+			};
+
+			it('saves the model picked on the Models tab onto the created agent', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+
+				await pickQwen();
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate).toHaveBeenCalledTimes(1);
+				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toEqual(QWEN);
+			});
+
+			it('disables the gateway field while a source is chosen', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+
+				expect(await gatewayInput()).not.toBeDisabled();
+				await pickQwen();
+
+				expect(await gatewayInput()).toBeDisabled();
+				expect(screen.getByTestId('new-agent-gateway-url-status')).toHaveTextContent(
+					'Not applied while Run on is a source'
+				);
+			});
+
+			it('tests the target from the form alone, since no agent exists yet', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+				await pickQwen();
+
+				fireEvent.click(screen.getByTestId('new-agent-run-on-field-test'));
+
+				await waitFor(() =>
+					expect(window.maestro.localModels.runOn.test).toHaveBeenCalledWith({
+						target: QWEN,
+						subject: expect.objectContaining({
+							toolType: 'claude-code',
+							cwd: '/my/project',
+							sshRemoteConfig: { enabled: false, remoteId: null },
+						}),
+					})
+				);
+				expect(onCreate).not.toHaveBeenCalled();
+			});
+
+			it('carries the target of the agent being duplicated', async () => {
+				renderModal({
+					sourceSession: createMockSession({
+						id: 'source-1',
+						name: 'Source',
+						toolType: 'claude-code',
+						cwd: '/source/project',
+						runOn: { ...QWEN, contextTokens: 65_536 },
+					}),
+				});
+				openTab('Models');
+
+				await waitFor(async () => expect((await picker()).value).toBe('ep-ollama:qwen3:latest'));
+			});
 		});
 
 		it('carries the gateway of the agent being duplicated', async () => {

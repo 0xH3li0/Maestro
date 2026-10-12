@@ -56,6 +56,25 @@ describe('GatewayUrlField', () => {
 		expect(status()).toHaveAttribute('data-tone', 'dim');
 	});
 
+	it('is disabled with the reason the host gives, keeping the stored URL', () => {
+		const { input } = renderField({
+			value: 'http://127.0.0.1:8787',
+			disabledReason: 'Not applied while Run on is a source.',
+		});
+
+		expect(input.disabled).toBe(true);
+		expect(input.value).toBe('http://127.0.0.1:8787');
+		// The reason takes the place of what the launch would have done.
+		expect(status()).toHaveTextContent('Not applied while Run on is a source.');
+		expect(status()).toHaveAttribute('data-tone', 'dim');
+	});
+
+	it('shows a save error over the reason it is disabled', () => {
+		renderField({ disabledReason: 'Not applied.', error: 'That is not a URL.' });
+
+		expect(status()).toHaveTextContent('That is not a URL.');
+	});
+
 	it('is disabled for Copilot CLI, with the reason', () => {
 		const { input } = renderField({ toolType: 'copilot-cli' });
 

@@ -15,7 +15,9 @@ import {
 	codifyTurnSettings,
 	captureQueuedTurnSettings,
 	codifyQueuedTurnSettings,
+	turnRunOnLabel,
 } from '../../../renderer/utils/providerTabSessions';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AITab, Session } from '../../../renderer/types';
 import type { ToolType } from '../../../shared/types';
 
@@ -292,5 +294,64 @@ describe('codifyQueuedTurnSettings', () => {
 			turnModel: undefined,
 			turnEffort: 'xhigh',
 		});
+	});
+});
+
+describe('turnRunOn: where a Run on turn ran', () => {
+	const OLLAMA = {
+		id: 'ep-ollama',
+		name: 'Ollama',
+		kind: 'ollama' as const,
+		baseUrl: 'http://127.0.0.1:11434',
+		enabled: true,
+	};
+	const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:latest' };
+
+	it('names nothing for an agent on its provider', () => {
+		expect(turnRunOnLabel({})).toBeUndefined();
+		expect(turnRunOnLabel({ runOn: { type: 'provider' } })).toBeUndefined();
+		expect(codifyTurnSettings(makeTab(), makeSession('claude-code')).turnRunOn).toBeUndefined();
+	});
+
+	it('names the model and the source for an agent on a source', () => {
+		expect(turnRunOnLabel({ runOn: QWEN }, [OLLAMA])).toBe('qwen3:latest · Ollama');
+	});
+
+	it('reads the saved sources when it is handed none', () => {
+		const saved = useSettingsStore.getState().localModelEndpoints;
+		useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+		try {
+			expect(turnRunOnLabel({ runOn: QWEN })).toBe('qwen3:latest · Ollama');
+		} finally {
+			useSettingsStore.setState({ localModelEndpoints: saved });
+		}
+	});
+
+	it('names nothing for a stored target that cannot be read: its launch is refused', () => {
+		expect(
+			turnRunOnLabel({ runOn: { type: 'source', endpointId: OLLAMA.id } as never }, [OLLAMA])
+		).toBeUndefined();
+	});
+
+	it('stamps the label beside the model, which stays what the spawn is handed', () => {
+		const session = makeSession('claude-code', { customModel: 'opus', runOn: QWEN });
+
+		expect(codifyTurnSettings(makeTab(), session)).toMatchObject({
+			turnModel: 'opus',
+			turnRunOn: 'qwen3:latest',
+		});
+	});
+
+	it('reads the label live for a queued item: the launch reads the target when it spawns', () => {
+		const item = { turnSettings: { model: 'haiku', effort: 'low' } };
+		const session = makeSession('claude-code', { runOn: QWEN });
+
+		expect(codifyQueuedTurnSettings(item, makeTab(), session)).toMatchObject({
+			turnModel: 'haiku',
+			turnRunOn: 'qwen3:latest',
+		});
+		expect(
+			codifyQueuedTurnSettings(item, makeTab(), makeSession('claude-code')).turnRunOn
+		).toBeUndefined();
 	});
 });

@@ -18,11 +18,17 @@ import {
 	OPENCODE_CONFIG_ENV_VAR,
 	RUN_ON_KEY_ENV_VAR,
 	RUN_ON_DEFAULT_CONTEXT_TOKENS,
+	RUN_ON_MIN_CONTEXT_TOKENS,
 	RUN_ON_PLACEHOLDER_KEY,
 	agentRunOnSupport,
+	formatRunOnSpec,
+	runOnContextProblem,
 	runOnOutputTokens,
+	runOnPillLabel,
 	isRunOnSourceTarget,
+	parseRunOnSpec,
 	parseRunOnTarget,
+	parseRunOnTestRequest,
 	resolveRunOnLaunch,
 	runOnHarnessMode,
 	runOnTargetLabel,
@@ -210,6 +216,7 @@ describe('parseRunOnTarget', () => {
 		['a zero context', { ...QWEN, contextTokens: 0 }, 'whole number'],
 		['a fractional context', { ...QWEN, contextTokens: 4096.5 }, 'whole number'],
 		['a text context', { ...QWEN, contextTokens: '40960' }, 'whole number'],
+		['a context under the agent minimum', { ...QWEN, contextTokens: 16_384 }, 'at least 40960'],
 	])('refuses %s', (_name, value, expected) => {
 		const parsed = parseRunOnTarget(value);
 
@@ -790,5 +797,133 @@ describe('runOnUnavailable', () => {
 		expect(refusal.message).toBe(
 			'This agent is set to run on gpt-oss 20B (MXFP4) on Maestro model server, but the Maestro model server could not serve it (The llama-server engine is not installed). Fix the source, or set Run on to Provider.'
 		);
+	});
+});
+
+describe('runOnContextProblem', () => {
+	it('accepts the agent minimum and anything above it', () => {
+		expect(RUN_ON_MIN_CONTEXT_TOKENS).toBe(MODEL_SERVER_AGENT_MIN_CONTEXT);
+		expect(runOnContextProblem(RUN_ON_MIN_CONTEXT_TOKENS)).toBeNull();
+		expect(runOnContextProblem(200_000)).toBeNull();
+	});
+
+	it.each([[undefined], [null], ['40960'], [0], [-1], [4096.5], [Number.NaN]])(
+		'refuses %j as not a whole number',
+		(value) => {
+			expect(runOnContextProblem(value)).toContain('whole number');
+		}
+	);
+
+	it('refuses a size an agent harness cannot hold its first prompt in', () => {
+		expect(runOnContextProblem(RUN_ON_MIN_CONTEXT_TOKENS - 1)).toContain(
+			`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
+		);
+	});
+});
+
+describe('formatRunOnSpec and parseRunOnSpec', () => {
+	it('spells the provider and a source target as one word', () => {
+		expect(formatRunOnSpec({ type: 'provider' })).toBe('provider');
+		expect(formatRunOnSpec(QWEN)).toBe('ep-ollama:qwen3:latest');
+		// The context size is a field of its own on every surface.
+		expect(formatRunOnSpec({ ...QWEN, contextTokens: 65_536 })).toBe('ep-ollama:qwen3:latest');
+	});
+
+	it.each([['provider'], [' Provider '], ['']])('reads %j as the provider', (spec) => {
+		expect(parseRunOnSpec(spec)).toEqual({ ok: true, target: { type: 'provider' } });
+	});
+
+	it('ends the source id at the first colon, so a model name may hold one', () => {
+		expect(parseRunOnSpec('ep-ollama:qwen3:latest')).toEqual({ ok: true, target: QWEN });
+		expect(parseRunOnSpec(formatRunOnSpec(QWEN), 65_536)).toEqual({
+			ok: true,
+			target: { ...QWEN, contextTokens: 65_536 },
+		});
+	});
+
+	it.each([
+		['a word that is not a target', 'qwen3', '<source id>:<model>'],
+		['a missing model', 'ep-ollama:', 'names a model'],
+		['a missing source', ':qwen3', 'names a source'],
+	])('refuses %s', (_name, spec, expected) => {
+		const parsed = parseRunOnSpec(spec);
+
+		expect(parsed.ok).toBe(false);
+		if (!parsed.ok) expect(parsed.error).toContain(expected);
+	});
+
+	it('refuses a context size the target could not store', () => {
+		const parsed = parseRunOnSpec('ep-ollama:qwen3:latest', 8192);
+
+		expect(parsed.ok).toBe(false);
+	});
+});
+
+describe('runOnPillLabel', () => {
+	it('names the model and the source it ran on', () => {
+		expect(runOnPillLabel(QWEN, [OLLAMA, CLOUD])).toBe('qwen3:latest · Ollama');
+	});
+
+	it('names a Maestro model server model by its catalog name', () => {
+		expect(
+			runOnPillLabel(
+				{ type: 'source', endpointId: MODEL_SERVER_ENDPOINT_ID, model: GPT_OSS_20B_ID },
+				[]
+			)
+		).toBe('gpt-oss 20B (MXFP4) · Maestro');
+	});
+
+	it('names the model alone when its source is gone', () => {
+		expect(runOnPillLabel(QWEN, [CLOUD])).toBe('qwen3:latest');
+	});
+});
+
+describe('parseRunOnTestRequest', () => {
+	it.each([[undefined], [null], ['agent-1'], [[{ agentId: 'agent-1' }]]])(
+		'reads %j as an empty request',
+		(value) => {
+			expect(parseRunOnTestRequest(value)).toEqual({});
+		}
+	);
+
+	it('keeps the agent, the target as data, and the form fields a test reads', () => {
+		expect(
+			parseRunOnTestRequest({
+				agentId: ' agent-1 ',
+				target: QWEN,
+				extra: true,
+				subject: {
+					toolType: ' codex ',
+					cwd: ' /work/project ',
+					customPath: '/opt/codex',
+					customArgs: '--flag',
+					customEnvVars: { KEEP: 'yes', DROP: 3 },
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1', workingDirOverride: ' ~/p ' },
+					extra: true,
+				},
+			})
+		).toEqual({
+			agentId: 'agent-1',
+			target: QWEN,
+			subject: {
+				toolType: 'codex',
+				cwd: '/work/project',
+				customPath: '/opt/codex',
+				customArgs: '--flag',
+				customEnvVars: { KEEP: 'yes' },
+				sshRemoteConfig: { enabled: true, remoteId: 'remote-1', workingDirOverride: '~/p' },
+			},
+		});
+	});
+
+	it('drops a field of the wrong type and keeps the rest', () => {
+		expect(
+			parseRunOnTestRequest({
+				agentId: 7,
+				subject: { toolType: 'claude-code', cwd: '', sshRemoteConfig: { enabled: 'yes' } },
+			})
+		).toEqual({
+			subject: { toolType: 'claude-code', sshRemoteConfig: { enabled: false, remoteId: null } },
+		});
 	});
 });

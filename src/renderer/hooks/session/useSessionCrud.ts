@@ -28,6 +28,7 @@ import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
@@ -86,7 +87,9 @@ export interface UseSessionCrudReturn {
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` sets none. */
-		gatewayUrl?: string
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -185,7 +188,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
 			/** Local Models gateway URL, already validated; `undefined` sets none. */
-			gatewayUrl?: string
+			gatewayUrl?: string,
+			/** Run on target, already validated; `undefined` means the provider's model. */
+			runOn?: RunOnSourceTarget
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -331,6 +336,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// Set from the New Agent Models tab. The token proxy mode is not set
 					// here: absent reads as `passthrough` when this URL is the proxy's.
 					gatewayUrl: gatewayUrl || undefined,
+					// Set from the New Agent Models tab. Absent means the provider's
+					// own model. A target takes the gateway's place at launch.
+					runOn,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};

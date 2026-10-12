@@ -43,3 +43,5 @@ export type {
 } from './useTokenProxyModeChoice';
 export { MODEL_SERVER_POLL_MS, useModelServer } from './useModelServer';
 export type { ModelServerBusy, ModelServerHookState } from './useModelServer';
+export { useRunOnSources } from './useRunOnSources';
+export type { RunOnSourceProblem, RunOnSourcesState } from './useRunOnSources';

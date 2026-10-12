@@ -12,6 +12,10 @@
  * `turnEffort`). An unset value means the agent's own default was in force, and
  * that pill is omitted rather than labeled with a guess.
  *
+ * A turn that ran on a Run on source (`LogEntry.turnRunOn`) names the model and
+ * the source in the model pill's place (`qwen3:latest · Ollama`): the agent's
+ * own model was not the one asked, so it is not the one shown.
+ *
  * Both pills carry `data-turn-setting-pill`, which the phone block in
  * `index.css` hides: they are readouts, and on a 390px screen they were sharing
  * a row with the Force Send button and the queued card's control cluster, which
@@ -28,18 +32,37 @@ export interface TurnSettingPillsProps {
 	model?: string;
 	/** Effort/reasoning level the turn ran under, or undefined for the default. */
 	effort?: string;
+	/** The model and source a Run on turn ran on. Takes the model pill's place. */
+	runOn?: string;
 }
 
 export const TurnSettingPills = memo(function TurnSettingPills({
 	theme,
 	model,
 	effort,
+	runOn,
 }: TurnSettingPillsProps) {
-	if (!model && !effort) return null;
+	if (!model && !effort && !runOn) return null;
 
 	return (
 		<>
-			{model && (
+			{runOn && (
+				<span
+					className="flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded max-w-[16rem]"
+					style={{
+						backgroundColor: `${theme.colors.accent}20`,
+						color: theme.colors.accent,
+						opacity: 0.7,
+					}}
+					title={`Ran on: ${runOn}`}
+					data-testid="turn-run-on-pill"
+					data-turn-setting-pill
+				>
+					<Sparkles className="w-2.5 h-2.5 shrink-0" />
+					<span className="truncate">{runOn}</span>
+				</span>
+			)}
+			{!runOn && model && (
 				<span
 					className="flex items-center gap-1 text-2xs px-1.5 py-0.5 rounded max-w-[12rem]"
 					style={{

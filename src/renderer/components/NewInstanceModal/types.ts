@@ -2,6 +2,7 @@ import type React from 'react';
 import type { AdditionalDirectory, AgentConfig, Session, ToolType, Theme } from '../../types';
 import { PICKABLE_AGENT_IDS } from '../../../shared/agentMetadata';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -65,7 +66,9 @@ export interface NewInstanceModalProps {
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` sets none. */
-		gatewayUrl?: string
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];
@@ -107,7 +110,9 @@ export interface EditAgentModalProps {
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
-		gatewayUrl?: string
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget
 	) => void;
 	theme: Theme;
 	session: Session | null;

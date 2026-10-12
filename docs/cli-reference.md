@@ -1151,6 +1151,18 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--force`                         | Confirm a destructive change (required for --provider)                                                          | -       |
 | `--json`                          | Output as JSON (for scripting)                                                                                  | -       |
 
+## `maestro-cli agent`
+
+Act on one agent
+
+## `maestro-cli agent test-run-on <agent-id>`
+
+Send one short read-only turn through the agent's harness on its Run on target and report the reply (requires the desktop app)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli rename-agent <agent-id> <new-name>`
 
 Rename an agent in the Maestro desktop app

@@ -239,6 +239,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Edit Agent modal fields                                                                     | `update-agent`, `settings agent set`                                                                                                               |
 | Set an agent's Local Models gateway (Edit Agent and New Agent Models tab)                   | `update-agent --gateway-url <url\|none>`, or at create `create-agent --gateway-url <url>`; read it with `show agent --json`                        |
 | Set an agent's Maestro proxy mode (Gateway table, Edit Agent Models tab)                    | `update-agent --proxy-mode <off\|passthrough\|compress\|compress-early>`; read: `show agent`                                                       |
+| Test an agent's Run on target (Test button, Edit Agent Models tab)                          | `agent test-run-on <agent-id>` (same `testAgentRunOn()`, on the stored target); read: its reply or `run-on-*` code                                 |
 | Switch an agent's provider                                                                  | `update-agent --provider --force`                                                                                                                  |
 | Codex transport (Standard / App server)                                                     | `update-agent --codex-transport exec\|app-server`, read back via `show-agent`                                                                      |
 | Move an agent to a group                                                                    | `update-agent --group`                                                                                                                             |
@@ -445,6 +446,17 @@ a design constraint; they are simply not built yet.
     flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
     `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
     below.
+17. **Set an agent's Run on target** (the Run on picker and its context size,
+    on the Edit Agent and New Agent Models tab). The picker stores
+    `Session.runOn`; no verb writes or reads it yet. The verbs are the next
+    task of the same playbook that added the picker (MODELS-06, "CLI"):
+    `create-agent --run-on provider|<endpoint-id>:<model> [--run-on-context <n>]`,
+    `update-agent --run-on ...` and `show agent` reporting `runOn`, over
+    `parseRunOnSpec()` in `src/shared/local-models/run-on.ts`. Until then
+    `agent test-run-on` tests only a target saved from the dialog. Testing a
+    target BEFORE it is saved (the same button, on a form with changes or in
+    New Agent) stays UI-only by design: the bridge sends the agent's id and
+    nothing else, so a caller cannot hand the test a command or a directory.
 
 ### Audit backlog (2026-09-27)
 

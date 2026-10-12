@@ -52,7 +52,8 @@ import type { AgentId } from '../agentIds';
 import { getAgentDisplayName } from '../agentMetadata';
 import type { LocalModelEndpoint } from './endpoints';
 import { isLoopbackGatewayUrl } from './gateway';
-import { MODEL_SERVER_AGENT_MIN_CONTEXT } from './model-server';
+import { getLocalModel } from './model-catalog';
+import { MODEL_SERVER_AGENT_MIN_CONTEXT, MODEL_SERVER_ENDPOINT_ID } from './model-server';
 import { localModelAssignmentSourceLabel } from './tasks';
 
 /** A model on a Local Models source, named the way an assignment names one. */
@@ -74,6 +75,27 @@ export type RunOnTarget = { type: 'provider' } | RunOnSourceTarget;
  * window an agent harness was measured to work in.
  */
 export const RUN_ON_DEFAULT_CONTEXT_TOKENS = MODEL_SERVER_AGENT_MIN_CONTEXT;
+
+/**
+ * The smallest context a target may name. Below it a harness cannot hold its
+ * own first prompt (see `MODEL_SERVER_AGENT_MIN_CONTEXT`), so every turn would
+ * fail with "Prompt is too long".
+ */
+export const RUN_ON_MIN_CONTEXT_TOKENS = MODEL_SERVER_AGENT_MIN_CONTEXT;
+
+/**
+ * Why a context size cannot be stored on a target, or null when it can. The
+ * one rule behind the picker's field, the CLI flag and {@link parseRunOnTarget}.
+ */
+export function runOnContextProblem(contextTokens: unknown): string | null {
+	if (typeof contextTokens !== 'number' || !Number.isInteger(contextTokens) || contextTokens <= 0) {
+		return 'A Run on context size is a whole number of tokens above zero.';
+	}
+	if (contextTokens < RUN_ON_MIN_CONTEXT_TOKENS) {
+		return `A Run on context size is at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens: an agent harness cannot hold its own first prompt in less.`;
+	}
+	return null;
+}
 
 /**
  * Sent as the key to a source that has none. Claude Code refuses to start with
@@ -429,11 +451,46 @@ export function parseRunOnTarget(value: unknown): RunOnTargetParse {
 	if (record.contextTokens === undefined || record.contextTokens === null) {
 		return { ok: true, target: { type: 'source', endpointId, model } };
 	}
-	const contextTokens = record.contextTokens;
-	if (typeof contextTokens !== 'number' || !Number.isInteger(contextTokens) || contextTokens <= 0) {
-		return { ok: false, error: 'A Run on context size is a whole number of tokens above zero.' };
-	}
+	const problem = runOnContextProblem(record.contextTokens);
+	if (problem) return { ok: false, error: problem };
+	const contextTokens = record.contextTokens as number;
 	return { ok: true, target: { type: 'source', endpointId, model, contextTokens } };
+}
+
+/** How a target is spelled on a command line and as a picker option's value. */
+export const RUN_ON_PROVIDER_SPEC = 'provider';
+
+/**
+ * A target as one word: `provider`, or `<endpoint-id>:<model>`. The context
+ * size is not part of it; it is a field of its own on every surface.
+ */
+export function formatRunOnSpec(target: RunOnTarget): string {
+	return target.type === 'provider' ? RUN_ON_PROVIDER_SPEC : `${target.endpointId}:${target.model}`;
+}
+
+/**
+ * Read a spelling written by {@link formatRunOnSpec}. The source's id ends at
+ * the FIRST colon, because a model name may hold one (`qwen3:latest`) and an
+ * endpoint id never does. The result has passed {@link parseRunOnTarget}.
+ */
+export function parseRunOnSpec(spec: string, contextTokens?: number): RunOnTargetParse {
+	const trimmed = spec.trim();
+	if (trimmed === '' || trimmed.toLowerCase() === RUN_ON_PROVIDER_SPEC) {
+		return { ok: true, target: { type: 'provider' } };
+	}
+	const separator = trimmed.indexOf(':');
+	if (separator < 0) {
+		return {
+			ok: false,
+			error: `A Run on target is "${RUN_ON_PROVIDER_SPEC}" or <source id>:<model>.`,
+		};
+	}
+	return parseRunOnTarget({
+		type: 'source',
+		endpointId: trimmed.slice(0, separator),
+		model: trimmed.slice(separator + 1),
+		...(contextTokens === undefined ? {} : { contextTokens }),
+	});
 }
 
 /**
@@ -450,6 +507,33 @@ export function runOnTargetLabel(
 			endpoints
 		) ?? target.model
 	);
+}
+
+/**
+ * Why an agent's gateway and token proxy mode do not apply while its Run on
+ * target is a source. Shown beside both controls, which are disabled for it.
+ */
+export const RUN_ON_GATEWAY_SKIPPED_REASON =
+	'Not applied while Run on is a source: the gateway routes requests to the provider, and this agent sends its requests to the source. Set Run on to Provider to use it.';
+
+/** What the Maestro model server is called on a turn's pill. */
+const RUN_ON_PILL_SERVER_NAME = 'Maestro';
+
+/**
+ * A target as a turn's pill names it: the model, then where it ran
+ * (`qwen3-coder-30b-a3b-q4km · Maestro`, `qwen3:latest · Ollama`). A source
+ * that is gone is named by the model alone.
+ */
+export function runOnPillLabel(
+	target: RunOnSourceTarget,
+	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[]
+): string {
+	if (target.endpointId === MODEL_SERVER_ENDPOINT_ID) {
+		const name = getLocalModel(target.model)?.displayName ?? target.model;
+		return `${name} · ${RUN_ON_PILL_SERVER_NAME}`;
+	}
+	const source = endpoints.find((endpoint) => endpoint.id === target.endpointId)?.name;
+	return source ? `${target.model} · ${source}` : target.model;
 }
 
 /**
@@ -699,4 +783,127 @@ export function runOnUnavailable(
 function lowerFirst(text: string): string {
 	// A reason starts with "Maestro" or a provider's name; only an article is lowered.
 	return /^(A|An|The) /.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+}
+
+/** The prompt a Run on test sends: one word back proves the whole route. */
+export const RUN_ON_TEST_PROMPT = 'Reply with the single word: ready';
+
+/** How much of the model's reply a test result carries. */
+export const RUN_ON_TEST_REPLY_MAX_CHARS = 400;
+
+/**
+ * The parts of an agent a Run on test launches with. The stored agent supplies
+ * them; a form that is not saved yet (New Agent, an Edit Agent with changes)
+ * sends its own values on top.
+ */
+export interface RunOnTestSubject {
+	/** The agent's provider, e.g. `claude-code`. */
+	toolType: string;
+	/** The directory the harness starts in (the remote path, on an SSH remote). */
+	cwd: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	sshRemoteConfig?: { enabled: boolean; remoteId: string | null; workingDirOverride?: string };
+}
+
+export interface RunOnTestRequest {
+	/** The stored agent to test. Absent for an agent that does not exist yet. */
+	agentId?: string;
+	/**
+	 * A form's values that are not saved yet. When present they are the agent's
+	 * launch settings as a set: the custom path, arguments, variables and SSH
+	 * remote are read from here and not from the stored agent, so a field the
+	 * form cleared is tested as cleared. Only the provider and the directory fall
+	 * back to the stored agent.
+	 */
+	subject?: Partial<RunOnTestSubject>;
+	/** A target that is not saved yet, as data. Absent tests the stored one. */
+	target?: unknown;
+}
+
+/**
+ * Why a test did not produce a reply. A launch refusal keeps its own code; the
+ * rest are the test's:
+ *
+ *   - `run-on-test-invalid-request`: no agent and no provider to test.
+ *   - `run-on-test-provider-target`: the target is Provider, so there is no source to test.
+ *   - `run-on-test-not-startable`: the harness could not be started (not installed, no batch mode, an SSH remote that is gone).
+ *   - `run-on-test-timeout`: no reply within the budget.
+ *   - `run-on-test-turn-failed`: the harness ran and the turn did not complete.
+ */
+export type RunOnTestFailureCode =
+	| RunOnRefusalCode
+	| 'run-on-test-invalid-request'
+	| 'run-on-test-provider-target'
+	| 'run-on-test-not-startable'
+	| 'run-on-test-timeout'
+	| 'run-on-test-turn-failed';
+
+export type RunOnTestResult =
+	| {
+			ok: true;
+			/** The source's name for the model that answered. */
+			model: string;
+			/** The target for a person (`runOnTargetLabel`). */
+			label: string;
+			/** What the model said, trimmed and capped. */
+			reply: string;
+			/** From the launch to the end of the turn. */
+			durationMs: number;
+			contextTokens: number;
+	  }
+	| { ok: false; code: RunOnTestFailureCode; message: string; durationMs?: number };
+
+function optionalString(value: unknown): string | undefined {
+	return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * Read a test request from anything that may hold one (an IPC argument, a
+ * bridge message), keeping only the fields a test reads. Never throws: a field
+ * of the wrong type is dropped, and the test then refuses what is missing.
+ */
+export function parseRunOnTestRequest(value: unknown): RunOnTestRequest {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+	const record = value as Record<string, unknown>;
+	const request: RunOnTestRequest = {};
+	const agentId = optionalString(record.agentId);
+	if (agentId) request.agentId = agentId.trim();
+	if ('target' in record && record.target !== undefined) request.target = record.target;
+
+	const raw = record.subject;
+	if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+		const from = raw as Record<string, unknown>;
+		const subject: Partial<RunOnTestSubject> = {};
+		const toolType = optionalString(from.toolType);
+		if (toolType) subject.toolType = toolType.trim();
+		const cwd = optionalString(from.cwd);
+		if (cwd) subject.cwd = cwd.trim();
+		const customPath = optionalString(from.customPath);
+		if (customPath) subject.customPath = customPath.trim();
+		const customArgs = optionalString(from.customArgs);
+		if (customArgs) subject.customArgs = customArgs;
+		const env = from.customEnvVars;
+		if (typeof env === 'object' && env !== null && !Array.isArray(env)) {
+			subject.customEnvVars = Object.fromEntries(
+				Object.entries(env as Record<string, unknown>).filter(
+					(entry): entry is [string, string] => typeof entry[1] === 'string'
+				)
+			);
+		}
+		const ssh = from.sshRemoteConfig;
+		if (typeof ssh === 'object' && ssh !== null && !Array.isArray(ssh)) {
+			const config = ssh as Record<string, unknown>;
+			subject.sshRemoteConfig = {
+				enabled: config.enabled === true,
+				remoteId: typeof config.remoteId === 'string' ? config.remoteId : null,
+				...(optionalString(config.workingDirOverride)
+					? { workingDirOverride: (config.workingDirOverride as string).trim() }
+					: {}),
+			};
+		}
+		request.subject = subject;
+	}
+	return request;
 }

@@ -25,6 +25,27 @@ describe('TurnSettingPills', () => {
 		expect(queryByTestId('turn-effort-pill')).toBeNull();
 	});
 
+	it('names where a Run on turn ran in place of the model pill', () => {
+		// The agent's own model was not the one asked, so it is not the one shown.
+		const { getByTestId, queryByTestId } = renderPills({
+			model: 'opus[1m]',
+			effort: 'high',
+			runOn: 'qwen3:latest · Ollama',
+		});
+		expect(getByTestId('turn-run-on-pill').textContent).toBe('qwen3:latest · Ollama');
+		expect(getByTestId('turn-run-on-pill').getAttribute('title')).toBe(
+			'Ran on: qwen3:latest · Ollama'
+		);
+		expect(getByTestId('turn-run-on-pill').hasAttribute('data-turn-setting-pill')).toBe(true);
+		expect(queryByTestId('turn-model-pill')).toBeNull();
+		expect(queryByTestId('turn-effort-pill')).not.toBeNull();
+	});
+
+	it('renders the Run on pill for a turn with no model or effort of its own', () => {
+		const { queryByTestId } = renderPills({ runOn: 'gpt-oss 20B (MXFP4) · Maestro' });
+		expect(queryByTestId('turn-run-on-pill')).not.toBeNull();
+	});
+
 	it('marks both pills as readouts the phone stylesheet can retire', () => {
 		// They share a footer row with controls that cannot yield width (the
 		// queued card's Force Send button and its icon cluster), so the phone

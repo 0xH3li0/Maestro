@@ -40,6 +40,8 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { flushAgentToStore } from '../../services/agentGateway';
@@ -103,7 +105,9 @@ export interface SessionLifecycleReturn {
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
-		gatewayUrl?: string
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -198,7 +202,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
 			/** Local Models gateway URL, already validated; `undefined` clears it. */
-			gatewayUrl?: string
+			gatewayUrl?: string,
+			/** Run on target, already validated; `undefined` means the provider's model. */
+			runOn?: RunOnSourceTarget
 		) => {
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
@@ -229,6 +235,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					customEnvVars,
 					customEnvVarsDisabled,
 					gatewayUrl,
+					// Where the agent's model runs. A target names a source and a
+					// model, not a provider, so (unlike the gateway) the dialog keeps
+					// it across a provider switch when the new harness can use one.
+					runOn,
 					// A proxy mode belongs to the gateway it was chosen for.
 					...((current?.gatewayUrl ?? undefined) !== gatewayUrl
 						? { tokenProxyMode: undefined }
@@ -309,7 +319,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// the debounced persistence would not reach for two seconds. Flush now
 			// so a message sent straight after this save goes where the user just
 			// said it should.
-			if ((current?.gatewayUrl ?? undefined) !== gatewayUrl) {
+			// The same holds for the Run on target, and a miss there sends a turn to
+			// the provider's cloud model the user just turned away from.
+			if (
+				(current?.gatewayUrl ?? undefined) !== gatewayUrl ||
+				canonicalJson(current?.runOn ?? null) !== canonicalJson(runOn ?? null)
+			) {
 				void flushAgentToStore(sessionId);
 			}
 		},

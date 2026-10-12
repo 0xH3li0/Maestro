@@ -13,6 +13,7 @@ import { useModalStore, selectModalOpen, selectModalData } from '../../stores/mo
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 
 /**
  * Props for the AppSessionModals component
@@ -56,7 +57,9 @@ export interface AppSessionModalsProps {
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` sets none. */
-		gatewayUrl?: string
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -99,7 +102,9 @@ export interface AppSessionModalsProps {
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
-		gatewayUrl?: string
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget
 	) => void;
 	editAgentSession: Session | null;
 

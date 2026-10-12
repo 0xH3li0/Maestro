@@ -764,6 +764,13 @@ const mockMaestro = {
 			listModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
 			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
 		},
+		runOn: {
+			test: vi.fn().mockResolvedValue({
+				ok: false,
+				code: 'run-on-test-not-startable',
+				message: 'not mocked',
+			}),
+		},
 		taskReadiness: vi.fn().mockResolvedValue([]),
 		search: vi.fn().mockResolvedValue({ status: 'off' }),
 		proxy: {

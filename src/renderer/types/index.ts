@@ -322,6 +322,9 @@ export interface LogEntry {
 	// footer pill is omitted rather than guessed at.
 	turnModel?: string;
 	turnEffort?: string;
+	// Where this turn ran when the agent's Run on target was a source, copied
+	// from `AITab.turnRunOn`. Shown in place of the model pill.
+	turnRunOn?: string;
 	// For session_not_found system entries - payload for the inline "Create new
 	// session from prior context" action. The button on the entry opens
 	// SessionRecoveryModal which re-spawns the agent in place on `tabId`,
@@ -962,6 +965,13 @@ export interface AITab {
 	 */
 	turnModel?: string;
 	turnEffort?: string;
+	/**
+	 * Where the most recent turn ran when the agent's Run on target was a source
+	 * (`qwen3:latest · Ollama`), captured with the fields above. A label only:
+	 * the launch reads the target itself from the agent record. Undefined for a
+	 * turn on the provider's own model.
+	 */
+	turnRunOn?: string;
 }
 
 // A single "thinking item" - one busy tab within a session.

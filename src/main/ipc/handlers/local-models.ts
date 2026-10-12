@@ -24,7 +24,8 @@
  * named; neither downloads a model. `hardware` reads the OS and a stored file.
  * `server:installEngine` downloads the model server engine and `server:start`
  * launches it, each because the user pressed that button; nothing here starts
- * the server on its own.
+ * the server on its own. `runOn:test` starts an agent's harness for one short
+ * read-only turn on its Run on target, because the user pressed Test.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`. A dictation is the exception: it belongs to
@@ -53,6 +54,8 @@ import {
 	stopDictation,
 } from '../../local-models/dictation';
 import { draftPullRequestRequest } from '../../local-models/git-drafts';
+import { testAgentRunOn } from '../../local-models/run-on-test';
+import type { RunOnTestResult } from '../../../shared/local-models/run-on';
 import {
 	announceAgentFinishedRequest,
 	speakNoticeRequest,
@@ -511,6 +514,14 @@ export function registerLocalModelsHandlers(deps: LocalModelsHandlerDependencies
 		withIpcErrorLogging(
 			handlerOpts('server:installEngine'),
 			async (choice: unknown): Promise<ModelServerReport> => installModelServerEngine(choice)
+		)
+	);
+
+	ipcMain.handle(
+		'localModels:runOn:test',
+		withIpcErrorLogging(
+			handlerOpts('runOn:test'),
+			async (request: unknown): Promise<RunOnTestResult> => testAgentRunOn(request)
 		)
 	);
 

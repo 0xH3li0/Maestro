@@ -469,6 +469,107 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		describe('Run on', () => {
+			const QWEN = {
+				type: 'source' as const,
+				endpointId: 'ep-ollama',
+				model: 'qwen3:latest',
+				contextTokens: 65_536,
+			};
+
+			const saveWithRunOn = (
+				save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+				runOn: typeof QWEN | undefined,
+				toolType?: Parameters<typeof save>[2]
+			) => {
+				// `runOn` is the 25th argument, after `gatewayUrl`; everything between
+				// is left unset.
+				const args = new Array(25).fill(undefined);
+				args[0] = 'session-1';
+				args[1] = 'Agent';
+				args[2] = toolType;
+				args[24] = runOn;
+				return (save as (...all: unknown[]) => void)(...args);
+			};
+
+			it('stores the target and flushes the agent to main at once', async () => {
+				// The launch reads the target from main's store. Left to the debounced
+				// persistence, a message sent straight after the save would run on the
+				// provider's cloud model the user just turned away from.
+				const session = createMockSession({ id: 'session-1' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, QWEN);
+				});
+
+				expect(useSessionStore.getState().sessions[0].runOn).toEqual(QWEN);
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 'session-1', runOn: QWEN })],
+					[]
+				);
+			});
+
+			it('clears the target and flushes that too', async () => {
+				const session = createMockSession({ id: 'session-1', runOn: QWEN });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, undefined);
+				});
+
+				expect(useSessionStore.getState().sessions[0].runOn).toBeUndefined();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('flushes a change of context size alone', async () => {
+				const session = createMockSession({ id: 'session-1', runOn: QWEN });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, { ...QWEN, contextTokens: 131_072 });
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			});
+
+			it('does not flush a save that left the target alone', async () => {
+				const session = createMockSession({ id: 'session-1', runOn: QWEN });
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					// An equal target in another object, as the dialog hands it back.
+					saveWithRunOn(result.current.handleSaveEditAgent, { ...QWEN });
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+			});
+
+			it('keeps the target across a provider switch, unlike the old provider overrides', async () => {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					customPath: '/old/claude',
+					runOn: QWEN,
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+				await act(async () => {
+					saveWithRunOn(result.current.handleSaveEditAgent, QWEN, 'codex');
+				});
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.toolType).toBe('codex');
+				expect(updated.customPath).toBeUndefined();
+				expect(updated.runOn).toEqual(QWEN);
+			});
+		});
+
 		const saveWithWorkingDirectory = (
 			save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
 			workingDirectory: string
