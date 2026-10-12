@@ -236,6 +236,24 @@ export function resolveEndpointApiKey(
 	return value.trim();
 }
 
+/**
+ * Whether a source serves the Anthropic Messages route (`/v1/messages`) beside
+ * its OpenAI routes. The record's `kind` is the mark: the Maestro model server
+ * (llama-server) and Ollama were measured with Claude Code on that route, and
+ * LM Studio documents it. An `openai-compatible` source is a base URL and
+ * nothing else, so Maestro cannot tell, and a caller that must send that route
+ * (the token proxy's background routing) refuses it by name.
+ */
+export function endpointServesAnthropicMessages(
+	endpoint: Pick<LocalModelEndpoint, 'id' | 'kind'>
+): boolean {
+	return (
+		endpoint.id === MODEL_SERVER_ENDPOINT_ID ||
+		endpoint.kind === 'ollama' ||
+		endpoint.kind === 'lmstudio'
+	);
+}
+
 /** Every spelling of "this machine" a base URL can carry. `URL` keeps IPv6 hosts bracketed. */
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 

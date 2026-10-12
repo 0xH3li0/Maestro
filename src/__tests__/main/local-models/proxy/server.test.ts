@@ -10,6 +10,12 @@
  * for an agent whose mode is `compress` and only when it holds a message list,
  * and a body that cannot be read, or a compressor that fails, goes out exactly
  * as it arrived.
+ *
+ * Then background routing: a side request on the provider's small model goes
+ * to the agent's target with the target's key and model and nothing of the
+ * provider's, every sign of a turn keeps a request on the provider byte for
+ * byte, and a target that fails is the answer, never retried against the
+ * provider.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -21,6 +27,7 @@ import {
 	createTokenProxyServer,
 	streamAnnouncedItsEnd,
 	forwardableHeaders,
+	type TokenProxyBackgroundTarget,
 	type TokenProxyRequestLog,
 	type TokenProxyServer,
 	type TokenProxyServerOptions,
@@ -90,7 +97,7 @@ interface RunningProxy {
 
 async function startProxy(
 	upstreams: Record<string, string>,
-	extra: Pick<TokenProxyServerOptions, 'modeFor' | 'compress'> = {}
+	extra: Pick<TokenProxyServerOptions, 'modeFor' | 'compress' | 'backgroundRouteFor'> = {}
 ): Promise<RunningProxy> {
 	const logs: TokenProxyRequestLog[] = [];
 	const proxy = createTokenProxyServer({
@@ -1120,6 +1127,508 @@ describe('token proxy server, compress mode', () => {
 		expect(JSON.parse(answer.body.toString()).error.code).toBe('upstream-unreachable');
 		await vi.waitFor(() => expect(logs).toHaveLength(1));
 		expect(logs[0].outcome).toBe('upstream-failed');
+	});
+});
+
+describe('token proxy server, background routing', () => {
+	const HAIKU = 'claude-haiku-4-5-20251001';
+	const TARGET_MODEL = 'qwen3.5-4b';
+	const ROUTED_TO = `maestro-server:${TARGET_MODEL}`;
+
+	/** A title request as Claude Code sends one: the small model, no tools, nothing cached. */
+	function titleRequest(overrides: Record<string, unknown> = {}): string {
+		return JSON.stringify({
+			model: HAIKU,
+			max_tokens: 64,
+			system: [{ type: 'text', text: 'Write a title.', cache_control: { type: 'ephemeral' } }],
+			messages: [{ role: 'user', content: 'fix the login bug' }],
+			stream: false,
+			...overrides,
+		});
+	}
+
+	/** What the client holds for the provider. None of it may reach a target. */
+	function clientHeaders(body: Buffer): string[] {
+		return [
+			'Content-Type',
+			'application/json',
+			'Authorization',
+			'Bearer oauth-for-anthropic',
+			'x-api-key',
+			'sk-ant-secret',
+			'anthropic-version',
+			'2023-06-01',
+			'Content-Length',
+			String(body.length),
+		];
+	}
+
+	const answerAs =
+		(who: string, status = 200): UpstreamHandler =>
+		(_req, res) => {
+			res.writeHead(status, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ from: who }));
+		};
+
+	/**
+	 * A provider, a target, and a proxy on which agent `bg` sends its background
+	 * requests to the target. Every other agent sends them nowhere.
+	 */
+	async function setup(
+		options: {
+			target?: UpstreamHandler;
+			resolve?: (targetOrigin: string) => Promise<TokenProxyBackgroundTarget>;
+			extra?: Pick<TokenProxyServerOptions, 'modeFor' | 'compress'>;
+		} = {}
+	) {
+		const provider = await startUpstream(answerAs('provider'));
+		const target = await startUpstream(options.target ?? answerAs('target'));
+		const resolve = vi.fn(
+			(): Promise<TokenProxyBackgroundTarget> =>
+				options.resolve
+					? options.resolve(target.origin)
+					: Promise.resolve({
+							ok: true,
+							baseUrl: target.origin,
+							key: 'sk-target',
+							model: TARGET_MODEL,
+						})
+		);
+		const backgroundRouteFor = vi.fn((agentId: string | null) =>
+			agentId === 'bg' ? { toolType: 'claude-code', routedTo: ROUTED_TO, resolve } : null
+		);
+		const running = await startProxy(
+			{ anthropic: provider.origin, openai: provider.origin },
+			{ backgroundRouteFor, ...options.extra }
+		);
+		return { provider, target, resolve, backgroundRouteFor, ...running };
+	}
+
+	function post(port: number, text: string, path = '/agent/bg/anthropic/v1/messages?beta=true') {
+		const body = Buffer.from(text, 'utf-8');
+		return send(port, { path, headers: clientHeaders(body), body });
+	}
+
+	it('sends a background request to the target, and not to the provider', async () => {
+		const { provider, target, resolve, port, logs } = await setup();
+		const original = titleRequest();
+
+		const answer = await post(port, original);
+
+		expect(JSON.parse(answer.body.toString())).toEqual({ from: 'target' });
+		expect(provider.seen).toHaveLength(0);
+		expect(resolve).toHaveBeenCalledTimes(1);
+		const seen = target.seen[0];
+		// The same path and query, without the proxy's own prefixes.
+		expect(seen.url).toBe('/v1/messages?beta=true');
+		// The same body, with one name changed.
+		const sent = original.replace(`"model":"${HAIKU}"`, `"model":"${TARGET_MODEL}"`);
+		expect(seen.body.toString('utf-8')).toBe(sent);
+		expect(rawValues(seen.rawHeaders, 'Content-Length')).toEqual([String(Buffer.byteLength(sent))]);
+		expect(rawValues(seen.rawHeaders, 'Host')).toEqual([target.host]);
+		expect(rawValues(seen.rawHeaders, 'anthropic-version')).toEqual(['2023-06-01']);
+		expect(rawValues(seen.rawHeaders, 'Content-Type')).toEqual(['application/json']);
+
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0]).toMatchObject({
+			agentId: 'bg',
+			kind: 'anthropic-messages',
+			status: 200,
+			outcome: 'completed',
+			requestBytes: Buffer.byteLength(original),
+			sentBytes: Buffer.byteLength(sent),
+		});
+		expect(logs[0].background).toMatchObject({ routedTo: ROUTED_TO });
+		expect(logs[0].background?.skipped).toBeUndefined();
+		expect(logs[0].background?.addedLatencyMs).toBeGreaterThanOrEqual(0);
+		expect(logs[0].compression).toBeUndefined();
+	});
+
+	it("sends the target its own key, and none of the client's provider credentials", async () => {
+		const { target, port } = await setup();
+
+		await post(port, titleRequest());
+
+		const headers = target.seen[0].rawHeaders;
+		expect(rawValues(headers, 'Authorization')).toEqual(['Bearer sk-target']);
+		expect(lowerNames(headers)).not.toContain('x-api-key');
+		expect(headers.join('\n')).not.toContain('oauth-for-anthropic');
+		expect(headers.join('\n')).not.toContain('sk-ant-secret');
+	});
+
+	it('sends no credential at all to a target that has no key', async () => {
+		const { target, port } = await setup({
+			resolve: async (origin) => ({ ok: true, baseUrl: origin, model: TARGET_MODEL }),
+		});
+
+		await post(port, titleRequest());
+
+		const names = lowerNames(target.seen[0].rawHeaders);
+		expect(names).not.toContain('authorization');
+		expect(names).not.toContain('x-api-key');
+	});
+
+	it("puts the request's path after a base path of the target", async () => {
+		const { target, port } = await setup({
+			resolve: async (origin) => ({ ok: true, baseUrl: `${origin}/gateway/`, model: 'm' }),
+		});
+
+		await post(port, titleRequest());
+
+		expect(target.seen[0].url).toBe('/gateway/v1/messages?beta=true');
+	});
+
+	it('decodes a gzip body to read it, and sends the target plain text', async () => {
+		const { provider, target, port } = await setup();
+		const original = titleRequest();
+		const body = zlib.gzipSync(Buffer.from(original, 'utf-8'));
+
+		await send(port, {
+			path: '/agent/bg/anthropic/v1/messages',
+			headers: ['Content-Encoding', 'gzip', 'Content-Length', String(body.length)],
+			body,
+		});
+
+		expect(provider.seen).toHaveLength(0);
+		expect(JSON.parse(target.seen[0].body.toString('utf-8')).model).toBe(TARGET_MODEL);
+		expect(lowerNames(target.seen[0].rawHeaders)).not.toContain('content-encoding');
+	});
+
+	describe('a request that is not a background request', () => {
+		const turns: Array<{ skipped: string; body: string }> = [
+			{ skipped: 'not-small-model', body: titleRequest({ model: 'claude-sonnet-4-5-20250929' }) },
+			{
+				skipped: 'thinking',
+				body: titleRequest({
+					messages: [
+						{ role: 'user', content: 'hi' },
+						{ role: 'assistant', content: [{ type: 'thinking', thinking: 'x', signature: 's' }] },
+						{ role: 'user', content: 'go on' },
+					],
+				}),
+			},
+			{
+				skipped: 'thinking',
+				body: titleRequest({
+					messages: [
+						{ role: 'user', content: 'hi' },
+						{ role: 'assistant', content: [{ type: 'redacted_thinking', data: 'opaque' }] },
+						{ role: 'user', content: 'go on' },
+					],
+				}),
+			},
+			{
+				skipped: 'cache-control',
+				body: titleRequest({
+					messages: [
+						{
+							role: 'user',
+							content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }],
+						},
+					],
+				}),
+			},
+			{
+				skipped: 'tool-result',
+				body: titleRequest({
+					messages: [
+						{ role: 'user', content: 'list' },
+						{ role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'LS', input: {} }] },
+						{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'a.ts' }] },
+					],
+				}),
+			},
+			{
+				skipped: 'tools',
+				body: titleRequest({ tools: [{ name: 'Read', input_schema: { type: 'object' } }] }),
+			},
+			{ skipped: 'unreadable', body: '{"model":"claude-haiku-4-5-20251001"' },
+		];
+
+		it('goes to the provider exactly as it arrived, and starts no target', async () => {
+			const { provider, target, resolve, port, logs } = await setup();
+
+			for (const [index, turn] of turns.entries()) {
+				const answer = await post(port, turn.body);
+
+				expect(JSON.parse(answer.body.toString()), turn.skipped).toEqual({ from: 'provider' });
+				const seen = provider.seen[index];
+				expect(seen.body.toString('utf-8'), turn.skipped).toBe(turn.body);
+				expect(seen.url).toBe('/v1/messages?beta=true');
+				// The provider gets the credentials it was sent.
+				expect(rawValues(seen.rawHeaders, 'Authorization')).toEqual(['Bearer oauth-for-anthropic']);
+				expect(rawValues(seen.rawHeaders, 'x-api-key')).toEqual(['sk-ant-secret']);
+				await vi.waitFor(() => expect(logs).toHaveLength(index + 1));
+				expect(logs[index].background, turn.skipped).toMatchObject({ skipped: turn.skipped });
+				expect(logs[index].background?.routedTo).toBeUndefined();
+				expect(logs[index].sentBytes).toBe(Buffer.byteLength(turn.body));
+			}
+			expect(target.seen).toHaveLength(0);
+			expect(resolve).not.toHaveBeenCalled();
+		});
+
+		it('goes to the provider when its body cannot be read at all', async () => {
+			const { provider, target, port, logs } = await setup();
+			const cases: Array<{ headers: string[]; body: Buffer; skipped: string }> = [
+				{ headers: ['Content-Encoding', 'snappy'], body: randomBytes(256), skipped: 'encoding' },
+				{ headers: [], body: Buffer.from([0xff, 0xfe, 0x00, 0xc3]), skipped: 'not-text' },
+				{ headers: ['Content-Encoding', 'gzip'], body: randomBytes(256), skipped: 'failed' },
+			];
+
+			for (const [index, entry] of cases.entries()) {
+				await send(port, {
+					path: '/agent/bg/anthropic/v1/messages',
+					headers: [...entry.headers, 'Content-Length', String(entry.body.length)],
+					body: entry.body,
+				});
+				expect(provider.seen[index].body.equals(entry.body)).toBe(true);
+				await vi.waitFor(() => expect(logs).toHaveLength(index + 1));
+				expect(logs[index].background).toMatchObject({ skipped: entry.skipped });
+			}
+			expect(target.seen).toHaveLength(0);
+		});
+	});
+
+	it('asks for a route only for an Anthropic Messages request', async () => {
+		const { provider, target, backgroundRouteFor, port, logs } = await setup();
+		const body = Buffer.from(titleRequest(), 'utf-8');
+
+		// The same body on a path that is not the Messages route, on another
+		// provider's route, and a request with no body at all.
+		await send(port, {
+			path: '/agent/bg/anthropic/v1/messages/count_tokens',
+			headers: clientHeaders(body),
+			body,
+		});
+		await send(port, {
+			path: '/agent/bg/openai/v1/chat/completions',
+			headers: clientHeaders(body),
+			body,
+		});
+		await send(port, { method: 'GET', path: '/agent/bg/anthropic/v1/models' });
+
+		expect(backgroundRouteFor).not.toHaveBeenCalled();
+		expect(provider.seen).toHaveLength(3);
+		expect(target.seen).toHaveLength(0);
+		await vi.waitFor(() => expect(logs).toHaveLength(3));
+		expect(logs.every((entry) => entry.background === undefined)).toBe(true);
+	});
+
+	it('leaves an agent with no target alone, and a request that names no agent', async () => {
+		const { provider, target, backgroundRouteFor, port, logs } = await setup();
+
+		await post(port, titleRequest(), '/agent/plain/anthropic/v1/messages');
+		await post(port, titleRequest(), '/anthropic/v1/messages');
+
+		expect(backgroundRouteFor).toHaveBeenCalledWith('plain');
+		expect(backgroundRouteFor).toHaveBeenCalledWith(null);
+		expect(provider.seen).toHaveLength(2);
+		expect(target.seen).toHaveLength(0);
+		await vi.waitFor(() => expect(logs).toHaveLength(2));
+		expect(logs.every((entry) => entry.background === undefined)).toBe(true);
+	});
+
+	it('reads the target on every request, so a change applies to the next one', async () => {
+		const { provider, target, backgroundRouteFor, port } = await setup();
+
+		await post(port, titleRequest());
+		backgroundRouteFor.mockReturnValue(null);
+		await post(port, titleRequest());
+
+		expect(target.seen).toHaveLength(1);
+		expect(provider.seen).toHaveLength(1);
+	});
+
+	describe('a target that fails', () => {
+		it("answers with the target's own error, and does not retry against the provider", async () => {
+			const { provider, target, port, logs } = await setup({
+				target: (_req, res) => {
+					res.writeHead(500, { 'content-type': 'application/json', 'x-target': 'llama' });
+					res.end('{"error":{"message":"model failed to load"}}');
+				},
+			});
+
+			const answer = await post(port, titleRequest());
+
+			expect(answer.status).toBe(500);
+			expect(answer.headers['x-target']).toBe('llama');
+			expect(answer.body.toString()).toBe('{"error":{"message":"model failed to load"}}');
+			expect(target.seen).toHaveLength(1);
+			expect(provider.seen).toHaveLength(0);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 500, outcome: 'completed' });
+			expect(logs[0].background?.routedTo).toBe(ROUTED_TO);
+		});
+
+		it('answers by name when the target cannot be reached, and sends the provider nothing', async () => {
+			const dead = await startUpstream((_req, res) => res.end('ok'));
+			await dead.close();
+			const { provider, port, logs } = await setup({
+				resolve: async () => ({ ok: true, baseUrl: dead.origin, key: 'k', model: TARGET_MODEL }),
+			});
+
+			const answer = await post(port, titleRequest());
+
+			expect(answer.status).toBe(502);
+			const body = JSON.parse(answer.body.toString());
+			expect(body.error.type).toBe('maestro_token_proxy_error');
+			expect(body.error.code).toBe('upstream-unreachable');
+			expect(body.error.message).toContain(dead.origin);
+			expect(body.error.message).toContain('not sent anywhere else');
+			expect(provider.seen).toHaveLength(0);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({ status: 502, outcome: 'upstream-failed' });
+			expect(logs[0].background?.routedTo).toBe(ROUTED_TO);
+		});
+
+		it('answers by name when the target cannot be used, and sends nothing anywhere', async () => {
+			const refusal =
+				'This agent sends background requests to Qwen, but the Maestro model server could not serve it. The request was not sent to the provider.';
+			const { provider, target, port, logs } = await setup({
+				resolve: async () => ({ ok: false, error: refusal }),
+			});
+
+			const answer = await post(port, titleRequest());
+
+			expect(answer.status).toBe(502);
+			const body = JSON.parse(answer.body.toString());
+			expect(body.error.code).toBe('background-target-unavailable');
+			expect(body.error.message).toBe(refusal);
+			expect(provider.seen).toHaveLength(0);
+			expect(target.seen).toHaveLength(0);
+			await vi.waitFor(() => expect(logs).toHaveLength(1));
+			expect(logs[0]).toMatchObject({
+				status: 502,
+				outcome: 'upstream-failed',
+				error: refusal,
+				sentBytes: 0,
+			});
+			expect(logs[0].background?.routedTo).toBe(ROUTED_TO);
+		});
+
+		it('answers by name when the target cannot be made ready or has no usable address', async () => {
+			const thrown = await setup({
+				resolve: async () => {
+					throw new Error('stores are not wired');
+				},
+			});
+			const first = await post(thrown.port, titleRequest());
+			expect(first.status).toBe(502);
+			expect(JSON.parse(first.body.toString()).error).toMatchObject({
+				code: 'background-target-unavailable',
+				message: expect.stringContaining('stores are not wired'),
+			});
+			expect(thrown.provider.seen).toHaveLength(0);
+
+			const badAddress = await setup({
+				resolve: async () => ({ ok: true, baseUrl: 'not a url', model: TARGET_MODEL }),
+			});
+			const second = await post(badAddress.port, titleRequest());
+			expect(second.status).toBe(502);
+			expect(JSON.parse(second.body.toString()).error.message).toContain(
+				'not sent to the provider'
+			);
+			expect(badAddress.provider.seen).toHaveLength(0);
+			expect(badAddress.target.seen).toHaveLength(0);
+		});
+
+		it('fails by name when the key cannot be written as a header', async () => {
+			const { provider, target, port } = await setup({
+				resolve: async (origin) => ({
+					ok: true,
+					baseUrl: origin,
+					key: 'line one\nline two',
+					model: TARGET_MODEL,
+				}),
+			});
+
+			const answer = await post(port, titleRequest());
+
+			expect(answer.status).toBe(502);
+			expect(JSON.parse(answer.body.toString()).error.code).toBe('background-target-unavailable');
+			expect(provider.seen).toHaveLength(0);
+			expect(target.seen).toHaveLength(0);
+		});
+	});
+
+	it('sends nothing when the client leaves while the target is made ready', async () => {
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { provider, target, resolve, port, logs } = await setup({
+			resolve: async (origin) => {
+				await held;
+				return { ok: true, baseUrl: origin, model: TARGET_MODEL };
+			},
+		});
+
+		const req = http.request({
+			host: '127.0.0.1',
+			port,
+			method: 'POST',
+			path: '/agent/bg/anthropic/v1/messages',
+			agent: false,
+		});
+		req.on('error', () => {});
+		req.end(titleRequest());
+		await vi.waitFor(() => expect(resolve).toHaveBeenCalled());
+		// A model that is still loading: the client gives up after a while.
+		await new Promise((resolveTick) => setTimeout(resolveTick, 30));
+		req.destroy();
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		// Logged with how long it was held, although the wait never finished.
+		expect(logs[0].background?.addedLatencyMs).toBeGreaterThanOrEqual(25);
+		release();
+		await new Promise((resolveTick) => setTimeout(resolveTick, 20));
+
+		expect(logs[0]).toMatchObject({ outcome: 'client-aborted', sentBytes: 0 });
+		expect(target.seen).toHaveLength(0);
+		expect(provider.seen).toHaveLength(0);
+	});
+
+	it('still compresses a turn of a compressing agent, and never a background request', async () => {
+		const shortened = titleRequest({ model: 'claude-sonnet-4-5-20250929', messages: [] });
+		const compress = vi.fn(
+			async (): Promise<CompressRequestResult> => ({
+				body: shortened,
+				changed: true,
+				blocks: [],
+				stats: {
+					candidates: 1,
+					belowThreshold: 0,
+					compressed: 1,
+					kept: 0,
+					cacheHits: 0,
+					originalTokens: 10,
+					compressedTokens: 5,
+					compressors: { json: 0, logs: 1, 'long-lines': 0, model: 0 },
+					modelFailures: 0,
+					storeFailures: 0,
+				},
+			})
+		);
+		const { provider, target, port, logs } = await setup({
+			extra: { modeFor: () => 'compress', compress },
+		});
+
+		// A turn: read once, kept on the provider, and handed to the compressor.
+		const turn = titleRequest({ model: 'claude-sonnet-4-5-20250929' });
+		await post(port, turn);
+		expect(compress).toHaveBeenCalledWith('anthropic-messages', turn, { early: false });
+		expect(provider.seen[0].body.toString('utf-8')).toBe(shortened);
+
+		// A background request: to the target, as it arrived but for the model.
+		await post(port, titleRequest());
+		expect(compress).toHaveBeenCalledTimes(1);
+		expect(target.seen).toHaveLength(1);
+		expect(provider.seen).toHaveLength(1);
+
+		await vi.waitFor(() => expect(logs).toHaveLength(2));
+		expect(logs[0].compression).toMatchObject({ changed: true });
+		expect(logs[0].background).toMatchObject({ skipped: 'not-small-model' });
+		expect(logs[1].compression).toBeUndefined();
+		expect(logs[1].background).toMatchObject({ routedTo: ROUTED_TO });
 	});
 });
 

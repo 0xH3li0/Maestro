@@ -32,6 +32,9 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		tokenProxyMode: 'compress' as const,
 		runOn: { type: 'source' as const, endpointId: 'maestro-server', model: 'gpt-oss-20b' },
 		tierTargets: { high: { type: 'provider-model' as const, model: 'opus' } },
+		backgroundRequests: {
+			target: { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+		},
 		customModel: 'opus',
 		customContextWindow: 200000,
 		contextWindowSource: 'user-edited' as const,
@@ -94,6 +97,10 @@ describe('buildWorktreeSession', () => {
 		// And the tier targets, so a tier the parent sends somewhere goes there
 		// from its worktree too.
 		expect(session.tierTargets).toEqual({ high: { type: 'provider-model', model: 'opus' } });
+		// And where background requests go: it is read with the gateway above.
+		expect(session.backgroundRequests).toEqual({
+			target: { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' },
+		});
 		expect(session.customModel).toBe('opus');
 		expect(session.customContextWindow).toBe(200000);
 		// Provenance travels with the value (finding AD1): inheriting the number

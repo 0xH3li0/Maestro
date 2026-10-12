@@ -396,7 +396,12 @@ export type TokenProxyErrorCode =
 	/** The upstream could not be reached, or dropped before answering. */
 	| 'upstream-unreachable'
 	/** The client asked to switch protocols (a WebSocket), which the proxy does not carry. */
-	| 'upgrade-not-supported';
+	| 'upgrade-not-supported'
+	/**
+	 * The agent's Background requests target could not be used. The request was
+	 * not sent to the provider (see `background-requests.ts`).
+	 */
+	| 'background-target-unavailable';
 
 /**
  * The body of an error the PROXY raises (an upstream's own error is forwarded

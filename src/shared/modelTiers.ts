@@ -814,6 +814,27 @@ const TIER_FAMILIES: Partial<Record<ToolType, Readonly<Record<ModelTier, string>
 	codex: CODEX_TIER_FAMILIES,
 };
 
+/**
+ * Whether a model id, as a provider's CLI puts it on the wire, is that
+ * provider's model for `tier`: the built-in table's own id, or a member of the
+ * family Maestro knows for the tier (`claude-haiku-4-5-20251001` and
+ * `claude-3-5-haiku-latest` are both Claude Code's `low`). The family must be
+ * one whole word of the id, so a name that only contains the letters does not
+ * match. False for a harness with no built-in row and no known family: nothing
+ * is known about its ids.
+ *
+ * The token proxy reads it to tell a background request (the small model) from
+ * the agent's own turn (`proxy/background-route.ts`).
+ */
+export function modelIdInTierFamily(harness: string, tier: ModelTier, modelId: string): boolean {
+	const id = modelId.trim().toLowerCase();
+	if (id === '') return false;
+	const toolType = harness as ToolType;
+	if (id === resolveTierModel(toolType, tier)?.toLowerCase()) return true;
+	const family = TIER_FAMILIES[toolType]?.[tier];
+	return family !== undefined && id.split(/[^a-z0-9]+/).includes(family);
+}
+
 /** The word in a catalogue's own description that places a model in a tier. */
 const TIER_DESCRIPTION_WORDS: Partial<Record<ModelTier, RegExp>> = {
 	low: /\bfast\b/i,

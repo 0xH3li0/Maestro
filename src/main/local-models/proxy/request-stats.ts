@@ -76,6 +76,8 @@ export function proxyRequestFromLog(entry: TokenProxyRequestLog): Omit<ProxyRequ
 		...(stats ? { compressorCounts: { ...stats.compressors } } : {}),
 		...(newBlocks.length > 0 ? { newBlocks } : {}),
 		...(compression?.skipped ? { skipReason: compression.skipped } : {}),
+		// Only the target: why a request stayed on the provider is in the log.
+		...(entry.background?.routedTo ? { routedTo: entry.background.routedTo } : {}),
 	};
 }
 

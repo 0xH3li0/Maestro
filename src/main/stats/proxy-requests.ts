@@ -26,8 +26,9 @@ const INSERT_SQL = `
   INSERT INTO proxy_requests
     (id, agent_id, route, kind, mode, started_at, duration_ms, status, outcome,
      request_bytes, sent_bytes, response_bytes, original_tokens, sent_tokens,
-     added_latency_ms, blocks_compressed, cache_hits, compressor_counts, new_blocks, skip_reason)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     added_latency_ms, blocks_compressed, cache_hits, compressor_counts, new_blocks, skip_reason,
+     routed_to)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 function roundedOrNull(value: number | undefined): number | null {
@@ -65,7 +66,8 @@ export function recordProxyRequest(
 			request.cacheHits,
 			hasCounts ? JSON.stringify(counts) : null,
 			blocks && blocks.length > 0 ? JSON.stringify(blocks) : null,
-			request.skipReason ?? null
+			request.skipReason ?? null,
+			request.routedTo ?? null
 		);
 	logger.debug(`Recorded proxy request: ${request.route} (${request.mode})`, LOG_CONTEXT);
 	return id;

@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
+import * as http from 'http';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
@@ -43,6 +44,9 @@ const compressor = vi.hoisted(() => ({
 	compressRequestBody: vi.fn(),
 }));
 vi.mock('../../../../main/local-models/proxy/compress', () => compressor);
+
+const sentry = vi.hoisted(() => ({ captureException: vi.fn(async () => {}) }));
+vi.mock('../../../../main/utils/sentry', () => sentry);
 
 const taskNotices = vi.hoisted(() => ({ reportLocalTaskUnavailable: vi.fn() }));
 vi.mock('../../../../main/local-models/task-notices', () => taskNotices);
@@ -76,6 +80,9 @@ import {
 	type TokenProxyServer,
 	type TokenProxyServerOptions,
 } from '../../../../main/local-models/proxy/server';
+import { configureAgentRunOn, resetAgentRunOnForTests } from '../../../../main/local-models/run-on';
+import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
 
 let agents: Array<Record<string, unknown>> = [];
 
@@ -606,6 +613,248 @@ describe("an agent's mode", () => {
 		options.onRequest?.(entry);
 
 		expect(requestStats.recordTokenProxyRequest).toHaveBeenCalledWith(entry);
+	});
+});
+
+describe("an agent's background requests", () => {
+	const OLLAMA: LocalModelEndpoint = {
+		id: 'ep-ollama',
+		name: 'Ollama',
+		kind: 'ollama',
+		baseUrl: 'http://127.0.0.1:11434',
+		apiKeyEnvVar: 'OLLAMA_KEY',
+		enabled: true,
+	};
+	const LITELLM: LocalModelEndpoint = {
+		id: 'ep-litellm',
+		name: 'LiteLLM',
+		kind: 'openai-compatible',
+		baseUrl: 'https://llm.example.com',
+		enabled: true,
+	};
+	const SERVER_URL = 'http://127.0.0.1:52100';
+	const ON_SERVER = { type: 'source', endpointId: MODEL_SERVER_ENDPOINT_ID, model: 'qwen3.5-4b' };
+	const ON_OLLAMA = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:4b' };
+
+	const modelServer = vi.fn();
+	let endpoints: LocalModelEndpoint[] = [];
+
+	const agent = (id: string, target?: unknown): Record<string, unknown> => ({
+		id,
+		toolType: 'claude-code',
+		...(target === undefined ? {} : { backgroundRequests: { target } }),
+	});
+
+	beforeEach(() => {
+		endpoints = [OLLAMA, LITELLM];
+		modelServer.mockResolvedValue({ ok: true, baseUrl: SERVER_URL, key: 'sk-server' });
+		configureAgentRunOn({
+			sessions: () => agents,
+			endpoints: () => endpoints,
+			shellEnvVars: () => ({ OLLAMA_KEY: 'sk-ollama' }),
+			modelServer,
+		});
+	});
+
+	afterEach(() => {
+		resetAgentRunOnForTests();
+	});
+
+	it('are read from the stored agent on every request', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [agent('a', ON_SERVER), agent('b')];
+
+		expect(options.backgroundRouteFor?.('a')).toMatchObject({
+			toolType: 'claude-code',
+			routedTo: 'maestro-server:qwen3.5-4b',
+		});
+		expect(options.backgroundRouteFor?.('b')).toBeNull();
+
+		// The user moves the target and gives the other agent one. No restart.
+		agents = [agent('a'), agent('b', ON_OLLAMA)];
+		expect(options.backgroundRouteFor?.('a')).toBeNull();
+		expect(options.backgroundRouteFor?.('b')).toMatchObject({ routedTo: 'ep-ollama:qwen3:4b' });
+	});
+
+	it('go to the provider for a request with no agent, an unknown agent, and a provider target', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [agent('a', { type: 'provider' })];
+
+		expect(options.backgroundRouteFor?.(null)).toBeNull();
+		expect(options.backgroundRouteFor?.('gone')).toBeNull();
+		expect(options.backgroundRouteFor?.('a')).toBeNull();
+	});
+
+	it('start the model server only when a request is routed, then say where it listens', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [agent('a', ON_SERVER)];
+
+		const route = options.backgroundRouteFor?.('a');
+		// Asked on every Messages request, turns included: it must start nothing.
+		expect(modelServer).not.toHaveBeenCalled();
+
+		await expect(route?.resolve()).resolves.toEqual({
+			ok: true,
+			baseUrl: SERVER_URL,
+			key: 'sk-server',
+			model: 'qwen3.5-4b',
+		});
+		expect(modelServer).toHaveBeenCalledWith('qwen3.5-4b');
+	});
+
+	it('send a saved source the key Settings holds for it', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [agent('a', ON_OLLAMA)];
+
+		await expect(options.backgroundRouteFor?.('a')?.resolve()).resolves.toEqual({
+			ok: true,
+			baseUrl: OLLAMA.baseUrl,
+			key: 'sk-ollama',
+			model: 'qwen3:4b',
+		});
+		expect(modelServer).not.toHaveBeenCalled();
+	});
+
+	it('fail by name for a target that cannot be used, and never name the provider as a way out', async () => {
+		const { options } = await startWithCapturedOptions();
+		const refusal = async (target: unknown): Promise<string> => {
+			agents = [agent('a', target)];
+			const resolved = await options.backgroundRouteFor?.('a')?.resolve();
+			if (!resolved || resolved.ok)
+				throw new Error(`expected a refusal: ${JSON.stringify(resolved)}`);
+			expect(resolved.error).toContain('The request was not sent to the provider.');
+			return resolved.error;
+		};
+
+		expect(await refusal({ type: 'source', endpointId: 'ep-gone', model: 'm' })).toContain(
+			'its source (ep-gone) is no longer configured'
+		);
+
+		endpoints = [{ ...OLLAMA, enabled: false }];
+		expect(await refusal(ON_OLLAMA)).toContain('the source "Ollama" is disabled');
+
+		endpoints = [LITELLM];
+		expect(await refusal({ type: 'source', endpointId: LITELLM.id, model: 'm' })).toContain(
+			'cannot tell that the source "LiteLLM" serves the Anthropic Messages route'
+		);
+
+		modelServer.mockResolvedValueOnce({ ok: false, error: 'Qwen 3.5 4B is not downloaded.' });
+		expect(await refusal(ON_SERVER)).toContain(
+			'Maestro model server could not serve it (Qwen 3.5 4B is not downloaded)'
+		);
+	});
+
+	it('fail by name for a stored value that is not a target, which is never read as "not routed"', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [
+			{ id: 'a', toolType: 'claude-code', backgroundRequests: 'maestro-server:qwen3.5-4b' },
+		];
+
+		const route = options.backgroundRouteFor?.('a');
+
+		expect(route).not.toBeNull();
+		expect(route?.routedTo).toBeUndefined();
+		const resolved = await route?.resolve();
+		expect(resolved).toMatchObject({ ok: false });
+		if (resolved?.ok === false) {
+			expect(resolved.error).toContain("This agent's Background requests target cannot be used");
+			expect(resolved.error).toContain('The request was not sent to the provider.');
+		}
+	});
+
+	it('report a lookup that throws, and still fail the request instead of sending it on', async () => {
+		const { options } = await startWithCapturedOptions();
+		agents = [agent('a', ON_SERVER)];
+		modelServer.mockRejectedValueOnce(new Error('supervisor state is corrupt'));
+
+		const route = options.backgroundRouteFor?.('a');
+
+		// The server turns this into a 502 that names the target (server.test.ts).
+		await expect(route?.resolve()).rejects.toThrow('supervisor state is corrupt');
+		expect(sentry.captureException).toHaveBeenCalledWith(
+			expect.objectContaining({ message: 'supervisor state is corrupt' }),
+			expect.objectContaining({ agentId: 'a', routedTo: 'maestro-server:qwen3.5-4b' })
+		);
+		// A refusal is an answer, not a bug: nothing is reported for one.
+		sentry.captureException.mockClear();
+		modelServer.mockResolvedValueOnce({ ok: false, error: 'not downloaded' });
+		await expect(route?.resolve()).resolves.toMatchObject({ ok: false });
+		expect(sentry.captureException).not.toHaveBeenCalled();
+	});
+
+	it('route a real request to the source, log the target, and record it', async () => {
+		const seen: Array<{ url: string; headers: http.IncomingHttpHeaders; body: string }> = [];
+		const listen = async (who: string): Promise<{ server: http.Server; origin: string }> => {
+			const server = http.createServer((req, res) => {
+				const chunks: Buffer[] = [];
+				req.on('data', (chunk: Buffer) => chunks.push(chunk));
+				req.on('end', () => {
+					if (who === 'source') {
+						seen.push({
+							url: req.url ?? '',
+							headers: req.headers,
+							body: Buffer.concat(chunks).toString('utf-8'),
+						});
+					}
+					res.writeHead(200, { 'content-type': 'application/json' });
+					res.end(JSON.stringify({ from: who }));
+				});
+			});
+			await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+			return { server, origin: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}` };
+		};
+		const provider = await listen('provider');
+		const source = await listen('source');
+		endpoints = [{ ...OLLAMA, baseUrl: source.origin }];
+		agents = [agent('a', ON_OLLAMA)];
+		configureTokenProxy({
+			sessions: () => agents,
+			dataDir: () => tempRoot.dir,
+			createServer: (options) =>
+				createTokenProxyServer({ ...options, upstreams: { anthropic: provider.origin } }),
+		});
+		const port = await ensureTokenProxyPort();
+		await ensureTokenProxyForGateway(`http://127.0.0.1:${port}/anthropic`);
+
+		const response = await fetch(`http://127.0.0.1:${port}/agent/a/anthropic/v1/messages`, {
+			method: 'POST',
+			headers: { authorization: 'Bearer oauth-secret', 'content-type': 'application/json' },
+			body: JSON.stringify({
+				model: 'claude-haiku-4-5-20251001',
+				max_tokens: 32,
+				messages: [{ role: 'user', content: 'title this' }],
+			}),
+		});
+
+		expect(await response.json()).toEqual({ from: 'source' });
+		expect(seen).toHaveLength(1);
+		expect(seen[0].url).toBe('/v1/messages');
+		expect(seen[0].headers.authorization).toBe('Bearer sk-ollama');
+		expect(JSON.parse(seen[0].body).model).toBe('qwen3:4b');
+
+		await vi.waitFor(() =>
+			expect(logger.info).toHaveBeenCalledWith(
+				expect.stringContaining('routed to ep-ollama:qwen3:4b'),
+				'[TokenProxy]',
+				expect.objectContaining({ agentId: 'a', routedTo: 'ep-ollama:qwen3:4b' })
+			)
+		);
+		expect(requestStats.recordTokenProxyRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				background: expect.objectContaining({ routedTo: 'ep-ollama:qwen3:4b' }),
+			})
+		);
+		// Neither credential is written to the log.
+		const logged = JSON.stringify([...logger.info.mock.calls, ...logger.warn.mock.calls]);
+		expect(logged).not.toContain('oauth-secret');
+		expect(logged).not.toContain('sk-ollama');
+
+		await stopTokenProxy();
+		await Promise.all(
+			[provider, source].map(
+				({ server }) => new Promise<void>((resolve) => server.close(() => resolve()))
+			)
+		);
 	});
 });
 

@@ -11,6 +11,8 @@
  *     `prepareLaunchRunOn()` and hands the result to `buildAgentLaunchPlan`.
  *   - A surface that builds none (a Group Chat participant, a cross-agent
  *     consult) calls `applyAgentRunOnToSpawn()`, which does both steps.
+ *   - A caller that sends a source a request itself, with no harness in between
+ *     (the token proxy's background routing), calls `resolveSourceCallTarget()`.
  *
  * What it reaches is injected (`configureAgentRunOn`), because two processes
  * run this code. The desktop app reads its own stores and starts its own model
@@ -44,6 +46,7 @@ import {
 	storedRunOnNamesSource,
 	type ResolvedRunOn,
 	type RunOnRefusal,
+	type RunOnSourceTarget,
 	type RunOnTarget,
 } from '../../shared/local-models/run-on';
 import {
@@ -136,6 +139,37 @@ export type AgentRunOnPreparation =
 	/** The launch must fail with this message. */
 	| RunOnRefusal;
 
+/** A target's source as the stores have it, before anything is asked of it. */
+interface KnownSource {
+	/** Whether the target names the Maestro model server. */
+	onServer: boolean;
+	/**
+	 * The source's record: a saved endpoint, or the model server at its loopback
+	 * host. The server's port is chosen at its first start, but its host is not
+	 * in doubt, and that is all a check made before it starts reads from its
+	 * record. Null when no such source is configured.
+	 */
+	endpoint: LocalModelEndpoint | null;
+	/** Settings -> Environment. Read only for a saved source. */
+	shellEnvVars: Record<string, string>;
+	/** A saved source's key. The model server hands its own over when it is ready. */
+	key: string | undefined;
+}
+
+function lookUpSource(resolver: AgentRunOnDeps, target: RunOnSourceTarget): KnownSource {
+	const onServer = target.endpointId === MODEL_SERVER_ENDPOINT_ID;
+	const saved = onServer
+		? null
+		: (resolver.endpoints().find((endpoint) => endpoint.id === target.endpointId) ?? null);
+	const shellEnvVars = saved ? resolver.shellEnvVars() : {};
+	return {
+		onServer,
+		endpoint: onServer ? modelServerEndpoint(`http://${MODEL_SERVER_LOOPBACK_HOST}`) : saved,
+		shellEnvVars,
+		key: saved ? resolveEndpointApiKey(saved, shellEnvVars) : undefined,
+	};
+}
+
 function servedDetail(models: readonly EndpointModel[]): string {
 	if (models.length === 0) return 'it serves no models';
 	const shown = models.slice(0, SERVED_MODELS_SHOWN).map((model) => model.id);
@@ -166,17 +200,7 @@ export async function prepareAgentRunOn(
 	if (parsed.target.type === 'provider') return { kind: 'none' };
 	const target = parsed.target;
 	const resolver = requireDeps();
-
-	const onServer = target.endpointId === MODEL_SERVER_ENDPOINT_ID;
-	const saved = onServer
-		? null
-		: (resolver.endpoints().find((endpoint) => endpoint.id === target.endpointId) ?? null);
-	// The server's port is chosen at its first start, but its host is not in
-	// doubt: it is reached on this machine's loopback. That is all the checks
-	// below read from its record.
-	const known = onServer ? modelServerEndpoint(`http://${MODEL_SERVER_LOOPBACK_HOST}`) : saved;
-	const shellEnvVars = saved ? resolver.shellEnvVars() : {};
-	const key = saved ? resolveEndpointApiKey(saved, shellEnvVars) : undefined;
+	const { onServer, endpoint: known, shellEnvVars, key } = lookUpSource(resolver, target);
 
 	// Everything that can be refused without touching the network.
 	const checked = resolveRunOnLaunch({
@@ -228,6 +252,45 @@ export async function prepareAgentRunOn(
 		return runOnUnavailable('run-on-model-not-served', target, known, servedDetail(models));
 	}
 	return ready(known, key);
+}
+
+/** A source, ready to be sent one request: its record (for its address) and its key. */
+export type SourceCallTarget =
+	| { ok: true; endpoint: LocalModelEndpoint; key?: string }
+	| {
+			ok: false;
+			/**
+			 * `missing`: no such source is configured. `disabled`: it is switched
+			 * off. `server-failed`: the Maestro model server could not serve the
+			 * model, and `detail` is what it said.
+			 */
+			reason: 'missing' | 'disabled' | 'server-failed';
+			endpoint: LocalModelEndpoint | null;
+			detail?: string;
+	  };
+
+/**
+ * Where one request for a source target goes right now. For a caller that sends
+ * the source a request ITSELF (the token proxy's background routing). A launch
+ * goes through {@link prepareAgentRunOn}, which also applies the harness's
+ * recipe.
+ *
+ * The Maestro model server is started and the model loaded when needed, as for
+ * a launch. A saved source is not asked what it serves: the request is about to
+ * be sent, and the source's own answer to it is the check. The caller words the
+ * refusal, and must not send the request anywhere else.
+ */
+export async function resolveSourceCallTarget(
+	target: RunOnSourceTarget
+): Promise<SourceCallTarget> {
+	const resolver = requireDeps();
+	const { onServer, endpoint, key } = lookUpSource(resolver, target);
+	if (!endpoint) return { ok: false, reason: 'missing', endpoint: null };
+	if (!endpoint.enabled) return { ok: false, reason: 'disabled', endpoint };
+	if (!onServer) return { ok: true, endpoint, key };
+	const server = await resolver.modelServer(target.model);
+	if (!server.ok) return { ok: false, reason: 'server-failed', endpoint, detail: server.error };
+	return { ok: true, endpoint: modelServerEndpoint(server.baseUrl), key: server.key };
 }
 
 export interface LaunchRunOnRequest extends Omit<AgentRunOnRequest, 'remote'> {

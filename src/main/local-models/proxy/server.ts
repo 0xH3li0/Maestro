@@ -18,6 +18,19 @@
  * request exactly as it arrived: compression is an optimization, so its
  * failure never costs the user the turn. The response is never touched.
  *
+ * Background routing is the second exception, and the only one that changes
+ * where a request GOES. For an agent whose `backgroundRequests` names a target
+ * (`backgroundRouteFor`), an Anthropic Messages request is read whole and
+ * handed to `planBackgroundRoute` (`background-route.ts`). A request that is
+ * unmistakably one of the CLI's side requests is sent to the target instead of
+ * the provider: the same path and query, the same body except for the model's
+ * name, the client's provider credentials removed, and the target's key added.
+ * The target's answer, an error included, is the response. A target that
+ * cannot be used is answered by the proxy, by name. In neither case does the
+ * request go to the provider as well: that would hide the failure and spend
+ * what the user chose to save. Every other request of that agent goes to the
+ * provider as it arrived.
+ *
  * Built on Node's `http` / `https` rather than `fetch` (and so not on
  * `fetchWithTimeout`) on purpose. `fetch` decodes a compressed response and
  * re-frames the body, which is a different response; it also wants a total
@@ -33,7 +46,8 @@
  *   upstream's, which TLS virtual hosting requires. `Authorization`,
  *   `x-api-key` and every other credential pass through; the proxy adds none of
  *   its own, so it gives a local caller nothing it could not get by calling the
- *   upstream directly.
+ *   upstream directly. (A request routed to a background target is the one
+ *   that does not go to the upstream, and it carries the target's key instead.)
  * - Bodies are never decoded. A request with `content-encoding: zstd` (Codex
  *   has sent one) is forwarded as the bytes it is, and so is a compressed
  *   response.
@@ -63,6 +77,12 @@ import {
 	type TokenProxyRequestMode,
 	type TokenProxyUpstreams,
 } from '../../../shared/local-models/token-proxy';
+import {
+	planBackgroundRoute,
+	withRequestModel,
+	type BackgroundRoutePlan,
+	type BackgroundRouteSkip,
+} from './background-route';
 import type { CompressedBlock, CompressRequestResult, CompressRequestStats } from './compress';
 
 /**
@@ -99,6 +119,56 @@ export interface TokenProxyCompressionLog {
 	blocks?: CompressedBlock[];
 }
 
+/** Why a request of an agent with a background target went to the provider. */
+export type TokenProxyBackgroundSkip =
+	/** It is not a background request (`planBackgroundRoute`). */
+	| BackgroundRouteSkip
+	/** Its body could not be read, so it could not be shown to be one. */
+	| TokenProxyCompressionSkip;
+
+/** What background routing did with one request. */
+export interface TokenProxyBackgroundLog {
+	/**
+	 * The target the request was meant for, as `<source id>:<model>`. Set for a
+	 * background request whether the target answered or could not be used.
+	 * Absent when the request went to the provider, and for a stored target
+	 * that names nothing.
+	 */
+	routedTo?: string;
+	/** Why the request went to the provider. */
+	skipped?: TokenProxyBackgroundSkip;
+	/** The failure, for `skipped: 'failed'`. */
+	error?: string;
+	/** How long the request was held: to be read, and for the target to be ready. */
+	addedLatencyMs: number;
+}
+
+/** A background target, ready for one request, or why it cannot be used. */
+export type TokenProxyBackgroundTarget =
+	| {
+			ok: true;
+			/** The target's root. The request's own path (`/v1/messages`) follows it. */
+			baseUrl: string;
+			/** The target's key, sent as a bearer token. Absent for a server with none. */
+			key?: string;
+			/** The model name sent in place of the provider's small model. */
+			model: string;
+	  }
+	| { ok: false; error: string };
+
+/** Where one agent's background requests go. */
+export interface TokenProxyBackgroundRoute {
+	/** The agent's provider: its small model is what a background request names. */
+	toolType: string;
+	/** The target as the log records it. Absent when the stored target names none. */
+	routedTo?: string;
+	/**
+	 * Make the target ready and say where it is. Called only for a request that
+	 * IS a background request, so a target is never started for a turn.
+	 */
+	resolve: () => Promise<TokenProxyBackgroundTarget>;
+}
+
 /** How one request ended. */
 export type TokenProxyRequestOutcome =
 	/** The upstream's response (whatever its status) reached the client whole. */
@@ -108,7 +178,11 @@ export type TokenProxyRequestOutcome =
 	 * stream announced the end of its turn (see `streamAnnouncedItsEnd`).
 	 */
 	| 'client-aborted'
-	/** The upstream could not be reached, or dropped mid-response. */
+	/**
+	 * The upstream could not be reached, or dropped mid-response. The upstream
+	 * of a background request is its target, which also ends here when it
+	 * cannot be used.
+	 */
 	| 'upstream-failed'
 	/** The request named no route; nothing was forwarded. */
 	| 'unknown-route'
@@ -136,7 +210,7 @@ export interface TokenProxyRequestLog {
 	status: number;
 	/** Request body bytes received from the client. */
 	requestBytes: number;
-	/** Request body bytes sent upstream. Differs only when the body was compressed. */
+	/** Request body bytes sent on. Differs only when the body was compressed or routed. */
 	sentBytes: number;
 	/** Response body bytes received from the upstream and sent to the client. */
 	responseBytes: number;
@@ -146,6 +220,11 @@ export interface TokenProxyRequestLog {
 	error?: string;
 	/** Present when the request went down the `compress` path. */
 	compression?: TokenProxyCompressionLog;
+	/**
+	 * Present for an Anthropic Messages request of an agent that sends its
+	 * background requests somewhere: where this one went, or why it stayed.
+	 */
+	background?: TokenProxyBackgroundLog;
 }
 
 export interface TokenProxyServerOptions {
@@ -167,6 +246,13 @@ export interface TokenProxyServerOptions {
 		body: string,
 		options: { early: boolean }
 	) => Promise<CompressRequestResult>;
+	/**
+	 * Where one agent's background requests go, or null when they go to the
+	 * provider like everything else. Asked once per Anthropic Messages request,
+	 * so a target the user changes applies to the next request. Without it no
+	 * request is ever routed.
+	 */
+	backgroundRouteFor?: (agentId: string | null) => TokenProxyBackgroundRoute | null;
 }
 
 export interface TokenProxyServer {
@@ -219,6 +305,13 @@ export function forwardableHeaders(
 	}
 	return kept;
 }
+
+/**
+ * The headers that carry the client's credential for the PROVIDER. A request
+ * sent to a background target goes without them: a provider's key or login
+ * token must never reach a server the provider does not run.
+ */
+const PROVIDER_CREDENTIAL_HEADERS: readonly string[] = ['authorization', 'x-api-key', 'cookie'];
 
 type BodyDecoder = (input: Buffer, options: zlib.ZlibOptions) => Promise<Buffer>;
 
@@ -303,6 +396,38 @@ function errorText(error: unknown): string {
 	return code && !message.includes(code) ? `${code}: ${message}` : message;
 }
 
+/** A request body's text, or why it cannot be read. */
+type ReadBody = { text: string } | { skipped: TokenProxyCompressionSkip; error?: string };
+
+type ReadyBackgroundTarget =
+	| { ok: true; destination: URL; key?: string; model: string }
+	| { ok: false; error: string };
+
+/**
+ * Ask a route for its target and turn the answer into an address. Never
+ * throws: a resolver that fails, and an address that is not a URL, are both a
+ * target that cannot be used.
+ */
+async function readyBackgroundTarget(
+	route: TokenProxyBackgroundRoute
+): Promise<ReadyBackgroundTarget> {
+	try {
+		const target = await route.resolve();
+		if (!target.ok) return target;
+		return {
+			ok: true,
+			destination: new URL(target.baseUrl),
+			key: target.key,
+			model: target.model,
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			error: `${TOKEN_PROXY_NAME} could not make this agent's Background requests target ready (${errorText(error)}). The request was not sent to the provider.`,
+		};
+	}
+}
+
 export function createTokenProxyServer(options: TokenProxyServerOptions = {}): TokenProxyServer {
 	const upstreams = options.upstreams ?? defaultTokenProxyUpstreams();
 	// Keep-alive to the upstream, so a turn's requests do not each pay a TLS
@@ -349,6 +474,10 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		// Set when the body sent is not the body received. Otherwise the two
 		// counts are the same number.
 		let sentBytes: number | null = null;
+		// When a background request began waiting for its target, while it waits.
+		// A cold model takes seconds to load, and a client that gives up in that
+		// time is still logged with how long it was held.
+		let waitingForTargetSince: number | null = null;
 
 		// 'close' is the one event every ending reaches: a finished response, a
 		// client that went away, and a response this module destroyed.
@@ -356,6 +485,9 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			closed = true;
 			entry.durationMs = Date.now() - startedAt;
 			entry.sentBytes = sentBytes ?? (upstreamRequest ? entry.requestBytes : 0);
+			if (waitingForTargetSince !== null && entry.background) {
+				entry.background.addedLatencyMs = Date.now() - waitingForTargetSince;
+			}
 			if (failure) {
 				entry.outcome = failure.outcome;
 				entry.error = failure.error;
@@ -432,18 +564,8 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			);
 			return;
 		}
-		const secure = upstream.protocol === 'https:';
 
-		const upstreamFailed = (error: unknown): void => {
-			answerAsProxy(
-				502,
-				'upstream-unreachable',
-				'upstream-failed',
-				`${TOKEN_PROXY_NAME} could not complete the request to ${upstream.origin} (${errorText(error)}). The request was not sent anywhere else.`
-			);
-		};
-
-		/** The request's own headers, for a body that goes out as it arrived. */
+		/** The request's own headers, for a body that goes to the provider as it arrived. */
 		const arrivedHeaders = (): string[] => [
 			...forwardableHeaders(req.rawHeaders, ['host']),
 			'Host',
@@ -451,19 +573,29 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		];
 
 		/**
-		 * Open the request to the upstream and wire its response to the client.
-		 * The headers are fixed here (Node writes an array of raw headers at
-		 * once), so a body whose length changed needs them built first.
+		 * Open the request to `destination` (the provider's upstream, or a
+		 * background target) and wire its response to the client. The headers are
+		 * fixed here (Node writes an array of raw headers at once), so a body
+		 * whose length changed needs them built first.
 		 */
-		const openUpstream = (headers: string[]): http.ClientRequest => {
+		const forward = (destination: URL, headers: string[]): http.ClientRequest => {
+			const secure = destination.protocol === 'https:';
+			const upstreamFailed = (error: unknown): void => {
+				answerAsProxy(
+					502,
+					'upstream-unreachable',
+					'upstream-failed',
+					`${TOKEN_PROXY_NAME} could not complete the request to ${destination.origin} (${errorText(error)}). The request was not sent anywhere else.`
+				);
+			};
 			const outgoing = (secure ? https : http).request({
-				protocol: upstream.protocol,
-				hostname: upstream.hostname.replace(/^\[|\]$/g, ''),
-				port: upstream.port || undefined,
+				protocol: destination.protocol,
+				hostname: destination.hostname.replace(/^\[|\]$/g, ''),
+				port: destination.port || undefined,
 				method,
 				// The client's path and query are appended as the text they arrived
-				// as. Only the upstream base (a constant) goes through `URL`.
-				path: `${upstream.pathname.replace(/\/+$/, '')}${target.path}${target.query}` || '/',
+				// as. Only the destination's base goes through `URL`.
+				path: `${destination.pathname.replace(/\/+$/, '')}${target.path}${target.query}` || '/',
 				headers,
 				agent: secure ? httpsAgent : httpAgent,
 			});
@@ -523,33 +655,127 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 		// above; this only keeps the stream error from going unhandled.
 		req.on('error', () => {});
 
-		const compress = options.compress;
-		if (!isCompressingTokenProxyMode(entry.mode) || !compress || target.kind === 'other') {
-			req.pipe(openUpstream(arrivedHeaders()));
+		const compress =
+			isCompressingTokenProxyMode(entry.mode) && target.kind !== 'other'
+				? options.compress
+				: undefined;
+		// Asked only for the one kind of request that can be routed.
+		const background =
+			target.kind === 'anthropic-messages' ? (options.backgroundRouteFor?.(agentId) ?? null) : null;
+		if (!compress && !background) {
+			req.pipe(forward(upstream, arrivedHeaders()));
 			return;
 		}
 
-		// `compress` mode, for a request that holds a message list: the body has
-		// to be whole before any of it is sent, because shortening it changes
-		// its length.
+		// The body has to be whole before any of it is sent: shortening it
+		// changes its length, and where it goes depends on what it holds.
 		const kind = target.kind;
 		const received: Buffer[] = [];
 		let receivedBytes = 0;
 
-		const shortenAndSend = async (raw: Buffer): Promise<void> => {
+		const readBody = async (raw: Buffer): Promise<ReadBody> => {
+			try {
+				return await decodeRequestBody(raw, contentEncoding(req.rawHeaders));
+			} catch (error) {
+				return { skipped: 'failed', error: errorText(error) };
+			}
+		};
+
+		/**
+		 * Send a background request to the agent's target. Resolves true when the
+		 * request is spoken for (sent to the target, or failed by name) and false
+		 * when it is not a background request, which then goes to the provider.
+		 */
+		const sendToTarget = async (
+			route: TokenProxyBackgroundRoute,
+			read: ReadBody,
+			heldAt: number
+		): Promise<boolean> => {
+			const log: TokenProxyBackgroundLog = { addedLatencyMs: 0 };
+			entry.background = log;
+			const stays = (skipped: TokenProxyBackgroundSkip, error?: string): false => {
+				log.skipped = skipped;
+				if (error !== undefined) log.error = error;
+				log.addedLatencyMs = Date.now() - heldAt;
+				return false;
+			};
+			if ('skipped' in read) return stays(read.skipped, read.error);
+			let plan: BackgroundRoutePlan;
+			try {
+				plan = planBackgroundRoute(read.text, route.toolType);
+			} catch (error) {
+				// Not shown to be a background request, so it is treated as a turn.
+				return stays('failed', errorText(error));
+			}
+			if (!plan.route) return stays(plan.reason);
+
+			// From here the request belongs to the target. Nothing below sends it
+			// to the provider.
+			if (route.routedTo !== undefined) log.routedTo = route.routedTo;
+			waitingForTargetSince = heldAt;
+			const ready = await readyBackgroundTarget(route);
+			waitingForTargetSince = null;
+			log.addedLatencyMs = Date.now() - heldAt;
+			// The client left while the target was made ready: nobody to answer.
+			if (closed) return true;
+			if (!ready.ok) {
+				answerAsProxy(502, 'background-target-unavailable', 'upstream-failed', ready.error);
+				return true;
+			}
+			const body = Buffer.from(withRequestModel(read.text, plan, ready.model), 'utf-8');
+			try {
+				const outgoing = forward(ready.destination, [
+					// The new body goes out as plain UTF-8 with its own length, and
+					// without the credentials the client holds for the provider.
+					...forwardableHeaders(req.rawHeaders, [
+						'host',
+						'content-length',
+						'content-encoding',
+						...PROVIDER_CREDENTIAL_HEADERS,
+					]),
+					'Content-Length',
+					String(body.length),
+					...(ready.key ? ['Authorization', `Bearer ${ready.key}`] : []),
+					'Host',
+					ready.destination.host,
+				]);
+				sentBytes = body.length;
+				outgoing.end(body);
+			} catch (error) {
+				// A header Node refuses to write (a key with a character no header
+				// may hold). The request never left.
+				answerAsProxy(
+					502,
+					'background-target-unavailable',
+					'upstream-failed',
+					`${TOKEN_PROXY_NAME} could not send the request to this agent's Background requests target (${errorText(error)}). The request was not sent to the provider.`
+				);
+			}
+			return true;
+		};
+
+		const readAndSend = async (raw: Buffer): Promise<void> => {
 			const heldAt = Date.now();
+			const read = await readBody(raw);
+			if (background && (await sendToTarget(background, read, heldAt))) return;
+
+			if (!compress) {
+				// Read for routing only, and it is a turn: out as it arrived.
+				if (!closed) forward(upstream, arrivedHeaders()).end(raw);
+				return;
+			}
 			const log: TokenProxyCompressionLog = { changed: false, addedLatencyMs: 0 };
 			let body = raw;
 			let headers = arrivedHeaders();
-			try {
-				const decoded = await decodeRequestBody(raw, contentEncoding(req.rawHeaders));
-				if ('skipped' in decoded) {
-					log.skipped = decoded.skipped;
-				} else {
-					const result = await compress(kind, decoded.text, {
+			if ('skipped' in read) {
+				log.skipped = read.skipped;
+				if (read.error !== undefined) log.error = read.error;
+			} else {
+				try {
+					const result = await compress(kind, read.text, {
 						early: entry.mode === 'compress-early',
 					});
-					log.originalTokens = estimateTokenCount(decoded.text);
+					log.originalTokens = estimateTokenCount(read.text);
 					log.sentTokens = log.originalTokens;
 					log.stats = result.stats;
 					log.blocks = result.blocks;
@@ -567,24 +793,24 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 						log.changed = true;
 						log.sentTokens = estimateTokenCount(result.body);
 					}
+				} catch (error) {
+					// The request goes out as it arrived. Nothing else is safe to send.
+					log.skipped = 'failed';
+					log.error = errorText(error);
+					log.changed = false;
+					body = raw;
+					headers = arrivedHeaders();
 				}
-			} catch (error) {
-				// The request goes out as it arrived. Nothing else is safe to send.
-				log.skipped = 'failed';
-				log.error = errorText(error);
-				log.changed = false;
-				body = raw;
-				headers = arrivedHeaders();
 			}
 			log.addedLatencyMs = Date.now() - heldAt;
 			entry.compression = log;
 			// The client left while the body was held: there is nobody to answer.
 			if (closed) return;
 			if (log.changed) sentBytes = body.length;
-			openUpstream(headers).end(body);
+			forward(upstream, headers).end(body);
 		};
 
-		const onBodyEnd = (): void => void shortenAndSend(Buffer.concat(received));
+		const onBodyEnd = (): void => void readAndSend(Buffer.concat(received));
 		const onBodyChunk = (chunk: Buffer): void => {
 			received.push(chunk);
 			receivedBytes += chunk.length;
@@ -593,8 +819,11 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 			req.off('data', onBodyChunk);
 			req.off('end', onBodyEnd);
 			req.pause();
-			entry.compression = { skipped: 'too-large', changed: false, addedLatencyMs: 0 };
-			const outgoing = openUpstream(arrivedHeaders());
+			if (compress) {
+				entry.compression = { skipped: 'too-large', changed: false, addedLatencyMs: 0 };
+			}
+			if (background) entry.background = { skipped: 'too-large', addedLatencyMs: 0 };
+			const outgoing = forward(upstream, arrivedHeaders());
 			for (const part of received) outgoing.write(part);
 			received.length = 0;
 			req.pipe(outgoing);

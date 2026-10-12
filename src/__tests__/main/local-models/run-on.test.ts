@@ -28,6 +28,7 @@ import {
 	prepareAgentRunOn,
 	prepareLaunchRunOn,
 	resetAgentRunOnForTests,
+	resolveSourceCallTarget,
 	storedAgentRunOn,
 	type AgentRunOnDeps,
 	type AgentRunOnRequest,
@@ -314,6 +315,69 @@ describe('prepareAgentRunOn: a process that was never configured', () => {
 		resetAgentRunOnForTests();
 
 		await expect(prepare()).rejects.toThrow('configureAgentRunOn');
+	});
+});
+
+describe('resolveSourceCallTarget', () => {
+	it('hands back a saved source and its key without asking it anything', async () => {
+		await expect(resolveSourceCallTarget(BIG)).resolves.toEqual({
+			ok: true,
+			endpoint: WORKSTATION,
+			key: 'sk-workstation',
+		});
+		// The request about to be sent is the question: no listing first.
+		expect(deps.listModels).not.toHaveBeenCalled();
+		expect(deps.modelServer).not.toHaveBeenCalled();
+	});
+
+	it('has no key for a source that names none', async () => {
+		const call = await resolveSourceCallTarget(QWEN);
+
+		expect(call).toEqual({ ok: true, endpoint: OLLAMA, key: undefined });
+	});
+
+	it('starts the Maestro model server for the model and hands back where it listens', async () => {
+		const call = await resolveSourceCallTarget(ON_SERVER);
+
+		expect(deps.modelServer).toHaveBeenCalledWith('gpt-oss-20b');
+		if (!call.ok) throw new Error(JSON.stringify(call));
+		expect(call.endpoint).toMatchObject({ id: MODEL_SERVER_ENDPOINT_ID, baseUrl: SERVER_URL });
+		expect(call.key).toBe('sk-server');
+	});
+
+	it('says why the model server cannot serve the model', async () => {
+		deps.modelServer.mockResolvedValue({ ok: false, error: 'gpt-oss 20B is not downloaded.' });
+
+		const call = await resolveSourceCallTarget(ON_SERVER);
+
+		expect(call).toMatchObject({
+			ok: false,
+			reason: 'server-failed',
+			detail: 'gpt-oss 20B is not downloaded.',
+		});
+		if (call.ok) throw new Error('expected a failure');
+		expect(call.endpoint?.id).toBe(MODEL_SERVER_ENDPOINT_ID);
+	});
+
+	it('reports a source that is gone, and one that is switched off, and starts nothing', async () => {
+		await expect(
+			resolveSourceCallTarget({ type: 'source', endpointId: 'ep-gone', model: 'm' })
+		).resolves.toEqual({ ok: false, reason: 'missing', endpoint: null });
+
+		const off = { ...OLLAMA, enabled: false };
+		deps.endpoints.mockReturnValue([off]);
+		await expect(resolveSourceCallTarget(QWEN)).resolves.toEqual({
+			ok: false,
+			reason: 'disabled',
+			endpoint: off,
+		});
+		expect(deps.modelServer).not.toHaveBeenCalled();
+	});
+
+	it('throws in a process that was never configured', async () => {
+		resetAgentRunOnForTests();
+
+		await expect(resolveSourceCallTarget(QWEN)).rejects.toThrow('configureAgentRunOn');
 	});
 });
 

@@ -11,6 +11,7 @@ import {
 	removeLocalModelEndpoint,
 	updateLocalModelEndpoint,
 	endpointBaseUrlProblem,
+	endpointServesAnthropicMessages,
 	LOCAL_MODEL_ENDPOINT_KINDS,
 	LOCAL_MODEL_ENDPOINT_KIND_LABELS,
 	isLocalModelEndpointKind,
@@ -183,6 +184,18 @@ describe('localModelEndpoints setting', () => {
 		for (const url of Object.values(DEFAULT_ENDPOINT_BASE_URLS)) {
 			expect(endpointBaseUrlProblem(url!)).toBeNull();
 		}
+	});
+});
+
+describe('endpointServesAnthropicMessages', () => {
+	it('is true for the servers known to serve /v1/messages', () => {
+		expect(endpointServesAnthropicMessages({ id: 'a', kind: 'ollama' })).toBe(true);
+		expect(endpointServesAnthropicMessages({ id: 'b', kind: 'lmstudio' })).toBe(true);
+		expect(endpointServesAnthropicMessages(modelServerEndpoint('http://127.0.0.1:1'))).toBe(true);
+	});
+
+	it('is false for a base URL Maestro knows nothing more about', () => {
+		expect(endpointServesAnthropicMessages({ id: 'c', kind: 'openai-compatible' })).toBe(false);
 	});
 });
 

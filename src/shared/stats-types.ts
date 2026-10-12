@@ -362,7 +362,7 @@ export interface ProxyRequest {
 	outcome: string;
 	/** Body bytes received from the agent. */
 	requestBytes: number;
-	/** Body bytes sent to the provider. Differs from `requestBytes` when compressed. */
+	/** Body bytes sent on. Differs from `requestBytes` when compressed or routed. */
 	sentBytes: number;
 	responseBytes: number;
 	/**
@@ -384,6 +384,13 @@ export interface ProxyRequest {
 	newBlocks?: ProxyCompressedBlock[];
 	/** Why the body was forwarded unread in `compress` mode, when it was. */
 	skipReason?: string;
+	/**
+	 * The Local Models target a background request was sent to in place of the
+	 * provider, as `<source id>:<model>`. Absent for a request that went to the
+	 * provider. A routed request whose target failed keeps it, with the failure
+	 * in `outcome`.
+	 */
+	routedTo?: string;
 }
 
 /** What the proxy carried, summed. */
@@ -438,4 +445,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 15;
+export const STATS_DB_VERSION = 17;

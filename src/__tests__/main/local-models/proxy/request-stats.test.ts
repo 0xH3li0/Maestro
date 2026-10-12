@@ -147,6 +147,39 @@ describe('proxyRequestFromLog', () => {
 		});
 	});
 
+	it('records the target of a routed request, and nothing for one that stayed', () => {
+		const routed = proxyRequestFromLog(
+			logEntry({
+				sentBytes: 3_980,
+				background: { routedTo: 'maestro-server:qwen3.5-4b', addedLatencyMs: 40 },
+			})
+		);
+		expect(routed).toMatchObject({
+			mode: 'passthrough',
+			sentBytes: 3_980,
+			routedTo: 'maestro-server:qwen3.5-4b',
+		});
+
+		// A turn of the same agent: read for routing, sent to the provider.
+		const stayed = proxyRequestFromLog(
+			logEntry({ background: { skipped: 'tool-result', addedLatencyMs: 1 } })
+		);
+		expect(stayed).not.toHaveProperty('routedTo');
+	});
+
+	it('keeps the target on a routed request whose target failed', () => {
+		expect(
+			proxyRequestFromLog(
+				logEntry({
+					status: 502,
+					sentBytes: 0,
+					outcome: 'upstream-failed',
+					background: { routedTo: 'ep-ollama:qwen3:4b', addedLatencyMs: 3 },
+				})
+			)
+		).toMatchObject({ outcome: 'upstream-failed', routedTo: 'ep-ollama:qwen3:4b' });
+	});
+
 	it('leaves the agent out of a request that named none', () => {
 		const row = proxyRequestFromLog(logEntry({ agentId: null }));
 		expect(row).not.toBeNull();

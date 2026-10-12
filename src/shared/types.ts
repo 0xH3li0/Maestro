@@ -5,6 +5,7 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 import type { CodexTransport } from './codexTransport';
+import type { BackgroundRequests } from './local-models/background-requests';
 import type { RunOnTarget } from './local-models/run-on';
 import type { TierTargets } from './modelTiers';
 
@@ -323,6 +324,14 @@ export interface SessionInfo {
 	 * by `resolveTierTarget` (see `shared/modelTiers.ts`).
 	 */
 	tierTargets?: TierTargets;
+	/**
+	 * Background requests: where the Maestro token proxy sends this agent's side
+	 * requests (the ones its CLI makes on the provider's small model), when
+	 * `gatewayUrl` points at the proxy. Absent means every request goes to the
+	 * provider. Read per request by the proxy (see
+	 * `shared/local-models/background-requests.ts`).
+	 */
+	backgroundRequests?: BackgroundRequests;
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */

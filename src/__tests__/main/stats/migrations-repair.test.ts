@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 16;
+const RC_TARGET_VERSION = 17;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -94,6 +94,7 @@ function crossBranchDb(
 		wizardActiveMs?: boolean;
 		localModelRuns?: boolean;
 		proxyRequests?: boolean;
+		proxyRoutedTo?: boolean;
 	}
 ): Database.Database {
 	const db = openDb();
@@ -109,6 +110,7 @@ function crossBranchDb(
 	if (missing.wizardActiveMs) db.exec('ALTER TABLE wizard_runs DROP COLUMN active_ms');
 	if (missing.localModelRuns) db.exec('DROP TABLE local_model_runs');
 	if (missing.proxyRequests) db.exec('DROP TABLE proxy_requests');
+	if (missing.proxyRoutedTo) db.exec('ALTER TABLE proxy_requests DROP COLUMN routed_to');
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -213,7 +215,42 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		runMigrations(db);
 
 		expect(hasTable(db, 'proxy_requests')).toBe(true);
+		// The table is created with every column it has today, so v17 has
+		// nothing left to repair.
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
 		expect(logger.warn).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v16');
+	});
+
+	it('gives a fresh proxy_requests table the routed_to column', () => {
+		const db = openDb();
+		runMigrations(db);
+
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+	});
+
+	it('adds routed_to to a proxy_requests table created before the column existed', () => {
+		// A v16 install: the table exists, without the column v17 adds.
+		const db = crossBranchDb(16, { proxyRoutedTo: true });
+		expect(columnNames(db, 'proxy_requests')).not.toContain('routed_to');
+
+		runMigrations(db);
+
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+		// An ordinary upgrade, not a repair.
+		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('adds routed_to back to a database stamped v17 without it', () => {
+		// v17 declares isApplied, so a database another branch stamped 17 for a
+		// different migration still gets the column the insert names.
+		const db = crossBranchDb(RC_TARGET_VERSION, { proxyRoutedTo: true });
+
+		runMigrations(db);
+
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v17');
 	});
 });

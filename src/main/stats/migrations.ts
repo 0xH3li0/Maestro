@@ -38,6 +38,7 @@ import {
 	CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL,
 	CREATE_PROXY_REQUESTS_SQL,
 	CREATE_PROXY_REQUESTS_INDEXES_SQL,
+	ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -154,6 +155,12 @@ function getMigrations(): Migration[] {
 			description: 'Add proxy_requests table for the Maestro token proxy',
 			up: (db) => migrateV16(db),
 			isApplied: (db) => hasTable(db, 'proxy_requests'),
+		},
+		{
+			version: 17,
+			description: 'Add routed_to column to proxy_requests for background request routing',
+			up: (db) => migrateV17(db),
+			isApplied: (db) => hasColumn(db, 'proxy_requests', 'routed_to'),
 		},
 	];
 }
@@ -451,6 +458,19 @@ function migrateV16(db: Database.Database): void {
 	runStatements(db, CREATE_PROXY_REQUESTS_SQL);
 	runStatements(db, CREATE_PROXY_REQUESTS_INDEXES_SQL);
 	logger.debug('Created proxy_requests table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v17: proxy_requests.routed_to - the Local Models target a
+ * background request was sent to in place of the provider. A table created by
+ * v16 at this version already has the column, so the body is guarded; it
+ * declares `isApplied` so a database stamped 17 by another branch still gets it.
+ */
+function migrateV17(db: Database.Database): void {
+	if (!hasColumn(db, 'proxy_requests', 'routed_to')) {
+		db.prepare(ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL).run();
+	}
+	logger.debug('Added routed_to column to proxy_requests', LOG_CONTEXT);
 }
 
 /**

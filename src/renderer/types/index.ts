@@ -64,6 +64,7 @@ export type {
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { BackgroundRequests } from '../../shared/local-models/background-requests';
 import type { RunOnTarget } from '../../shared/local-models/run-on';
 import type { TierTargets } from '../../shared/modelTiers';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
@@ -1644,6 +1645,10 @@ export interface Session {
 	// harness default, then the built-in table. See resolveTierTarget in
 	// shared/modelTiers.ts.
 	tierTargets?: TierTargets;
+	// Background requests: where the Maestro token proxy sends this agent's side
+	// requests (its CLI's small-model requests) when gatewayUrl points at the
+	// proxy. Absent means the provider. See shared/local-models/background-requests.ts.
+	backgroundRequests?: BackgroundRequests;
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

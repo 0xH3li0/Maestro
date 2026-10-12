@@ -31,6 +31,14 @@
  *    changes applies to the next request, mid-turn. A request that names no
  *    agent, or an agent that is gone, is a passthrough.
  *
+ * 5. **It knows where an agent's background requests go.** The server asks
+ *    `backgroundRouteFor` per Anthropic Messages request, which reads the
+ *    agent's stored `backgroundRequests`. The target is looked up and made
+ *    ready (the Maestro model server started, the model loaded) only for a
+ *    request the server has already decided IS a background request, so an
+ *    agent's own turn never starts anything. A target that cannot be used
+ *    fails that request by name; it is never sent to the provider instead.
+ *
  * `maestro-cli send` spawns in the CLI's own process and cannot start anything
  * here. It relies on (2): the proxy is already up while the app is, and with
  * the app closed the agent's connection to the gateway URL is refused, which is
@@ -40,7 +48,14 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import {
+	backgroundRequestsUnavailable,
+	parseBackgroundRequests,
+	type BackgroundRequestsRefusalCode,
+} from '../../../shared/local-models/background-requests';
+import { endpointServesAnthropicMessages } from '../../../shared/local-models/endpoints';
 import { resolveAgentGateway } from '../../../shared/local-models/gateway';
+import { formatRunOnSpec, type RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import {
 	asStoredTokenProxyMode,
 	gatewayPointsAtTokenProxy,
@@ -59,14 +74,18 @@ import {
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 import type { SafeSendFn } from '../../utils/safe-send';
+import { captureException } from '../../utils/sentry';
 import { isTcpPort, pickFreePort } from '../../utils/tcp-port';
 import { localModelsDataDir } from '../paths';
+import { resolveSourceCallTarget, type SourceCallTarget } from '../run-on';
 import { reportLocalTaskUnavailable } from '../task-notices';
 import { compressRequestBody } from './compress';
 import { getCompressionCache, isContentHash } from './compression-cache';
 import { readTokenProxyUsage, recordTokenProxyRequest } from './request-stats';
 import {
 	createTokenProxyServer,
+	type TokenProxyBackgroundRoute,
+	type TokenProxyBackgroundTarget,
 	type TokenProxyRequestLog,
 	type TokenProxyServer,
 	type TokenProxyServerOptions,
@@ -164,8 +183,93 @@ function modeFor(agentId: string | null): TokenProxyRequestMode {
 	return asStoredTokenProxyMode(agentRecord(agentId)?.tokenProxyMode);
 }
 
+/** Why a source cannot be sent a request, as a background requests refusal. */
+const SOURCE_REFUSAL_CODES: Readonly<
+	Record<Extract<SourceCallTarget, { ok: false }>['reason'], BackgroundRequestsRefusalCode>
+> = {
+	missing: 'background-source-missing',
+	disabled: 'background-source-disabled',
+	'server-failed': 'background-server-failed',
+};
+
+/**
+ * Make one background target ready for a request: its source looked up, the
+ * Maestro model server started when the target is on it, and the source
+ * checked for the one route a background request uses.
+ */
+async function resolveBackgroundTarget(
+	target: RunOnSourceTarget
+): Promise<TokenProxyBackgroundTarget> {
+	const source = await resolveSourceCallTarget(target);
+	if (!source.ok) {
+		return {
+			ok: false,
+			error: backgroundRequestsUnavailable(
+				SOURCE_REFUSAL_CODES[source.reason],
+				target,
+				source.endpoint,
+				source.detail
+			),
+		};
+	}
+	if (!endpointServesAnthropicMessages(source.endpoint)) {
+		return {
+			ok: false,
+			error: backgroundRequestsUnavailable(
+				'background-source-not-anthropic',
+				target,
+				source.endpoint
+			),
+		};
+	}
+	return { ok: true, baseUrl: source.endpoint.baseUrl, key: source.key, model: target.model };
+}
+
+/**
+ * Where one agent's background requests go, read from its stored record each
+ * time so a change applies to the next request. Null for a request that names
+ * no agent and for an agent that sends them nowhere. A stored value that is
+ * not a target still answers with a route, one that fails by name: a setting
+ * the user made is never read as "send it to the provider".
+ */
+function backgroundRouteFor(agentId: string | null): TokenProxyBackgroundRoute | null {
+	if (agentId === null) return null;
+	const record = agentRecord(agentId);
+	const parsed = parseBackgroundRequests(record?.backgroundRequests);
+	const toolType = typeof record?.toolType === 'string' ? record.toolType : '';
+	if (!parsed.ok) {
+		const error = backgroundRequestsUnavailable(
+			'background-invalid-target',
+			null,
+			null,
+			parsed.error
+		);
+		return { toolType, resolve: async () => ({ ok: false, error }) };
+	}
+	if (!parsed.backgroundRequests) return null;
+	const target = parsed.backgroundRequests.target;
+	const routedTo = formatRunOnSpec(target);
+	return {
+		toolType,
+		routedTo,
+		resolve: () =>
+			resolveBackgroundTarget(target).catch((error: unknown) => {
+				// A target that cannot be used is an answer, not a throw. A throw
+				// means the lookup itself is broken: the server still fails the
+				// request by name, and this is how the bug is heard about.
+				void captureException(error instanceof Error ? error : new Error(String(error)), {
+					operation: 'tokenProxy:resolveBackgroundTarget',
+					agentId,
+					routedTo,
+				});
+				throw error;
+			}),
+	};
+}
+
 function logRequest(entry: TokenProxyRequestLog): void {
 	const compression = entry.compression;
+	const background = entry.background;
 	const data = {
 		route: entry.route,
 		kind: entry.kind,
@@ -193,6 +297,16 @@ function logRequest(entry: TokenProxyRequestLog): void {
 					},
 				}
 			: {}),
+		...(background
+			? {
+					routedTo: background.routedTo,
+					background: {
+						skipped: background.skipped,
+						error: background.error,
+						addedLatencyMs: background.addedLatencyMs,
+					},
+				}
+			: {}),
 	};
 	if (compression?.skipped === 'failed') {
 		logger.warn(
@@ -205,8 +319,15 @@ function logRequest(entry: TokenProxyRequestLog): void {
 		logger.warn(entry.error ?? `${TOKEN_PROXY_NAME} failed a request`, LOG_CONTEXT, data);
 		return;
 	}
+	if (background?.skipped === 'failed') {
+		logger.warn(
+			`${TOKEN_PROXY_NAME} could not read a request for background routing and sent it to the provider: ${background.error ?? 'unknown error'}`,
+			LOG_CONTEXT,
+			data
+		);
+	}
 	logger.info(
-		`${entry.method} /${entry.route}${entry.path} -> ${entry.status}: ${entry.sentBytes} bytes sent, ${entry.responseBytes} bytes received`,
+		`${entry.method} /${entry.route}${entry.path} -> ${entry.status}: ${entry.sentBytes} bytes sent, ${entry.responseBytes} bytes received${background?.routedTo ? `, routed to ${background.routedTo}` : ''}`,
 		LOG_CONTEXT,
 		data
 	);
@@ -231,6 +352,7 @@ async function start(port: number): Promise<void> {
 				recordTokenProxyRequest(entry);
 			},
 			modeFor,
+			backgroundRouteFor,
 			compress: (kind, body, { early }) =>
 				compressRequestBody(kind, body, {
 					early,

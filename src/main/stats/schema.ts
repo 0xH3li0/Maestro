@@ -302,6 +302,8 @@ export const CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL = `
  * only in `compress` mode. `compressor_counts` and `new_blocks` are JSON;
  * `new_blocks` lists only the blocks shortened for the first time in this
  * request, so a block appears in one row however many later requests resend it.
+ * `routed_to` (migration v17) is the Local Models target a background request
+ * was sent to in place of the provider, and NULL for every other request.
  */
 export const CREATE_PROXY_REQUESTS_SQL = `
   CREATE TABLE IF NOT EXISTS proxy_requests (
@@ -324,8 +326,14 @@ export const CREATE_PROXY_REQUESTS_SQL = `
     cache_hits INTEGER NOT NULL DEFAULT 0,
     compressor_counts TEXT,
     new_blocks TEXT,
-    skip_reason TEXT
+    skip_reason TEXT,
+    routed_to TEXT
   )
+`;
+
+/** Migration v17, for a `proxy_requests` table created before the column existed. */
+export const ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL = `
+  ALTER TABLE proxy_requests ADD COLUMN routed_to TEXT
 `;
 
 export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `

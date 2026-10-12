@@ -11,6 +11,7 @@ import {
 	cheapResumeTurnSettings,
 	cheapTurnSettings,
 	CODEX_TIER_FAMILIES,
+	modelIdInTierFamily,
 	parseHarnessTierDefaults,
 	parseTierTarget,
 	resolveEffortLevel,
@@ -100,6 +101,46 @@ describe('model tiers', () => {
 		expect(resolveTierModel('opencode', 'high')).toBeUndefined();
 		expect(supportsTierSelection('opencode')).toBe(false);
 		expect(supportsTierSelection('claude-code')).toBe(true);
+	});
+});
+
+describe('modelIdInTierFamily', () => {
+	it("reads Claude Code's small model from the ids its CLI puts on the wire", () => {
+		for (const id of [
+			'haiku',
+			'claude-haiku-4-5-20251001',
+			'claude-haiku-4-5',
+			'claude-3-5-haiku-20241022',
+			'claude-3-5-haiku-latest',
+			'Claude-Haiku-4-5',
+		]) {
+			expect(modelIdInTierFamily('claude-code', 'low', id), id).toBe(true);
+		}
+	});
+
+	it('keeps each family in its own tier', () => {
+		expect(modelIdInTierFamily('claude-code', 'low', 'claude-sonnet-4-5-20250929')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'low', 'claude-opus-4-8')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'medium', 'claude-sonnet-4-5-20250929')).toBe(true);
+		expect(modelIdInTierFamily('claude-code', 'high', 'claude-opus-4-8')).toBe(true);
+		expect(modelIdInTierFamily('codex', 'low', 'gpt-6-luna')).toBe(true);
+		expect(modelIdInTierFamily('codex', 'low', 'gpt-6.1-sol')).toBe(false);
+	});
+
+	it('wants the family as a whole word of the id', () => {
+		expect(modelIdInTierFamily('claude-code', 'low', 'claude-haikus-4')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'low', 'myhaiku')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'low', '')).toBe(false);
+	});
+
+	it('matches the built-in id of a harness with no family, and nothing else of it', () => {
+		expect(modelIdInTierFamily('factory-droid', 'low', 'claude-haiku-4-5-20251001')).toBe(true);
+		expect(modelIdInTierFamily('factory-droid', 'low', 'claude-haiku-4-6')).toBe(false);
+	});
+
+	it('knows nothing about a harness with no built-in row', () => {
+		expect(modelIdInTierFamily('opencode', 'low', 'anthropic/claude-haiku-4-5')).toBe(false);
+		expect(modelIdInTierFamily('not-a-harness', 'low', 'haiku')).toBe(false);
 	});
 });
 

@@ -92,6 +92,8 @@ describe('proxy-requests', () => {
 				1,
 				JSON.stringify({ json: 0, logs: 2, 'long-lines': 0, model: 0 }),
 				JSON.stringify([block]),
+				null,
+				// It went to the provider.
 				null
 			);
 		});
@@ -133,8 +135,37 @@ describe('proxy-requests', () => {
 				0,
 				null,
 				null,
+				null,
 				null
 			);
+		});
+
+		it('stores the target of a request that was routed, as the last column', () => {
+			recordProxyRequest(mockDb, {
+				agentId: 'agent-1',
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				mode: 'passthrough',
+				startedAt: 4_000,
+				durationMs: 300,
+				status: 200,
+				outcome: 'completed',
+				requestBytes: 900,
+				sentBytes: 880,
+				responseBytes: 120,
+				blocksCompressed: 0,
+				cacheHits: 0,
+				routedTo: 'maestro-server:qwen3.5-4b',
+			});
+
+			const sql = (mockDb.prepare as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			// One placeholder per column, and the target bound where its column is.
+			const columns = sql.slice(sql.indexOf('(') + 1, sql.indexOf(')')).split(',');
+			expect(columns.map((column) => column.trim()).at(-1)).toBe('routed_to');
+			expect(sql.match(/\?/g)).toHaveLength(columns.length);
+			const bound = mockStatement.run.mock.calls[0] as unknown[];
+			expect(bound).toHaveLength(columns.length);
+			expect(bound.at(-1)).toBe('maestro-server:qwen3.5-4b');
 		});
 
 		it('stores no JSON for counts that are all zero or a block list that is empty', () => {
@@ -163,7 +194,7 @@ describe('proxy-requests', () => {
 			const bound = mockStatement.run.mock.calls[0] as unknown[];
 			// A zero is a measurement and is kept; an empty summary is not stored.
 			expect(bound.slice(12, 15)).toEqual([25, 25, 0]);
-			expect(bound.slice(17)).toEqual([null, null, 'encoding']);
+			expect(bound.slice(17)).toEqual([null, null, 'encoding', null]);
 		});
 	});
 

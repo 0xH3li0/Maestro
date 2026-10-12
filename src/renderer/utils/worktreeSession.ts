@@ -135,6 +135,9 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// And the same tier targets, for the same reason: a `low` task the parent
 		// sends to a local model must not reach the cloud from its worktree.
 		tierTargets: params.parentSession.tierTargets,
+		// And the same background requests target: it is read with the gateway
+		// and the proxy mode above, which the worktree agent already shares.
+		backgroundRequests: params.parentSession.backgroundRequests,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
