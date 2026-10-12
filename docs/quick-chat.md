@@ -63,6 +63,12 @@ A tab answers one message at a time. When a message belongs in a tab that is in 
 
 If you would rather not wait, click **Send to a new tab** next to **Queued**. The message leaves the queue and runs in a new tab now. The same thing from the command line is `maestro-cli quick-chat new-tab`.
 
+A message waits only for its own tab, never for the agent's other tabs. This is true whatever **Forced Parallel Execution** is set to: that setting governs **Force Send** in the main window, and Quick Chat has always run beside whatever else the agent is doing.
+
+<Warning>
+Two replies running at once on one agent share its working directory. If both edit files, they can step on each other. Quick questions are safe. For two tasks that both change code, let the first finish, or use agents in separate worktrees.
+</Warning>
+
 ### Tabs Quick Chat creates
 
 A chat has one of two modes, and you can flip between them at any time with the bookmark in the window or `Cmd+B` / `Ctrl+B`. The mode applies only to the tabs the chat **creates**. A tab the agent already had, and a tab reopened for a message, are yours: Quick Chat never hides or deletes them.

@@ -496,6 +496,15 @@ function deliverToTab(
  * queue itself would run: not paused, not held for a consult or a connection.
  * A tab with an Agent Resilience retry counting down is not free either, and an
  * agent stopped on an error a human has to clear takes nothing.
+ *
+ * Deliberately NOT asked: whether another tab of the agent is busy, and whether
+ * Forced Parallel Execution is on. That setting gates the composer's Force Send
+ * in the main window. Quick Chat has never waited on the agent's other tabs (it
+ * used to send with `force: true` for exactly this reason), and "Send to a new
+ * tab" exists so a message does not have to: gating on the setting would make
+ * every message wait whenever any tab is working. The cost is the one the
+ * setting guards against, two turns writing in one working directory, and the
+ * docs say so.
  */
 function isTabFreeFor(session: Session | null, tabId: string, itemId: string): boolean {
 	const tab = session?.aiTabs.find((t) => t.id === tabId);
