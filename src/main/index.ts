@@ -168,6 +168,7 @@ import { initializeStatsDB, closeStatsDB } from './stats';
 import { evaluateCueGate } from './local-models/cue-gate';
 import { scoreCueInjectionText } from './local-models/cue-injection-screen';
 import { closeEmbeddingStore } from './local-models/embedding-store';
+import { refreshModelRouting, startModelRouting } from './local-models/route-turn';
 import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
 import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
@@ -583,6 +584,9 @@ const settingsWatcher = createSettingsWatcher({
 		// semanticIndexCue ...` edit the file directly. A no-op unless one of
 		// those two actually moved.
 		refreshSemanticIndexer();
+		// `maestro-cli models assign model-routing ...` moves the embedding router
+		// to another model, or off. A no-op unless that assignment moved.
+		refreshModelRouting();
 	},
 });
 
@@ -3688,6 +3692,11 @@ app
 			sessionsStore,
 			historyManager: getHistoryManager(),
 		});
+
+		// Model routing notes which router is assigned and follows the setting.
+		// It loads nothing here: the embedding router is warmed on a change of
+		// assignment, never at a start.
+		startModelRouting(store);
 
 		// Tab cleanup suggestions read the tabs from the sessions store and ask
 		// the process manager which of them are running a turn. Wiring it reads

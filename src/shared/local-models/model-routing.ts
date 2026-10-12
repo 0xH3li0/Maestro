@@ -14,11 +14,13 @@
  *     in `userData/model-routing-corrections.json` and votes like any example;
  *   - {@link voteModelRoute} is the k-nearest-neighbour vote.
  *
- * Tier and effort share one vocabulary (`TIER_LEVELS` in `modelTiers.ts`), so
- * both axes are voted the same way.
+ * Tier and effort share one vocabulary (`TIER_LEVELS`), so both axes are voted
+ * the same way. It is imported from `tierLevels.ts`, never from `modelTiers.ts`:
+ * the task registry imports this module's sibling, and `modelTiers.ts` reaches
+ * the registry, so that import would close a cycle.
  */
 
-import { asTierLevel, TIER_LEVELS, type EffortLevel, type ModelTier } from '../modelTiers';
+import { asTierLevel, TIER_LEVELS, type EffortLevel, type ModelTier } from '../tierLevels';
 import { redactSecrets } from '../redactSecrets';
 
 /** One labeled prompt: the tier and effort a careful person would pick for it. */

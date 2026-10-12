@@ -28,6 +28,7 @@ const generate = vi.hoisted(() => ({ generateText: vi.fn() }));
 const embed = vi.hoisted(() => ({ embedTexts: vi.fn() }));
 const classify = vi.hoisted(() => ({ classifyText: vi.fn() }));
 const speech = vi.hoisted(() => ({ transcribeSpeech: vi.fn() }));
+const router = vi.hoisted(() => ({ route: vi.fn() }));
 
 vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({
@@ -67,11 +68,16 @@ vi.mock('../../../main/local-models/speech-to-text', () => ({
 	transcribeSpeech: speech.transcribeSpeech,
 }));
 
+vi.mock('../../../main/local-models/model-router', () => ({
+	getEmbeddingRouter: () => ({ route: router.route }),
+}));
+
 import {
 	DEFAULT_TASK_MAX_TOKENS,
 	isInteractiveLocalTaskRunning,
 	parseLocalTaskInput,
 	runClassifierTask,
+	runEmbeddingRouteTask,
 	runEmbeddingTask,
 	runLocalTask,
 	runLocalTaskRequest,
@@ -407,6 +413,103 @@ describe('runEmbeddingTask', () => {
 	it('refuses a task that is not an embedding task (a caller bug)', async () => {
 		await expect(runEmbeddingTask('tab-naming', { texts: ['a'], mode: 'query' })).rejects.toThrow(
 			/text-gen task/
+		);
+	});
+});
+
+describe('runEmbeddingRouteTask', () => {
+	const BGE = { type: 'local', modelId: BGE_SMALL_EN_ID } as const;
+	const DECISION = {
+		tier: 'medium',
+		effort: 'low',
+		tierConfidence: 0.6,
+		effortConfidence: 0.2,
+		neighbours: [],
+		exampleCount: 57,
+		source: BGE,
+	};
+
+	beforeEach(() => {
+		settings.clear();
+		stats.ready = true;
+		stats.recordLocalModelRun.mockReset().mockReturnValue('id');
+		router.route.mockReset();
+	});
+
+	it('answers off on the default assignment and routes nothing', async () => {
+		await expect(runEmbeddingRouteTask('model-routing', { text: 'rename it' })).resolves.toEqual({
+			status: 'off',
+		});
+		expect(router.route).not.toHaveBeenCalled();
+		expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
+	});
+
+	it('routes on the assigned embedding model, passes the signal, and records the run', async () => {
+		assign('model-routing', BGE);
+		router.route.mockResolvedValue(DECISION);
+		const signal = new AbortController().signal;
+
+		const result = await runEmbeddingRouteTask('model-routing', { text: 'rename it', signal });
+
+		expect(router.route).toHaveBeenCalledWith(BGE, 'rename it', { signal });
+		expect(result).toMatchObject({ status: 'ok', decision: DECISION, source: BGE });
+		expect(recorded()).toMatchObject({
+			taskId: 'model-routing',
+			sourceType: 'local',
+			modelId: BGE_SMALL_EN_ID,
+			outcome: 'ok',
+		});
+	});
+
+	it('reports a model that is not downloaded as unavailable, and asks nothing else', async () => {
+		assign('model-routing', BGE);
+		router.route.mockRejectedValue(
+			new LocalModelError('bge-small is not downloaded.', {
+				code: 'model-not-installed',
+				recovery: 'Download it in Settings.',
+				consumerId: 'embeddings',
+			})
+		);
+
+		await expect(runEmbeddingRouteTask('model-routing', { text: 'rename it' })).resolves.toEqual({
+			status: 'unavailable',
+			source: BGE,
+			reason: 'bge-small is not downloaded. Download it in Settings.',
+			code: 'model-not-installed',
+		});
+		expect(router.route).toHaveBeenCalledTimes(1);
+		expect(recorded()).toMatchObject({ outcome: 'error', errorCode: 'model-not-installed' });
+	});
+
+	it('reports a caller that stopped waiting as cancelled', async () => {
+		assign('model-routing', BGE);
+		router.route.mockRejectedValue(
+			new LocalModelError('The request was cancelled.', {
+				code: 'cancelled',
+				recovery: 'Nothing to do.',
+				consumerId: 'local-models:model-router',
+			})
+		);
+
+		await expect(runEmbeddingRouteTask('model-routing', { text: 'rename it' })).resolves.toEqual({
+			status: 'cancelled',
+			source: BGE,
+		});
+	});
+
+	it('rethrows a failure the router did not classify (a bug) after recording it', async () => {
+		assign('model-routing', BGE);
+		router.route.mockRejectedValue(new Error('embeddings of more than one width'));
+
+		await expect(runEmbeddingRouteTask('model-routing', { text: 'rename it' })).rejects.toThrow(
+			/more than one width/
+		);
+		expect(recorded()).toMatchObject({ outcome: 'error', errorCode: 'unexpected' });
+	});
+
+	it('refuses a task that takes no embedding model (a caller bug)', async () => {
+		await expect(runEmbeddingRouteTask('tab-naming', { text: 'rename it' })).rejects.toThrow(
+			/Tab naming takes no embedding model/
 		);
 	});
 });

@@ -8,7 +8,10 @@
  * happened when it could not" has one answer. `runAgentSystemOneRequest` (the
  * agent service) records every request an agent's `maestro-cli s1` verb sent to
  * an engine or was answered from the cache, filed under `agent:<verb>` with the
- * agent and tab that asked. The records are kept in `stats.db` (`s1_decisions`)
+ * agent and tab that asked. A third writes the same record for a decision no
+ * System One engine made: `routeTurn` files every model-routing decision here,
+ * whichever router made it, so the embedding router's decisions are read in the
+ * same place as Jev's ({@link SystemOneLedgerEngine}). The records are kept in `stats.db` (`s1_decisions`)
  * for {@link SYSTEM_ONE_LEDGER_RETENTION_DAYS} days and read by the ledger in
  * Settings > Models > System One and `maestro-cli s1 ledger`.
  *
@@ -26,6 +29,7 @@
  * Everything here is pure and bundle-safe.
  */
 
+import { EMBEDDING_ROUTER_ENGINE_ID, embeddingRouterLabel } from './model-routing-task';
 import {
 	redactSystemOneRequest,
 	type SystemOneAnswer,
@@ -39,7 +43,7 @@ import {
 	systemOneAgentSourceVerb,
 	type SystemOneAgentSourceId,
 } from './system-one-agent';
-import type { SystemOneEngineChoice } from './system-one-settings';
+import { systemOneEngineChoiceLabel, type SystemOneEngineChoice } from './system-one-settings';
 import { LOCAL_MODEL_TASKS, isLocalModelTaskId, type LocalModelTaskId } from './tasks';
 
 // ---------------------------------------------------------------------------
@@ -97,10 +101,24 @@ export function systemOneLedgerTaskLabel(taskId: SystemOneLedgerTaskId): string 
 	return (LOCAL_MODEL_TASKS as Partial<typeof LOCAL_MODEL_TASKS>)[taskId]?.label ?? taskId;
 }
 
+/**
+ * Who a record says was asked: a System One engine (`off` when the task was
+ * assigned and no engine was chosen), or the embedding router, which decides a
+ * model-routing run with no engine and no text model.
+ */
+export type SystemOneLedgerEngine = SystemOneEngineChoice | typeof EMBEDDING_ROUTER_ENGINE_ID;
+
+/** What a record's engine is called in the ledger. */
+export function systemOneLedgerEngineLabel(engine: SystemOneLedgerEngine): string {
+	return engine === EMBEDDING_ROUTER_ENGINE_ID
+		? embeddingRouterLabel()
+		: systemOneEngineChoiceLabel(engine);
+}
+
 export interface SystemOneDecision {
 	taskId: SystemOneLedgerTaskId;
-	/** The engine that was asked. `off` when the task was assigned and no engine was chosen. */
-	engine: SystemOneEngineChoice;
+	/** Who was asked. See {@link SystemOneLedgerEngine}. */
+	engine: SystemOneLedgerEngine;
 	/** The model the engine says answered. Absent with no answer. */
 	model?: string;
 	questionIds: string[];

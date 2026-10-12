@@ -22,6 +22,7 @@ import {
 	isSystemOneLedgerTaskId,
 	parseSystemOneLedgerQuery,
 	summarizeSystemOneDecision,
+	systemOneLedgerEngineLabel,
 	systemOneLedgerTaskLabel,
 } from '../../../shared/local-models/system-one-ledger';
 
@@ -123,6 +124,19 @@ describe('what a record is filed under', () => {
 
 	it('reads a stored task a later build no longer has as its id, never as a throw', () => {
 		expect(systemOneLedgerTaskLabel('retired-task' as never)).toBe('retired-task');
+	});
+
+	it('files model routing under its own task, whichever router decided', () => {
+		expect(isSystemOneLedgerTaskId('model-routing')).toBe(true);
+		expect(systemOneLedgerTaskLabel('model-routing')).toBe('Model routing');
+	});
+
+	it('names every engine a record can carry, the embedding router among them', () => {
+		expect(systemOneLedgerEngineLabel('jev-cloud')).toBe('Jev (TypeSafe cloud)');
+		expect(systemOneLedgerEngineLabel('local-judge')).toBe('Local judge, not calibrated');
+		expect(systemOneLedgerEngineLabel('off')).toBe('Off');
+		// Not a System One engine: it decides a routing run with no engine at all.
+		expect(systemOneLedgerEngineLabel('embedding-router')).toBe('Embedding router, not calibrated');
 	});
 });
 

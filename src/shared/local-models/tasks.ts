@@ -30,6 +30,7 @@ import { secretScreenSystemOneRequest, type SecretScreenSystemOneInput } from '.
 import { tabCleanupSystemOneRequest, type TabCleanupSystemOneInput } from '../tabCleanup';
 import type { LocalModelEndpoint } from './endpoints';
 import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
+import { modelRoutingSystemOneRequest, type ModelRoutingInput } from './model-routing-task';
 import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
 import type { SystemOneFailPolicy, SystemOneTaskRequest } from './system-one';
 import type { LocalModelKind } from './types';
@@ -121,6 +122,7 @@ export const LOCAL_MODEL_TASK_IDS = [
 	'dictation',
 	'spoken-notices',
 	'voice-routing',
+	'model-routing',
 	'token-proxy',
 	'local-judge',
 ] as const;
@@ -155,6 +157,7 @@ export interface SystemOneTaskInputs {
 	'injection-screen': CueInjectionSystemOneInput;
 	'secret-screen': SecretScreenSystemOneInput;
 	'voice-routing': VoiceRoutingSystemOneInput;
+	'model-routing': ModelRoutingInput;
 }
 
 export type SystemOneTaskId = keyof SystemOneTaskInputs;
@@ -170,6 +173,24 @@ export interface LocalModelTaskDefinition {
 	 * models and endpoint models of this kind.
 	 */
 	readonly needs: LocalModelTaskNeed;
+	/**
+	 * Other kinds of CATALOG model the assignment may name, for a task that does
+	 * its job a different way on each. Model routing is the one today: an
+	 * embedding model votes by the labeled prompts a prompt resembles, a text
+	 * model answers as a judge. The task reads the assigned model's kind and
+	 * picks the way; {@link taskAcceptsLocalKind} is the one check.
+	 *
+	 * An endpoint does not report a model's kind, so an endpoint assignment is
+	 * always read as `needs`.
+	 */
+	readonly alsoAcceptsLocal?: readonly LocalModelTaskNeed[];
+	/**
+	 * True for a task that works fully on this machine and treats System One as
+	 * one option among several. Its source picker lists local models and
+	 * endpoints BEFORE System One, and says beside every source whether its
+	 * answer is calibrated.
+	 */
+	readonly localFirst?: boolean;
 	/**
 	 * System One when the output is a judgment (a decision, label, score, vector
 	 * or transcript), System Two when it is text written for someone to read or
@@ -232,6 +253,9 @@ function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
 	return Object.freeze({
 		...task,
 		...(task.alsoNeeds ? { alsoNeeds: Object.freeze([...task.alsoNeeds]) } : {}),
+		...(task.alsoAcceptsLocal
+			? { alsoAcceptsLocal: Object.freeze([...task.alsoAcceptsLocal]) }
+			: {}),
 		...(task.unofferedLocalModels
 			? { unofferedLocalModels: Object.freeze({ ...task.unofferedLocalModels }) }
 			: {}),
@@ -399,6 +423,22 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 					'It sends requests that name an agent to the Conductor, so it is not offered for voice routing.',
 			},
 		}),
+		'model-routing': defineTask({
+			id: 'model-routing',
+			system: 'one',
+			label: 'Model routing',
+			description:
+				'Judges how much model and effort a turn needs, for an agent whose model is Auto. An embedding model decides by the labeled prompts a prompt resembles; a text model answers as a local judge. Off runs an Auto agent at its default tier.',
+			// The endpoint reading: an endpoint model is always the judge.
+			needs: 'text-gen',
+			alsoAcceptsLocal: ['embedding'],
+			localFirst: true,
+			allowsUtilityAgent: false,
+			defaultAssignment: OFF_ASSIGNMENT,
+			// No fail policy: a turn with no decision runs at the agent's default
+			// tier, which is neither letting unchecked work through nor stopping it.
+			systemOneQuestions: modelRoutingSystemOneRequest,
+		}),
 		'token-proxy': defineTask({
 			id: 'token-proxy',
 			system: 'two',
@@ -427,6 +467,21 @@ export function isLocalModelTaskId(value: unknown): value is LocalModelTaskId {
 	return (
 		typeof value === 'string' && Object.prototype.hasOwnProperty.call(LOCAL_MODEL_TASKS, value)
 	);
+}
+
+/** The kinds of catalog model a task's assignment may name: `needs` first. */
+export function taskLocalModelKinds(
+	task: Pick<LocalModelTaskDefinition, 'needs' | 'alsoAcceptsLocal'>
+): readonly LocalModelTaskNeed[] {
+	return [task.needs, ...(task.alsoAcceptsLocal ?? [])];
+}
+
+/** Whether a catalog model of this kind is one the task can be assigned. */
+export function taskAcceptsLocalKind(
+	task: Pick<LocalModelTaskDefinition, 'needs' | 'alsoAcceptsLocal'>,
+	kind: LocalModelKind
+): boolean {
+	return (taskLocalModelKinds(task) as readonly LocalModelKind[]).includes(kind);
 }
 
 /**
@@ -563,7 +618,7 @@ export function resolveLocalModelAssignments(
 /**
  * Why an assignment the user is about to SAVE does not fit a task, or `null`
  * when it does. Stricter than {@link parseLocalModelAssignment}: a local model
- * must be in the catalog and of the kind the task needs, because picking a
+ * must be in the catalog and of a kind the task accepts, because picking a
  * text model for an embedding task is a mistake to refuse at the picker, not a
  * failure to discover at run time. An endpoint is refused for a need no server
  * serves ({@link endpointServesNeed}); otherwise its models are discovered at
@@ -596,8 +651,8 @@ export function localModelAssignmentProblem(
 	if (assignment.type === 'local') {
 		const model = getLocalModel(assignment.modelId);
 		if (!model) return `"${assignment.modelId}" is not a known local model.`;
-		if (model.kind !== task.needs) {
-			return `${model.displayName} is a ${model.kind} model, but ${task.label} needs a ${task.needs} model.`;
+		if (!taskAcceptsLocalKind(task, model.kind)) {
+			return `${model.displayName} is a ${model.kind} model, but ${task.label} needs a ${taskLocalModelKinds(task).join(' or ')} model.`;
 		}
 	}
 	if (assignment.type === 'endpoint' && !endpointServesNeed(task.needs)) {
@@ -673,8 +728,8 @@ export function tasksUsingLocalModel(
 
 /** The tasks that can be assigned a model of this kind, in registry order. */
 export function tasksNeedingKind(kind: LocalModelKind): LocalModelTaskDefinition[] {
-	return LOCAL_MODEL_TASK_IDS.map((taskId) => LOCAL_MODEL_TASKS[taskId]).filter(
-		(task) => task.needs === kind
+	return LOCAL_MODEL_TASK_IDS.map((taskId) => LOCAL_MODEL_TASKS[taskId]).filter((task) =>
+		taskAcceptsLocalKind(task, kind)
 	);
 }
 

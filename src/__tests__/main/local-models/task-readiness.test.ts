@@ -200,6 +200,28 @@ describe('resolveTaskReadiness', () => {
 		expect(verdict).toMatchObject({ state: 'ready', detail: 'Runs nomic-embed-text on Ollama.' });
 	});
 
+	it('is ready for model routing on an embedding model and on a text model alike', async () => {
+		for (const modelId of [BGE_SMALL_EN_ID, QWEN3_1_7B_ID]) {
+			const verdict = await resolveTaskReadiness(
+				'model-routing',
+				healthy({ assignments: { 'model-routing': local(modelId) } })
+			);
+			expect(verdict).toMatchObject({ state: 'ready', needs: 'text-gen' });
+		}
+	});
+
+	it('names both kinds model routing takes when it is assigned neither', async () => {
+		const verdict = await resolveTaskReadiness(
+			'model-routing',
+			healthy({ assignments: { 'model-routing': local(PROMPT_GUARD_2_22M_ID) } })
+		);
+		expect(verdict).toMatchObject({ state: 'unavailable', reason: 'model-wrong-kind' });
+		expect(verdict.detail).toMatch(
+			/is not a text-generation or embedding model, which Model routing needs/
+		);
+		expect(verdict.suggestedAction).toMatch(/^Assign a text-generation or embedding model in /);
+	});
+
 	it('checks the runtime before the model', async () => {
 		const options = healthy({
 			assignments: { 'semantic-search': local(BGE_SMALL_EN_ID) },

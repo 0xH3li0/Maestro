@@ -31,6 +31,8 @@ import {
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
 	resolveLocalModelAssignment,
+	taskAcceptsLocalKind,
+	taskLocalModelKinds,
 	type LocalModelAssignment,
 	type LocalModelAssignments,
 	type LocalModelTaskDefinition,
@@ -80,6 +82,12 @@ const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
 function aNeed(need: LocalModelTaskDefinition['needs']): string {
 	const label = NEED_LABELS[need];
 	return `${/^[aeiou]/.test(label) ? 'an' : 'a'} ${label}`;
+}
+
+/** "a text-generation or embedding model": every kind of catalog model a task accepts. */
+function aLocalNeed(task: LocalModelTaskDefinition): string {
+	const [first, ...rest] = taskLocalModelKinds(task);
+	return [aNeed(first), ...rest.map((kind) => NEED_LABELS[kind])].join(' or ');
 }
 
 export interface ResolveTaskReadinessOptions {
@@ -233,7 +241,7 @@ async function resolveLocal(
 	modelId: string,
 	options: ResolveTaskReadinessOptions
 ): Promise<Verdict> {
-	const needLabel = aNeed(task.needs);
+	const needLabel = aLocalNeed(task);
 	const entry = getLocalModel(modelId);
 	if (!entry) {
 		return unavailable(
@@ -242,7 +250,7 @@ async function resolveLocal(
 			`Assign ${needLabel} model from the Local Models catalog in ${taskAssignmentLocation(task.id)}.`
 		);
 	}
-	if (entry.kind !== task.needs) {
+	if (!taskAcceptsLocalKind(task, entry.kind)) {
 		return unavailable(
 			'model-wrong-kind',
 			`${entry.displayName} is not ${needLabel} model, which ${task.label} needs.`,

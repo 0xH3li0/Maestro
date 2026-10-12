@@ -251,6 +251,32 @@ describe('askLocalJudge', () => {
 		expect(result.calibrated).toBe(false);
 	});
 
+	describe("on another task's own model", () => {
+		const ROUTING = 'model-routing';
+		const TIER = { tier: score('How much model?', ['Small', 'Middle', 'Large']) };
+
+		it("answers on that task's assignment while the local judge task has no model", async () => {
+			settings.set('localModelAssignments', { [ROUTING]: ENDPOINT });
+
+			const result = await askLocalJudge(STATE, TIER, { taskId: ROUTING });
+
+			expect(result.answers).toEqual({ tier: { type: 'score', score: 2 } });
+			expect(result.engine).toBe('local-judge');
+			expect(result.model).toBe('endpoint:ep-1:llama3.2');
+			expect(requests()[0].source).toEqual(ENDPOINT);
+			// The generation is a run of the task that owns the model.
+			expect(stats.recordLocalModelRun.mock.calls[0][0]).toMatchObject({ taskId: ROUTING });
+		});
+
+		it("never reads the local judge task's model for it", async () => {
+			// The local judge task has a model (the `beforeEach`); model routing has none.
+			const error = await failure(askLocalJudge(STATE, TIER, { taskId: ROUTING }), 'unavailable');
+
+			expect(error.message).toMatch(/Assign Model routing a local model or an endpoint/);
+			expect(generate.generateText).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('a noul', () => {
 		async function probability(answer: unknown): Promise<number> {
 			mockModel(() => answer);

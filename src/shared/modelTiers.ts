@@ -51,20 +51,14 @@ import {
 } from './local-models/run-on';
 import { runOnModelFacts, type RunOnPickerSource } from './local-models/run-on-picker';
 import { getAgentCapabilities } from './maestro-lib/providers/capabilities';
+import { asTierLevel, TIER_LEVELS, type EffortLevel, type ModelTier } from './tierLevels';
 
-/** The one vocabulary: model tier and effort level both use these three rungs. */
-export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
-
-/** Which model to use. Resolved per provider by {@link resolveTierModel}. */
-export type ModelTier = (typeof TIER_LEVELS)[number];
-
-/** How hard the model should think. Resolved by {@link resolveEffortLevel}. */
-export type EffortLevel = (typeof TIER_LEVELS)[number];
-
-/** Narrow an unknown value to a tier/effort rung, or `undefined` if it isn't one. */
-export function asTierLevel(value: unknown): ModelTier | undefined {
-	return TIER_LEVELS.includes(value as ModelTier) ? (value as ModelTier) : undefined;
-}
+// The vocabulary itself (`low | medium | high`) lives in `tierLevels.ts`, a leaf
+// with no imports, and is re-exported here so every caller keeps one import.
+// It is apart because this module reaches the Local Models task registry
+// (through `run-on.ts`), and the registry needs the three words too: importing
+// them from here would close a cycle.
+export { TIER_LEVELS, asTierLevel, type EffortLevel, type ModelTier } from './tierLevels';
 
 /**
  * Effort ladders, per provider, floor to ceiling.

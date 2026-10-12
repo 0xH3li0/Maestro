@@ -6,7 +6,8 @@
  * input: a prompt for a text-generation task ({@link runLocalTask}), texts for
  * an embedding task ({@link runEmbeddingTask}), one text for a classifier task
  * ({@link runClassifierTask}), one clip of audio for a speech-to-text task
- * ({@link runSpeechToTextTask}). The router reads the user's assignment for that task
+ * ({@link runSpeechToTextTask}), one prompt for the embedding router
+ * ({@link runEmbeddingRouteTask}). The router reads the user's assignment for that task
  * (`localModelAssignments`, resolved against the registry defaults in
  * `src/shared/local-models/tasks.ts`) and answers with one of:
  *
@@ -56,6 +57,7 @@ import {
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASKS,
 	resolveLocalModelAssignment,
+	taskAcceptsLocalKind,
 	type LocalModelTaskDefinition,
 	type LocalModelTaskId,
 	type SystemOneTaskId,
@@ -76,6 +78,7 @@ import {
 	isLocalModelError,
 	isSystemOneError,
 } from './errors';
+import { getEmbeddingRouter, type EmbeddingRouteDecision } from './model-router';
 import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
 import { transcribeSpeech } from './speech-to-text';
 import { keepSystemOneDecision, type SystemOneDecision } from './system-one/decisions';
@@ -344,6 +347,66 @@ export async function runSpeechToTextTask(
 	};
 }
 
+/** What the embedding router is handed. */
+export interface EmbeddingRouteTaskInput {
+	/** The prompt to route. The router normalizes it (`normalizeModelRoutingText`). */
+	text: string;
+	/** Stops the caller's wait. It never stops the build of the example vectors. */
+	signal?: AbortSignal;
+}
+
+/**
+ * The embedding router's verdict. No `use-utility-agent`: an agent cannot
+ * produce vectors, so no task that takes an embedding model accepts it.
+ */
+export type EmbeddingRouteTaskResult =
+	| { status: 'off' }
+	| {
+			status: 'ok';
+			decision: EmbeddingRouteDecision;
+			source: LocalModelSource;
+			durationMs: number;
+	  }
+	| LocalTaskUnavailable
+	| { status: 'cancelled'; source: LocalModelSource };
+
+/**
+ * Route one prompt on the embedding model a task is assigned (`model-routing`
+ * assigned an embedding model): its nearest labeled prompts vote for a tier and
+ * an effort (`getEmbeddingRouter`). The run is recorded like every other, and a
+ * source that cannot run is `unavailable` as itself.
+ *
+ * The caller checks that the assignment IS an embedding model first
+ * (`modelRouterKind`): a text model handed here fails as a model that cannot
+ * embed, which is `unavailable` too.
+ *
+ * Throws only for a caller bug (a task that takes no embedding model, no text to
+ * route) or an unclassified failure inside the service.
+ */
+export async function runEmbeddingRouteTask(
+	taskId: LocalModelTaskId,
+	input: EmbeddingRouteTaskInput
+): Promise<EmbeddingRouteTaskResult> {
+	const task = LOCAL_MODEL_TASKS[taskId];
+	if (!taskAcceptsLocalKind(task, 'embedding')) {
+		throw new Error(`${task.label} takes no embedding model; runEmbeddingRouteTask cannot run it.`);
+	}
+	const verdict = await runThroughAssignment(taskId, (source) =>
+		getEmbeddingRouter().route(source, input.text, input.signal ? { signal: input.signal } : {})
+	);
+	if (verdict.status === 'use-utility-agent') {
+		// The registry refuses this assignment for every such task.
+		throw new Error(`${task.label} cannot run on the Utility Agent.`);
+	}
+	if (verdict.status !== 'ok') return verdict;
+	return {
+		status: 'ok',
+		decision: verdict.value,
+		source: verdict.source,
+		durationMs: verdict.durationMs,
+	};
+}
+
 /** What a caller may tell {@link runSystemOneTask} beyond the task's input. */
 export interface SystemOneTaskOptions {
 	/** In-process callers only. The engine's own budget still applies. */
@@ -363,6 +426,8 @@ export interface SystemOneTaskOptions {
 	failPolicy?: SystemOneFailPolicy;
 	/** The agent this run is for, when the caller knows one. Kept on the decision record. */
 	agentId?: string;
+	/** The AI tab of that agent whose turn this run is for, when there is one. */
+	tabId?: string;
 }
 
 /** A run the engine did not answer. It names the engine that was asked, never another. */
@@ -429,7 +494,7 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 	const decision = (
 		rest: Omit<
 			SystemOneDecision,
-			'taskId' | 'engine' | 'questionIds' | 'startedAt' | 'agentId' | 'input'
+			'taskId' | 'engine' | 'questionIds' | 'startedAt' | 'agentId' | 'tabId' | 'input'
 		>
 	): void =>
 		keepSystemOneDecision(
@@ -439,6 +504,7 @@ export async function runSystemOneTask<T extends SystemOneTaskId>(
 				questionIds: Object.keys(request.questions),
 				startedAt,
 				...(options.agentId ? { agentId: options.agentId } : {}),
+				...(options.tabId ? { tabId: options.tabId } : {}),
 				...rest,
 			},
 			keepInputs ? request : null

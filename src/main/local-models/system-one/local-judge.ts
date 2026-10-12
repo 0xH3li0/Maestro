@@ -5,6 +5,11 @@
  * The model is the `local-judge` task's assignment (a catalog model or a model
  * on an endpoint). There is no second place a judge model is stored.
  *
+ * A task that offers a text model as one of its own sources is judged the same
+ * way on THAT task's assignment (`AskLocalJudgeOptions.taskId`): model routing
+ * assigned a text model asks its two questions here, on its own model, without
+ * System One being on at all.
+ *
  * Each question is one generation, constrained to a JSON schema built for it:
  *
  *   - `noul`   - `{ "answer": "yes" | "no", "confidence": 0..1 }`, read as P(yes).
@@ -54,6 +59,7 @@ import {
 	LOCAL_MODEL_TASKS,
 	localModelAssignmentSourceLabel,
 	resolveLocalModelAssignment,
+	type LocalModelTaskId,
 } from '../../../shared/local-models/tasks';
 import { getPrompt } from '../../prompt-manager';
 import { getConfiguredLocalModelEndpoints } from '../endpoint-service';
@@ -76,6 +82,12 @@ export interface AskLocalJudgeOptions {
 	timeoutMs?: number;
 	/** Caller cancellation, composed with the budget. */
 	signal?: AbortSignal;
+	/**
+	 * The task whose assignment is the judge's model, and under which its
+	 * generations are recorded. Defaults to the Local judge task: the model the
+	 * System One engine runs on.
+	 */
+	taskId?: LocalModelTaskId;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +109,8 @@ export async function askLocalJudge(
 	const invalid = systemOneStateProblem(state) ?? systemOneQuestionsProblem(questions);
 	if (invalid) throw judgeError('invalid', invalid);
 
-	const source = assignedSource();
+	const taskId = options.taskId ?? LOCAL_JUDGE_TASK_ID;
+	const source = assignedSource(taskId);
 	const label = describeJudge(source);
 	const request = redactSystemOneRequest(state, questions);
 	const system = getPrompt(PROMPT_ID);
@@ -125,7 +138,7 @@ export async function askLocalJudge(
 	let outputTokens = 0;
 
 	for (const turn of turns) {
-		const verdict = await runLocalTask(LOCAL_JUDGE_TASK_ID, {
+		const verdict = await runLocalTask(taskId, {
 			system,
 			prompt: turn.prompt,
 			maxTokens: turn.maxTokens,
@@ -137,7 +150,7 @@ export async function askLocalJudge(
 			case 'off':
 			case 'use-utility-agent':
 				// The assignment was read a moment ago; this is one that changed since.
-				throw noModelError();
+				throw noModelError(taskId);
 			case 'cancelled':
 				if (options.signal?.aborted) {
 					throw judgeError('cancelled', `${label}: the request was cancelled.`);
@@ -366,11 +379,11 @@ function refuseIfTooLarge(label: string, system: string, prompt: string, maxToke
 // ---------------------------------------------------------------------------
 
 /** The source the judge is assigned, or the refusal that names where to assign one. */
-function assignedSource(): LocalModelSource {
+function assignedSource(taskId: LocalModelTaskId): LocalModelSource {
 	const source = sourceForAssignment(
-		resolveLocalModelAssignment(readLocalModelAssignments(), LOCAL_JUDGE_TASK_ID)
+		resolveLocalModelAssignment(readLocalModelAssignments(), taskId)
 	);
-	if (!source) throw noModelError();
+	if (!source) throw noModelError(taskId);
 	return source;
 }
 
@@ -382,13 +395,13 @@ function describeJudge(source: LocalModelSource): string {
 }
 
 /** Why the judge cannot answer with no model assigned. Also what `s1 status` reports. */
-export function localJudgeNoModelMessage(): string {
-	const task = LOCAL_MODEL_TASKS[LOCAL_JUDGE_TASK_ID];
-	return `${systemOneEngineLabel(ENGINE_ID)}: no model is assigned. Assign ${task.label} a local model or an endpoint in ${taskAssignmentLocation(LOCAL_JUDGE_TASK_ID)}.`;
+export function localJudgeNoModelMessage(taskId: LocalModelTaskId = LOCAL_JUDGE_TASK_ID): string {
+	const task = LOCAL_MODEL_TASKS[taskId];
+	return `${systemOneEngineLabel(ENGINE_ID)}: no model is assigned. Assign ${task.label} a local model or an endpoint in ${taskAssignmentLocation(taskId)}.`;
 }
 
-function noModelError(): SystemOneError {
-	return judgeError('unavailable', localJudgeNoModelMessage());
+function noModelError(taskId: LocalModelTaskId): SystemOneError {
+	return judgeError('unavailable', localJudgeNoModelMessage(taskId));
 }
 
 /**

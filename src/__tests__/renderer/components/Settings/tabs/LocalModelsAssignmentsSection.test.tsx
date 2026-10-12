@@ -22,9 +22,11 @@ import {
 } from '../../../../../shared/local-models/tasks';
 import {
 	BGE_SMALL_EN_ID,
+	GEMMA_4_E4B_ID,
 	LOCAL_MODEL_CATALOG,
 	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
+	QWEN3_5_4B_ID,
 	getLocalModel,
 } from '../../../../../shared/local-models/model-catalog';
 
@@ -406,9 +408,15 @@ describe('buildAssignmentOptionGroups', () => {
 				'injection-screen',
 				'secret-screen',
 				'voice-routing',
+				'model-routing',
 			];
 			for (const task of Object.values(LOCAL_MODEL_TASKS)) {
-				const offered = head(task.id, 'jev-cloud').map((option) => option.value);
+				// Every group: a local-first task lists System One last, not in the head.
+				const offered = buildAssignmentOptionGroups(
+					task,
+					{ type: 'off' },
+					{ ...sources, systemOneEngine: 'jev-cloud' }
+				).flatMap((group) => group.options.map((option) => option.value));
 				if (accepting.includes(task.id)) expect(offered).toContain('system-one');
 				else expect(offered).not.toContain('system-one');
 			}
@@ -423,6 +431,118 @@ describe('buildAssignmentOptionGroups', () => {
 			expect(
 				head('cue-gate', 'jev-cloud', SYSTEM_ONE).filter((option) => option.value === 'system-one')
 			).toHaveLength(1);
+		});
+	});
+});
+
+describe('the model routing picker (a local-first task)', () => {
+	const ROUTING = LOCAL_MODEL_TASKS['model-routing'];
+	const name = (id: string) => getLocalModel(id)!.displayName;
+	/** A catalog listing that reads as installed, whatever the shared set says. */
+	const installed = (id: string): LocalModelListing => {
+		const entry = getLocalModel(id)!;
+		return {
+			entry,
+			status: {
+				id,
+				status: 'installed',
+				manifest: { installedAt: 1, verifiedAt: 1 } as never,
+				bytesOnDisk: entry.bytes,
+			},
+			installPaths: [],
+		};
+	};
+	const sources = {
+		// Listed largest first, so the order below is the picker's and not the input's.
+		listings: [GEMMA_4_E4B_ID, QWEN3_5_4B_ID, QWEN3_1_7B_ID, BGE_SMALL_EN_ID].map(installed),
+		endpoints: [ollama],
+		endpointModels: { 'ep-ollama': { ok: true as const, models: [{ id: 'qwen3:latest' }] } },
+	};
+	const groups = (engine?: SystemOneEngineChoice) =>
+		buildAssignmentOptionGroups(
+			ROUTING,
+			{ type: 'off' },
+			{
+				...sources,
+				...(engine ? { systemOneEngine: engine } : {}),
+			}
+		);
+
+	it('lists local models first, endpoints next and System One last', () => {
+		expect(groups('jev-cloud').map((group) => group.label)).toEqual([
+			null,
+			'Local models',
+			'Ollama',
+			'System One',
+		]);
+		expect(groups('jev-cloud')[0].options).toEqual([{ value: 'off', label: 'Off' }]);
+	});
+
+	it('puts the embedding model first, then judge models smallest first, then the rest', () => {
+		// Qwen3 1.7B and Qwen3.5 4B carry the judge role; Gemma 4 E4B does not.
+		expect(getLocalModel(QWEN3_1_7B_ID)!.roles).toContain('judge');
+		expect(getLocalModel(GEMMA_4_E4B_ID)!.roles).not.toContain('judge');
+		expect(groups()[1].options.map((option) => option.value)).toEqual([
+			`local:${BGE_SMALL_EN_ID}`,
+			`local:${QWEN3_1_7B_ID}`,
+			`local:${QWEN3_5_4B_ID}`,
+			`local:${GEMMA_4_E4B_ID}`,
+		]);
+	});
+
+	it('says of every source which router it is and whether it is calibrated', () => {
+		const [, local, endpoint, systemOne] = groups('jev-cloud');
+		expect(local.options[0].label).toBe(
+			`${name(BGE_SMALL_EN_ID)} (embedding router, not calibrated)`
+		);
+		expect(local.options[1].label).toBe(`${name(QWEN3_1_7B_ID)} (local judge, not calibrated)`);
+		expect(endpoint.options).toEqual([
+			{
+				value: 'endpoint:ep-ollama:qwen3:latest',
+				label: 'qwen3:latest (local judge, not calibrated)',
+			},
+		]);
+		expect(systemOne.options).toEqual([
+			{ value: 'system-one', label: 'System One (Jev), calibrated' },
+		]);
+		expect(groups('openjev')[3].options[0].label).toBe('System One (OpenJev), calibrated');
+		expect(groups('local-judge')[3].options[0].label).toBe(
+			'System One (local judge), not calibrated'
+		);
+	});
+
+	it('offers System One only while an engine is chosen', () => {
+		expect(groups('off').map((group) => group.label)).toEqual([null, 'Local models', 'Ollama']);
+		expect(groups().map((group) => group.label)).toEqual([null, 'Local models', 'Ollama']);
+	});
+
+	it('offers no classifier, speech or voice model', () => {
+		const offered = buildAssignmentOptionGroups(
+			ROUTING,
+			{ type: 'off' },
+			{
+				listings: LOCAL_MODEL_CATALOG.map((entry) => installed(entry.id)),
+				endpoints: [],
+				endpointModels: {},
+			}
+		)[1].options.map((option) => getLocalModel(option.value.slice('local:'.length))!.kind);
+		expect(new Set(offered)).toEqual(new Set(['embedding', 'text-gen']));
+	});
+
+	it("leaves every other task's labels and order as they were", () => {
+		const cueGate = buildAssignmentOptionGroups(
+			LOCAL_MODEL_TASKS['cue-gate'],
+			{ type: 'off' },
+			{ ...sources, systemOneEngine: 'jev-cloud' }
+		);
+		expect(cueGate[0].options).toEqual([
+			{ value: 'off', label: 'Off' },
+			{ value: 'system-one', label: 'System One (Jev)' },
+		]);
+		// Input order, no note.
+		expect(cueGate[1].options[0]).toEqual({
+			value: `local:${GEMMA_4_E4B_ID}`,
+			label: name(GEMMA_4_E4B_ID),
 		});
 	});
 });

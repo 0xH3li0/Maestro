@@ -8,11 +8,18 @@
  * - System One, only when the task declares typed questions for an engine
  *   (`taskAcceptsSystemOne`) and an engine is chosen. Its label names the engine
  *   in force (`systemOneAssignmentLabel`), so a local judge is never read as Jev.
- * - Installed local models of exactly the kind the task `needs`, except one
- *   the task records as measured-unfit (`unofferedLocalModels`).
+ * - Installed local models of a kind the task accepts (`taskAcceptsLocalKind`),
+ *   except one the task records as measured-unfit (`unofferedLocalModels`).
  * - Models of enabled endpoints, only when an endpoint can serve that need
  *   (`endpointServesNeed`). Endpoints do not report a model's kind, so every
  *   listed model is offered and readiness names a wrong pick.
+ *
+ * A `localFirst` task (model routing) treats System One as one router among
+ * several, so its picker reads differently: local models first, in the order
+ * they are recommended (an embedding model, then judge text models smallest
+ * first, then the other text models), then endpoints, and System One LAST.
+ * Every source says which router it is and whether its answer is calibrated
+ * (`modelRouterSourceNote`).
  *
  * The task's CURRENT assignment is always present, even when it fits none of
  * the above (a model not downloaded yet, an endpoint that was removed): a
@@ -27,6 +34,10 @@ import type { LocalModelListing } from '../../../../../main/local-models/service
 import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
 import { getLocalModel } from '../../../../../shared/local-models/model-catalog';
 import {
+	modelRouterKind,
+	modelRouterSourceNote,
+} from '../../../../../shared/local-models/model-routing-task';
+import {
 	systemOneAssignmentLabel,
 	type SystemOneEngineChoice,
 } from '../../../../../shared/local-models/system-one-settings';
@@ -36,6 +47,7 @@ import {
 	isLocalModelOfferedForTask,
 	localModelAssignmentSourceLabel,
 	SYSTEM_ONE_ASSIGNMENT,
+	taskAcceptsLocalKind,
 	taskAcceptsSystemOne,
 	type LocalModelAssignment,
 	type LocalModelTaskDefinition,
@@ -67,6 +79,43 @@ export interface AssignmentOptionSources {
 }
 
 export const LOCAL_MODELS_GROUP_LABEL = 'Local models';
+export const SYSTEM_ONE_GROUP_LABEL = 'System One';
+
+/**
+ * Where a catalog model stands in a `localFirst` picker: the task's other
+ * kinds first (for model routing, the embedding model: the fastest router),
+ * then text models that carry the judge role, then the rest.
+ */
+function localFirstRank(task: LocalModelTaskDefinition, entry: LocalModelListing['entry']): number {
+	if (entry.kind !== task.needs) return 0;
+	return entry.roles?.includes('judge') ? 1 : 2;
+}
+
+/** A `localFirst` task's installed models in the order they are recommended. */
+function recommendedFirst(
+	task: LocalModelTaskDefinition,
+	listings: readonly LocalModelListing[]
+): LocalModelListing[] {
+	return [...listings].sort(
+		(a, b) =>
+			localFirstRank(task, a.entry) - localFirstRank(task, b.entry) || a.entry.bytes - b.entry.bytes
+	);
+}
+
+/**
+ * A source's label with what a `localFirst` picker says beside it: which
+ * router the source is, and whether its answer is calibrated.
+ */
+function withRouterNote(
+	label: string,
+	assignment: LocalModelAssignment,
+	systemOneEngine: SystemOneEngineChoice
+): string {
+	const kind = modelRouterKind(assignment);
+	if (!kind) return label;
+	const note = modelRouterSourceNote(kind, systemOneEngine);
+	return kind === 'system-one' ? `${label}, ${note}` : `${label} (${note})`;
+}
 
 /** The models an endpoint listed, or none while loading or after a failure. */
 function listedModelIds(state: EndpointModelsState | undefined): string[] {
@@ -104,26 +153,32 @@ export function buildAssignmentOptionGroups(
 	current: LocalModelAssignment,
 	sources: AssignmentOptionSources
 ): AssignmentOptionGroup[] {
+	const localFirst = task.localFirst === true;
+	const systemOneEngine = sources.systemOneEngine ?? 'off';
+	/** An option for a source, labeled the way this task's picker labels one. */
+	const option = (assignment: LocalModelAssignment, label: string): AssignmentOption => ({
+		value: formatLocalModelAssignmentSpec(assignment),
+		label: localFirst ? withRouterNote(label, assignment, systemOneEngine) : label,
+	});
+
 	const head: AssignmentOption[] = [{ value: 'off', label: 'Off' }];
 	if (task.allowsUtilityAgent) head.push({ value: 'utility-agent', label: 'Utility Agent' });
-	const systemOneEngine = sources.systemOneEngine ?? 'off';
-	if (taskAcceptsSystemOne(task) && systemOneEngine !== 'off') {
-		head.push({
-			value: formatLocalModelAssignmentSpec(SYSTEM_ONE_ASSIGNMENT),
-			label: systemOneAssignmentLabel(systemOneEngine),
-		});
-	}
+	const systemOneOption =
+		taskAcceptsSystemOne(task) && systemOneEngine !== 'off'
+			? option(SYSTEM_ONE_ASSIGNMENT, systemOneAssignmentLabel(systemOneEngine))
+			: null;
+	if (systemOneOption && !localFirst) head.push(systemOneOption);
 	const groups: AssignmentOptionGroup[] = [{ label: null, options: head }];
 
 	const installed = sources.listings.filter(
-		(listing) => listing.entry.kind === task.needs && listing.status.status === 'installed'
+		(listing) =>
+			taskAcceptsLocalKind(task, listing.entry.kind) && listing.status.status === 'installed'
 	);
-	const localOptions = installed
+	const localOptions = (localFirst ? recommendedFirst(task, installed) : installed)
 		.filter((listing) => isLocalModelOfferedForTask(task.id, listing.entry.id))
-		.map((listing) => ({
-			value: formatLocalModelAssignmentSpec({ type: 'local', modelId: listing.entry.id }),
-			label: listing.entry.displayName,
-		}));
+		.map((listing) =>
+			option({ type: 'local', modelId: listing.entry.id }, listing.entry.displayName)
+		);
 	if (localOptions.length > 0) {
 		groups.push({ label: LOCAL_MODELS_GROUP_LABEL, options: localOptions });
 	}
@@ -131,16 +186,15 @@ export function buildAssignmentOptionGroups(
 	if (endpointServesNeed(task.needs)) {
 		for (const endpoint of sources.endpoints) {
 			if (!endpoint.enabled) continue;
-			const options = listedModelIds(sources.endpointModels[endpoint.id]).map((model) => ({
-				value: formatLocalModelAssignmentSpec({
-					type: 'endpoint',
-					endpointId: endpoint.id,
-					model,
-				}),
-				label: model,
-			}));
+			const options = listedModelIds(sources.endpointModels[endpoint.id]).map((model) =>
+				option({ type: 'endpoint', endpointId: endpoint.id, model }, model)
+			);
 			if (options.length > 0) groups.push({ label: endpoint.name, options });
 		}
+	}
+	// Last for a local-first task: an engine is one option among several there.
+	if (systemOneOption && localFirst) {
+		groups.push({ label: SYSTEM_ONE_GROUP_LABEL, options: [systemOneOption] });
 	}
 
 	const currentValue = formatLocalModelAssignmentSpec(current);

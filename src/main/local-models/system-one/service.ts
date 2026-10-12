@@ -362,6 +362,15 @@ export async function resolveSystemOneForTask(taskId: LocalModelTaskId): Promise
 }
 
 /**
+ * "Keep inputs in the ledger", for a producer that records a decision no engine
+ * made (the embedding router, a task's own local judge). One setting decides
+ * what every record keeps, whoever wrote it.
+ */
+export async function systemOneKeepsInputs(): Promise<boolean> {
+	return (await readSystemOneSettings(dataDir())).keepInputs;
+}
+
+/**
  * Ask the engine in force. Rejects with a `SystemOneError` that names that
  * engine; it never asks another. `off` is not an engine: a caller decides what
  * no engine means for it before calling this.

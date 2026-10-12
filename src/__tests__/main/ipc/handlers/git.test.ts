@@ -159,6 +159,8 @@ const { mockSpawnSync } = vi.hoisted(() => ({
 // The secret screen's optional model pass. Off, which is the shipped default,
 // so only the pattern scan decides what `git:createGist` refuses.
 vi.mock('../../../../main/local-models/task-router', () => ({
+	// Asked first: it answers `not-assigned` for any assignment but System One.
+	runSystemOneTask: vi.fn(async () => ({ status: 'not-assigned' })),
 	runClassifierTask: vi.fn(async () => ({ status: 'off' })),
 }));
 

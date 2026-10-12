@@ -11,7 +11,9 @@ import {
 	LOCAL_MODEL_TASKS,
 	SYSTEM_ONE_ASSIGNMENT,
 	buildSystemOneTaskRequest,
+	taskAcceptsLocalKind,
 	taskAcceptsSystemOne,
+	taskLocalModelKinds,
 	isLocalModelOfferedForTask,
 	isLocalModelTaskId,
 	isSameLocalModelAssignment,
@@ -40,6 +42,7 @@ import {
 import {
 	BGE_SMALL_EN_ID,
 	KOKORO_82M_ID,
+	PROMPT_GUARD_2_22M_ID,
 	QWEN3_1_7B_ID,
 	QWEN3_5_4B_ID,
 	getLocalModel,
@@ -73,6 +76,7 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'dictation',
 			'spoken-notices',
 			'voice-routing',
+			'model-routing',
 			'token-proxy',
 			'local-judge',
 		]);
@@ -88,6 +92,7 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 		expect(Object.isFrozen(LOCAL_MODEL_TASKS)).toBe(true);
 		expect(Object.isFrozen(LOCAL_MODEL_TASKS['tab-naming'])).toBe(true);
 		expect(Object.isFrozen(LOCAL_MODEL_TASKS['spoken-notices'].alsoNeeds)).toBe(true);
+		expect(Object.isFrozen(LOCAL_MODEL_TASKS['model-routing'].alsoAcceptsLocal)).toBe(true);
 	});
 
 	it('maps each task to the kind of model it needs', () => {
@@ -102,10 +107,26 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 			'git-drafts',
 			'cue-gate',
 			'voice-routing',
+			'model-routing',
 			'token-proxy',
 			'local-judge',
 		] as const) {
 			expect(LOCAL_MODEL_TASKS[id].needs).toBe('text-gen');
+		}
+	});
+
+	it('lets model routing take an embedding model or a text model, and no other task take two kinds', () => {
+		const routing = LOCAL_MODEL_TASKS['model-routing'];
+		expect(taskLocalModelKinds(routing)).toEqual(['text-gen', 'embedding']);
+		expect(taskAcceptsLocalKind(routing, 'embedding')).toBe(true);
+		expect(taskAcceptsLocalKind(routing, 'text-gen')).toBe(true);
+		expect(taskAcceptsLocalKind(routing, 'classifier')).toBe(false);
+		expect(routing.system).toBe('one');
+		expect(routing.localFirst).toBe(true);
+		for (const id of LOCAL_MODEL_TASK_IDS) {
+			if (id === 'model-routing') continue;
+			expect(taskLocalModelKinds(LOCAL_MODEL_TASKS[id])).toEqual([LOCAL_MODEL_TASKS[id].needs]);
+			expect(LOCAL_MODEL_TASKS[id].localFirst).toBeUndefined();
 		}
 	});
 
@@ -250,6 +271,32 @@ describe('localModelAssignmentProblem', () => {
 			})
 		).toBeNull();
 		expect(localModelAssignmentProblem('dictation', { type: 'off' })).toBeNull();
+	});
+
+	it('accepts every kind of router for model routing, and names both kinds when it refuses', () => {
+		expect(
+			localModelAssignmentProblem('model-routing', { type: 'local', modelId: BGE_SMALL_EN_ID })
+		).toBeNull();
+		expect(
+			localModelAssignmentProblem('model-routing', { type: 'local', modelId: QWEN3_5_4B_ID })
+		).toBeNull();
+		expect(
+			localModelAssignmentProblem('model-routing', {
+				type: 'endpoint',
+				endpointId: 'ep',
+				model: 'qwen3:latest',
+			})
+		).toBeNull();
+		expect(localModelAssignmentProblem('model-routing', SYSTEM_ONE_ASSIGNMENT)).toBeNull();
+		expect(
+			localModelAssignmentProblem('model-routing', {
+				type: 'local',
+				modelId: PROMPT_GUARD_2_22M_ID,
+			})
+		).toMatch(/is a classifier model, but Model routing needs a text-gen or embedding model\./);
+		expect(localModelAssignmentProblem('model-routing', { type: 'utility-agent' })).toMatch(
+			/no Utility Agent path/
+		);
 	});
 
 	it('names the task when it has no Utility Agent path', () => {
@@ -418,6 +465,7 @@ describe('tasksForSystem', () => {
 			'secret-screen',
 			'dictation',
 			'voice-routing',
+			'model-routing',
 			'local-judge',
 		]);
 		expect(tasksForSystem('two').map((task) => task.id)).toEqual([
@@ -437,10 +485,14 @@ describe('tasksForSystem', () => {
 });
 
 describe('tasksNeedingKind', () => {
-	it('lists exactly the tasks whose need matches the kind', () => {
-		const embedding = tasksNeedingKind('embedding');
-		expect(embedding.length).toBeGreaterThan(0);
-		for (const task of embedding) expect(task.needs).toBe('embedding');
+	it('lists exactly the tasks that can be assigned a model of the kind', () => {
+		// Model routing takes an embedding model too, so removing one names it.
+		expect(tasksNeedingKind('embedding').map((task) => task.id)).toEqual([
+			'semantic-search',
+			'model-routing',
+		]);
+		for (const task of tasksNeedingKind('text-gen')) expect(task.needs).toBe('text-gen');
+		expect(tasksNeedingKind('text-gen').map((task) => task.id)).toContain('model-routing');
 		expect(tasksNeedingKind('wake-word')).toEqual([]);
 	});
 });
@@ -523,6 +575,7 @@ describe('the system-one assignment', () => {
 			'injection-screen',
 			'secret-screen',
 			'voice-routing',
+			'model-routing',
 		]);
 		for (const taskId of accepting) {
 			expect(LOCAL_MODEL_TASKS[taskId].system).toBe('one');
@@ -646,6 +699,10 @@ describe('the system-one assignment', () => {
 						},
 					],
 				},
+			},
+			'model-routing': {
+				prompt: 'Rename the helper in utils.ts',
+				recent: { assistant: 'Done. Anything else?' },
 			},
 		};
 		expect(Object.keys(inputs).sort()).toEqual([...accepting].sort());

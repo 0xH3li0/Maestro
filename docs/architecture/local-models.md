@@ -83,6 +83,7 @@ flowchart TD
 | `model-fit.ts`                                                    | `modelFit()`, `HardwareProfile`, `describeHardwareProfile()`, `hardwareFitCaveat()`, `MODEL_FIT_LABELS`: whether a model runs on a computer, and the sentence that says why                                                                                                                                                                                                               |
 | `library.ts`                                                      | `groupLocalModelsForLibrary()`, `localModelRoleBadges()`, `CLOUD_ONLY_NOTE`: how the Library and `models list` group and badge models                                                                                                                                                                                                                                                     |
 | `user-models.ts`                                                  | `huggingFaceModelRecord()`, `userLocalModelEntry()`, `parseUserLocalModels()`: a model the user adds from Hugging Face, as a record and as a catalog entry                                                                                                                                                                                                                                |
+| `model-routing-task.ts`                                           | The `model-routing` task: what a router is handed, the two `score` questions (`modelRoutingSystemOneRequest()`), reading a route back (`modelRouteFromSystemOne()`), which router an assignment names (`modelRouterKind()`), and the skip reasons: see [Model routing](#model-routing)                                                                                                    |
 | `model-routing.ts`, `model-routing-examples.ts`                   | Model routing by example: `MODEL_ROUTING_EXAMPLES` (the shipped labeled prompts), the corrections file shape, `normalizeModelRoutingText()`, and `voteModelRoute()`: see [Model routing](#model-routing)                                                                                                                                                                                  |
 
 A model records the runtime it needs (`runtime: NativeRuntimeId`). A runtime never lists features;
@@ -122,6 +123,7 @@ a consumer derives its own grouping from the models (voice does this in `voiceSl
 | `task-router.ts`               | `runLocalTask()` and its embedding, classifier, and speech-to-text twins: assignment picks the source                    |
 | `task-readiness.ts`            | `resolveTaskReadiness()`: would a task's assigned source answer now, and if not why (below)                              |
 | `model-router.ts`              | `EmbeddingRouter`: a tier and an effort from a prompt's nearest labeled examples (below)                                 |
+| `route-turn.ts`                | `routeTurn()`: one turn's tier and effort from the assigned router, inside the hard timeout, recorded in the ledger      |
 | `model-routing-corrections.ts` | `ModelRoutingCorrectionStore` over `userData/model-routing-corrections.json`: the user's routing corrections             |
 | `system-one/`                  | The System One engines, key, settings, and ledger: see [System One](#system-one-engines-the-router-entry-and-the-ledger) |
 | `endpoint-service.ts`          | Endpoint calls with persisted state: saved list, key from `shellEnvVars`, exact-id `chat...()`                           |
@@ -832,6 +834,14 @@ catalog no longer knows is KEPT, so the router can name it as unavailable instea
 quietly changing source. Save-time checks (catalog membership, matching kind) are
 `localModelAssignmentProblem()`.
 
+One task takes two kinds of catalog model. `model-routing` declares `needs: 'text-gen'` and
+`alsoAcceptsLocal: ['embedding']`, and does its job a different way on each (see
+[Model routing](#model-routing)). `taskAcceptsLocalKind(task, kind)` is the one check: the save-time
+check, readiness, the picker and `tasksNeedingKind()` all read it, never `task.needs` alone. An
+endpoint does not report a model's kind, so an endpoint assignment is always read as `needs`. The
+same task sets `localFirst`: its picker lists local models and endpoints before System One and says
+beside every source whether its answer is calibrated.
+
 ### System One and System Two
 
 Every task carries a required `system: 'one' | 'two'` (`LocalModelSystem`). One rule sets it: a task
@@ -1483,7 +1493,8 @@ chosen)" for a task left on it after the engine was switched off.
 
 ### The tasks that run on System One
 
-Five tasks declare `systemOneQuestions`. Each builder and the function that reads the answers back
+Six tasks declare `systemOneQuestions`. Five of them are below; the sixth, `model-routing`, treats
+System One as one router among three and is covered in [Model routing](#model-routing). Each builder and the function that reads the answers back
 live in the task's OWN shared module, next to the model path's reply contract, and each caller asks
 `runSystemOneTask` first and runs its model twin on `not-assigned`. The output shape and the
 threshold are the model path's, so a caller cannot tell which engine answered except through the
@@ -1543,16 +1554,16 @@ the system log (debug for `ok`, info otherwise, never text) and one row to `s1_d
 `stats.db` (migration v18 through `runSqliteMigrations`, with `isApplied` so a database another
 branch stamped 18 still gets the table).
 
-| Column                                              | Holds                                                                                 |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `id`, `started_at`                                  | Row id and start time                                                                 |
-| `task_id`, `engine`, `model`                        | The task, the engine (`off` included) and the model that answered                     |
-| `question_ids`, `answers`                           | JSON: the ids asked and the typed answers                                             |
-| `outcome`                                           | `ok`, `failed-open`, `failed-closed`, `unavailable`, `cancelled` (a CHECK constraint) |
-| `error_code`                                        | Why there was no answer: `timeout`, `auth`, `off`, ...                                |
-| `latency_ms`, `tokens_in`, `tokens_out`, `cost_usd` | What the engine reported and the cost estimate                                        |
-| `agent_id`                                          | The agent the run was for, when the caller knows one                                  |
-| `input`                                             | The redacted state and questions, only while `keepInputs` is on                       |
+| Column                                              | Holds                                                                                                                                                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`, `started_at`                                  | Row id and start time                                                                                                                                                                                                                                         |
+| `task_id`, `engine`, `model`                        | The task, the engine (`off` included) and the model that answered. `engine` is `embedding-router` for a model-routing run the embedding router decided: it is not a System One engine, and its decisions are filed here so every routing is read in one place |
+| `question_ids`, `answers`                           | JSON: the ids asked and the typed answers                                                                                                                                                                                                                     |
+| `outcome`                                           | `ok`, `failed-open`, `failed-closed`, `unavailable`, `cancelled` (a CHECK constraint)                                                                                                                                                                         |
+| `error_code`                                        | Why there was no answer: `timeout`, `auth`, `off`, ...                                                                                                                                                                                                        |
+| `latency_ms`, `tokens_in`, `tokens_out`, `cost_usd` | What the engine reported and the cost estimate                                                                                                                                                                                                                |
+| `agent_id`, `tab_id`                                | The agent the run was for and its AI tab, when the caller knows them                                                                                                                                                                                          |
+| `input`                                             | The redacted state and questions, only while `keepInputs` is on                                                                                                                                                                                               |
 
 - **The outcome says what the policy did and the code says why.** A timeout is not an outcome of its
   own, so the record never loses whether the work went ahead. `timeout` is a FILTER that matches the
@@ -1768,9 +1779,98 @@ off is not told about System One; it is only not stopped if it asks anyway. Not 
 ## Model routing
 
 Model routing is a fast judgment of how much model a turn needs: a tier and an effort, in the one
-vocabulary of `TIER_LEVELS` (`low`, `medium`, `high`). Three kinds of router can make it (an
-embedding router, a local judge, a System One engine). This section covers the first; the task,
-the timeout and the ledger are a later part of it.
+vocabulary of `TIER_LEVELS` (`low`, `medium`, `high`). Three kinds of router can make it, all
+behind the one `model-routing` task. It works fully offline: Jev is one option among several, never
+a requirement.
+
+### The task: `model-routing`
+
+A System One task, off by default. Its ONE assignment names the router
+(`modelRouterKind(assignment)` in `src/shared/local-models/model-routing-task.ts`):
+
+| Assignment                                      | Router           | How it decides                                                                     | Calibrated        |
+| ----------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------- | ----------------- |
+| `local:<embedding model>`                       | Embedding router | The prompt's nearest labeled prompts vote (next section). No text is generated     | No                |
+| `local:<text model>` or `endpoint:<id>:<model>` | Local judge      | That text model answers the two `score` questions through a JSON schema            | No                |
+| `system-one`                                    | System One       | The engine in force (Jev, OpenJev, or the System One local judge) answers the same | Jev, OpenJev only |
+
+An endpoint model is always the judge, because an endpoint does not report a model's kind and the
+judge is the reading that needs none. The picker (`buildAssignmentOptionGroups`, for a `localFirst`
+task) lists the recommended router first: an installed embedding model, then text models with the
+`judge` role smallest first, then other text models, then endpoints, and System One last, offered
+only while an engine is chosen. Every option says which router it is and whether it is calibrated
+(`modelRouterSourceNote()`).
+
+**The two questions** (`modelRoutingSystemOneRequest(input)`), asked of a judge and of an engine
+alike, so every router that reads text is held to one rubric:
+
+| Id       | Type    | Levels, low to high                                                                                                                                                             |
+| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tier`   | `score` | A lookup, a rename, a one-line fix, a question about code in context. A change to a few files, or a bounded investigation. A design decision, a multi-file refactor, a hard bug |
+| `effort` | `score` | The answer is direct. Some reasoning: several steps, a few things to keep consistent. Careful reasoning: trade-offs, a subtle cause, many constraints                           |
+
+The state is `{ prompt, recent? }`. `prompt` goes through `normalizeModelRoutingText()` (secrets
+replaced, then cut to 2,000 characters). `recent` is the last user and assistant message, each cut
+to 600 characters after secrets are replaced: the user's keeps its START, where a request is stated,
+and the assistant's keeps its END, where it says what it will do next. Never the whole transcript.
+`modelRouteFromSystemOne(answers)` reads the two answers back as a `ModelRoute`: a position between
+two levels (Jev can answer 1.6) takes the nearer one, exactly between goes to the HIGHER, and a
+missing or malformed answer on either axis is no route at all.
+
+### One turn: `routeTurn({ agent, prompt, recent })`
+
+`src/main/local-models/route-turn.ts`. It answers
+`{ tier, effort, engine, latencyMs, tierConfidence?, effortConfidence? }` or
+`{ skipped, detail, engine?, latencyMs }`, and it never rejects.
+
+```
+routeTurn -> assignment -> modelRouterKind
+   embedding model -> runEmbeddingRouteTask('model-routing', { text: prompt })   (the prompt ALONE)
+   text model      -> askLocalJudge(state, questions, { taskId: 'model-routing' })
+   system-one      -> runSystemOneTask('model-routing', { prompt, recent })
+```
+
+| Skip          | When                                                                                         | Recorded                 |
+| ------------- | -------------------------------------------------------------------------------------------- | ------------------------ |
+| `off`         | The task is off                                                                              | No: nothing was asked    |
+| `no-prompt`   | The prompt is blank                                                                          | No                       |
+| `timeout`     | No answer inside the hard timeout (`MODEL_ROUTING_TIMEOUT_MS`, 400 ms)                       | `unavailable`, `timeout` |
+| `unavailable` | The router could not run, its answer was not a tier and an effort, or it failed unexpectedly | `unavailable`, the code  |
+| `cancelled`   | The caller's signal aborted                                                                  | `cancelled`              |
+
+Rules that are easy to break:
+
+- **A send never waits past the timeout.** The work is raced against a timer `routeTurn` owns. A
+  router's own budget is not enough: a model that is still loading cannot be stopped, and its
+  `await` returns seconds late. Work the deadline overtook is left to end by itself; a failure it
+  meets afterwards is reported to Sentry, never thrown.
+- **A send never fails here.** A classified failure is a skip. An unclassified one is a bug: it is
+  logged, sent to Sentry, and answered as `unavailable`, so the turn runs at the agent's default
+  tier.
+- **No router stands in for another.** An embedding model that is not downloaded is not answered by
+  asking Jev. The skip names the router that was assigned.
+- **The embedding router gets the prompt alone.** Its labeled examples are bare prompts, and the
+  recent exchange would dilute the match. The two routers that read text get `recent` too.
+- **Every routing that asked a router is in the ledger once**, under the task `model-routing`.
+  `runSystemOneTask` writes its own record. `routeTurn` writes the record for the two local routers
+  in the same shape (`modelRouteAnswers()`): question ids `tier` and `effort`, two `score` answers,
+  `engine` `embedding-router` or `local-judge`, `model` the source's spelling, cost 0. The text is
+  kept only while "Keep inputs in the ledger" is on (`systemOneKeepsInputs()`), as for every record.
+  The record is written after the answer is returned, so it adds nothing to the wait.
+- **The local judge here is not System One's.** It runs on the `model-routing` task's own text
+  model (`AskLocalJudgeOptions.taskId`), with System One off or on. The `local-judge` task's model
+  is read only when the assignment is `system-one` and the engine in force is the local judge.
+
+`refreshModelRouting()` keeps the embedding router's vectors in step with the assignment. A change
+TO an embedding model embeds the examples at once (`warm`), a change away drops them (`reset`), and
+the first look at a start only notes where routing stands: loading an embedding model at every
+start, for sends that may never come, is work nobody asked for. So the first routed send after a
+start can be a `timeout` once, while the build runs on for the next. `startModelRouting(store)`
+wires it to the settings store, and the settings watcher calls it for a change another process
+wrote (`maestro-cli models assign model-routing ...`).
+
+Not built yet: nothing calls `routeTurn` at a send. The Auto model choice, its pills and
+`maestro-cli s1 route` are the next parts.
 
 ### The embedding router: `getEmbeddingRouter().route(source, text)`
 
@@ -1826,8 +1926,8 @@ Rules that are easy to break:
 - **A prompt is routed as it would be stored.** `normalizeModelRoutingText()` replaces secrets,
   trims, and cuts to 2,000 characters, for the router and for the corrections store alike, so a
   correction is the exact match of its prompt. Secrets are replaced before the cut.
-- **It decides nothing about whether routing runs.** No assignment, no timeout, no ledger. A source
-  that cannot run fails as itself, never by falling back to another.
+- **It decides nothing about whether routing runs.** No assignment, no timeout, no ledger: those are
+  `routeTurn`'s, above. A source that cannot run fails as itself, never by falling back to another.
 
 Not measured yet: agreement with a person's labels, latency, and whether 5 neighbours and this
 weighting are the right choice. The routing eval reports those.

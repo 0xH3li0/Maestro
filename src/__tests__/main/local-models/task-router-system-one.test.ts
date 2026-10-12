@@ -226,6 +226,15 @@ describe('runSystemOneTask', () => {
 		await runSystemOneTask('cue-gate', INPUT, { agentId: 'agent-7' });
 
 		expect(recorded().agentId).toBe('agent-7');
+		expect(recorded()).not.toHaveProperty('tabId');
+	});
+
+	it('records the tab whose turn the run was for, when the caller names one', async () => {
+		await gateOnJev();
+
+		await runSystemOneTask('cue-gate', INPUT, { agentId: 'agent-7', tabId: 'tab-3' });
+
+		expect(recorded()).toMatchObject({ agentId: 'agent-7', tabId: 'tab-3' });
 	});
 
 	it('keeps the redacted state and questions on the record only while Keep inputs is on', async () => {
