@@ -2850,6 +2850,24 @@ Some text with [x] in it that's not a checkbox
 			expect(execIdx).toBeLessThan(resumeIdx);
 		});
 
+		it('Codex puts --add-dir before the resume subcommand', async () => {
+			// `codex exec resume` has no `--add-dir`: a flag after `resume <id>`
+			// belongs to that subcommand, so it answered "unexpected argument
+			// '--add-dir' found" and exited 2. Every follow-up turn of an agent with
+			// a writable Additional Directory died before it started.
+			const p = spawnAgent('codex', '/working', 'hi', 'codex-thread-123', {
+				additionalDirectories: [{ path: '/config', read: true, write: true }],
+			});
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			const addDirIdx = args.indexOf('--add-dir');
+			expect(addDirIdx).toBeGreaterThanOrEqual(0);
+			expect(args[addDirIdx + 1]).toBe('/config');
+			expect(args.indexOf('exec')).toBeLessThan(addDirIdx);
+			expect(addDirIdx).toBeLessThan(args.indexOf('resume'));
+		});
+
 		it('unsupported agent type returns a failure result', async () => {
 			const result = await spawnAgent('terminal' as never, '/p', 'hi');
 			expect(result.success).toBe(false);

@@ -935,15 +935,17 @@ async function spawnJsonLineAgent(
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
 
-	if (agentSessionId && def?.resumeArgs) {
-		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
-	}
-
 	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
 	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
 	// an interactive turn hand the provider identical flags. Providers with no
 	// native mechanism emit nothing here and rely on the prompt block instead.
+	// Emitted BEFORE the resume selector, same as the desktop: Codex resumes with
+	// a subcommand, and `codex exec resume` rejects `--add-dir` with exit 2.
 	preOverrideArgs.push(...buildAdditionalDirArgs(def, overrides.additionalDirectories));
+
+	if (agentSessionId && def?.resumeArgs) {
+		preOverrideArgs.push(...def.resumeArgs(agentSessionId));
+	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).

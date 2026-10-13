@@ -1566,6 +1566,67 @@ describe('buildAgentArgs: additionalDirectories', () => {
 		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
 		expect(args[args.length - 1]).not.toMatch(/^-/);
 	});
+
+	it('puts the grant flags before the resume selector', () => {
+		const agent = makeAgent({
+			additionalDirArgs: accessAgent.additionalDirArgs,
+			resumeArgs: (id: string) => ['--resume', id],
+		});
+
+		expect(
+			buildAgentArgs(agent, {
+				baseArgs: ['--print'],
+				agentSessionId: 'sess-1',
+				additionalDirectories: [RO, RW],
+			})
+		).toEqual([
+			'--print',
+			'--add-dir',
+			'/ref/docs',
+			'--add-dir',
+			'/shared/src',
+			'--resume',
+			'sess-1',
+		]);
+	});
+
+	it('leaves a resume turn unchanged when there are no grants', () => {
+		const agent = makeAgent({ resumeArgs: (id: string) => ['--resume', id] });
+
+		expect(buildAgentArgs(agent, { baseArgs: ['--print'], agentSessionId: 'sess-1' })).toEqual([
+			'--print',
+			'--resume',
+			'sess-1',
+		]);
+	});
+
+	it('Codex: --add-dir lands on `exec`, not on the `resume` subcommand', () => {
+		// `codex exec resume` has no `--add-dir`. Emitted after `resume <id>` it is
+		// parsed as that subcommand's flag, Codex answers "unexpected argument
+		// '--add-dir' found" and exits 2, so a tab's first turn worked and every
+		// follow-up died before it started.
+		const codex = {
+			...getAgentDefinition('codex'),
+			available: true,
+			capabilities: {} as AgentConfig['capabilities'],
+		} as AgentConfig;
+
+		const args = buildAgentArgs(codex, {
+			baseArgs: [],
+			prompt: 'hi',
+			cwd: '/work',
+			agentSessionId: 'thread-1',
+			additionalDirectories: [RO, RW],
+		});
+
+		// Codex's flag means WRITABLE root, so only the write grant maps to it.
+		expect(args.filter((a) => a === '--add-dir')).toHaveLength(1);
+		const addDirIdx = args.indexOf('--add-dir');
+		expect(args[addDirIdx + 1]).toBe('/shared/src');
+		expect(args.indexOf('exec')).toBeLessThan(addDirIdx);
+		expect(addDirIdx).toBeLessThan(args.indexOf('resume'));
+		expect(args.slice(-2)).toEqual(['resume', 'thread-1']);
+	});
 });
 
 // ---------------------------------------------------------------------------
