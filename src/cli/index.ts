@@ -1117,6 +1117,10 @@ cue
 	.option('--clear-model', "Remove the tier / model and use the agent's own model")
 	.option('--clear-effort', "Remove the effort and use the agent's own effort")
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueModel);
 
 cue

@@ -2069,18 +2069,20 @@ maestro-cli cue model triage --model gpt-5.5-codex
 maestro-cli cue model nightly-review --clear-model --clear-effort
 ```
 
-| Flag                       | Description                                                      |
-| -------------------------- | ---------------------------------------------------------------- |
-| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider         |
-| `--model <id>`             | Exact model id, passed to the agent as-is                        |
-| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder |
-| `--clear-model`            | Remove the tier or model and use the agent's own model           |
-| `--clear-effort`           | Remove the effort and use the agent's own effort                 |
-| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)        |
-| `--json`                   | Output as JSON (for scripting)                                   |
+| Flag                       | Description                                                       |
+| -------------------------- | ----------------------------------------------------------------- |
+| `--tier <level>`           | Model tier: `low`, `medium`, `high`, mapped per provider          |
+| `--model <id>`             | Exact model id, passed to the agent as-is                         |
+| `--effort <level>`         | Effort: `low`, `medium`, `high`, mapped to the provider's ladder  |
+| `--clear-model`            | Remove the tier or model and use the agent's own model            |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                  |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)         |
+| `--json`                   | Output as JSON (for scripting)                                    |
+| `--data-dir <path>`        | Read agents from this Maestro data directory (must already exist) |
 
 Notes:
 
+- On a server, pass `--data-dir` (or set `MAESTRO_USER_DATA`) so the command reads the same agents the Cue engine runs. A running engine picks the edited `cue.yaml` up on its own.
 - With no setting flag the command only reads. Its output names the stored choice and the model and effort the run resolves to.
 - `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
 - When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
