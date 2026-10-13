@@ -332,6 +332,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Open Tab Cleanup Suggestions                                                                | `open tab-cleanup`                                                                                                                                 |
 | Open the Delegation Graph (hamburger menu, palette, unbound hotkey)                         | `open delegation-graph` (every agent)                                                                                                              |
 | Open the Delegation Graph on one group (group right-click, a palette command per group)     | `open delegation-graph --group <id>` (same `openDelegationGraph()` action; `open --list` marks the surface)                                        |
+| Delegation Graph: read the graph itself (nodes, edges, counts, one group or every agent)    | `delegation graph [--group <id>] [--json]` (same `buildDelegationGraph()` model the canvas draws; needs no running app)                            |
 | Delegation Graph: read a scope's layout and saved positions                                 | `settings get delegationGraphLayouts` (keys: `all`, `group:<groupId>`)                                                                             |
 | Delegation Graph: draw or re-draw an edge (Edit mode, the edge editor)                      | `update-agent <source> --peer <target>:<r\|w\|rw>`, `--peer-note <target>:<text>`; read: `show-agent` (same `applyPeerAgentEdits()` patch)         |
 | Delegation Graph: click an edge, then Delete edge (an edge the user wrote)                  | `update-agent <source> --remove-peer <target>`; read: `show-agent` (same `applyPeerAgentEdits()` patch)                                            |
@@ -501,7 +502,8 @@ a design constraint; they are simply not built yet.
     so a pointer has something to draw an edge to. The CLI names the target
     by id, in or out of the group: `update-agent <source> --peer <target>:r`.
     The relationships the graph draws are covered in full (`update-agent --peer`
-    writes them, `show-agent` reads them resolved). Changing the scope of a
+    writes them, `show-agent` reads them resolved for one agent, and
+    `delegation graph` reads the whole graph). Changing the scope of a
     graph that is already open is the same `open delegation-graph --group`
     call: the modal is keyed by scope, so a second open shows the new one.
 

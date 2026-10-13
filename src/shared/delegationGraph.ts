@@ -345,3 +345,84 @@ export function delegationGraphStats(model: DelegationGraphModel): DelegationGra
 		placed,
 	};
 }
+
+function countOf(count: number, one: string, many: string): string {
+	return `${count} ${count === 1 ? one : many}`;
+}
+
+/**
+ * The counts in words, one line per fact, in the order a reader asks: how many,
+ * how connected, what stands out. A fact with a count of zero has no line. The
+ * legend on the canvas and `maestro-cli delegation graph` both print these, so
+ * the two cannot count a graph in different words.
+ */
+export function describeDelegationGraphStats(stats: DelegationGraphStats): string[] {
+	const lines = [
+		`${countOf(stats.agents, 'agent', 'agents')}, ${countOf(stats.edges, 'edge', 'edges')}`,
+	];
+	if (stats.mutual > 0) lines.push(countOf(stats.mutual, 'mutual pair', 'mutual pairs'));
+	if (stats.isolated > 0) lines.push(`${stats.isolated} with no peers`);
+	if (stats.spill > 0) lines.push(`${stats.spill} outside this scope`);
+	if (stats.placed > 0) lines.push(`${stats.placed} added, no edge yet`);
+	return lines;
+}
+
+/** One edge as one of its two agents sees it: the edge, and the agent at the far end. */
+export interface DelegationAdjacencyLink {
+	edge: DelegationGraphEdge;
+	/** The agent at the other end of `edge`. */
+	peer: DelegationGraphNode;
+	/** True when the edge in the opposite direction exists too. */
+	mutual: boolean;
+}
+
+/** One agent on the graph with every edge that touches it, split by direction. */
+export interface DelegationAdjacencyEntry {
+	node: DelegationGraphNode;
+	/** The edges this agent is the SOURCE of: whom it may consult or delegate to. */
+	reaches: DelegationAdjacencyLink[];
+	/** The edges this agent is the TARGET of: who may consult it or delegate to it. */
+	reachedBy: DelegationAdjacencyLink[];
+}
+
+/**
+ * The graph as an adjacency listing: every node, in the model's order, with the
+ * edges that leave it and the edges that arrive at it. It is the model read by
+ * agent and not by edge, which is the shape a listing in text needs
+ * (`maestro-cli delegation graph`). Both lists are in the order of the peer's
+ * node, so the listing is as stable as the model.
+ *
+ * It is a view and holds no rule: an edge is in `reaches` of its source and in
+ * `reachedBy` of its target, exactly once each. On a group scope a `spill`
+ * agent lists only the edges that join it to the group, because the model
+ * keeps no other edge of it.
+ */
+export function delegationAdjacency(model: DelegationGraphModel): DelegationAdjacencyEntry[] {
+	const order = new Map(model.nodes.map((node, index) => [node.sessionId, index]));
+	const edgeIds = new Set(model.edges.map((edge) => edge.id));
+	const entries = new Map(
+		model.nodes.map((node): [string, DelegationAdjacencyEntry] => [
+			node.sessionId,
+			{ node, reaches: [], reachedBy: [] },
+		])
+	);
+
+	for (const edge of model.edges) {
+		const source = entries.get(edge.sourceId);
+		const target = entries.get(edge.targetId);
+		// `buildDelegationGraph` gives both ends of every edge a node. A model
+		// built by hand that does not is listed without the edge.
+		if (!source || !target) continue;
+		const mutual = edgeIds.has(delegationEdgeId(edge.targetId, edge.sourceId));
+		source.reaches.push({ edge, peer: target.node, mutual });
+		target.reachedBy.push({ edge, peer: source.node, mutual });
+	}
+
+	const byPeerOrder = (a: DelegationAdjacencyLink, b: DelegationAdjacencyLink) =>
+		(order.get(a.peer.sessionId) ?? 0) - (order.get(b.peer.sessionId) ?? 0);
+	return [...entries.values()].map((entry) => ({
+		node: entry.node,
+		reaches: entry.reaches.sort(byPeerOrder),
+		reachedBy: entry.reachedBy.sort(byPeerOrder),
+	}));
+}

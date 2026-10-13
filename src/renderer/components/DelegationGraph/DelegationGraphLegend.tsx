@@ -14,7 +14,10 @@
 import { memo } from 'react';
 import { Plus, Unplug, X } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { DelegationGraphStats } from '../../../shared/delegationGraph';
+import {
+	describeDelegationGraphStats,
+	type DelegationGraphStats,
+} from '../../../shared/delegationGraph';
 import {
 	DELEGATION_EDGE_KIND_LABELS,
 	DELEGATION_EDGE_LINES,
@@ -46,22 +49,6 @@ const NODE_STATES: ReadonlyArray<{ state: AgentDelegationNodeState; label: strin
 
 const SAMPLE_WIDTH = 34;
 const SAMPLE_HEIGHT = 10;
-
-function pluralize(count: number, singular: string, plural: string): string {
-	return `${count} ${count === 1 ? singular : plural}`;
-}
-
-/** One line per fact, in the order a reader asks: how many, how connected, what stands out. */
-export function describeDelegationGraphStats(stats: DelegationGraphStats): string[] {
-	const lines = [
-		`${pluralize(stats.agents, 'agent', 'agents')}, ${pluralize(stats.edges, 'edge', 'edges')}`,
-	];
-	if (stats.mutual > 0) lines.push(pluralize(stats.mutual, 'mutual pair', 'mutual pairs'));
-	if (stats.isolated > 0) lines.push(`${stats.isolated} with no peers`);
-	if (stats.spill > 0) lines.push(`${stats.spill} outside this scope`);
-	if (stats.placed > 0) lines.push(`${stats.placed} added, no edge yet`);
-	return lines;
-}
 
 function EdgeSample({
 	kind,

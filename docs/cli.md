@@ -792,6 +792,53 @@ Notes on behavior:
 | `--yes`                | Confirm a `--publish` without asking                                                                                                  | -       |
 | `--json`               | Machine-readable JSON output                                                                                                          | -       |
 
+### Reading the Delegation Graph (`delegation graph`)
+
+`show agent` answers "who can this agent reach?" for one agent. `delegation graph` answers it for every agent at once: it prints the graph the Delegation Graph window draws (see [Peer Agents](./peer-agents)), so you can see the shape of a team without opening the app. It reads the stored agents and needs no running app.
+
+```bash
+# Every agent
+maestro-cli delegation graph
+
+# One group, and the agents outside it that an edge joins to it
+maestro-cli delegation graph --group <group-id>
+
+# The graph model, for a script
+maestro-cli delegation graph --json
+```
+
+| Flag               | Description                                                              |
+| ------------------ | ------------------------------------------------------------------------ |
+| `-g, --group <id>` | Only one agent group, and the agents outside it that an edge joins to it |
+| `--json`           | Output the graph model (nodes and edges) as JSON                         |
+
+The listing has one block per agent:
+
+```
+DELEGATION GRAPH  All agents
+  3 agents, 2 edges, 1 mutual pair, 1 with no peers
+
+  Employee (4c1e...)
+    -> Manager (9f2a...)  Consult only [explicit] (mutual)
+    reached by: Manager
+
+  Loner (77b0...)
+    no peers in either direction
+
+  Manager (9f2a...)
+    -> Employee (4c1e...)  Consult + Delegate [explicit] (mutual) - Owns the backend
+    reached by: Employee
+```
+
+- A `->` line is one edge: the agent above it may consult the named agent, delegate to it, or both. The word in brackets is where the edge comes from: `explicit` (a row in the agent's Peers tab), `group` (its **Peers in my group** grant), or `worktree` (its **Worktree family** grant).
+- An edge has one direction. The edge back, when there is one, is a separate line under the other agent, and it can carry different access. `(mutual)` marks an edge whose reverse also exists.
+- `reached by:` names the agents that have an edge to this one. `no peers in either direction` marks an agent that reaches nobody and that nobody reaches.
+- With `--group`, an agent outside the group is listed when an edge joins it to the group, and it is marked `[outside the group]`. Only its edges to and from the group are listed. `--group` takes the group's id or a unique prefix of it, the same as `open delegation-graph --group`.
+
+`--json` prints `scope`, `group`, `stats`, `nodes` and `edges`. A node has `sessionId`, `name`, `groupId` and `scope` (`in-scope` or `spill`). An edge has `sourceId`, `targetId`, `read` (consult), `write` (delegate), `source`, and `description` when the row has a note.
+
+The verb only reads. To change an edge, use `update-agent <source> --peer <target>:<r|w|rw|none>` or `--remove-peer <target>` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)). To see the canvas, use `maestro-cli open delegation-graph`.
+
 ### Moving Agents and Groups Between Windows (`window`)
 
 The CLI half of the Left Bar's **Move to Window** menus. `move-agent` carries one agent with its worktrees; `move-group` carries every agent in a group (and its subgroups when Groups+ nesting is on), gathering a group that is split across windows into one. The primary window answers through the same code path as a click, so the same rule applies: a move that would leave the main window with no agents is refused.

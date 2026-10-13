@@ -5,10 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import {
-	DelegationGraphLegend,
-	describeDelegationGraphStats,
-} from '../../../../renderer/components/DelegationGraph/DelegationGraphLegend';
+import { DelegationGraphLegend } from '../../../../renderer/components/DelegationGraph/DelegationGraphLegend';
 import { DELEGATION_EDGE_LINES } from '../../../../renderer/components/DelegationGraph/edges/DelegationEdge';
 import { AGENT_DELEGATION_NODE_BORDER_STYLE } from '../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
 import type { DelegationGraphStats } from '../../../../shared/delegationGraph';
@@ -22,44 +19,6 @@ const STATS: DelegationGraphStats = {
 	spill: 1,
 	placed: 0,
 };
-
-describe('describeDelegationGraphStats', () => {
-	it('says how many agents and edges, then what stands out', () => {
-		expect(describeDelegationGraphStats(STATS)).toEqual([
-			'6 agents, 4 edges',
-			'1 mutual pair',
-			'2 with no peers',
-			'1 outside this scope',
-		]);
-	});
-
-	it('leaves out a count that is zero', () => {
-		expect(
-			describeDelegationGraphStats({
-				agents: 1,
-				edges: 1,
-				mutual: 0,
-				isolated: 0,
-				spill: 0,
-				placed: 0,
-			})
-		).toEqual(['1 agent, 1 edge']);
-	});
-
-	it('counts the agents that were added and have no edge, after the ones outside the scope', () => {
-		expect(describeDelegationGraphStats({ ...STATS, spill: 3, placed: 2 })).toEqual([
-			'6 agents, 4 edges',
-			'1 mutual pair',
-			'2 with no peers',
-			'3 outside this scope',
-			'2 added, no edge yet',
-		]);
-	});
-
-	it('uses the plural for more than one mutual pair', () => {
-		expect(describeDelegationGraphStats({ ...STATS, mutual: 3 })).toContain('3 mutual pairs');
-	});
-});
 
 describe('DelegationGraphLegend', () => {
 	const renderLegend = (onClose = vi.fn()) => {

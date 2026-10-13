@@ -206,6 +206,7 @@ import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
 import { groupSettings } from './commands/group-settings';
 import { updateGroupSettings } from './commands/update-group-settings';
+import { delegationGraph } from './commands/delegation-graph';
 import {
 	stopAutoRun,
 	resumeAutoRun,
@@ -1591,6 +1592,26 @@ program
 	.option('--show', 'Bring a hidden group back into the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroup(groupId, options));
+
+// Delegation commands - the fleet's peer relationships read as one graph, the
+// model the Delegation Graph draws. Read only: an edge is written with
+// `update-agent --peer` / `--remove-peer`, and `open delegation-graph` shows
+// the canvas.
+const delegation = program
+	.command('delegation')
+	.description('Read which agents may consult or delegate to which (the Delegation Graph)');
+
+delegation
+	.command('graph')
+	.description(
+		'Print the Delegation Graph: every agent, whom it may consult or delegate to, and who reaches it'
+	)
+	.option(
+		'-g, --group <id>',
+		'Only one agent group, and the agents outside it that an edge joins to it'
+	)
+	.option('--json', 'Output the graph model (nodes and edges) as JSON')
+	.action(delegationGraph);
 
 // Group settings commands - the Group Settings dialog: the defaults a new agent
 // created in a group starts with (copy-at-create; never a runtime layer), and

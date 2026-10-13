@@ -40,6 +40,16 @@ describe('_maestro-cli.md peer agents', () => {
 		expect(line).toContain('update-group-settings');
 	});
 
+	// An agent cannot use a verb it was never told about.
+	test('lists the read verb for the whole graph, and says it does not write', () => {
+		const line = prompt.split('\n').find((l) => l.startsWith('- **delegation graph**'));
+		expect(line).toBeDefined();
+		expect(line).toContain('`--group <id>`');
+		expect(line).toContain('`--json`');
+		expect(line).toMatch(/Read only/);
+		expect(line).toContain('`update-agent --peer`');
+	});
+
 	test('uses no em or en dash', () => {
 		const dashes = new RegExp(`[${String.fromCharCode(0x2013)}${String.fromCharCode(0x2014)}]`);
 		expect(dashes.test(peerParagraph ?? '')).toBe(false);

@@ -27,6 +27,7 @@ import {
 	formatSessions,
 	formatSshRemotes,
 	formatDirectorNotesHistory,
+	formatDelegationGraph,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -37,6 +38,13 @@ import {
 	type SessionDisplay,
 	type SshRemoteDisplay,
 } from '../../../cli/output/formatter';
+import {
+	buildDelegationGraph,
+	delegationAdjacency,
+	delegationGraphStats,
+	type DelegationGraphScope,
+} from '../../../shared/delegationGraph';
+import type { PeerRosterInput } from '../../../shared/peerAgents';
 
 // Store original process.stdout.isTTY
 const originalIsTTY = process.stdout.isTTY;
@@ -1634,6 +1642,123 @@ describe('formatter', () => {
 		it('should show remote ID', () => {
 			const result = formatSshRemotes([baseRemote]);
 			expect(result).toContain('remote-abc-123');
+		});
+	});
+
+	// ============================================================================
+	// formatDelegationGraph Tests
+	// ============================================================================
+
+	describe('formatDelegationGraph', () => {
+		const view = (
+			scope: DelegationGraphScope,
+			sessions: PeerRosterInput[],
+			group: { id: string; name: string; emoji?: string } | null = null
+		) => {
+			const model = buildDelegationGraph(scope, sessions);
+			return formatDelegationGraph({
+				group,
+				stats: delegationGraphStats(model),
+				agents: delegationAdjacency(model),
+			});
+		};
+		const ALL: DelegationGraphScope = { kind: 'all' };
+
+		it('names the scope and counts the graph in the words the legend uses', () => {
+			const result = view(ALL, [
+				{ id: 'a', name: 'Alice', peerAgents: [{ sessionId: 'b', read: true, write: false }] },
+				{ id: 'b', name: 'Bob' },
+			]);
+
+			expect(result).toContain('DELEGATION GRAPH');
+			expect(result).toContain('All agents');
+			expect(result).toContain('2 agents, 1 edge');
+		});
+
+		it('prints an edge once, under its source, with the access label and the grant', () => {
+			const result = view(ALL, [
+				{ id: 'a', name: 'Alice', peerAgents: [{ sessionId: 'b', read: false, write: true }] },
+				{ id: 'b', name: 'Bob' },
+			]);
+
+			expect(result).toContain('-> Bob (b)  Delegate only [explicit]');
+			expect(result.match(/->/g)).toHaveLength(1);
+			expect(result).toContain('reached by: Alice');
+			expect(result).toContain('reached by nobody');
+			expect(result).toContain('reaches nobody');
+		});
+
+		it('marks each edge of a pair as mutual and keeps the access of each direction', () => {
+			const result = view(ALL, [
+				{ id: 'm', name: 'Manager', peerAgents: [{ sessionId: 'e', read: true, write: true }] },
+				{ id: 'e', name: 'Employee', peerAgents: [{ sessionId: 'm', read: true, write: false }] },
+			]);
+
+			expect(result).toContain('-> Employee (e)  Consult + Delegate [explicit] (mutual)');
+			expect(result).toContain('-> Manager (m)  Consult only [explicit] (mutual)');
+		});
+
+		it('prints the note of an edge, cut to one line', () => {
+			const result = view(ALL, [
+				{
+					id: 'a',
+					name: 'Alice',
+					peerAgents: [{ sessionId: 'b', read: true, write: false, description: 'x'.repeat(200) }],
+				},
+				{ id: 'b', name: 'Bob' },
+			]);
+
+			expect(result).toContain(' - xxx');
+			expect(result).not.toContain('x'.repeat(61));
+		});
+
+		it('says an agent with no edge has no peers in either direction', () => {
+			const result = view(ALL, [{ id: 'l', name: 'Loner' }]);
+
+			expect(result).toContain('Loner (l)');
+			expect(result).toContain('no peers in either direction');
+			expect(result).toContain('1 with no peers');
+		});
+
+		it('marks an agent outside the group, and says its "nobody" is about the group', () => {
+			const result = view(
+				{ kind: 'group', groupId: 'g1' },
+				[
+					{
+						id: 'a',
+						name: 'Alice',
+						groupId: 'g1',
+						peerAgents: [{ sessionId: 'x', read: true, write: false }],
+					},
+					{ id: 'x', name: 'Xavier', groupId: 'g2' },
+				],
+				{ id: 'g1', name: 'Backend', emoji: '🛠' }
+			);
+
+			expect(result).toContain('🛠 Backend (g1)');
+			expect(result).toContain('Xavier (x) [outside the group]');
+			expect(result).toContain('reaches nobody in this group');
+			expect(result).toContain('1 outside this scope');
+		});
+
+		it('names the group with no emoji when it has none', () => {
+			const result = view(
+				{ kind: 'group', groupId: 'g1' },
+				[{ id: 'a', name: 'Alice', groupId: 'g1' }],
+				{
+					id: 'g1',
+					name: 'Backend',
+				}
+			);
+
+			expect(result).toContain('Backend (g1)');
+		});
+
+		it('says so for a group with no agent, and for a fleet with none', () => {
+			expect(view({ kind: 'group', groupId: 'g1' }, [], { id: 'g1', name: 'Backend' })).toContain(
+				'No agents in this group.'
+			);
+			expect(view(ALL, [])).toContain('No agents found.');
 		});
 	});
 });

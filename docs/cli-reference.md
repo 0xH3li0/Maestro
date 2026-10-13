@@ -1104,6 +1104,19 @@ Update a group's name, icon, color, parent, or Left Bar visibility in the Maestr
 | `--show`              | Bring a hidden group back into the Left Bar                                                            | -       |
 | `--json`              | Output as JSON (for scripting)                                                                         | -       |
 
+## `maestro-cli delegation`
+
+Read which agents may consult or delegate to which (the Delegation Graph)
+
+## `maestro-cli delegation graph`
+
+Print the Delegation Graph: every agent, whom it may consult or delegate to, and who reaches it
+
+| Option             | Description                                                              | Default |
+| ------------------ | ------------------------------------------------------------------------ | ------- |
+| `-g, --group <id>` | Only one agent group, and the agents outside it that an edge joins to it | -       |
+| `--json`           | Output the graph model (nodes and edges) as JSON                         | -       |
+
 ## `maestro-cli group-settings <group-id>`
 
 Show a group's defaults (what a new agent in it starts with) and its Left Bar pill label

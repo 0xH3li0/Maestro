@@ -56,6 +56,11 @@ import {
 import type { DurationPercentiles } from '../../shared/percentiles';
 import { peerAccessLabel, type PeerConfigurationReport } from '../../shared/peerAgents';
 import {
+	describeDelegationGraphStats,
+	type DelegationAdjacencyEntry,
+	type DelegationGraphStats,
+} from '../../shared/delegationGraph';
+import {
 	groupDefaultLabel,
 	type GroupDefaultKey,
 	type GroupDefaultsFieldChange,
@@ -2259,6 +2264,62 @@ export function formatGroupSettingsUpdate(
 		for (const skip of publish.skipped) {
 			lines.push(`  Skipped on ${skip.agentName}: ${skip.label}. ${skip.reason}`);
 		}
+	}
+	return lines.join('\n');
+}
+
+/** What `maestro-cli delegation graph` prints for a person. */
+export interface DelegationGraphView {
+	/** The group the graph is about, or `null` for the graph of every agent. */
+	group: { id: string; name: string; emoji?: string } | null;
+	stats: DelegationGraphStats;
+	/** `delegationAdjacency()` of the model: one entry per agent on the graph. */
+	agents: DelegationAdjacencyEntry[];
+}
+
+/**
+ * Render `maestro-cli delegation graph`: the Delegation Graph as an adjacency
+ * listing. Each agent is followed by the edges that leave it (whom it may
+ * consult or delegate to, with the grant that produced the edge) and by the
+ * names of the agents that reach it. An edge is printed once, under its source.
+ */
+export function formatDelegationGraph(view: DelegationGraphView): string {
+	const { group, stats, agents } = view;
+	const scope = group
+		? `${group.emoji ? `${group.emoji} ` : ''}${c('white', group.name)} ${dim(`(${group.id})`)}`
+		: c('white', 'All agents');
+	const lines = [`${bold(c('cyan', 'DELEGATION GRAPH'))}  ${scope}`];
+	if (agents.length === 0) {
+		lines.push('', dim(group ? '  No agents in this group.' : '  No agents found.'));
+		return lines.join('\n');
+	}
+	lines.push(`  ${dim(describeDelegationGraphStats(stats).join(', '))}`);
+
+	// A `spill` agent lists only the edges that join it to the group, so
+	// "nobody" is true of the group and not of the fleet. Say which.
+	for (const { node, reaches, reachedBy } of agents) {
+		const outside = node.scope === 'spill';
+		const where = outside ? ' in this group' : '';
+		lines.push('');
+		lines.push(
+			`  ${c('white', node.name)} ${dim(`(${node.sessionId})`)}${outside ? dim(' [outside the group]') : ''}`
+		);
+		if (reaches.length === 0 && reachedBy.length === 0) {
+			lines.push(`    ${c('yellow', 'no peers in either direction')}`);
+			continue;
+		}
+		if (reaches.length === 0) lines.push(`    ${dim(`reaches nobody${where}`)}`);
+		for (const { edge, peer, mutual } of reaches) {
+			const note = edge.description ? dim(` - ${truncate(edge.description, 60)}`) : '';
+			lines.push(
+				`    -> ${peer.name} ${dim(`(${peer.sessionId})`)}  ${peerAccessLabel(edge)} ${dim(`[${edge.source}]`)}${mutual ? dim(' (mutual)') : ''}${note}`
+			);
+		}
+		lines.push(
+			reachedBy.length === 0
+				? `    ${dim(`reached by nobody${where}`)}`
+				: `    ${dim('reached by:')} ${reachedBy.map((link) => link.peer.name).join(', ')}`
+		);
 	}
 	return lines.join('\n');
 }

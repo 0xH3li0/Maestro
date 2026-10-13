@@ -13,13 +13,15 @@ import {
 	agentsOffGraph,
 	buildDelegationGraph,
 	connectedAgentIds,
+	delegationAdjacency,
 	delegationEdgeId,
 	delegationEdgeRefusal,
 	delegationGraphStats,
+	describeDelegationGraphStats,
 	edgeBetween,
 	isMutual,
 } from '../../shared/delegationGraph';
-import type { DelegationGraphModel } from '../../shared/delegationGraph';
+import type { DelegationGraphModel, DelegationGraphStats } from '../../shared/delegationGraph';
 import { SELF_PEER_ERROR } from '../../shared/peerAgents';
 import type { PeerRosterInput } from '../../shared/peerAgents';
 import type { PeerAccess, PeerAgent } from '../../shared/types';
@@ -574,5 +576,180 @@ describe('delegationGraphStats', () => {
 			spill: 2,
 			placed: 1,
 		});
+	});
+});
+
+// The legend on the canvas and `maestro-cli delegation graph` print these lines.
+describe('describeDelegationGraphStats', () => {
+	const STATS: DelegationGraphStats = {
+		agents: 6,
+		edges: 4,
+		mutual: 1,
+		isolated: 2,
+		spill: 1,
+		placed: 0,
+	};
+
+	it('says how many agents and edges, then what stands out', () => {
+		expect(describeDelegationGraphStats(STATS)).toEqual([
+			'6 agents, 4 edges',
+			'1 mutual pair',
+			'2 with no peers',
+			'1 outside this scope',
+		]);
+	});
+
+	it('leaves out a count that is zero', () => {
+		expect(
+			describeDelegationGraphStats({
+				agents: 1,
+				edges: 1,
+				mutual: 0,
+				isolated: 0,
+				spill: 0,
+				placed: 0,
+			})
+		).toEqual(['1 agent, 1 edge']);
+	});
+
+	it('counts the agents that were added and have no edge, after the ones outside the scope', () => {
+		expect(describeDelegationGraphStats({ ...STATS, spill: 3, placed: 2 })).toEqual([
+			'6 agents, 4 edges',
+			'1 mutual pair',
+			'2 with no peers',
+			'3 outside this scope',
+			'2 added, no edge yet',
+		]);
+	});
+
+	it('uses the plural for more than one mutual pair', () => {
+		expect(describeDelegationGraphStats({ ...STATS, mutual: 3 })).toContain('3 mutual pairs');
+	});
+});
+
+describe('delegationAdjacency', () => {
+	const names = (links: { peer: { name: string } }[]) => links.map((link) => link.peer.name);
+
+	it('lists nothing for an empty graph', () => {
+		expect(delegationAdjacency({ nodes: [], edges: [] })).toEqual([]);
+	});
+
+	it('gives every node an entry, in the order of the model, with or without an edge', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('c', 'Carol'),
+			agent('a', 'Alice', { peerAgents: [row('b', R)] }),
+			agent('b', 'Bob'),
+		]);
+
+		const listing = delegationAdjacency(model);
+
+		expect(listing.map((entry) => entry.node.name)).toEqual(['Alice', 'Bob', 'Carol']);
+		expect(listing[2]).toMatchObject({ reaches: [], reachedBy: [] });
+	});
+
+	it('puts an edge in `reaches` of its source and in `reachedBy` of its target, once each', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('a', 'Alice', { peerAgents: [{ ...row('b', RW), description: 'Reviews' }] }),
+			agent('b', 'Bob'),
+		]);
+
+		const [alice, bob] = delegationAdjacency(model);
+
+		expect(alice.reaches).toHaveLength(1);
+		expect(alice.reaches[0]).toMatchObject({
+			edge: { id: 'a->b', read: true, write: true, description: 'Reviews', source: 'explicit' },
+			peer: { sessionId: 'b', name: 'Bob' },
+			mutual: false,
+		});
+		expect(alice.reachedBy).toEqual([]);
+		expect(bob.reaches).toEqual([]);
+		expect(bob.reachedBy).toHaveLength(1);
+		expect(bob.reachedBy[0]).toMatchObject({ edge: { id: 'a->b' }, peer: { sessionId: 'a' } });
+	});
+
+	// The manager delegates down and the employee only consults up: two edges,
+	// each with its own bits, and each marked as half of a pair.
+	it('marks both edges of a pair as mutual and keeps the bits of each', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('m', 'Manager', { peerAgents: [row('e', RW)] }),
+			agent('e', 'Employee', { peerAgents: [row('m', R)] }),
+		]);
+
+		const [employee, manager] = delegationAdjacency(model);
+
+		expect(manager.reaches[0]).toMatchObject({ edge: { write: true }, mutual: true });
+		expect(employee.reaches[0]).toMatchObject({ edge: { read: true, write: false }, mutual: true });
+		expect(manager.reachedBy[0]).toMatchObject({ peer: { sessionId: 'e' }, mutual: true });
+	});
+
+	it('orders the links of one agent by the peer, the way the nodes are ordered', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('a', 'Alice', { peerAgents: [row('z', R), row('b', R), row('c', R)] }),
+			agent('z', 'Zed', { peerAgents: [row('c', R)] }),
+			agent('c', 'Carol'),
+			agent('b', 'Bob', { peerAgents: [row('c', R)] }),
+		]);
+
+		const listing = delegationAdjacency(model);
+
+		expect(names(listing[0].reaches)).toEqual(['Bob', 'Carol', 'Zed']);
+		expect(names(listing[2].reachedBy)).toEqual(['Alice', 'Bob', 'Zed']);
+	});
+
+	it('names the grant that derived an edge', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('a', 'Alice', { groupId: 'g1', groupPeerAccess: R }),
+			agent('b', 'Bob', { groupId: 'g1' }),
+		]);
+
+		expect(delegationAdjacency(model)[0].reaches[0].edge.source).toBe('group');
+	});
+
+	// The model of a group keeps an edge only when one end is in the group.
+	it('lists for a spill agent only the edges that join it to the group', () => {
+		const model = buildDelegationGraph(G1, [
+			agent('a', 'Alice', { groupId: 'g1', peerAgents: [row('x', W)] }),
+			agent('x', 'Xavier', { groupId: 'g2', peerAgents: [row('y', R)] }),
+			agent('y', 'Yara', { groupId: 'g2' }),
+		]);
+
+		const listing = delegationAdjacency(model);
+
+		expect(listing.map((entry) => entry.node.name)).toEqual(['Alice', 'Xavier']);
+		expect(listing[1].node.scope).toBe('spill');
+		expect(listing[1].reaches).toEqual([]);
+		expect(names(listing[1].reachedBy)).toEqual(['Alice']);
+	});
+
+	it('leaves out an edge whose end has no node, and does not throw', () => {
+		const model: DelegationGraphModel = {
+			nodes: [{ sessionId: 'a', name: 'Alice', scope: 'in-scope' }],
+			edges: [
+				{
+					id: 'a->gone',
+					sourceId: 'a',
+					targetId: 'gone',
+					read: true,
+					write: false,
+					source: 'explicit',
+				},
+			],
+		};
+
+		expect(delegationAdjacency(model)).toEqual([
+			{ node: model.nodes[0], reaches: [], reachedBy: [] },
+		]);
+	});
+
+	it('does not change the model', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('a', 'Alice', { peerAgents: [row('b', R)] }),
+			agent('b', 'Bob', { peerAgents: [row('a', R)] }),
+		]);
+		const before = JSON.stringify(model);
+
+		delegationAdjacency(model);
+
+		expect(JSON.stringify(model)).toBe(before);
 	});
 });

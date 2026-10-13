@@ -152,6 +152,13 @@ maestro-cli show agent Backend --json
 
 The output lists the configured rows (with their notes), the two grants and whether each is on, and then the **resolved roster**, with each entry labeled `explicit`, `group`, or `worktree` for the source that produced it. The configured rows and the resolved roster are different lists on purpose: an exclusion removes an agent the group grant would have added, and a row for a deleted agent adds nobody.
 
+To read every agent's roster at once, as one graph of who reaches whom:
+
+```bash
+maestro-cli delegation graph
+maestro-cli delegation graph --group <group-id>
+```
+
 ## Related
 
 - [Cross-Agent Mentions](./cross-agent-mentions) - the consult you type yourself, and the `maestro-cli ask` verb agents use
