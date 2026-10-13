@@ -18,7 +18,7 @@ import { mkdirSync } from 'fs';
 import { LiteProfiles, normalizeRemoteUrl, hostPartition } from './profiles';
 import type { LiteProfile } from '../../shared/lite-control';
 import { openTunnel } from './tunnel';
-import { openTailnetRelay } from './tailnet-relay';
+import { openTailnetRelay, openLanRelay } from './tailnet-relay';
 import { validateHandshake, HostConnectionError } from './handshake';
 import { connectionPage } from './ui';
 import { parseSshConfig } from '../utils/ssh-config-parser';
@@ -310,15 +310,18 @@ export async function startLite(): Promise<void> {
 			status = `Connecting · ${profile.name}`;
 			publish();
 			let base = normalizeRemoteUrl(profile.url, profile.transport);
-			if (profile.transport === 'tailscale') {
+			if (profile.transport === 'tailscale' || profile.transport === 'lan') {
 				if (!selectedDiscovery)
-					throw new HostConnectionError('Select and pair the discovered Tailscale host first.');
-				const opening = openTailnetRelay(
-					base,
-					selectedDiscovery.credential,
-					signal,
-					selectedDiscovery.peerId!
-				);
+					throw new HostConnectionError('Select and pair the discovered private host first.');
+				const opening =
+					profile.transport === 'lan'
+						? openLanRelay(base, selectedDiscovery.credential, signal)
+						: openTailnetRelay(
+								base,
+								selectedDiscovery.credential,
+								signal,
+								selectedDiscovery.peerId!
+							);
 				transportOpening = opening.then(
 					() => {},
 					() => {}
@@ -355,7 +358,8 @@ export async function startLite(): Promise<void> {
 			const authentication = selectedDiscovery
 				? discoveredSession!
 				: session.fromPartition('maestro-lite-auth-' + randomUUID());
-			if (profile.transport === 'tailscale') await authentication.setProxy({ mode: 'direct' });
+			if (profile.transport === 'tailscale' || profile.transport === 'lan')
+				await authentication.setProxy({ mode: 'direct' });
 			if (selectedDiscovery)
 				authentication.webRequest.onBeforeSendHeaders((details, callback) => {
 					const url = new URL(details.url);

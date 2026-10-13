@@ -4,6 +4,7 @@ import type { DirectAccessState } from './direct-tailnet';
 interface State {
 	enabled: boolean;
 	direct: DirectAccessState;
+	lan?: DirectAccessState & { interfaceAddress?: string };
 	advertising: boolean;
 	requests: LocalRequest[];
 	devices: Array<{ id: string; name: string; createdAt: number }>;
@@ -33,6 +34,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		requestsKey = '',
 		devicesKey = '',
 		localError = '',
+		lanOptionsKey = '',
 		removing: string | undefined,
 		latest: State | undefined;
 	let page: 'connect' | 'manage' | 'https' | 'updates' = 'connect';
@@ -101,7 +103,7 @@ window.addEventListener('DOMContentLoaded', () => {
 						? 'updates-heading'
 						: selectedRequest
 							? 'request-title-' + selectedRequest
-							: latest?.direct.ready || latest?.enabled
+							: latest?.direct.ready || latest?.lan?.ready || latest?.enabled
 								? 'waiting-heading'
 								: 'access-heading';
 		el(heading)?.focus();
@@ -110,7 +112,10 @@ window.addEventListener('DOMContentLoaded', () => {
 	function renderFlow(state: State): void {
 		const current = state.requests.find((row) => row.requestId === selectedRequest);
 		const connecting = page === 'connect';
-		const ready = state.direct.ready || (state.enabled && !state.direct.enabled);
+		const ready =
+			state.direct.ready ||
+			state.lan?.ready ||
+			(state.enabled && !state.direct.enabled && !state.lan?.enabled);
 		el('manage-page').hidden = page !== 'manage';
 		el('attended-options').hidden = page !== 'https';
 		el('updates').hidden = page !== 'updates';
@@ -146,26 +151,74 @@ window.addEventListener('DOMContentLoaded', () => {
 	}
 
 	function renderAccess(state: State): void {
-		const direct = state.direct;
+		const transport = el('access-transport') as HTMLSelectElement;
+		if (state.lan?.enabled) transport.value = 'lan';
+		else if (state.direct.enabled) transport.value = 'tailscale';
+		transport.disabled =
+			pending > 0 || state.enabled || state.direct.enabled || !!state.lan?.enabled;
+		const lan = transport.value === 'lan';
+		const direct = lan
+			? (state.lan ?? {
+					enabled: false,
+					ready: false,
+					checking: false,
+					message: 'Local network access is off.',
+				})
+			: state.direct;
+		const network = el('lan-network') as HTMLSelectElement;
+		const nextOptions = JSON.stringify(state.interfaces);
+		if (nextOptions !== lanOptionsKey) {
+			lanOptionsKey = nextOptions;
+			const previous = network.value;
+			network.replaceChildren(
+				...state.interfaces.map((row) => {
+					const option = document.createElement('option');
+					option.value = row.address;
+					option.textContent = row.name + ' (' + row.address + ')';
+					return option;
+				})
+			);
+			if (state.interfaces.some((row) => row.address === previous)) network.value = previous;
+		}
+		if (state.lan?.interfaceAddress && state.lan.enabled)
+			network.value = state.lan.interfaceAddress;
+		network.disabled = pending > 0 || !!state.lan?.enabled;
+		el('lan-network-label').hidden = !lan;
+		el('lan-access-help').hidden = !lan;
+		setText(el('access-mode'), lan ? 'Access over local network (LAN)' : 'Access over Tailscale');
 		const mode = direct.enabled
 			? direct.ready
 				? 'on'
 				: 'blocked'
-			: direct.origin
+			: direct.origin || (lan && !!network.value)
 				? 'off'
 				: direct.checking
 					? 'checking'
 					: 'unavailable';
 		const copy: Record<typeof mode, [string, string, string]> = {
-			checking: ['Checking Tailscale on this computer…', '', ''],
-			unavailable: ["Tailscale isn't ready on this computer.", 'Off', ''],
+			checking: [
+				lan ? 'Checking the local network…' : 'Checking Tailscale on this computer…',
+				'',
+				'',
+			],
+			unavailable: [
+				lan
+					? 'No private local network is available on this computer.'
+					: "Tailscale isn't ready on this computer.",
+				'Off',
+				'',
+			],
 			off: [
-				'Turn on access so Maestro Lite on your other devices can find this computer over Tailscale. Each new device needs a pairing code and your approval.',
+				lan
+					? 'Turn on access so Maestro Lite can find this computer on your local network. Each new device needs a pairing code and your approval.'
+					: 'Turn on access so Maestro Lite on your other devices can find this computer over Tailscale. Each new device needs a pairing code and your approval.',
 				'Off',
 				'',
 			],
 			on: [
-				'On. Devices on your Tailscale network can find this computer and ask to pair.',
+				lan
+					? 'On. Devices on your local network can find this computer and ask to pair.'
+					: 'On. Devices on your Tailscale network can find this computer and ask to pair.',
 				'On',
 				'on',
 			],
@@ -183,25 +236,30 @@ window.addEventListener('DOMContentLoaded', () => {
 				: mode === 'blocked'
 					? 'Reconnect this computer'
 					: mode === 'unavailable'
-						? 'Connect Tailscale first'
+						? lan
+							? 'Connect to a local network first'
+							: 'Connect Tailscale first'
 						: 'Make this computer available'
 		);
 		setText(el('status'), status);
 		setText(el('access-badge'), badge);
 		if (tone) el('access-badge').dataset.tone = tone;
 		else delete el('access-badge').dataset.tone;
-		const showReason = mode === 'unavailable' || mode === 'blocked';
+		const showReason =
+			mode === 'unavailable' || mode === 'blocked' || (lan && direct.ready && !state.advertising);
 		el('direct-status').hidden = !showReason;
 		setText(el('direct-status'), showReason ? direct.message : '');
 		el('direct-setup').hidden = mode !== 'off';
 		button('enable-direct').hidden = mode !== 'off';
 		button('enable-direct').disabled = pending > 0 || mode !== 'off';
-		button('open-tailscale').hidden = !showReason;
+		button('open-tailscale').hidden = lan || !showReason;
 		button('open-tailscale').classList.toggle('primary', mode === 'unavailable');
 		button('refresh').hidden = !showReason;
 		button('refresh').classList.toggle('primary', mode === 'blocked');
-		button('disable-direct').hidden = !direct.enabled;
+		button('disable-direct').hidden = !state.direct.enabled;
 		button('disable-direct').disabled = pending > 0;
+		button('disable-lan').hidden = !state.lan?.enabled;
+		button('disable-lan').disabled = pending > 0;
 		el('direct-hint').hidden = mode !== 'on';
 
 		if (direct.enabled) {
@@ -246,11 +304,12 @@ window.addEventListener('DOMContentLoaded', () => {
 				state.interfaces.map((i) => ({ value: i.address, label: i.name + ' (' + i.address + ')' }))
 			);
 		}
-		const httpsOn = state.enabled && !state.direct.enabled;
+		const directOn = state.direct.enabled || !!state.lan?.enabled;
+		const httpsOn = state.enabled && !directOn;
 		el('https-on').hidden = !httpsOn;
 		(el('enable') as HTMLFormElement).hidden = httpsOn;
-		el('https-blocked').hidden = !state.direct.enabled;
-		button('enable-https').disabled = state.direct.enabled || pending > 0;
+		el('https-blocked').hidden = !directOn;
+		button('enable-https').disabled = directOn || pending > 0;
 		setText(el('https-badge'), httpsOn ? '(HTTPS on)' : '');
 		setText(
 			el('sharing-expiry'),
@@ -549,7 +608,9 @@ window.addEventListener('DOMContentLoaded', () => {
 			input('direct-consent').focus();
 			return;
 		}
-		void action('enable-direct', { consent: true });
+		if ((el('access-transport') as HTMLSelectElement).value === 'lan')
+			void action('enable-lan', { consent: true, interfaceAddress: input('lan-network').value });
+		else void action('enable-direct', { consent: true });
 	};
 	input('direct-consent').onchange = () => {
 		el('direct-consent-error').hidden = true;
@@ -557,6 +618,19 @@ window.addEventListener('DOMContentLoaded', () => {
 	};
 	button('disable-direct').onclick = () => {
 		if (!pending) void action('disable-direct');
+	};
+	button('disable-lan').onclick = () => {
+		if (!pending) void action('disable-lan');
+	};
+	input('access-transport').onchange = () => {
+		input('direct-consent').checked = false;
+		el('direct-consent-error').hidden = true;
+		input('direct-consent').removeAttribute('aria-invalid');
+		if (latest) render(latest);
+	};
+	input('lan-network').onchange = () => {
+		input('direct-consent').checked = false;
+		if (latest) render(latest);
 	};
 	button('refresh').onclick = () => void action('inspect');
 	button('open-tailscale').onclick = () => void action('open-tailscale');
@@ -571,7 +645,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		if (input('advanced').checked) input('advanced-endpoint').focus();
 	};
 	input('lan').onchange = () => {
-		el('interface-row').hidden = !input('lan').checked;
+		el('interface-label').hidden = !input('lan').checked;
 	};
 	el('enable').addEventListener('submit', (event) => {
 		event.preventDefault();

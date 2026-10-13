@@ -2,7 +2,7 @@ import { createSocket, type Socket } from 'node:dgram';
 import { isIPv4 } from 'node:net';
 import * as dns from 'dns-packet';
 import { advertisement, SERVICE } from './mdns';
-/** Opt-in advertisement for an already configured HTTPS endpoint. No endpoint/listener provisioning. */
+/** Opt-in advertisement for an existing HTTPS or private LAN endpoint. No listener provisioning. */
 export class MdnsAdvertiser {
 	private socket?: Socket;
 	private timers: NodeJS.Timeout[] = [];

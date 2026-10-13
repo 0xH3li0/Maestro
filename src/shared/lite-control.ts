@@ -8,7 +8,7 @@ import type { DiscoveryPairingState } from './lite-discovery';
 export interface LiteProfile {
 	id: string;
 	name: string;
-	transport: 'ssh' | 'https' | 'tailscale';
+	transport: 'ssh' | 'https' | 'tailscale' | 'lan';
 	url: string;
 	ssh?: SshRemoteConfig;
 	instanceId?: string;

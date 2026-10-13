@@ -1,23 +1,30 @@
 import { request } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { tailnetDestination } from '../tailnet';
+import { lanDestination } from '../lan';
 import { connectionOrigin } from '../discovery/types';
 import { PAIR_PATH, type PairingTransport, type Route } from './protocol';
-/** Fixed routes, no redirects or ambient proxy. Direct mode binds verified Tailscale source and destination. */
+/** Fixed routes, no redirects or ambient proxy. Direct mode binds its verified private interface. */
 export function pairingTransport(route: Route, send?: typeof request): PairingTransport {
 	const origin = connectionOrigin(route.endpoint);
 	const direct = origin.startsWith('http:');
-	if (direct && route.source !== 'tailscale')
-		throw new Error('Direct transport requires a Tailscale peer.');
+	if (direct && route.source !== 'tailscale' && route.source !== 'lan')
+		throw new Error('Direct transport requires a private LAN or Tailscale host.');
 	return {
 		async call<T>(operation: string, payload: unknown, signal?: AbortSignal): Promise<T> {
 			if (!/^[a-z]+$/.test(operation)) return Promise.reject(new Error('invalid-operation'));
 			const data = JSON.stringify({ route, payload });
 			if (Buffer.byteLength(data) > 16384) return Promise.reject(new Error('request-too-large'));
 			const bound = direct
-				? await tailnetDestination(origin, signal ?? AbortSignal.timeout(5000))
+				? route.source === 'lan'
+					? await lanDestination(origin, signal)
+					: await tailnetDestination(origin, signal ?? AbortSignal.timeout(5000))
 				: undefined;
-			if (bound && bound.peerId !== route.peerId)
+			if (
+				bound &&
+				route.source === 'tailscale' &&
+				(!('peerId' in bound) || bound.peerId !== route.peerId)
+			)
 				throw new Error('Tailscale node identity changed. Refresh and verify the host.');
 			return new Promise((resolve, reject) => {
 				const req = (send ?? (direct ? httpRequest : request))(
@@ -73,7 +80,9 @@ export function pairingTransport(route: Route, send?: typeof request): PairingTr
 							signal?.aborted
 								? 'cancelled'
 								: direct
-									? 'tailnet-connection-failed'
+									? route.source === 'lan'
+										? 'lan-connection-failed'
+										: 'tailnet-connection-failed'
 									: 'tls-or-connection-failed'
 						)
 					)

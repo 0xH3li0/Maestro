@@ -45,6 +45,8 @@ export function validateHandshake(
 				'Paired-device authorization was rejected. Pair this device again.'
 			);
 	} else {
+		if (profile.transport === 'lan' || profile.transport === 'tailscale')
+			throw new HostConnectionError('Direct private connections require device pairing.');
 		if (profile.transport === 'https' && !host.authentication.loginEnabled)
 			throw new HostConnectionError(
 				'Direct manual HTTPS requires host login. Use device pairing for code-only access.'

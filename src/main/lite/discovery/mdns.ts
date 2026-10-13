@@ -1,7 +1,7 @@
 import { createSocket, type Socket } from 'node:dgram';
 import { isIPv4 } from 'node:net';
 import * as dns from 'dns-packet';
-import { candidate, httpsOrigin, type DiscoveryAdapter } from './types';
+import { candidate, connectionOrigin, type DiscoveryAdapter } from './types';
 import type { Candidate } from '../../../shared/lite-discovery';
 export const SERVICE = '_maestro._tcp.local';
 const GROUP = '224.0.0.251';
@@ -69,7 +69,7 @@ export class MdnsCache {
 			const data = srv.record.data as { target?: string; port?: number };
 			if (
 				fields.v !== '1' ||
-				fields.tls !== '1' ||
+				!['0', '1'].includes(fields.tls) ||
 				fields.pair !== '1' ||
 				typeof data.target !== 'string' ||
 				!Number.isInteger(data.port) ||
@@ -82,7 +82,10 @@ export class MdnsCache {
 					candidate(
 						fields.id,
 						fields.name,
-						'https://' + data.target.replace(/\.$/, '') + ':' + data.port,
+						(fields.tls === '1' ? 'https://' : 'http://') +
+							data.target.replace(/\.$/, '') +
+							':' +
+							data.port,
 						'lan',
 						Math.min(ptr.until, srv.until, txt.until)
 					)
@@ -199,9 +202,9 @@ export class MdnsBrowser implements DiscoveryAdapter {
 		}
 	}
 }
-/** DNS-SD advert bytes for an existing TLS endpoint; no secret URL/token is published. */
+/** DNS-SD advert bytes for an existing HTTPS or private LAN endpoint; no secret URL/token is published. */
 export function advertisement(id: string, name: string, endpoint: string, ttl = 120): Buffer {
-	const origin = new URL(httpsOrigin(endpoint));
+	const origin = new URL(connectionOrigin(endpoint));
 	const row = candidate(id, name, origin.origin, 'lan', 0);
 	const instance = row.id + '.' + SERVICE;
 	return dns.encode({
@@ -221,7 +224,13 @@ export function advertisement(id: string, name: string, endpoint: string, ttl = 
 				type: 'TXT',
 				ttl,
 				flush: true,
-				data: ['v=1', 'tls=1', 'pair=1', 'id=' + id, 'name=' + name].map((v) => Buffer.from(v)),
+				data: [
+					'v=1',
+					'tls=' + (origin.protocol === 'https:' ? '1' : '0'),
+					'pair=1',
+					'id=' + id,
+					'name=' + name,
+				].map((v) => Buffer.from(v)),
 			},
 		],
 	});

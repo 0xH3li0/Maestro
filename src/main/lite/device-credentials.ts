@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertSerializedJsonIsSafe, parseJsonWithBom } from '../../shared/jsonUtils';
 import { connectionOrigin } from './discovery/types';
+import { tailnetIPv4 } from './tailnet-origin';
 import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 
 interface SavedDevice {
@@ -65,8 +66,8 @@ export class DeviceCredentials {
 		await this.load();
 		this.assertAvailable();
 		origin = connectionOrigin(origin);
-		if (origin.startsWith('http:') && !peerId)
-			throw new Error('A verified Tailscale node identity is required.');
+		const tailnet = origin.startsWith('http:') && tailnetIPv4(new URL(origin).hostname);
+		if (tailnet && !peerId) throw new Error('A verified Tailscale node identity is required.');
 		if (
 			[...this.rows.values()].some((row) => row.origin === origin && row.instanceId !== instanceId)
 		)
@@ -81,7 +82,7 @@ export class DeviceCredentials {
 		if (
 			value.instanceId !== instanceId ||
 			value.origin !== origin ||
-			(origin.startsWith('http:') && value.peerId !== peerId) ||
+			(tailnet && value.peerId !== peerId) ||
 			!/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(value.credential)
 		)
 			throw new Error('Saved device identity does not match.');
@@ -97,7 +98,7 @@ export class DeviceCredentials {
 			await this.load();
 			this.assertAvailable();
 			origin = connectionOrigin(origin);
-			if (origin.startsWith('http:') && !peerId)
+			if (origin.startsWith('http:') && tailnetIPv4(new URL(origin).hostname) && !peerId)
 				throw new Error('A verified Tailscale node identity is required.');
 			if (!/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(credential) || !instanceId)
 				throw new Error('Invalid paired-device credential.');

@@ -86,6 +86,13 @@ HTTPS requires Web Login and valid TLS. Profiles pin host identity and isolate
 cookies, navigation, and drafts by connection/host. Disconnecting Lite never
 stops accepted host work; the full host and its owning renderer must stay alive.
 
+The guided device-pairing flow also offers Tailscale or LAN. `src/main/lite/lan.ts`
+owns private IPv4 origin validation and same-subnet interface binding; reuse it
+for direct LAN routes. `pairing/direct-lan.ts` owns persisted host consent and
+multicast discovery on the selected interface. Both direct modes use the existing
+paired-device admission and localhost relay, with no privileged preload in remote
+content. LAN traffic is unencrypted and requires a trusted local network.
+
 Browser tabs use one canonical page in `src/main/browser/browser-pages.ts`.
 Native and remote views are presentations of that page, not independent guests.
 Empty offscreen startup paints are not usable frames. Disconnect releases the

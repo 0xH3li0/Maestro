@@ -3,9 +3,10 @@ import type { Socket } from 'node:net';
 import { timingSafeEqual } from 'node:crypto';
 import { tailnetDestination } from './tailnet';
 import { directTailnetOrigin } from './tailnet-origin';
+import { lanDestination, lanOrigin } from './lan';
 import { CONNECT_PATH, ADMISSION_HEADER } from './pairing/protocol';
 
-/** Private browser adapter: localhost remains a secure browser context, upstream binds the verified tailnet interface.
+/** Private browser adapter: localhost remains a secure browser context, upstream binds the verified private interface.
  * Never a general proxy. Only the selected paired host's application subtree and credential are accepted.
  */
 export async function openTailnetRelay(
@@ -15,29 +16,66 @@ export async function openTailnetRelay(
 	peerId: string
 ): Promise<{ url: URL; tunnel: { stop(): Promise<void> } }> {
 	const origin = directTailnetOrigin(endpoint.origin);
+	return openPairedRelay(
+		endpoint,
+		credential,
+		signal,
+		origin,
+		async () => {
+			const binding = await tailnetDestination(origin, signal);
+			if (binding.peerId !== peerId)
+				throw new Error('The Tailscale node identity changed. Verify and pair again.');
+			return binding;
+		},
+		(next, initial) => next.device === initial.device && next.tailnet === initial.tailnet
+	);
+}
+
+export async function openLanRelay(
+	endpoint: URL,
+	credential: string,
+	signal: AbortSignal
+): Promise<{ url: URL; tunnel: { stop(): Promise<void> } }> {
+	const origin = lanOrigin(endpoint.origin);
+	return openPairedRelay(
+		endpoint,
+		credential,
+		signal,
+		origin,
+		() => lanDestination(origin, signal),
+		() => true
+	);
+}
+
+async function openPairedRelay<T extends { hostname: string; port: number; localAddress: string }>(
+	endpoint: URL,
+	credential: string,
+	signal: AbortSignal,
+	origin: string,
+	readDestination: () => Promise<T>,
+	sameIdentity: (next: T, initial: T) => boolean
+): Promise<{ url: URL; tunnel: { stop(): Promise<void> } }> {
 	if (
 		endpoint.pathname !== CONNECT_PATH ||
 		!/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(credential)
 	)
-		throw new Error('Invalid paired Tailscale connection.');
-	const initial = await tailnetDestination(origin, signal);
-	if (initial.peerId !== peerId)
-		throw new Error('The Tailscale node identity changed. Verify and pair again.');
+		throw new Error('Invalid paired private connection.');
+	const initial = await readDestination();
 	let bound = initial,
 		checkedAt = Date.now(),
 		checking: Promise<typeof initial> | undefined;
 	const destination = async () => {
 		if (signal.aborted) throw new Error('Connection canceled.');
 		if (Date.now() - checkedAt < 2000) return bound;
-		checking ??= tailnetDestination(origin, signal)
+		checking ??= readDestination()
 			.then((next) => {
 				if (
-					next.peerId !== peerId ||
-					next.device !== initial.device ||
-					next.tailnet !== initial.tailnet ||
+					!sameIdentity(next, initial) ||
+					next.hostname !== initial.hostname ||
+					next.port !== initial.port ||
 					next.localAddress !== initial.localAddress
 				)
-					throw new Error('Tailscale network changed. Reconnect explicitly.');
+					throw new Error('Private network changed. Reconnect explicitly.');
 				bound = next;
 				checkedAt = Date.now();
 				return next;

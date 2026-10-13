@@ -4,6 +4,8 @@ import QRCode from 'qrcode';
 import { PairedDevices } from './paired-devices';
 import { PairingHost } from './host';
 import { DirectTailnetHost, type TailnetListener } from './direct-tailnet';
+import { DirectLanHost } from './direct-lan';
+import { lanIPv4 } from '../lan';
 import { MdnsAdvertiser } from '../discovery/advertiser';
 import { availableLanInterfaces } from '../discovery/interfaces';
 import { issueInvitation, parseInvitation } from '../discovery/invitation';
@@ -18,6 +20,7 @@ export interface HostPairingOptions {
 	/** Existing all-interface listener port; undefined when the backend is loopback-only. */
 	backendPort?: () => number | undefined;
 	listenTailnet?: TailnetListener;
+	listenLan?: TailnetListener;
 	parent?: () => BrowserWindow | null;
 }
 /** Host-only consent and code display. Remote content never receives this local capability. */
@@ -25,6 +28,7 @@ export class HostPairingWindow {
 	private currentHost?: PairingHost;
 	private window?: BrowserWindow;
 	private direct?: DirectTailnetHost;
+	private lan?: DirectLanHost;
 	private devices = new PairedDevices(app.getPath('userData'));
 	private advertiser = new MdnsAdvertiser();
 	private advertising = false;
@@ -129,9 +133,20 @@ export class HostPairingWindow {
 			this.incomingRequest
 		);
 		await this.direct.initialize();
+		this.lan ??= new DirectLanHost(
+			app.getPath('userData'),
+			this.devices,
+			instanceId,
+			options.name,
+			options.listenLan,
+			this.incomingRequest,
+			() => !this.direct?.state.enabled && !this.currentHost
+		);
+		await this.lan.initialize();
 	}
 	get host(): PairingHost | undefined {
 		if (this.direct?.state.enabled) return this.direct.host;
+		if (this.lan?.state.enabled) return this.lan.host;
 		if (
 			this.knownOrigin &&
 			this.origin &&
@@ -211,8 +226,14 @@ export class HostPairingWindow {
 				if (this.invitation && this.invitation.expiresAt <= Date.now()) this.invitation = undefined;
 				const endpoints = options.endpoints().map(httpsOrigin);
 				if (action !== 'state') this.error = undefined;
-				if (action === 'inspect') await this.direct!.refresh();
-				else if (action === 'enable-direct') {
+				if (action === 'inspect') {
+					await this.direct!.refresh();
+					await this.lan!.refresh();
+				} else if (action === 'enable-direct') {
+					if (this.lan!.state.enabled)
+						throw new Error('Disable direct LAN access before enabling Tailscale access.');
+					if (this.currentHost)
+						throw new Error('Disable HTTPS access before enabling Tailscale access.');
 					if (this.busy) throw new Error('An access operation is already in progress.');
 					if (payload.consent !== true) throw new Error('Explicit host consent is required.');
 					this.busy = true;
@@ -224,6 +245,20 @@ export class HostPairingWindow {
 					}
 				} else if (action === 'disable-direct') {
 					await this.direct!.disable();
+				} else if (action === 'enable-lan') {
+					if (this.direct!.state.enabled)
+						throw new Error('Disable direct Tailscale access before enabling LAN access.');
+					if (this.currentHost) throw new Error('Disable HTTPS access before enabling LAN access.');
+					if (this.busy) throw new Error('An access operation is already in progress.');
+					if (payload.consent !== true) throw new Error('Explicit host consent is required.');
+					this.busy = true;
+					try {
+						await this.lan!.enable(true, payload.interfaceAddress ?? '');
+					} finally {
+						this.busy = false;
+					}
+				} else if (action === 'disable-lan') {
+					await this.lan!.disable();
 				} else if (action === 'open-tailscale') {
 					const application = tailscaleApplication();
 					if (application) {
@@ -231,6 +266,8 @@ export class HostPairingWindow {
 						if (error) throw new Error('Tailscale could not be opened.');
 					} else await shell.openExternal(tailscaleInstallUrl());
 				} else if (action === 'enable') {
+					if (this.lan!.state.enabled)
+						throw new Error('Disable direct LAN access before choosing a different connection.');
 					if (this.direct!.state.enabled)
 						throw new Error(
 							'Disable direct Tailscale access before choosing a different connection.'
@@ -334,13 +371,14 @@ export class HostPairingWindow {
 				return {
 					enabled: !!this.host,
 					direct: this.direct!.state,
-					advertising: this.advertising,
+					lan: this.lan!.state,
+					advertising: this.advertising || this.lan!.advertising,
 					requests: this.host?.localRequests() ?? [],
 					devices: this.devices.list(instanceId),
 					focusRequestId: this.focusRequestId,
 					error: this.error,
 					invitation: this.invitation,
-					interfaces: availableLanInterfaces(),
+					interfaces: availableLanInterfaces().filter((entry) => lanIPv4(entry.address)),
 					endpoints,
 					name: options.name,
 					expiresAt: this.expiresAt,
@@ -367,5 +405,7 @@ export class HostPairingWindow {
 		this.window?.close();
 		await this.direct?.close();
 		this.direct = undefined;
+		await this.lan?.close();
+		this.lan = undefined;
 	}
 }

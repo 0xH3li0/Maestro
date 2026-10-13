@@ -85,6 +85,20 @@ describe('OS-protected paired device persistence', () => {
 		await expect(restarted.get('aster-id', direct, 'replacement-node')).rejects.toThrow('identity');
 		await expect(restarted.get('aster-id', direct)).rejects.toThrow('node identity');
 	});
+	it('restores LAN pairing without Tailscale and keeps its credential encrypted and tied to host identity', async () => {
+		const store = new DeviceCredentials(directory),
+			lan = 'http://192.168.1.10:56036';
+		await store.save('aster-id', lan, first);
+		expect(
+			readFileSync(path.join(directory, 'lite-device-credentials.json'), 'utf8')
+		).not.toContain(first);
+		const restarted = new DeviceCredentials(directory);
+		expect(await restarted.get('aster-id', lan)).toBe(first);
+		await expect(restarted.get('replacement-host', lan)).rejects.toThrow('identity changed');
+		expect(await restarted.get('aster-id', 'http://192.168.1.11:56036')).toBeUndefined();
+		await restarted.forget(lan);
+		expect(await new DeviceCredentials(directory).get('aster-id', lan)).toBeUndefined();
+	});
 });
 describe('host paired device persistence', () => {
 	it('revokes live access immediately while waiting for another pairing write', async () => {

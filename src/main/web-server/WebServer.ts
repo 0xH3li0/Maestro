@@ -36,7 +36,7 @@ import { existsSync } from 'fs';
 import { app, type BrowserWindow } from 'electron';
 import { tunnelManager } from '../tunnel-manager';
 import { HostPairingWindow } from '../lite/pairing/host-window';
-import { listenTailnet } from '../lite/tailnet-listener';
+import { listenLan, listenTailnet } from '../lite/tailnet-listener';
 import { registerPairingRoutes } from '../lite/pairing/routes';
 
 import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
@@ -251,6 +251,7 @@ export class WebServer {
 			parent: this.getPairingParent,
 			backendPort: () => this.port,
 			listenTailnet: (address) => listenTailnet(this.server, address),
+			listenLan: (address) => listenLan(this.server, address),
 			endpoints: () => {
 				const tunnel = tunnelManager.getStatus();
 				return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
@@ -1796,6 +1797,7 @@ export class WebServer {
 						parent: this.getPairingParent,
 						backendPort: () => (this.lanAccess ? this.port : undefined),
 						listenTailnet: (address) => listenTailnet(this.server, address),
+						listenLan: (address) => listenLan(this.server, address),
 						endpoints: () => {
 							const tunnel = tunnelManager.getStatus();
 							return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];

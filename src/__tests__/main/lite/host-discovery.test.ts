@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Socket } from 'node:dgram';
@@ -19,7 +19,7 @@ import { MdnsAdvertiser } from '../../../main/lite/discovery/advertiser';
 import { parseInvitation } from '../../../main/lite/discovery/invitation';
 import { PairingHost } from '../../../main/lite/pairing/host';
 import { PairingClient } from '../../../main/lite/pairing/client';
-import { HostPairingWindow } from '../../../main/lite/pairing/host-window';
+import { HostPairingWindow, type HostPairingOptions } from '../../../main/lite/pairing/host-window';
 
 import { registerPairingRoutes } from '../../../main/lite/pairing/routes';
 import { hash, token, PAIR_PATH, type PairingTransport } from '../../../main/lite/pairing/protocol';
@@ -38,6 +38,23 @@ vi.mock('../../../main/lite/discovery/tailscale', async (original) => ({
 	readTailscaleStatus: vi.fn(async () => JSON.stringify({ BackendState: 'Stopped' })),
 }));
 vi.mock('node:dgram', () => ({ createSocket: mocks.sockets }));
+vi.mock('node:os', async (original) => ({
+	...(await original<typeof import('node:os')>()),
+	networkInterfaces: () =>
+		Object.fromEntries(
+			(mocks.interfaces() ?? []).map((entry: { name: string; address: string }) => [
+				entry.name,
+				[
+					{
+						address: entry.address,
+						netmask: '255.255.255.0',
+						family: 'IPv4',
+						internal: false,
+					},
+				],
+			])
+		),
+}));
 vi.mock('../../../main/lite/discovery/interfaces', () => ({
 	availableLanInterfaces: mocks.interfaces,
 }));
@@ -107,7 +124,7 @@ afterEach(async () => {
 	vi.restoreAllMocks();
 });
 
-async function local(config = options) {
+async function local(config: HostPairingOptions = options) {
 	shell = new HostPairingWindow();
 	await shell.open(
 		{
@@ -320,6 +337,75 @@ describe('attended host discovery manifest on the existing server', () => {
 });
 
 describe('host-local consent, interface selection and invitation lifecycle', () => {
+	it('offers private LAN interfaces and keeps direct access active when setup closes', async () => {
+		mocks.interfaces.mockReturnValue([
+			{ name: 'Ethernet', address: '192.168.20.10' },
+			{ name: 'Public', address: '192.0.2.10' },
+		]);
+		const stop = vi.fn(async () => {});
+		const listenLan = vi.fn(async () => stop);
+		const { invoke, window, shell } = await local({ ...options, listenLan });
+		expect((await invoke('state')).interfaces).toEqual([
+			{ name: 'Ethernet', address: '192.168.20.10' },
+		]);
+		await expect(
+			invoke('enable-lan', { consent: false, interfaceAddress: '192.168.20.10' })
+		).rejects.toThrow('Explicit host consent');
+		expect(listenLan).not.toHaveBeenCalled();
+		const enabled = await invoke('enable-lan', {
+			consent: true,
+			interfaceAddress: '192.168.20.10',
+		});
+		expect(enabled.lan).toMatchObject({
+			enabled: true,
+			ready: true,
+			origin: 'http://192.168.20.10:56036',
+		});
+		expect(enabled.advertising).toBe(true);
+		await expect(invoke('enable-direct', { consent: true })).rejects.toThrow('Disable direct LAN');
+		await expect(invoke('enable', enable)).rejects.toThrow('Disable direct LAN');
+		window.close();
+		expect(
+			shell.host?.isPublishedRequest('192.168.20.10:56036', '192.168.20.20', '192.168.20.10')
+		).toBe(true);
+		expect(stop).not.toHaveBeenCalled();
+		await shell.open({ isDestroyed: () => false } as BrowserWindow, 'host-id', {
+			...options,
+			listenLan,
+		});
+		const reopened = vi.mocked(BrowserWindow).mock.results.at(-1)!.value;
+		const handler = vi.mocked(ipcMain.handle).mock.calls.at(-1)![1];
+		const state = await handler(
+			{ sender: reopened.webContents, senderFrame: reopened.webContents.mainFrame } as never,
+			'disable-lan'
+		);
+		expect(state.lan.enabled).toBe(false);
+		expect(shell.host).toBeUndefined();
+		expect(stop).toHaveBeenCalledOnce();
+	});
+	it('requires disabling HTTPS or restored Tailscale access before enabling another mode', async () => {
+		const { invoke } = await local();
+		await invoke('enable', enable);
+		await expect(invoke('enable-lan', { consent: true })).rejects.toThrow('Disable HTTPS');
+		await expect(invoke('enable-direct', { consent: true })).rejects.toThrow('Disable HTTPS');
+		await shell!.close();
+		writeFileSync(
+			path.join(mocks.directory, 'lite-tailnet-access.json'),
+			JSON.stringify({
+				version: 1,
+				enabled: true,
+				instanceId: 'host-id',
+				device: 'host-node',
+				tailnet: 'example.ts.net',
+				address: '100.64.0.10',
+			})
+		);
+		const restored = await local();
+		await expect(restored.invoke('enable-lan', { consent: true })).rejects.toThrow(
+			'Disable direct Tailscale'
+		);
+		await expect(restored.invoke('enable', enable)).rejects.toThrow('Disable direct Tailscale');
+	});
 	it('prompts for a named incoming request and denies it without revealing a code or granting a device', async () => {
 		vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false });
 		const { invoke, shell: active } = await local();
@@ -430,7 +516,7 @@ describe('host-local consent, interface selection and invitation lifecycle', () 
 			enabled: false,
 			advertising: false,
 			endpoints: [endpoint],
-			interfaces: availableLanInterfaces(),
+			interfaces: [],
 		});
 		expect(mocks.sockets).not.toHaveBeenCalled();
 		await expect(invoke('enable', { ...enable, consent: false })).rejects.toThrow(

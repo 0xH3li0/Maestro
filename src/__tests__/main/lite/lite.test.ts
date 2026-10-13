@@ -70,6 +70,32 @@ describe('Lite URL and host identity boundary', () => {
 	it('never forwards to arbitrary remote network hosts', () => {
 		expect(() => normalizeRemoteUrl('http://internal.example/token', 'ssh')).toThrow(/loopback/);
 	});
+	it('restricts discovered LAN connections to paired application paths and authenticated device handshakes', () => {
+		const lanProfile: LiteProfile = {
+			...profile,
+			transport: 'lan',
+			url: 'http://192.168.1.10:56036/.well-known/maestro/connect',
+			instanceId: host.instanceId,
+		};
+		expect(normalizeRemoteUrl(lanProfile.url, 'lan').toString()).toBe(lanProfile.url);
+		expect(() => normalizeRemoteUrl('http://192.168.1.10:56036/token', 'lan')).toThrow(
+			/paired connection/
+		);
+		expect(() => validateHandshake(host, lanProfile)).toThrow(/device pairing/);
+		expect(() => validateHandshake(host, lanProfile, true)).toThrow(/authorization/);
+		const authenticated = {
+			...host,
+			authentication: {
+				loginEnabled: false,
+				authenticated: true,
+				method: 'device-pairing' as const,
+			},
+		};
+		expect(validateHandshake(authenticated, lanProfile, true).instanceId).toBe(host.instanceId);
+		expect(() =>
+			validateHandshake(authenticated, { ...lanProfile, instanceId: 'different' }, true)
+		).toThrow(/identity/);
+	});
 	it('isolates host identity and profile identity independent of loopback address reuse', () => {
 		expect(hostPartition('host-a', 'instance-a')).not.toBe(hostPartition('host-a', 'instance-b'));
 		expect(hostPartition('host-a', 'instance-a')).not.toBe(hostPartition('host-b', 'instance-a'));
