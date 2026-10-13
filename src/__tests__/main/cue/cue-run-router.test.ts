@@ -146,6 +146,18 @@ describe('executeCueRunAction', () => {
 		expect(deps.reportAuthFailure).toHaveBeenCalledWith(result, 'claude-code', 'remote-7');
 	});
 
+	it('hands the agent New Session Message to the prompt executor', async () => {
+		// Each Cue prompt run starts a new provider session, so the executor
+		// prefixes this onto the prompt. Dropping it here is how the field once
+		// reached only the desktop's inline copy of this routing.
+		const withMessage = { ...SESSION, newSessionMessage: 'Read AGENTS.md first.' };
+		const deps = makeDeps({ findSession: vi.fn(() => withMessage) });
+		await executeCueRunAction(deps, params());
+
+		const call = deps.executeCuePrompt.mock.calls[0][0] as Record<string, any>;
+		expect(call.session.newSessionMessage).toBe('Read AGENTS.md first.');
+	});
+
 	it('prefers the configured customPath over the detector', async () => {
 		const deps = makeDeps({
 			getAgentConfigValues: vi.fn(() => ({ customPath: '/custom/claude' })),
