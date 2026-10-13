@@ -292,6 +292,7 @@ function SessionListInner(props: SessionListProps) {
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pianolaSession = useSessionStore((s) => s.sessions.find((x) => x.isPianola));
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
+	const showLeftPanelCollapsedInitials = useSettingsStore((s) => s.showLeftPanelCollapsedInitials);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
 	// How much wider the header's own labels render in the current interface font
@@ -2370,6 +2371,7 @@ function SessionListInner(props: SessionListProps) {
 					handleContextMenu={handleContextMenu}
 					showUnreadAgentsOnly={showUnreadAgentsOnly}
 					stuckOutageSignature={stuckOutageSignature}
+					showInitials={showLeftPanelCollapsedInitials}
 				/>
 			)}
 

@@ -847,9 +847,12 @@ Drag the right edge of the sidebar to resize it. The width is persisted across s
 
 Click the sidebar toggle (`Opt+Cmd+Left` / `Alt+Ctrl+Left`) to collapse the sidebar to icon-only mode. In collapsed mode:
 
-- Agents show as icons with status indicators
-- Hover for agent name tooltip
+- Each agent shows as a two-letter badge tinted with its status color (`MR` for "Maestro RC", `Ma` for "Maestro"). Letters are picked across all your agents so no two share a label where the names allow
+- The active agent gets a ring and a stronger fill; a red corner dot marks unread messages
+- Hover for the full agent tooltip
 - Click to select an agent
+
+Prefer the plain status dots? Turn off **Settings → Display → Left Side Panel → Show agent initials when collapsed**.
 
 ## Tab Management
 
