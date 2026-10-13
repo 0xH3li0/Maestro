@@ -13,10 +13,18 @@ vi.mock('../../../main/lite/tailnet', () => ({
 		peerId: provider.peerId,
 	}),
 }));
-import { openTailnetRelay } from '../../../main/lite/tailnet-relay';
+vi.mock('../../../main/lite/lan', async (original) => ({
+	...(await original<typeof import('../../../main/lite/lan')>()),
+	lanDestination: async () => ({
+		hostname: '127.0.0.1',
+		port: provider.port,
+		localAddress: '127.0.0.1',
+	}),
+}));
+import { openTailnetRelay, openLanRelay } from '../../../main/lite/tailnet-relay';
 import { ADMISSION_HEADER, CONNECT_PATH } from '../../../main/lite/pairing/protocol';
-const credential = 'A'.repeat(43) + '.' + 'B'.repeat(43),
-	endpoint = new URL('http://100.64.0.10:56036' + CONNECT_PATH);
+const credential = 'A'.repeat(43) + '.' + 'B'.repeat(43);
+let endpoint: URL;
 let server: Server,
 	ws: WebSocketServer,
 	relay: Awaited<ReturnType<typeof openTailnetRelay>>,
@@ -50,10 +58,10 @@ beforeEach(async () => {
 	});
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	provider.port = (server.address() as { port: number }).port;
-	relay = await openTailnetRelay(endpoint, credential, abort.signal, 'host-node');
 });
+/** Reject WebSocket upgrades if the relay rewrites the selected upstream host authority incorrectly. */
 function assertHost(host: string | undefined) {
-	if (host !== '100.64.0.10:56036') throw new Error('Wrong selected host authority');
+	if (host !== endpoint.host) throw new Error('Wrong selected host authority');
 }
 afterEach(async () => {
 	vi.restoreAllMocks();
@@ -62,65 +70,83 @@ afterEach(async () => {
 	ws.close();
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 });
-describe('private paired browser relay', () => {
-	it('rejects non-ASCII credentials without throwing or contacting the host', async () => {
-		const response = await fetch(relay.url + '/api/sessions', {
-			headers: { [ADMISSION_HEADER]: '\u00e9'.repeat(credential.length) },
-			signal: AbortSignal.timeout(1000),
+describe.each(['tailscale', 'lan'] as const)(
+	'private paired browser relay over %s',
+	(transport) => {
+		beforeEach(async () => {
+			endpoint = new URL(
+				(transport === 'lan' ? 'http://192.168.1.10:56036' : 'http://100.64.0.10:56036') +
+					CONNECT_PATH
+			);
+			relay =
+				transport === 'lan'
+					? await openLanRelay(endpoint, credential, abort.signal)
+					: await openTailnetRelay(endpoint, credential, abort.signal, 'host-node');
 		});
-		expect(response.status).toBe(403);
-		expect(requests).toBe(0);
-	});
-	it('rejects missing credentials, cross-origin requests and sibling paths before contacting the host', async () => {
-		expect((await fetch(relay.url + '/api/sessions')).status).toBe(403);
-		expect(
-			(
-				await fetch(relay.url + '/api/sessions', {
-					headers: { [ADMISSION_HEADER]: credential, origin: 'http://evil.test' },
-				})
-			).status
-		).toBe(403);
-		expect(
-			(await fetch(new URL('/health', relay.url), { headers: { [ADMISSION_HEADER]: credential } }))
-				.status
-		).toBe(403);
-		expect(requests).toBe(0);
-		expect(
-			(await fetch(relay.url + '/api/sessions', { headers: { [ADMISSION_HEADER]: credential } }))
-				.status
-		).toBe(200);
-	});
-	it('does not follow redirects or send a credential after the authenticated peer identity changes', async () => {
-		expect(
-			(await fetch(relay.url + '/redirect', { headers: { [ADMISSION_HEADER]: credential } })).status
-		).toBe(502);
-		expect(requests).toBe(1);
-		provider.peerId = 'replacement-node';
-		const now = Date.now();
-		vi.spyOn(Date, 'now').mockReturnValue(now + 3000);
-		expect(
-			(await fetch(relay.url + '/api/sessions', { headers: { [ADMISSION_HEADER]: credential } }))
-				.status
-		).toBe(502);
-		expect(requests).toBe(1);
-	});
-	it('uses real WebSocket upgrade, sends a command only once and closes its sockets on cancellation', async () => {
-		const url = new URL(relay.url);
-		url.protocol = 'ws:';
-		url.pathname = CONNECT_PATH + '/ws';
-		const socket = new WebSocket(url, {
-			origin: relay.url.origin,
-			headers: { [ADMISSION_HEADER]: credential },
+		it('rejects non-ASCII credentials without throwing or contacting the host', async () => {
+			const response = await fetch(relay.url + '/api/sessions', {
+				headers: { [ADMISSION_HEADER]: '\u00e9'.repeat(credential.length) },
+				signal: AbortSignal.timeout(1000),
+			});
+			expect(response.status).toBe(403);
+			expect(requests).toBe(0);
 		});
-		await once(socket, 'open');
-		const reply = once(socket, 'message');
-		socket.send('one command');
-		await reply;
-		expect(commands).toBe(1);
-		const closed = once(socket, 'close');
-		abort.abort();
-		await closed;
-		expect(socket.readyState).toBe(WebSocket.CLOSED);
-		expect(commands).toBe(1);
-	});
-});
+		it('rejects missing credentials, cross-origin requests and sibling paths before contacting the host', async () => {
+			expect((await fetch(relay.url + '/api/sessions')).status).toBe(403);
+			expect(
+				(
+					await fetch(relay.url + '/api/sessions', {
+						headers: { [ADMISSION_HEADER]: credential, origin: 'http://evil.test' },
+					})
+				).status
+			).toBe(403);
+			expect(
+				(
+					await fetch(new URL('/health', relay.url), {
+						headers: { [ADMISSION_HEADER]: credential },
+					})
+				).status
+			).toBe(403);
+			expect(requests).toBe(0);
+			expect(
+				(await fetch(relay.url + '/api/sessions', { headers: { [ADMISSION_HEADER]: credential } }))
+					.status
+			).toBe(200);
+		});
+		it('does not follow redirects or send a credential after the network binding changes', async () => {
+			expect(
+				(await fetch(relay.url + '/redirect', { headers: { [ADMISSION_HEADER]: credential } }))
+					.status
+			).toBe(502);
+			expect(requests).toBe(1);
+			provider.peerId = 'replacement-node';
+			if (transport === 'lan') provider.port++;
+			const now = Date.now();
+			vi.spyOn(Date, 'now').mockReturnValue(now + 3000);
+			expect(
+				(await fetch(relay.url + '/api/sessions', { headers: { [ADMISSION_HEADER]: credential } }))
+					.status
+			).toBe(502);
+			expect(requests).toBe(1);
+		});
+		it('uses real WebSocket upgrade, sends a command only once and closes its sockets on cancellation', async () => {
+			const url = new URL(relay.url);
+			url.protocol = 'ws:';
+			url.pathname = CONNECT_PATH + '/ws';
+			const socket = new WebSocket(url, {
+				origin: relay.url.origin,
+				headers: { [ADMISSION_HEADER]: credential },
+			});
+			await once(socket, 'open');
+			const reply = once(socket, 'message');
+			socket.send('one command');
+			await reply;
+			expect(commands).toBe(1);
+			const closed = once(socket, 'close');
+			abort.abort();
+			await closed;
+			expect(socket.readyState).toBe(WebSocket.CLOSED);
+			expect(commands).toBe(1);
+		});
+	}
+);

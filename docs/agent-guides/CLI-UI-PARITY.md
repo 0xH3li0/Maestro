@@ -370,8 +370,8 @@ acting again.
 
 ## Open gaps
 
-Ranked by how often an agent is likely to hit them. None of these are blocked by
-a design constraint; they are simply not built yet.
+Ranked by how often an agent is likely to hit them. Most are not built yet;
+deliberate design constraints, including protected host consent, are noted below.
 
 1. **Interrupt a running turn.** Escape stops a busy agent in the UI. There is
    no CLI equivalent and no WS message behind one. This is the largest remaining
@@ -438,6 +438,11 @@ a design constraint; they are simply not built yet.
     `processInput(undefined, { hold: true })` and the card toggles the flag in
     place. Closing it means a WS message that sets `paused` on create and on an
     existing item, then the two verbs, with `queue list` already reading it back.
+15. **Host LAN and Tailscale access controls** (enable, disable, select a LAN
+    interface, and inspect access state in Connect another device / Manage access).
+    These remain in the protected native host window as a deliberate human-consent
+    design choice. Enabling a private listener requires the host owner's review;
+    no CLI verbs expose these controls.
 
 ### Audit backlog (2026-09-27)
 

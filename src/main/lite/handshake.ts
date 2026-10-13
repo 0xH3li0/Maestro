@@ -6,6 +6,7 @@ export class HostConnectionError extends Error {
 	name = 'HostConnectionError';
 }
 
+/** Require a compatible, ready host with the pinned identity and authentication appropriate to its transport. */
 export function validateHandshake(
 	value: unknown,
 	profile: LiteProfile,
@@ -45,6 +46,8 @@ export function validateHandshake(
 				'Paired-device authorization was rejected. Pair this device again.'
 			);
 	} else {
+		if (profile.transport === 'lan' || profile.transport === 'tailscale')
+			throw new HostConnectionError('Direct private connections require device pairing.');
 		if (profile.transport === 'https' && !host.authentication.loginEnabled)
 			throw new HostConnectionError(
 				'Direct manual HTTPS requires host login. Use device pairing for code-only access.'
