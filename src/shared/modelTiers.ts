@@ -33,6 +33,7 @@
  */
 
 import type { ToolType } from './types';
+import { getEffortRejection, type EffortRejection } from './effortRejection';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -60,6 +61,12 @@ export function asTierLevel(value: unknown): ModelTier | undefined {
  * must resolve identically on every machine. Discovery can ADD rungs a given
  * install supports; it cannot be allowed to silently change what `high` means
  * for a playbook someone else wrote.
+ *
+ * The one runtime input is a REFUSAL. A static table goes stale the day a
+ * provider retires a rung, and the provider then fails the turn outright rather
+ * than clamping. A value the provider has refused in this process resolves to
+ * `undefined` from then on (see `effortRejection.ts`): never a different value,
+ * only "inherit the agent's own", and always reported.
  */
 const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// Ladder: low, medium, high, xhigh, max
@@ -123,7 +130,37 @@ export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | 
  * {@link resolveTierModel}: `undefined` is inherit-and-say-so.
  */
 export function resolveEffortLevel(toolType: ToolType, level: EffortLevel): string | undefined {
-	return EFFORT_LADDERS[toolType]?.[level];
+	return rejectedEffortForLevel(toolType, level) ? undefined : EFFORT_LADDERS[toolType]?.[level];
+}
+
+/**
+ * The provider's refusal of the value this level maps to, when it has refused
+ * it in this process (see `effortRejection.ts`).
+ *
+ * The ladders above are a snapshot of each provider's catalogue, and a provider
+ * can retire a rung without notice. Once it has said no, the level resolves to
+ * `undefined` - inherit the agent's own effort - instead of sending a value
+ * that is known to fail the turn. Callers that explain an unmapped level to the
+ * user read the refusal from here so they can say what actually happened.
+ */
+export function rejectedEffortForLevel(
+	toolType: ToolType,
+	level: EffortLevel
+): EffortRejection | undefined {
+	const value = EFFORT_LADDERS[toolType]?.[level];
+	return value === undefined ? undefined : getEffortRejection(toolType, value);
+}
+
+/**
+ * True when `value` is one a ladder above hands out for this provider.
+ *
+ * Tells a refusal of something MAESTRO chose (the shipped table has drifted
+ * from the provider's catalogue, fixable only in a release) apart from a
+ * refusal of something the user picked on a tab, which is theirs to change.
+ */
+export function isLadderEffortValue(toolType: string, value: string): boolean {
+	const ladder = EFFORT_LADDERS[toolType as ToolType];
+	return ladder !== undefined && Object.values(ladder).includes(value);
 }
 
 /** True when this provider can act on a tier hint at all. */

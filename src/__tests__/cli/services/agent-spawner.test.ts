@@ -185,6 +185,10 @@ import {
 	AgentResult,
 } from '../../../cli/services/agent-spawner';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+// Static, so they share one module instance with the statically imported
+// `spawnAgent` above; other suites here call `vi.resetModules()`.
+import { resetEffortRejections } from '../../../shared/effortRejection';
+import { resolveEffortLevel } from '../../../shared/modelTiers';
 
 describe('agent-spawner', () => {
 	beforeEach(() => {
@@ -2344,6 +2348,100 @@ Some text with [x] in it that's not a checkbox
 
 			const { args } = spawnCall();
 			expect(args).not.toContain('--model');
+		});
+	});
+
+	describe('spawnAgent: effort refused by the provider', () => {
+		isolateAgentEnv();
+
+		// What `codex exec --json` prints when the API answers the effort with a
+		// 400: the API's own JSON, carried as a string inside a JSONL event.
+		const REFUSAL_LINE =
+			JSON.stringify({
+				type: 'error',
+				message:
+					'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+			}) + '\n';
+
+		let errorSpy: ReturnType<typeof vi.spyOn>;
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+			errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		});
+
+		afterEach(() => {
+			errorSpy.mockRestore();
+			resetEffortRejections();
+		});
+
+		/** Args of the Nth agent spawn (0-based). */
+		const argsOfSpawn = (index: number) => mockSpawn.mock.calls[index][1] as string[];
+		const effortArg = (args: string[]) =>
+			args.find((arg) => arg.startsWith('model_reasoning_effort='));
+
+		it('runs the turn once more with the effort left to the agent', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+
+			await waitForSpawnCall(1);
+			expect(effortArg(argsOfSpawn(0))).toBe('model_reasoning_effort="low"');
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			await waitForSpawnCall(2);
+			expect(mockSpawn).toHaveBeenCalledTimes(2);
+			expect(effortArg(argsOfSpawn(1))).toBeUndefined();
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 0);
+
+			const result = await p;
+			expect(result.success).toBe(true);
+			expect(errorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('codex rejected effort "low" for gpt-6-astra')
+			);
+		});
+
+		it('takes the refused value out of the ladder for the rest of the run', async () => {
+			expect(resolveEffortLevel('codex', 'low')).toBe('low');
+
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			await waitForSpawnCall(1);
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+			await waitForSpawnCall(2);
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 0);
+			await p;
+
+			expect(resolveEffortLevel('codex', 'low')).toBeUndefined();
+		});
+
+		it('does not retry when the caller sent no effort', async () => {
+			// The agent's own configured effort was refused: nothing Maestro chose
+			// is left to drop, so the failure is returned as it is.
+			const p = spawnAgent('codex', '/p', 'hi');
+			await waitForSpawnCall(1);
+			mockStdout.emit('data', Buffer.from(REFUSAL_LINE));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			const result = await p;
+			expect(result.success).toBe(false);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			await waitForSpawnCall(1);
+			mockStderr.emit('data', Buffer.from('Not logged in\n'));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', 1);
+
+			const result = await p;
+			expect(result.success).toBe(false);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
 		});
 	});
 

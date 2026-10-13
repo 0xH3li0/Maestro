@@ -460,6 +460,8 @@ The three levels mean the floor, the middle, and the ceiling of whatever that pr
 
 Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
 
+Providers also retire rungs. If a provider rejects the value a level maps to, Maestro runs that task once more at the agent's configured effort, stops asking for the value until it restarts, and tells you which value was rejected.
+
 ### Provider support
 
 | Provider      | Model tier              | Effort |

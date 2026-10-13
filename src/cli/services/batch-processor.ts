@@ -89,9 +89,10 @@ export async function* runPlaybook(
 		ignoreModelHints = false,
 	} = options;
 	const batchStartTime = Date.now();
-	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
-	// it depends only on the provider, which cannot change mid-run.
-	const cheapSynopsis = cheapTurnSettings(session.toolType);
+	// Bottom of both ladders for every synopsis turn in this run. Read per use
+	// rather than once: a provider can refuse the effort value mid-run, after
+	// which the ladder stops handing it out (see shared/effortRejection.ts).
+	const cheapSynopsis = () => cheapTurnSettings(session.toolType);
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -756,8 +757,8 @@ export async function* runPlaybook(
 										// (codex, opencode): there is nothing to downgrade TO, so the
 										// synopsis inherits, and it must inherit the same value the task
 										// ran under - the run override, not just the session's.
-										customModel: cheapSynopsis.model ?? runModel ?? session.customModel,
-										customEffort: cheapSynopsis.effort ?? runEffort ?? session.customEffort,
+										customModel: cheapSynopsis().model ?? runModel ?? session.customModel,
+										customEffort: cheapSynopsis().effort ?? runEffort ?? session.customEffort,
 										customArgs: session.customArgs,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,

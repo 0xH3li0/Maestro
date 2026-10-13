@@ -28,6 +28,11 @@ import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
+import {
+	describeEffortRejection,
+	noteEffortRejection,
+	parseEffortRejection,
+} from '../../shared/effortRejection';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
@@ -1232,9 +1237,40 @@ export interface SpawnAgentOptions {
 }
 
 /**
- * Spawn an agent with a prompt and return the result
+ * Spawn an agent with a prompt and return the result.
+ *
+ * When the provider refuses the effort level the turn asked for, the turn is
+ * run once more with the effort left to the agent's own configuration. The
+ * effort a CLI run sends usually came off Maestro's static ladder (a document
+ * hint, the synopsis pin), and a provider can retire a rung without notice;
+ * failing every task of a playbook on a value nobody typed is the wrong
+ * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
+ * run stop asking for the value and report why (see shared/effortRejection.ts).
  */
 export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	if (result.success || !options?.customEffort) return result;
+
+	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
+	if (!rejection) return result;
+
+	noteEffortRejection(toolType, rejection);
+	console.error(
+		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
+	);
+	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
+		...options,
+		customEffort: undefined,
+	});
+}
+
+async function spawnAgentOnce(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
