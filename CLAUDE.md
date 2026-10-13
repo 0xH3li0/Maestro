@@ -231,6 +231,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **The consultation budget setting (peer consults and delegations per user message):** `MAX_CONSULTATIONS_PER_TURN_SETTING`, `DEFAULT_MAX_CONSULTATIONS_PER_TURN`, `normalizeMaxConsultationsPerTurn()` in `src/shared/consultBudget.ts` (`0` is a real value; never `|| 25`)
 - **Spending a consult chain's budget (the shared counter):** `spendConsultBudget()`, `readConsultBudgetSpent()`, `sweepExpiredChains()`, `newConsultChainId()` in `src/main/peer-consults/consult-budget.ts`; `isConsultChainId()` in `src/shared/consultBudget.ts` (fails closed; tests pass `dataDir`)
 - **Which consult chain a spawned agent is in (`MAESTRO_CONSULT_CHAIN` / `MAESTRO_CONSULT_DEPTH`):** `readConsultChainEnv()`, `buildConsultChainEnv()`, `childConsultChain()`, `parseConsultChain()`, `withoutConsultChainEnv()`, `ConsultChain` in `src/shared/consultBudget.ts`
+- **Admitting a consult or delegation (spend, refuse, place the target):** `admitConsult()` in `src/main/peer-consults/consult-budget.ts`; `admitCliConsult()` in `src/cli/services/consult-budget-guard.ts`; `describeConsultBudgetRefusal()` in `src/shared/consultBudget.ts`; `SpawnAgentOptions.consultChain`
 
 #### Auto Run, Cue, Group Chat, Director's Notes
 

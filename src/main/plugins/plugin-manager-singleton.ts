@@ -16,6 +16,7 @@ import type { PluginManager } from './plugin-manager';
 import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import type { AutoTurnReport } from '../../shared/autoTurn';
+import type { ConsultChain } from '../../shared/consultBudget';
 
 export interface HeadlessAgentReply {
 	success: boolean;
@@ -32,6 +33,12 @@ export interface HeadlessAgentReply {
 export interface HeadlessTurnSettings {
 	/** The model for this turn. `auto` asks the model router. */
 	model?: string;
+	/**
+	 * The agent's place in a consult chain, when the send that asked for this
+	 * turn was admitted against one (`maestro-cli send`). Stated in the agent's
+	 * environment so its own consults spend the same budget.
+	 */
+	consultChain?: ConsultChain;
 }
 export type HeadlessAgentRunner = (
 	agentId: string,

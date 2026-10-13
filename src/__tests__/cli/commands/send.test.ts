@@ -51,6 +51,14 @@ vi.mock('../../../cli/services/auto-turn', () => ({
 	resolveCliAutoTurn: vi.fn(),
 }));
 
+// The consult budget is a real file in the Maestro data directory, and
+// MAESTRO_USER_DATA in an agent's shell points that at the LIVE one. The guard
+// runs against a temp directory in services/consult-budget-guard.test.ts; here
+// it only answers.
+vi.mock('../../../cli/services/consult-budget-guard', () => ({
+	admitCliConsult: vi.fn(),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
@@ -96,8 +104,13 @@ import { autoTurnReport } from '../../../shared/autoTurn';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { resolveCliAutoTurn } from '../../../cli/services/auto-turn';
+import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
+import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
+
+/** The place in a consult chain every admitted send below hands its target. */
+const TARGET_CHAIN = { chainId: 'chain-test', depth: 1 };
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -121,6 +134,7 @@ describe('send command', () => {
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+		vi.mocked(admitCliConsult).mockReturnValue({ allowed: true, chain: TARGET_CHAIN });
 		// A test run started from an agent's own shell inherits its caller
 		// identity and its turn's origin, which would turn every entry here into
 		// an AGENT or CUE entry. Blank reads as absent.
@@ -448,7 +462,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -497,7 +511,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -523,7 +537,7 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 	});
 
@@ -565,7 +579,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: true, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 	});
 
@@ -1543,6 +1557,120 @@ describe('send command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('disk full'));
 			errSpy.mockRestore();
+		});
+	});
+
+	// A send from an agent's shell is a consult made while working on a user
+	// message. It spends that message's budget, and a chain that is out refuses
+	// it loudly: a silent no-op would read as a peer with nothing to say.
+	describe('the consult budget', () => {
+		const refusal = {
+			allowed: false as const,
+			code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			message:
+				'Consultation budget exhausted, so nothing was sent: the agents working on this message have spent 25 of 25 consults and delegations.',
+		};
+
+		function ready(): void {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent());
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+		}
+
+		it('refuses with the JSON error shape and a non-zero exit, and reaches nobody', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			await send('agent-abc', 'What do you think?', {});
+
+			expect(consoleSpy).toHaveBeenCalledOnce();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: refusal.message,
+				code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(desktop.sendCommand).not.toHaveBeenCalled();
+			expect(desktop.disconnect).toHaveBeenCalled();
+			// Nothing was sent, so the target's History must not say something was.
+			expect(addHistoryEntry).not.toHaveBeenCalled();
+		});
+
+		it('names the budget, the number spent and the setting in the error', async () => {
+			ready();
+			vi.mocked(admitCliConsult).mockReturnValue({
+				...refusal,
+				message: `${refusal.message} The budget is the maxConsultationsPerTurn setting.`,
+			});
+
+			await send('agent-abc', 'What do you think?', {});
+
+			const { error } = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(error).toContain('Consultation budget');
+			expect(error).toContain('25 of 25');
+			expect(error).toContain('maxConsultationsPerTurn');
+		});
+
+		it('spends once per send, from the environment the command runs in', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { synopsis: false });
+
+			expect(admitCliConsult).toHaveBeenCalledExactlyOnceWith();
+		});
+
+		// Checked last: a send that was never going to start must not cost the
+		// chain one of its consults.
+		it('spends nothing on a model name it refuses', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { model: '-x' });
+
+			expect(admitCliConsult).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({ code: 'INVALID_MODEL' });
+		});
+
+		it('spends nothing on a plugin-tool run that has no desktop to run on', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { requirePluginTools: true });
+
+			expect(admitCliConsult).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				code: 'PLUGIN_TOOLS_UNAVAILABLE',
+			});
+		});
+
+		it('hands the agent it spawns its place in the chain, so its own consults are counted', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { synopsis: false });
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ consultChain: TARGET_CHAIN });
+		});
+
+		// The desktop spawns the agent on this route, so the chain cannot ride the
+		// CLI's own environment: it has to be in the message.
+		it('hands the desktop the same place in the chain when the desktop runs the send', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'What do you think?', { synopsis: false });
+
+			expect(desktop.sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'plugins_send_agent', consultChain: TARGET_CHAIN }),
+				'plugins_send_agent_result',
+				expect.any(Number)
+			);
+			expect(spawnAgent).not.toHaveBeenCalled();
 		});
 	});
 });

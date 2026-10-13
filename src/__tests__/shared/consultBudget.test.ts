@@ -9,6 +9,8 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+	CONSULT_BUDGET_EXHAUSTED_CODE,
+	CONSULT_BUDGET_UNAVAILABLE_CODE,
 	CONSULT_CHAIN_ENV_VAR,
 	CONSULT_DEPTH_ENV_VAR,
 	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
@@ -16,6 +18,7 @@ import {
 	MAX_CONSULTATIONS_PER_TURN_SETTING,
 	buildConsultChainEnv,
 	childConsultChain,
+	describeConsultBudgetRefusal,
 	isConsultChainId,
 	normalizeMaxConsultationsPerTurn,
 	parseConsultChain,
@@ -188,6 +191,53 @@ describe('consultBudget', () => {
 			};
 			expect(withoutConsultChainEnv(env)).toEqual({ CLAUDE_CONFIG_DIR: '/cfg' });
 			expect(env).toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+		});
+	});
+
+	// One wording for every verb. The reader is an agent, and what it must learn
+	// is that the peer was never reached.
+	describe('describeConsultBudgetRefusal', () => {
+		it('names the budget, what the chain has spent, and the setting', () => {
+			const refusal = describeConsultBudgetRefusal({ spent: 25, limit: 25 });
+
+			expect(refusal.code).toBe(CONSULT_BUDGET_EXHAUSTED_CODE);
+			expect(refusal.message).toContain('Consultation budget exhausted');
+			expect(refusal.message).toContain('25 of 25');
+			expect(refusal.message).toContain(MAX_CONSULTATIONS_PER_TURN_SETTING);
+			expect(refusal.message).toContain('nothing was sent');
+		});
+
+		it('reports the true total when the setting was lowered under a running chain', () => {
+			expect(describeConsultBudgetRefusal({ spent: 9, limit: 4 }).message).toContain('9 of 4');
+		});
+
+		it('says peer dispatch is off at a budget of 0, rather than "0 of 0"', () => {
+			const refusal = describeConsultBudgetRefusal({ spent: 0, limit: 0 });
+
+			expect(refusal.code).toBe(CONSULT_BUDGET_EXHAUSTED_CODE);
+			expect(refusal.message).toContain('switched off');
+			expect(refusal.message).toContain(MAX_CONSULTATIONS_PER_TURN_SETTING);
+			expect(refusal.message).not.toContain('0 of 0');
+		});
+
+		it('shows a broken counter as it reported itself, and prints no count', () => {
+			const problem = 'The consult budget counter at /data/consult-budget.json could not be used.';
+			const refusal = describeConsultBudgetRefusal({ spent: 0, limit: 25, problem });
+
+			expect(refusal.code).toBe(CONSULT_BUDGET_UNAVAILABLE_CODE);
+			expect(refusal.message).toContain(problem);
+			expect(refusal.message).toContain('nothing was sent');
+			expect(refusal.message).not.toContain('0 of 25');
+		});
+
+		it('never uses a dash that reads as machine-written', () => {
+			for (const spend of [
+				{ spent: 25, limit: 25 },
+				{ spent: 0, limit: 0 },
+				{ spent: 0, limit: 25, problem: 'broken' },
+			]) {
+				expect(describeConsultBudgetRefusal(spend).message).not.toMatch(/[\u2013\u2014]/);
+			}
 		});
 	});
 });

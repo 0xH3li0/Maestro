@@ -13,6 +13,7 @@ import {
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
 import { isTurnModelName } from '../../../../shared/autoModel';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -103,6 +104,11 @@ export async function handlePluginsSendAgent(
 	const requiredToolId = message.requiredToolId;
 	// `maestro-cli send --model`: this one turn's model, in place of the agent's own.
 	const model = message.model;
+	// The place in a consult chain the CLI admitted this send at. The CLI has
+	// already spent for it; here it only has to reach the agent's environment,
+	// which this process spawns and the CLI's own shell therefore cannot supply.
+	// Anything that is not a chain reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
 	if (
 		typeof agentId !== 'string' ||
 		!ctx.callbacks.getSessionDetail?.(agentId) ||
@@ -139,7 +145,12 @@ export async function handlePluginsSendAgent(
 				'user',
 				undefined,
 				requiredToolId as string | undefined,
-				typeof model === 'string' ? { model } : undefined
+				typeof model === 'string' || consultChain
+					? {
+							...(typeof model === 'string' ? { model } : {}),
+							...(consultChain ? { consultChain } : {}),
+						}
+					: undefined
 			);
 			const toolStillActive =
 				requiredToolId === undefined ||

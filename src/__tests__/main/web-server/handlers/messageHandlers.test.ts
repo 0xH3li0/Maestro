@@ -5765,6 +5765,57 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		}
 	);
 
+	// The CLI admitted the send against a consult chain and already spent for
+	// it. This process spawns the agent, so the chain rides the turn settings.
+	it('hands the runner the consult chain the CLI admitted the send at', async () => {
+		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+			model: 'sonnet',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		expect(run).toHaveBeenCalledWith(
+			'agent-a',
+			'hello',
+			undefined,
+			expect.any(AbortSignal),
+			'user',
+			undefined,
+			undefined,
+			{ model: 'sonnet', consultChain: { chainId: 'chain-a', depth: 2 } }
+		);
+	});
+
+	it.each([
+		['an id the counter would refuse', { chainId: '../escape', depth: 1 }],
+		['a bare string', 'chain-a'],
+		['null', null],
+	])('reads %s as no consult chain, and still runs the send', async (_what, consultChain) => {
+		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+			consultChain,
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		// No model and no usable chain: no turn settings at all.
+		expect(vi.mocked(run).mock.calls[0][7]).toBeUndefined();
+	});
+
 	it.each([
 		['a flag', '-x'],
 		['a number', 7],

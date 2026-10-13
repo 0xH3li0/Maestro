@@ -42,6 +42,7 @@ import { prepareCliRunOn } from './run-on';
 import { runOnHarnessMode, type ResolvedRunOn } from '../../shared/local-models/run-on';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
+import { buildConsultChainEnv, type ConsultChain } from '../../shared/consultBudget';
 import { sanitizeSessionId } from '../../shared/history';
 import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
@@ -173,6 +174,7 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'consultChain'
 	| 'signal'
 	| 'pluginRunProofFile'
 	| 'mcpCliScriptPath'
@@ -353,6 +355,7 @@ function planCliLaunch(
 		sessionCustomEnvVars?: Record<string, string>;
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
+		consultChain?: SpawnOverrides['consultChain'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
 		gatewayUrl?: string;
 		runOn?: ResolvedRunOn;
@@ -371,6 +374,9 @@ function planCliLaunch(
 		batchMode: true,
 		isResuming: input.isResuming,
 		querySource: input.querySource,
+		// Stated over the inherited environment, and carried to an SSH remote,
+		// which inherits nothing from this process.
+		maestroEnvVars: input.consultChain ? buildConsultChainEnv(input.consultChain) : undefined,
 		gateway: { toolType, url: input.gatewayUrl },
 		runOn: input.runOn,
 		sshRemoteConfig: input.sshRemoteConfig,
@@ -766,6 +772,7 @@ async function spawnClaudeAgent(
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
+		consultChain: overrides.consultChain,
 		sshRemoteConfig,
 		gatewayUrl: overrides.gatewayUrl,
 		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
@@ -1271,6 +1278,7 @@ async function spawnJsonLineAgent(
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: isResume,
 		querySource: overrides.querySource,
+		consultChain: overrides.consultChain,
 		sshRemoteConfig,
 		gatewayUrl: overrides.gatewayUrl,
 		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
@@ -1582,6 +1590,15 @@ export interface SpawnAgentOptions {
 	 */
 	querySource?: QuerySource;
 	/**
+	 * The spawned agent's place in a consult chain (see shared/consultBudget.ts),
+	 * stated in its environment as MAESTRO_CONSULT_CHAIN / MAESTRO_CONSULT_DEPTH
+	 * so the consults and delegations it makes spend that chain's one budget.
+	 * Set by a spawn that IS a consult or delegation (`maestro-cli send`), with
+	 * the place `admitConsult()` returned. Left unset everywhere else: the agent
+	 * then keeps whatever chain this process is in.
+	 */
+	consultChain?: ConsultChain;
+	/**
 	 * Abort the turn. The shared stop ladder terminates the process tree and
 	 * the result comes back with `outcome: 'interrupted'` - a user
 	 * stop, never reported as a crash. An already-aborted signal returns
@@ -1619,6 +1636,7 @@ export async function spawnAgent(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		consultChain: options?.consultChain,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

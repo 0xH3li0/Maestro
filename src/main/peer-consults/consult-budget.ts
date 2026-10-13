@@ -34,7 +34,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { atomicWriteJsonSync } from '../../shared/atomicJsonSync';
-import { isConsultChainId } from '../../shared/consultBudget';
+import {
+	childConsultChain,
+	describeConsultBudgetRefusal,
+	isConsultChainId,
+	type ConsultBudgetRefusal,
+	type ConsultChain,
+} from '../../shared/consultBudget';
 import { withDirectoryLock } from '../../shared/directoryLock';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { generateUUID } from '../../shared/uuid';
@@ -248,6 +254,67 @@ export function spendConsultBudget(
 	} catch (error) {
 		return { allowed: false, spent: 0, problem: describeProblem(counterFilePath(options), error) };
 	}
+}
+
+export interface ConsultAdmissionRequest {
+	/**
+	 * The caller's own place in a chain (`readConsultChainEnv()` for a process,
+	 * `parseConsultChain()` for a message), when it is in one.
+	 */
+	chain?: ConsultChain;
+	/**
+	 * Whether an agent is making the call, as opposed to the user. Read only
+	 * when `chain` is absent: a caller in a chain is a descendant whoever it is.
+	 */
+	fromAgent: boolean;
+	/** The setting, read through `normalizeMaxConsultationsPerTurn()`. */
+	limit: number;
+}
+
+export type ConsultAdmission =
+	/** `chain` is the place the TARGET takes: put it in the agent that is spawned. */
+	{ allowed: true; chain: ConsultChain } | ({ allowed: false } & ConsultBudgetRefusal);
+
+/**
+ * Decide whether one consult or delegation may go ahead, spend for it, and
+ * name the place in the chain its target takes. The ONE admission rule, shared
+ * by every verb (`maestro-cli send`, `ask` and `dispatch` through
+ * `admitCliConsult()`, and the app's `@mention` router), so a mixed chain is
+ * counted the same way at every hop.
+ *
+ * Three callers, and the asymmetry between them is deliberate:
+ *
+ *  1. In a chain: a descendant of some user message. It spends one from that
+ *     chain, and its target sits one hop further down.
+ *  2. An agent in no chain: its turn was a root nobody gave a chain to (an
+ *     agent with no peer roster, a Cue run). The turn becomes the root of a new
+ *     chain here and spends the first of it, so a budget of `0` still refuses
+ *     it and its target's own consults are bounded.
+ *  3. The user, in no chain (a shell, a script, a typed `@mention`): this call
+ *     IS the user's message, not a consult made while working on one. It is
+ *     always let through and spends nothing, even at a budget of `0`. It still
+ *     mints a chain, with the target at depth 0, because without one nothing
+ *     the target starts would ever be counted.
+ *
+ * Never throws. A refusal carries the text and code to report as they are.
+ */
+export function admitConsult(
+	request: ConsultAdmissionRequest,
+	options: ConsultBudgetStoreOptions = {}
+): ConsultAdmission {
+	const root: ConsultChain = { chainId: newConsultChainId(), depth: 0 };
+	if (!request.chain && !request.fromAgent) {
+		return { allowed: true, chain: root };
+	}
+	const mine = request.chain ?? root;
+	const spend = spendConsultBudget(mine.chainId, request.limit, options);
+	if (!spend.allowed) {
+		return {
+			allowed: false,
+			...describeConsultBudgetRefusal({ ...spend, limit: request.limit }),
+		};
+	}
+	return { allowed: true, chain: childConsultChain(mine) };
 }
 
 /**

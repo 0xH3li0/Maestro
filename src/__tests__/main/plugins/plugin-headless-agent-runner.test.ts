@@ -388,6 +388,61 @@ describe('plugin headless agent runner', () => {
 		expect(spawn).toHaveBeenCalledOnce();
 	});
 
+	// `maestro-cli send` through the desktop: the CLI admitted the send against a
+	// consult chain, but this process spawns the agent, so the chain reaches the
+	// agent's environment only if the runner passes it on.
+	describe('a send admitted against a consult chain', () => {
+		function harness() {
+			const spawn = vi.fn(async () => ({
+				success: true,
+				response: 'done',
+				agentSessionId: 'sess-new',
+			}));
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => false,
+				spawn: spawn as never,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: () => 'token',
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+				resolveAutoTurn: vi.fn() as never,
+				noteAutoSessionLaunch: vi.fn(),
+			});
+			return { run, spawnOptions: () => spawn.mock.calls[0][4] as Record<string, unknown> };
+		}
+
+		it('spawns the agent at the place in the chain the send was admitted at', async () => {
+			const { run, spawnOptions } = harness();
+			const consultChain = { chainId: 'chain-a', depth: 2 };
+
+			await run(
+				'agent-a',
+				'what do you think?',
+				undefined,
+				undefined,
+				'user',
+				undefined,
+				undefined,
+				{
+					consultChain,
+				}
+			);
+
+			expect(spawnOptions()).toMatchObject({ consultChain });
+		});
+
+		it('states no chain for a turn that carries none', async () => {
+			const { run, spawnOptions } = harness();
+
+			await run('agent-a', 'what do you think?', undefined, undefined, 'user');
+
+			expect('consultChain' in spawnOptions()).toBe(false);
+		});
+	});
+
 	// A send to an agent set to the Auto model: the turn is routed here, in the
 	// process that owns the router, and the harness is never handed the word.
 	describe('an agent on the Auto model', () => {

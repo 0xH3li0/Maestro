@@ -11,6 +11,7 @@ import {
 } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { requestCliSynopsis } from '../services/synopsis';
+import { admitCliConsult } from '../services/consult-budget-guard';
 import { resolveCliAutoTurn } from '../services/auto-turn';
 import { isAutoModel, isTurnModelName } from '../../shared/autoModel';
 import { autoModelProblem, autoTurnReport, type AutoTurnReport } from '../../shared/autoTurn';
@@ -386,6 +387,23 @@ export async function send(
 		return;
 	}
 
+	// The consult budget, checked last so a send that was never going to start
+	// spends nothing. A send from an agent's shell is a consult made while
+	// working on some user message: it spends one from that message's chain, and
+	// when the chain is out it is refused here, loudly, because a silent no-op
+	// would read to the calling agent as a peer with nothing to say. A send the
+	// user runs is their own message and always passes. Either way the target is
+	// handed its place in the chain, on both routes below, so what IT sends and
+	// asks is counted against the same budget (see admitConsult).
+	const admission = admitCliConsult();
+	if (!admission.allowed) {
+		desktop?.disconnect();
+		emitErrorJson(admission.message, admission.code);
+		process.exit(1);
+		return;
+	}
+	const consultChain = admission.chain;
+
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
 	// Ctrl+C stops the agent and reports `outcome: 'interrupted'`
@@ -424,6 +442,7 @@ export async function send(
 								providerSessionId: agentSessionId || undefined,
 								...(requiredToolId ? { requiredToolId } : {}),
 								...(turnModel !== undefined ? { model: turnModel } : {}),
+								consultChain,
 							},
 							'plugins_send_agent_result',
 							HEADLESS_RUN_COMPLETION_TIMEOUT_MS
@@ -505,6 +524,7 @@ export async function send(
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
+					consultChain,
 					customModel: autoTurn ? autoTurn.model : sendModel,
 					customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
 					customArgs: agent.customArgs,

@@ -12,10 +12,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { isConsultChainId } from '../../../shared/consultBudget';
+import {
+	CONSULT_BUDGET_EXHAUSTED_CODE,
+	CONSULT_BUDGET_UNAVAILABLE_CODE,
+	isConsultChainId,
+} from '../../../shared/consultBudget';
 import {
 	CONSULT_BUDGET_FILE,
 	CONSULT_CHAIN_TTL_MS,
+	admitConsult,
 	newConsultChainId,
 	readConsultBudgetSpent,
 	spendConsultBudget,
@@ -202,6 +207,134 @@ describe('spendConsultBudget', () => {
 
 			expect(result.allowed).toBe(false);
 			expect(result.problem).toContain(filePath);
+		});
+	});
+});
+
+// The one admission rule every verb shares. Three callers, and the difference
+// between them is the point of each case.
+describe('admitConsult', () => {
+	describe('a caller in a chain', () => {
+		const mine = { chainId: 'chain-a', depth: 2 };
+
+		it('spends one from its chain and puts the target one hop further down', () => {
+			const admission = admitConsult({ chain: mine, fromAgent: true, limit: 5 }, { dataDir });
+
+			expect(admission).toEqual({ allowed: true, chain: { chainId: 'chain-a', depth: 3 } });
+			expect(readConsultBudgetSpent('chain-a', { dataDir })).toBe(1);
+		});
+
+		it('spends whoever it is: a chain makes the caller a descendant', () => {
+			admitConsult({ chain: mine, fromAgent: false, limit: 5 }, { dataDir });
+
+			expect(readConsultBudgetSpent('chain-a', { dataDir })).toBe(1);
+		});
+
+		it('is refused once the chain is out, with the count and the setting', () => {
+			admitConsult({ chain: mine, fromAgent: true, limit: 2 }, { dataDir });
+			admitConsult({ chain: mine, fromAgent: true, limit: 2 }, { dataDir });
+
+			const admission = admitConsult({ chain: mine, fromAgent: true, limit: 2 }, { dataDir });
+
+			expect(admission).toMatchObject({ allowed: false, code: CONSULT_BUDGET_EXHAUSTED_CODE });
+			if (admission.allowed) throw new Error('expected a refusal');
+			expect(admission.message).toContain('2 of 2');
+			expect(admission.message).toContain('maxConsultationsPerTurn');
+			expect(admission).not.toHaveProperty('chain');
+			expect(readConsultBudgetSpent('chain-a', { dataDir })).toBe(2);
+		});
+
+		it('shares one budget with every other member of the chain', () => {
+			admitConsult(
+				{ chain: { chainId: 'chain-a', depth: 0 }, fromAgent: true, limit: 2 },
+				{ dataDir }
+			);
+			admitConsult(
+				{ chain: { chainId: 'chain-a', depth: 1 }, fromAgent: true, limit: 2 },
+				{ dataDir }
+			);
+
+			expect(
+				admitConsult(
+					{ chain: { chainId: 'chain-a', depth: 4 }, fromAgent: true, limit: 2 },
+					{ dataDir }
+				).allowed
+			).toBe(false);
+		});
+
+		it('is refused, not waved through, when the counter cannot be used', () => {
+			fs.writeFileSync(filePath, 'not json', 'utf-8');
+
+			const admission = admitConsult({ chain: mine, fromAgent: true, limit: 5 }, { dataDir });
+
+			expect(admission).toMatchObject({ allowed: false, code: CONSULT_BUDGET_UNAVAILABLE_CODE });
+			if (admission.allowed) throw new Error('expected a refusal');
+			expect(admission.message).toContain(filePath);
+			expect(fs.readFileSync(filePath, 'utf-8')).toBe('not json');
+		});
+	});
+
+	describe('an agent in no chain', () => {
+		it('becomes the root of a new chain and spends the first of it', () => {
+			const admission = admitConsult({ fromAgent: true, limit: 5 }, { dataDir });
+
+			if (!admission.allowed) throw new Error('expected the consult to be admitted');
+			expect(isConsultChainId(admission.chain.chainId)).toBe(true);
+			expect(admission.chain.depth).toBe(1);
+			expect(readConsultBudgetSpent(admission.chain.chainId, { dataDir })).toBe(1);
+		});
+
+		it('is refused at a budget of 0, and leaves no chain behind', () => {
+			const admission = admitConsult({ fromAgent: true, limit: 0 }, { dataDir });
+
+			expect(admission).toMatchObject({ allowed: false, code: CONSULT_BUDGET_EXHAUSTED_CODE });
+			if (admission.allowed) throw new Error('expected a refusal');
+			expect(admission.message).toContain('switched off');
+			expect(fs.existsSync(filePath)).toBe(false);
+		});
+	});
+
+	// Looks like a hole in the budget and is not one: this call IS the user's
+	// message, not a consult made while working on one.
+	describe('the user, in no chain', () => {
+		it('is let through without spending, and roots a chain for the target', () => {
+			const admission = admitConsult({ fromAgent: false, limit: 5 }, { dataDir });
+
+			if (!admission.allowed) throw new Error('expected the send to be admitted');
+			expect(isConsultChainId(admission.chain.chainId)).toBe(true);
+			expect(admission.chain.depth).toBe(0);
+			expect(readConsultBudgetSpent(admission.chain.chainId, { dataDir })).toBe(0);
+			expect(fs.existsSync(filePath)).toBe(false);
+		});
+
+		it('is let through even at a budget of 0', () => {
+			expect(admitConsult({ fromAgent: false, limit: 0 }, { dataDir }).allowed).toBe(true);
+		});
+
+		it('is let through even when the counter is damaged, which it never reads', () => {
+			fs.writeFileSync(filePath, 'not json', 'utf-8');
+
+			expect(admitConsult({ fromAgent: false, limit: 5 }, { dataDir }).allowed).toBe(true);
+		});
+
+		it("mints a chain per call, so two of the user's messages never share a budget", () => {
+			const first = admitConsult({ fromAgent: false, limit: 5 }, { dataDir });
+			const second = admitConsult({ fromAgent: false, limit: 5 }, { dataDir });
+
+			if (!first.allowed || !second.allowed) throw new Error('expected both to be admitted');
+			expect(first.chain.chainId).not.toBe(second.chain.chainId);
+		});
+
+		it('bounds what the target then starts: its consults spend the minted chain', () => {
+			const root = admitConsult({ fromAgent: false, limit: 1 }, { dataDir });
+			if (!root.allowed) throw new Error('expected the send to be admitted');
+
+			expect(
+				admitConsult({ chain: root.chain, fromAgent: false, limit: 1 }, { dataDir }).allowed
+			).toBe(true);
+			expect(
+				admitConsult({ chain: root.chain, fromAgent: false, limit: 1 }, { dataDir }).allowed
+			).toBe(false);
 		});
 	});
 });

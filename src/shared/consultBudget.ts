@@ -46,6 +46,61 @@ export function normalizeMaxConsultationsPerTurn(raw: unknown): number {
 	return Math.min(MAX_CONSULTATIONS_PER_TURN_CEILING, Math.max(0, Math.floor(raw)));
 }
 
+/** A chain has spent its whole budget (or the budget is `0`). */
+export const CONSULT_BUDGET_EXHAUSTED_CODE = 'CONSULT_BUDGET_EXHAUSTED';
+
+/** The counter could not be used, so the consult was refused rather than waved through. */
+export const CONSULT_BUDGET_UNAVAILABLE_CODE = 'CONSULT_BUDGET_UNAVAILABLE';
+
+export type ConsultBudgetRefusalCode =
+	| typeof CONSULT_BUDGET_EXHAUSTED_CODE
+	| typeof CONSULT_BUDGET_UNAVAILABLE_CODE;
+
+/** A refused consult or delegation, as every verb reports it. */
+export interface ConsultBudgetRefusal {
+	code: ConsultBudgetRefusalCode;
+	message: string;
+}
+
+/** Where the user changes the budget, named in every refusal. */
+const CONSULT_BUDGET_SETTING_HINT = `the ${MAX_CONSULTATIONS_PER_TURN_SETTING} setting (Settings > General > Consultation Budget, or \`maestro-cli settings set ${MAX_CONSULTATIONS_PER_TURN_SETTING} <n>\`)`;
+
+/**
+ * The text of a refused consult or delegation.
+ *
+ * ONE wording for every verb (`maestro-cli send`, `ask`, `dispatch`, and an
+ * agent's `@mention` in the app), because the reader is an agent and it has to
+ * learn one thing from it: the peer was never reached. A refusal that read as
+ * an empty answer would teach it that the peer had nothing to say. So each
+ * message names the budget, what the chain has spent, and the setting.
+ *
+ * `problem` is the counter's own report that it could not be used
+ * (`ConsultBudgetSpend.problem`). The count is then unknown, so it is not
+ * printed.
+ */
+export function describeConsultBudgetRefusal(spend: {
+	spent: number;
+	limit: number;
+	problem?: string;
+}): ConsultBudgetRefusal {
+	if (spend.problem) {
+		return {
+			code: CONSULT_BUDGET_UNAVAILABLE_CODE,
+			message: `Consultation budget unavailable, so nothing was sent. ${spend.problem}`,
+		};
+	}
+	if (spend.limit <= 0) {
+		return {
+			code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			message: `Peer consults and delegations are switched off, so nothing was sent: the consultation budget is 0. It is ${CONSULT_BUDGET_SETTING_HINT}.`,
+		};
+	}
+	return {
+		code: CONSULT_BUDGET_EXHAUSTED_CODE,
+		message: `Consultation budget exhausted, so nothing was sent: the agents working on this message have spent ${spend.spent} of ${spend.limit} consults and delegations. Every agent in the chain shares this budget, so do not retry; finish with what you have. The budget is ${CONSULT_BUDGET_SETTING_HINT}.`,
+	};
+}
+
 /** A UUID fits; so does any id a test or a future minter picks. */
 const CONSULT_CHAIN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 

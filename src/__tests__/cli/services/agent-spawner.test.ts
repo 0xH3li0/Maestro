@@ -2855,6 +2855,58 @@ Some text with [x] in it that's not a checkbox
 			expect(options.env.MAESTRO_TEST_LAYER).toBe('session');
 		});
 
+		// `maestro-cli send`: the spawned agent is a consult made on a chain, and
+		// its own consults have to spend that chain's budget from its own place.
+		describe('consultChain', () => {
+			const CHAIN = 'MAESTRO_CONSULT_CHAIN';
+			const DEPTH = 'MAESTRO_CONSULT_DEPTH';
+
+			afterEach(() => {
+				vi.unstubAllEnvs();
+			});
+
+			it('states the chain in the spawned agent env, over the one this process inherited', async () => {
+				// The caller's own place: same chain, one hop up.
+				vi.stubEnv(CHAIN, 'chain-a');
+				vi.stubEnv(DEPTH, '1');
+
+				const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+					consultChain: { chainId: 'chain-a', depth: 2 },
+				});
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				const { options } = spawnCall();
+				expect(options.env[CHAIN]).toBe('chain-a');
+				expect(options.env[DEPTH]).toBe('2');
+			});
+
+			it('states it for a JSON-line agent too', async () => {
+				vi.stubEnv(CHAIN, '');
+				vi.stubEnv(DEPTH, '');
+
+				const p = spawnAgent('opencode', '/p', 'hi', undefined, {
+					consultChain: { chainId: 'chain-b', depth: 0 },
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env[CHAIN]).toBe('chain-b');
+				expect(options.env[DEPTH]).toBe('0');
+			});
+
+			it('leaves the inherited chain alone when the spawn states none', async () => {
+				vi.stubEnv(CHAIN, 'chain-a');
+				vi.stubEnv(DEPTH, '1');
+
+				const p = spawnAgent('claude-code', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+				const { options } = spawnCall();
+				expect(options.env[CHAIN]).toBe('chain-a');
+				expect(options.env[DEPTH]).toBe('1');
+			});
+		});
+
 		it('shell env wins over agent defaultEnvVars when user has no customEnvVars', async () => {
 			// Regression: agent.defaultEnvVars must NOT silently override a value
 			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
@@ -3123,6 +3175,22 @@ Some text with [x] in it that's not a checkbox
 			const { command, args } = spawnCall();
 			expect(command).toBe('ssh');
 			expect(args).toEqual(['remotehost', 'claude --print -- hi']);
+		});
+
+		// A remote inherits nothing from this process, so the chain reaches the
+		// agent only through the env the wrapper is handed.
+		it('carries the consult chain to the remote agent', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult());
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				consultChain: { chainId: 'chain-a', depth: 2 },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(mockWrapSpawnWithSsh.mock.calls[0][0]).toMatchObject({
+				customEnvVars: { MAESTRO_CONSULT_CHAIN: 'chain-a', MAESTRO_CONSULT_DEPTH: '2' },
+			});
 		});
 
 		it('writes sshStdinScript to child.stdin when large-prompt passthrough is used', async () => {
