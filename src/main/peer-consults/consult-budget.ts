@@ -39,6 +39,7 @@ import {
 	describeConsultBudgetRefusal,
 	isConsultChainId,
 	type ConsultBudgetRefusal,
+	type ConsultBudgetStatus,
 	type ConsultChain,
 } from '../../shared/consultBudget';
 import { withDirectoryLock } from '../../shared/directoryLock';
@@ -339,6 +340,30 @@ export function readConsultBudgetSpent(
 		// Not swallowed: the next spend on this counter refuses and reports why.
 		return null;
 	}
+}
+
+/**
+ * Where the budget stands for a turn that is about to be spawned, for the one
+ * sentence its system prompt carries (`formatPeerAgentsForPrompt()`), so the
+ * agent can ration instead of finding the ceiling by hitting it.
+ *
+ * `chain` is the place the turn takes in a chain that already exists (a
+ * consult, or a prompt another agent delegated). Without one the turn is a
+ * ROOT: its chain is minted at the spawn, so nothing has been spent. A caller
+ * that cannot say which of the two its spawn is (a Cue run, a Group Chat
+ * participant) must not call this: a figure for a chain the agent is not in
+ * is worse than no figure.
+ *
+ * Undefined when the count cannot be read. The sentence is then left out; the
+ * agent's first spend refuses and reports the counter's problem.
+ */
+export function readConsultBudgetStatus(
+	turn: { chain?: ConsultChain; limit: number },
+	options: ConsultBudgetStoreOptions = {}
+): ConsultBudgetStatus | undefined {
+	if (!turn.chain) return { limit: turn.limit, spent: 0 };
+	const spent = readConsultBudgetSpent(turn.chain.chainId, options);
+	return spent === null ? undefined : { limit: turn.limit, spent };
 }
 
 /**

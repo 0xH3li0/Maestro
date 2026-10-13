@@ -3236,6 +3236,13 @@ interface MaestroAPI {
 		) => Promise<{ requestId: string }>;
 		/** Stop every consult this source agent still has in flight (Stop button). */
 		cancel: (sourceSessionId: string) => Promise<{ canceled: number }>;
+		/**
+		 * Where the consultation budget stands for a turn about to be spawned. No
+		 * chain means a root turn (nothing spent); `null` means it cannot be read.
+		 */
+		consultBudget: (
+			consultChain?: import('../shared/consultBudget').ConsultChain
+		) => Promise<import('../shared/consultBudget').ConsultBudgetStatus | null>;
 		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
 		onChunk: (
 			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void

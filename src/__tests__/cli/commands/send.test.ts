@@ -754,7 +754,10 @@ describe('send command', () => {
 
 		await send('agent-abc', 'hello', {});
 
-		expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(agent);
+		// The chain the send was admitted to, so the prompt can state what is left of it.
+		expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(agent, {
+			consultChain: TARGET_CHAIN,
+		});
 		expect(spawnAgent).toHaveBeenCalledWith(
 			'claude-code',
 			'/path/to/project',

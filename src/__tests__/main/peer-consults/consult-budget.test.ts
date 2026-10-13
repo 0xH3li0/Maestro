@@ -23,6 +23,7 @@ import {
 	admitConsult,
 	newConsultChainId,
 	readConsultBudgetSpent,
+	readConsultBudgetStatus,
 	spendConsultBudget,
 	sweepExpiredChains,
 } from '../../../main/peer-consults/consult-budget';
@@ -361,6 +362,54 @@ describe('readConsultBudgetSpent', () => {
 
 		fs.writeFileSync(filePath, 'not json', 'utf-8');
 		expect(readConsultBudgetSpent('chain-a', { dataDir })).toBeNull();
+	});
+});
+
+// What a turn about to be spawned is told about its budget.
+describe('readConsultBudgetStatus', () => {
+	it('reads a root turn (no chain yet) as nothing spent, without touching the counter', () => {
+		expect(readConsultBudgetStatus({ limit: 25 }, { dataDir })).toEqual({ limit: 25, spent: 0 });
+		expect(fs.existsSync(filePath)).toBe(false);
+
+		// Not even a damaged counter changes it: the root's chain is not in the file.
+		fs.writeFileSync(filePath, 'not json', 'utf-8');
+		expect(readConsultBudgetStatus({ limit: 25 }, { dataDir })).toEqual({ limit: 25, spent: 0 });
+	});
+
+	it('reads what the chain the turn was placed in has already spent', () => {
+		const first = admitConsult({ fromAgent: true, limit: 25 }, { dataDir });
+		if (!first.allowed) throw new Error('expected the first consult to be admitted');
+		spendConsultBudget(first.chain.chainId, 25, { dataDir });
+
+		expect(readConsultBudgetStatus({ chain: first.chain, limit: 25 }, { dataDir })).toEqual({
+			limit: 25,
+			spent: 2,
+		});
+		// Another chain's spending is not this turn's.
+		expect(
+			readConsultBudgetStatus({ chain: { chainId: 'chain-b', depth: 1 }, limit: 25 }, { dataDir })
+		).toEqual({ limit: 25, spent: 0 });
+	});
+
+	it('does not spend', () => {
+		spendConsultBudget('chain-a', 5, { dataDir });
+		const chain = { chainId: 'chain-a', depth: 1 };
+
+		readConsultBudgetStatus({ chain, limit: 5 }, { dataDir });
+		readConsultBudgetStatus({ chain, limit: 5 }, { dataDir });
+
+		expect(readConsultBudgetSpent('chain-a', { dataDir })).toBe(1);
+	});
+
+	it('passes a budget of 0 through as it is, so the prompt can say consults are off', () => {
+		expect(readConsultBudgetStatus({ limit: 0 }, { dataDir })).toEqual({ limit: 0, spent: 0 });
+	});
+
+	it('is undefined when the count is not known, so no figure is printed', () => {
+		fs.writeFileSync(filePath, 'not json', 'utf-8');
+		expect(
+			readConsultBudgetStatus({ chain: { chainId: 'chain-a', depth: 1 }, limit: 25 }, { dataDir })
+		).toBeUndefined();
 	});
 });
 

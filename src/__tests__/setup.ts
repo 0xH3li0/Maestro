@@ -1108,6 +1108,9 @@ const mockMaestro = {
 		// Stop calls this for every interrupt in AI mode, so it has to exist or
 		// handleInterrupt throws before it ever signals a process.
 		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
+		// Asked by prepareMaestroSystemPrompt for an agent that has peers. `null`
+		// is "cannot say", which leaves the budget sentence out.
+		consultBudget: vi.fn().mockResolvedValue(null),
 		onChunk: vi.fn().mockReturnValue(() => {}),
 	},
 	leaderboard: {

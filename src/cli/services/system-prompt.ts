@@ -9,6 +9,15 @@
 
 import type { SessionInfo } from '../../shared/types';
 import { resolvePeerRosterForPrompt, type PeerRosterInput } from '../../shared/peerAgents';
+import {
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+	type ConsultChain,
+} from '../../shared/consultBudget';
+import {
+	readConsultBudgetStatus,
+	type ConsultBudgetStoreOptions,
+} from '../../main/peer-consults/consult-budget';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { computerHistoryDir } from '../../shared/computer-history/paths';
 import { readMaestroRunReadyPath } from '../../shared/maestro-run/state-file';
@@ -72,6 +81,16 @@ export interface PrepareMaestroSystemPromptCliOptions {
 	 * Called only when the agent has a peer grant.
 	 */
 	readAgents?: () => readonly PeerRosterInput[];
+	/**
+	 * The place the spawned turn takes in a consult chain (the chain
+	 * `admitCliConsult()` returned for a `send`). The Peer Agents block then
+	 * states what is left of that chain's budget. Left unset by a caller that
+	 * put the spawn in no chain (a playbook, a goal run): the sentence is left
+	 * out.
+	 */
+	consultChain?: ConsultChain;
+	/** Where the budget counter lives. Tests pass a temp directory. */
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 }
 
 /**
@@ -142,6 +161,24 @@ export async function prepareMaestroSystemPromptCli(
 		pluginSections.push(await loadSection(ref.promptId));
 	}
 
+	// {{PEER_AGENTS}}: the same call the desktop builders make, so a headless
+	// run and a desktop tab of one agent are told about the same peers.
+	const peerRoster = resolvePeerRosterForPrompt(session, options.readAgents ?? readSessions);
+	// The budget sentence of that block: only for an agent that has peers, and
+	// only when the caller named the chain this spawn is in.
+	const consultBudget =
+		peerRoster?.length && options.consultChain
+			? readConsultBudgetStatus(
+					{
+						chain: options.consultChain,
+						limit: normalizeMaxConsultationsPerTurn(
+							readSettingValue(MAX_CONSULTATIONS_PER_TURN_SETTING)
+						),
+					},
+					options.consultBudgetStore
+				)
+			: undefined;
+
 	return assembleMaestroSystemPrompt({
 		template,
 		context: {
@@ -162,9 +199,8 @@ export async function prepareMaestroSystemPromptCli(
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,
-			// {{PEER_AGENTS}}: the same call the desktop builders make, so a headless
-			// run and a desktop tab of one agent are told about the same peers.
-			peerRoster: resolvePeerRosterForPrompt(session, options.readAgents ?? readSessions),
+			peerRoster,
+			consultBudget,
 			...coreSystemPromptContext(core),
 		},
 		roleSections,

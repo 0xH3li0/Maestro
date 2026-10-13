@@ -433,6 +433,32 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 			expect(readConsultBudgetSpent('chain-a', { dataDir: budgetDir })).toBe(2);
 		});
 
+		// The prompt builder is told the chain the consult was just placed in, so
+		// the consulted agent reads what is left of the budget it now shares.
+		it('builds the consulted agent its prompt with the chain it was placed in', async () => {
+			spendConsultBudget('chain-a', 25, { dataDir: budgetDir });
+			const { dispatch } = harness({
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 1 } },
+			});
+			await dispatch();
+
+			expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt', {
+				consultChain: { chainId: 'chain-a', depth: 2 },
+				consultBudgetStore: { dataDir: budgetDir },
+			});
+		});
+
+		it('builds the prompt of a consult admitted in the CLI with the chain it carries', async () => {
+			const { dispatch } = harness({
+				request: { consultChain: { chainId: 'chain-b', depth: 3 } },
+			});
+			await dispatch();
+
+			expect(vi.mocked(buildMaestroSystemPromptForSession).mock.calls[0][1]).toMatchObject({
+				consultChain: { chainId: 'chain-b', depth: 3 },
+			});
+		});
+
 		it('refuses an agent mention once the chain has spent its budget', async () => {
 			spendConsultBudget('chain-a', 2, { dataDir: budgetDir });
 			spendConsultBudget('chain-a', 2, { dataDir: budgetDir });
@@ -497,7 +523,7 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		const { dispatch } = harness();
 		await dispatch();
 
-		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt');
+		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt', expect.anything());
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
 		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
 		expect(config.isResume).toBe(false);

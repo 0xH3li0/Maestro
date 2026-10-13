@@ -575,6 +575,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: targetTab?.id,
+					consultChain,
 				});
 
 				const remoteImages = images && images.length > 0 ? images : undefined;

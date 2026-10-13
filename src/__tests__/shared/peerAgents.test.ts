@@ -700,6 +700,100 @@ describe('formatPeerAgentsForPrompt', () => {
 		});
 	});
 
+	// One sentence, so the agent can ration instead of finding the ceiling by
+	// hitting it. Absent whenever the builder has nothing true to say.
+	describe('the budget sentence', () => {
+		const roster = [peer('a', 'Alpha', RW)];
+		const budgetLines = (block: string) =>
+			block.split('\n').filter((line) => line.startsWith('- **Budget:**'));
+
+		it('is left out entirely when no budget is known, with no placeholder in its place', () => {
+			const block = formatPeerAgentsForPrompt(roster, { agentId: 'me' });
+			expect(budgetLines(block)).toEqual([]);
+			expect(block).not.toMatch(/budget/i);
+			expect(formatPeerAgentsForPrompt(roster, { agentId: 'me', budget: undefined })).toBe(block);
+		});
+
+		it('states how many remain for this message, and that consults and delegations both count', () => {
+			const block = formatPeerAgentsForPrompt(roster, { budget: { limit: 25, spent: 3 } });
+			const [line, ...rest] = budgetLines(block);
+			expect(rest).toEqual([]);
+			expect(line).toContain('22 of the 25 consults and delegations this message allows are left');
+			expect(line).toContain('a consult and a delegation each spend one');
+			// The count moves under the agent: its peers draw on the same budget.
+			expect(line).toContain('each one a peer you reach makes in turn');
+		});
+
+		it('reads the whole budget as left at the root of a chain', () => {
+			const block = formatPeerAgentsForPrompt(roster, { budget: { limit: 25, spent: 0 } });
+			expect(budgetLines(block)[0]).toContain('25 of the 25');
+		});
+
+		it('agrees in number when one is left', () => {
+			const block = formatPeerAgentsForPrompt(roster, { budget: { limit: 25, spent: 24 } });
+			expect(budgetLines(block)[0]).toContain(
+				'1 of the 25 consults and delegations this message allows is left'
+			);
+		});
+
+		it('tells the agent to reach no peer once the budget is spent', () => {
+			for (const spent of [25, 31]) {
+				const [line] = budgetLines(
+					formatPeerAgentsForPrompt(roster, { budget: { limit: 25, spent } })
+				);
+				expect(line).toContain(
+					'all 25 of the consults and delegations this message allows are spent'
+				);
+				expect(line).toContain('reach no peer on this turn');
+				expect(line).toContain('would be refused');
+				expect(line).not.toMatch(/-\d/);
+			}
+		});
+
+		it('says peer dispatch is switched off at a budget of 0, rather than "0 of 0"', () => {
+			const [line] = budgetLines(
+				formatPeerAgentsForPrompt(roster, { budget: { limit: 0, spent: 0 } })
+			);
+			expect(line).toContain('switched off');
+			expect(line).toContain('reach no peer on this turn');
+			expect(line).not.toContain('0 of');
+		});
+
+		it('is left out when the figures are not counts', () => {
+			for (const budget of [
+				{ limit: Number.NaN, spent: 0 },
+				{ limit: 25, spent: Number.NaN },
+				{ limit: -1, spent: 0 },
+				{ limit: 25, spent: -2 },
+				{ limit: 2.5, spent: 0 },
+			]) {
+				expect(budgetLines(formatPeerAgentsForPrompt(roster, { budget }))).toEqual([]);
+			}
+		});
+
+		it('is one sentence, among the how-to lines and ahead of the closing rules', () => {
+			const block = formatPeerAgentsForPrompt(roster, { budget: { limit: 25, spent: 3 } });
+			const [line] = budgetLines(block);
+			expect(line.match(/\.(\s|$)/g)).toHaveLength(1);
+			expect(block.indexOf(line)).toBeGreaterThan(block.indexOf('- **Delegate**'));
+			expect(block.indexOf(line)).toBeLessThan(block.indexOf('- Decide for yourself'));
+		});
+
+		it('never renders for an agent with no peers, whatever the budget', () => {
+			expect(formatPeerAgentsForPrompt([], { budget: { limit: 25, spent: 3 } })).toBe('');
+		});
+
+		it('never uses a dash that reads as machine-written', () => {
+			for (const budget of [
+				{ limit: 25, spent: 3 },
+				{ limit: 25, spent: 25 },
+				{ limit: 0, spent: 0 },
+			]) {
+				expect(formatPeerAgentsForPrompt(roster, { budget })).not.toMatch(/[\u2013\u2014]/);
+			}
+		});
+	});
+
 	it('does not mutate the roster', () => {
 		const roster = [peer('b', 'Bravo', RW, ' a | note '), peer('a', 'Alpha', NONE)];
 		const before = JSON.stringify(roster);

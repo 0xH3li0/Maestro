@@ -26,6 +26,8 @@
  *   4. `formatPeerAgentsForPrompt` - the markdown block substituted into
  *      `{{PEER_AGENTS}}` in the Maestro system prompt: the roster plus the
  *      shell commands that reach it. A roster with no instructions is inert.
+ *      It also states what is left of the consultation budget
+ *      (`./consultBudget`) when the builder knows it.
  *
  * Unlike an Additional Directory, an explicit row with NEITHER bit set is not
  * inert. It is an exclusion: it overrides a group or worktree grant that would
@@ -36,6 +38,7 @@
  */
 
 import { sanitizeDescriptionCell } from './additionalDirectories';
+import { remainingConsultBudget, type ConsultBudgetStatus } from './consultBudget';
 import type { PeerAccess, PeerAgent } from './types';
 
 /**
@@ -283,6 +286,36 @@ export interface PeerPromptOptions {
 	 * is on the PATH.
 	 */
 	cliCommand?: string;
+	/**
+	 * Where the consultation budget stands as this turn starts: the limit and
+	 * what the turn's chain has already spent. Rendered as one sentence, so the
+	 * agent can ration its consults instead of finding the ceiling by hitting
+	 * it. Leave it unset when the builder does not know the turn's chain: the
+	 * sentence is then left out, never replaced by a placeholder.
+	 */
+	budget?: ConsultBudgetStatus;
+}
+
+/**
+ * The one sentence the block says about the consultation budget, or undefined
+ * when there is nothing true to say (no status, or one that is not a count).
+ *
+ * It is a snapshot taken when the turn was spawned. The sentence says so, and
+ * says who else spends, because the count moves under the agent: every peer it
+ * reaches draws on the same budget.
+ */
+function consultBudgetLine(budget: ConsultBudgetStatus | undefined): string | undefined {
+	if (!budget) return undefined;
+	const remaining = remainingConsultBudget(budget);
+	if (remaining === undefined) return undefined;
+	const { limit } = budget;
+	if (limit === 0) {
+		return '- **Budget:** peer consults and delegations are switched off (the consultation budget is 0), so reach no peer on this turn: the command would be refused.';
+	}
+	if (remaining === 0) {
+		return `- **Budget:** all ${limit} of the consults and delegations this message allows are spent (both count, whoever in the chain made them), so reach no peer on this turn: the command would be refused.`;
+	}
+	return `- **Budget:** ${remaining} of the ${limit} consults and delegations this message allows ${remaining === 1 ? 'is' : 'are'} left as this turn starts: a consult and a delegation each spend one, and so does each one a peer you reach makes in turn, so ration them.`;
 }
 
 /**
@@ -299,7 +332,7 @@ export interface PeerPromptOptions {
  *
  * Each how-to line renders only when at least one peer grants that access, so
  * an agent whose peers are all consult-only is never taught the delegate
- * command.
+ * command. The budget line renders only when `options.budget` is known.
  */
 export function formatPeerAgentsForPrompt(
 	peers: readonly ResolvedPeer[],
@@ -328,6 +361,7 @@ export function formatPeerAgentsForPrompt(
 
 	const cli = options.cliCommand?.trim() || 'maestro-cli';
 	const self = options.agentId?.trim() || '<your-agent-id>';
+	const budgetLine = consultBudgetLine(options.budget);
 
 	const howTo = [
 		// `--from` is left off on purpose: `ask` defaults it to the agent the
@@ -344,6 +378,7 @@ export function formatPeerAgentsForPrompt(
 					`- **Delegate** (access includes \`Delegate\`): \`${cli} dispatch <agent-id> "<task>" --new-tab --notify-on-complete ${self}\` hands the work to a new tab of the peer and wakes you with a turn when it finishes. Use it when you are handing off work rather than asking a question.`,
 				]
 			: []),
+		...(budgetLine ? [budgetLine] : []),
 		`- Decide for yourself, from ${hasNotes ? 'the Notes column and ' : ''}what you know of a peer's scope, whether it is the right one to reach. Reaching an agent that is not in the table, or exceeding the access listed for one that is, is out of bounds. Say so instead.`,
 		'- Tell the user which peer you reached and why, so a consult or a delegation never happens invisibly.',
 	].join('\n');

@@ -22,6 +22,7 @@ import {
 	isConsultChainId,
 	normalizeMaxConsultationsPerTurn,
 	parseConsultChain,
+	remainingConsultBudget,
 	readConsultChainEnv,
 	withoutConsultChainEnv,
 } from '../../shared/consultBudget';
@@ -191,6 +192,28 @@ describe('consultBudget', () => {
 			};
 			expect(withoutConsultChainEnv(env)).toEqual({ CLAUDE_CONFIG_DIR: '/cfg' });
 			expect(env).toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+		});
+	});
+
+	describe('remainingConsultBudget', () => {
+		it('is the budget less what the chain has spent', () => {
+			expect(remainingConsultBudget({ limit: 25, spent: 0 })).toBe(25);
+			expect(remainingConsultBudget({ limit: 25, spent: 3 })).toBe(22);
+			expect(remainingConsultBudget({ limit: 25, spent: 25 })).toBe(0);
+		});
+
+		it('never goes below zero when the setting was lowered under a running chain', () => {
+			expect(remainingConsultBudget({ limit: 4, spent: 9 })).toBe(0);
+			expect(remainingConsultBudget({ limit: 0, spent: 0 })).toBe(0);
+		});
+
+		it('is undefined, not NaN, when either figure is not a count', () => {
+			expect(remainingConsultBudget({ limit: Number.NaN, spent: 0 })).toBeUndefined();
+			expect(remainingConsultBudget({ limit: 25, spent: Number.NaN })).toBeUndefined();
+			expect(remainingConsultBudget({ limit: -1, spent: 0 })).toBeUndefined();
+			expect(remainingConsultBudget({ limit: 25, spent: -1 })).toBeUndefined();
+			expect(remainingConsultBudget({ limit: 25, spent: 1.5 })).toBeUndefined();
+			expect(remainingConsultBudget({ limit: Infinity, spent: 0 })).toBeUndefined();
 		});
 	});
 

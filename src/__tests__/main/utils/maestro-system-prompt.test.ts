@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 vi.mock('electron', () => ({
 	app: { getPath: vi.fn(() => '/data') },
@@ -83,6 +86,10 @@ import {
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
 import { formatPeerAgentsForPrompt, resolvePeerRoster } from '../../../shared/peerAgents';
+import {
+	CONSULT_BUDGET_FILE,
+	spendConsultBudget,
+} from '../../../main/peer-consults/consult-budget';
 import {
 	SYSTEM_ONE_GATES,
 	refusedSystemOneAccess,
@@ -266,6 +273,90 @@ describe('the Peer Agents roster (main builder)', () => {
 		const result = await buildMaestroSystemPromptForSession('me');
 		const table = (text: string) => text.split('\n').filter((line) => line.startsWith('| '));
 		expect(table(result ?? '')).toEqual(table(formatPeerAgentsForPrompt(roster)));
+	});
+
+	// The one sentence that lets a consulted agent ration. Every case passes a
+	// temp directory: the default counter is the live one in an agent's shell.
+	describe('the remaining budget', () => {
+		let budgetDir: string;
+		const chain = { chainId: 'chain-a', depth: 1 };
+		const budgetLines = (text: string | undefined) =>
+			(text ?? '').split('\n').filter((line) => line.startsWith('- **Budget:**'));
+
+		beforeEach(() => {
+			budgetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'msp-consult-budget-'));
+			storedSessions[0] = me({ groupPeerAccess: RW });
+		});
+
+		afterEach(() => {
+			fs.rmSync(budgetDir, { recursive: true, force: true });
+		});
+
+		it('states what is left of the chain the spawn was placed in', async () => {
+			spendConsultBudget('chain-a', 25, { dataDir: budgetDir });
+			spendConsultBudget('chain-a', 25, { dataDir: budgetDir });
+
+			const result = await buildMaestroSystemPromptForSession('me', {
+				consultChain: chain,
+				consultBudgetStore: { dataDir: budgetDir },
+			});
+
+			expect(budgetLines(result)).toHaveLength(1);
+			expect(budgetLines(result)[0]).toContain('23 of the 25 consults and delegations');
+		});
+
+		it('reads the limit from the setting, through the normalizer', async () => {
+			settings = { maxConsultationsPerTurn: 4 };
+			spendConsultBudget('chain-a', 4, { dataDir: budgetDir });
+			const built = () =>
+				buildMaestroSystemPromptForSession('me', {
+					consultChain: chain,
+					consultBudgetStore: { dataDir: budgetDir },
+				});
+
+			expect(budgetLines(await built())[0]).toContain('3 of the 4 consults');
+
+			// `0` is a real budget, not "unset".
+			settings = { maxConsultationsPerTurn: 0 };
+			expect(budgetLines(await built())[0]).toContain('switched off');
+
+			// A value the CLI stored by hand as a string is the default.
+			settings = { maxConsultationsPerTurn: 'lots' };
+			expect(budgetLines(await built())[0]).toContain('24 of the 25 consults');
+		});
+
+		it('says nothing when the caller put the spawn in no chain (a Cue run, a group chat turn)', async () => {
+			const result = await buildMaestroSystemPromptForSession('me', {
+				consultBudgetStore: { dataDir: budgetDir },
+			});
+
+			expect(result).toContain('## Peer Agents');
+			expect(result).not.toMatch(/budget/i);
+		});
+
+		it('says nothing, and reads no counter, for an agent with no peers', async () => {
+			storedSessions[0] = me();
+			fs.writeFileSync(path.join(budgetDir, CONSULT_BUDGET_FILE), 'not json', 'utf-8');
+
+			const result = await buildMaestroSystemPromptForSession('me', {
+				consultChain: chain,
+				consultBudgetStore: { dataDir: budgetDir },
+			});
+
+			expect(result).toBe('BASE\n\n');
+		});
+
+		it('leaves the sentence out, and keeps the roster, when the counter cannot be read', async () => {
+			fs.writeFileSync(path.join(budgetDir, CONSULT_BUDGET_FILE), 'not json', 'utf-8');
+
+			const result = await buildMaestroSystemPromptForSession('me', {
+				consultChain: chain,
+				consultBudgetStore: { dataDir: budgetDir },
+			});
+
+			expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate |');
+			expect(result).not.toMatch(/budget/i);
+		});
 	});
 
 	it('renders no roster (never throws) when the store cannot be read for the agent list', async () => {

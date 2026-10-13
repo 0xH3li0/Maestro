@@ -35,7 +35,9 @@ import {
 	MAX_CONSULTATIONS_PER_TURN_SETTING,
 	normalizeMaxConsultationsPerTurn,
 	parseConsultChain,
+	type ConsultBudgetStatus,
 } from '../../../shared/consultBudget';
+import { readConsultBudgetStatus } from '../../peer-consults/consult-budget';
 import { logger } from '../../utils/logger';
 import {
 	startCrossAgentRequest,
@@ -197,6 +199,28 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 				});
 
 				return { requestId };
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'cross-agent:consultBudget',
+		withIpcErrorLogging(
+			handlerOpts('consultBudget'),
+			async (payload?: { consultChain?: unknown }): Promise<ConsultBudgetStatus | null> => {
+				// The renderer builds a tab's system prompt but can read neither the
+				// counter file nor the chain `process:spawn` is about to mint, so it
+				// asks here. No chain (or one that is not a chain, which the spawn
+				// reads as none too) means the turn is a root with nothing spent.
+				const status = readConsultBudgetStatus({
+					chain: parseConsultChain(payload?.consultChain),
+					// Through the normalizer: `0` is a real budget, and the CLI can
+					// store any JSON under the key.
+					limit: normalizeMaxConsultationsPerTurn(
+						settingsStore.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+					),
+				});
+				return status ?? null;
 			}
 		)
 	);

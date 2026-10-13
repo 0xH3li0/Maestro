@@ -1,5 +1,6 @@
 import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
+import type { ConsultBudgetStatus } from './consultBudget';
 import { formatPeerAgentsForPrompt, type ResolvedPeer } from './peerAgents';
 import type { AdditionalDirectory } from './types';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
@@ -252,6 +253,13 @@ export interface TemplateContext {
 	 * which is what every other call site gets.
 	 */
 	peerRoster?: ResolvedPeer[];
+	/**
+	 * Where the consultation budget stands for the turn being spawned
+	 * (`ConsultBudgetStatus` in `src/shared/consultBudget.ts`), rendered as one
+	 * sentence of {{PEER_AGENTS}}. A builder sets it only when it knows which
+	 * chain the turn is in; unset leaves the sentence out.
+	 */
+	consultBudget?: ConsultBudgetStatus;
 	/**
 	 * What the System One system-prompt section says about the engine and the
 	 * budget (`systemOnePromptVariables`). A builder sets it only while a System
@@ -778,6 +786,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		PEER_AGENTS: formatPeerAgentsForPrompt(context.peerRoster ?? [], {
 			agentId: session.id,
 			cliCommand: maestroCliCommand,
+			budget: context.consultBudget,
 		}),
 		AUTORUN_FOLDER:
 			autoRunFolder ||

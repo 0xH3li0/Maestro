@@ -427,6 +427,79 @@ describe('prepareMaestroSystemPrompt', () => {
 				});
 				expect(result).toBe('BASE\n\n');
 			});
+
+			// The counter is a file and a root turn's chain is minted in main, so the
+			// renderer asks main where the budget stands.
+			describe('the remaining budget', () => {
+				const consultBudget = vi.fn();
+				const budgetLines = (text: string | undefined) =>
+					(text ?? '').split('\n').filter((line) => line.startsWith('- **Budget:**'));
+
+				beforeEach(() => {
+					consultBudget.mockReset();
+					consultBudget.mockResolvedValue({ limit: 25, spent: 0 });
+					(window as any).maestro.crossAgent = { consultBudget };
+				});
+
+				it('asks main with no chain for a turn the user started, and states the answer', async () => {
+					const result = await prepareMaestroSystemPrompt({
+						session: { ...me, groupPeerAccess: RW },
+					});
+
+					expect(consultBudget).toHaveBeenCalledTimes(1);
+					expect(consultBudget).toHaveBeenCalledWith(undefined);
+					expect(budgetLines(result)).toHaveLength(1);
+					expect(budgetLines(result)[0]).toContain('25 of the 25 consults and delegations');
+				});
+
+				it('asks main about the chain of a turn another agent delegated', async () => {
+					consultBudget.mockResolvedValue({ limit: 25, spent: 6 });
+					const consultChain = { chainId: 'chain-a', depth: 2 };
+
+					const result = await prepareMaestroSystemPrompt({
+						session: { ...me, groupPeerAccess: RW },
+						consultChain,
+					});
+
+					expect(consultBudget).toHaveBeenCalledWith(consultChain);
+					expect(budgetLines(result)[0]).toContain('19 of the 25 consults and delegations');
+				});
+
+				it('asks on every spawn, so the count is never a cached one', async () => {
+					consultBudget
+						.mockResolvedValueOnce({ limit: 25, spent: 1 })
+						.mockResolvedValueOnce({ limit: 25, spent: 9 });
+					const session = { ...me, groupPeerAccess: RW };
+
+					expect(budgetLines(await prepareMaestroSystemPrompt({ session }))[0]).toContain('24 of');
+					expect(budgetLines(await prepareMaestroSystemPrompt({ session }))[0]).toContain('16 of');
+				});
+
+				it('does not ask main for an agent with no peers', async () => {
+					expect(await prepareMaestroSystemPrompt({ session: me })).toBe('BASE\n\n');
+					// Every configured peer deleted: no roster, so nothing to ration.
+					await prepareMaestroSystemPrompt({
+						session: { ...me, peerAgents: [{ sessionId: 'gone', ...RW }] },
+					});
+					expect(consultBudget).not.toHaveBeenCalled();
+				});
+
+				it('leaves the sentence out, and keeps the roster, when main cannot say', async () => {
+					const session = { ...me, groupPeerAccess: RW };
+
+					consultBudget.mockResolvedValue(null);
+					const unknown = await prepareMaestroSystemPrompt({ session });
+					expect(unknown).toContain('| Alpha | `peer-a` | Consult + Delegate |');
+					expect(unknown).not.toMatch(/budget/i);
+
+					consultBudget.mockRejectedValue(new Error('main not ready'));
+					expect(await prepareMaestroSystemPrompt({ session })).toBe(unknown);
+
+					// An older preload has no such method.
+					(window as any).maestro.crossAgent = {};
+					expect(await prepareMaestroSystemPrompt({ session })).toBe(unknown);
+				});
+			});
 		});
 
 		it('skips a section whose prompt fails to load', async () => {

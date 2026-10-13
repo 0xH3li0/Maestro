@@ -24,12 +24,22 @@ import {
 	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
 import { resolvePeerRosterForPrompt } from '../../shared/peerAgents';
+import {
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+	type ConsultBudgetStatus,
+	type ConsultChain,
+} from '../../shared/consultBudget';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { StoredSession } from '../stores/types';
 import { getPrompt } from '../prompt-manager';
 import { getSessionsStore, getSettingsStore } from '../stores/getters';
 import { getHistoryManager } from '../history-manager';
 import { getSystemOneAgentAccess } from '../local-models/system-one/agent-service';
+import {
+	readConsultBudgetStatus,
+	type ConsultBudgetStoreOptions,
+} from '../peer-consults/consult-budget';
 import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
@@ -40,6 +50,15 @@ const LOG_CONTEXT = '[MaestroSystemPrompt]';
 export interface BuildMaestroSystemPromptOptions {
 	/** The AI tab the spawn belongs to ({{TAB_ID}}). Headless spawns leave it empty. */
 	activeTabId?: string;
+	/**
+	 * The place the spawned turn takes in a consult chain, when the caller put
+	 * it in one (a cross-agent consult). The Peer Agents block then states what
+	 * is left of that chain's budget. Left unset by a caller whose spawn carries
+	 * no chain (a Cue run, a Group Chat participant): the sentence is left out.
+	 */
+	consultChain?: ConsultChain;
+	/** Where the budget counter lives. Tests pass a temp directory. */
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 }
 
 /** A core prompt by id, or undefined (logged) when it is missing or prompts are not loaded. */
@@ -54,7 +73,12 @@ function loadPrompt(id: string): string | undefined {
 	}
 }
 
-function readSettings(): { encoreFeatures: unknown; conductorProfile: string | undefined } {
+function readSettings(): {
+	encoreFeatures: unknown;
+	conductorProfile: string | undefined;
+	/** Undefined when the settings cannot be read: no budget is then stated. */
+	maxConsultationsPerTurn: number | undefined;
+} {
 	try {
 		const store = getSettingsStore() as unknown as { get: (key: string) => unknown };
 		const conductorProfile = store.get('conductorProfile');
@@ -62,12 +86,19 @@ function readSettings(): { encoreFeatures: unknown; conductorProfile: string | u
 			encoreFeatures: store.get('encoreFeatures'),
 			conductorProfile:
 				typeof conductorProfile === 'string' && conductorProfile ? conductorProfile : undefined,
+			maxConsultationsPerTurn: normalizeMaxConsultationsPerTurn(
+				store.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+			),
 		};
 	} catch (err) {
 		logger.warn('Settings unavailable while building system prompt', LOG_CONTEXT, {
 			error: err instanceof Error ? err.message : String(err),
 		});
-		return { encoreFeatures: undefined, conductorProfile: undefined };
+		return {
+			encoreFeatures: undefined,
+			conductorProfile: undefined,
+			maxConsultationsPerTurn: undefined,
+		};
 	}
 }
 
@@ -219,7 +250,7 @@ export async function buildMaestroSystemPromptForSession(
 
 	const isSsh = isSshRecord(record);
 	const cwd: string = record.cwd || record.projectRoot || record.fullPath || '';
-	const { encoreFeatures, conductorProfile } = readSettings();
+	const { encoreFeatures, conductorProfile, maxConsultationsPerTurn } = readSettings();
 
 	// Branch and history file are read from this machine, so an SSH agent gets
 	// neither: the values would describe the wrong host.
@@ -232,6 +263,20 @@ export async function buildMaestroSystemPromptForSession(
 		isSsh,
 		systemOne: isSsh ? undefined : await localSystemOneAccess(record.id),
 	};
+
+	// {{PEER_AGENTS}}. The grants are read from `record`: the `session` literal
+	// below is hand-built and does not carry them. The agent list is read only
+	// when the agent has a grant.
+	const peerRoster = resolvePeerRosterForPrompt(record, () => readStoredSessions(record.id));
+	// The budget sentence of that block: only for an agent that has peers, and
+	// only when the caller named the chain this spawn is in.
+	const consultBudget: ConsultBudgetStatus | undefined =
+		peerRoster?.length && opts.consultChain && maxConsultationsPerTurn !== undefined
+			? readConsultBudgetStatus(
+					{ chain: opts.consultChain, limit: maxConsultationsPerTurn },
+					opts.consultBudgetStore
+				)
+			: undefined;
 
 	const context: TemplateContext = {
 		session: {
@@ -254,10 +299,8 @@ export async function buildMaestroSystemPromptForSession(
 		computerHistoryDir: isSsh ? undefined : localComputerHistoryDir(),
 		maestroRunPath,
 		maestroCliPath: resolvedCliPath(),
-		// {{PEER_AGENTS}}. The grants are read from `record`: the `session` literal
-		// above is hand-built and does not carry them. The agent list is read only
-		// when the agent has a grant.
-		peerRoster: resolvePeerRosterForPrompt(record, () => readStoredSessions(record.id)),
+		peerRoster,
+		consultBudget,
 		...coreSystemPromptContext(core),
 	};
 

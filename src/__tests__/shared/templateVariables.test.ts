@@ -482,6 +482,25 @@ describe('substituteTemplateVariables', () => {
 			expect(result).toContain(`\`${cli} dispatch <agent-id> "<task>" --new-tab`);
 		});
 
+		it('should state the remaining consultation budget when the builder knows it', () => {
+			const context = createTestContext({
+				peerRoster: roster,
+				consultBudget: { limit: 25, spent: 4 },
+			});
+			const result = substituteTemplateVariables('{{PEER_AGENTS}}', context);
+			expect(result).toContain('- **Budget:** 21 of the 25 consults and delegations');
+		});
+
+		it('should say nothing about the budget when the builder does not know it', () => {
+			const context = createTestContext({ peerRoster: roster });
+			expect(substituteTemplateVariables('{{PEER_AGENTS}}', context)).not.toMatch(/budget/i);
+		});
+
+		it('should render no budget for an agent with no peers', () => {
+			const context = createTestContext({ consultBudget: { limit: 25, spent: 4 } });
+			expect(substituteTemplateVariables('{{PEER_AGENTS}}', context)).toBe('');
+		});
+
 		describe('in the Maestro system prompt', () => {
 			// The file as shipped. A checkout on Windows may hold CRLF line endings.
 			const systemPrompt = readFileSync(

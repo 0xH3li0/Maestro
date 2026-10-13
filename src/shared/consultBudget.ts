@@ -46,6 +46,33 @@ export function normalizeMaxConsultationsPerTurn(raw: unknown): number {
 	return Math.min(MAX_CONSULTATIONS_PER_TURN_CEILING, Math.max(0, Math.floor(raw)));
 }
 
+/**
+ * Where one chain's budget stands: the budget, and what the chain has spent of
+ * it. What an agent is TOLD about its budget (the Peer Agents block of its
+ * system prompt), as opposed to what a spend decides. Read on Node by
+ * `readConsultBudgetStatus()` in `src/main/peer-consults/consult-budget.ts`.
+ */
+export interface ConsultBudgetStatus {
+	/** The setting, read through {@link normalizeMaxConsultationsPerTurn}. */
+	limit: number;
+	/** Consults and delegations the chain has already made. */
+	spent: number;
+}
+
+/**
+ * How many consults and delegations a chain has left, never below zero (a
+ * budget the user lowered mid-run can sit under what was already spent).
+ * Undefined when either number is not a count, so a caller that only shows the
+ * figure leaves it out rather than print `NaN`.
+ */
+export function remainingConsultBudget(status: ConsultBudgetStatus): number | undefined {
+	const { limit, spent } = status;
+	if (!Number.isSafeInteger(limit) || !Number.isSafeInteger(spent) || limit < 0 || spent < 0) {
+		return undefined;
+	}
+	return Math.max(0, limit - spent);
+}
+
 /** A chain has spent its whole budget (or the budget is `0`). */
 export const CONSULT_BUDGET_EXHAUSTED_CODE = 'CONSULT_BUDGET_EXHAUSTED';
 

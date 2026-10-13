@@ -398,12 +398,13 @@ describe('plugin headless agent runner', () => {
 				response: 'done',
 				agentSessionId: 'sess-new',
 			}));
+			const prepareSystemPrompt = vi.fn(async () => undefined);
 			const run = createPluginHeadlessAgentRunner({
 				getAgent: () => agent,
 				detectAgent: async () => ({ available: true }),
 				hasPluginTools: () => false,
 				spawn: spawn as never,
-				prepareSystemPrompt: async () => undefined,
+				prepareSystemPrompt,
 				issueRunToken: () => 'token',
 				revokeRunToken: vi.fn(),
 				cliScriptPath: () => '/cli.js',
@@ -411,7 +412,11 @@ describe('plugin headless agent runner', () => {
 				resolveAutoTurn: vi.fn() as never,
 				noteAutoSessionLaunch: vi.fn(),
 			});
-			return { run, spawnOptions: () => spawn.mock.calls[0][4] as Record<string, unknown> };
+			return {
+				run,
+				prepareSystemPrompt,
+				spawnOptions: () => spawn.mock.calls[0][4] as Record<string, unknown>,
+			};
 		}
 
 		it('spawns the agent at the place in the chain the send was admitted at', async () => {
@@ -440,6 +445,20 @@ describe('plugin headless agent runner', () => {
 			await run('agent-a', 'what do you think?', undefined, undefined, 'user');
 
 			expect('consultChain' in spawnOptions()).toBe(false);
+		});
+
+		// So the prompt can state what is left of the chain's budget.
+		it('builds the system prompt with the chain the turn was admitted at', async () => {
+			const { run, prepareSystemPrompt } = harness();
+			const consultChain = { chainId: 'chain-a', depth: 2 };
+
+			await run('agent-a', 'q', undefined, undefined, 'user', undefined, undefined, {
+				consultChain,
+			});
+			expect(prepareSystemPrompt).toHaveBeenLastCalledWith(agent, consultChain);
+
+			await run('agent-a', 'q', undefined, undefined, 'user');
+			expect(prepareSystemPrompt).toHaveBeenLastCalledWith(agent, undefined);
 		});
 	});
 

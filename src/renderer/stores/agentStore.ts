@@ -544,6 +544,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					prepareMaestroSystemPrompt({
 						session,
 						activeTabId: targetTab.id,
+						consultChain: item.consultChain,
 					}),
 					settleAuto(messagePrompt),
 				]);
@@ -642,6 +643,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						prepareMaestroSystemPrompt({
 							session,
 							activeTabId: targetTab.id,
+							consultChain: item.consultChain,
 						}),
 						settleAuto(substitutedPrompt),
 					]);

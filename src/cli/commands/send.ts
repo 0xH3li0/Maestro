@@ -517,7 +517,9 @@ export async function send(
 				if (autoTurn?.refusal) return { success: false, error: autoTurn.refusal.message };
 				for (const warning of autoTurn?.warnings ?? []) console.error(`Warning: ${warning}`);
 				const appendSystemPrompt =
-					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
+					options.systemPrompt !== false
+						? await prepareMaestroSystemPromptCli(agent, { consultChain })
+						: undefined;
 				const spawned = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,

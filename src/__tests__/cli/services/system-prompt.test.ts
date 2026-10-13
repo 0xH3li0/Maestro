@@ -7,7 +7,10 @@
  * in `src/renderer/utils/spawnHelpers.ts`.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type { SessionInfo } from '../../../shared/types';
 
 vi.mock('../../../cli/services/prompt-loader', () => ({
@@ -61,6 +64,10 @@ import {
 	resolveSessionHistoryFilePath,
 } from '../../../cli/services/storage';
 import { formatPeerAgentsForPrompt, resolvePeerRoster } from '../../../shared/peerAgents';
+import {
+	CONSULT_BUDGET_FILE,
+	spendConsultBudget,
+} from '../../../main/peer-consults/consult-budget';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
 import { readMaestroRunReadyPath } from '../../../shared/maestro-run/state-file';
 
@@ -284,6 +291,95 @@ describe('prepareMaestroSystemPromptCli', () => {
 			expect(result).toContain('| Alpha | `peer-a` | Consult only |');
 			expect(readAgents).toHaveBeenCalledTimes(1);
 			expect(readSessions).not.toHaveBeenCalled();
+		});
+
+		// The one sentence that lets a sent-to agent ration. Every case passes a
+		// temp directory: the default counter is the live one in an agent's shell.
+		describe('the remaining budget', () => {
+			let budgetDir: string;
+			const chain = { chainId: 'chain-a', depth: 1 };
+			const budgetLines = (text: string | undefined) =>
+				(text ?? '').split('\n').filter((line) => line.startsWith('- **Budget:**'));
+			const setting = (value: unknown) =>
+				vi
+					.mocked(readSettingValue)
+					.mockImplementation((key: string) => (key === 'maxConsultationsPerTurn' ? value : ''));
+
+			beforeEach(() => {
+				budgetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-consult-budget-'));
+			});
+
+			afterEach(() => {
+				fs.rmSync(budgetDir, { recursive: true, force: true });
+			});
+
+			it('states what is left of the chain the send was admitted to', async () => {
+				spendConsultBudget('chain-a', 25, { dataDir: budgetDir });
+
+				const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }), {
+					consultChain: chain,
+					consultBudgetStore: { dataDir: budgetDir },
+				});
+
+				expect(budgetLines(result)).toHaveLength(1);
+				expect(budgetLines(result)[0]).toContain('24 of the 25 consults and delegations');
+			});
+
+			it('reads the whole budget as left for a chain the user just rooted', async () => {
+				const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }), {
+					consultChain: { chainId: 'chain-new', depth: 0 },
+					consultBudgetStore: { dataDir: budgetDir },
+				});
+
+				expect(budgetLines(result)[0]).toContain('25 of the 25');
+			});
+
+			it('reads the limit from the setting, through the normalizer', async () => {
+				const built = () =>
+					prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }), {
+						consultChain: chain,
+						consultBudgetStore: { dataDir: budgetDir },
+					});
+
+				setting(4);
+				expect(budgetLines(await built())[0]).toContain('4 of the 4 consults');
+
+				// `0` is a real budget, not "unset".
+				setting(0);
+				expect(budgetLines(await built())[0]).toContain('switched off');
+			});
+
+			it('says nothing when the caller put the spawn in no chain (a playbook, a goal run)', async () => {
+				const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }), {
+					consultBudgetStore: { dataDir: budgetDir },
+				});
+
+				expect(result).toContain('## Peer Agents');
+				expect(result).not.toMatch(/budget/i);
+			});
+
+			it('says nothing, and reads no counter, for an agent with no peers', async () => {
+				fs.writeFileSync(path.join(budgetDir, CONSULT_BUDGET_FILE), 'not json', 'utf-8');
+
+				const result = await prepareMaestroSystemPromptCli(me(), {
+					consultChain: chain,
+					consultBudgetStore: { dataDir: budgetDir },
+				});
+
+				expect(result).toBe('BASE\n\n');
+			});
+
+			it('leaves the sentence out, and keeps the roster, when the counter cannot be read', async () => {
+				fs.writeFileSync(path.join(budgetDir, CONSULT_BUDGET_FILE), 'not json', 'utf-8');
+
+				const result = await prepareMaestroSystemPromptCli(me({ groupPeerAccess: RW }), {
+					consultChain: chain,
+					consultBudgetStore: { dataDir: budgetDir },
+				});
+
+				expect(result).toContain('| Alpha | `peer-a` | Consult + Delegate |');
+				expect(result).not.toMatch(/budget/i);
+			});
 		});
 	});
 

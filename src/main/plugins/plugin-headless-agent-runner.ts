@@ -7,6 +7,7 @@ import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { isAutoModel } from '../../shared/autoModel';
 import { autoTurnReport, type AutoTurn } from '../../shared/autoTurn';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { AgentAutoTurnRequest } from '../local-models/auto-turn';
 import { logger } from '../utils/logger';
 
@@ -26,7 +27,15 @@ export interface PluginHeadlessRunnerDeps {
 		sessionId?: string,
 		options?: SpawnAgentOptions
 	) => Promise<AgentResult>;
-	prepareSystemPrompt: (agent: SessionInfo) => Promise<string | undefined>;
+	/**
+	 * `consultChain` is the place the turn takes in a consult chain, when the
+	 * send that started it carried one, so the prompt can state what is left of
+	 * that chain's budget.
+	 */
+	prepareSystemPrompt: (
+		agent: SessionInfo,
+		consultChain?: ConsultChain
+	) => Promise<string | undefined>;
 	issueRunToken: (agentId: string, ttlMs: number, receiptToolId?: string) => string;
 	getRunReceipts?: (token: string) => PluginToolReceipt[];
 	hasRunReceiptOverflow?: (token: string) => boolean;
@@ -141,7 +150,7 @@ export function createPluginHeadlessAgentRunner(
 				customEnvVars: agent.customEnvVars,
 				additionalDirectories: agent.additionalDirectories,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
-				appendSystemPrompt: await deps.prepareSystemPrompt(agent),
+				appendSystemPrompt: await deps.prepareSystemPrompt(agent, turn?.consultChain),
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,

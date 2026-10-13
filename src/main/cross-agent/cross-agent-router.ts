@@ -731,7 +731,11 @@ export async function startCrossAgentRequest(
 			// The consulted agent is a real Maestro agent: it answers with the same
 			// system prompt its own tabs carry. A resumed consult skips re-embedding
 			// for agents without the native flag (already in that transcript).
-			appendSystemPrompt: await buildMaestroSystemPromptForSession(target.id),
+			// It is told what is left of the chain it was just placed in.
+			appendSystemPrompt: await buildMaestroSystemPromptForSession(target.id, {
+				consultChain: targetChain,
+				consultBudgetStore: opts.consultBudgetStore,
+			}),
 			isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
 		});
 		// The spawners CATCH their own failures and return `{ pid: -1, success: false }`
