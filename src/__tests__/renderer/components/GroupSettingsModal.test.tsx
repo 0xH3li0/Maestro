@@ -379,6 +379,8 @@ describe('GroupSettingsModal', () => {
 
 			const grant = screen.getByRole('checkbox', { name: /Peers in my group/ });
 			expect(grant).not.toBeDisabled();
+			// The row counts the agents of this group by its name, not "in this group".
+			expect(screen.getByText(/other agents? in Backend/)).toBeInTheDocument();
 
 			fireEvent.click(grant);
 			fireEvent.click(screen.getByText('Save'));
