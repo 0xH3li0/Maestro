@@ -20,7 +20,7 @@ import {
 	type CampaignStatus,
 } from '../../shared/campaign';
 import { TERMINAL_AGENT_RUN_STATUSES } from '../../shared/agent-run/lifecycle';
-import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
+import { atomicWriteJsonSync } from '../../shared/atomicJsonSync';
 import { getConfigDirectory } from './storage';
 import { withStoreLock } from './agent-run-lock';
 
@@ -84,15 +84,10 @@ function ensureConfigDirectory(): void {
 
 function atomicWriteJson(filename: string, value: unknown): void {
 	ensureConfigDirectory();
-	const filePath = getStorePath(filename);
-	const content = `${JSON.stringify(value, null, '\t')}\n`;
-	// Guards against writing the literal "undefined" over a good file. Skips the
-	// full round-trip parse on large payloads, where it cost more than the write
-	// itself - see assertSerializedJsonIsSafe.
-	assertSerializedJsonIsSafe(content, filePath);
-	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-	fs.writeFileSync(tempPath, content, 'utf-8');
-	fs.renameSync(tempPath, filePath);
+	// The shared writer guards against writing the literal "undefined" over a
+	// good file, and skips the full round-trip parse on large payloads, where it
+	// cost more than the write itself - see assertSerializedJsonIsSafe.
+	atomicWriteJsonSync(getStorePath(filename), value, { indent: '\t', trailingNewline: true });
 }
 
 function readJsonValue(filename: string): unknown | undefined {

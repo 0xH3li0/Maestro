@@ -42,3 +42,19 @@ export function normalizeMaxConsultationsPerTurn(raw: unknown): number {
 	}
 	return Math.min(MAX_CONSULTATIONS_PER_TURN_CEILING, Math.max(0, Math.floor(raw)));
 }
+
+/** A UUID fits; so does any id a test or a future minter picks. */
+const CONSULT_CHAIN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * Whether a value can name a consult chain.
+ *
+ * A chain id crosses process boundaries in an environment variable and is used
+ * as a key in the counter file (`src/main/peer-consults/consult-budget.ts`), so
+ * every reader checks its shape before trusting it. A value that fails is not a
+ * chain: the counter refuses to spend on it rather than filing it under a key
+ * nobody minted.
+ */
+export function isConsultChainId(value: unknown): value is string {
+	return typeof value === 'string' && CONSULT_CHAIN_ID_PATTERN.test(value);
+}

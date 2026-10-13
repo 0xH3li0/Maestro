@@ -86,6 +86,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
+- **Writing a JSON file atomically from synchronous code:** `atomicWriteJsonSync(filePath, value, opts?)` in `src/shared/atomicJsonSync.ts` (the async twin is `atomicWriteJson()` in `src/main/utils/atomic-json-store.ts`)
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
@@ -105,6 +106,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A per-device state file that holds a secret:** `createPrivateStateFile()`, `sealSecret()`, `unsealSecret()`, `isStoredSecret()`, `SealedSecretError` in `src/main/utils/sealed-state-file.ts`; `SecretStorage`, `describeSecretStorage()` in `src/shared/secretStorage.ts`
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
+- **Serializing a read-modify-write across PROCESSES:** `withDirectoryLock(lockDir, fn, opts?)`, `sleepSync(ms)` in `src/shared/directoryLock.ts` (for a file the app AND `maestro-cli` write; `createKeyedWriteQueue()` covers one process only)
 - **Capping stored tool output:** `compactToolOutput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
 - **Merging browser-deferred conversations:** `projectWebSession()`, `readDeferredContent()`, `mergeDeferredSessionContent()` in `src/main/stores/deferred-session-content.ts`, over `mergeDeferredItems()` in `src/shared/deferredSessionContent.ts`
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
@@ -227,6 +229,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An agent asking another agent (`maestro-cli ask`):** `runCrossAgentAsk()` in `src/renderer/services/crossAgentAsk.ts` (a question is `ask`, never `dispatch`)
 - **Marking an agent's own hand-off in its transcript (`dispatch` / `ask` from its shell):** `readCallerIdentity()`, `callerMessageFields()`, `isSelfDispatch()` in `src/shared/agentDelegation.ts`; `recordAgentDelegation()`, `settleAgentDelegation()` in `src/renderer/services/agentDelegation.ts`
 - **The consultation budget setting (peer consults and delegations per user message):** `MAX_CONSULTATIONS_PER_TURN_SETTING`, `DEFAULT_MAX_CONSULTATIONS_PER_TURN`, `normalizeMaxConsultationsPerTurn()` in `src/shared/consultBudget.ts` (`0` is a real value; never `|| 25`)
+- **Spending a consult chain's budget (the shared counter):** `spendConsultBudget()`, `readConsultBudgetSpent()`, `sweepExpiredChains()`, `newConsultChainId()` in `src/main/peer-consults/consult-budget.ts`; `isConsultChainId()` in `src/shared/consultBudget.ts` (fails closed; tests pass `dataDir`)
 
 #### Auto Run, Cue, Group Chat, Director's Notes
 

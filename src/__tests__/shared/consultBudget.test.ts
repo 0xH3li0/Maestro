@@ -12,6 +12,7 @@ import {
 	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 	MAX_CONSULTATIONS_PER_TURN_CEILING,
 	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	isConsultChainId,
 	normalizeMaxConsultationsPerTurn,
 } from '../../shared/consultBudget';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
@@ -60,5 +61,32 @@ describe('consultBudget', () => {
 				expect(normalizeMaxConsultationsPerTurn(raw)).toBe(DEFAULT_MAX_CONSULTATIONS_PER_TURN);
 			}
 		);
+	});
+
+	describe('isConsultChainId', () => {
+		it('accepts a UUID and other plain ids', () => {
+			expect(isConsultChainId('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+			expect(isConsultChainId('chain_1')).toBe(true);
+			expect(isConsultChainId('a')).toBe(true);
+			expect(isConsultChainId('a'.repeat(64))).toBe(true);
+		});
+
+		it.each([
+			'',
+			' ',
+			'a b',
+			'-leading-dash',
+			'__proto__',
+			'../escape',
+			'a/b',
+			'a.b',
+			'a'.repeat(65),
+			undefined,
+			null,
+			42,
+			{},
+		])('refuses %j', (value) => {
+			expect(isConsultChainId(value)).toBe(false);
+		});
 	});
 });
