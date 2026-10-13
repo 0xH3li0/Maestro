@@ -11,14 +11,16 @@ export function pairingTransport(route: Route, send?: typeof request): PairingTr
 	if (direct && route.source !== 'tailscale' && route.source !== 'lan')
 		throw new Error('Direct transport requires a private LAN or Tailscale host.');
 	return {
-		/** Revalidate private destinations for each bounded pairing POST, preserving Tailscale node identity checks. */
+		/** Revalidate private pairing destinations, preserving cancellation and reporting LAN binding failures as transport errors. */
 		async call<T>(operation: string, payload: unknown, signal?: AbortSignal): Promise<T> {
 			if (!/^[a-z]+$/.test(operation)) return Promise.reject(new Error('invalid-operation'));
 			const data = JSON.stringify({ route, payload });
 			if (Buffer.byteLength(data) > 16384) return Promise.reject(new Error('request-too-large'));
 			const bound = direct
 				? route.source === 'lan'
-					? await lanDestination(origin, signal)
+					? await lanDestination(origin, signal).catch(() => {
+							throw new Error(signal?.aborted ? 'cancelled' : 'lan-connection-failed');
+						})
 					: await tailnetDestination(origin, signal ?? AbortSignal.timeout(5000))
 				: undefined;
 			if (

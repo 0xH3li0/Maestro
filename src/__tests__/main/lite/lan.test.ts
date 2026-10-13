@@ -28,6 +28,7 @@ import { candidate } from '../../../main/lite/discovery/types';
 import { advertisement, MdnsCache } from '../../../main/lite/discovery/mdns';
 import { probeService } from '../../../main/lite/discovery/probe';
 import { pairingTransport } from '../../../main/lite/pairing/transport';
+import { PairingClient } from '../../../main/lite/pairing/client';
 import { CONNECTION } from '../../../main/lite/pairing/protocol';
 import { DiscoveryController } from '../../../main/lite/discovery/controller';
 import type { DeviceCredentials } from '../../../main/lite/device-credentials';
@@ -226,6 +227,31 @@ describe('LAN discovery and pairing without Tailscale', () => {
 		secure.ingest(advertisement('host-id', 'Work computer', 'https://host.example.test'));
 		expect(secure.rows()[0].endpoint).toBe('https://host.example.test');
 	});
+	it('reports a LAN connection failure to pairing when the discovered interface disappears', async () => {
+		const row = candidate('host-id', 'Work computer', origin, 'lan', Date.now() + 60000);
+		const send = vi.fn<typeof request>();
+		const client = new PairingClient(pairingTransport(row, send), row, 'Lite');
+		network.interfaces = {};
+		await expect(client.begin(row.id)).rejects.toThrow('lan-connection-failed');
+		expect(client.snapshot().error).toBe('lan-connection-failed');
+		expect(send).not.toHaveBeenCalled();
+		expect(tailnetDestination).not.toHaveBeenCalled();
+	});
+	it.each(['before binding', 'while binding'])(
+		'preserves cancellation when a LAN destination fails %s',
+		async (timing) => {
+			const row = candidate('host-id', 'Work computer', origin, 'lan', Date.now() + 60000);
+			const send = vi.fn<typeof request>();
+			const abort = new AbortController();
+			network.interfaces = {};
+			if (timing === 'before binding') abort.abort();
+			const result = pairingTransport(row, send).call('describe', {}, abort.signal);
+			if (timing === 'while binding') abort.abort();
+			await expect(result).rejects.toThrow('cancelled');
+			expect(send).not.toHaveBeenCalled();
+			expect(tailnetDestination).not.toHaveBeenCalled();
+		}
+	);
 	it('binds manifest probes and pairing calls to LAN and does not contact foreign subnets', async () => {
 		const row = candidate('host-id', 'Work computer', origin, 'lan', Date.now() + 60000);
 		const manifest = {
@@ -283,7 +309,9 @@ describe('LAN discovery and pairing without Tailscale', () => {
 		expect((await probeService(foreign, new AbortController().signal, send)).availability).toBe(
 			'unreachable'
 		);
-		await expect(pairingTransport(foreign, send).call('describe', {})).rejects.toThrow('same LAN');
+		await expect(pairingTransport(foreign, send).call('describe', {})).rejects.toThrow(
+			'lan-connection-failed'
+		);
 		expect(calls).toHaveBeenCalledTimes(2);
 		expect(tailnetDestination).not.toHaveBeenCalled();
 	});

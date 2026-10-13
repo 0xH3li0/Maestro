@@ -51,12 +51,14 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+/** Mount inert page markup, import its preload and explicitly dispatch the captured DOM-ready callback. */
 async function installPage(page: string, loadPreload: () => Promise<unknown>): Promise<void> {
 	document.body.innerHTML = new DOMParser().parseFromString(page, 'text/html').body.innerHTML;
 	await loadPreload();
 	ready?.(new Event('DOMContentLoaded'));
 }
 
+/** Install the disconnected Lite picker with mocked profile-saving IPC and publish its initial state. */
 async function installLitePage(): Promise<void> {
 	state = { status: 'Disconnected', picker: true, profiles: [], aliases: [] };
 	ipc.invoke.mockImplementation(async (_channel, name, profile) => {

@@ -61,6 +61,7 @@ afterEach(async () => {
 	await rm(directory, { recursive: true, force: true });
 	vi.restoreAllMocks();
 });
+/** Initialize a host with injected listener/availability controls and register it for teardown. */
 async function host(
 	listen = vi.fn(async (_address: string) => vi.fn(async () => {})),
 	available = () => true

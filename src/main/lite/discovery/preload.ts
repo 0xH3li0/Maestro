@@ -543,24 +543,27 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 	button('open-invitation').onclick = () => showPage('invitation');
 	button('open-diagnostics').onclick = () => showPage('diagnostics');
 	/** Select existing Tailscale peers and keep the diagnostic peer-scanning toggle synchronized. */
-	button('discovery-tailnet').onclick = () => {
+	function findOverTailscale(): void {
 		network = 'tailscale';
 		input('discovery-peers').checked = true;
 		void start();
-	};
+	}
+	button('discovery-tailnet').onclick = findOverTailscale;
 	/** Switch to LAN discovery with Tailscale peer scanning explicitly disabled. */
-	button('discovery-lan').onclick = () => {
+	function findOnLan(): void {
 		network = 'lan';
 		input('discovery-peers').checked = false;
 		void start();
-	};
+	}
+	button('discovery-lan').onclick = findOnLan;
 	button('pair-return').onclick = () => void action('dismiss');
 	button('discovery-start').onclick = () => void start();
 	/** Treat the diagnostic peer toggle as a network choice and restart discovery with that scope. */
-	input('discovery-peers').onchange = () => {
+	function applyDiscoveryNetwork(): void {
 		network = input('discovery-peers').checked ? 'tailscale' : 'lan';
 		void start();
-	};
+	}
+	input('discovery-peers').onchange = applyDiscoveryNetwork;
 	button('discovery-stop').onclick = () => {
 		input('discovery-peers').checked = false;
 		void action('discovery-stop');

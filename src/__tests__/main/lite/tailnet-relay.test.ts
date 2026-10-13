@@ -59,6 +59,7 @@ beforeEach(async () => {
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	provider.port = (server.address() as { port: number }).port;
 });
+/** Reject WebSocket upgrades if the relay rewrites the selected upstream host authority incorrectly. */
 function assertHost(host: string | undefined) {
 	if (host !== endpoint.host) throw new Error('Wrong selected host authority');
 }

@@ -124,6 +124,7 @@ afterEach(async () => {
 	vi.restoreAllMocks();
 });
 
+/** Open the synthetic host window and invoke its local IPC handler with the matching sender frame. */
 async function local(config: HostPairingOptions = options) {
 	shell = new HostPairingWindow();
 	await shell.open(

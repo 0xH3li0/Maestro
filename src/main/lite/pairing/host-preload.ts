@@ -607,7 +607,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		showPage('connect');
 	};
 	/** Require checked human consent before enabling the selected private transport and LAN interface. */
-	button('enable-direct').onclick = () => {
+	function enablePrivateAccess(): void {
 		if (pending) return;
 		if (!input('direct-consent').checked) {
 			el('direct-consent-error').hidden = false;
@@ -618,7 +618,8 @@ window.addEventListener('DOMContentLoaded', () => {
 		if ((el('access-transport') as HTMLSelectElement).value === 'lan')
 			void action('enable-lan', { consent: true, interfaceAddress: input('lan-network').value });
 		else void action('enable-direct', { consent: true });
-	};
+	}
+	button('enable-direct').onclick = enablePrivateAccess;
 	input('direct-consent').onchange = () => {
 		el('direct-consent-error').hidden = true;
 		input('direct-consent').removeAttribute('aria-invalid');
@@ -627,21 +628,24 @@ window.addEventListener('DOMContentLoaded', () => {
 		if (!pending) void action('disable-direct');
 	};
 	/** Request LAN listener shutdown only when no host-control operation is pending. */
-	button('disable-lan').onclick = () => {
+	function disableLanAccess(): void {
 		if (!pending) void action('disable-lan');
-	};
+	}
+	button('disable-lan').onclick = disableLanAccess;
 	/** Invalidate prior consent when the exposure transport changes and redraw the access guidance. */
-	input('access-transport').onchange = () => {
+	function changeAccessTransport(): void {
 		input('direct-consent').checked = false;
 		el('direct-consent-error').hidden = true;
 		input('direct-consent').removeAttribute('aria-invalid');
 		if (latest) render(latest);
-	};
+	}
+	input('access-transport').onchange = changeAccessTransport;
 	/** Require renewed human consent when the selected LAN network changes. */
-	input('lan-network').onchange = () => {
+	function changeLanNetwork(): void {
 		input('direct-consent').checked = false;
 		if (latest) render(latest);
-	};
+	}
+	input('lan-network').onchange = changeLanNetwork;
 	button('refresh').onclick = () => void action('inspect');
 	button('open-tailscale').onclick = () => void action('open-tailscale');
 	button('close').onclick = () => void action('close');
@@ -655,9 +659,10 @@ window.addEventListener('DOMContentLoaded', () => {
 		if (input('advanced').checked) input('advanced-endpoint').focus();
 	};
 	/** Show HTTPS multicast interface selection only when its LAN advertisement option is checked. */
-	input('lan').onchange = () => {
+	function toggleHttpsLanAdvertisement(): void {
 		el('interface-label').hidden = !input('lan').checked;
-	};
+	}
+	input('lan').onchange = toggleHttpsLanAdvertisement;
 	el('enable').addEventListener('submit', (event) => {
 		event.preventDefault();
 		if (!pending)
