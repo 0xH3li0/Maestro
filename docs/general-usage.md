@@ -503,6 +503,21 @@ Force Send and Steer are a pair. A queued card offers one or the other, never bo
 | Needs               | Forced Parallel Execution: always for the chord, and for the button only to run beside another busy tab | Claude Code on the interactive token source, or Codex on app-server transport |
 | Mark on the message | Hammer                                                                                                  | Arrow                                                                         |
 
+### Send button menu
+
+While the agent is working, clicking **Send** opens a small menu instead of sending, so you can pick how the message goes:
+
+| Row        | What it does                                                      | Keyboard                               |
+| ---------- | ----------------------------------------------------------------- | -------------------------------------- |
+| Queue      | Queues the message behind the running turn, the same as Enter     | `Enter`                                |
+| Force Send | Sends now, beside a working tab (needs Forced Parallel Execution) | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` |
+| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
+| Steer      | Hands the message to the turn in progress (see [Steer](#steer))   | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`     |
+
+A row that cannot run right now is dimmed and says why in one line. Force Send while Forced Parallel Execution is off jumps to that setting when you click it. The `?` next to Steer explains how to get steering on this agent: switch a Claude Code agent to the TUI token source, or a Codex agent to the app-server transport. For any other provider, it links a pre-filled feature request.
+
+When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
+
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.

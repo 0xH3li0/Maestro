@@ -262,6 +262,8 @@ of taking a second round trip or trusting a value the caller guessed.
 | Consult another agent (`@mention`)                                                                                                                                          | `ask <agent> "<question>" --from <caller>`                                                                                                                                                                                                               |
 | Steer a queued message into the running turn                                                                                                                                | `queue steer <item-id> --agent <id>` (find the id with `queue list`)                                                                                                                                                                                     |
 | Steer Running Turn chord / palette entry (send the draft as a steer, or steer the newest)                                                                                   | `dispatch --queue` to queue the text, then `queue steer <item-id> --agent <id>`                                                                                                                                                                          |
+| Send button menu: Queue, Force Send, Steer rows                                                                                                                             | `dispatch --queue`, `dispatch --force`, then `queue steer <item-id> --agent <id>` (Queue Held: see Open gaps)                                                                                                                                            |
+| Send Button Menu setting (and the menu's own "Show this menu on click" toggle)                                                                                              | `settings set sendButtonMenu true\|false`, `settings get sendButtonMenu`                                                                                                                                                                                 |
 | Open a file / URL / terminal tab                                                                                                                                            | `open-file`, `open-browser`, `open-terminal`                                                                                                                                                                                                             |
 | Open a modal or dashboard                                                                                                                                                   | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                                                                                                                                                                        |
 | Auto Run: start, stop, resume, skip, abort                                                                                                                                  | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                                                                                                                                                                      |
@@ -429,6 +431,13 @@ a design constraint; they are simply not built yet.
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
     `/login`. There is no CLI read of the quota snapshots yet, so verifying the
     login from the CLI is part of this gap.
+14. **Queue Held** (the Send button menu's row, and the queued card's
+    Hold / Resume). There is no `dispatch --queue --held` and no
+    `queue hold|resume <item-id>`, so the CLI cannot park a message or release
+    one. Both map onto `QueuedItem.paused`: the composer path is
+    `processInput(undefined, { hold: true })` and the card toggles the flag in
+    place. Closing it means a WS message that sets `paused` on create and on an
+    existing item, then the two verbs, with `queue list` already reading it back.
 
 ### Audit backlog (2026-09-27)
 

@@ -470,6 +470,8 @@ export interface UseSettingsReturn {
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	forcedParallelAlways: boolean;
 	setForcedParallelAlways: (value: boolean) => void;
+	sendButtonMenu: boolean;
+	setSendButtonMenu: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
 	crossAgentHandoffsWritable: boolean;

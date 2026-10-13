@@ -156,6 +156,27 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-send-button-menu',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Send Button Menu',
+		description:
+			'Clicking Send while the agent is working opens a menu to Queue, Force Send, Queue Held, or Steer. Turn it off to make a click send at once.',
+		keywords: [
+			'send button',
+			'send button menu',
+			'send menu',
+			'just send',
+			'queue',
+			'queue held',
+			'hold',
+			'steer',
+			'steering',
+			'force send',
+			'click',
+		],
+	},
+	{
 		id: 'general-cross-agent-mentions',
 		tab: 'general',
 		tabLabel: 'General',

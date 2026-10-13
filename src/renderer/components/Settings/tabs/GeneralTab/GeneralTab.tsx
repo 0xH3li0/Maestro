@@ -91,6 +91,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				forcedParallelExecution={settings.forcedParallelExecution}
 				forcedParallelAlways={settings.forcedParallelAlways}
 				setForcedParallelAlways={settings.setForcedParallelAlways}
+				sendButtonMenu={settings.sendButtonMenu}
+				setSendButtonMenu={settings.setSendButtonMenu}
 				shortcuts={settings.shortcuts}
 				forcedParallelWarning={forcedParallelWarning}
 			/>

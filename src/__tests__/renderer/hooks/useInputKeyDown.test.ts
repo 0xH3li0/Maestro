@@ -51,6 +51,7 @@ vi.mock('../../../renderer/contexts/InputContext', () => ({
 import {
 	useInputKeyDown,
 	FORCED_PARALLEL_SEND_EVENT,
+	HOLD_SEND_EVENT,
 } from '../../../renderer/hooks/input/useInputKeyDown';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -1405,6 +1406,28 @@ describe('Steer Running Turn shortcut', () => {
 		});
 		expect(steerNewestQueuedMessage).toHaveBeenCalledWith('session-1', 'tab-7');
 		expect(emptyDeps.processInput).not.toHaveBeenCalled();
+	});
+});
+
+describe('Queue Held (window event)', () => {
+	it('queues the draft held', () => {
+		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+		});
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { hold: true });
+	});
+
+	it('does nothing with an empty draft', () => {
+		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		const deps = createMockDeps({ inputValue: '   ' });
+		renderHook(() => useInputKeyDown(deps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+		});
+		expect(deps.processInput).not.toHaveBeenCalled();
 	});
 });
 

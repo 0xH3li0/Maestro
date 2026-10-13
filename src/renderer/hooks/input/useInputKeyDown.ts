@@ -45,6 +45,13 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
  */
 export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
 
+/**
+ * Window event that runs Queue Held: queue the draft PAUSED, so it waits on its
+ * card until the user resumes it. Raised by the Send button's menu; same bridge
+ * as {@link FORCED_PARALLEL_SEND_EVENT}, because the composer owns the draft.
+ */
+export const HOLD_SEND_EVENT = 'maestro:holdSend';
+
 // ============================================================================
 // Dependencies interface
 // ============================================================================
@@ -70,7 +77,7 @@ export interface InputKeyDownDeps {
 	/** Process and send the current input */
 	processInput: (
 		overrideInputValue?: string,
-		options?: { forceParallel?: boolean; steer?: boolean }
+		options?: { forceParallel?: boolean; steer?: boolean; hold?: boolean }
 	) => void;
 	/** Get tab completion suggestions for a given input */
 	getTabCompletionSuggestions: (
@@ -209,6 +216,23 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	}, [getInputValue, processInput]);
 
 	useEventListener(STEER_SEND_EVENT, runSteerSend);
+
+	/**
+	 * Queue Held, from the Send button's menu. Queues the draft paused even on an
+	 * idle agent; an empty draft has nothing to hold, so it does nothing.
+	 */
+	const runHoldSend = useCallback(() => {
+		if (useGroupChatStore.getState().activeGroupChatId) return;
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (activeSession?.inputMode !== 'ai') return;
+		const stagedImageCount =
+			activeSession.aiTabs?.find((tab) => tab.id === activeSession.activeTabId)?.stagedImages
+				?.length ?? 0;
+		if (getInputValue().trim().length === 0 && stagedImageCount === 0) return;
+		processInput(undefined, { hold: true });
+	}, [getInputValue, processInput]);
+
+	useEventListener(HOLD_SEND_EVENT, runHoldSend);
 
 	const handleInputKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {

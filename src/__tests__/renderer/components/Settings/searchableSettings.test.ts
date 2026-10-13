@@ -192,6 +192,8 @@ describe('searchableSettings', () => {
 			['shift+enter', 'general-input-behavior'],
 			['prompt composer', 'general-input-behavior'],
 			['ai interaction mode', 'general-input-behavior'],
+			['send button menu', 'general-send-button-menu'],
+			['just send', 'general-send-button-menu'],
 			['cross-agent mentions', 'general-cross-agent-mentions'],
 			['consult or delegate', 'general-cross-agent-mentions'],
 			['delegation', 'general-cross-agent-mentions'],

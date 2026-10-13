@@ -1679,6 +1679,42 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('Queue Held (hold option)', () => {
+		it('queues a message paused even when the agent is idle', async () => {
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({ activeSession: session, inputValue: 'later please' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { hold: true });
+			});
+
+			expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updatedSessions[0].executionQueue).toHaveLength(1);
+			expect(updatedSessions[0].executionQueue[0]).toMatchObject({
+				text: 'later please',
+				paused: true,
+			});
+		});
+
+		it('leaves a plain queued message unpaused', async () => {
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+			const deps = createDeps({ activeSession: busySession, inputValue: 'next' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([busySession]);
+			expect(updatedSessions[0].executionQueue[0].paused).toBeUndefined();
+		});
+	});
+
 	describe('Agent Resilience holds the composer', () => {
 		// Regression: a quota wall used to eat a whole conversation. The failed turn
 		// schedules a retry and leaves the tab IDLE, so every busy-based queue rule
