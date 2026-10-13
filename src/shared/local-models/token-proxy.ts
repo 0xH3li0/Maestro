@@ -257,6 +257,19 @@ export const TOKEN_PROXY_MODES: readonly TokenProxyMode[] = [
 	'compress-early',
 ];
 
+/**
+ * What an agent's record holds once it is off the Maestro token proxy: no
+ * mode, and no background requests target. Every writer that moves an agent's
+ * gateway away from the proxy spreads this, so the two cannot drift apart.
+ *
+ * Shared, so the renderer's writers and the pure group-defaults publish
+ * (`applyGroupDefaultsToSession`) clear the same two fields.
+ */
+export const OFF_TOKEN_PROXY_FIELDS: Readonly<{
+	tokenProxyMode: undefined;
+	backgroundRequests: undefined;
+}> = Object.freeze({ tokenProxyMode: undefined, backgroundRequests: undefined });
+
 /** The part of the mode that is stored on the agent. `off` is the gateway's absence. */
 export type StoredTokenProxyMode = Exclude<TokenProxyMode, 'off'>;
 

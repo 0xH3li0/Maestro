@@ -1,17 +1,21 @@
 /**
  * @fileoverview Tests for GroupSettingsModal: the explainer, the tabbed form
  * seeded from a group's defaults, the save that omits every blank field, the
- * group's own pill label, and Clear defaults.
+ * group's own pill label, Clear defaults, and the dialog that asks whether a
+ * save is published to the agents already in the group.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { GroupSettingsModal } from '../../../renderer/components/GroupSettingsModal';
 import { __resetRememberedModalTabsForTests } from '../../../renderer/components/ui/ModalTabStrip';
+import { __resetGroupDefaultsPublishForTests } from '../../../renderer/services/groupDefaultsPublish';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import type { AgentConfig, Group } from '../../../renderer/types';
+import type { AgentConfig, Group, Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 import { createMockTheme } from '../../helpers/mockTheme';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
@@ -418,6 +422,174 @@ describe('GroupSettingsModal', () => {
 			expect(screen.queryByRole('dialog', { name: 'Clear defaults' })).not.toBeInTheDocument();
 			expect(setGroups).not.toHaveBeenCalled();
 			expect(onClose).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Publishing a save', () => {
+		const PUBLISH_DIALOG = 'Publish to existing agents?';
+		const aiTabs = [{ id: 'tab-1', agentSessionId: 'provider-session-1' }] as Session['aiTabs'];
+		let agents: Session[];
+
+		const stored = (id: string) => useSessionStore.getState().sessions.find((s) => s.id === id)!;
+		const changeNudge = (value: string) =>
+			fireEvent.change(screen.getByPlaceholderText(/appended to every message/), {
+				target: { value },
+			});
+		const dialog = () => screen.getByRole('dialog', { name: PUBLISH_DIALOG });
+
+		beforeEach(() => {
+			__resetGroupDefaultsPublishForTests();
+			useNotificationStore.setState({ toasts: [] });
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
+			agents = [
+				createMockSession({ id: 'a', name: 'API', groupId: 'g-backend', aiTabs }),
+				createMockSession({
+					id: 'b',
+					name: 'Scraper',
+					groupId: 'g-backend',
+					nudgeMessage: 'Mine.',
+				}),
+				createMockSession({ id: 'c', name: 'Triage', groupId: 'g-backend' }),
+				// Not a member: a publish must never reach it.
+				createMockSession({ id: 'other', name: 'Elsewhere', groupId: 'g-docs' }),
+			];
+			useSessionStore.setState({ sessions: agents, groups: [] } as never);
+		});
+
+		it('saves with no dialog when the group has no agents', () => {
+			useSessionStore.setState({ sessions: [agents[3]] });
+			const group = createGroup();
+			renderModal(group);
+
+			changeNudge('Be brief.');
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.queryByRole('dialog', { name: PUBLISH_DIALOG })).not.toBeInTheDocument();
+			expect(written(group)[0].defaults).toEqual({ nudgeMessage: 'Be brief.' });
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('saves with no dialog when only the pill label changed', () => {
+			const group = createGroup({ defaults: { nudgeMessage: 'Be brief.' } });
+			renderModal(group);
+
+			fireEvent.change(screen.getByLabelText('Group Pill Label'), { target: { value: 'API' } });
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.queryByRole('dialog', { name: PUBLISH_DIALOG })).not.toBeInTheDocument();
+			expect(written(group)[0].shortLabel).toBe('API');
+			expect(useSessionStore.getState().sessions).toEqual(agents);
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('saves with no dialog when nothing an agent can take changed', () => {
+			// A working directory is for new agents only, so there is nothing to ask.
+			const group = createGroup();
+			renderModal(group);
+
+			fireEvent.change(screen.getByLabelText('Default Working Directory'), {
+				target: { value: '/srv/app' },
+			});
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.queryByRole('dialog', { name: PUBLISH_DIALOG })).not.toBeInTheDocument();
+			expect(written(group)[0].defaults).toEqual({ projectRoot: '/srv/app' });
+		});
+
+		it('asks before it writes anything, and names the change and the agents', async () => {
+			renderModal(createGroup());
+
+			changeNudge('Be brief.');
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(dialog()).toHaveTextContent('You changed Nudge Message.');
+			expect(dialog()).toHaveTextContent('🌳 Backend has 3 agents: API, Scraper, Triage.');
+			expect(
+				within(dialog()).getByRole('button', { name: 'Publish to all 3 agents' })
+			).toBeTruthy();
+			expect(setGroups).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			// The safe outcome has the focus.
+			await waitFor(() =>
+				expect(document.activeElement).toBe(
+					within(dialog()).getByRole('button', { name: 'New agents only' })
+				)
+			);
+		});
+
+		it('says what is not published', () => {
+			renderModal(createGroup());
+
+			changeNudge('Be brief.');
+			fireEvent.change(screen.getByLabelText('Default Working Directory'), {
+				target: { value: '/srv/app' },
+			});
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.getByTestId('group-settings-publish-unpublished')).toHaveTextContent(
+				'Not published (new agents only): Working Directory.'
+			);
+		});
+
+		it('New agents only writes the profile and leaves every agent as it was', () => {
+			const group = createGroup();
+			renderModal(group);
+
+			changeNudge('Be brief.');
+			fireEvent.click(screen.getByText('Save'));
+			fireEvent.click(within(dialog()).getByRole('button', { name: 'New agents only' }));
+
+			expect(written(group)[0].defaults).toEqual({ nudgeMessage: 'Be brief.' });
+			// The same objects: not one agent was rewritten.
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions).toHaveLength(agents.length);
+			sessions.forEach((session, index) => expect(session).toBe(agents[index]));
+			expect(useNotificationStore.getState().toasts).toEqual([]);
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('Publish writes the profile and the direct members, and no tab', async () => {
+			const group = createGroup();
+			renderModal(group);
+
+			changeNudge('Be brief.');
+			fireEvent.click(screen.getByText('Save'));
+			fireEvent.click(within(dialog()).getByRole('button', { name: 'Publish to all 3 agents' }));
+
+			expect(written(group)[0].defaults).toEqual({ nudgeMessage: 'Be brief.' });
+			expect(['a', 'b', 'c'].map((id) => stored(id).nudgeMessage)).toEqual([
+				'Be brief.',
+				'Be brief.',
+				'Be brief.',
+			]);
+			expect(stored('a').aiTabs).toBe(aiTabs);
+			expect(stored('other')).toBe(agents[3]);
+			expect(onClose).toHaveBeenCalledTimes(1);
+
+			// The toast is the Undo.
+			await waitFor(() =>
+				expect(useNotificationStore.getState().toasts[0]?.title).toBe('Published to 3 agents')
+			);
+			expect(useNotificationStore.getState().toasts[0].clickAction).toEqual({
+				kind: 'undo-group-publish',
+				publishId: expect.any(String),
+			});
+		});
+
+		it('Cancel writes nothing at all and keeps the form', () => {
+			renderModal(createGroup());
+
+			changeNudge('Be brief.');
+			fireEvent.click(screen.getByText('Save'));
+			// A save from the keyboard cannot go through under the dialog.
+			fireEvent.keyDown(window, { key: 's', metaKey: true });
+			fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
+
+			expect(screen.queryByRole('dialog', { name: PUBLISH_DIALOG })).not.toBeInTheDocument();
+			expect(setGroups).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions).toEqual(agents);
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByDisplayValue('Be brief.')).toBeInTheDocument();
 		});
 	});
 });

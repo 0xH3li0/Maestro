@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AgentConfig, Group, Theme, ToolType } from '../../types';
+import type { AgentConfig, Group, GroupAgentDefaults, Theme, ToolType } from '../../types';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
-import { withGroupDefaults, withGroupShortLabel } from '../../../shared/groupAgentDefaults';
+import {
+	diffGroupDefaults,
+	directGroupMembers,
+	publishableChangesFor,
+	withGroupDefaults,
+	withGroupShortLabel,
+	type GroupDefaultsDiff,
+} from '../../../shared/groupAgentDefaults';
 import { backgroundRequestsSupport } from '../../../shared/local-models/background-requests';
 import {
 	agentRunOnSupport,
@@ -13,6 +20,11 @@ import { useAgentConfiguration } from '../../hooks/agent/useAgentConfiguration';
 import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
+import {
+	notifyGroupDefaultsPublished,
+	publishGroupDefaults,
+} from '../../services/groupDefaultsPublish';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import {
@@ -50,6 +62,7 @@ import {
 	type GroupDefaultsForm,
 } from './groupDefaultsForm';
 import { GroupPillLabelField } from './GroupPillLabelField';
+import { PublishDefaultsDialog, type PublishDialogMember } from './PublishDefaultsDialog';
 
 const TAB_ID_PREFIX = 'group-settings';
 
@@ -74,6 +87,13 @@ type OwnFormState = Omit<
 	| 'sshRemoteConfig'
 >;
 
+/** A save that is waiting on the publish dialog. Nothing is written until it is answered. */
+interface PendingPublish {
+	defaults: GroupAgentDefaults | undefined;
+	diff: GroupDefaultsDiff;
+	members: PublishDialogMember[];
+}
+
 export interface GroupSettingsModalProps {
 	theme: Theme;
 	/** The group whose defaults for new agents are edited. */
@@ -97,6 +117,10 @@ export interface GroupSettingsModalProps {
  * One field is about the group itself: the pill label (`Group.shortLabel`). It
  * is saved in the same write as the defaults, but it is not one of them. It is
  * never copied into an agent and never published to one.
+ *
+ * A save that changes a default an agent already in the group could take asks
+ * first where the change goes (`PublishDefaultsDialog`). A publish is a
+ * one-time write into each agent's own record, not a layer above it.
  *
  * The modal is mounted only while it is open, and it reads `group.defaults`
  * and `group.shortLabel` once, when it mounts: a change to the group from
@@ -150,6 +174,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	);
 
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+	const [pendingPublish, setPendingPublish] = useState<PendingPublish | null>(null);
 	// Auto-detected maestro-p path, shown as helper text in the Claude Token Source selector.
 	const [detectedMaestroPPath, setDetectedMaestroPPath] = useState<string | undefined>(undefined);
 	useEffect(() => {
@@ -248,10 +273,27 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		[errorFields]
 	);
 
-	// Save writes the profile and the pill label, in one write, and nothing
-	// else. The values are built with every blank or default-valued field omitted
+	// The profile and the pill label, in one write. A blank label removes
+	// `shortLabel`. The label is not a default: it is no part of the diff below.
+	const writeProfile = useCallback(
+		(defaults: GroupAgentDefaults | undefined) => {
+			setGroups((prev) =>
+				prev.map((g) =>
+					g.id === group.id ? withGroupShortLabel(withGroupDefaults(g, defaults), shortLabel) : g
+				)
+			);
+		},
+		[setGroups, group.id, shortLabel]
+	);
+
+	// Save builds the profile with every blank or default-valued field omitted
 	// (`buildGroupDefaults`); a value a new agent could not be created with goes
-	// to its tab instead. A blank pill label removes `shortLabel`.
+	// to its tab instead. Then it diffs the profile against the stored one. When
+	// an agent already in the group could take the change, the dialog asks where
+	// it goes and nothing is written yet. Otherwise there is nothing to decide:
+	// no direct member, or no change a member can receive (an empty diff, a pill
+	// label only, a provider or directory only). That saves with no dialog,
+	// because a dialog with nothing to decide teaches people to dismiss it unread.
 	const handleSave = useCallback(() => {
 		const result = buildGroupDefaults(form, { homeDir, sshRemoteName, endpoints });
 		if (!result.ok) {
@@ -263,25 +305,52 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 			if (tab) setActiveTab(tab);
 			return;
 		}
-		setGroups((prev) =>
-			prev.map((g) =>
-				g.id === group.id
-					? withGroupShortLabel(withGroupDefaults(g, result.defaults), shortLabel)
-					: g
-			)
-		);
-		onClose();
+		const diff = diffGroupDefaults(group.defaults, result.defaults);
+		const members = directGroupMembers(useSessionStore.getState().sessions, group.id);
+		if (!members.some((member) => publishableChangesFor(member.toolType, diff).length > 0)) {
+			writeProfile(result.defaults);
+			onClose();
+			return;
+		}
+		setPendingPublish({
+			defaults: result.defaults,
+			diff,
+			members: members.map(({ id, name, toolType: provider }) => ({
+				id,
+				name,
+				toolType: provider,
+			})),
+		});
 	}, [
 		form,
-		shortLabel,
 		homeDir,
 		sshRemoteName,
 		endpoints,
-		setGroups,
+		group.defaults,
 		group.id,
+		writeProfile,
 		onClose,
 		setActiveTab,
 	]);
+
+	// The profile and the agents in one pass: the service writes every member
+	// before it first yields. Its toast is the Undo.
+	const handlePublish = useCallback(() => {
+		if (!pendingPublish) return;
+		const { defaults, diff } = pendingPublish;
+		const published = { id: group.id, name: group.name, emoji: group.emoji };
+		writeProfile(defaults);
+		void publishGroupDefaults(published, diff).then((result) =>
+			notifyGroupDefaultsPublished(published, diff, result)
+		);
+		onClose();
+	}, [pendingPublish, group.id, group.name, group.emoji, writeProfile, onClose]);
+
+	const handleNewAgentsOnly = useCallback(() => {
+		if (!pendingPublish) return;
+		writeProfile(pendingPublish.defaults);
+		onClose();
+	}, [pendingPublish, writeProfile, onClose]);
 
 	// Clearing is a profile edit only: no agent is read or written.
 	const handleClearDefaults = useCallback(() => {
@@ -290,7 +359,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	}, [setGroups, group.id, onClose]);
 
 	// Cmd+Enter / Cmd+S from any tab. Window capture, as in Edit Agent: the Modal
-	// stops keydown propagation on its backdrop. Off while the confirmation is
+	// stops keydown propagation on its backdrop. Off while a confirmation is
 	// up, so a save cannot go through underneath it.
 	useEventListener(
 		'keydown',
@@ -301,7 +370,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 				handleSave();
 			}
 		},
-		{ capture: true, enabled: !clearConfirmOpen }
+		{ capture: true, enabled: !clearConfirmOpen && !pendingPublish }
 	);
 
 	// Shared by the Provider tab's config panel (which hides them) and the
@@ -771,6 +840,19 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 						this group keep their settings: clearing is not published to them.
 					</p>
 				</ConfirmModal>
+			)}
+
+			{pendingPublish && (
+				<PublishDefaultsDialog
+					theme={theme}
+					group={group}
+					diff={pendingPublish.diff}
+					members={pendingPublish.members}
+					onPublish={handlePublish}
+					onNewAgentsOnly={handleNewAgentsOnly}
+					// Abandons the save: nothing was written, and the form is as typed.
+					onCancel={() => setPendingPublish(null)}
+				/>
 			)}
 		</>
 	);

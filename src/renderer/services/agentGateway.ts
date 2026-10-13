@@ -31,6 +31,7 @@ import {
 import { agentGatewaySupport, parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 import {
 	gatewayPointsAtTokenProxy,
+	OFF_TOKEN_PROXY_FIELDS,
 	resolveTokenProxyMode,
 	TOKEN_PROXY_NAME,
 	tokenProxyGatewayUrl,
@@ -43,13 +44,9 @@ import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import type { Session } from '../types';
 import { logger } from '../utils/logger';
 
-/**
- * What an agent's record holds once it is off the Maestro token proxy: no
- * mode, and no background requests target. Every writer that moves an agent's
- * gateway away from the proxy spreads this, so the two cannot drift apart.
- */
-export const OFF_TOKEN_PROXY_FIELDS: Pick<Session, 'tokenProxyMode' | 'backgroundRequests'> =
-	Object.freeze({ tokenProxyMode: undefined, backgroundRequests: undefined });
+// Defined in shared so the pure group-defaults publish clears the same fields.
+// Re-exported here, where every renderer writer already imports it from.
+export { OFF_TOKEN_PROXY_FIELDS };
 
 export type SetAgentGatewayResult =
 	| { ok: true; gatewayUrl: string | undefined }

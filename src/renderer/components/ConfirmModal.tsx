@@ -2,11 +2,22 @@ import React, { memo, useRef, useCallback } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { Modal, ModalFooter } from './ui/Modal';
+import { Modal, ModalFooter, MODAL_BUTTON_SECONDARY_CLASS } from './ui/Modal';
+
+/**
+ * A third outcome beside Cancel and the confirm button. It is drawn between
+ * them and takes the focus when the dialog opens, so it is what Enter chooses:
+ * the safe choice of a dialog whose confirm button is a bulk write. Like the
+ * confirm button, it closes the dialog after it runs.
+ */
+export interface ConfirmModalAlternative {
+	label: string;
+	onSelect: () => void;
+}
 
 interface ConfirmModalProps {
 	theme: Theme;
-	message: string;
+	message: React.ReactNode;
 	onConfirm: (() => void) | null;
 	onClose: () => void;
 	title?: string;
@@ -19,6 +30,9 @@ interface ConfirmModalProps {
 	width?: number;
 	/** Raise the dialog over a modal that sits above the default layer. */
 	zIndex?: number;
+	/** A third outcome, focused by default. See {@link ConfirmModalAlternative}. */
+	alternative?: ConfirmModalAlternative;
+	testId?: string;
 }
 
 export const ConfirmModal = memo(function ConfirmModal({
@@ -34,8 +48,11 @@ export const ConfirmModal = memo(function ConfirmModal({
 	children,
 	width = 450,
 	zIndex = 10000,
+	alternative,
+	testId,
 }: ConfirmModalProps) {
 	const confirmButtonRef = useRef<HTMLButtonElement>(null);
+	const alternativeButtonRef = useRef<HTMLButtonElement>(null);
 
 	const handleConfirm = useCallback(() => {
 		if (onConfirm) {
@@ -43,6 +60,11 @@ export const ConfirmModal = memo(function ConfirmModal({
 		}
 		onClose();
 	}, [onConfirm, onClose]);
+
+	const handleAlternative = useCallback(() => {
+		alternative?.onSelect();
+		onClose();
+	}, [alternative, onClose]);
 
 	const iconColor = destructive ? theme.colors.error : theme.colors.warning;
 
@@ -55,7 +77,8 @@ export const ConfirmModal = memo(function ConfirmModal({
 			headerIcon={headerIcon ?? <Trash2 className="w-4 h-4" style={{ color: iconColor }} />}
 			width={width}
 			zIndex={zIndex}
-			initialFocusRef={confirmButtonRef}
+			initialFocusRef={alternative ? alternativeButtonRef : confirmButtonRef}
+			testId={testId}
 			footer={
 				<ModalFooter
 					theme={theme}
@@ -64,6 +87,24 @@ export const ConfirmModal = memo(function ConfirmModal({
 					destructive={destructive}
 					confirmLabel={confirmLabel}
 					confirmButtonRef={confirmButtonRef}
+					between={
+						alternative && (
+							<button
+								ref={alternativeButtonRef}
+								type="button"
+								onClick={handleAlternative}
+								// Enter activates the button itself. Stopping it here keeps a
+								// handler under the dialog from acting on the same key.
+								onKeyDown={(e) => {
+									if (e.key === 'Enter') e.stopPropagation();
+								}}
+								className={MODAL_BUTTON_SECONDARY_CLASS}
+								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+							>
+								{alternative.label}
+							</button>
+						)
+					}
 				/>
 			}
 		>
