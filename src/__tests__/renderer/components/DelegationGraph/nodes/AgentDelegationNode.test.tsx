@@ -14,6 +14,7 @@ import {
 	AGENT_DELEGATION_NODE_MIN_WIDTH,
 	AgentDelegationNode,
 	agentDelegationNodeState,
+	removedAgentLabel,
 	type AgentDelegationNodeData,
 	type AgentDelegationNodeState,
 } from '../../../../../renderer/components/DelegationGraph/nodes/AgentDelegationNode';
@@ -72,6 +73,13 @@ function renderNode(options: RenderOptions = {}) {
 function rootOf(container: HTMLElement): HTMLElement {
 	return container.querySelector('[data-testid="agent-delegation-node"]') as HTMLElement;
 }
+
+// The node and the edge tooltip both name an agent that is gone, and both ask here.
+describe('removedAgentLabel', () => {
+	it('names a deleted agent by the first eight characters of its id', () => {
+		expect(removedAgentLabel('deleted-agent-id')).toBe('Removed agent deleted-');
+	});
+});
 
 describe('AgentDelegationNode', () => {
 	beforeEach(() => {

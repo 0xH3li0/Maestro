@@ -62,6 +62,14 @@ const BORDER_STYLE: Record<AgentDelegationNodeState, CSSProperties['borderStyle'
 };
 
 /**
+ * The name drawn for an agent that is gone. An agent can be deleted a render
+ * before the graph drops its node and its edges, and both still need a name.
+ */
+export function removedAgentLabel(sessionId: string): string {
+	return `Removed agent ${sessionId.slice(0, 8)}`;
+}
+
+/**
  * The state of one model node. `connectedIds` is `connectedAgentIds(model)`,
  * computed once for the graph and not once per node.
  */
@@ -137,7 +145,7 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 
 	// The agent can be deleted a render before the graph drops its node. Keep the
 	// node whole for that render: an edge with no handle to land on throws.
-	const name = agent?.name ?? `Removed agent ${sessionId.slice(0, 8)}`;
+	const name = agent?.name ?? removedAgentLabel(sessionId);
 	const provider = agent ? getAgentDisplayName(agent.toolType) : '';
 
 	const stateColor = isIsolated ? colors.warning : isSpill ? colors.border : colors.accent;

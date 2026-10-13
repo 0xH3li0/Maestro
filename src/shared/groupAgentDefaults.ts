@@ -35,6 +35,7 @@ import type { LocalModelEndpoint } from './local-models/endpoints';
 import { resolveRunOnLaunch, type RunOnTarget } from './local-models/run-on';
 import { OFF_TOKEN_PROXY_FIELDS, type TokenProxyMode } from './local-models/token-proxy';
 import type { TierTarget } from './modelTiers';
+import { PEER_GRANT_LABELS } from './peerAgents';
 import type { Group, GroupAgentDefaults, ToolType } from './types';
 
 /**
@@ -149,8 +150,8 @@ const GROUP_DEFAULT_FIELDS: Record<GroupDefaultKey, GroupDefaultField> = {
 	},
 	// Peers
 	peerAgents: { label: 'Peer Agents', publishable: true, write: 'list' },
-	groupPeerAccess: { label: 'Peers in my group', publishable: true },
-	worktreePeerAccess: { label: 'Worktree family', publishable: true },
+	groupPeerAccess: { label: PEER_GRANT_LABELS.group, publishable: true },
+	worktreePeerAccess: { label: PEER_GRANT_LABELS.worktree, publishable: true },
 	// SSH
 	sessionSshRemoteConfig: { label: 'SSH Remote', publishable: false },
 };

@@ -320,6 +320,16 @@ export interface ResolvedPeer extends PeerAccess {
 }
 
 /**
+ * What the Peers tab calls each derived grant. Anything that names a grant to
+ * the user reads it here, so a tooltip cannot point at a control the tab spells
+ * another way.
+ */
+export const PEER_GRANT_LABELS: Record<Exclude<ResolvedPeer['source'], 'explicit'>, string> = {
+	group: 'Peers in my group',
+	worktree: 'Worktree family',
+};
+
+/**
  * The fields of an agent that roster resolution reads. A minimal shape, so the
  * CLI can pass its own session records and the renderer its `Session`s.
  */

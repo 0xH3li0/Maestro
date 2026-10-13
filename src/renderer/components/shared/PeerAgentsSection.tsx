@@ -39,7 +39,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { GitBranch, Plus, Trash2, Users } from 'lucide-react';
 
-import { hasAnyPeerAccess } from '../../../shared/peerAgents';
+import { hasAnyPeerAccess, PEER_GRANT_LABELS } from '../../../shared/peerAgents';
 import { FormFieldLabel } from '../ui/FormFieldLabel';
 import { FormInput } from '../ui/FormInput';
 import { GhostIconButton } from '../ui/GhostIconButton';
@@ -268,7 +268,7 @@ export function PeerAgentsSection({
 				<PeerGrantRow
 					theme={theme}
 					icon={<Users className="w-3 h-3" />}
-					label="Peers in my group"
+					label={PEER_GRANT_LABELS.group}
 					hint={groupHint}
 					access={groupAccess}
 					onChange={onGroupAccessChange}
@@ -279,7 +279,7 @@ export function PeerAgentsSection({
 				<PeerGrantRow
 					theme={theme}
 					icon={<GitBranch className="w-3 h-3" />}
-					label="Worktree family"
+					label={PEER_GRANT_LABELS.worktree}
 					hint="The worktree parent, the sibling worktrees and this agent's own worktree children."
 					access={worktreeAccess}
 					onChange={onWorktreeAccessChange}
