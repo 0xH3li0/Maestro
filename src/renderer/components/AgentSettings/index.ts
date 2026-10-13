@@ -1,5 +1,7 @@
 export * from './agentSettingsTabs';
 export * from './AgentSettingsPanel';
+export * from './AgentProviderSelect';
+export * from './BrowseFolderButton';
 export * from './GeneralTab';
 export * from './ProviderTab';
 export * from './ModelsTab';

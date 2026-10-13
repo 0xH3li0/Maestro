@@ -117,6 +117,24 @@ describe('useAgentConfiguration', () => {
 			expect(result.current.customArgs).toBe('--extra');
 			expect(result.current.customEnvVars).toEqual({ KEY: 'val' });
 		});
+
+		it('applies initialValues for the SSH remote config', async () => {
+			const sshRemoteConfig = { enabled: true, remoteId: 'remote-1', workingDirOverride: '/srv' };
+			const { result } = renderHook(() =>
+				useAgentConfiguration({
+					enabled: true,
+					autoSelect: false,
+					loadSshRemotes: true,
+					initialValues: { sshRemoteConfig },
+				})
+			);
+
+			await waitFor(() => {
+				expect(result.current.isDetecting).toBe(false);
+			});
+
+			expect(result.current.sshRemoteConfig).toEqual(sshRemoteConfig);
+		});
 	});
 
 	describe('agent detection', () => {
@@ -355,6 +373,60 @@ describe('useAgentConfiguration', () => {
 			// A parked var belongs to the old provider as much as a live one does.
 			expect(result.current.customEnvVarsDisabled).toEqual({});
 			expect(result.current.hasCustomization).toBe(false);
+		});
+
+		it('keeps the env vars across a change when asked to', async () => {
+			const { result } = renderHook(() =>
+				useAgentConfiguration({ enabled: true, autoSelect: true })
+			);
+
+			await waitFor(() => {
+				expect(result.current.isDetecting).toBe(false);
+			});
+
+			act(() => {
+				result.current.setCustomPath('/custom');
+				result.current.setCustomArgs('--x');
+				result.current.setCustomEnvVars({ K: 'V' });
+				result.current.setCustomEnvVarsDisabled({ PARKED: 'P' });
+			});
+
+			act(() => {
+				result.current.handleAgentChange('codex', { keepEnvVars: true });
+			});
+
+			expect(result.current.selectedAgent).toBe('codex');
+			// The path and the args name one provider's binary; the vars do not.
+			expect(result.current.customPath).toBe('');
+			expect(result.current.customArgs).toBe('');
+			expect(result.current.customEnvVars).toEqual({ K: 'V' });
+			expect(result.current.customEnvVarsDisabled).toEqual({ PARKED: 'P' });
+		});
+
+		it('clears the selection on a change to null and loads nothing', async () => {
+			const { result } = renderHook(() =>
+				useAgentConfiguration({ enabled: true, autoSelect: true })
+			);
+
+			await waitFor(() => {
+				expect(result.current.isDetecting).toBe(false);
+			});
+
+			act(() => {
+				result.current.setConfigExpanded(true);
+			});
+			await waitFor(() => {
+				expect(mockGetConfig).toHaveBeenCalledWith('claude-code');
+			});
+			mockGetConfig.mockClear();
+
+			act(() => {
+				result.current.handleAgentChange(null);
+			});
+
+			expect(result.current.selectedAgent).toBeNull();
+			expect(result.current.agentConfig).toEqual({});
+			expect(mockGetConfig).not.toHaveBeenCalled();
 		});
 	});
 

@@ -87,4 +87,23 @@ describe('GeneralTab', () => {
 		expect(within(chip).getByText('build-box')).toBeInTheDocument();
 		expect(within(chip).queryByText('Local')).not.toBeInTheDocument();
 	});
+
+	it('draws no name field for a form that names no agent', () => {
+		const {
+			name: _name,
+			onNameChange: _onNameChange,
+			nameInputId: _nameInputId,
+			...unnamed
+		} = createProps();
+		render(<GeneralTab {...unnamed} lead={<div data-testid="lead-slot" />} />);
+
+		expect(screen.queryByText('Agent Name')).not.toBeInTheDocument();
+		expect(screen.queryByDisplayValue('Builder')).not.toBeInTheDocument();
+		// The rest of the tab is still there, with the lead slot where the name was.
+		expect(screen.getByTestId('edit-agent-runs-on').nextElementSibling).toBe(
+			screen.getByTestId('lead-slot')
+		);
+		expect(screen.getByTestId('working-dir-slot')).toBeInTheDocument();
+		expect(screen.getByText('Nudge Message')).toBeInTheDocument();
+	});
 });

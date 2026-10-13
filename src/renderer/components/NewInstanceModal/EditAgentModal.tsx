@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Info, Copy, Check, X, Folder } from 'lucide-react';
+import { Info, Copy, Check, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
@@ -37,6 +37,8 @@ import { RunOnField } from '../shared/RunOnField';
 import { TierTargetsField } from '../shared/TierTargetsField';
 import {
 	AGENT_FORM_TAB_IDS,
+	AgentProviderSelect,
+	BrowseFolderButton,
 	buildAgentSettingsTabs,
 	EnvironmentTab,
 	firstTabWithError,
@@ -44,6 +46,7 @@ import {
 	ModelsTab,
 	PeersTab,
 	ProviderTab,
+	sshFolderPickerUnavailableTitle,
 	SshTab,
 } from '../AgentSettings';
 import { AgentSystemOneControl } from './AgentSystemOneControl';
@@ -65,7 +68,6 @@ import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
 import { RemotePathStatus } from './RemotePathStatus';
 import type { EditAgentModalProps } from './types';
-import { SUPPORTED_AGENTS } from './types';
 import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
@@ -1031,21 +1033,14 @@ export function EditAgentModal({
 								monospace
 								heightClass="p-2"
 								addon={
-									<button
-										type="button"
-										onClick={handleSelectFolder}
+									<BrowseFolderButton
+										theme={theme}
+										onBrowse={handleSelectFolder}
 										disabled={isSshEnabled || !!workingDirBlocker}
-										className={`p-2 rounded border transition-colors ${isSshEnabled || workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
-										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 										title={
-											isSshEnabled
-												? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-												: 'Browse folders'
+											isSshEnabled ? sshFolderPickerUnavailableTitle(sshRemoteHost) : undefined
 										}
-										aria-label="Browse folders"
-									>
-										<Folder className="w-5 h-5" />
-									</button>
+									/>
 								}
 							/>
 						}
@@ -1087,30 +1082,11 @@ export function EditAgentModal({
 						idPrefix="edit-agent"
 						picker={
 							<>
-								{/* Agent Provider */}
-								<div>
-									<div
-										className="block text-xs font-bold opacity-70 uppercase mb-2"
-										style={{ color: theme.colors.textMain }}
-									>
-										Agent Provider
-									</div>
-									<select
-										value={selectedToolType}
-										onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
-										className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-										style={{
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-											backgroundColor: theme.colors.bgMain,
-										}}
-									>
-										{SUPPORTED_AGENTS.map((agentId) => (
-											<option key={agentId} value={agentId}>
-												{getAgentDisplayName(agentId)}
-											</option>
-										))}
-									</select>
+								<AgentProviderSelect
+									theme={theme}
+									value={selectedToolType}
+									onChange={(providerId) => setSelectedToolType(providerId as ToolType)}
+								>
 									{providerChanged && (
 										<div
 											className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
@@ -1128,7 +1104,7 @@ export function EditAgentModal({
 											</span>
 										</div>
 									)}
-								</div>
+								</AgentProviderSelect>
 
 								{/* Provider settings (path, args, agent-specific options). Its env
 								    vars live on the Environment tab. Per-session values are saved

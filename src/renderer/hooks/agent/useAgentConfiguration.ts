@@ -55,7 +55,18 @@ export interface UseAgentConfigurationOptions {
 		maestroPMode?: 'interactive' | 'dynamic';
 		/** Optional override path to the maestro-p binary. */
 		maestroPPath?: string;
+		/** Where the agent runs. Read with `loadSshRemotes`. */
+		sshRemoteConfig?: AgentSshRemoteConfig;
 	};
+}
+
+export interface AgentChangeOptions {
+	/**
+	 * Keep the env vars across the change. For a form whose vars are not tied to
+	 * one provider (Group Settings): the reset is right for a form that holds one
+	 * environment per provider, and wrong for one that holds a single set.
+	 */
+	keepEnvVars?: boolean;
 }
 
 export interface UseAgentConfigurationReturn {
@@ -67,7 +78,8 @@ export interface UseAgentConfigurationReturn {
 	// Selection
 	selectedAgent: string | null;
 	setSelectedAgent: (agentId: string | null) => void;
-	handleAgentChange: (agentId: string) => void;
+	/** `null` clears the selection, for a form where the provider is optional. */
+	handleAgentChange: (agentId: string | null, options?: AgentChangeOptions) => void;
 
 	// Config expansion: the provider config panel is showing, so the selected
 	// agent's config and models are loaded (and reloaded on a provider change).
@@ -191,7 +203,7 @@ export function useAgentConfiguration(
 	// SSH
 	const [sshRemotes, setSshRemotes] = useState<SshRemoteConfig[]>([]);
 	const [sshRemoteConfig, setSshRemoteConfig] = useState<AgentSshRemoteConfig | undefined>(
-		undefined
+		initialValues?.sshRemoteConfig
 	);
 
 	// Reset all state
@@ -334,15 +346,17 @@ export function useAgentConfiguration(
 
 	// Handle agent selection change - resets customizations and agent-scoped state
 	const handleAgentChange = useCallback(
-		(agentId: string) => {
+		(agentId: string | null, changeOptions?: AgentChangeOptions) => {
 			// Invalidate any in-flight loadAgentConfig requests
 			latestLoadRequestRef.current++;
 
 			setSelectedAgent(agentId);
 			setCustomPath('');
 			setCustomArgs('');
-			setCustomEnvVars({});
-			setCustomEnvVarsDisabled({});
+			if (!changeOptions?.keepEnvVars) {
+				setCustomEnvVars({});
+				setCustomEnvVarsDisabled({});
+			}
 			setEnableMaestroP(false);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -352,7 +366,7 @@ export function useAgentConfiguration(
 			setLoadingModels(false);
 			setDynamicOptions({});
 			setLoadingDynamicOptions(false);
-			if (isConfigExpanded) {
+			if (isConfigExpanded && agentId) {
 				loadAgentConfig(agentId);
 			}
 		},
