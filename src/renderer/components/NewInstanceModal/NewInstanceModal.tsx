@@ -3,6 +3,8 @@ import { Folder, AlertTriangle, Terminal } from 'lucide-react';
 import type {
 	AdditionalDirectory,
 	AgentConfig,
+	Group,
+	GroupAgentDefaults,
 	PeerAccess,
 	PeerAgent,
 	ToolType,
@@ -13,6 +15,13 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { normalizePeerAgents } from '../../../shared/peerAgents';
+import {
+	groupDefaultLabel,
+	groupDefaultsCreateExtras,
+	resolveGroupDefaultsSeed,
+	type GroupDefaultKey,
+	type GroupDefaultsSeed,
+} from '../../../shared/groupAgentDefaults';
 import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
@@ -45,6 +54,8 @@ import { RunOnField } from '../shared/RunOnField';
 import { TOKEN_PROXY_NAME } from '../../../shared/local-models/token-proxy';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { getModalActions } from '../../stores/modalStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import type { AgentDebugInfo, AgentSeed, NewInstanceModalProps } from './types';
 import { SUPPORTED_AGENTS } from './types';
@@ -52,6 +63,8 @@ import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidati
 import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
+import { GroupSeedBanner } from './GroupSeedBanner';
+import { sshRemoteConfigToForm } from '../GroupSettingsModal/groupDefaultsForm';
 import {
 	filterToAvailableProviders,
 	providerLocationLabel,
@@ -69,6 +82,12 @@ import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
  * `AgentSettings/`). Every piece of state stays here: the panels only draw it.
  * Only the active panel is rendered, so Tab never walks into a hidden one. It
  * always opens on General, where the name is the first thing to type.
+ *
+ * The form can open pre-filled from one of two seeds: an agent being duplicated
+ * (`sourceSession`), or the defaults of the group the agent is created in
+ * (`presetGroupId`). A group's defaults are copy-at-create: they are read once,
+ * as the modal opens, and the banner above the tabs says where the values came
+ * from.
  */
 export function NewInstanceModal({
 	isOpen,
@@ -159,12 +178,20 @@ export function NewInstanceModal({
 	// opens from the source session (when duplicating) or the caller's preset.
 	const [selectedGroupId, setSelectedGroupId] = useState<string>('');
 	const groups = useSessionStore((s) => s.groups);
+	// The group whose defaults filled this form, with the seed as it was resolved
+	// when the modal opened. `null` for a blank form and for a duplicate.
+	const [groupSeed, setGroupSeed] = useState<(GroupDefaultsSeed & { group: Group }) | null>(null);
+	const seededFromGroup = groupSeed?.group ?? null;
+	const localModelEndpoints = useSettingsStore((s) => s.localModelEndpoints);
 	// The Peers tab counts the group selected here, so choosing a group on General
 	// is what enables its group grant.
 	const peerGroupId = selectedGroupId || undefined;
 	const peerFleet = usePeerFleet(peerGroupId);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
+	// The SSH remote a group seed just switched on. The re-detection that follows
+	// is the seed's own doing, and is the one pass that keeps the form.
+	const seedSshRemoteIdRef = useRef<string | null>(null);
 
 	// The one piece of form state the tabs own. No `rememberKey`: create always
 	// starts on General.
@@ -251,12 +278,32 @@ export function NewInstanceModal({
 	});
 
 	// Define handlers first before they're used in effects
-	const loadAgents = async (source?: AgentSeed, sshRemoteId?: string) => {
+	const loadAgents = async (
+		source?: AgentSeed,
+		sshRemoteId?: string,
+		options: {
+			/**
+			 * What kind of seed `source` is. A `copy` (an agent being duplicated) is
+			 * the whole truth: a provider setting it lacks is cleared in the form. A
+			 * group's `defaults` are sparse: an absent one is no opinion, and the
+			 * form keeps what it loaded for the provider.
+			 */
+			seedKind?: 'copy' | 'defaults';
+			/**
+			 * Refresh which providers the host can run and nothing else. Set for the
+			 * re-detection a seed's own SSH remote causes, which must not replace
+			 * the values the seed just put in the form.
+			 */
+			keepForm?: boolean;
+		} = {}
+	) => {
 		setLoading(true);
 		setSshConnectionError(null);
+		const sparse = options.seedKind === 'defaults';
 		// The provider the seed's provider settings belong to. A seed with none
-		// (a group default that names no provider) fills only the fields the form
-		// does not keep per provider.
+		// (a group default that names no provider) fills the fields the form does
+		// not keep per provider, and its env vars, resilience flags and SSH remote
+		// for every provider, so they hold whichever one the user picks.
 		const seedProvider = source?.toolType;
 		try {
 			const detectedAgents = await window.maestro.agents.detect(sshRemoteId);
@@ -349,10 +396,12 @@ export function NewInstanceModal({
 				configs[seedProvider] = sourceConfig;
 			}
 
-			setAgentConfigs(configs);
-			setCustomAgentPaths(paths);
-			setCustomAgentArgs(args);
-			setCustomAgentEnvVars(envVars);
+			if (!options.keepForm) {
+				setAgentConfigs(configs);
+				setCustomAgentPaths(paths);
+				setCustomAgentArgs(args);
+				setCustomAgentEnvVars(envVars);
+			}
 
 			// Select first available non-hidden agent (or source agent if duplicating)
 			// (hidden agents like 'terminal' should never be auto-selected)
@@ -377,7 +426,9 @@ export function NewInstanceModal({
 					(source.sessionSshRemoteConfig?.enabled &&
 						source.sessionSshRemoteConfig.workingDirOverride) ||
 					(source.cwd ?? source.projectRoot);
-				if (seedWorkingDir !== undefined) {
+				// A directory the caller named ("New Agent Here") outranks a group's
+				// default one: it is the more specific of the two.
+				if (seedWorkingDir !== undefined && !(sparse && presetWorkingDir)) {
 					handleWorkingDirChange(seedWorkingDir);
 				}
 				// Clone the grants, don't alias them - the rows are edited in place and
@@ -398,20 +449,76 @@ export function NewInstanceModal({
 				const sourceRunOn = parseRunOnTarget(source.runOn);
 				setRunOn(sourceRunOn.ok ? sourceRunOn.target : { type: 'provider' });
 
+				if (sparse) {
+					// A group's env vars, resilience flags and SSH remote are not tied to
+					// a provider, and the form keeps all three per provider. So they are
+					// filled for every provider: a default that names no provider still
+					// applies, and one that names a provider survives the user picking
+					// another.
+					const everyProvider = detectedAgents.map((a: AgentConfig) => a.id);
+					const forEveryProvider = <Value,>(value: Value): Record<string, Value> =>
+						Object.fromEntries(everyProvider.map((id: string) => [id, value]));
+					const seedEnvVars = source.customEnvVars;
+					if (seedEnvVars && Object.keys(seedEnvVars).length > 0) {
+						// Over the provider's own variables, key by key: the group has no
+						// opinion on a variable it does not name.
+						setCustomAgentEnvVars((prev) => ({
+							...prev,
+							...Object.fromEntries(
+								everyProvider.map((id: string) => [id, { ...prev[id], ...seedEnvVars }])
+							),
+						}));
+					}
+					if (source.retryOnAvailabilityErrors !== undefined) {
+						setRetryAvailabilityByAgent(
+							forEveryProvider(resilienceEnabled(source.retryOnAvailabilityErrors))
+						);
+					}
+					if (source.retryOnTokenExhaustion !== undefined) {
+						setRetryTokenByAgent(
+							forEveryProvider(resilienceEnabled(source.retryOnTokenExhaustion))
+						);
+					}
+					// Under `_pending_` too, the key the SSH tab writes: the config then
+					// follows the provider selection the way one chosen by hand does.
+					const seedSsh = sshRemoteConfigToForm(source.sessionSshRemoteConfig);
+					if (seedSsh) {
+						setAgentSshRemoteConfigs((prev) => ({
+							...prev,
+							_pending_: seedSsh,
+							...(seedProvider ? { [seedProvider]: seedSsh } : {}),
+						}));
+						// Turning the remote on makes the form detect providers on it.
+						// That pass must not undo this one.
+						if (seedSsh.enabled && seedSsh.remoteId) {
+							seedSshRemoteIdRef.current = seedSsh.remoteId;
+						}
+					}
+				}
+
 				if (seedProvider) {
-					// Pre-fill custom agent configuration, kept per provider
-					setCustomAgentPaths((prev) => ({
-						...prev,
-						[seedProvider]: source.customPath || '',
-					}));
-					setCustomAgentArgs((prev) => ({
-						...prev,
-						[seedProvider]: source.customArgs || '',
-					}));
-					setCustomAgentEnvVars((prev) => ({
-						...prev,
-						[seedProvider]: source.customEnvVars || {},
-					}));
+					// Pre-fill custom agent configuration, kept per provider. A copy
+					// takes each value from its source, so an absent one clears the
+					// form's. A group default with no path or args has no opinion, and
+					// the form keeps the provider's own.
+					if (!sparse || source.customPath !== undefined) {
+						setCustomAgentPaths((prev) => ({
+							...prev,
+							[seedProvider]: source.customPath || '',
+						}));
+					}
+					if (!sparse || source.customArgs !== undefined) {
+						setCustomAgentArgs((prev) => ({
+							...prev,
+							[seedProvider]: source.customArgs || '',
+						}));
+					}
+					if (!sparse) {
+						setCustomAgentEnvVars((prev) => ({
+							...prev,
+							[seedProvider]: source.customEnvVars || {},
+						}));
+					}
 					// Mirror the source agent's EXPLICIT Adaptive Mode choice so a duplicate
 					// inherits it. When the source never configured a token source, leave the
 					// entry unset so the duplicate falls through to the same default path as a
@@ -435,14 +542,16 @@ export function NewInstanceModal({
 						[seedProvider]: source.maestroPPath || '',
 					}));
 					// Mirror the source agent's Agent Resilience toggles (default ON).
-					setRetryAvailabilityByAgent((prev) => ({
-						...prev,
-						[seedProvider]: resilienceEnabled(source.retryOnAvailabilityErrors),
-					}));
-					setRetryTokenByAgent((prev) => ({
-						...prev,
-						[seedProvider]: resilienceEnabled(source.retryOnTokenExhaustion),
-					}));
+					if (!sparse) {
+						setRetryAvailabilityByAgent((prev) => ({
+							...prev,
+							[seedProvider]: resilienceEnabled(source.retryOnAvailabilityErrors),
+						}));
+						setRetryTokenByAgent((prev) => ({
+							...prev,
+							[seedProvider]: resilienceEnabled(source.retryOnTokenExhaustion),
+						}));
+					}
 					// Duplicating an agent carries its automatic-reset preference too, so a
 					// copy does not silently start spending credits the original never did
 					// (and vice versa).
@@ -463,7 +572,11 @@ export function NewInstanceModal({
 					}));
 
 					// Pre-fill SSH remote configuration if source session has it
-					if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
+					if (
+						!sparse &&
+						source.sessionSshRemoteConfig?.enabled &&
+						source.sessionSshRemoteConfig?.remoteId
+					) {
 						setAgentSshRemoteConfigs((prev) => ({
 							...prev,
 							[seedProvider]: {
@@ -480,6 +593,32 @@ export function NewInstanceModal({
 		} finally {
 			setLoading(false);
 		}
+	};
+
+	// Fill the form from a group's defaults. A fresh form plus the group's
+	// values: `loadAgents` runs with the seed as it does with a duplicate's source.
+	const seedFromGroup = async (group: Group, defaults: GroupAgentDefaults) => {
+		// Whether the defaults' SSH remote still exists decides the seed, so the
+		// remotes are read before anything is filled. A read that fails judges no
+		// remote gone: an unknown remote then fails the launch by name, where a
+		// remote wrongly dropped would run the agent on this machine.
+		let sshRemoteIds: string[] | undefined;
+		if (defaults.sessionSshRemoteConfig?.enabled) {
+			try {
+				const result = await window.maestro.sshRemote.getConfigs();
+				if (result.success && result.configs) {
+					sshRemoteIds = result.configs.map((remote: SshRemoteConfig) => remote.id);
+				}
+			} catch (error) {
+				logger.error('Failed to load SSH remote configs for a group seed:', undefined, error);
+			}
+		}
+		const resolved = resolveGroupDefaultsSeed(defaults, {
+			sshRemoteIds,
+			endpoints: useSettingsStore.getState().localModelEndpoints ?? [],
+		});
+		setGroupSeed({ ...resolved, group });
+		await loadAgents(resolved.seed, undefined, { seedKind: 'defaults' });
 	};
 
 	const handleSelectFolder = React.useCallback(async () => {
@@ -633,6 +772,34 @@ export function NewInstanceModal({
 	// What the Auto model choice is judged against besides the provider: a new
 	// agent has no tier targets of its own yet, so only where it runs.
 	const autoModelFor = useMemo(() => ({ runOn: effectiveRunOn }), [effectiveRunOn]);
+
+	// The group defaults this form has no control for (tiers, switched-off
+	// variables, the token proxy, System One). They are stamped onto the agent
+	// as it is created, judged against the form as it stands NOW: a provider, an
+	// SSH remote or a gateway the user changed since the seed decides what the
+	// new agent can take. The banner names them from the same value.
+	const seedExtras = useMemo(() => {
+		if (!groupSeed || !selectedAgent) return null;
+		return groupDefaultsCreateExtras(
+			groupSeed.seed,
+			{
+				toolType: selectedAgent as ToolType,
+				customEnvVars: customAgentEnvVars[selectedAgent],
+				gatewayUrl: gatewayUrlByAgent[selectedAgent]?.trim() || undefined,
+				sessionSshRemoteConfig: effectiveSshRemoteId
+					? { enabled: true, remoteId: effectiveSshRemoteId }
+					: undefined,
+			},
+			{ endpoints: localModelEndpoints ?? [] }
+		);
+	}, [
+		groupSeed,
+		selectedAgent,
+		customAgentEnvVars,
+		gatewayUrlByAgent,
+		effectiveSshRemoteId,
+		localModelEndpoints,
+	]);
 
 	// One test turn on the target the picker shows, launched with the form as it
 	// stands. No agent exists yet, so every launch setting comes from the form.
@@ -808,7 +975,10 @@ export function NewInstanceModal({
 				peerAgents: normalizePeerAgents(peerAgents),
 				groupPeerAccess,
 				worktreePeerAccess,
-			}
+			},
+			// The group defaults the form has no control for. Absent for a form that
+			// was not seeded from a group, and for a seed that holds none.
+			seedExtras && Object.keys(seedExtras.extras).length > 0 ? seedExtras.extras : undefined
 		);
 		onClose();
 
@@ -893,6 +1063,7 @@ export function NewInstanceModal({
 		codexTransportByAgent,
 		gatewayUrlByAgent,
 		effectiveRunOn,
+		seedExtras,
 		setActiveTab,
 	]);
 
@@ -1098,15 +1269,25 @@ export function NewInstanceModal({
 	// user has typed (issue #827).
 	useEffect(() => {
 		if (isOpen) {
-			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
-			// This prevents the race condition where loadAgents would overwrite pre-filled values
-			loadAgents(sourceSession);
-			// Keep all agents collapsed by default, or expand when duplicating to show custom config
-			if (sourceSession) {
-				setExpandedAgent(sourceSession.toolType);
+			// A group's defaults seed the form when the agent is created in that
+			// group and is not a duplicate (a duplicate is its source's copy). Read
+			// from the store here, once: the defaults are copy-at-create, so a later
+			// edit to the group must not refill a form the user is typing in.
+			const seedGroup =
+				!sourceSession && presetGroupId
+					? useSessionStore.getState().groups.find((g) => g.id === presetGroupId)
+					: undefined;
+			if (seedGroup?.defaults) {
+				void seedFromGroup(seedGroup, seedGroup.defaults);
 			} else {
-				setExpandedAgent(null);
+				setGroupSeed(null);
+				// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
+				// This prevents the race condition where loadAgents would overwrite pre-filled values
+				loadAgents(sourceSession);
 			}
+			// Keep all agents collapsed by default, or expand the seed's provider
+			// (a duplicate's, or a group default's) to show its custom config.
+			setExpandedAgent(sourceSession?.toolType ?? seedGroup?.defaults?.toolType ?? null);
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
 			// A fresh form: General first, no refused attempt, no gateway error.
@@ -1114,7 +1295,9 @@ export function NewInstanceModal({
 			setCreateAttempted(false);
 			setGatewayUrlError(undefined);
 			// Seed group selection: duplicate inherits source's group; otherwise
-			// honor any presetGroupId from the caller.
+			// honor any presetGroupId from the caller. Choosing another group in the
+			// picker afterwards moves the new agent and does NOT reseed the form:
+			// a reseed would replace values the user has typed since it opened.
 			setSelectedGroupId(sourceSession?.groupId ?? presetGroupId ?? '');
 			// Seed the working directory from the caller (e.g. "New Agent Here" on a
 			// folder in the Files panel). Skipped when duplicating - loadAgents fills
@@ -1202,8 +1385,15 @@ export function NewInstanceModal({
 
 		lastSshRemoteIdRef.current = currentSshRemoteId;
 
+		// A group seed that switched this remote on caused this pass itself. It
+		// only needs to learn which providers the remote can run: reloading the
+		// provider settings would replace the env vars, path and model the seed
+		// put in the form a moment ago.
+		const keepForm = !!currentSshRemoteId && seedSshRemoteIdRef.current === currentSshRemoteId;
+		seedSshRemoteIdRef.current = null;
+
 		// Re-run agent detection with the new SSH remote ID
-		loadAgents(undefined, currentSshRemoteId ?? undefined);
+		loadAgents(undefined, currentSshRemoteId ?? undefined, { keepForm });
 	}, [isOpen, currentSshRemoteId]);
 
 	if (!isOpen) return null;
@@ -1230,6 +1420,24 @@ export function NewInstanceModal({
 				/>
 			}
 		>
+			{seededFromGroup && groupSeed && (
+				<GroupSeedBanner
+					theme={theme}
+					group={seededFromGroup}
+					sshRemoteMissing={groupSeed.sshRemoteMissing}
+					appliedOnCreate={(Object.keys(seedExtras?.extras ?? {}) as GroupDefaultKey[]).map(
+						groupDefaultLabel
+					)}
+					skipped={[...groupSeed.skipped, ...(seedExtras?.skipped ?? [])]}
+					onOpenGroupSettings={() => {
+						// One modal at a time: Group Settings takes the window, and this
+						// form is closed without creating an agent.
+						onClose();
+						getModalActions().openGroupSettings(seededFromGroup.id);
+					}}
+					className="mx-6 mt-4"
+				/>
+			)}
 			<ModalTabStrip
 				theme={theme}
 				tabs={tabs}

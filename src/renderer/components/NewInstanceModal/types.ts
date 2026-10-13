@@ -5,6 +5,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargetAgent, TierTargets } from '../../../shared/modelTiers';
 import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 
 // Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -45,10 +46,12 @@ export interface SessionSshRemoteConfig {
  * group's defaults (`GroupAgentDefaults`) both satisfy it, so the form has one
  * pre-fill path for both.
  *
- * A seed with no `toolType` selects no provider and fills none of the provider
- * settings, which the form keeps per provider. A seed with no `name` leaves the
- * name alone. A seed gives its working directory as `cwd` (an agent) or
- * `projectRoot` (a group default, which has no `cwd`).
+ * A seed with no `toolType` selects no provider and fills none of the settings
+ * written for one provider's binary or API. A group default's env vars,
+ * resilience flags and SSH remote are not among those: `loadAgents` fills them
+ * for every provider. A seed with no `name` leaves the name alone. A seed gives
+ * its working directory as `cwd` (an agent) or `projectRoot` (a group default,
+ * which has no `cwd`).
  */
 export type AgentSeed = Partial<
 	Pick<
@@ -116,7 +119,9 @@ export interface NewInstanceModalProps {
 		/** Run on target, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
-		peerGrants?: PeerGrants
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras
 	) => void;
 	theme: Theme;
 	existingSessions: Session[];

@@ -42,11 +42,17 @@ vi.mock('../../../renderer/utils/sessionValidation', () => ({
 	validateNewSession: vi.fn(() => ({ valid: true, error: null })),
 }));
 
+// The token proxy half of a group seed has its own tests. Here only the call.
+vi.mock('../../../renderer/services/groupDefaultsPublish', () => ({
+	applySeededTokenProxy: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
 
 import { useSessionCrud } from '../../../renderer/hooks/session/useSessionCrud';
+import { applySeededTokenProxy } from '../../../renderer/services/groupDefaultsPublish';
 import type { UseSessionCrudDeps } from '../../../renderer/hooks/session/useSessionCrud';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -674,6 +680,66 @@ describe('useSessionCrud', () => {
 				expect(session.groupPeerAccess).toBeUndefined();
 				expect(session.worktreePeerAccess).toBeUndefined();
 			});
+		});
+	});
+
+	// ========================================================================
+	// createNewSession: the group defaults the New Agent form has no control for
+	// ========================================================================
+	describe('createNewSession with group seed extras', () => {
+		const createWith = async (seedExtras: unknown) => {
+			vi.mocked(applySeededTokenProxy).mockClear();
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// seedExtras is the 26th positional argument.
+			const args: unknown[] = ['claude-code', '/test/project', 'Seeded Session'];
+			args[25] = seedExtras;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+			return useSessionStore.getState().sessions[0];
+		};
+
+		it('stamps the tiers, the switched-off variables and the System One opt-out', async () => {
+			const tierTargets = { low: { type: 'provider-model', model: 'haiku' } };
+			const session = await createWith({
+				tierTargets,
+				customEnvVarsDisabled: { DEBUG: '1' },
+				systemOneOptOut: true,
+			});
+
+			expect(session.tierTargets).toEqual(tierTargets);
+			expect(session.customEnvVarsDisabled).toEqual({ DEBUG: '1' });
+			expect(session.systemOneOptOut).toBe(true);
+			// No proxy mode in the seed: the proxy writers are not called.
+			expect(applySeededTokenProxy).not.toHaveBeenCalled();
+		});
+
+		it('hands the token proxy mode to its writer and never stamps it', async () => {
+			const seedExtras = {
+				tokenProxyMode: 'compress',
+				backgroundRequests: {
+					target: { type: 'source', endpointId: 'ep-cloud', model: 'qwen3-coder' },
+				},
+			};
+			const session = await createWith(seedExtras);
+
+			// The mode alone does nothing on a record: the writer sets the gateway.
+			expect(session.tokenProxyMode).toBeUndefined();
+			expect(session.backgroundRequests).toBeUndefined();
+			expect(applySeededTokenProxy).toHaveBeenCalledWith(session.id, seedExtras);
+		});
+
+		// Every caller but a group-seeded form passes 25 arguments.
+		it('creates a plain agent when the argument is absent', async () => {
+			const session = await createWith(undefined);
+
+			expect(session.tierTargets).toBeUndefined();
+			expect(session.customEnvVarsDisabled).toBeUndefined();
+			expect(session.systemOneOptOut).toBeUndefined();
+			expect(applySeededTokenProxy).not.toHaveBeenCalled();
 		});
 	});
 

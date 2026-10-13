@@ -7,9 +7,11 @@ import {
 	applyGroupDefaultsToSession,
 	diffGroupDefaults,
 	directGroupMembers,
+	groupDefaultsCreateExtras,
 	groupDefaultsPublishProvider,
 	PUBLISHABLE_KEYS,
 	publishableChangesFor,
+	resolveGroupDefaultsSeed,
 	summarizeGroupDefaultsDiff,
 	UNPUBLISHABLE_KEYS,
 	withGroupDefaults,
@@ -640,5 +642,220 @@ describe('applyGroupDefaultsToSession', () => {
 
 		expect(result.next.tierTargets).toEqual({ high: { type: 'provider-model', model: 'opus' } });
 		expect(result.skipped.map((skip) => skip.label)).toEqual(['Tier: low']);
+	});
+});
+
+describe('resolveGroupDefaultsSeed', () => {
+	it('hands back defaults a new agent can use as they are, without mutating them', () => {
+		const defaults: GroupAgentDefaults = {
+			toolType: 'claude-code',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' },
+			sessionSshRemoteConfig: SSH,
+			runOn: CLOUD_TARGET,
+		};
+		const result = resolveGroupDefaultsSeed(defaults, {
+			sshRemoteIds: ['remote-1'],
+			endpoints: [OLLAMA, CLOUD],
+		});
+
+		expect(result).toEqual({ seed: defaults, sshRemoteMissing: false, skipped: [] });
+		expect(result.seed).not.toBe(defaults);
+	});
+
+	it('runs the seed locally when its SSH remote no longer exists, and says so', () => {
+		const defaults: GroupAgentDefaults = {
+			nudgeMessage: 'Be brief.',
+			sessionSshRemoteConfig: { ...SSH, workingDirOverride: '~/git/app', syncHistory: true },
+		};
+		const result = resolveGroupDefaultsSeed(defaults, { sshRemoteIds: ['remote-2'] });
+
+		expect(result.sshRemoteMissing).toBe(true);
+		expect(result.seed).toEqual({ nudgeMessage: 'Be brief.' });
+		// The stored defaults are the group's, and are left as they were.
+		expect(defaults.sessionSshRemoteConfig?.remoteId).toBe('remote-1');
+	});
+
+	it('keeps the mirror flag of a seed whose remote is gone', () => {
+		const result = resolveGroupDefaultsSeed(
+			{ sessionSshRemoteConfig: { ...SSH, shareHistoryToProjectDir: true } },
+			{ sshRemoteIds: [] }
+		);
+		expect(result.seed.sessionSshRemoteConfig).toEqual({
+			enabled: false,
+			remoteId: null,
+			shareHistoryToProjectDir: true,
+		});
+	});
+
+	it('judges no remote gone when the remotes are not known', () => {
+		// An unknown remote fails the launch by name. A remote wrongly dropped
+		// would run the agent on this machine without a word.
+		const result = resolveGroupDefaultsSeed({ sessionSshRemoteConfig: SSH });
+		expect(result.sshRemoteMissing).toBe(false);
+		expect(result.seed.sessionSshRemoteConfig).toEqual(SSH);
+	});
+
+	it('does not call a remote missing for a seed that names none', () => {
+		const result = resolveGroupDefaultsSeed(
+			{
+				sessionSshRemoteConfig: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
+			},
+			{ sshRemoteIds: [] }
+		);
+		expect(result.sshRemoteMissing).toBe(false);
+	});
+
+	it("leaves out a Run on target the seed's own SSH remote cannot reach, with the reason", () => {
+		const result = resolveGroupDefaultsSeed(
+			{ toolType: 'claude-code', sessionSshRemoteConfig: SSH, runOn: LOCAL_TARGET },
+			{ sshRemoteIds: ['remote-1'], endpoints: [OLLAMA, CLOUD] }
+		);
+
+		expect(result.seed).not.toHaveProperty('runOn');
+		expect(result.skipped).toHaveLength(1);
+		expect(result.skipped[0].label).toBe('Run On');
+		expect(result.skipped[0].reason).toMatch(/SSH remote/);
+	});
+
+	it('keeps a loopback Run on target when the seed runs locally', () => {
+		const local = resolveGroupDefaultsSeed(
+			{ toolType: 'claude-code', runOn: LOCAL_TARGET },
+			{ endpoints: [OLLAMA] }
+		);
+		expect(local.seed.runOn).toEqual(LOCAL_TARGET);
+
+		// A remote that is gone is decided first: the seed runs here, where the source is.
+		const gone = resolveGroupDefaultsSeed(
+			{ toolType: 'claude-code', sessionSshRemoteConfig: SSH, runOn: LOCAL_TARGET },
+			{ sshRemoteIds: [], endpoints: [OLLAMA] }
+		);
+		expect(gone.sshRemoteMissing).toBe(true);
+		expect(gone.seed.runOn).toEqual(LOCAL_TARGET);
+		expect(gone.skipped).toEqual([]);
+	});
+});
+
+describe('groupDefaultsCreateExtras', () => {
+	const seed: GroupAgentDefaults = {
+		toolType: 'claude-code',
+		tierTargets: { low: { type: 'provider-model', model: 'haiku' } },
+		tokenProxyMode: 'compress',
+		backgroundRequests: { target: CLOUD_TARGET },
+		systemOneOptOut: true,
+		customEnvVarsDisabled: { DEBUG: '1' },
+		// Form fields: never an extra.
+		nudgeMessage: 'Be brief.',
+		customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' },
+	};
+
+	it('returns exactly the defaults the create form has no control for, in form order', () => {
+		const { extras, skipped } = groupDefaultsCreateExtras(seed, { toolType: 'claude-code' });
+
+		expect(extras).toEqual({
+			tierTargets: seed.tierTargets,
+			backgroundRequests: seed.backgroundRequests,
+			systemOneOptOut: true,
+			tokenProxyMode: 'compress',
+			customEnvVarsDisabled: { DEBUG: '1' },
+		});
+		expect(Object.keys(extras)).toEqual([
+			'tierTargets',
+			'backgroundRequests',
+			'systemOneOptOut',
+			'tokenProxyMode',
+			'customEnvVarsDisabled',
+		]);
+		expect(skipped).toEqual([]);
+	});
+
+	it('is empty for a seed that holds none of them', () => {
+		expect(
+			groupDefaultsCreateExtras(
+				{ toolType: 'claude-code', nudgeMessage: 'Be brief.' },
+				{ toolType: 'claude-code' }
+			)
+		).toEqual({ extras: {}, skipped: [] });
+	});
+
+	it('gives the provider-bound extras only to an agent on the seed provider', () => {
+		const { extras, skipped } = groupDefaultsCreateExtras(seed, { toolType: 'codex' });
+
+		// What is not written for one provider still goes.
+		expect(extras).toEqual({ systemOneOptOut: true, customEnvVarsDisabled: { DEBUG: '1' } });
+		expect(skipped).toEqual([]);
+	});
+
+	it('gives a seed with no provider none of the provider-bound extras', () => {
+		const { toolType: _provider, ...noProvider } = seed;
+		const { extras } = groupDefaultsCreateExtras(noProvider, { toolType: 'claude-code' });
+		expect(extras).toEqual({ systemOneOptOut: true, customEnvVarsDisabled: { DEBUG: '1' } });
+	});
+
+	it("leaves out a tier target the agent's SSH remote cannot reach, and keeps the others", () => {
+		const { extras, skipped } = groupDefaultsCreateExtras(
+			{
+				toolType: 'claude-code',
+				tierTargets: { low: LOCAL_TARGET, high: { type: 'provider-model', model: 'opus' } },
+			},
+			{ toolType: 'claude-code', sessionSshRemoteConfig: SSH },
+			{ endpoints: [OLLAMA] }
+		);
+
+		expect(extras.tierTargets).toEqual({ high: { type: 'provider-model', model: 'opus' } });
+		expect(skipped.map((skip) => skip.label)).toEqual(['Tier: low']);
+	});
+
+	it('stamps no tier map at all when every tier is unreachable', () => {
+		const { extras } = groupDefaultsCreateExtras(
+			{ toolType: 'claude-code', tierTargets: { low: LOCAL_TARGET } },
+			{ toolType: 'claude-code', sessionSshRemoteConfig: SSH },
+			{ endpoints: [OLLAMA] }
+		);
+		expect(extras).not.toHaveProperty('tierTargets');
+	});
+
+	it('judges a tier against the form as it stands: the same seed, a local agent', () => {
+		const { extras, skipped } = groupDefaultsCreateExtras(
+			{ toolType: 'claude-code', tierTargets: { low: LOCAL_TARGET } },
+			{ toolType: 'claude-code' },
+			{ endpoints: [OLLAMA] }
+		);
+		expect(extras.tierTargets).toEqual({ low: LOCAL_TARGET });
+		expect(skipped).toEqual([]);
+	});
+
+	it('keeps the agent off the proxy when the form sets a gateway of its own', () => {
+		const { extras, skipped } = groupDefaultsCreateExtras(seed, {
+			toolType: 'claude-code',
+			gatewayUrl: 'http://127.0.0.1:8787',
+		});
+
+		expect(extras).not.toHaveProperty('tokenProxyMode');
+		// Background requests belong to the proxy and go with it.
+		expect(extras).not.toHaveProperty('backgroundRequests');
+		expect(skipped.map((skip) => skip.label)).toEqual(['Maestro Token Proxy']);
+	});
+
+	it('never sends background requests without a proxy mode', () => {
+		const { toolType, backgroundRequests } = seed;
+		const { extras } = groupDefaultsCreateExtras(
+			{ toolType, backgroundRequests },
+			{ toolType: 'claude-code' }
+		);
+		expect(extras).toEqual({});
+	});
+
+	it('leaves out a switched-off variable the form holds switched on', () => {
+		const { extras } = groupDefaultsCreateExtras(
+			{ customEnvVarsDisabled: { DEBUG: '1', TRACE: '1' } },
+			{ toolType: 'claude-code', customEnvVars: { DEBUG: '2' } }
+		);
+		expect(extras.customEnvVarsDisabled).toEqual({ TRACE: '1' });
+
+		const none = groupDefaultsCreateExtras(
+			{ customEnvVarsDisabled: { DEBUG: '1' } },
+			{ toolType: 'claude-code', customEnvVars: { DEBUG: '2' } }
+		);
+		expect(none.extras).not.toHaveProperty('customEnvVarsDisabled');
 	});
 });

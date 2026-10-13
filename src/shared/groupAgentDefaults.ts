@@ -21,6 +21,12 @@
  * same fields by the same rules. Only the fields changed in ONE save are
  * pushed, never the whole profile: a profile that has held a model for a week
  * must not stamp it over agents the user has since retuned by hand.
+ *
+ * SEEDING
+ * The copy itself: `resolveGroupDefaultsSeed` is the seed a new agent starts
+ * from, and `groupDefaultsCreateExtras` is the part of it the create form has
+ * no control for. Both are here so the desktop form and a CLI create read a
+ * group's defaults by the same rules.
  */
 
 import { canonicalJson } from './canonicalJson';
@@ -591,4 +597,174 @@ export function applyGroupDefaultsToSession<Target extends GroupDefaultsTarget>(
 		skipped,
 		...(proxy ? { proxy } : {}),
 	};
+}
+
+// ============================================================================
+// Seeding a new agent
+// ============================================================================
+
+/** What a seed needs to know about this machine. */
+export interface GroupDefaultsSeedContext {
+	/**
+	 * The ids of the SSH remotes that exist. Absent means not known, and then no
+	 * remote is judged gone: a remote that cannot be resolved fails the launch
+	 * by name, which is loud. A remote wrongly judged gone would run the agent
+	 * on this machine, which is not.
+	 */
+	sshRemoteIds?: readonly string[];
+	/** The saved sources, so a target the seed's SSH remote cannot reach is left out. */
+	endpoints?: readonly LocalModelEndpoint[];
+}
+
+/** A group's defaults, as a new agent can start from them. */
+export interface GroupDefaultsSeed {
+	/** The defaults, less what a new agent cannot use. */
+	seed: GroupAgentDefaults;
+	/** The defaults name an SSH remote that no longer exists, so the seed runs on this machine. */
+	sshRemoteMissing: boolean;
+	/** Defaults left out of the seed, each with its reason. */
+	skipped: GroupDefaultsSkip[];
+}
+
+/**
+ * The seed a new agent in a group starts from: the group's defaults, less the
+ * two things a new agent cannot use as they are stored.
+ *
+ *   - An SSH remote that was deleted since the defaults were saved. The seed
+ *     runs on this machine and says so (`sshRemoteMissing`); it is never
+ *     handed a remote id that resolves to nothing.
+ *   - A Run on target the seed's own SSH remote cannot reach (a source on this
+ *     machine's loopback address). It is not seeded, with the reason.
+ *
+ * The remote is decided first, so a seed whose remote is gone keeps a loopback
+ * target: it runs here, where the source is.
+ */
+export function resolveGroupDefaultsSeed(
+	defaults: GroupAgentDefaults,
+	context: GroupDefaultsSeedContext = {}
+): GroupDefaultsSeed {
+	const seed: GroupAgentDefaults = { ...defaults };
+	const skipped: GroupDefaultsSkip[] = [];
+
+	const ssh = defaults.sessionSshRemoteConfig;
+	const sshRemoteMissing =
+		!!ssh?.enabled &&
+		!!ssh.remoteId &&
+		context.sshRemoteIds !== undefined &&
+		!context.sshRemoteIds.includes(ssh.remoteId);
+	if (sshRemoteMissing) {
+		// The mirror flag stands without a remote: it marks an agent that runs
+		// here and is controlled from another machine.
+		if (ssh?.shareHistoryToProjectDir) {
+			seed.sessionSshRemoteConfig = {
+				enabled: false,
+				remoteId: null,
+				shareHistoryToProjectDir: true,
+			};
+		} else {
+			delete seed.sessionSshRemoteConfig;
+		}
+	}
+
+	if (seed.toolType && seed.runOn) {
+		const reason = unreachableTargetReason(
+			{ ...seed, toolType: seed.toolType },
+			seed.runOn,
+			context
+		);
+		if (reason) {
+			delete seed.runOn;
+			skipped.push({ label: groupDefaultLabel('runOn'), reason });
+		}
+	}
+
+	return { seed, sshRemoteMissing, skipped };
+}
+
+/**
+ * The defaults the create-agent form draws no control for. A seed cannot put
+ * them in the form, so they are stamped onto the new agent as it is created,
+ * and the form names them so the user knows they are coming.
+ */
+export type GroupDefaultsCreateExtras = Pick<
+	GroupAgentDefaults,
+	| 'tierTargets'
+	| 'backgroundRequests'
+	| 'systemOneOptOut'
+	| 'tokenProxyMode'
+	| 'customEnvVarsDisabled'
+>;
+
+/** The agent a seed's extras are judged against: the create form as it stands. */
+export type GroupDefaultsNewAgent = Pick<
+	GroupDefaultsTarget,
+	'toolType' | 'customEnvVars' | 'gatewayUrl' | 'sessionSshRemoteConfig'
+>;
+
+export interface GroupDefaultsCreateExtrasResult {
+	/** What to stamp onto the new agent, in form order. Empty when there is nothing. */
+	extras: GroupDefaultsCreateExtras;
+	/** Extras that are not stamped onto this agent, each with its reason. */
+	skipped: GroupDefaultsSkip[];
+}
+
+/**
+ * The extras of `seed` that go onto `agent`, the agent the create form is
+ * about to make. Judged against the form as it stands and not as it was
+ * seeded, because the user may have changed the provider, the SSH remote or
+ * the gateway since.
+ *
+ *   - A provider-bound extra (tiers, the token proxy mode, background
+ *     requests) goes only to an agent on the seed's provider, the rule the
+ *     form's own provider settings follow.
+ *   - A tier target the agent's SSH remote cannot reach is left out, with the
+ *     reason. A tier the group never set is not stamped at all, so it keeps
+ *     following the harness default.
+ *   - The token proxy mode is left out when the form sets a gateway of its
+ *     own: the proxy would take that gateway's place. Background requests
+ *     belong to the proxy and go with it. Whether THIS agent can use the proxy
+ *     at all is decided by the writer that applies the mode.
+ *   - A switched-off variable the form holds switched on is left out: a
+ *     variable lives in one of the two env records, and the form's side wins.
+ */
+export function groupDefaultsCreateExtras(
+	seed: GroupAgentDefaults,
+	agent: GroupDefaultsNewAgent,
+	context: GroupDefaultsApplyContext = {}
+): GroupDefaultsCreateExtrasResult {
+	const extras: GroupDefaultsCreateExtras = {};
+	const skipped: GroupDefaultsSkip[] = [];
+	const sameProvider = seed.toolType !== undefined && seed.toolType === agent.toolType;
+
+	if (sameProvider) {
+		const tiers: Record<string, TierTarget> = {};
+		for (const [tier, target] of Object.entries(seed.tierTargets ?? {})) {
+			if (!target) continue;
+			const reason = unreachableTargetReason(agent, target, context);
+			if (reason) skipped.push({ label: `Tier: ${tier}`, reason });
+			else tiers[tier] = target;
+		}
+		if (Object.keys(tiers).length > 0) extras.tierTargets = tiers;
+	}
+
+	const proxyMode = sameProvider ? seed.tokenProxyMode : undefined;
+	const onProxy = proxyMode !== undefined && !agent.gatewayUrl;
+	if (proxyMode !== undefined && !onProxy) {
+		skipped.push({
+			label: groupDefaultLabel('tokenProxyMode'),
+			reason:
+				'This form sets a Local Models gateway of its own, and the proxy would take its place.',
+		});
+	}
+	if (onProxy && seed.backgroundRequests) extras.backgroundRequests = seed.backgroundRequests;
+	if (seed.systemOneOptOut) extras.systemOneOptOut = true;
+	if (onProxy) extras.tokenProxyMode = proxyMode;
+
+	const parked: Record<string, string> = {};
+	for (const [key, value] of Object.entries(seed.customEnvVarsDisabled ?? {})) {
+		if (agent.customEnvVars?.[key] === undefined) parked[key] = value;
+	}
+	if (Object.keys(parked).length > 0) extras.customEnvVarsDisabled = parked;
+
+	return { extras, skipped };
 }

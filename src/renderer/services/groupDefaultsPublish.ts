@@ -13,6 +13,9 @@
  * members, the two token proxy writers, the flush to the main process, and the
  * snapshot an Undo restores.
  *
+ * `applySeededTokenProxy` is here too. It is the one part of SEEDING a new
+ * agent that needs the same two token proxy writers.
+ *
  * Only settings are written. No tab, transcript or process is touched, so a
  * turn in flight finishes on what it started with (settings are codified at
  * send) and the published values apply from the agent's next message.
@@ -24,6 +27,7 @@ import {
 	directGroupMembers,
 	groupDefaultLabel,
 	summarizeGroupDefaultsDiff,
+	type GroupDefaultsCreateExtras,
 	type GroupDefaultsDiff,
 	type GroupDefaultsProxyChange,
 } from '../../shared/groupAgentDefaults';
@@ -119,6 +123,46 @@ async function applyProxyChange(
 		// The proxy's port comes from the main process. A failed call there is
 		// one agent's setting not published, not a publish that stops half way.
 		skip('tokenProxyMode', ipcErrorMessage(error));
+	}
+}
+
+/**
+ * The token proxy half of a group seed: put a NEW agent on the proxy its
+ * group's defaults name, then set its background requests target.
+ *
+ * The create form has no control for either, and neither can be stamped onto
+ * the record: the proxy's address is worked out per agent, by the same writers
+ * a click in Edit Agent uses. Call it once the agent is in the store. A writer
+ * that refuses (an agent on an SSH remote, a provider with no gateway) leaves
+ * the agent off the proxy, and the toast says which setting and why: a default
+ * the user chose must not go missing silently.
+ *
+ * Never throws.
+ */
+export async function applySeededTokenProxy(
+	agentId: string,
+	extras: Pick<GroupDefaultsCreateExtras, 'tokenProxyMode' | 'backgroundRequests'>
+): Promise<void> {
+	const agent = currentSession(agentId);
+	if (!agent || !extras.tokenProxyMode) return;
+	const skipped: GroupDefaultsPublishSkip[] = [];
+	await applyProxyChange(
+		agent,
+		{
+			mode: extras.tokenProxyMode,
+			...(extras.backgroundRequests
+				? { backgroundRequests: { value: extras.backgroundRequests } }
+				: {}),
+		},
+		skipped
+	);
+	if (skipped.length > 0) {
+		notifyToast({
+			color: 'yellow',
+			title: 'Some group settings were not applied',
+			message: skipped.map((skip) => `${skip.agentName}: ${skip.label}. ${skip.reason}`).join('\n'),
+			dismissible: true,
+		});
 	}
 }
 

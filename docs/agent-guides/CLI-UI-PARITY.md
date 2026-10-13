@@ -481,7 +481,12 @@ a design constraint; they are simply not built yet.
     the rules the modal already uses, all in `src/shared/groupAgentDefaults.ts`
     (`withGroupDefaults()`, `withGroupShortLabel()`, `diffGroupDefaults()`,
     `applyGroupDefaultsToSession()`), with `list groups --json` as the read.
-    Planned in the Agent Delegation work (MODELS-17).
+    The other half is seeding: the New Agent form opens pre-filled from the
+    defaults of the group the agent is created in, and `create-agent --group`
+    does not read them yet. It must seed through `resolveGroupDefaultsSeed()`
+    and `groupDefaultsCreateExtras()` in the same file, with an explicit flag
+    always winning over a default. Planned in the Agent Delegation work
+    (MODELS-17).
 
 ### Audit backlog (2026-09-27)
 

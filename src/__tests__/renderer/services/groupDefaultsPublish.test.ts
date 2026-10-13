@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	__resetGroupDefaultsPublishForTests,
+	applySeededTokenProxy,
 	notifyGroupDefaultsPublished,
 	publishGroupDefaults,
 	undoGroupDefaultsPublish,
@@ -151,6 +152,46 @@ describe('publishGroupDefaults', () => {
 				reason: expect.stringContaining('SSH remote'),
 			},
 		]);
+	});
+});
+
+describe('applySeededTokenProxy', () => {
+	it('puts a new agent on the proxy its group names, and flushes it', async () => {
+		seed([member('new')]);
+
+		await applySeededTokenProxy('new', { tokenProxyMode: 'compress' });
+
+		// The mode alone does nothing: the gateway must point at the proxy.
+		expect(stored('new').tokenProxyMode).toBe('compress');
+		expect(stored('new').gatewayUrl).toBe(proxyUrl('/anthropic'));
+		expect(window.maestro.sessions.setMany).toHaveBeenCalled();
+		expect(toasts()).toEqual([]);
+	});
+
+	it('says so when the agent cannot use the proxy, and leaves it off', async () => {
+		seed([member('remote', { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } })]);
+
+		await applySeededTokenProxy('remote', { tokenProxyMode: 'passthrough' });
+
+		expect(stored('remote').gatewayUrl).toBeUndefined();
+		expect(stored('remote').tokenProxyMode).toBeUndefined();
+		expect(toasts()).toHaveLength(1);
+		expect(toasts()[0]).toMatchObject({
+			color: 'yellow',
+			title: 'Some group settings were not applied',
+			message: expect.stringContaining('Maestro Token Proxy'),
+		});
+	});
+
+	it('does nothing with no mode, and nothing for an agent that is not in the store', async () => {
+		seed([member('new')]);
+
+		await applySeededTokenProxy('new', {});
+		await applySeededTokenProxy('missing', { tokenProxyMode: 'compress' });
+
+		expect(stored('new').gatewayUrl).toBeUndefined();
+		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
+		expect(toasts()).toEqual([]);
 	});
 });
 

@@ -96,8 +96,12 @@ export interface GroupDefaultsForm {
 	sshRemoteConfig: AgentSshRemoteConfig | undefined;
 }
 
-/** The SSH config a form edits, from the one a record stores. */
-function sshRemoteConfigToForm(
+/**
+ * The SSH config a form edits, from the one a record stores. `undefined` when
+ * the record names no remote and no mirror flag. Shared with the create form,
+ * which seeds its SSH tab from a group's defaults.
+ */
+export function sshRemoteConfigToForm(
 	stored: GroupAgentDefaults['sessionSshRemoteConfig']
 ): AgentSshRemoteConfig | undefined {
 	if (stored?.enabled && stored.remoteId) {

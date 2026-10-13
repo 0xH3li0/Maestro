@@ -16,6 +16,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import type { TierTargets } from '../../../shared/modelTiers';
 import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 
 /**
  * Props for the AppSessionModals component
@@ -63,7 +64,9 @@ export interface AppSessionModalsProps {
 		/** Run on target, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
-		peerGrants?: PeerGrants
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication

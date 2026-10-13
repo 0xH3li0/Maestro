@@ -12,6 +12,7 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
@@ -920,7 +921,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -980,7 +982,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -1040,7 +1043,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 	});
@@ -1101,7 +1105,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1667,7 +1672,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -1833,7 +1839,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 	});
@@ -3023,7 +3030,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -3264,7 +3272,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -3583,7 +3592,8 @@ describe('NewInstanceModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: none unless set on the Models tab
 				undefined, // runOn: the provider's own model unless chosen on the Models tab
-				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -4222,6 +4232,388 @@ describe('NewInstanceModal', () => {
 
 			openTab('Provider');
 			await waitFor(() => expect(screen.getByText('Agent Resilience')).toBeInTheDocument());
+		});
+	});
+
+	// A group's defaults are copy-at-create: they fill the form once, as it opens
+	// for an agent created in that group.
+	describe('Group defaults seed', () => {
+		// Not 🌳: that emoji marks a worktree group, which has no Group Settings.
+		const GROUP_ID = 'group-backend';
+		const withGroupDefaults = (defaults: Record<string, unknown> | undefined) =>
+			useSessionStore.setState({
+				groups: [
+					{
+						id: GROUP_ID,
+						name: 'Backend',
+						emoji: '📦',
+						collapsed: false,
+						...(defaults ? { defaults } : {}),
+					},
+				] as never,
+			});
+
+		const REMOTE = {
+			id: 'remote-1',
+			name: 'Test Server',
+			host: 'test.example.com',
+			port: 22,
+			username: 'testuser',
+			privateKeyPath: '/path/to/key',
+			enabled: true,
+		};
+
+		const renderSeeded = (props: Partial<React.ComponentProps<typeof NewInstanceModal>> = {}) =>
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetGroupId={GROUP_ID}
+					{...props}
+				/>
+			);
+
+		const banner = () => screen.findByTestId('new-agent-group-seed-banner');
+
+		/** Name the agent, give it a directory unless the seed did, and create it. */
+		const create = async (dir: string | null = '/my/project') => {
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Seeded' } });
+			if (dir !== null) {
+				fireEvent.change(screen.getByLabelText('Working Directory'), { target: { value: dir } });
+			}
+			await waitFor(() => expect(screen.getByText('Create Agent')).not.toBeDisabled());
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			return onCreate.mock.calls[0];
+		};
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: true, binaryName: 'codex' }),
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+		});
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('groupSettings');
+		});
+
+		it('pre-fills the provider, the nudge and the env vars, and says where they came from', async () => {
+			withGroupDefaults({
+				toolType: 'codex',
+				nudgeMessage: 'Be brief.',
+				customEnvVars: { CODEX_HOME: '~/.work' },
+			});
+			renderSeeded();
+
+			expect(await banner()).toHaveTextContent(
+				'Pre-filled from 📦 Backend group settings. Edit anything before creating.'
+			);
+			expect(await screen.findByDisplayValue('Be brief.')).toBeInTheDocument();
+
+			// The seed's provider is selected, not the first one this machine can run.
+			openTab('Environment');
+			expect(await screen.findByText(/Editing the Codex environment\./)).toBeInTheDocument();
+			expect(screen.getByDisplayValue('CODEX_HOME')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('~/.work')).toBeInTheDocument();
+
+			openTab('General');
+			const args = await create();
+			expect(args[0]).toBe('codex');
+			expect(args[3]).toBe('Be brief.');
+			expect(args[7]).toEqual({ CODEX_HOME: '~/.work' });
+			expect(args[13]).toBe(GROUP_ID);
+			// Nothing the form has no control for.
+			expect(args[25]).toBeUndefined();
+		});
+
+		it('fills env vars for a default that names no provider, over the provider own', async () => {
+			// The motivating case: one variable pinned for every agent in the group.
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				customEnvVars: { API_KEY: 'provider-level' },
+			});
+			withGroupDefaults({ customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' } });
+			renderSeeded();
+			await banner();
+
+			openTab('Environment');
+			expect(await screen.findByDisplayValue('CLAUDE_CONFIG_DIR')).toBeInTheDocument();
+			// The group has no opinion on a variable it does not name.
+			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
+
+			openTab('General');
+			const args = await create();
+			// No default provider: the first one this machine can run.
+			expect(args[0]).toBe('claude-code');
+			expect(args[7]).toEqual({ API_KEY: 'provider-level', CLAUDE_CONFIG_DIR: '~/.work' });
+		});
+
+		it('keeps the provider own path and args when the default has none', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({ customArgs: '--verbose' });
+			withGroupDefaults({ toolType: 'claude-code', nudgeMessage: 'Be brief.' });
+			renderSeeded();
+			await banner();
+
+			const args = await create();
+			expect(args[6]).toBe('--verbose');
+		});
+
+		it('carries a resilience flag the group switched off onto whichever provider is picked', async () => {
+			withGroupDefaults({ retryOnTokenExhaustion: false });
+			renderSeeded();
+			await banner();
+
+			const args = await create();
+			expect(args[17]).toBe(true); // retryOnAvailabilityErrors: no opinion, so on
+			expect(args[18]).toBe(false); // retryOnTokenExhaustion
+		});
+
+		it('shows no banner for a group with no defaults', async () => {
+			withGroupDefaults(undefined);
+			renderSeeded();
+
+			const trigger = await screen.findByLabelText('Agent Group');
+			await waitFor(() => expect(trigger).toHaveTextContent(/Backend/));
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toBeInTheDocument());
+			expect(screen.queryByTestId('new-agent-group-seed-banner')).not.toBeInTheDocument();
+		});
+
+		it('shows no banner with no preset group', async () => {
+			withGroupDefaults({ nudgeMessage: 'Be brief.' });
+			renderSeeded({ presetGroupId: null });
+
+			await screen.findByLabelText('Agent Group');
+			expect(screen.queryByTestId('new-agent-group-seed-banner')).not.toBeInTheDocument();
+			expect(screen.queryByDisplayValue('Be brief.')).not.toBeInTheDocument();
+		});
+
+		it('never seeds a duplicate: it is its source copy', async () => {
+			withGroupDefaults({ nudgeMessage: 'From the group.' });
+			renderSeeded({
+				sourceSession: createMockSession({
+					id: 'source-1',
+					name: 'Source',
+					toolType: 'claude-code',
+					cwd: '/source/project',
+					groupId: GROUP_ID,
+					nudgeMessage: 'From the source.',
+				}),
+			});
+
+			expect(await screen.findByDisplayValue('From the source.')).toBeInTheDocument();
+			expect(screen.queryByTestId('new-agent-group-seed-banner')).not.toBeInTheDocument();
+		});
+
+		it('does not reseed when another group is picked afterwards', async () => {
+			useSessionStore.setState({
+				groups: [
+					{
+						id: GROUP_ID,
+						name: 'Backend',
+						emoji: '📦',
+						collapsed: false,
+						defaults: { nudgeMessage: 'From Backend.' },
+					},
+					{
+						id: 'group-docs',
+						name: 'Docs',
+						emoji: '📚',
+						collapsed: false,
+						defaults: { nudgeMessage: 'From Docs.' },
+					},
+				] as never,
+			});
+			renderSeeded();
+			expect(await screen.findByDisplayValue('From Backend.')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByLabelText('Agent Group'));
+			fireEvent.click(await screen.findByRole('option', { name: /Docs/ }));
+
+			// The agent moves. What the form holds does not change.
+			expect(screen.getByDisplayValue('From Backend.')).toBeInTheDocument();
+			expect(screen.queryByDisplayValue('From Docs.')).not.toBeInTheDocument();
+			expect(await banner()).toHaveTextContent('📦 Backend');
+			const args = await create();
+			expect(args[13]).toBe('group-docs');
+			expect(args[3]).toBe('From Backend.');
+		});
+
+		it('a working directory the caller named outranks the group default one', async () => {
+			withGroupDefaults({ projectRoot: '/srv/group-default', nudgeMessage: 'Be brief.' });
+			renderSeeded({ presetWorkingDir: '/project/here' });
+			await banner();
+			await screen.findByDisplayValue('Be brief.');
+
+			expect(screen.getByLabelText('Working Directory')).toHaveValue('/project/here');
+		});
+
+		it('seeds the working directory from the group default', async () => {
+			withGroupDefaults({ projectRoot: '/srv/group-default' });
+			renderSeeded();
+
+			await waitFor(() =>
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/srv/group-default')
+			);
+		});
+
+		it('the group name closes the form and opens Group Settings for that group', async () => {
+			withGroupDefaults({ nudgeMessage: 'Be brief.' });
+			renderSeeded();
+
+			fireEvent.click(within(await banner()).getByRole('button', { name: /Backend/ }));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('groupSettings')).toBe(true);
+			expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: GROUP_ID });
+		});
+
+		describe('SSH remote', () => {
+			beforeEach(() => {
+				// Remote path validation is informational; give it a directory.
+				vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+					size: 4096,
+					createdAt: '2024-01-01T00:00:00.000Z',
+					modifiedAt: '2024-01-15T12:30:00.000Z',
+					isDirectory: true,
+					isFile: false,
+				});
+			});
+
+			it('seeds SSH off with a note when the remote no longer exists', async () => {
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+					success: true,
+					configs: [],
+				});
+				withGroupDefaults({
+					nudgeMessage: 'Be brief.',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-gone' },
+				});
+				renderSeeded();
+
+				expect(await banner()).toHaveTextContent('SSH remote no longer exists, running locally.');
+				expect(screen.getByTestId('new-agent-runs-on')).toHaveTextContent('Local');
+
+				const args = await create();
+				// Never handed a remote id that resolves to nothing.
+				expect(args[11]).toMatchObject({ enabled: false, remoteId: null });
+				expect(window.maestro.agents.detect).not.toHaveBeenCalledWith('remote-gone');
+			});
+
+			it('seeds the remote, and keeps the seed through the detection the remote causes', async () => {
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+					success: true,
+					configs: [REMOTE],
+				});
+				withGroupDefaults({
+					toolType: 'claude-code',
+					projectRoot: '~/git/app',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				});
+				renderSeeded();
+
+				const seeded = await banner();
+				expect(seeded).not.toHaveTextContent('SSH remote no longer exists');
+				// Turning the remote on makes the form detect providers on it.
+				await waitFor(() => expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1'));
+				await waitFor(() =>
+					expect(screen.getByLabelText('Working Directory')).toHaveValue('~/git/app')
+				);
+
+				// That pass must not replace what the seed filled.
+				openTab('Environment');
+				expect(await screen.findByDisplayValue('CLAUDE_CONFIG_DIR')).toBeInTheDocument();
+
+				openTab('General');
+				const args = await create(null);
+				// A remote path keeps its `~`: only the remote shell can expand it.
+				expect(args[1]).toBe('~/git/app');
+				expect(args[7]).toEqual({ CLAUDE_CONFIG_DIR: '~/.work' });
+				expect(args[11]).toMatchObject({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~/git/app',
+				});
+			});
+		});
+
+		describe('defaults the form has no control for', () => {
+			const TIERS = { low: { type: 'provider-model', model: 'haiku' } };
+
+			it('names them in the banner and hands them to onCreate', async () => {
+				withGroupDefaults({
+					toolType: 'claude-code',
+					tierTargets: TIERS,
+					systemOneOptOut: true,
+					customEnvVarsDisabled: { DEBUG: '1' },
+				});
+				renderSeeded();
+
+				const extras = await screen.findByTestId('new-agent-group-seed-extras');
+				expect(extras).toHaveTextContent(
+					'Also set when the agent is created: Tier Targets, System One, Environment Variables (switched off).'
+				);
+
+				const args = await create();
+				expect(args[25]).toEqual({
+					tierTargets: TIERS,
+					systemOneOptOut: true,
+					customEnvVarsDisabled: { DEBUG: '1' },
+				});
+			});
+
+			it('drops the provider-bound ones when another provider is picked', async () => {
+				withGroupDefaults({
+					toolType: 'claude-code',
+					tierTargets: TIERS,
+					systemOneOptOut: true,
+				});
+				renderSeeded();
+				await screen.findByTestId('new-agent-group-seed-extras');
+
+				openTab('Provider');
+				fireEvent.click(await screen.findByRole('option', { name: /Codex/i }));
+
+				// Judged against the form as it stands, not as it was seeded.
+				await waitFor(() =>
+					expect(screen.getByTestId('new-agent-group-seed-extras')).toHaveTextContent(
+						'Also set when the agent is created: System One.'
+					)
+				);
+				openTab('General');
+				const args = await create();
+				expect(args[0]).toBe('codex');
+				expect(args[25]).toEqual({ systemOneOptOut: true });
+			});
+
+			it('says which default was left out, and why', async () => {
+				withGroupDefaults({ toolType: 'claude-code', tokenProxyMode: 'compress' });
+				renderSeeded();
+				expect(await screen.findByTestId('new-agent-group-seed-extras')).toHaveTextContent(
+					'Maestro Token Proxy'
+				);
+
+				// A gateway typed in the form: the proxy would take its place.
+				openTab('Models');
+				const gateway = (await screen.findByTestId('new-agent-gateway')).querySelector(
+					'input'
+				) as HTMLInputElement;
+				fireEvent.change(gateway, { target: { value: 'http://127.0.0.1:8787' } });
+
+				await waitFor(() =>
+					expect(screen.getByTestId('new-agent-group-seed-skipped')).toHaveTextContent(
+						'Not pre-filled: Maestro Token Proxy.'
+					)
+				);
+				expect(screen.queryByTestId('new-agent-group-seed-extras')).not.toBeInTheDocument();
+			});
 		});
 	});
 });
