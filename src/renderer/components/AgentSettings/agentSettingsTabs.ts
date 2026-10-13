@@ -10,24 +10,33 @@
 
 import { BrainCircuit, Cpu, Server, SlidersHorizontal, Terminal, Users } from 'lucide-react';
 import type { ModalTab } from '../ui/ModalTabStrip';
+import {
+	AGENT_SETTINGS_TAB_IDS,
+	AGENT_SETTINGS_TAB_LABELS,
+	type AgentSettingsTabId,
+} from '../../../shared/agentSettingsTabs';
 
-export type AgentSettingsTabId =
-	| 'general'
-	| 'provider'
-	| 'models'
-	| 'peers'
-	| 'environment'
-	| 'ssh';
+export type { AgentSettingsTabId };
 
-/** Every tab, in strip order. A surface shows the subset it supports. */
-export const AGENT_SETTINGS_TABS: readonly ModalTab<AgentSettingsTabId>[] = [
-	{ id: 'general', label: 'General', icon: SlidersHorizontal },
-	{ id: 'provider', label: 'Provider', icon: Cpu },
-	{ id: 'models', label: 'Models', icon: BrainCircuit },
-	{ id: 'environment', label: 'Environment', icon: Terminal },
-	{ id: 'peers', label: 'Peers', icon: Users },
-	{ id: 'ssh', label: 'SSH', icon: Server },
-];
+const AGENT_SETTINGS_TAB_ICONS: Readonly<Record<AgentSettingsTabId, ModalTab['icon']>> = {
+	general: SlidersHorizontal,
+	provider: Cpu,
+	models: BrainCircuit,
+	environment: Terminal,
+	peers: Users,
+	ssh: Server,
+};
+
+/**
+ * Every tab, in strip order. A surface shows the subset it supports. The ids
+ * and labels are the shared list `maestro-cli open agent-settings --tab` reads.
+ */
+export const AGENT_SETTINGS_TABS: readonly ModalTab<AgentSettingsTabId>[] =
+	AGENT_SETTINGS_TAB_IDS.map((id) => ({
+		id,
+		label: AGENT_SETTINGS_TAB_LABELS[id],
+		icon: AGENT_SETTINGS_TAB_ICONS[id],
+	}));
 
 /** New Agent and Edit Agent show every tab. */
 export const AGENT_FORM_TAB_IDS: readonly AgentSettingsTabId[] = AGENT_SETTINGS_TABS.map(

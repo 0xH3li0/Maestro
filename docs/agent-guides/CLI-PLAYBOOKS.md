@@ -627,6 +627,7 @@ maestro-cli open group-settings --group <group-id>
 - Profile only is the default. `--publish` also writes THIS call's diff into the group's existing agents by the dialog's "Update N agents" rules (`summarizeGroupDefaultsDiff()`), and has no undo on the CLI, so it asks on a terminal or needs `--yes`.
 - `create-agent --group` seeds a new agent from the profile (`seedRemoteCreate()`); `--no-group-defaults` skips it.
 - `open group-settings --group` has `groupRequired` on its `UI_SURFACES` entry and no hotkey: a global chord has no group to act on.
+- `open agent-settings --agent <id> [--tab <tab>]` opens Edit Agent the same way. Its entry has `agentClick`, which makes `--agent` valid and required, and its tabs come from `AGENT_SETTINGS_TAB_IDS` (`src/shared/agentSettingsTabs.ts`), the list the form's own strip is built from. The bridge handler refuses an agent that is gone (`getSessions`), because the renderer would open nothing and say nothing.
 
 ### `models run git-drafts --cwd <path>`
 

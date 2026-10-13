@@ -13,6 +13,8 @@ import {
 	useModalStore,
 } from '../../../renderer/stores/modalStore';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { createMockSession } from '../../helpers/mockSession';
 
 describe('openUiSurface - feedback', () => {
 	beforeEach(() => {
@@ -21,7 +23,7 @@ describe('openUiSurface - feedback', () => {
 	});
 
 	it('opens the Send Feedback modal', () => {
-		expect(openUiSurface('feedback')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'feedback' })).toEqual({ ok: true });
 		expect(selectModalOpen('feedback')(useModalStore.getState())).toBe(true);
 	});
 
@@ -29,7 +31,7 @@ describe('openUiSurface - feedback', () => {
 		useModalStore.getState().openModal('feedback');
 		useFeedbackDraftStore.getState().setMinimized(true);
 
-		expect(openUiSurface('feedback')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'feedback' })).toEqual({ ok: true });
 
 		expect(useFeedbackDraftStore.getState().isMinimized).toBe(false);
 		expect(selectModalOpen('feedback')(useModalStore.getState())).toBe(true);
@@ -40,7 +42,7 @@ describe('openUiSurface - quick-chat', () => {
 	it('shows the Quick Chat window through the main process, not as a modal', () => {
 		const show = vi.mocked(window.maestro.quickChat.window);
 		show.mockClear();
-		expect(openUiSurface('quick-chat')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'quick-chat' })).toEqual({ ok: true });
 		expect(show).toHaveBeenCalledWith('show');
 	});
 });
@@ -51,7 +53,9 @@ describe('openUiSurface - settings deep links', () => {
 	});
 
 	it('opens Settings on the Models tab and the inner tab asked for', () => {
-		expect(openUiSurface('settings', 'models', 'system-one')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'settings', tab: 'models', subTab: 'system-one' })).toEqual({
+			ok: true,
+		});
 		expect(selectModalOpen('settings')(useModalStore.getState())).toBe(true);
 		expect(selectModalData('settings')(useModalStore.getState())).toMatchObject({
 			tab: 'models',
@@ -60,21 +64,21 @@ describe('openUiSurface - settings deep links', () => {
 	});
 
 	it('still opens `local-models` as the Models tab', () => {
-		expect(openUiSurface('settings', 'local-models')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'settings', tab: 'local-models' })).toEqual({ ok: true });
 		const data = selectModalData('settings')(useModalStore.getState());
 		expect(data).toMatchObject({ tab: 'models' });
 		expect(data?.subTab).toBeUndefined();
 	});
 
 	it('refuses an unknown inner tab and opens nothing', () => {
-		const result = openUiSurface('settings', 'models', 'nope');
+		const result = openUiSurface({ surface: 'settings', tab: 'models', subTab: 'nope' });
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('Valid sub-tabs: library');
 		expect(selectModalOpen('settings')(useModalStore.getState())).toBe(false);
 	});
 
 	it('refuses an inner tab without a tab', () => {
-		const result = openUiSurface('settings', undefined, 'library');
+		const result = openUiSurface({ surface: 'settings', subTab: 'library' });
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('--sub-tab needs --tab');
 	});
@@ -86,18 +90,18 @@ describe('openUiSurface - delegation graph', () => {
 	});
 
 	it('opens the Delegation Graph by id and by alias, with no Encore Feature to refuse it', () => {
-		expect(openUiSurface('delegation-graph')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'delegation-graph' })).toEqual({ ok: true });
 		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(true);
 		// No scope: the graph opens on every agent.
 		expect(selectModalData('delegationGraph')(useModalStore.getState())).toBeUndefined();
 
 		useModalStore.getState().closeModal('delegationGraph');
-		expect(openUiSurface('delegation')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'delegation' })).toEqual({ ok: true });
 		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(true);
 	});
 
 	it('refuses a tab, since the graph has none', () => {
-		const result = openUiSurface('delegation-graph', 'peers');
+		const result = openUiSurface({ surface: 'delegation-graph', tab: 'peers' });
 
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('has no tabs');
@@ -105,7 +109,7 @@ describe('openUiSurface - delegation graph', () => {
 	});
 
 	it('opens the Delegation Graph on one group (`open delegation-graph --group`)', () => {
-		expect(openUiSurface('delegation-graph', undefined, undefined, 'group-1')).toEqual({
+		expect(openUiSurface({ surface: 'delegation-graph', group: 'group-1' })).toEqual({
 			ok: true,
 		});
 
@@ -118,7 +122,7 @@ describe('openUiSurface - delegation graph', () => {
 	it('refuses a group on a surface that does not open on one, and opens nothing', () => {
 		useModalStore.getState().closeModal('about');
 
-		const result = openUiSurface('about', undefined, undefined, 'group-1');
+		const result = openUiSurface({ surface: 'about', group: 'group-1' });
 
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('--group does not apply');
@@ -132,7 +136,7 @@ describe('openUiSurface - group settings', () => {
 	});
 
 	it('opens Group Settings on the group it was given', () => {
-		expect(openUiSurface('group-settings', undefined, undefined, 'group-1')).toEqual({ ok: true });
+		expect(openUiSurface({ surface: 'group-settings', group: 'group-1' })).toEqual({ ok: true });
 		expect(selectModalOpen('groupSettings')(useModalStore.getState())).toBe(true);
 		expect(selectModalData('groupSettings')(useModalStore.getState())).toMatchObject({
 			groupId: 'group-1',
@@ -140,9 +144,59 @@ describe('openUiSurface - group settings', () => {
 	});
 
 	it('is refused without a group, and opens nothing', () => {
-		const result = openUiSurface('group-settings');
+		const result = openUiSurface({ surface: 'group-settings' });
 		expect(result.ok).toBe(false);
 		expect(result.error).toContain('pass --group');
 		expect(selectModalOpen('groupSettings')(useModalStore.getState())).toBe(false);
+	});
+});
+
+describe('openUiSurface - agent settings', () => {
+	const session = createMockSession({ id: 'agent-1', name: 'Builder' });
+
+	beforeEach(() => {
+		useModalStore.getState().closeModal('editAgent');
+		useSessionStore.setState({ sessions: [session] });
+	});
+
+	it('opens Edit Agent for the agent it was given, on the tab it was last on', () => {
+		expect(openUiSurface({ surface: 'agent-settings', agent: 'agent-1' })).toEqual({ ok: true });
+		expect(selectModalOpen('editAgent')(useModalStore.getState())).toBe(true);
+		const data = selectModalData('editAgent')(useModalStore.getState());
+		expect(data?.session.id).toBe('agent-1');
+		expect(data?.initialTab).toBeUndefined();
+	});
+
+	it('opens Edit Agent on the tab asked for (`open agent-settings --tab peers`)', () => {
+		expect(openUiSurface({ surface: 'edit-agent', agent: 'agent-1', tab: 'Peers' })).toEqual({
+			ok: true,
+		});
+		expect(selectModalData('editAgent')(useModalStore.getState())).toMatchObject({
+			session: { id: 'agent-1' },
+			initialTab: 'peers',
+		});
+	});
+
+	it('is refused without an agent, and opens nothing', () => {
+		const result = openUiSurface({ surface: 'agent-settings' });
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('pass --agent');
+		expect(selectModalOpen('editAgent')(useModalStore.getState())).toBe(false);
+	});
+
+	it('is refused for an agent that is gone, and opens nothing', () => {
+		const result = openUiSurface({ surface: 'agent-settings', agent: 'agent-gone' });
+		expect(result).toEqual({ ok: false, error: 'Agent not found: agent-gone' });
+		expect(selectModalOpen('editAgent')(useModalStore.getState())).toBe(false);
+	});
+
+	it("refuses an agent on a surface that is not one agent's, and opens nothing", () => {
+		useModalStore.getState().closeModal('about');
+
+		const result = openUiSurface({ surface: 'about', agent: 'agent-1' });
+
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('--agent does not apply');
+		expect(selectModalOpen('about')(useModalStore.getState())).toBe(false);
 	});
 });

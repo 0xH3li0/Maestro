@@ -1783,6 +1783,9 @@ maestro-cli open delegation-graph --group <group-id>
 
 # Open Group Settings for one group (the dialog behind group-settings)
 maestro-cli open group-settings --group <group-id>
+
+# Open Edit Agent for one agent, on its Peers tab
+maestro-cli open agent-settings --agent <agent-id> --tab peers
 ```
 
 | Flag                  | Description                                                            |
@@ -1790,12 +1793,15 @@ maestro-cli open group-settings --group <group-id>
 | `-t, --tab <tab>`     | Deep-link to a tab within the surface                                  |
 | `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs `--tab`)                     |
 | `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph, Group Settings) |
+| `-a, --agent <id>`    | Open one agent's surface for this agent (Edit Agent)                   |
 | `--list`              | List every openable surface, its tabs, sub-tabs, and shortcut          |
 | `--json`              | Output as JSON (for scripting)                                         |
 
 Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` or `--sub-tab` value matches either the id (`scheduled`) or the label (`"Scheduled Tasks"`). A renamed tab keeps its old id as an alias: `--tab local-models` still opens Settings > Models. The Models tab has the sub-tabs `library`, `sources`, `system-one`, `system-two`, and `gateway`.
 
 `--group` applies to two surfaces. On the Delegation Graph it opens the graph on that group and the agents it reaches instead of on every agent; in the app the same thing is **Delegation Graph** in a group's right-click menu, or a "Delegation Graph: <group>" command in the command palette. On `group-settings` it is required, and opens the **Group Settings** dialog for that group; there is no global hotkey for it, because a chord has no group to act on. Find a group's id with `maestro-cli list groups`. Any other surface refuses `--group` and says so.
+
+`--agent` applies to one surface, `agent-settings` (alias `edit-agent`), where it is required: the **Edit Agent** form belongs to one agent. Its `--tab` values are the form's tabs: `general`, `provider`, `models`, `environment`, `peers`, and `ssh`. With no `--tab` the form opens on the tab it was last on. In the app the hotkey and the command palette entry open the form for the selected agent, and **Edit Agent** in an agent's right-click menu opens it for any agent. The form only shows the settings: read them with `maestro-cli show agent` and change them with `update-agent`. An agent that does not exist is refused, and so is `--agent` on any other surface.
 
 On success the command also prints how to reach that surface by hand:
 

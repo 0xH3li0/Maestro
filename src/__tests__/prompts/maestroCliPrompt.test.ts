@@ -11,11 +11,10 @@
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
-import type { Command } from 'commander';
-
 import { program } from '../../cli/index';
 import { ExitCode } from '../../cli/exit-codes';
 import { LOCAL_MODEL_TASK_IDS } from '../../shared/local-models/tasks';
+import { declaredFlags, descendCommandTree, findSubcommand } from '../helpers/cliCommandTree';
 
 const prompt = readFileSync(path.join(__dirname, '../../prompts/_maestro-cli.md'), 'utf-8');
 const peerParagraph = prompt.split('\n').find((line) => line.startsWith('**Peer agents.**'));
@@ -61,26 +60,6 @@ describe('_maestro-cli.md peer agents', () => {
 	});
 });
 
-/** The `--flag` names a command declares, long form only. */
-function declaredFlags(cmd: Command): Set<string> {
-	return new Set(cmd.options.map((option) => option.long).filter((long): long is string => !!long));
-}
-
-/** Descend the live tree one subcommand per word, stopping at the first word that is not one. */
-function descend(words: string[]): { command: Command; rest: string[] } {
-	let command: Command = program;
-	let index = 0;
-	while (index < words.length) {
-		const next = command.commands.find(
-			(sub) => sub.name() === words[index] || sub.aliases().includes(words[index])
-		);
-		if (!next) break;
-		command = next;
-		index += 1;
-	}
-	return { command, rest: words.slice(index) };
-}
-
 // The map is the only place an agent learns a verb exists, so every verb it
 // names has to be one the live tree registers (src/cli/index.ts, the same tree
 // command-tree.test.ts walks).
@@ -107,16 +86,13 @@ describe('_maestro-cli.md names the verbs of this branch', () => {
 		const unresolved: string[] = [];
 		for (const span of spans) {
 			const words = span.trim().split(/\s+/);
-			const { command, rest } = descend(words);
+			const { command, rest } = descendCommandTree(words);
 			if (command === program || command.commands.length === 0) continue;
 			// A group followed by a bare word: that word must be one of its subcommands.
 			const next = rest[0];
 			if (!next || !/^[a-z][a-z0-9|-]*$/.test(next)) continue;
 			for (const alternative of next.split('|')) {
-				const known = command.commands.some(
-					(sub) => sub.name() === alternative || sub.aliases().includes(alternative)
-				);
-				if (!known) unresolved.push(`${span} -> ${alternative}`);
+				if (!findSubcommand(command, alternative)) unresolved.push(`${span} -> ${alternative}`);
 			}
 		}
 		expect(unresolved).toEqual([]);
@@ -140,8 +116,8 @@ describe('_maestro-cli.md names the verbs of this branch', () => {
 			'--proxy-mode',
 			'--remove-peer',
 		];
-		const create = declaredFlags(descend(['create-agent']).command);
-		const update = declaredFlags(descend(['update-agent']).command);
+		const create = declaredFlags(descendCommandTree(['create-agent']).command);
+		const update = declaredFlags(descendCommandTree(['update-agent']).command);
 		for (const flag of both) {
 			expect(create.has(flag), `create-agent does not declare ${flag}`).toBe(true);
 			expect(update.has(flag), `update-agent does not declare ${flag}`).toBe(true);

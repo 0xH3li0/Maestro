@@ -1393,11 +1393,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	}, []);
 
 	// Handle a remote request to open a modal / dashboard (`maestro-cli open`).
-	// The main process has already validated the surface, tab and group scope,
-	// so this is a straight hand-off to the shared opener.
+	// The main process has already validated the surface, tab, group and agent
+	// scope, so this is a straight hand-off to the shared opener.
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteOpenModal((params) => {
-			openUiSurface(params.surface, params.tab, params.subTab, params.group);
+			openUiSurface(params);
 		});
 		return () => {
 			unsubscribe();

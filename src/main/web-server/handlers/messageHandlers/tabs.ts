@@ -1079,9 +1079,9 @@ export function handleOpenDocumentGraph(
 
 /**
  * Handle open_modal message - open one of the app's modals / dashboards by
- * `UiSurface.id`, optionally on a specific tab or on one agent group. The
- * surface, the tab and whether the surface takes a group are validated here so
- * the renderer only ever receives a request it can act on.
+ * `UiSurface.id`, optionally on a specific tab, on one agent group, or on one
+ * agent. The surface, the tab and whether the surface takes a group or an agent
+ * are validated here so the renderer only ever receives a request it can act on.
  */
 export function handleOpenModal(
 	ctx: MessageHandlerContext,
@@ -1095,6 +1095,8 @@ export function handleOpenModal(
 		typeof message.subTab === 'string' && message.subTab.length > 0 ? message.subTab : undefined;
 	const groupId =
 		typeof message.group === 'string' && message.group.length > 0 ? message.group : undefined;
+	const agentId =
+		typeof message.agent === 'string' && message.agent.length > 0 ? message.agent : undefined;
 
 	const sendResult = (success: boolean, error?: string) => {
 		ctx.send(client, {
@@ -1118,6 +1120,7 @@ export function handleOpenModal(
 		tab: tabName,
 		subTab: subTabName,
 		group: groupId,
+		agent: agentId,
 	});
 	if ('error' in target) {
 		sendResult(false, target.error);
@@ -1135,8 +1138,21 @@ export function handleOpenModal(
 		return;
 	}
 
+	// An agent's surface has nothing to show for an agent that is gone, and the
+	// renderer would open nothing without a word. A group is not checked the
+	// same way: the one surface that takes an optional group falls back to
+	// every agent.
+	if (
+		target.agent !== undefined &&
+		ctx.callbacks.getSessions &&
+		!ctx.callbacks.getSessions().some((session) => session.id === target.agent)
+	) {
+		sendResult(false, `Agent not found: ${target.agent}`);
+		return;
+	}
+
 	logger.info(
-		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}, group=${target.group ?? '-'}`,
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}, group=${target.group ?? '-'}, agent=${target.agent ?? '-'}`,
 		LOG_CONTEXT
 	);
 
@@ -1146,7 +1162,13 @@ export function handleOpenModal(
 	}
 
 	ctx.callbacks
-		.openModal({ surface: surface.id, tab: tabId, subTab: subTabId, group: target.group })
+		.openModal({
+			surface: surface.id,
+			tab: tabId,
+			subTab: subTabId,
+			group: target.group,
+			agent: target.agent,
+		})
 		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
 		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

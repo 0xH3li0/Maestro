@@ -964,7 +964,11 @@ program
 	.description('Open a Maestro modal or dashboard (use --list to see every surface)')
 	.option('-t, --tab <tab>', 'Deep-link to a tab within the surface')
 	.option('--sub-tab <sub-tab>', 'Deep-link to a tab inside that tab (needs --tab)')
-	.option('-g, --group <id>', 'Open the surface on one agent group (Delegation Graph only)')
+	.option(
+		'-g, --group <id>',
+		'Open the surface on one agent group (Delegation Graph, Group Settings)'
+	)
+	.option('-a, --agent <id>', "Open one agent's surface for this agent (Edit Agent)")
 	.option('--list', 'List every openable surface, its tabs, and its shortcut')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openModal);

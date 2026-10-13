@@ -715,18 +715,20 @@ maestro-cli open-browser https://example.com --agent <agent-id> --background
 
 Open a Maestro modal or dashboard (use --list to see every surface)
 
-| Option                | Description                                                 | Default |
-| --------------------- | ----------------------------------------------------------- | ------- |
-| `-t, --tab <tab>`     | Deep-link to a tab within the surface                       | -       |
-| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs --tab)            | -       |
-| `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph only) | -       |
-| `--list`              | List every openable surface, its tabs, and its shortcut     | -       |
-| `--json`              | Output as JSON (for scripting)                              | -       |
+| Option                | Description                                                            | Default |
+| --------------------- | ---------------------------------------------------------------------- | ------- |
+| `-t, --tab <tab>`     | Deep-link to a tab within the surface                                  | -       |
+| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs --tab)                       | -       |
+| `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph, Group Settings) | -       |
+| `-a, --agent <id>`    | Open one agent's surface for this agent (Edit Agent)                   | -       |
+| `--list`              | List every openable surface, its tabs, and its shortcut                | -       |
+| `--json`              | Output as JSON (for scripting)                                         | -       |
 
 ```bash
 maestro-cli open --list
 maestro-cli open settings --tab models --sub-tab library
 maestro-cli open delegation-graph --group <group-id>
+maestro-cli open agent-settings --agent <agent-id> --tab peers
 ```
 
 ## `maestro-cli image`

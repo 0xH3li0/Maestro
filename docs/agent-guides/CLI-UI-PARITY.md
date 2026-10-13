@@ -237,6 +237,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                 | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                                    |
 | Create / rename / remove an agent                                                            | `create-agent`, `rename-agent`, `remove-agent`                                                                                                             |
 | Edit Agent modal fields                                                                      | `update-agent`, `settings agent set`                                                                                                                       |
+| Open Edit Agent on a tab (Opt+Cmd+,, palette, agent right-click, the graph's Peers link)     | `open agent-settings --agent <id> [--tab general\|provider\|models\|environment\|peers\|ssh]` (same `openAgentSettings()`)                                 |
 | Set an agent's Local Models gateway (Edit Agent and New Agent Models tab)                    | `update-agent --gateway-url <url\|none>`, or at create `create-agent --gateway-url <url>`; read it with `show agent --json`                                |
 | Set an agent's Maestro proxy mode (Gateway table, Edit Agent Models tab)                     | `update-agent --proxy-mode <off\|passthrough\|compress\|compress-early>`; read: `show agent`                                                               |
 | Set an agent's Run on target and its context size (Edit Agent, New Agent Models tab)         | `update-agent` / `create-agent --run-on <provider\|id:model> [--run-on-context <n>]` (`parseRunOnEdit()`); read: `show agent --json`                       |
@@ -280,6 +281,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Steer a queued message into the running turn                                                 | `queue steer <item-id> --agent <id>` (find the id with `queue list`)                                                                                       |
 | Open a file / URL / terminal tab                                                             | `open-file`, `open-browser`, `open-terminal`                                                                                                               |
 | Open a modal or dashboard                                                                    | `open <surface> [--tab [--sub-tab]]` (registry in `src/shared/uiSurfaces.ts`)                                                                              |
+| Settings > Models: the Library, Sources, System One, System Two and Gateway inner tabs       | `open settings --tab models --sub-tab library\|sources\|system-one\|system-two\|gateway` (the in-app links call the same `openSettings()`)                 |
 | Auto Run: start, stop, resume, skip, abort                                                   | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                                                                        |
 | Settings, theme, Encore features                                                             | `settings`, `theme`, `set-theme`, `encore`                                                                                                                 |
 | Toasts and center flashes                                                                    | `notify toast`, `notify flash`                                                                                                                             |
@@ -337,7 +339,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Edit Agent: share history to the project directory                                           | `update-agent --share-history-to-project-dir <bool>` (agent must be stopped, like every SSH block write)                                                   |
 | Edit Agent and Models > Gateway: Show environment                                            | `show agent <id> [--json] [--show-secrets]`: `effectiveEnv` (same `resolveAgentEnvironment()`; secrets masked by default)                                  |
 | New Agent: the Peers tab                                                                     | `create-agent --peer`, `--peer-note`, `--group-peers`, `--worktree-peers` (written after the create by the `update-agent --peer` message)                  |
-| Open Group Settings (group right-click, palette)                                             | `open group-settings --group <id>` (refused without a group, and for a worktree group)                                                                     |
+| Open Group Settings (group right-click, palette, the New Agent banner link)                  | `open group-settings --group <id>` (refused without a group, and for a worktree group)                                                                     |
 | Models > System Two: Utility Agent and its model override                                    | `settings set utilityAgentId <agent-id>`, `settings set utilityModelId <model>`; read with `settings get` (not checked against the agent list)             |
 | Local Models endpoints: add, remove, test, detect                                            | `models endpoints list\|add\|remove\|test\|detect`                                                                                                         |
 | Local Models endpoint: Edit form, enabled switch                                             | `models endpoints update <ep> [--name --url --kind --api-key-env] [--enable \| --disable]`                                                                 |
@@ -461,6 +463,11 @@ a design constraint; they are simply not built yet.
     Graph preview width via `usePersistedPanelWidth`). Pure view preferences
     with nothing for an agent to act on; the values never reach main, so a
     verb needs a renderer round trip. Double-click on the grip resets them.
+    The same holds for two `usePersistedToggle` view switches: the Library's
+    "Show models too large for this machine" (`models list --fit` lists every
+    model with its fit label, so nothing is hidden from the CLI) and the
+    Delegation Graph legend. The sort order of a Usage Dashboard Models table
+    is not saved at all; `stats models --json` returns the rows to sort.
 13. **Log in to a provider account** (Usage Dashboard quota row "Log in",
     palette "Reauthenticate Provider"). The login is an interactive OAuth or
     device-code flow in a PTY, so there is nothing a non-interactive verb could
@@ -521,7 +528,8 @@ list` mask it in an object read, but the file itself is not sealed.
     is reachable without a verb: read it with `settings get
 delegationGraphLayouts`, and return a scope to the automatic layout with
     `settings reset delegationGraphLayouts.<scope key>` (the settings watcher
-    reloads the open graph). Fit and the legend toggle are never saved. The
+    reloads the open graph). Fit is never saved, and the legend toggle is a
+    view switch in renderer localStorage (gap 12). The
     View / Edit switch has no verb and needs none: it is a guard against a
     slipped pointer, it is never saved, and a CLI caller has no pointer to
     slip. What Edit lets the pointer write, `update-agent --peer` writes (see

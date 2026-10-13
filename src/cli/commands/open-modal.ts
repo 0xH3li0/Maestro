@@ -1,7 +1,8 @@
 /**
- * `maestro-cli open <surface> [--tab <tab> [--sub-tab <sub-tab>]] [--group <id>]` - open one of
- * Maestro's modals or dashboards in the running desktop app, optionally on a specific tab, or on
- * one agent group for a surface that takes one (the Delegation Graph).
+ * `maestro-cli open <surface> [--tab <tab> [--sub-tab <sub-tab>]] [--group <id>] [--agent <id>]` -
+ * open one of Maestro's modals or dashboards in the running desktop app, optionally on a specific
+ * tab, on one agent group for a surface that takes one (the Delegation Graph), or for one agent
+ * when the surface is that agent's (Edit Agent).
  *
  * The point is teaching, not just navigating: an agent answering "where do I
  * see my scheduled tasks?" can open the surface AND relay the manual paths
@@ -10,7 +11,7 @@
  */
 
 import { withMaestroClient } from '../services/maestro-client';
-import { readGroups, resolveGroupId } from '../services/storage';
+import { getSessionById, readGroups, resolveAgentId, resolveGroupId } from '../services/storage';
 import { groupSettingsBlocker } from '../services/group-settings';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
@@ -32,6 +33,7 @@ interface OpenModalOptions {
 	tab?: string;
 	subTab?: string;
 	group?: string;
+	agent?: string;
 	list?: boolean;
 	json?: boolean;
 }
@@ -70,6 +72,7 @@ function printSurfaceList(options: OpenModalOptions): void {
 					command_palette: surface.commandPalette ?? '',
 					encore: surface.encore ?? '',
 					group_scoped: !!surface.groupClick,
+					agent_scoped: !!surface.agentClick,
 				}))
 			)
 		);
@@ -87,6 +90,7 @@ function printSurfaceList(options: OpenModalOptions): void {
 			tabs.length > 0 ? `tabs: ${tabs.join(', ')}` : null,
 			subTabs.length > 0 ? `sub-tabs (--sub-tab), ${subTabs.join('; ')}` : null,
 			surface.groupClick ? 'one group: --group <id>' : null,
+			surface.agentClick ? 'one agent: --agent <id>' : null,
 		]
 			.filter(Boolean)
 			.join('  |  ');
@@ -115,21 +119,23 @@ export async function openModal(
 		failCommand(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options.json);
 	}
 
-	// Whether the surface takes a group is checked before the group is looked
-	// up, so `--group` on the wrong surface says that and not "Group not found".
+	// Whether the surface takes a group or an agent is checked before either is
+	// looked up, so `--group` on the wrong surface says that and not "Group not
+	// found".
 	const accepted = resolveUiSurfaceTarget(surface, {
 		tab: options.tab,
 		subTab: options.subTab,
 		group: options.group,
+		agent: options.agent,
 	});
 	if ('error' in accepted) failCommand(accepted.error, options.json);
 	let groupId: string | undefined;
-	if (options.group !== undefined) {
-		try {
-			groupId = resolveGroupId(options.group);
-		} catch (error) {
-			failFromError(error, options.json);
-		}
+	let agentId: string | undefined;
+	try {
+		if (options.group !== undefined) groupId = resolveGroupId(options.group);
+		if (options.agent !== undefined) agentId = resolveAgentId(options.agent);
+	} catch (error) {
+		failFromError(error, options.json);
 	}
 	// Group Settings is refused for a worktree group, in the words the Group
 	// Settings verbs use, before the app is asked to open a dialog with nothing
@@ -139,15 +145,23 @@ export async function openModal(
 		const blocker = group ? groupSettingsBlocker(group) : undefined;
 		if (blocker) failCommand(blocker, options.json);
 	}
-	const target = { ...accepted, group: groupId };
+	const target = { ...accepted, group: groupId, agent: agentId };
 	const tabId = target.tab?.id;
 	const subTabId = target.subTab?.id;
 	const groupName = groupId ? readGroups().find((group) => group.id === groupId)?.name : undefined;
+	const agentName = agentId ? getSessionById(agentId)?.name : undefined;
 
 	try {
 		const result = await withMaestroClient(async (client) =>
 			client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'open_modal', surface: surface.id, tab: tabId, subTab: subTabId, group: groupId },
+				{
+					type: 'open_modal',
+					surface: surface.id,
+					tab: tabId,
+					subTab: subTabId,
+					group: groupId,
+					agent: agentId,
+				},
 				'open_modal_result'
 			)
 		);
@@ -166,6 +180,7 @@ export async function openModal(
 					tab: tabId ?? '',
 					sub_tab: subTabId ?? '',
 					group: groupId ?? '',
+					agent: agentId ?? '',
 					shortcut: shortcutFor(surface) ?? '',
 					command_palette: surface.commandPalette ?? '',
 					click: surface.click ?? '',
@@ -176,7 +191,8 @@ export async function openModal(
 		}
 		const tabSuffix = tabId ? ` (${[tabId, subTabId].filter(Boolean).join(' > ')} tab)` : '';
 		const groupSuffix = groupId ? ` on the group ${groupName ?? groupId}` : '';
-		console.log(`Opened ${surface.label}${tabSuffix}${groupSuffix} in Maestro.`);
+		const agentSuffix = agentId ? ` for the agent ${agentName ?? agentId}` : '';
+		console.log(`Opened ${surface.label}${tabSuffix}${groupSuffix}${agentSuffix} in Maestro.`);
 		if (hint) console.log(hint);
 	} catch (error) {
 		failFromError(error, options.json);

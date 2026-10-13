@@ -98,6 +98,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli open --list',
 		'maestro-cli open settings --tab models --sub-tab library',
 		'maestro-cli open delegation-graph --group <group-id>',
+		'maestro-cli open agent-settings --agent <agent-id> --tab peers',
 	],
 	'image list': ['maestro-cli image list --agent <agent-id> --limit 10'],
 	'image save': ['maestro-cli image save latest --output ./screenshot.png'],

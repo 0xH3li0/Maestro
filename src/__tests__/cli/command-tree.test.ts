@@ -21,6 +21,7 @@ import {
 	formatExamplesHelp,
 } from '../../cli/command-examples';
 import { reference } from '../../cli/commands/reference';
+import { declaredFlags, descendCommandTree } from '../helpers/cliCommandTree';
 
 interface WalkedCommand {
 	path: string;
@@ -84,21 +85,6 @@ function invocationWords(example: string): string[] {
 	return end === -1 ? rest : rest.slice(0, end);
 }
 
-/** Descend through the subcommand names of an example; what is left are its arguments. */
-function resolveInvocation(words: string[]): { command: Command; rest: string[] } {
-	let command = program;
-	let index = 0;
-	while (index < words.length) {
-		const next = (command.commands as Command[]).find(
-			(sub) => sub.name() === words[index] || sub.aliases().includes(words[index])
-		);
-		if (!next) break;
-		command = next;
-		index += 1;
-	}
-	return { command, rest: words.slice(index) };
-}
-
 const walked = walk(program);
 const paths = new Set(walked.map((entry) => entry.path));
 
@@ -147,7 +133,7 @@ describe('maestro-cli command tree', () => {
 		const wrong: string[] = [];
 		for (const [path, examples] of Object.entries(COMMAND_EXAMPLES)) {
 			for (const example of examples) {
-				const { command } = resolveInvocation(invocationWords(example));
+				const { command } = descendCommandTree(invocationWords(example));
 				if (commandPath(command) !== path) {
 					wrong.push(`${path}: resolves to "${commandPath(command)}" in ${example}`);
 				}
@@ -161,12 +147,8 @@ describe('maestro-cli command tree', () => {
 		const unknown: string[] = [];
 		for (const [path, examples] of Object.entries(COMMAND_EXAMPLES)) {
 			for (const example of examples) {
-				const { command, rest } = resolveInvocation(invocationWords(example));
-				const declared = new Set<string>(['-h', '--help']);
-				for (const option of command.options) {
-					if (option.long) declared.add(option.long);
-					if (option.short) declared.add(option.short);
-				}
+				const { command, rest } = descendCommandTree(invocationWords(example));
+				const declared = new Set<string>(['-h', '--help', ...declaredFlags(command)]);
 				for (const word of rest) {
 					if (!word.startsWith('-') || word === '-') continue;
 					const flag = word.split('=')[0];

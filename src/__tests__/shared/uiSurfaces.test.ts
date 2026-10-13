@@ -19,6 +19,7 @@ import {
 	surfaceTabIds,
 } from '../../shared/uiSurfaces';
 import { MODELS_SETTINGS_PANELS } from '../../shared/local-models/settings-location';
+import { AGENT_SETTINGS_TAB_IDS, AGENT_SETTINGS_TAB_LABELS } from '../../shared/agentSettingsTabs';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
 
@@ -318,6 +319,73 @@ describe('a surface that exists only for one group', () => {
 		expect(resolveUiSurfaceTarget(groupSettings, { group: 'group-1' })).toEqual({
 			group: 'group-1',
 		});
+	});
+});
+
+describe("a surface that is one agent's", () => {
+	const editAgent = resolveUiSurface('agent-settings')!;
+
+	it('resolves Edit Agent so `open agent-settings --agent` works', () => {
+		expect(editAgent.modal).toBe('editAgent');
+		expect(resolveUiSurface('edit-agent')?.id).toBe('agent-settings');
+		// The hotkey and the palette entry the hint names are the form's own.
+		expect(DEFAULT_SHORTCUTS[editAgent.shortcutId!].keys.length).toBeGreaterThan(0);
+		expect(UI_SURFACES.filter((entry) => entry.agentClick).map((entry) => entry.id)).toEqual([
+			'agent-settings',
+		]);
+	});
+
+	it('offers the tabs of the form, in strip order, from the one tab list', () => {
+		expect(surfaceTabIds(editAgent)).toEqual([...AGENT_SETTINGS_TAB_IDS]);
+		expect(editAgent.tabs?.map((tab) => tab.label)).toEqual(
+			AGENT_SETTINGS_TAB_IDS.map((id) => AGENT_SETTINGS_TAB_LABELS[id])
+		);
+	});
+
+	it('is refused without an agent, and names the flag', () => {
+		expect(resolveUiSurfaceTarget(editAgent, {})).toEqual({
+			error: 'Edit Agent opens on one agent: pass --agent <id>.',
+		});
+		// Refused before the tab is looked at, so the agent is the error named.
+		expect(resolveUiSurfaceTarget(editAgent, { tab: 'peers' })).toEqual({
+			error: expect.stringContaining('pass --agent'),
+		});
+	});
+
+	it('passes the agent through, with the tab asked for', () => {
+		expect(resolveUiSurfaceTarget(editAgent, { agent: 'agent-1' })).toEqual({ agent: 'agent-1' });
+		expect(resolveUiSurfaceTarget(editAgent, { agent: 'agent-1', tab: 'Peers' })).toMatchObject({
+			agent: 'agent-1',
+			tab: { id: 'peers', label: 'Peers' },
+		});
+	});
+
+	it('names the valid tabs when the tab is not one of the form', () => {
+		expect(resolveUiSurfaceTarget(editAgent, { agent: 'agent-1', tab: 'nope' })).toEqual({
+			error: expect.stringContaining('Valid tabs: general, provider, models, environment, peers'),
+		});
+	});
+
+	it('takes no group, and no other surface takes an agent', () => {
+		expect(resolveUiSurfaceTarget(editAgent, { agent: 'agent-1', group: 'g-1' })).toEqual({
+			error: expect.stringContaining('--group does not apply'),
+		});
+		const settings = resolveUiSurface('settings')!;
+		expect(resolveUiSurfaceTarget(settings, { agent: 'agent-1' })).toEqual({
+			error: "Settings is not one agent's, so --agent does not apply.",
+		});
+		// No agent asked for, no agent key in the answer.
+		expect(resolveUiSurfaceTarget(settings, {})).not.toHaveProperty('agent');
+	});
+
+	it('says how to open the form for an agent other than the selected one', () => {
+		const target = resolveUiSurfaceTarget(editAgent, { agent: 'agent-1', tab: 'peers' });
+		if ('error' in target) throw new Error(target.error);
+		const hint = describeSurfaceAccess(editAgent, 'Alt+Cmd+,', target);
+		expect(hint).toContain('press Alt+Cmd+,');
+		expect(hint).toContain('search "Edit Agent"');
+		expect(hint).toContain('then pick Peers.');
+		expect(hint).toMatch(/ For any agent: right-click the agent in the Left Bar > Edit Agent\.$/);
 	});
 });
 

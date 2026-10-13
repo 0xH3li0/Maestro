@@ -133,6 +133,84 @@ describe('open_modal handler', () => {
 	});
 });
 
+// Edit Agent is one agent's form. This hop knows the agents, so an agent that
+// is gone is refused here: the renderer would open nothing and say nothing.
+describe("open_modal handler: a surface that is one agent's", () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	let openModal: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		openModal = vi.fn().mockResolvedValue(true);
+		handler.setCallbacks({
+			openModal,
+			getSessions: () => [{ id: 'agent-1', name: 'Builder' }],
+		} as never);
+	});
+
+	it('hands the agent and the tab to the renderer for Edit Agent', async () => {
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-1',
+			// An alias and a label, so the ids the renderer gets are the registry's.
+			surface: 'edit-agent',
+			tab: 'Peers',
+			agent: 'agent-1',
+		});
+		await flush();
+
+		expect(openModal).toHaveBeenCalledWith(
+			expect.objectContaining({ surface: 'agent-settings', tab: 'peers', agent: 'agent-1' })
+		);
+		expect(lastResponse(client)).toMatchObject({ success: true, requestId: 'req-1' });
+	});
+
+	it('refuses Edit Agent without an agent, and opens nothing', async () => {
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-2',
+			surface: 'agent-settings',
+			agent: '',
+		});
+		await flush();
+
+		expect(openModal).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ success: false, requestId: 'req-2' });
+		expect(lastResponse(client).error).toContain('pass --agent');
+	});
+
+	it('refuses an agent that is gone, and opens nothing', async () => {
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-3',
+			surface: 'agent-settings',
+			agent: 'agent-gone',
+		});
+		await flush();
+
+		expect(openModal).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: 'Agent not found: agent-gone',
+		});
+	});
+
+	it("refuses an agent on a surface that is not one agent's, and opens nothing", async () => {
+		handler.handleMessage(client, {
+			type: 'open_modal',
+			requestId: 'req-4',
+			surface: 'cue',
+			agent: 'agent-1',
+		});
+		await flush();
+
+		expect(openModal).not.toHaveBeenCalled();
+		expect(lastResponse(client).error).toContain('--agent does not apply');
+	});
+});
+
 // `open` used to answer "Opened" for a surface behind a switched-off Encore
 // Feature: the app showed a toast and stayed as it was, and the caller was
 // told the opposite. The flags are read at this hop, so the refusal is in the
