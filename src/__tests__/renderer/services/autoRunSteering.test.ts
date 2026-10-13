@@ -17,7 +17,9 @@ import {
 	submitSteeringNote,
 	cancelSteeringNote,
 	takeSteeringNotesForDispatch,
+	recordSteeringResponse,
 	clearSteeringNotes,
+	clearPendingSteeringNotes,
 } from '../../../renderer/services/autoRunSteering';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -198,5 +200,58 @@ describe('clearSteeringNotes', () => {
 
 		expect(pendingCount()).toBe(0);
 		expect(deliveredCount()).toBe(0);
+	});
+});
+
+describe('recordSteeringResponse', () => {
+	const delivered = () => useAutoRunSteeringStore.getState().delivered[SESSION_ID] ?? [];
+
+	it('brings the task reply back to the notes that task was dispatched with', () => {
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'use the v3 endpoint' });
+		const taken = takeSteeringNotesForDispatch(SESSION_ID);
+
+		recordSteeringResponse(SESSION_ID, taken, {
+			summary: '[steered] Switched to v3.',
+			text: '[steered] Switched to v3.\n\nSet aside the v2 instruction in the doc.',
+			success: true,
+		});
+
+		expect(delivered()[0].response).toMatchObject({
+			summary: '[steered] Switched to v3.',
+			success: true,
+		});
+	});
+
+	it('is a no-op for a task that took no notes, which is nearly all of them', () => {
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'earlier' });
+		takeSteeringNotesForDispatch(SESSION_ID);
+		const before = useAutoRunSteeringStore.getState().delivered;
+
+		recordSteeringResponse(SESSION_ID, [], { summary: 's', text: 't', success: true });
+
+		expect(useAutoRunSteeringStore.getState().delivered).toBe(before);
+		expect(delivered()[0].response).toBeUndefined();
+	});
+
+	it('writes nothing into the AI chat transcript', () => {
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'note' });
+		const taken = takeSteeringNotesForDispatch(SESSION_ID);
+
+		recordSteeringResponse(SESSION_ID, taken, { summary: 's', text: 't', success: true });
+
+		expect(logsIn('tab-1')).toHaveLength(0);
+	});
+});
+
+describe('clearPendingSteeringNotes', () => {
+	it('drops what no task took and keeps the delivered record for the finished run', () => {
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'delivered' });
+		takeSteeringNotesForDispatch(SESSION_ID);
+		submitSteeringNote({ sessionId: SESSION_ID, text: 'still pending' });
+
+		clearPendingSteeringNotes(SESSION_ID);
+
+		expect(pendingCount()).toBe(0);
+		expect(deliveredCount()).toBe(1);
 	});
 });

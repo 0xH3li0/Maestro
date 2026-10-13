@@ -9,7 +9,8 @@
  * note, and the list that shows what is still pending.
  *
  * `submitSteeringNote` parks a note; `takeSteeringNotesForDispatch` hands the
- * pending ones to the task about to run. Both live here rather than in the store
+ * pending ones to the task about to run; `recordSteeringResponse` brings that
+ * task's reply back to them. All three live here rather than in the store
  * so the store stays pure state, and rather than in the panel so the batch
  * runner can consume notes without importing anything from the view layer.
  */
@@ -79,7 +80,37 @@ export function takeSteeringNotesForDispatch(sessionId: string): AutoRunSteering
 	return useAutoRunSteeringStore.getState().takeNotes(sessionId);
 }
 
-/** Clear anything pending or delivered (run start and run end own the lifetime). */
+/**
+ * Attach a finished task's reply to the notes it was dispatched with, so the
+ * panel can show what the agent did about them.
+ *
+ * Called for EVERY settled task, failed ones included: a note whose task blew up
+ * must say so rather than sit on "working on it" for the rest of the run. No-op
+ * for a task that took no notes, which is nearly all of them.
+ */
+export function recordSteeringResponse(
+	sessionId: string,
+	notes: readonly AutoRunSteeringNote[],
+	response: { summary: string; text: string; success: boolean }
+): void {
+	if (notes.length === 0) return;
+	useAutoRunSteeringStore.getState().recordResponse(
+		sessionId,
+		notes.map((note) => note.id),
+		response
+	);
+}
+
+/** Clear anything pending or delivered. Run START owns this: a new run begins clean. */
 export function clearSteeringNotes(sessionId: string): void {
 	useAutoRunSteeringStore.getState().clearNotes(sessionId);
+}
+
+/**
+ * Drop the notes no task took, keeping the delivered record and its replies.
+ * Run END owns this. The reply to a run's last note lands as the run finishes,
+ * so clearing the delivered list here would erase it the moment it arrived.
+ */
+export function clearPendingSteeringNotes(sessionId: string): void {
+	useAutoRunSteeringStore.getState().clearPendingNotes(sessionId);
 }
