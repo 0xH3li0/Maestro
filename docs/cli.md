@@ -57,6 +57,8 @@ Commands exit with a standardized code so scripts and CI can branch on the failu
 
 Every verb reports a failure the same way. A person reads one `Error:` line on stderr. Under `--json`, a script reads one object on stdout, `{ "success": false, "error": "..." }`, and the exit code names the class. A bridge call that fails exits `3`, `4` or `5` instead of `1`; only `send` and `goal-run` keep exit codes of their own.
 
+Every verb that returns data takes `--json` (`completions`, `reference`, which has `--format`, and `mcp serve` are the exceptions), including the ones that always print JSON (`send`, `dispatch`, `queue`, `gist create`, `settings media-status`), where the flag changes nothing. Every verb also ends its `--help` with an `Examples:` block, and `maestro-cli reference` prints the same examples under each command (`--format json` carries them as `examples`). A test walks the live command tree and fails on a verb that has no description or no example, so a new verb cannot skip either.
+
 ### Who Moves the View (`--background` / `--focus`)
 
 Focus belongs to whoever is at the keyboard. An agent may create a surface; it should not decide you ought to be looking at it. Every verb that can move the Maestro view or raise a notice therefore accepts `--background`, which means exactly two things: the active agent does not change, and the active tab inside any agent does not change. The surface is still created and still addressable - it lands in the tab bar the way a browser opens a background tab.
@@ -553,7 +555,7 @@ maestro-cli update-agent <agent-id> --clear-env
 maestro-cli update-agent <agent-id> --gateway-url http://127.0.0.1:8787
 maestro-cli update-agent <agent-id> --gateway-url none
 
-# Or use Maestro's own proxy: off | passthrough | compress (it sets the gateway URL for you)
+# Or use Maestro's own proxy: off | passthrough | compress | compress-early (it sets the gateway URL for you)
 maestro-cli update-agent <agent-id> --proxy-mode compress
 
 # Run the agent's model on a Local Models source, behind the same provider CLI
@@ -565,6 +567,21 @@ maestro-cli agent test-run-on <agent-id>                                   # one
 maestro-cli update-agent <agent-id> --run-on provider                      # back to the provider's model
 maestro-cli models proxy status              # what it carried, saved, and shortened
 maestro-cli models proxy block <hash>        # a diff of one block it shortened
+
+# Tiers: where a low, medium or high task of this agent launches (repeatable; =default follows the harness again)
+maestro-cli update-agent <agent-id> --tier low=maestro-server:<model-id> --tier high=provider:opus
+maestro-cli update-agent <agent-id> --tier low=default
+
+# Let the model router pick the tier and effort of each turn
+maestro-cli update-agent <agent-id> --model auto
+
+# Where the token proxy sends this agent's side requests (titles, summaries), or none
+maestro-cli update-agent <agent-id> --background-requests <source-id>:<model>
+maestro-cli update-agent <agent-id> --background-requests none
+
+# Keep one agent off System One, or follow the global switch again
+maestro-cli update-agent <agent-id> --system-one off
+maestro-cli update-agent <agent-id> --system-one on
 
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
@@ -580,6 +597,21 @@ maestro-cli update-agent <agent-id> --remove-peer docs-agent     # delete the ro
 maestro-cli update-agent <agent-id> --group-peers rw --worktree-peers r
 maestro-cli update-agent <agent-id> --group-peers off
 
+# Peers can be set when the agent is created, too
+maestro-cli create-agent "Docs Worker" -d . --peer docs-agent:r --group-peers rw
+
+# Agent Resilience and the Codex reset credit (true | false | default)
+maestro-cli update-agent <agent-id> --retry-on-availability false --retry-on-token-exhaustion default
+maestro-cli update-agent <agent-id> --codex-auto-reset true
+
+# Directories outside the working directory the agent may use: <path> is read-only, <path>:rw can write
+maestro-cli update-agent <agent-id> --additional-dir ~/notes --additional-dir ~/shared:rw
+maestro-cli update-agent <agent-id> --clear-additional-dirs
+
+# Switch an environment variable off without deleting it, and back on
+maestro-cli update-agent <agent-id> --env-park OPENAI_API_KEY
+maestro-cli update-agent <agent-id> --env-unpark OPENAI_API_KEY
+
 # Update SSH execution config (use "none" to revert to local)
 maestro-cli update-agent <agent-id> --ssh-remote <remote-id> --ssh-cwd /remote/workdir
 maestro-cli update-agent <agent-id> --ssh-remote none
@@ -588,70 +620,99 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 `update-agent` mutates an existing agent in place, writing the same live desktop Session the Edit Agent modal edits (not the per-agent config store that `settings agent set` writes). Read the current values back with `maestro-cli show agent <id> --json`.
 
+`show agent` also prints the environment the agent is spawned with, with the layer each value came from (`global`, `agent`, `session` or `gateway`) and any layer it overrode. Secret values (keys, tokens, passwords) are masked unless you pass `--show-secrets`, as `settings list` does. Parked variables are listed apart. `--json` carries the same data as `effectiveEnv` and `parkedEnvVars`.
+
 `show agent` also answers "who can this agent reach?". Its `peers` object lists the stored rows (with their access and notes), the two derived grants and whether each is on, and the **resolved** roster, each entry labeled with its source (`explicit`, `group`, or `worktree`). The resolved roster is the list the agent actually receives in its system prompt, so it can differ from the rows you configured. See [Agent Delegation](./agent-delegation).
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
 For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--gateway-url` sets the agent's [Local Models gateway](/local-models#gateway): the URL becomes the provider's base-URL variable (`ANTHROPIC_BASE_URL` for Claude Code, `OPENAI_BASE_URL` for Codex) the next time the agent starts, unless the agent's own environment variables already set that variable. It is refused for a provider that cannot use a gateway (Copilot CLI ignores base-URL variables), and an agent on an SSH remote does not start with a loopback gateway, because the remote host cannot reach it. `--run-on` sets where the agent's model runs, the Run on picker on the Models tab: `provider` is the provider's own model, and `<source id>:<model>` is a model on a Local Models source (`maestro-server` for the Maestro model server, or an id from `models endpoints list`). The source's id ends at the first colon, so a model name may hold one. The agent keeps its provider's CLI and only the model behind it changes. The target is refused for a provider whose CLI Maestro cannot point at another model server, for a source id that names nothing, and for a context under 40960 tokens. Whether the source serves the model is not asked at this point: `agent test-run-on` sends one short turn to find out, and a launch that cannot run on its target is refused by name, never moved to the provider's model. While the target is a source, `--gateway-url` and `--proxy-mode` are refused (clearing them is not), because a gateway routes requests to the provider. `show agent --json` reports the target as `runOn`, with `runOnSpec` in the spelling `--run-on` takes. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running local chat turn be steered. SSH, image, Auto Run, and Cue turns keep using `codex exec` either way.
 
-| Flag                               | Description                                                                                                                                           | Default |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                 | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                                                 | -       |
-| `-d, --cwd <path>`                 | New working directory (resolved to absolute). Agent must be stopped                                                                                   | -       |
-| `--ssh-remote <id>`                | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                                                 | -       |
-| `--ssh-cwd <path>`                 | Working directory override on the SSH remote. Agent must be stopped                                                                                   | -       |
-| `--sync-history-to-remote <bool>`  | Sync history entries to `.maestro/history/` on the remote host                                                                                        | -       |
-| `--nudge <message>`                | Nudge message appended to every message. Empty string clears                                                                                          | -       |
-| `--new-session-message <message>`  | Message prefixed to the first message of new sessions. Empty string clears                                                                            | -       |
-| `--custom-path <path>`             | Override the agent binary path. Empty string clears                                                                                                   | -       |
-| `--custom-args <args>`             | Custom CLI arguments. Empty string clears                                                                                                             | -       |
-| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                                                        | -       |
-| `--clear-env`                      | Clear all per-agent environment variables                                                                                                             | -       |
-| `--gateway-url <url\|none>`        | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                               | -       |
-| `--proxy-mode <mode>`              | [Maestro's own proxy](/local-models#the-maestro-proxy) for this agent: `off`, `passthrough` or `compress`. Not with `--gateway-url`                   | -       |
-| `--run-on <target>`                | [Run on](/local-models): `provider` (clears a target), or `<source id>:<model>` on a Local Models source                                              | -       |
-| `--run-on-context <tokens>`        | Context size for the Run on source (at least 40960). Alone, it changes the current target's context                                                   | -       |
-| `--model <model>`                  | Model override (e.g. sonnet, opus). Empty string clears                                                                                               | -       |
-| `--effort <level>`                 | Effort/reasoning level override. Empty string clears                                                                                                  | -       |
-| `--context-window <size>`          | Context window size in tokens. `0` or `none` clears                                                                                                   | -       |
-| `--token-source <mode>`            | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                        | -       |
-| `--maestro-p-path <path>`          | Override the maestro-p binary path. Empty string clears                                                                                               | -       |
-| `--codex-transport <transport>`    | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only                                 | -       |
-| `--peer <agent:access>`            | Set one explicit peer row (repeatable). `access` is `r` (consult), `w` (delegate), `rw`, or `none` (exclude the peer from a group or worktree grant)  | -       |
-| `--peer-note <agent:text>`         | Set a row's note, the hint the agent reads for when to reach that peer (repeatable). Needs an existing row or a `--peer` beside it. Empty text clears | -       |
-| `--remove-peer <agent>`            | Delete a peer row (repeatable). Not the same as `none`: a deleted row lets the group and worktree grants apply again                                  | -       |
-| `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group, resolved live. `off` clears                                                                      | -       |
-| `--worktree-peers <r\|w\|rw\|off>` | Grant access to the agent's worktree family: parent, sibling and child worktrees, resolved live. `off` clears                                         | -       |
-| `--provider <type>`                | Switch the agent's provider. Destructive: resets tabs and clears provider config. Requires `--force`. Cannot be combined with other settings edits    | -       |
-| `--force`                          | Confirm a destructive change (required for `--provider`)                                                                                              | -       |
-| `--json`                           | Machine-readable JSON output                                                                                                                          | -       |
+The rest of the Models tab, and the settings the Edit Agent form groups under Resilience and Directories, have flags too:
+
+- `--tier <low|medium|high>=<target>` repeats, one per tier. A target is `<source id>:<model>`, `provider` (the agent's own model), `provider:<model>`, or `default` to follow the harness default again. `models tiers options <harness>` lists what a harness can launch a tier on. `show agent --json` reports each tier with the layer it came from (`agent`, `harness-default` or `built-in`). See [Local Models](/local-models#tiers).
+- `--model auto` sends each turn on the Auto model: the router picks the tier and effort per turn, and the transcript labels the turn with what it chose. Dry-run a prompt with `maestro-cli s1 route "<prompt>"`.
+- `--background-requests` and `--system-one` change one agent only. `--system-one off` makes that agent's `s1` verbs refuse, and its system prompt stops mentioning them; `on` returns it to the global "Let agents use System One" switch.
+- `--retry-on-availability`, `--retry-on-token-exhaustion` and `--codex-auto-reset` take `true`, `false` or `default`. `default` removes the agent's own choice so the app default applies again. The two retries are on by default, so `default` and `false` differ.
+- `--additional-dir` replaces the whole list (repeat it for several directories) and `--clear-additional-dirs` empties it.
+- `--env-park KEY` keeps the variable in the agent's settings and stops spawning with it, the Edit Agent toggle for the same thing. `--env-unpark KEY` reverses it. Neither is for `--clear-env`, which deletes. `show agent` lists parked variables apart from the effective environment.
+- `--share-history-to-project-dir` is for an agent whose project another Maestro install controls: it mirrors History entries into the project's `.maestro/history/` folder. The agent must be stopped.
+
+| Flag                                    | Description                                                                                                                                                                                     | Default |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                      | Move the agent to this group; supports partial IDs. Use `none` (or `null`) to ungroup                                                                                                           | -       |
+| `-d, --cwd <path>`                      | New working directory (resolved to absolute). Agent must be stopped                                                                                                                             | -       |
+| `--ssh-remote <id>`                     | SSH remote for remote execution. Use `none` to revert to local. Agent must be stopped                                                                                                           | -       |
+| `--ssh-cwd <path>`                      | Working directory override on the SSH remote. Agent must be stopped                                                                                                                             | -       |
+| `--sync-history-to-remote <bool>`       | Sync history entries to `.maestro/history/` on the remote host                                                                                                                                  | -       |
+| `--nudge <message>`                     | Nudge message appended to every message. Empty string clears                                                                                                                                    | -       |
+| `--new-session-message <message>`       | Message prefixed to the first message of new sessions. Empty string clears                                                                                                                      | -       |
+| `--custom-path <path>`                  | Override the agent binary path. Empty string clears                                                                                                                                             | -       |
+| `--custom-args <args>`                  | Custom CLI arguments. Empty string clears                                                                                                                                                       | -       |
+| `--env <KEY=VALUE>`                     | Set an environment variable (repeatable; replaces the env map)                                                                                                                                  | -       |
+| `--clear-env`                           | Clear all per-agent environment variables                                                                                                                                                       | -       |
+| `--gateway-url <url\|none>`             | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                                                                         | -       |
+| `--proxy-mode <mode>`                   | [Maestro's own proxy](/local-models#the-maestro-proxy) for this agent: `off`, `passthrough`, `compress` or `compress-early`. Not with `--gateway-url`                                           | -       |
+| `--run-on <target>`                     | [Run on](/local-models): `provider` (clears a target), or `<source id>:<model>` on a Local Models source                                                                                        | -       |
+| `--run-on-context <tokens>`             | Context size for the Run on source (at least 40960). Alone, it changes the current target's context                                                                                             | -       |
+| `--tier <tier=target>`                  | Where a `low`, `medium` or `high` task of this agent launches (repeatable): `low=<source id>:<model>`, `high=provider:<model>`, `medium=provider`, or `low=default` to follow the harness again | -       |
+| `--background-requests <target>`        | Where the token proxy sends this agent's side requests: `<source id>:<model>`, or `none`. Claude Code agents on the proxy only                                                                  | -       |
+| `--system-one <on\|off>`                | Whether this agent may ask System One with `s1`: `off` for this agent only, `on` follows the global switch                                                                                      | -       |
+| `--model <model>`                       | Model override (e.g. sonnet, opus). `auto` lets the model router pick the tier and effort of each turn. Empty string clears                                                                     | -       |
+| `--effort <level>`                      | Effort/reasoning level override. Empty string clears                                                                                                                                            | -       |
+| `--context-window <size>`               | Context window size in tokens. `0` or `none` clears                                                                                                                                             | -       |
+| `--token-source <mode>`                 | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                                                                  | -       |
+| `--maestro-p-path <path>`               | Override the maestro-p binary path. Empty string clears                                                                                                                                         | -       |
+| `--codex-transport <transport>`         | Codex transport: `exec` (standard) or `app-server` (experimental, enables steering a running turn). Codex agents only                                                                           | -       |
+| `--peer <agent:access>`                 | Set one explicit peer row (repeatable). `access` is `r` (consult), `w` (delegate), `rw`, or `none` (exclude the peer from a group or worktree grant)                                            | -       |
+| `--peer-note <agent:text>`              | Set a row's note, the hint the agent reads for when to reach that peer (repeatable). Needs an existing row or a `--peer` beside it. Empty text clears                                           | -       |
+| `--remove-peer <agent>`                 | Delete a peer row (repeatable). Not the same as `none`: a deleted row lets the group and worktree grants apply again                                                                            | -       |
+| `--group-peers <r\|w\|rw\|off>`         | Grant access to every other agent in the same group, resolved live. `off` clears                                                                                                                | -       |
+| `--worktree-peers <r\|w\|rw\|off>`      | Grant access to the agent's worktree family: parent, sibling and child worktrees, resolved live. `off` clears                                                                                   | -       |
+| `--bookmark <bool>`                     | Bookmark the agent in the Left Bar (`true` or `false`)                                                                                                                                          | -       |
+| `--retry-on-availability <bool>`        | Agent Resilience: resend a turn the provider refused as overloaded. `default` drops the choice, which is on                                                                                     | -       |
+| `--retry-on-token-exhaustion <bool>`    | Agent Resilience: resend a turn refused for a spent quota once it resets. `default` drops the choice, which is on                                                                               | -       |
+| `--codex-auto-reset <bool>`             | Spend a Codex rate-limit reset credit when the quota is exhausted. `default` drops the choice. Codex agents only                                                                                | -       |
+| `--additional-dir <path[:access]>`      | A directory outside the working directory the agent may use (repeatable; replaces the list): `<path>` is read-only, `<path>:rw` adds write                                                      | -       |
+| `--clear-additional-dirs`               | Remove every additional directory                                                                                                                                                               | -       |
+| `--env-park <KEY>`                      | Switch an environment variable off without deleting it (repeatable): kept and editable, never spawned with                                                                                      | -       |
+| `--env-unpark <KEY>`                    | Switch a parked environment variable back on (repeatable)                                                                                                                                       | -       |
+| `--share-history-to-project-dir <bool>` | Mirror History entries into the local project's `.maestro/history/`, for an agent another Maestro controls. Agent must be stopped                                                               | -       |
+| `--provider <type>`                     | Switch the agent's provider. Destructive: resets tabs and clears provider config. Requires `--force`. Cannot be combined with other settings edits                                              | -       |
+| `--force`                               | Confirm a destructive change (required for `--provider`)                                                                                                                                        | -       |
+| `--json`                                | Machine-readable JSON output                                                                                                                                                                    | -       |
 
 The flag table below covers `create-agent`:
 
-| Flag                              | Description                                                                                                                                                                                                    | Default                    |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `-d, --cwd <path>`                | Working directory for the agent. Required unless `--group` names a group whose defaults set one                                                                                                                | -                          |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid)                                                                                                                                                       | `claude-code`              |
-| `-g, --group <id>`                | Group to assign the agent to; partial IDs work. The agent starts from the group's defaults and every flag you pass overrides one                                                                               | -                          |
-| `--no-group-defaults`             | Create a bare agent in `--group`, ignoring the group's defaults. No effect without `--group`                                                                                                                   | -                          |
-| `--nudge <message>`               | Nudge message appended to every user message                                                                                                                                                                   | -                          |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                                                                                                                              | -                          |
-| `--custom-path <path>`            | Custom binary path for the agent CLI                                                                                                                                                                           | -                          |
-| `--custom-args <args>`            | Custom CLI arguments                                                                                                                                                                                           | -                          |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                                                                                                              | -                          |
-| `--model <model>`                 | Model override (e.g., sonnet, opus)                                                                                                                                                                            | -                          |
-| `--effort <level>`                | Effort/reasoning level override                                                                                                                                                                                | -                          |
-| `--context-window <size>`         | Context window size in tokens                                                                                                                                                                                  | -                          |
-| `--provider-path <path>`          | Custom provider path                                                                                                                                                                                           | -                          |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                                                                                             | -                          |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                                                                                                                   | -                          |
-| `--auto-run-folder <path>`        | Auto Run / playbooks folder for this agent                                                                                                                                                                     | `<cwd>/.maestro/playbooks` |
-| `--gateway-url <url\|none>`       | [Local Models gateway](/local-models#gateway), as on the New Agent Models tab. Checked against the provider like `update-agent --gateway-url`. Choose a proxy mode afterwards with `update-agent --proxy-mode` | -                          |
-| `--run-on <target>`               | Where the model runs, as on the New Agent Models tab: `provider` (default), or `<source id>:<model>` on a Local Models source. Checked like `update-agent --run-on`                                            | -                          |
-| `--run-on-context <tokens>`       | Context size the harness is told a `--run-on` source has (at least 40960; default: the model's catalog context on the Maestro model server, 40960 elsewhere)                                                   | -                          |
-| `--background`                    | Create the agent without selecting it in the Left Bar                                                                                                                                                          | -                          |
-| `--focus`                         | Select the new agent after creating it (default)                                                                                                                                                               | -                          |
-| `--json`                          | Machine-readable JSON output                                                                                                                                                                                   | -                          |
+| Flag                               | Description                                                                                                                                                                                                                      | Default                    |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `-d, --cwd <path>`                 | Working directory for the agent. Required unless `--group` names a group whose defaults set one                                                                                                                                  | -                          |
+| `-t, --type <type>`                | Agent type: any provider id Maestro lists (`claude-code`, `codex`, `opencode`, `factory-droid`, `copilot-cli`, `antigravity`, `qwen3-coder`, `grok`, `hermes`, `pi`, `omp`); `maestro-cli create-agent --help` has the full list | `claude-code`              |
+| `-g, --group <id>`                 | Group to assign the agent to; partial IDs work. The agent starts from the group's defaults and every flag you pass overrides one                                                                                                 | -                          |
+| `--no-group-defaults`              | Create a bare agent in `--group`, ignoring the group's defaults. No effect without `--group`                                                                                                                                     | -                          |
+| `--nudge <message>`                | Nudge message appended to every user message                                                                                                                                                                                     | -                          |
+| `--new-session-message <message>`  | Message prefixed to first message in new sessions                                                                                                                                                                                | -                          |
+| `--custom-path <path>`             | Custom binary path for the agent CLI                                                                                                                                                                                             | -                          |
+| `--custom-args <args>`             | Custom CLI arguments                                                                                                                                                                                                             | -                          |
+| `--env <KEY=VALUE>`                | Environment variable (repeatable)                                                                                                                                                                                                | -                          |
+| `--model <model>`                  | Model override (e.g., sonnet, opus; `auto` lets the model router pick each turn)                                                                                                                                                 | -                          |
+| `--effort <level>`                 | Effort/reasoning level override                                                                                                                                                                                                  | -                          |
+| `--context-window <size>`          | Context window size in tokens                                                                                                                                                                                                    | -                          |
+| `--provider-path <path>`           | Custom provider path                                                                                                                                                                                                             | -                          |
+| `--ssh-remote <id>`                | SSH remote ID for remote execution                                                                                                                                                                                               | -                          |
+| `--ssh-cwd <path>`                 | Working directory override on the SSH remote                                                                                                                                                                                     | -                          |
+| `--sync-history-to-remote <bool>`  | Sync history entries to `.maestro/history/` on the remote host (`true` or `false`; needs `--ssh-remote`)                                                                                                                         | -                          |
+| `--auto-run-folder <path>`         | Auto Run / playbooks folder for this agent                                                                                                                                                                                       | `<cwd>/.maestro/playbooks` |
+| `--gateway-url <url\|none>`        | [Local Models gateway](/local-models#gateway), as on the New Agent Models tab. Checked against the provider like `update-agent --gateway-url`. Choose a proxy mode afterwards with `update-agent --proxy-mode`                   | -                          |
+| `--run-on <target>`                | Where the model runs, as on the New Agent Models tab: `provider` (default), or `<source id>:<model>` on a Local Models source. Checked like `update-agent --run-on`                                                              | -                          |
+| `--run-on-context <tokens>`        | Context size the harness is told a `--run-on` source has (at least 40960; default: the model's catalog context on the Maestro model server, 40960 elsewhere)                                                                     | -                          |
+| `--peer <agent:access>`            | Set one explicit peer row (repeatable), as `update-agent --peer` does: `r`, `w`, `rw` or `none`                                                                                                                                  | -                          |
+| `--peer-note <agent:text>`         | Set the note on a peer row (repeatable)                                                                                                                                                                                          | -                          |
+| `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group, resolved live                                                                                                                                                               | -                          |
+| `--worktree-peers <r\|w\|rw\|off>` | Grant access to the agent's worktree family, resolved live                                                                                                                                                                       | -                          |
+| `--background`                     | Create the agent without selecting it in the Left Bar                                                                                                                                                                            | -                          |
+| `--focus`                          | Select the new agent after creating it (default)                                                                                                                                                                                 | -                          |
+| `--json`                           | Machine-readable JSON output                                                                                                                                                                                                     | -                          |
 
 ### Creating, Updating, and Removing Groups
 
@@ -773,6 +834,8 @@ maestro-cli update-group-settings <group-id> --model sonnet --publish
 maestro-cli update-group-settings <group-id> --model sonnet --publish --yes
 ```
 
+`maestro-cli open group-settings --group <group-id>` opens the dialog itself.
+
 `group-settings` prints the group's defaults, or **no defaults** when it holds none, and its pill label. When the group has no label of its own, the abbreviation Maestro derives from the name is printed and marked as automatic. It reads the stored group and does not need the app to be running. `--json` returns `group` with `defaults`, `shortLabel`, `badgeLabel` and `badgeLabelSource` (`custom` or `automatic`).
 
 `update-group-settings` needs the desktop app. It accepts the settings flags of [`update-agent`](#creating-updating-and-removing-agents) that map to a default (`--provider`, `--cwd`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env`, `--clear-env`, `--model`, `--effort`, `--context-window`, `--gateway-url`, `--proxy-mode`, `--run-on`, `--tier`, `--system-one`, the five peer flags, `--ssh-remote`, `--ssh-cwd`, and the rest), and it builds the profile with the same validation the dialog uses, so a flag and a click store the same thing. A provider-bound value for a group with no provider, or for another provider, is refused by name.
@@ -843,6 +906,113 @@ DELEGATION GRAPH  All agents
 `--json` prints `scope`, `group`, `stats`, `nodes` and `edges`. A node has `sessionId`, `name`, `groupId` and `scope` (`in-scope` or `spill`). An edge has `sourceId`, `targetId`, `read` (consult), `write` (delegate), `source`, and `description` when the row has a note.
 
 The verb only reads. To change an edge, use `update-agent <source> --peer <target>:<r|w|rw|none>` or `--remove-peer <target>` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)). To see the canvas, use `maestro-cli open delegation-graph`.
+
+### Local Models (`models`)
+
+`models` is the command-line form of **Settings > Models**: the Library, the engines, the model server, the endpoints you run, which model each housekeeping task uses, tier defaults, and the token proxy. Each verb reaches the same main-process function as its button, so a download started here is the download the Library shows. The concepts are in [Local Models](/local-models); this section is the verb map.
+
+| To do this                                   | Run                                                                                                                                |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| See which models are installed               | `models list [--kind text-gen\|embedding\|classifier\|stt\|tts\|wake-word] [--fit]`                                                |
+| Download, pause, cancel, verify, or drop one | `models install <id>`, `models pause <id>`, `models cancel <id>`, `models verify <id>`, `models remove <id> [--force]`             |
+| Add a GGUF model from Hugging Face           | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                 |
+| Install or update an engine                  | `models runtimes list`, `models runtimes install onnx\|llama`                                                                      |
+| Point a task at a model                      | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                     |
+| See what each task runs on, and if it can    | `models tasks`, `models status [<task>]`                                                                                           |
+| Run a task now                               | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                   |
+| See and drive the model server               | `models server status\|start\|stop\|key`, `models server set --bind local\|network --max-models <n> --rotate-key --build <choice>` |
+| Use a model server you run                   | `models endpoints list\|add\|update\|remove\|models\|test\|detect`                                                                 |
+| Set tier defaults per harness                | `models tiers list\|options\|suggest\|set\|reset`                                                                                  |
+| See what the token proxy did                 | `models proxy status`, `models proxy block <hash>`                                                                                 |
+| Check the semantic index                     | `models index`                                                                                                                     |
+| Change where model files come from           | `models config show`, `models config set download-base <url\|default>`                                                             |
+
+```bash
+# What is installed, and what will fit on this computer
+maestro-cli models list --kind text-gen --fit
+
+# Download one and wait until it is verified and usable
+maestro-cli models install <model-id>
+
+# Give a housekeeping task to a local model, then check it and run it
+maestro-cli models assign tab-naming local:<model-id>
+maestro-cli models status tab-naming
+maestro-cli models run tab-naming --input "Name this tab: fix the login redirect"
+
+# Start the Maestro model server and read its key and address
+maestro-cli models server start
+maestro-cli models server status --json
+
+# Use an Ollama you already run
+maestro-cli models endpoints add --kind ollama
+maestro-cli models endpoints models <endpoint>
+maestro-cli models assign model-routing endpoint:<endpoint>:<model>
+```
+
+Notes:
+
+- **Nothing starts itself.** `models server start` and `models install` are the only ways these verbs spend disk, memory or bandwidth, and each waits until the work is done.
+- **A missing target is refused by name.** A task whose model is not installed or whose endpoint is off fails with the reason; it is never moved to another model. `models status` says what to do about it.
+- **Exit codes.** `models run` exits `6` when the task is switched off or assigned to the Utility Agent (nothing will answer, so do not retry) and `7` when the task ran and could not answer (unavailable, cancelled, no changes). `1` is a usage or refused-write failure.
+- **Which verbs need the app.** Reads and writes of the settings file (`models assign`, `models tasks`, `models endpoints list|add|update|remove`, `models tiers list|set|reset`, `models config`) work with Maestro closed, and the watcher reloads the running app. Anything that downloads, starts, or probes needs the app and exits `3` without it.
+- **Agents.** Point one agent at a model with `update-agent --run-on`, `--tier`, `--background-requests` and `--proxy-mode` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)), and test the target with `agent test-run-on <agent-id>`.
+
+### System One (`s1`)
+
+`s1` asks typed questions about a text and returns calibrated judgments, and it configures the engine that answers them. The concepts, the engines and the budget are in [System One](/local-models#system-one). Every verb needs the desktop app.
+
+| To do this                           | Run                                                                                                             |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Ask a yes or no question             | `s1 yes "<question>" --state "<text>"`, which exits `0` for yes and `1` for no                                  |
+| Pick one option, or rate on a rubric | `s1 pick "<question>" "a=desc,b=desc"`, `s1 rate "<question>" "low,mid,high"`                                   |
+| Ask several questions of one text    | `s1 ask --noul <id> "<question>" --choice <id> "<question>" <option>...`                                        |
+| Rank or filter many candidates       | `s1 rank --query "<query>" --candidates-file <file>`                                                            |
+| Ask the same of every row of a file  | `s1 batch --input <file> --noul <id> "<question>"`                                                              |
+| Know the price before a job          | `s1 cost --state-file <file> --questions <n>`                                                                   |
+| Read the playbook and recipes        | `s1 guide [<topic>]`, `s1 examples [<name>]`                                                                    |
+| See and change the engine            | `s1 status`, `s1 set engine\|timeout\|fail-policy\|keep-inputs\|agents\|budget`, `s1 key set\|clear`, `s1 test` |
+| See what it decided and what it cost | `s1 ledger [--task <task>] [--since 2h]`, `s1 usage [--agent <id>] [--since 7d]`                                |
+| Dry-run the model router             | `s1 route "<prompt>" [--agent <id>]`                                                                            |
+
+```bash
+# A calibrated gut check in a shell condition
+if maestro-cli s1 yes "Does this diff change a public API?" --state-file change.diff; then
+  echo "needs review"
+fi
+
+# Set the engine, store its key (read from standard input, never an argument), and prove it works
+maestro-cli s1 set engine openjev --url https://jev.example.com
+pbpaste | maestro-cli s1 key set --engine openjev
+maestro-cli s1 test
+
+# What did agents spend today?
+maestro-cli s1 usage --since 1d
+```
+
+`s1 status` and `s1 test` exit non-zero when the engine cannot answer as set up. `s1 route` exits `6` when the router is off and `7` when it gave no decision, the same split `models run` uses. No verb prints a stored key.
+
+### What the Other Models Did (`stats models`)
+
+`stats models` is the Usage Dashboard's **Models** tab as data: what every model other than a provider's own did, by source and by task, plus the Run on agents, System One and what the token proxy saved. It has no side effects.
+
+```bash
+maestro-cli stats models --range week
+maestro-cli stats models --range month --json
+maestro-cli open usage-dashboard --tab models
+```
+
+`--range` takes `day`, `week`, `month`, `quarter`, `year` or `all`, as `stats` does. `stats` itself prints the rest of the dashboard.
+
+### Searching Past Work (`search`)
+
+`search` looks through History entries, Director's Notes and tab transcripts for a query. It matches exact text by default and by meaning with `--semantic`, which needs the `semantic-search` task assigned to an embedding model (`maestro-cli models assign semantic-search <source>`; `models index` shows the index state).
+
+```bash
+maestro-cli search "retry backoff" --source history
+maestro-cli search "how we handled rate limits" --semantic --agent <agent-id> --limit 10
+```
+
+`--source` takes `history`, `notes` or `transcripts` (repeatable, or comma-separated). `--limit` defaults to 20 and is capped at 100. Under `--json` the output is `{ "success": true, "query", "status", "mode", "hits", "durationMs" }`. A hit has `sourceType`, `sourceId`, `agentId`, `agentName`, `title`, `snippet`, `timestamp`, and `score` (semantic) or `matchCount` (text). `--semantic` never falls back to text matching: when the task is off or cannot run it says so and exits non-zero.
 
 ### Moving Agents and Groups Between Windows (`window`)
 
@@ -1289,6 +1459,17 @@ maestro-cli settings reset fontSize
 Use `maestro-cli settings list -v` from inside an AI agent conversation to give the agent full context about every available setting and what it controls.
 </Tip>
 
+**A Cappella settings** live under one `acappella` key, and `settings` checks them against the same bounds the Voice panels use. A path nothing reads is refused with the list of known paths, a value out of range or of the wrong type is refused by name, `get` of a field you never set returns its default, and `reset` puts it back. After a write the running app re-syncs the wake word and the voice hotkeys, so the change applies without a restart.
+
+```bash
+maestro-cli settings get acappella.ui.listenMode
+maestro-cli settings set acappella.controls.idleTimeoutMs 120000
+maestro-cli settings set acappella.controls.wakePhrase "hey scout"
+maestro-cli settings reset acappella.voice.volume
+```
+
+Use the [`voice`](#voice) verbs for anything that has one: `voice providers set` and `voice volume` also tell a running session, which a bare settings write cannot. The TURN credential reads back masked, as a stored key does in `settings list`.
+
 ### Theme and Encore Features
 
 Ergonomic, validated wrappers over the underlying settings, for the customizations users most often ask for by voice. Unlike `settings set` (which writes the settings file), these route through the running desktop app, so the change applies live. The app must be running.
@@ -1316,7 +1497,7 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`).
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `computerHistory`, `quickChat`, `aCappella` (the voice interface), and on macOS `maestroRun`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`, `voice` for `aCappella`). Enabling `aCappella` opens nothing and downloads nothing: it only makes the voice surfaces and verbs available.
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 
@@ -1566,7 +1747,13 @@ If the run is interrupted (Ctrl+C or SIGTERM), the agent turn in flight is stopp
 {"type":"complete","timestamp":...,"success":false,"totalTasksCompleted":2,"totalElapsedMs":31000,"stopped":true}
 ```
 
-The `send` command always outputs JSON (no `--json` flag needed).
+The `send` command always outputs JSON (no `--json` flag needed; `--json` is accepted and changes nothing, as it is on `dispatch`, `queue` and `gist create`).
+
+Every verb reports a failure in one shape. A person reads `Error: <reason>` on stderr; under `--json` a script reads this on stdout and checks the exit code for the class (see [Global Flags and Exit Codes](#global-flags-and-exit-codes)):
+
+```json
+{ "success": false, "error": "Maestro is not running" }
+```
 
 ### Desktop Integration
 
@@ -1593,19 +1780,22 @@ maestro-cli open settings --tab models --sub-tab system-one
 
 # Open the Delegation Graph on one group (the group's id, or a unique prefix of it)
 maestro-cli open delegation-graph --group <group-id>
+
+# Open Group Settings for one group (the dialog behind group-settings)
+maestro-cli open group-settings --group <group-id>
 ```
 
-| Flag                  | Description                                                   |
-| --------------------- | ------------------------------------------------------------- |
-| `-t, --tab <tab>`     | Deep-link to a tab within the surface                         |
-| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs `--tab`)            |
-| `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph only)   |
-| `--list`              | List every openable surface, its tabs, sub-tabs, and shortcut |
-| `--json`              | Output as JSON (for scripting)                                |
+| Flag                  | Description                                                            |
+| --------------------- | ---------------------------------------------------------------------- |
+| `-t, --tab <tab>`     | Deep-link to a tab within the surface                                  |
+| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs `--tab`)                     |
+| `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph, Group Settings) |
+| `--list`              | List every openable surface, its tabs, sub-tabs, and shortcut          |
+| `--json`              | Output as JSON (for scripting)                                         |
 
 Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` or `--sub-tab` value matches either the id (`scheduled`) or the label (`"Scheduled Tasks"`). A renamed tab keeps its old id as an alias: `--tab local-models` still opens Settings > Models. The Models tab has the sub-tabs `library`, `sources`, `system-one`, `system-two`, and `gateway`.
 
-`--group` applies to the Delegation Graph only, and opens it on that group and the agents it reaches instead of on every agent. Find a group's id with `maestro-cli list groups`. In the app the same thing is **Delegation Graph** in a group's right-click menu, or a "Delegation Graph: <group>" command in the command palette. Any other surface refuses `--group` and says so.
+`--group` applies to two surfaces. On the Delegation Graph it opens the graph on that group and the agents it reaches instead of on every agent; in the app the same thing is **Delegation Graph** in a group's right-click menu, or a "Delegation Graph: <group>" command in the command palette. On `group-settings` it is required, and opens the **Group Settings** dialog for that group; there is no global hotkey for it, because a chord has no group to act on. Find a group's id with `maestro-cli list groups`. Any other surface refuses `--group` and says so.
 
 On success the command also prints how to reach that surface by hand:
 
@@ -1616,7 +1806,7 @@ You can also reach Maestro Cue yourself: press Alt+Q, or open the command palett
 
 That second line is the point: an agent should relay it, so opening a surface for you teaches you the hotkey instead of making you ask again next time.
 
-Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Director's Notes, the Usage Dashboard) refuse to open and say so in a toast rather than silently doing nothing or turning your setting back on.
+Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Director's Notes, the Usage Dashboard, the voice surfaces) refuse to open. The app says so in a toast, and the command exits non-zero with the same sentence (turn the feature on with `maestro-cli encore enable <feature>`), so a script does not report an "Opened" that never happened. The setting is never turned back on for you.
 
 #### Open a File
 
@@ -1969,6 +2159,51 @@ Both commands support `--json` for scripting. Toasts respect the user's notifica
 
 ### Voice
 
+`maestro-cli voice` is the command-line form of A Cappella, the voice interface ([Voice Mode](./voice-mode)). It starts and ends sessions, drives the HUD controls, chooses the microphone, providers and voice, stores cloud keys, manages paired devices, and trains the wake word. Every verb reaches the same main-process function as its button, so a session started here is the session the HUD shows. A Cappella is an Encore Feature that is off by default: `maestro-cli encore enable aCappella` turns it on, and enabling it opens no device and downloads nothing.
+
+| To do this                                     | Run                                                                                                                     |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| See whether voice is ready, and what blocks it | `voice status`                                                                                                          |
+| Start or end a session                         | `voice start [--conductor \| --agent <id> [--tab <id>] \| --agent <id> --document <path>] [--paused]`, `voice stop`     |
+| Open or shut the microphone, send now          | `voice listen on\|off [--send]`, `voice send`, `voice stop-reply`                                                       |
+| Re-aim, change the pause, volume, mute         | `voice scope conductor\|agent\|tab`, `voice wait [<ms>\|default]`, `voice volume <0.1-1>`, `voice mute`, `voice unmute` |
+| Choose the microphone                          | `voice input list`, `voice input set <device-id>\|default`                                                              |
+| Choose providers and the voice                 | `voice providers list\|set <slot> <id>`, `voice voices list\|set <id>\|preview [<id>]`                                  |
+| Store a cloud key                              | `voice credentials list\|set\|test\|clear <service>` (`openai`, `elevenlabs`, `anthropic`)                              |
+| Manage paired devices                          | `voice devices list\|rename\|revoke\|forget\|revoke-all\|disconnect\|discovery\|test-connection`                        |
+| Set the models local voice needs               | `voice setup [--download]`                                                                                              |
+| See where the time went, or self-test          | `voice latency`, `voice self-test`                                                                                      |
+| Give one agent its own wake phrase             | `voice wake-phrase list\|set <agent> <phrase>\|clear <agent>`                                                           |
+| Train the wake word                            | `voice wake record\|stop\|add\|undo\|clear-background\|train\|status\|list\|remove\|test`                               |
+
+```bash
+# Is it ready? Prints what blocks a session by name (a model missing, the mic permission, the feature off).
+maestro-cli voice status
+
+# Talk to the Conductor, or to one agent, with the microphone shut until you open it (push-to-talk)
+maestro-cli voice start --conductor
+maestro-cli voice start --agent <agent-id> --paused
+maestro-cli voice listen on
+maestro-cli voice listen off --send     # shut the microphone and send what was said
+maestro-cli voice stop
+
+# Talk about one document with an agent
+maestro-cli voice start --agent <agent-id> --document docs/plan.md
+```
+
+A session needs a person at the microphone, so an agent drives voice for the user, not instead of them. Notes:
+
+- **One session, one window.** `voice start` opens the HUD in the window you are looking at. `voice stop` and `voice self-test` work with voice switched off, so a stuck session can always be ended.
+- **A missing capability is refused by name.** If a model is not installed or a provider is not set up, `voice start` says which slot and how to fix it (`voice setup --download`, `voice credentials set`). It never switches to a cloud provider you did not choose.
+- **Push-to-talk has no "hold" on the command line.** `listen on` is the press, `listen off` (with `--send` to send what was said) is the release.
+- **Providers and voices** are written to the settings file (so they work with Maestro closed) and then applied to a running session. A swap the app refuses because a turn is in flight is reported as saved but not applied, with the reason, and takes effect when the turn ends. `voice voices preview` is refused while a session is live.
+- **Cloud keys** are read from standard input and kept in the OS keychain. No verb takes one as an argument or prints one: `pbpaste | maestro-cli voice credentials set openai`.
+- **Paired devices.** `revoke`, `forget` and `revoke-all` ask for confirmation on a terminal. With no terminal, or under `--json`, they exit `2` unless `--yes` is passed. Approving or denying a new pairing has no verb on purpose: it is a decision only a person at the computer makes, in the app.
+- **A wake phrase for one agent** (`wake-phrase set`) rewrites only that agent's entry, leaving every other agent's phrase as it was.
+- **Every voice setting** is also reachable with `settings get|set|reset acappella.<path>`, checked against the bounds the Voice panels use (see [Managing Settings](#managing-settings)).
+
+#### Training the wake word
+
 `maestro-cli voice wake` teaches the A Cappella wake word a phrase from your own recordings. It is the command-line form of **Train** in Settings > Plugins > A Cappella > Voice Controls, and it reaches the same code, so a recording started here and one started in Settings are the same recording. See [Training your own wake phrase](./voice-mode#training-your-own-wake-phrase) for what the training does.
 
 ```bash
@@ -1995,14 +2230,16 @@ maestro-cli voice wake clear-background "hey scout"  # record the other speech a
 maestro-cli voice wake remove "hey scout"            # delete the model and every recording
 ```
 
-`record` opens the microphone on the computer running Maestro and returns at once; `stop` ends the run and closes it. A run that hears nothing for 45 seconds closes itself. `add` is the route for an agent, which has no microphone: it keeps going past a file the app will not take (too short, too long, not a WAV), says why, and still exits non-zero when any file was skipped, with `success: false` and the skipped list under `--json`. `train` waits until training finishes. `status`, `record`, `undo`, `clear-background` and `train` take the phrase as optional and use the configured wake phrase when it is left out. `--background` is the old spelling of `--other-speech` and still works.
+`record` opens the microphone on the computer running Maestro and returns at once; `stop` ends the run and closes it. A run that hears nothing for 45 seconds closes itself. `add` is the route for an agent, which has no microphone: it keeps going past a file the app will not take (too short, too long, not a WAV), says why, and still exits non-zero when any file was skipped, with `success: false` and the skipped list under `--json`. `train` waits until training finishes. `status`, `record`, `undo`, `clear-background` and `train` take the phrase as optional and use the configured wake phrase when it is left out. `--background` is the old spelling of `--other-speech` and still works, though `reference` and the shell completions no longer list it.
 
 Training needs at least 8 recordings of the phrase and 12 seconds of other speech. When the app refuses a request on purpose (a voice session holds the microphone, there is not enough recorded yet, A Cappella is switched off) the command prints the reason and exits non-zero. `status`, `list`, `stop`, and `remove` work with A Cappella switched off.
 
-| Flag           | Description                                                             |
-| -------------- | ----------------------------------------------------------------------- |
-| `--background` | `record` and `add`: the audio is ordinary speech, not the phrase        |
-| `--json`       | JSON output for scripting: `{"success":true,"status":{...}}` or `error` |
+| Flag             | Description                                                             |
+| ---------------- | ----------------------------------------------------------------------- |
+| `--other-speech` | `record` and `add`: the audio is ordinary speech, not the phrase        |
+| `--json`         | JSON output for scripting: `{"success":true,"status":{...}}` or `error` |
+
+`voice wake test [phrase]` runs the wake word alone for a few seconds and counts how often it fired, the Test button next to the phrase. Say the phrase, and say something else, to see both numbers.
 
 ### Configuring Auto-Run
 
