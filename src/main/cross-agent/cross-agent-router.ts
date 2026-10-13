@@ -41,6 +41,7 @@ import type {
 	CrossAgentTranscriptEntry,
 } from '../../shared/crossAgentTypes';
 import { CROSS_AGENT_SESSION_PREFIX } from '../../shared/crossAgentTypes';
+import { buildConsultChainEnv } from '../../shared/consultBudget';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
 import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
@@ -637,6 +638,19 @@ export async function startCrossAgentRequest(
 		return;
 	}
 
+	// The consulted agent's place in a consult chain, when whoever asked was
+	// already admitted to one (`maestro-cli ask` spends in the CLI). Stated in the
+	// consult's environment, over the agent's own env vars, so a `maestro-cli
+	// ask` or `dispatch` the consulted agent runs spends the chain it descends
+	// from. Without it that call would carry no chain and read as the user's own.
+	// It rides `customEnvVars` because that is the one record the local,
+	// maestro-p and SSH spawn paths all carry.
+	const agentEnvVars =
+		configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType);
+	const consultEnvVars = request.consultChain
+		? { ...(agentEnvVars ?? {}), ...buildConsultChainEnv(request.consultChain) }
+		: agentEnvVars;
+
 	try {
 		const spawnResult = await spawnGroupChatAgent({
 			sessionId,
@@ -646,8 +660,7 @@ export async function startCrossAgentRequest(
 			args: configResolution.args,
 			cwd: target.cwd,
 			prompt: fullPrompt,
-			customEnvVars:
-				configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType),
+			customEnvVars: consultEnvVars,
 			agentConfigValues,
 			sshRemoteConfig: target.sshRemoteConfig,
 			// The consult runs AS the target agent, so it takes that agent's gateway.

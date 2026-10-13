@@ -658,7 +658,8 @@ export async function pianolaOrchestrate(
 			return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
 		},
 		dispatch: async (task, agentId) => {
-			const res = await runDispatch(agentId, task.prompt, {});
+			// The orchestrator is a supervisor loop, not a consult (see DispatchOptions).
+			const res = await runDispatch(agentId, task.prompt, { skipConsultBudget: true });
 			return { success: !!res.success, tabId: res.sessionId ?? undefined, error: res.error };
 		},
 		persist: (p) => {
@@ -687,7 +688,7 @@ export async function pianolaOrchestrate(
 				attempt: (task.fixAttempts ?? 0) + 1,
 			});
 			try {
-				const res = await runDispatch(agentId, fixPrompt, {});
+				const res = await runDispatch(agentId, fixPrompt, { skipConsultBudget: true });
 				// F5/F8 (ISC-5.9): a REAL dispatch just happened - reflect it on the run
 				// through the guarded producer. The dispatch object is the evidence; on
 				// a failed dispatch nothing is written (the task also stays needs_review).

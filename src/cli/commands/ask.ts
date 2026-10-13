@@ -17,6 +17,7 @@
 import { resolveAgentId } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
+import { admitCliConsult } from '../services/consult-budget-guard';
 
 export interface AskOptions {
 	/**
@@ -62,9 +63,9 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	 * would still consult the agent, and the tests that prove a bad invocation
 	 * consults nobody can only do that if the guard actually stops.
 	 */
-	const fail = (message: string) => {
+	const fail = (message: string, code?: string) => {
 		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: message }));
+			console.log(JSON.stringify({ success: false, error: message, ...(code ? { code } : {}) }));
 		} else {
 			console.error(`Error: ${message}`);
 		}
@@ -118,6 +119,21 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	}
 	const timeoutMs = Math.round(seconds * 1000);
 
+	// The consult budget, checked last so an ask that was never going to start
+	// spends nothing. An ask from an agent's shell is a consult made while
+	// working on some user message: it spends one from that message's chain, and
+	// when the chain is out it is refused here, loudly, because an empty answer
+	// would read to the calling agent as a peer with nothing to say. An ask the
+	// user runs is their own question and always passes. Either way the
+	// consulted agent's place in the chain travels in the message and the
+	// desktop puts it in the consult's environment, so what THAT agent asks and
+	// delegates is counted against the same budget (see admitConsult).
+	const admission = admitCliConsult();
+	if (!admission.allowed) {
+		fail(admission.message, admission.code);
+		return;
+	}
+
 	try {
 		const result = await withMaestroClient(async (client) =>
 			client.sendCommand<AskResponse>(
@@ -129,6 +145,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 					...(fromTabId ? { fromTabId } : {}),
 					withContext: options.withContext === true,
 					timeoutMs,
+					consultChain: admission.chain,
 				},
 				'cross_agent_ask_result',
 				timeoutMs + CLIENT_TIMEOUT_GRACE_MS

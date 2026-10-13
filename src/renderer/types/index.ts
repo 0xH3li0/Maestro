@@ -70,6 +70,7 @@ import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { AutoRouteStamp, AutoTurnStamp } from '../../shared/autoTurn';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { BackgroundRequests } from '../../shared/local-models/background-requests';
 import type { RunOnSourceTarget, RunOnTarget } from '../../shared/local-models/run-on';
 import type { TierTargets } from '../../shared/modelTiers';
@@ -579,6 +580,12 @@ export interface QueuedItem {
 	// with - the configuration it was queued with, not whatever is selected by
 	// the time the queue drains. Undefined only on items queued by older builds.
 	turnSettings?: QueuedTurnSettings;
+	// The place in a consult chain the turn this item starts takes, set when
+	// another agent's `maestro-cli dispatch` put the item here. It rides the item
+	// to the spawn, however long the item waits and whichever tab it drains in,
+	// so the delegated turn's own consults spend the chain it descends from
+	// (shared/consultBudget.ts). Absent on everything the user queued.
+	consultChain?: ConsultChain;
 }
 
 export interface WorkLogItem {
@@ -1823,6 +1830,12 @@ export interface ProcessConfig {
 	// The Run on target this turn launches on in place of the agent's stored
 	// one: a tier's target, set only by a spawn that resolved a tier.
 	runOnOverride?: RunOnTarget;
+	// The consult chain this turn runs IN, already at its own depth, when
+	// another agent's delegation started it (`maestro-cli dispatch`). The spawn
+	// handler states it in the agent's environment so what the agent asks and
+	// delegates spends that chain's budget (shared/consultBudget.ts). Absent on
+	// every other turn: the handler then decides whether the turn roots a chain.
+	consultChain?: ConsultChain;
 	// Session's Additional Directories. Providers that declare
 	// `supportsAdditionalDirectories` turn these into native grant flags
 	// (e.g. --add-dir); every agent also gets them via the system prompt.

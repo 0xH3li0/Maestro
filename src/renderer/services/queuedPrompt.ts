@@ -27,6 +27,7 @@ import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
 import { routeQueuedAutoItem } from './autoTurn';
 import { generateId } from '../utils/ids';
+import type { ConsultChain } from '../../shared/consultBudget';
 
 /** What to queue, and where. */
 export interface QueuedPromptOptions {
@@ -36,6 +37,11 @@ export interface QueuedPromptOptions {
 	text: string;
 	/** Base64 data URLs, forwarded to the spawn. */
 	images?: string[];
+	/**
+	 * The place in a consult chain the queued turn takes, when another agent's
+	 * `maestro-cli dispatch` is what queued it. See `QueuedItem.consultChain`.
+	 */
+	consultChain?: ConsultChain;
 }
 
 /**
@@ -57,6 +63,7 @@ export function buildQueuedMessageItem({
 	tab,
 	text,
 	images,
+	consultChain,
 }: QueuedPromptOptions): QueuedItem {
 	const mentionPlan = planCrossAgentMentions(text, session.id);
 	return {
@@ -73,6 +80,7 @@ export function buildQueuedMessageItem({
 			crossAgentMention: true,
 			crossAgentOnly: mentionPlan.suppressLocal,
 		}),
+		...(consultChain ? { consultChain } : {}),
 	};
 }
 
@@ -91,15 +99,16 @@ export function enqueuePromptForTab(options: {
 	tabId: string;
 	text: string;
 	images?: string[];
+	consultChain?: ConsultChain;
 }): QueuedItem | null {
-	const { sessionId, tabId, text, images } = options;
+	const { sessionId, tabId, text, images, consultChain } = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId) ?? getActiveTab(session);
 	if (!tab) return null;
 
-	const item = buildQueuedMessageItem({ session, tab, text, images });
+	const item = buildQueuedMessageItem({ session, tab, text, images, consultChain });
 	updateSessionWith(sessionId, (s) => ({
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],

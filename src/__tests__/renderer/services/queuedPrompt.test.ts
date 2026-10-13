@@ -70,6 +70,27 @@ describe('buildQueuedMessageItem', () => {
 		expect(item.turnSettings).toBeDefined();
 	});
 
+	// A prompt another agent's `maestro-cli dispatch` queued carries the place in
+	// the consult chain its turn takes; the spawn reads it off the item.
+	it('carries a consult chain on the item when the caller was admitted to one', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[1],
+			text: 'take this over',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+
+		expect(item.consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+	});
+
+	it('leaves the consult chain off everything else', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({ session, tab: session.aiTabs[1], text: 'carry on' });
+
+		expect(item).not.toHaveProperty('consultChain');
+	});
+
 	it('marks an item queued from a read-only tab', () => {
 		const session = seed({
 			aiTabs: [createMockAITab({ id: 'a', name: 'Alpha', readOnlyMode: true })],
@@ -112,6 +133,18 @@ describe('enqueuePromptForTab', () => {
 		enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'second' });
 
 		expect(currentQueue().map((item) => item.text)).toEqual(['first', 'second']);
+	});
+
+	it('queues the consult chain with the prompt', () => {
+		seed();
+		enqueuePromptForTab({
+			sessionId: 'session-1',
+			tabId: 'b',
+			text: 'take this over',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+
+		expect(currentQueue()[0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
 	});
 
 	it('falls back to the active tab when the target tab is gone', () => {

@@ -10,6 +10,7 @@
 import path from 'path';
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
 import { isRemoteMediaUrl, type MediaOpenMode } from '../../../../shared/mediaTypes';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -691,6 +692,9 @@ export function handleNewAITabWithPrompt(
 	// background=true creates the tab without switching to/focusing it.
 	// `maestro-cli dispatch --new-tab` sets this by default; `--focus` clears it.
 	const background = message.background === true;
+	// The new tab's turn's place in a consult chain, admitted and paid for by
+	// `maestro-cli dispatch` (see handleSendCommand). Not a chain reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
 	// Prompts can contain user-authored content with secrets or PII -
 	// log length only rather than a raw preview.
 	logger.info(
@@ -736,7 +740,7 @@ export function handleNewAITabWithPrompt(
 	}
 
 	ctx.callbacks
-		.newAITabWithPrompt(sessionId, prompt, background)
+		.newAITabWithPrompt(sessionId, prompt, background, consultChain)
 		.then((result) => {
 			// Arm the callback only once the fresh tab id is known - that id is
 			// the correlation key. `isNewTab` lets the registry adopt a spawn the

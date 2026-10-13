@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import {
 	parseQueueSteerResult,
 	QUEUE_STEER_RENDERER_TIMEOUT_MS,
@@ -56,7 +57,8 @@ export function registerQueueCallbacks(
 			inputMode?: 'ai' | 'terminal',
 			tabId?: string,
 			images?: string[],
-			background?: boolean
+			background?: boolean,
+			consultChain?: ConsultChain
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -104,7 +106,8 @@ export function registerQueueCallbacks(
 					inputMode,
 					tabId,
 					images,
-					background
+					background,
+					consultChain
 				);
 
 				const timeoutId = setTimeout(() => {

@@ -1289,6 +1289,50 @@ describe('agentStore', () => {
 			);
 		});
 
+		// An item another agent's `maestro-cli dispatch` queued carries the place in
+		// the consult chain its turn takes; the drain has to hand it to the spawn.
+		it('hands the spawn the consult chain a queued item carries, and none otherwise', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			await useAgentStore.getState().processQueuedItem(
+				'session-1',
+				createQueuedItem({
+					tabId: 'tab-1',
+					text: 'Take this over',
+					consultChain: { chainId: 'chain-a', depth: 2 },
+				}),
+				defaultDeps
+			);
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ id: 'item-2', tabId: 'tab-1', text: 'Carry on' }),
+					defaultDeps
+				);
+
+			expect(mockSpawn.mock.calls[0][0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+			expect(mockSpawn.mock.calls[1][0]).not.toHaveProperty('consultChain');
+		});
+
 		describe('tab auto-naming (issue #1531)', () => {
 			const seedUnnamedTab = () => {
 				useSessionStore.getState().setSessions([

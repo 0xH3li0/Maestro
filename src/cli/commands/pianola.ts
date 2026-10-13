@@ -200,7 +200,11 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 	const deps: WatchDeps = {
 		readRules: readPianolaRules,
 		dispatch: async (target, answer) => {
-			const res = await runDispatch(target.agentId, answer, { tab: target.tabId });
+			const res = await runDispatch(target.agentId, answer, {
+				tab: target.tabId,
+				// The watch is a supervisor loop, not a consult (see DispatchOptions).
+				skipConsultBudget: true,
+			});
 			return { success: !!res.success, error: res.error };
 		},
 		recordDecision: appendPianolaDecision,
@@ -222,7 +226,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 				return { success: false, error: 'target agent is Pianola itself' };
 			}
 			const message = buildPianolaHandoffPrompt(request);
-			const res = await runDispatch(pianolaAgentId, message, {});
+			const res = await runDispatch(pianolaAgentId, message, { skipConsultBudget: true });
 			return { success: !!res.success, error: res.error };
 		};
 	}

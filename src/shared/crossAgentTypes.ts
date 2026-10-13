@@ -15,6 +15,7 @@
  * can still pass its logs straight through.
  */
 
+import type { ConsultChain } from './consultBudget';
 import type { ContextWindowStrategy } from './crossAgentContext';
 import type { ToolType } from './types';
 
@@ -129,6 +130,15 @@ export interface CrossAgentRequest {
 	 * question to answer. Absent for a consult.
 	 */
 	handoffAnswer?: string;
+	/**
+	 * The place in a consult chain the CONSULTED agent takes, when the consult was
+	 * admitted before it got here: `maestro-cli ask` spends in the CLI
+	 * (`admitCliConsult()`) and sends the place `admitConsult()` returned. The
+	 * router does not spend again for a request that carries this. It only states
+	 * the chain in the consult's environment, so what the consulted agent asks
+	 * and delegates is counted against the same budget (shared/consultBudget.ts).
+	 */
+	consultChain?: ConsultChain;
 	/** When the request was created (epoch ms). */
 	createdAt: number;
 }

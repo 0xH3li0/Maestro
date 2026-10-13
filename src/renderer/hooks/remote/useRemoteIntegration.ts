@@ -58,6 +58,7 @@ import {
 } from '../../utils/desktopTabSelectionSync';
 import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -330,6 +331,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: ConsultChain,
 				receiptChannel?: string
 			) => {
 				// Delivery receipt for the web server's `executeCommand` promise.
@@ -436,7 +438,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
+						detail: {
+							sessionId,
+							command,
+							inputMode,
+							tabId,
+							force,
+							images,
+							receiptChannel,
+							// The turn's place in a consult chain, when another agent's
+							// `maestro-cli dispatch` sent this command.
+							...(consultChain ? { consultChain } : {}),
+						},
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -715,7 +728,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// success when a tab was actually created - and reports the REASON when it
 		// was not, rather than leaving the CLI to infer one from a missing tab id.
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(sessionId: string, prompt: string, responseChannel: string, background?: boolean) => {
+			(
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean,
+				consultChain?: ConsultChain
+			) => {
 				const ack = (result: {
 					success: boolean;
 					tabId?: string;
@@ -786,6 +805,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						sessionId,
 						tabId: createdTabId,
 						text: prompt,
+						consultChain,
 					});
 					if (!queued) {
 						logger.warn(
@@ -807,7 +827,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// caller that doesn't atomically setActiveSessionId.
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command: prompt, inputMode: 'ai', tabId: createdTabId },
+						detail: {
+							sessionId,
+							command: prompt,
+							inputMode: 'ai',
+							tabId: createdTabId,
+							...(consultChain ? { consultChain } : {}),
+						},
 					})
 				);
 				ack({ success: true, tabId: createdTabId });
@@ -1110,7 +1136,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				_inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				consultChain?: ConsultChain
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1157,7 +1184,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						}
 						window.dispatchEvent(
 							new CustomEvent('maestro:remoteCommand', {
-								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+								detail: {
+									sessionId,
+									command,
+									inputMode: 'ai',
+									tabId: resolvedTabId,
+									images,
+									...(consultChain ? { consultChain } : {}),
+								},
 							})
 						);
 						reply({ success: true, tabId: resolvedTabId, queued: false });
@@ -1174,6 +1208,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						tab: targetTab,
 						text: command,
 						images,
+						consultChain,
 					});
 
 					// Position is deterministic from the snapshot we already read: the item

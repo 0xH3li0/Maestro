@@ -167,6 +167,7 @@ import type {
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -424,7 +425,8 @@ export class CallbackRegistry {
 		tabId?: string,
 		force?: boolean,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -434,7 +436,8 @@ export class CallbackRegistry {
 			tabId,
 			force,
 			images,
-			background
+			background,
+			consultChain
 		);
 	}
 
@@ -589,10 +592,11 @@ export class CallbackRegistry {
 	async newAITabWithPrompt(
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, consultChain);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -613,10 +617,19 @@ export class CallbackRegistry {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
-		return this.callbacks.enqueueCommand(sessionId, command, inputMode, tabId, images, background);
+		return this.callbacks.enqueueCommand(
+			sessionId,
+			command,
+			inputMode,
+			tabId,
+			images,
+			background,
+			consultChain
+		);
 	}
 
 	async listQueue(sessionId?: string): Promise<ListQueueResult> {

@@ -20,6 +20,7 @@ import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type { AgentDelegationNotice } from '../../shared/agentDelegation';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { WebActingUser } from '../../shared/webLogin';
 import type {
 	ConcertoDesignerAction,
@@ -334,7 +335,13 @@ export type ExecuteCommandCallback = (
 	 * (the renderer selects it "for visual feedback"), so the web/mobile client and
 	 * every in-app caller keep focusing exactly as they do now.
 	 */
-	background?: boolean
+	background?: boolean,
+	/**
+	 * The place in a consult chain the turn this command starts takes, when a
+	 * `maestro-cli dispatch` admitted it (see shared/consultBudget.ts). The
+	 * renderer hands it to the spawn. Absent for every other sender.
+	 */
+	consultChain?: ConsultChain
 ) => Promise<boolean>;
 
 /**
@@ -493,6 +500,12 @@ export type ConsultAgentParams = {
 	withContext?: boolean;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
 	timeoutMs: number;
+	/**
+	 * The consulted agent's place in a consult chain, when `maestro-cli ask`
+	 * admitted the consult (see shared/consultBudget.ts). The CLI has already
+	 * spent for it; it only has to reach the consult's environment.
+	 */
+	consultChain?: ConsultChain;
 };
 export type ConsultAgentResult = {
 	success: boolean;
@@ -525,7 +538,9 @@ export type NewAITabWithPromptResult = {
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
-	background?: boolean
+	background?: boolean,
+	/** The new tab's turn's place in a consult chain (see ExecuteCommandCallback). */
+	consultChain?: ConsultChain
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
@@ -561,7 +576,9 @@ export type EnqueueCommandCallback = (
 	inputMode?: 'ai' | 'terminal',
 	tabId?: string,
 	images?: string[],
-	background?: boolean
+	background?: boolean,
+	/** The queued turn's place in a consult chain (see ExecuteCommandCallback). */
+	consultChain?: ConsultChain
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI

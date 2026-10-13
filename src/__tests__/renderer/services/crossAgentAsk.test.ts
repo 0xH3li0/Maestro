@@ -91,6 +91,29 @@ describe('runCrossAgentAsk', () => {
 		await pending;
 	});
 
+	it('passes the chain the CLI admitted the ask at on to the consult', async () => {
+		const pending = runCrossAgentAsk({
+			targetSessionId: 'target',
+			question: 'q',
+			fromSessionId: 'caller',
+			consultChain: { chainId: 'chain-a', depth: 2 },
+		});
+		expect(sentOptions().consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+		complete({ text: 'a' });
+		await pending;
+	});
+
+	it('sends no chain for an ask that carries none', async () => {
+		const pending = runCrossAgentAsk({
+			targetSessionId: 'target',
+			question: 'q',
+			fromSessionId: 'caller',
+		});
+		expect(sentOptions()).not.toHaveProperty('consultChain');
+		complete({ text: 'a' });
+		await pending;
+	});
+
 	it('keys the consult on the CALLING AGENT, not on whichever tab it had open', async () => {
 		// One consult tab per (caller -> target) pairing is what lets a follow-up
 		// `ask` resume the earlier exchange. Keying it on the caller's active tab

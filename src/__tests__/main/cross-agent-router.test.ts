@@ -327,6 +327,36 @@ describe('startCrossAgentRequest dispatch lifecycle', () => {
 		expect(config.args).not.toContain('plan');
 	});
 
+	// `maestro-cli ask` spends in the CLI and sends the place the consulted agent
+	// takes. The router's part is to state it in the consult's environment, so a
+	// `maestro-cli ask` or `dispatch` the consulted agent runs spends the same chain.
+	it('states an admitted consult chain in the environment, over the agent env vars', async () => {
+		const { dispatch } = harness({
+			getTargetSession: () => ({ ...targetSession(), customEnvVars: { FOO: 'bar' } }),
+			request: { consultChain: { chainId: 'chain-a', depth: 2 } },
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.customEnvVars).toMatchObject({
+			FOO: 'bar',
+			MAESTRO_CONSULT_CHAIN: 'chain-a',
+			MAESTRO_CONSULT_DEPTH: '2',
+		});
+	});
+
+	it('adds no chain to the environment of a consult that carries none', async () => {
+		const { dispatch } = harness({
+			getTargetSession: () => ({ ...targetSession(), customEnvVars: { FOO: 'bar' } }),
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.customEnvVars).toMatchObject({ FOO: 'bar' });
+		expect(config.customEnvVars).not.toHaveProperty('MAESTRO_CONSULT_CHAIN');
+		expect(config.customEnvVars).not.toHaveProperty('MAESTRO_CONSULT_DEPTH');
+	});
+
 	it('hands the consulted agent its own Maestro system prompt (fresh session)', async () => {
 		const { dispatch } = harness();
 		await dispatch();

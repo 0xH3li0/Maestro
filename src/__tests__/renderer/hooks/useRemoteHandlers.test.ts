@@ -505,6 +505,71 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		// A prompt another agent's `maestro-cli dispatch` sent carries the place in
+		// the consult chain its turn takes. It has to reach the spawn, and the
+		// retry snapshot, or the delegated turn would root a fresh budget.
+		it('hands the spawn and the retry snapshot the consult chain of a dispatched command', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+			noteDirectDispatchMock.mockClear();
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'take this over',
+							inputMode: 'ai',
+							consultChain: { chainId: 'chain-a', depth: 2 },
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: 'take this over',
+					consultChain: { chainId: 'chain-a', depth: 2 },
+				})
+			);
+			for (const [, item] of noteDirectDispatchMock.mock.calls) {
+				expect(item.consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+			}
+		});
+
+		it('adds no consult chain to the spawn of a command that carries none', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain this code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect((window.maestro.process.spawn as any).mock.calls[0][0]).not.toHaveProperty(
+				'consultChain'
+			);
+		});
+
 		// A command that lands on an agent set to the Auto model: the tab takes
 		// the turn, the model router is asked, and the spawn launches on what it
 		// answers, exactly as a message typed in the composer does.

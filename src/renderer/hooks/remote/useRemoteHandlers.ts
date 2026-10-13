@@ -42,6 +42,7 @@ import {
 import { noteDirectDispatch } from '../../stores/retryStore';
 import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 // ============================================================================
 // Dependencies interface
@@ -169,6 +170,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
 				receiptChannel?: string;
+				/** The place in a consult chain this command's turn takes, set when
+				 *  another agent's `maestro-cli dispatch` sent it. Handed to the
+				 *  spawn so the delegated turn's own consults spend the chain it
+				 *  descends from (shared/consultBudget.ts). */
+				consultChain?: ConsultChain;
 			}>;
 			const {
 				sessionId,
@@ -178,6 +184,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				force,
 				images,
 				receiptChannel,
+				consultChain,
 			} = customEvent.detail;
 
 			// The CLI's `dispatch` success flag is this ack, not the fact that an
@@ -671,6 +678,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						tabId: targetTab.id,
 						type: 'message',
 						text: promptToSend,
+						// A resend of a delegated turn stays in the chain it was
+						// admitted to, rather than rooting a fresh one.
+						...(consultChain ? { consultChain } : {}),
 					});
 				}
 
@@ -736,6 +746,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							: { sessionCustomModel: session.customModel }),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						...(consultChain ? { consultChain } : {}),
 					});
 				} finally {
 					clearTimeout(ackTimer);

@@ -196,6 +196,7 @@ import type {
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { ConsultChain } from '../../shared/consultBudget';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -1177,7 +1178,8 @@ export class WebServer {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				consultChain?: ConsultChain
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1186,7 +1188,8 @@ export class WebServer {
 					tabId,
 					force,
 					images,
-					background
+					background,
+					consultChain
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1229,8 +1232,12 @@ export class WebServer {
 				this.callbackRegistry.listTerminalTabs(sessionId),
 			readTerminalTab: async (sessionId: string, payload: ReadTerminalTabPayload) =>
 				this.callbackRegistry.readTerminalTab(sessionId, payload),
-			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
-				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			newAITabWithPrompt: async (
+				sessionId: string,
+				prompt: string,
+				background?: boolean,
+				consultChain?: ConsultChain
+			) => this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background, consultChain),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
@@ -1241,7 +1248,8 @@ export class WebServer {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				consultChain?: ConsultChain
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1249,7 +1257,8 @@ export class WebServer {
 					inputMode,
 					tabId,
 					images,
-					background
+					background,
+					consultChain
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>

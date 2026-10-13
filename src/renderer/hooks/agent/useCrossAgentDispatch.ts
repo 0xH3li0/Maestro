@@ -31,6 +31,7 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import { settleConsultHold } from '../../services/crossAgentConsultHold';
 import type {
 	CrossAgentResponseChunk,
@@ -106,6 +107,11 @@ export interface SendCrossAgentRequestOptions {
 	 * transcript BEFORE that turn, so the answer is not sent twice.
 	 */
 	handoffAnswer?: string;
+	/**
+	 * The consulted agent's place in a consult chain, when the consult was
+	 * already admitted by whoever asked for it (see `CrossAgentRequest.consultChain`).
+	 */
+	consultChain?: ConsultChain;
 	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
@@ -601,6 +607,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			strategy,
 			sourceCwd: opts.sourceCwd,
 			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
+			...(opts.consultChain && { consultChain: opts.consultChain }),
 		})
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that

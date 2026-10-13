@@ -767,6 +767,7 @@ describe('useRemoteIntegration', () => {
 					undefined,
 					undefined,
 					undefined,
+					undefined,
 					'receipt-1'
 				);
 			});
@@ -789,6 +790,7 @@ describe('useRemoteIntegration', () => {
 					'session-1',
 					'test command',
 					'ai',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -816,6 +818,7 @@ describe('useRemoteIntegration', () => {
 					'session-1',
 					'test command',
 					'ai',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -1531,6 +1534,169 @@ describe('useRemoteIntegration', () => {
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.aiTabs).toHaveLength(originalTabCount + 1);
 			expect(updated?.activeTabId).toBe(originalActiveTabId);
+
+			dispatchEventSpy.mockRestore();
+		});
+	});
+
+	// `maestro-cli dispatch` admits a delegation in the CLI and sends the place in
+	// the consult chain the delegated turn takes. Whichever way the prompt reaches
+	// a spawn (now, or from the queue), the chain has to reach it too.
+	describe('the consult chain of a CLI dispatch', () => {
+		const chain = { chainId: 'chain-a', depth: 2 };
+
+		/** The detail of the one `maestro:remoteCommand` event a handler fired. */
+		const remoteCommandDetail = (spy: ReturnType<typeof vi.spyOn>) =>
+			spy.mock.calls
+				.map(([event]) => event as CustomEvent)
+				.find((event) => event.type === 'maestro:remoteCommand')?.detail;
+
+		it('hands a plain dispatch its chain, and keeps the receipt channel after it', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'Take this over',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					true,
+					chain,
+					'receipt-chain'
+				);
+			});
+
+			expect(remoteCommandDetail(dispatchEventSpy)).toMatchObject({
+				sessionId: 'session-1',
+				consultChain: chain,
+				receiptChannel: 'receipt-chain',
+			});
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('adds no chain to a command that carries none', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.('session-1', 'test command', 'ai');
+			});
+
+			expect(remoteCommandDetail(dispatchEventSpy)).not.toHaveProperty('consultChain');
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('hands --new-tab its chain when the agent is idle', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-chain', true, chain);
+			});
+
+			expect(remoteCommandDetail(dispatchEventSpy)).toMatchObject({
+				command: 'Hello',
+				consultChain: chain,
+			});
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('queues --new-tab with its chain when the agent is busy', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({ id: 'session-1', state: 'busy', aiTabs: [tab] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-chain-busy', true, chain);
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue?.[0]).toMatchObject({ text: 'Hello', consultChain: chain });
+		});
+
+		it('queues --queue with its chain on a busy agent', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'Second task',
+					'chan-chain-q',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					chain
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue[0]).toMatchObject({
+				text: 'Second task',
+				consultChain: chain,
+			});
+		});
+
+		it('hands --queue its chain when the agent is idle and the prompt runs now', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'Run now',
+					'chan-chain-idle',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					chain
+				);
+			});
+
+			expect(remoteCommandDetail(dispatchEventSpy)).toMatchObject({
+				command: 'Run now',
+				tabId: 'tab-1',
+				consultChain: chain,
+			});
 
 			dispatchEventSpy.mockRestore();
 		});

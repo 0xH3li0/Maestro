@@ -75,6 +75,12 @@ interface ProcessConfig {
 	// The Run on target this turn launches on in place of the agent's stored
 	// one: a tier's target, set only by a spawn that resolved a tier.
 	runOnOverride?: import('../shared/local-models/run-on').RunOnTarget;
+	// The consult chain this turn runs IN, already at its own depth, when
+	// another agent's delegation started it (`maestro-cli dispatch`). The spawn
+	// handler states it in the agent's environment so what the agent asks and
+	// delegates spends that chain's budget (shared/consultBudget.ts). Absent on
+	// every other turn: the handler then decides whether the turn roots a chain.
+	consultChain?: import('../shared/consultBudget').ConsultChain;
 	// Session's Additional Directories. Providers that support it get native grant
 	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
 	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
@@ -482,6 +488,7 @@ interface MaestroAPI {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: import('../shared/consultBudget').ConsultChain,
 				receiptChannel?: string
 			) => void
 		) => () => void;
@@ -784,7 +791,8 @@ interface MaestroAPI {
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				consultChain?: import('../shared/consultBudget').ConsultChain
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -801,6 +809,7 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					consultChain?: import('../shared/consultBudget').ConsultChain;
 				},
 				responseChannel: string
 			) => void
@@ -828,7 +837,8 @@ interface MaestroAPI {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				consultChain?: import('../shared/consultBudget').ConsultChain
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

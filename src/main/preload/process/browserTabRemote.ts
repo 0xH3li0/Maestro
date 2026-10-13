@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 export function createBrowserTabRemoteApi() {
 	return {
@@ -241,7 +242,8 @@ export function createBrowserTabRemoteApi() {
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				consultChain?: ConsultChain
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -249,10 +251,11 @@ export function createBrowserTabRemoteApi() {
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				consultChain?: ConsultChain
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background);
+					callback(sessionId, prompt, responseChannel, background, consultChain);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

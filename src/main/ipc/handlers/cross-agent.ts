@@ -31,6 +31,7 @@ import type {
 	CrossAgentResponseChunk,
 } from '../../../shared/crossAgentTypes';
 import { generateUUID } from '../../../shared/uuid';
+import { parseConsultChain } from '../../../shared/consultBudget';
 import { logger } from '../../utils/logger';
 import {
 	startCrossAgentRequest,
@@ -133,6 +134,8 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					strategy: payload.strategy,
 					sourceCwd: payload.sourceCwd,
 					handoffAnswer: payload.handoffAnswer,
+					// Data from the renderer: anything that is not a chain reads as none.
+					consultChain: parseConsultChain(payload.consultChain),
 					createdAt: Date.now(),
 				};
 

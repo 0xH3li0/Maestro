@@ -1039,6 +1039,7 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 			]);
 			await expect(resultPromise).resolves.toBe(true);
 		});
@@ -1058,6 +1059,7 @@ describe('web-server/web-server-factory', () => {
 				'follow up',
 				'ai',
 				'tab-7',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -1081,6 +1083,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				undefined,
 				true,
+				undefined,
 				undefined,
 				undefined,
 			]);
@@ -1112,6 +1115,7 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				images,
+				undefined,
 				undefined,
 			]);
 			await expect(resultPromise).resolves.toBe(true);
@@ -2092,6 +2096,7 @@ describe('web-server/web-server-factory', () => {
 				'ai',
 				'tab-1',
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -2748,6 +2753,7 @@ describe('web-server/web-server-factory', () => {
 				expect.anything(),
 				expect.anything(),
 				expect.anything(),
+				expect.anything(),
 				expect.anything()
 			);
 			const request = secondaryWebContents.send.mock.calls.find(
@@ -2759,6 +2765,7 @@ describe('web-server/web-server-factory', () => {
 				'hello owner',
 				'ai',
 				'tab-1',
+				undefined,
 				undefined,
 				undefined,
 				undefined,

@@ -752,6 +752,121 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	// `maestro-cli dispatch` and `ask` admit a consult in the CLI, spend for it
+	// there, and send the place in the chain its target takes. Main spends
+	// nothing: it only carries that place to whatever spawns the target's turn.
+	describe('Consult chain (maestro-cli dispatch / ask)', () => {
+		const chain = { chainId: 'chain-a', depth: 2 };
+
+		it('hands send_command the chain as the last executeCommand argument', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Take this over',
+				inputMode: 'ai',
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Take this over',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false,
+					chain
+				);
+			});
+		});
+
+		it('hands new_ai_tab_with_prompt the chain for the new tab', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Take this over',
+				background: true,
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Take this over',
+					true,
+					chain
+				);
+			});
+		});
+
+		it('hands enqueue_command the chain for the queued item', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Take this over',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Take this over',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					chain
+				);
+			});
+		});
+
+		it('hands cross_agent_ask the chain for the consult', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				consultChain: chain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({ targetSessionId: 'session-1', consultChain: chain })
+				);
+			});
+		});
+
+		it.each([
+			['an id the counter would refuse', { chainId: '../escape', depth: 1 }],
+			['a bare string', 'chain-a'],
+			['null', null],
+		])('reads %s as no chain, and still delivers', async (_what, consultChain) => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Take this over',
+				inputMode: 'ai',
+				consultChain,
+			});
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				consultChain,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalled();
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.executeCommand as any).mock.calls[0][7]).toBeUndefined();
+			expect((callbacks.consultAgent as any).mock.calls[0][0]).not.toHaveProperty('consultChain');
+		});
+	});
+
 	describe('Cross-Agent Ask (maestro-cli ask)', () => {
 		it('forwards the asking agent tab so the consult pill lands in that conversation', async () => {
 			handler.handleMessage(client, {
@@ -875,7 +990,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -960,7 +1076,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -1026,7 +1143,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-explicit',
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -1057,7 +1175,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -1096,7 +1215,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -1120,7 +1240,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					true,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -1146,7 +1267,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -1170,7 +1292,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2664,7 +2787,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2689,7 +2813,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -2999,7 +3124,8 @@ describe('WebSocketMessageHandler', () => {
 					'ai',
 					'tab-1',
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 

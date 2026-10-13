@@ -55,6 +55,7 @@ import type {
 	CueInjectionScreenWriteResult,
 } from '../../../../shared/cue/injection-screen';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
+import type { ConsultChain } from '../../../../shared/consultBudget';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -139,7 +140,8 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		force?: boolean,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -206,7 +208,8 @@ export interface MessageHandlerCallbacks {
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
@@ -218,7 +221,8 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;

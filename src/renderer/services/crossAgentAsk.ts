@@ -24,6 +24,7 @@ import {
 } from '../hooks/agent/useCrossAgentDispatch';
 import { recordAgentDelegation, settleAgentDelegation } from './agentDelegation';
 import type { LogEntry } from '../types';
+import type { ConsultChain } from '../../shared/consultBudget';
 
 /**
  * Stand-in source tab id for a consult nobody typed. The consult tab on the
@@ -69,6 +70,12 @@ export interface CrossAgentAskRequest {
 	 * transcript is what `@mention` is for.
 	 */
 	withContext?: boolean;
+	/**
+	 * The consulted agent's place in a consult chain. `maestro-cli ask` admitted
+	 * the consult and spent for it before sending; this only has to reach the
+	 * consult's environment (see `CrossAgentRequest.consultChain`).
+	 */
+	consultChain?: ConsultChain;
 }
 
 export interface CrossAgentAskResult {
@@ -159,6 +166,7 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 			userPrompt: request.question,
 			sourceLogs,
 			sourceCwd: source?.cwd,
+			...(request.consultChain ? { consultChain: request.consultChain } : {}),
 			onComplete: finish,
 		});
 	});
