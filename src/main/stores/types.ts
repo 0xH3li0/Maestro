@@ -131,6 +131,12 @@ export interface MaestroSettings {
 	usageRefreshIntervals: Record<string, number>;
 	/** Add a supervised Pianola watch for each newly created top-level agent. */
 	pianolaAutoWatchNewAgents: boolean;
+	/**
+	 * Peer consults and delegations one user message may spend, counted across
+	 * the whole chain (0 = off). Read by main and the CLI at every consult. See
+	 * src/shared/consultBudget.ts.
+	 */
+	maxConsultationsPerTurn: number;
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.

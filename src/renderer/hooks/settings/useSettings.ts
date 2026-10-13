@@ -476,6 +476,8 @@ export interface UseSettingsReturn {
 	setForcedParallelAlways: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	maxConsultationsPerTurn: number;
+	setMaxConsultationsPerTurn: (value: number) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;

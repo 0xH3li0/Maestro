@@ -13,6 +13,11 @@ import {
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
+import {
+	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+	MAX_CONSULTATIONS_PER_TURN_CEILING,
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+} from '../../../shared/consultBudget';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -1077,6 +1082,37 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('setters with validation', () => {
+		it('setMaxConsultationsPerTurn keeps 0, floors, and clamps to the ceiling', () => {
+			// 0 is a real value (peer consults off), never coerced to the default.
+			useSettingsStore.getState().setMaxConsultationsPerTurn(0);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(0);
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				MAX_CONSULTATIONS_PER_TURN_SETTING,
+				0
+			);
+
+			useSettingsStore.getState().setMaxConsultationsPerTurn(12.9);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(12);
+
+			useSettingsStore.getState().setMaxConsultationsPerTurn(-4);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(0);
+
+			useSettingsStore.getState().setMaxConsultationsPerTurn(1_000_000);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+				MAX_CONSULTATIONS_PER_TURN_CEILING
+			);
+			expect(window.maestro.settings.set).toHaveBeenLastCalledWith(
+				MAX_CONSULTATIONS_PER_TURN_SETTING,
+				MAX_CONSULTATIONS_PER_TURN_CEILING
+			);
+
+			// A non-number can only arrive from a caller bug; it must not persist NaN.
+			useSettingsStore.getState().setMaxConsultationsPerTurn(Number.NaN);
+			expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+				DEFAULT_MAX_CONSULTATIONS_PER_TURN
+			);
+		});
+
 		it('setConductorProfile trims to 5000 characters', () => {
 			const longProfile = 'a'.repeat(6000);
 			useSettingsStore.getState().setConductorProfile(longProfile);
@@ -2003,6 +2039,45 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		describe('maxConsultationsPerTurn', () => {
+			it('starts on the default, which is also the metadata default', () => {
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+					DEFAULT_MAX_CONSULTATIONS_PER_TURN
+				);
+				expect(SETTINGS_METADATA[MAX_CONSULTATIONS_PER_TURN_SETTING].default).toBe(
+					DEFAULT_MAX_CONSULTATIONS_PER_TURN
+				);
+			});
+
+			it('hydrates a stored 0 as 0, not as the default', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					[MAX_CONSULTATIONS_PER_TURN_SETTING]: 0,
+				});
+
+				await loadAllSettings();
+
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(0);
+			});
+
+			it('normalizes a value written by hand: out of range clamps, a string is the default', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					[MAX_CONSULTATIONS_PER_TURN_SETTING]: 99_999,
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+					MAX_CONSULTATIONS_PER_TURN_CEILING
+				);
+
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					[MAX_CONSULTATIONS_PER_TURN_SETTING]: 'ten',
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().maxConsultationsPerTurn).toBe(
+					DEFAULT_MAX_CONSULTATIONS_PER_TURN
+				);
+			});
+		});
+
 		describe('harnessTierDefaults', () => {
 			it('starts on the built-in table', () => {
 				expect(useSettingsStore.getState().harnessTierDefaults).toEqual({});

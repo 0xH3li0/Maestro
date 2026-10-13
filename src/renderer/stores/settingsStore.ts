@@ -52,6 +52,11 @@ import {
 } from '../../shared/local-models/tasks';
 import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
 import {
+	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+} from '../../shared/consultBudget';
+import {
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
 	type QuickChatSettings,
@@ -420,6 +425,8 @@ export interface SettingsStoreState
 	forcedParallelAlways: boolean;
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
+	/** Peer consults and delegations one user message may spend, whole chain. See shared/consultBudget.ts. */
+	maxConsultationsPerTurn: number;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -562,6 +569,7 @@ export interface SettingsStoreActions
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setForcedParallelAlways: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	setMaxConsultationsPerTurn: (value: number) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -821,6 +829,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		forcedParallelAcknowledged: false,
 		forcedParallelAlways: false,
 		crossAgentMentionsWritable: false,
+		maxConsultationsPerTurn: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -1041,6 +1050,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCrossAgentMentionsWritable: (value) => {
 			set({ crossAgentMentionsWritable: value });
 			window.maestro.settings.set('crossAgentMentionsWritable', value);
+		},
+
+		setMaxConsultationsPerTurn: (value) => {
+			// 0 is a real value (peer consults off), so normalize rather than `|| default`.
+			const normalized = normalizeMaxConsultationsPerTurn(value);
+			set({ maxConsultationsPerTurn: normalized });
+			window.maestro.settings.set(MAX_CONSULTATIONS_PER_TURN_SETTING, normalized);
 		},
 
 		setDefaultSaveToHistory: (value) => {
@@ -2184,6 +2200,11 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['crossAgentMentionsWritable'] !== undefined)
 			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
 
+		if (allSettings[MAX_CONSULTATIONS_PER_TURN_SETTING] !== undefined)
+			patch.maxConsultationsPerTurn = normalizeMaxConsultationsPerTurn(
+				allSettings[MAX_CONSULTATIONS_PER_TURN_SETTING]
+			);
+
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
 
@@ -2937,6 +2958,7 @@ export function getSettingsActions() {
 		setCustomThemeColors: state.setCustomThemeColors,
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
 		setEnterToSendAI: state.setEnterToSendAI,
+		setMaxConsultationsPerTurn: state.setMaxConsultationsPerTurn,
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
 		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,

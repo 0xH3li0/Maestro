@@ -4,6 +4,7 @@ import {
 	AutoResumeSection,
 	BrowserSection,
 	ConductorProfileSection,
+	ConsultationBudgetSection,
 	CrossAgentMentionsSection,
 	GitHubCliSection,
 	GlobalHotkeySection,
@@ -97,6 +98,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				crossAgentMentionsWritable={settings.crossAgentMentionsWritable}
 				setCrossAgentMentionsWritable={settings.setCrossAgentMentionsWritable}
+			/>
+			<ConsultationBudgetSection
+				theme={theme}
+				maxConsultationsPerTurn={settings.maxConsultationsPerTurn}
+				setMaxConsultationsPerTurn={settings.setMaxConsultationsPerTurn}
 			/>
 			<AutoRunInactivitySection
 				theme={theme}

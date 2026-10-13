@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	AutoResumeSection,
 	BrowserSection,
+	ConsultationBudgetSection,
 	HistorySection,
 	InputBehaviorSection,
 	MaestroCliSection,
@@ -522,5 +523,72 @@ describe('GeneralTab section components', () => {
 		expect(
 			screen.queryByText('Restart Maestro for changes to take effect')
 		).not.toBeInTheDocument();
+	});
+
+	describe('ConsultationBudgetSection', () => {
+		function renderBudget(value: number) {
+			const setMaxConsultationsPerTurn = vi.fn();
+			const view = render(
+				<ConsultationBudgetSection
+					theme={mockTheme}
+					maxConsultationsPerTurn={value}
+					setMaxConsultationsPerTurn={setMaxConsultationsPerTurn}
+				/>
+			);
+			const input = screen.getByLabelText(
+				'Peer consults and delegations per message'
+			) as HTMLInputElement;
+			return { ...view, input, setMaxConsultationsPerTurn };
+		}
+
+		it('shows the stored budget and explains that the whole chain counts', () => {
+			const { input } = renderBudget(25);
+
+			expect(input.value).toBe('25');
+			expect(screen.getByText(/Counts the whole chain/)).toBeInTheDocument();
+			expect(screen.getByText(/Set it to 0 to stop agents/)).toBeInTheDocument();
+		});
+
+		it('reads as the current state when the budget is 0', () => {
+			renderBudget(0);
+
+			expect(screen.getByText(/At 0, agents cannot consult or delegate/)).toBeInTheDocument();
+		});
+
+		it('commits a typed whole number, including 0', () => {
+			const { input, setMaxConsultationsPerTurn } = renderBudget(25);
+
+			fireEvent.change(input, { target: { value: '40' } });
+			expect(setMaxConsultationsPerTurn).toHaveBeenLastCalledWith(40);
+
+			fireEvent.change(input, { target: { value: '0' } });
+			expect(setMaxConsultationsPerTurn).toHaveBeenLastCalledWith(0);
+		});
+
+		it('never commits an emptied field, and restores the stored value on blur', () => {
+			const { input, setMaxConsultationsPerTurn } = renderBudget(25);
+
+			// Clearing the field to type a new number must not switch the feature off.
+			fireEvent.change(input, { target: { value: '' } });
+			expect(setMaxConsultationsPerTurn).not.toHaveBeenCalled();
+			expect(input.value).toBe('');
+
+			fireEvent.blur(input);
+			expect(input.value).toBe('25');
+		});
+
+		it('follows a value changed elsewhere (the store clamps what was typed)', () => {
+			const { input, rerender } = renderBudget(25);
+
+			rerender(
+				<ConsultationBudgetSection
+					theme={mockTheme}
+					maxConsultationsPerTurn={500}
+					setMaxConsultationsPerTurn={vi.fn()}
+				/>
+			);
+
+			expect(input.value).toBe('500');
+		});
 	});
 });

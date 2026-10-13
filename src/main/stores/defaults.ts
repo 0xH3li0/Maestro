@@ -13,6 +13,7 @@ import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../shared/cue/retention';
 import { DEFAULT_DOWNLOAD_BASE } from '../../shared/local-models/download-base';
 import { DEFAULT_SPOKEN_NOTICE_MODE } from '../../shared/spokenNotices';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from '../../shared/quickChat';
+import { DEFAULT_MAX_CONSULTATIONS_PER_TURN } from '../../shared/consultBudget';
 
 import type {
 	MaestroSettings,
@@ -133,6 +134,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	spellCheck: false,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
+	// Consultation budget: peer consults and delegations per user message, whole
+	// chain. Main and the CLI enforce it. See shared/consultBudget.ts.
+	maxConsultationsPerTurn: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 	annotatorPenColor: '#9146FF',
 	annotatorPenSize: 10,
 	annotatorThinning: 0.5,

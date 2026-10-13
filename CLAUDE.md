@@ -226,6 +226,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **When a mention runs (parallel / consult first / hand-off):** `inferMentionTiming()` in `src/shared/crossAgentContext.ts`; `armMentionHandoff()`, `releaseMentionHandoff()`, `dropMentionHandoffs()` in `src/renderer/services/crossAgentHandoff.ts`
 - **An agent asking another agent (`maestro-cli ask`):** `runCrossAgentAsk()` in `src/renderer/services/crossAgentAsk.ts` (a question is `ask`, never `dispatch`)
 - **Marking an agent's own hand-off in its transcript (`dispatch` / `ask` from its shell):** `readCallerIdentity()`, `callerMessageFields()`, `isSelfDispatch()` in `src/shared/agentDelegation.ts`; `recordAgentDelegation()`, `settleAgentDelegation()` in `src/renderer/services/agentDelegation.ts`
+- **The consultation budget setting (peer consults and delegations per user message):** `MAX_CONSULTATIONS_PER_TURN_SETTING`, `DEFAULT_MAX_CONSULTATIONS_PER_TURN`, `normalizeMaxConsultationsPerTurn()` in `src/shared/consultBudget.ts` (`0` is a real value; never `|| 25`)
 
 #### Auto Run, Cue, Group Chat, Director's Notes
 
