@@ -439,7 +439,7 @@ Ask another agent a question and print its answer (background consult - never to
 | `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
 | `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
-`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work in a visible tab and returns a tab ID. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
 
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"

@@ -261,7 +261,7 @@ subscriptions:
 
 The target accepts an agent ID or name. Cue substitutes event variables before delivery. Existing Maestro custom commands and project/provider prompt commands expand with their arguments, just as they do in the composer. The `/triage` command must already exist for the target agent.
 
-With `new_tab: true`, every dispatch creates a fresh AI tab in the target agent. The tab appears in its tab strip while the current view stays in place. Omitting `new_tab` or setting it to `false` sends to the agent's existing active tab. Agent messages require the Maestro desktop app to be running.
+With `new_tab: true`, every dispatch creates a fresh visible AI tab in the target agent. The active agent and active tab stay unchanged. If the target is busy, the message enters its serial execution queue. Omitting `new_tab` or setting it to `false` sends to the agent's existing active tab. Agent messages require the Maestro desktop app to be running.
 
 An Agent message command completes when the message is delivered. A downstream step connected to this command starts after delivery; it does not wait for the target AI turn to finish or receive that turn's answer.
 

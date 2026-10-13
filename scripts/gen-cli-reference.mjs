@@ -44,7 +44,7 @@ const frontmatter = [
 const guidance = [
 	[
 		'## `maestro-cli queue`',
-		'`ask` is a background consult: it prints an answer without touching the target agent\'s open conversation. `dispatch` hands over work in a visible tab and returns a tab ID. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target\'s history.\n\n```bash\nmaestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"\n```',
+		'`ask` is a background consult: it prints an answer without touching the target agent\'s open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target\'s history.\n\n```bash\nmaestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"\n```',
 	],
 	[
 		'## `maestro-cli update-ssh-remote <remote-id>`',

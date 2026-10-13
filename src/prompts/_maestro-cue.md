@@ -235,7 +235,7 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
       command: send # required; only 'send' is supported today
       target: <session-id-or-name> # required, supports template vars
       message: '{{CUE_SOURCE_OUTPUT}}' # optional; default is exactly this
-      new_tab: true # optional boolean; default false, fresh AI tab per dispatch
+      new_tab: true # optional boolean; default false, fresh visible background AI tab
   # standard subscription fields all still apply (pipeline_name, target_node_key,
   # source_session, source_sub, event-specific fields like interval_minutes, etc.)
 ```
@@ -260,7 +260,7 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
       new_tab: true
 ```
 
-Cue substitutes event variables before delivery. Existing Maestro custom and project/provider prompt commands expand with their arguments as they do in the composer; `/triage` must already exist for the target agent. Each `new_tab: true` dispatch creates a fresh AI tab visible in the target's tab strip, while preserving the user's current view. With `new_tab` omitted or `false`, delivery uses the target's active tab. The Maestro desktop app must be running.
+Cue substitutes event variables before delivery. Existing Maestro custom and project/provider prompt commands expand with their arguments as they do in the composer; `/triage` must already exist for the target agent. Each `new_tab: true` dispatch creates a fresh AI tab visible in the target's tab strip. The active agent and active tab stay unchanged. If the target is busy, the message enters its serial execution queue. With `new_tab` omitted or `false`, delivery uses the target's active tab. The Maestro desktop app must be running.
 
 **Completion means delivery:** A `mode: cli` command completes when its message is delivered, without waiting for the target AI turn. Downstream subscriptions receive the delivery command's stdout, not the target AI's answer.
 
