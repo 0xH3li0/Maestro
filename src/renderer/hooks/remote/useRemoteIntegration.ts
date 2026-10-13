@@ -12,6 +12,7 @@ import {
 	closeTab,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
+	focusAiTabInSession,
 	reopenClosedAiTabById,
 	hasActiveWizard,
 	visibleAiTabs,
@@ -545,7 +546,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						if (!s.aiTabs.some((t) => t.id === tabId)) {
 							return s;
 						}
-						return { ...s, ...aiTabFocusFields(tabId) };
+						return focusAiTabInSession(s, tabId);
 					});
 				}
 			}
@@ -621,9 +622,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					const targetExists = updatedSession.aiTabs.some((tab) => tab.id === tabId);
 					if (!isInventorySync) {
-						return targetExists
-							? { ...updatedSession, ...aiTabFocusFields(tabId) }
-							: updatedSession;
+						return targetExists ? focusAiTabInSession(updatedSession, tabId) : updatedSession;
 					}
 
 					// An inventory snapshot never moves the browser's visible tab, even

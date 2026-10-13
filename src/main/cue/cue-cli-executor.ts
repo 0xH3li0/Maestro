@@ -123,7 +123,10 @@ export async function runMaestroCliSend(
 		let child: ChildProcess;
 		try {
 			const args = [cliScriptPath, 'dispatch', target, truncated, '--background'];
-			if (newTab) args.push('--new-tab');
+			// Cue Agent messages promise a tab in the target's tab strip while
+			// preserving the user's view. Visibility is separate from placement;
+			// ordinary background dispatches keep their existing hidden default.
+			if (newTab) args.push('--new-tab', '--visible');
 			child = spawn(process.execPath, args, {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not

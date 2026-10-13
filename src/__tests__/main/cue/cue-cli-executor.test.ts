@@ -2,7 +2,7 @@
  * Tests for cue-cli-executor.
  *
  * Verifies that subscriptions with `action: command` + `command.mode: 'cli'`
- * shell out to `node maestro-cli.js send <target> <message> --live`, with
+ * shell out to `node maestro-cli.js dispatch <target> <message> --background`, with
  * template substitution applied to both target and (optional) message.
  */
 
@@ -167,16 +167,17 @@ describe('cue-cli-executor', () => {
 		expect(args).toHaveLength(5);
 		expect(args[4]).toBe('--background');
 		expect(args).not.toContain('--new-tab');
+		expect(args).not.toContain('--visible');
 		expect(result.status).toBe('completed');
 	});
 
-	it('dispatches a substituted slash command into a fresh background tab', async () => {
+	it('dispatches a substituted provider slash command into a fresh visible background tab', async () => {
 		const config = createConfig({
 			event: { ...createEvent({ number: 42 }), type: 'github.issue' },
 			cli: {
 				command: 'send' as const,
 				target: '{{CUE_FROM_AGENT}}',
-				message: '/triage {{CUE_GH_NUMBER}}',
+				message: '/mattpocock-skills:triage {{CUE_GH_NUMBER}}',
 				new_tab: true,
 			},
 		});
@@ -189,9 +190,10 @@ describe('cue-cli-executor', () => {
 		expect(args.slice(1)).toEqual([
 			'dispatch',
 			'session-research',
-			'/triage 42',
+			'/mattpocock-skills:triage 42',
 			'--background',
 			'--new-tab',
+			'--visible',
 		]);
 		expect(result.status).toBe('completed');
 	});
@@ -208,6 +210,7 @@ describe('cue-cli-executor', () => {
 		const args = mockSpawn.mock.calls[0][1] as string[];
 		expect(args).toContain('--background');
 		expect(args).not.toContain('--new-tab');
+		expect(args).not.toContain('--visible');
 	});
 
 	it('caps argv message length to stay under the platform spawn limit', async () => {
