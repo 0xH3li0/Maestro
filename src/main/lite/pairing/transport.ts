@@ -11,6 +11,7 @@ export function pairingTransport(route: Route, send?: typeof request): PairingTr
 	if (direct && route.source !== 'tailscale' && route.source !== 'lan')
 		throw new Error('Direct transport requires a private LAN or Tailscale host.');
 	return {
+		/** Revalidate private destinations for each bounded pairing POST, preserving Tailscale node identity checks. */
 		async call<T>(operation: string, payload: unknown, signal?: AbortSignal): Promise<T> {
 			if (!/^[a-z]+$/.test(operation)) return Promise.reject(new Error('invalid-operation'));
 			const data = JSON.stringify({ route, payload });

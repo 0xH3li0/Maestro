@@ -57,6 +57,7 @@ export class PairingHost {
 	onRequest(listener: (id: string) => void): void {
 		this.requestListener = listener;
 	}
+	/** Normalize allowed host origins and require a socket admission policy for every plain-HTTP endpoint. */
 	constructor(
 		private name: string,
 		private instanceId: string,
@@ -87,6 +88,7 @@ export class PairingHost {
 		await Promise.all([opaque.ready, devices.load()]);
 		return new PairingHost(name, instanceId, endpoints, now, persistent, devices, requestPolicy);
 	}
+	/** Require an allowed endpoint/source and match plain HTTP routes to their LAN or Tailscale address. */
 	describe(route: Route): Descriptor {
 		if (
 			!route ||

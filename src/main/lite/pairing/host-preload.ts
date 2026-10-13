@@ -93,6 +93,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		}
 	}
 
+	/** Focus the active page's relevant heading, accounting for pending requests and either private transport. */
 	function showPage(next: typeof page): void {
 		page = next;
 		if (latest) render(latest);
@@ -605,6 +606,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		selectedRequest = requests[(index + 1) % requests.length]?.requestId;
 		showPage('connect');
 	};
+	/** Require checked human consent before enabling the selected private transport and LAN interface. */
 	button('enable-direct').onclick = () => {
 		if (pending) return;
 		if (!input('direct-consent').checked) {
@@ -624,15 +626,18 @@ window.addEventListener('DOMContentLoaded', () => {
 	button('disable-direct').onclick = () => {
 		if (!pending) void action('disable-direct');
 	};
+	/** Request LAN listener shutdown only when no host-control operation is pending. */
 	button('disable-lan').onclick = () => {
 		if (!pending) void action('disable-lan');
 	};
+	/** Invalidate prior consent when the exposure transport changes and redraw the access guidance. */
 	input('access-transport').onchange = () => {
 		input('direct-consent').checked = false;
 		el('direct-consent-error').hidden = true;
 		input('direct-consent').removeAttribute('aria-invalid');
 		if (latest) render(latest);
 	};
+	/** Require renewed human consent when the selected LAN network changes. */
 	input('lan-network').onchange = () => {
 		input('direct-consent').checked = false;
 		if (latest) render(latest);
@@ -649,6 +654,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		input('advanced-endpoint').hidden = !input('advanced').checked;
 		if (input('advanced').checked) input('advanced-endpoint').focus();
 	};
+	/** Show HTTPS multicast interface selection only when its LAN advertisement option is checked. */
 	input('lan').onchange = () => {
 		el('interface-label').hidden = !input('lan').checked;
 	};

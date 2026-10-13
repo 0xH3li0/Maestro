@@ -89,6 +89,7 @@ interface PairingView {
 	status: string;
 }
 
+/** Wire the native discovery/pairing UI with page-local state; host requests go through Lite's IPC controller. */
 export function installDiscoveryControls(report: (error: unknown) => void): {
 	escape(): boolean;
 	showHosts(focus?: boolean): void;
@@ -251,6 +252,7 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 			).focus();
 	}
 
+	/** Reconcile pairing and discovery state while preserving code entry and focus across status updates. */
 	function render(): void {
 		const discovery = state?.discovery;
 		const pairing = state?.pairing;
@@ -502,6 +504,7 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 		if (view.phase === 'network-changed') void start();
 	}
 
+	/** Apply the selected network's discovery options in main, ignoring overlapping start requests. */
 	async function start(peers = input('discovery-peers').checked): Promise<void> {
 		if (starting) return;
 		starting = true;
@@ -539,11 +542,13 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 	};
 	button('open-invitation').onclick = () => showPage('invitation');
 	button('open-diagnostics').onclick = () => showPage('diagnostics');
+	/** Select existing Tailscale peers and keep the diagnostic peer-scanning toggle synchronized. */
 	button('discovery-tailnet').onclick = () => {
 		network = 'tailscale';
 		input('discovery-peers').checked = true;
 		void start();
 	};
+	/** Switch to LAN discovery with Tailscale peer scanning explicitly disabled. */
 	button('discovery-lan').onclick = () => {
 		network = 'lan';
 		input('discovery-peers').checked = false;
@@ -551,6 +556,7 @@ export function installDiscoveryControls(report: (error: unknown) => void): {
 	};
 	button('pair-return').onclick = () => void action('dismiss');
 	button('discovery-start').onclick = () => void start();
+	/** Treat the diagnostic peer toggle as a network choice and restart discovery with that scope. */
 	input('discovery-peers').onchange = () => {
 		network = input('discovery-peers').checked ? 'tailscale' : 'lan';
 		void start();

@@ -26,6 +26,7 @@ import { startLiteControlServer } from './control-server';
 import { resolveLiteDataDirectory } from '../../shared/lite-control';
 import type { LiteControlOptions, LiteControlState } from '../../shared/lite-control';
 
+/** Start an isolated attachment runtime without full Maestro backends, keeping remote content sandboxed. */
 export async function startLite(): Promise<void> {
 	// Separate startup preferences from full-mode data without opening any backend stores.
 	const dataFlag = process.argv.indexOf('--lite-user-data');
@@ -289,6 +290,7 @@ export async function startLite(): Promise<void> {
 			);
 		return response.json();
 	}
+	/** Drain the previous transport, cancel superseded attempts and validate host trust before showing remote content. */
 	async function connect(id: string, initialState?: () => void): Promise<void> {
 		const closing = disconnect();
 		const version = connectionVersion;

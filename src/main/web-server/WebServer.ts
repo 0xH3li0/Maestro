@@ -241,6 +241,7 @@ export class WebServer {
 	private port: number;
 	private litePairing = new HostPairingWindow();
 	private getPairingParent: () => BrowserWindow | null = () => null;
+	/** Open the host owner's pairing controls using the running server's identity and scoped private listeners. */
 	async openLitePairing(parent: BrowserWindow): Promise<void> {
 		if (!this.isRunning || !this.getRemoteHostStatus)
 			throw new Error('Existing Maestro server must be running');
@@ -1744,6 +1745,7 @@ export class WebServer {
 		}
 	}
 
+	/** Reuse a running server; otherwise bind the configured exposure interface before restoring private access consent. */
 	async start(): Promise<{ port: number; token: string; url: string }> {
 		if (this.isRunning) {
 			return {
