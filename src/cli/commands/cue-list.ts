@@ -2,6 +2,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { formatCueTurnSettings, type CueTurnSettings } from '../../shared/cue/turn-settings';
+import { exitWith, exitCodeForError } from '../exit-codes';
 
 interface CueListOptions {
 	json?: boolean;
@@ -91,7 +92,7 @@ export async function cueList(options: CueListOptions): Promise<void> {
 		} else {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 

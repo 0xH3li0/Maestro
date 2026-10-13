@@ -34,7 +34,12 @@ import { MODEL_SETS, type VoiceModelSetId } from '../../shared/acappella/voice-m
 import { formatSize } from '../../shared/formatters';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatSuccess, formatWarning } from '../output/formatter';
-import { failCommand, resolveAgentOrFail, resolveTabOwner } from '../services/session-command';
+import {
+	failCommand,
+	resolveAgentOrFail,
+	resolveTabOwner,
+	failFromError,
+} from '../services/session-command';
 import {
 	getSessionById,
 	readActiveAgentId,
@@ -164,7 +169,7 @@ async function resolveScope(options: ScopeOptions): Promise<VoiceScope> {
 			const owner = await resolveTabOwner(options.tab, options.agent);
 			return { kind: 'agent', sessionId: owner.agentId, tabId: owner.tabId };
 		} catch (error) {
-			failCommand(error instanceof Error ? error.message : String(error), options.json);
+			failFromError(error, options.json);
 		}
 	}
 	if (options.agent !== undefined) {
@@ -276,7 +281,7 @@ export async function voiceScope(mode: string, options: ScopeOptions): Promise<v
 			const owner = await resolveTabOwner(options.tab ?? 'active', options.agent);
 			scope = { kind: 'agent', sessionId: owner.agentId, tabId: owner.tabId };
 		} catch (error) {
-			failCommand(error instanceof Error ? error.message : String(error), options.json);
+			failFromError(error, options.json);
 		}
 	} else {
 		failCommand(

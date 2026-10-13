@@ -38,6 +38,8 @@ import {
 	type ToolType,
 } from '../../shared/types';
 import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failCommand, failFromError } from '../services/session-command';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -77,15 +79,6 @@ interface CreateAgentOptions {
 /** The peer flags join the create options: the New Agent dialog has a Peers tab. */
 type CreateAgentFlags = CreateAgentOptions & PeerFlagOptions;
 
-function fail(msg: string, json?: boolean): void {
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: msg }));
-	} else {
-		console.error(formatError(msg));
-	}
-	process.exit(1);
-}
-
 /**
  * The group `--group` names, and the defaults a new agent in it starts from
  * (none for `--no-group-defaults`, a worktree group, or a group with no
@@ -104,7 +97,7 @@ function resolveCreateGroup(options: CreateAgentOptions): {
 		groupId = resolveGroupId(options.group);
 		group = readGroups().find((candidate) => candidate.id === groupId);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 		return {};
 	}
 	const seeded =
@@ -126,7 +119,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			? groupDefaults.toolType
 			: options.type;
 	if (!VALID_TYPES.has(type)) {
-		fail(
+		failCommand(
 			`Invalid agent type "${type}". Must be one of: ${[...VALID_TYPES].join(', ')}`,
 			options.json
 		);
@@ -144,7 +137,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 	} else if (groupDefaults?.projectRoot) {
 		cwd = seededRemote ? groupDefaults.projectRoot : path.resolve(groupDefaults.projectRoot);
 	} else {
-		fail(
+		failCommand(
 			group
 				? `No working directory: pass --cwd, or set one in the defaults of group "${group.name}" (update-group-settings --cwd).`
 				: "required option '-d, --cwd <path>' not specified",
@@ -166,7 +159,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 				} else {
 					console.error(formatError(msg));
 				}
-				process.exit(1);
+				exitWith(ExitCode.GeneralError);
 			}
 			customEnvVars[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
 		}
@@ -183,7 +176,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -200,7 +193,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -231,7 +224,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// `--gateway-url <url|none>`: the New Agent Models tab's gateway. Checked
@@ -247,7 +240,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		gatewayUrl = edit.gatewayUrl ?? undefined;
 	}
@@ -264,7 +257,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		} else {
 			console.error(formatError(runOnEdit.error));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	if (runOnEdit.kind === 'set') runOn = runOnEdit.target;
 
@@ -278,7 +271,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// `--model auto`: the Auto choice of the New Agent model picker, stored as
@@ -297,7 +290,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		customModel = AUTO_MODEL;
 	}
@@ -312,7 +305,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		try {
 			peerPatch = readPeerFlags(options);
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options.json);
+			failFromError(error, options.json);
 			return;
 		}
 	}
@@ -389,7 +382,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 				} else {
 					console.error(formatError(msg));
 				}
-				process.exit(1);
+				exitWith(ExitCode.GeneralError);
 				return;
 			}
 		}
@@ -437,7 +430,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -446,6 +439,6 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

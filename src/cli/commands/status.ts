@@ -3,17 +3,24 @@
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
+import { failCommand } from '../services/session-command';
 
-export async function status(): Promise<void> {
+export interface StatusOptions {
+	json?: boolean;
+}
+
+export async function status(options: StatusOptions = {}): Promise<void> {
 	const info = readCliServerInfo();
 	if (!info) {
-		console.log('Maestro desktop app is not running');
-		process.exit(ExitCode.NotRunning);
+		failCommand('Maestro desktop app is not running', options.json, ExitCode.NotRunning);
 	}
 
 	if (!isCliServerRunning()) {
-		console.log('Maestro discovery file is stale (app may have crashed)');
-		process.exit(ExitCode.NotRunning);
+		failCommand(
+			'Maestro discovery file is stale (app may have crashed)',
+			options.json,
+			ExitCode.NotRunning
+		);
 	}
 
 	try {
@@ -28,12 +35,21 @@ export async function status(): Promise<void> {
 			);
 
 			const sessionCount = sessionsResult.sessions?.length ?? 0;
-			console.log(
-				`Maestro is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
-			);
+			if (options.json) {
+				console.log(
+					JSON.stringify({ success: true, running: true, port: info.port, agents: sessionCount })
+				);
+			} else {
+				console.log(
+					`Maestro is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
+				);
+			}
 		});
 	} catch (error) {
-		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(ExitCode.NotRunning);
+		failCommand(
+			error instanceof Error ? error.message : String(error),
+			options.json,
+			ExitCode.NotRunning
+		);
 	}
 }

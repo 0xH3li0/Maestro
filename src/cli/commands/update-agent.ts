@@ -22,7 +22,7 @@
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 import {
@@ -58,6 +58,7 @@ import {
 	type AgentSettingFlagOptions,
 	type SshFlagOptions,
 } from '../services/agent-setting-flags';
+import { failCommand, failFromError } from '../services/session-command';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -74,15 +75,6 @@ interface UpdateAgentOptions extends PeerFlagOptions, AgentSettingFlagOptions, S
 	runOn?: string;
 	runOnContext?: string;
 	json?: boolean;
-}
-
-function emitError(message: string, options: UpdateAgentOptions): never {
-	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	return process.exit(1);
 }
 
 // One printed line per change a peer edit made, in the words the Peers tab uses.
@@ -105,7 +97,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	try {
 		configPatch = buildConfigPatch(options);
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 
 	// `--run-on` / `--run-on-context` are read once the agent is: the target is
@@ -121,9 +113,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		!hasPeerFlags(options) &&
 		options.provider === undefined
 	) {
-		emitError(
+		failCommand(
 			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
-			options
+			options.json
 		);
 	}
 
@@ -131,7 +123,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	try {
 		sessionId = resolveAgentId(agentId);
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 
 	// Read the resolved agent so provider- and token-source-specific rules can
@@ -153,7 +145,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			}
 			configPatch = { ...configPatch, ...peers };
 		} catch (error) {
-			emitError(error instanceof Error ? error.message : String(error), options);
+			failFromError(error, options.json);
 		}
 	}
 
@@ -165,9 +157,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		currentToolType !== undefined &&
 		currentToolType !== 'claude-code'
 	) {
-		emitError(
+		failCommand(
 			`--token-source only applies to Claude Code agents; "${sessionId}" is a ${currentToolType} agent.`,
-			options
+			options.json
 		);
 	}
 
@@ -177,9 +169,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		currentToolType !== undefined &&
 		currentToolType !== 'codex'
 	) {
-		emitError(
+		failCommand(
 			`--codex-transport only applies to Codex agents; "${sessionId}" is a ${currentToolType} agent.`,
-			options
+			options.json
 		);
 	}
 
@@ -191,7 +183,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	if (typeof configPatch?.gatewayUrl === 'string' && currentToolType !== undefined) {
 		const edit = parseGatewayUrlEdit(currentToolType, configPatch.gatewayUrl);
 		if (!edit.ok) {
-			emitError(`--gateway-url: ${edit.error}`, options);
+			failCommand(`--gateway-url: ${edit.error}`, options.json);
 		}
 		configPatch.gatewayUrl = edit.gatewayUrl;
 	}
@@ -203,10 +195,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	// (`null` on the wire). The app runs the same check before it writes.
 	if (runOnFlagsPresent) {
 		if (!session) {
-			emitError(`Agent "${sessionId}" could not be read from the agent store.`, options);
+			failCommand(`Agent "${sessionId}" could not be read from the agent store.`, options.json);
 		}
 		const runOnEdit = readRunOnFlags(options, session);
-		if (runOnEdit.kind === 'refused') emitError(runOnEdit.error, options);
+		if (runOnEdit.kind === 'refused') failCommand(runOnEdit.error, options.json);
 		if (runOnEdit.kind === 'set') {
 			configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };
 		}
@@ -221,9 +213,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			configPatch
 		);
 		if (gatewayProblem) {
-			emitError(
+			failCommand(
 				`${configPatch.tokenProxyMode !== undefined ? '--proxy-mode' : '--gateway-url'}: ${gatewayProblem}`,
-				options
+				options.json
 			);
 		}
 	}
@@ -238,7 +230,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			base: session?.tierTargets,
 			endpoints: readLocalModelEndpoints(),
 		});
-		if (!edit.ok) emitError(`--tier ${edit.error}`, options);
+		if (!edit.ok) failCommand(`--tier ${edit.error}`, options.json);
 		tierTargetsAfter = edit.tierTargets;
 	}
 
@@ -257,7 +249,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				},
 				readHarnessTierDefaults()
 			);
-			if (problem) emitError(`--model auto: ${problem}`, options);
+			if (problem) failCommand(`--model auto: ${problem}`, options.json);
 		}
 		configPatch.customModel = AUTO_MODEL;
 	}
@@ -275,11 +267,11 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			configPatch.backgroundRequests,
 			readLocalModelEndpoints()
 		);
-		if (!edit.ok) emitError(`--background-requests: ${edit.error}`, options);
+		if (!edit.ok) failCommand(`--background-requests: ${edit.error}`, options.json);
 		if (configPatch.tokenProxyMode === 'off' || configPatch.gatewayUrl !== undefined) {
-			emitError(
+			failCommand(
 				'--background-requests: background requests are routed by the token proxy, so a target cannot be set in the call that turns the proxy off or sets another gateway.',
-				options
+				options.json
 			);
 		}
 	}
@@ -291,26 +283,26 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	if (options.provider !== undefined) {
 		const requested = options.provider.trim().toLowerCase();
 		if (!VALID_PROVIDER_TYPES.has(requested)) {
-			emitError(
+			failCommand(
 				`Invalid provider "${options.provider}". Must be one of: ${[...VALID_PROVIDER_TYPES].join(', ')}`,
-				options
+				options.json
 			);
 		}
 		if (currentToolType !== undefined && requested === currentToolType) {
-			emitError(`Agent "${sessionId}" is already a ${requested} agent.`, options);
+			failCommand(`Agent "${sessionId}" is already a ${requested} agent.`, options.json);
 		}
 		if (!options.force) {
-			emitError(
+			failCommand(
 				'Switching provider resets the agent tabs, clears provider-specific config, and kills the running process. Re-run with --force to confirm.',
-				options
+				options.json
 			);
 		}
 		// A provider switch wipes provider-specific config anyway, so refuse to
 		// combine it with those edits in the same call to avoid confusing order.
 		if (configPatch !== undefined) {
-			emitError(
+			failCommand(
 				'--provider cannot be combined with other settings edits (it resets provider config). Run it on its own, then adjust settings.',
-				options
+				options.json
 			);
 		}
 		providerType = requested;
@@ -323,7 +315,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		try {
 			sshPatch = buildSshPatch(options);
 		} catch (error) {
-			emitError(error instanceof Error ? error.message : String(error), options);
+			failFromError(error, options.json);
 		}
 	}
 
@@ -336,7 +328,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			try {
 				resolvedGroupId = resolveGroupId(raw);
 			} catch (error) {
-				emitError(error instanceof Error ? error.message : String(error), options);
+				failFromError(error, options.json);
 			}
 		}
 	}
@@ -453,7 +445,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			}
 		});
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 
 	if (options.json) {

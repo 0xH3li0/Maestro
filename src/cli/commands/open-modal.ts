@@ -25,6 +25,8 @@ import {
 	surfaceTabIds,
 	type UiSurface,
 } from '../../shared/uiSurfaces';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failCommand, failFromError } from '../services/session-command';
 
 interface OpenModalOptions {
 	tab?: string;
@@ -102,7 +104,7 @@ export async function openModal(
 		printSurfaceList(options);
 		if (!surfaceName && !options.list) {
 			console.error('\nError: missing <surface>. Pick one of the ids above.');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return;
 	}
@@ -110,7 +112,7 @@ export async function openModal(
 	const surface = resolveUiSurface(surfaceName);
 	if (!surface) {
 		const valid = UI_SURFACES.map((entry) => entry.id).join(', ');
-		fail(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options);
+		failCommand(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options.json);
 	}
 
 	// Whether the surface takes a group is checked before the group is looked
@@ -120,13 +122,13 @@ export async function openModal(
 		subTab: options.subTab,
 		group: options.group,
 	});
-	if ('error' in accepted) fail(accepted.error, options);
+	if ('error' in accepted) failCommand(accepted.error, options.json);
 	let groupId: string | undefined;
 	if (options.group !== undefined) {
 		try {
 			groupId = resolveGroupId(options.group);
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options);
+			failFromError(error, options.json);
 		}
 	}
 	// Group Settings is refused for a worktree group, in the words the Group
@@ -135,7 +137,7 @@ export async function openModal(
 	if (surface.groupRequired && groupId) {
 		const group = readGroups().find((candidate) => candidate.id === groupId);
 		const blocker = group ? groupSettingsBlocker(group) : undefined;
-		if (blocker) fail(blocker, options);
+		if (blocker) failCommand(blocker, options.json);
 	}
 	const target = { ...accepted, group: groupId };
 	const tabId = target.tab?.id;
@@ -151,7 +153,7 @@ export async function openModal(
 		);
 
 		if (!result.success) {
-			fail(result.error || `Failed to open ${surface.label}`, options);
+			failCommand(result.error || `Failed to open ${surface.label}`, options.json);
 		}
 
 		const hint = describeSurfaceAccess(surface, shortcutFor(surface), target);
@@ -177,12 +179,6 @@ export async function openModal(
 		console.log(`Opened ${surface.label}${tabSuffix}${groupSuffix} in Maestro.`);
 		if (hint) console.log(hint);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
-}
-
-function fail(message: string, options: OpenModalOptions): never {
-	if (options.json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	process.exit(1);
 }

@@ -21,6 +21,7 @@ import type {
 	TokenProxyBlockDetail,
 	TokenProxyReport,
 } from '../../../shared/local-models/token-proxy';
+import { formatError } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -227,7 +228,7 @@ describe('models proxy status command', () => {
 
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 		await expect(modelsProxyStatus({})).rejects.toThrow('__exit__');
-		expect(errorSpy).toHaveBeenCalledWith('Error: Maestro desktop app is not running');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('Maestro desktop app is not running'));
 	});
 });
 
@@ -286,7 +287,7 @@ describe('models proxy block command', () => {
 		await expect(modelsProxyBlock(HASH, {})).rejects.toThrow('__exit__');
 
 		expect(errorSpy).toHaveBeenCalledWith(
-			`Error: The proxy cache holds no compressed block for ${HASH}.`
+			formatError(`The proxy cache holds no compressed block for ${HASH}.`)
 		);
 	});
 

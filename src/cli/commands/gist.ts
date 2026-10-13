@@ -20,6 +20,7 @@ import {
 	type SecretFinding,
 } from '../../shared/secretScan';
 import type { CreateGistResult } from '../../shared/gitUtils';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 interface GistCreateOptions {
 	description?: string;
@@ -52,7 +53,7 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : 'Unknown error';
 		emitErrorJson(msg, 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 
 	const description = options.description ?? '';
@@ -64,7 +65,7 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 	const agentSessionId = options.session?.trim();
 	if (options.session !== undefined && !agentSessionId) {
 		emitErrorJson('--session requires a non-empty session id', 'INVALID_SESSION');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	try {
@@ -90,12 +91,12 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 				...(result.secretScreenNote ? { secretScreenNote: result.secretScreenNote } : {}),
 			});
 			for (const line of secretScreenReportLines(result)) console.error(line);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		if (!result.success || !result.gistUrl) {
 			emitErrorJson(result.error ?? 'Failed to create gist', 'GIST_CREATE_FAILED');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const response: GistCreateResponse = {
@@ -120,6 +121,6 @@ export async function gistCreate(agentIdArg: string, options: GistCreateOptions)
 		} else {
 			emitErrorJson(`Gist creation failed: ${msg}`, 'GIST_CREATE_FAILED');
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

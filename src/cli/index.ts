@@ -2,7 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
@@ -334,6 +334,7 @@ import {
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
 import { logger } from '../main/utils/logger';
+import { ExitCode, exitWith } from './exit-codes';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -615,6 +616,7 @@ program
 		'Do not write a History entry for this turn (written by default, desktop app running or not)'
 	)
 	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -666,6 +668,7 @@ program
 		'--callback-timeout <seconds>',
 		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
 	)
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(dispatch);
 
 // Ask command - the agent-to-agent question. `dispatch` hands WORK to an agent
@@ -705,12 +708,14 @@ queue
 		'-a, --agent <id>',
 		'Only list items for this agent (default: every agent with queued items)'
 	)
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueList);
 
 queue
 	.command('remove <item-id>')
 	.description('Remove a queued item by its id (from dispatch --queue output or queue list)')
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueRemove);
 
 queue
@@ -719,6 +724,7 @@ queue
 		'Steer a queued message into the turn already running on its tab, like the Steer button on the queued card (Claude agents on the interactive token source, or Codex agents on the app-server transport). The item leaves the queue once the agent has it and returns if the agent never takes it.'
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(queueSteer);
 
 // Window commands - the CLI half of the Left Bar's "Move to Window" menus (on an
@@ -1109,6 +1115,7 @@ program
 		'--ignore-model-hints',
 		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(autoRun);
 
 // Auto Run control commands - stop a run and recover from an error pause. These
@@ -1477,6 +1484,7 @@ directorNotes
 program
 	.command('status')
 	.description('Check if the Maestro desktop app is running and reachable')
+	.option('--json', 'Output as JSON (for scripting)')
 	.action(status);
 
 // Version command - report the running app's version + build commit hash (the
@@ -2106,7 +2114,7 @@ function tabBoolArg(value: string, label: string): boolean {
 		return parseCliBool(value, label);
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
-		return process.exit(1);
+		return exitWith(ExitCode.GeneralError);
 	}
 }
 
@@ -2126,7 +2134,7 @@ tabTargetOptions(tab.command('thinking <tab-id> <mode>'))
 		const v = String(mode).trim().toLowerCase();
 		if (v !== 'cycle' && asThinkingMode(v) === undefined) {
 			console.error(`Invalid mode "${mode}". Use off, on, sticky, or cycle.`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return tabThinking(tabId, v as ThinkingMode | 'cycle', options);
 	});
@@ -2357,6 +2365,7 @@ settings
 settings
 	.command('media-status')
 	.description('Report media tools available to this CLI process and allowed models as JSON')
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(settingsMediaStatus);
 
 // Agent-specific config subcommands
@@ -2814,6 +2823,7 @@ gist
 		'--allow-secrets',
 		'Publish even when the secret screen finds a possible credential (default: refuse and list them, masked)'
 	)
+	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
 	.action(gistCreate);
 
 // Notify commands - surface notifications in the Maestro desktop app
@@ -3225,20 +3235,23 @@ voiceWake
 	.action(voiceWakeList);
 
 voiceWake
-	.command('status <phrase>')
-	.description('Show what is recorded for a phrase and what its trained model measured')
+	.command('status [phrase]')
+	.description(
+		'Show what is recorded for a phrase and what its trained model measured (default: the configured wake phrase)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakeStatus);
 
 voiceWake
-	.command('record <phrase>')
+	.command('record [phrase]')
 	.description(
-		'Open the microphone and keep each burst of speech as one recording of the phrase, until "voice wake stop"'
+		'Open the microphone and keep each burst of speech as one recording of the phrase (default: the configured wake phrase), until "voice wake stop"'
 	)
 	.option(
-		'--background',
+		'--other-speech',
 		'Record ordinary speech that is NOT the phrase instead (about 30 seconds)'
 	)
+	.addOption(new Option('--background').hideHelp())
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakeRecord);
 
@@ -3253,26 +3266,29 @@ voiceWake
 	.description(
 		'Add recordings from 16-bit PCM WAV files instead of the microphone, one recording of the phrase per file'
 	)
-	.option('--background', 'The files are ordinary speech that is NOT the phrase')
+	.option('--other-speech', 'The files are ordinary speech that is NOT the phrase')
+	.addOption(new Option('--background').hideHelp())
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakeAdd);
 
 voiceWake
-	.command('undo <phrase>')
-	.description('Remove the newest recording of the phrase')
+	.command('undo [phrase]')
+	.description('Remove the newest recording of the phrase (default: the configured wake phrase)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakeUndo);
 
 voiceWake
-	.command('clear-background <phrase>')
-	.description('Remove the ordinary speech recorded for a phrase, so it can be recorded again')
+	.command('clear-background [phrase]')
+	.description(
+		'Remove the ordinary speech recorded for a phrase, so it can be recorded again (default: the configured wake phrase)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakeClearBackground);
 
 voiceWake
-	.command('train <phrase>')
+	.command('train [phrase]')
 	.description(
-		'Build the wake word model for a phrase from its recordings; waits until training finishes'
+		'Build the wake word model for a phrase from its recordings (default: the configured wake phrase); waits until training finishes'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakeTrain);

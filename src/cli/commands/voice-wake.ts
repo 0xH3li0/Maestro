@@ -17,8 +17,7 @@
 // there are too few recordings to train from) prints its reason and exits
 // non-zero, so a script can tell "done" from "not done, and why".
 
-import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { resolveCliPath } from '../utils/parse';
 import {
 	WAKE_ENROLLMENT_BACKGROUND_MIN_MS,
@@ -29,11 +28,21 @@ import {
 	type WakeEnrollmentRequest,
 	type WakeEnrollmentStatus,
 } from '../../shared/acappella/wake-enrollment';
+import { DEFAULT_WAKE_PHRASE } from '../../shared/acappella/voice-controls';
+import { failCommand, sendBridgeCommand } from '../services/session-command';
+import { readSettingValue } from '../services/storage';
 
 interface VoiceWakeOptions {
 	json?: boolean;
 	/** `record` and `add`: the recording is ordinary speech, not the phrase. */
+	otherSpeech?: boolean;
+	/** The spelling `otherSpeech` replaced (it clashed with the CLI-wide `--background`). */
 	background?: boolean;
+}
+
+/** Whether `record` and `add` were asked to keep ordinary speech, by either spelling. */
+function recordingKind(options: VoiceWakeOptions): 'background' | 'phrase' {
+	return options.otherSpeech || options.background ? 'background' : 'phrase';
 }
 
 /** Enough for a status read or a recording to start. */
@@ -45,37 +54,23 @@ const REQUEST_TIMEOUT_MS = 20_000;
  */
 const TRAIN_TIMEOUT_MS = 300_000;
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 /** Send one request and return the app's reply, or exit with why the bridge failed. */
 async function send(
 	request: WakeEnrollmentRequest,
 	options: VoiceWakeOptions,
 	timeoutMs = REQUEST_TIMEOUT_MS
 ): Promise<WakeEnrollmentReply> {
-	let response: { success: boolean; reply?: WakeEnrollmentReply; error?: string };
-	try {
-		response = await withMaestroClient((client) =>
-			client.sendCommand<{ success: boolean; reply?: WakeEnrollmentReply; error?: string }>(
-				{ type: 'voice_wake_enrollment', request },
-				'voice_wake_enrollment_result',
-				timeoutMs
-			)
-		);
-	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
-	}
-	if (!response.success || !response.reply) {
-		fail(response.error || 'Wake phrase request failed', options.json);
-	}
+	const response = await sendBridgeCommand<{
+		success: boolean;
+		reply?: WakeEnrollmentReply;
+		error?: string;
+	}>(
+		{ type: 'voice_wake_enrollment', request },
+		'voice_wake_enrollment_result',
+		options.json,
+		timeoutMs
+	);
+	if (!response.reply) failCommand('Wake phrase request failed', options.json);
 	return response.reply;
 }
 
@@ -86,13 +81,21 @@ async function sendOrFail(
 	timeoutMs?: number
 ): Promise<Extract<WakeEnrollmentReply, { ok: true }>> {
 	const reply = await send(request, options, timeoutMs);
-	if (!reply.ok) fail(reply.reason, options.json);
+	if (!reply.ok) failCommand(reply.reason, options.json);
 	return reply;
 }
 
-function requirePhrase(phrase: string, options: VoiceWakeOptions): string {
+/** The phrase Settings trains when none is named: the configured wake phrase. */
+function configuredWakePhrase(): string {
+	const stored = readSettingValue('acappella.controls.wakePhrase');
+	return typeof stored === 'string' && stored.trim() ? stored.trim() : DEFAULT_WAKE_PHRASE;
+}
+
+/** The phrase named on the command line, or the configured wake phrase when it is left out. */
+function requirePhrase(phrase: string | undefined, options: VoiceWakeOptions): string {
+	if (phrase === undefined) return configuredWakePhrase();
 	const trimmed = phrase.trim();
-	if (!trimmed) fail('phrase cannot be empty', options.json, ExitCode.InvalidUsage);
+	if (!trimmed) failCommand('phrase cannot be empty', options.json, ExitCode.InvalidUsage);
 	return trimmed;
 }
 
@@ -130,15 +133,19 @@ export function formatWakeEnrollmentStatus(status: WakeEnrollmentStatus): string
 function printStatus(status: WakeEnrollmentStatus | null, options: VoiceWakeOptions): void {
 	if (options.json) console.log(JSON.stringify({ success: true, status }));
 	else if (status) console.log(formatWakeEnrollmentStatus(status));
+	else console.log('Nothing is recorded for this phrase.');
 }
 
 /** `voice wake list` - every phrase with recordings, and where each one stands. */
 export async function voiceWakeList(options: VoiceWakeOptions): Promise<void> {
-	const { phrases = [] } = await sendOrFail({ action: 'list' }, options);
-	const statuses: WakeEnrollmentStatus[] = [];
-	for (const phrase of phrases) {
-		const { status } = await sendOrFail({ action: 'status', phrase }, options);
-		if (status) statuses.push(status);
+	const { phrases = [], statuses: listed } = await sendOrFail({ action: 'list' }, options);
+	const statuses: WakeEnrollmentStatus[] = [...(listed ?? [])];
+	// An app older than this CLI names the phrases and leaves the statuses to a read each.
+	if (!listed) {
+		for (const phrase of phrases) {
+			const { status } = await sendOrFail({ action: 'status', phrase }, options);
+			if (status) statuses.push(status);
+		}
 	}
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, phrases: statuses }));
@@ -150,7 +157,10 @@ export async function voiceWakeList(options: VoiceWakeOptions): Promise<void> {
 }
 
 /** `voice wake status <phrase>` - what is recorded and whether it is trained. */
-export async function voiceWakeStatus(phrase: string, options: VoiceWakeOptions): Promise<void> {
+export async function voiceWakeStatus(
+	phrase: string | undefined,
+	options: VoiceWakeOptions
+): Promise<void> {
 	const { status } = await sendOrFail(
 		{ action: 'status', phrase: requirePhrase(phrase, options) },
 		options
@@ -158,13 +168,16 @@ export async function voiceWakeStatus(phrase: string, options: VoiceWakeOptions)
 	printStatus(status, options);
 }
 
-/** `voice wake record <phrase> [--background]` - open the microphone and keep what it hears. */
-export async function voiceWakeRecord(phrase: string, options: VoiceWakeOptions): Promise<void> {
+/** `voice wake record [phrase] [--other-speech]` - open the microphone and keep what it hears. */
+export async function voiceWakeRecord(
+	phrase: string | undefined,
+	options: VoiceWakeOptions
+): Promise<void> {
 	const { status } = await sendOrFail(
 		{
 			action: 'record',
 			phrase: requirePhrase(phrase, options),
-			kind: options.background ? 'background' : 'phrase',
+			kind: recordingKind(options),
 		},
 		options
 	);
@@ -178,14 +191,14 @@ export async function voiceWakeStop(options: VoiceWakeOptions): Promise<void> {
 	else printStatus(status, options);
 }
 
-/** `voice wake add <phrase> <file.wav...> [--background]` - recordings from files. */
+/** `voice wake add <phrase> <file.wav...> [--other-speech]` - recordings from files. */
 export async function voiceWakeAdd(
 	phrase: string,
 	files: string[],
 	options: VoiceWakeOptions
 ): Promise<void> {
 	const wanted = requirePhrase(phrase, options);
-	if (!files.length) fail('name at least one WAV file', options.json, ExitCode.InvalidUsage);
+	if (!files.length) failCommand('name at least one WAV file', options.json, ExitCode.InvalidUsage);
 
 	let status: WakeEnrollmentStatus | null = null;
 	const skipped: Array<{ file: string; reason: string }> = [];
@@ -194,7 +207,7 @@ export async function voiceWakeAdd(
 			{
 				action: 'import',
 				phrase: wanted,
-				kind: options.background ? 'background' : 'phrase',
+				kind: recordingKind(options),
 				path: resolveCliPath(file),
 			},
 			options
@@ -205,17 +218,23 @@ export async function voiceWakeAdd(
 	}
 
 	const added = files.length - skipped.length;
+	// `success` means every file was added: a folder where one take was skipped
+	// says so, and exits non-zero, instead of passing for a clean import.
+	const complete = skipped.length === 0;
 	if (options.json) {
-		console.log(JSON.stringify({ success: added > 0, added, skipped, status }));
+		console.log(JSON.stringify({ success: complete, added, skipped, status }));
 	} else {
 		for (const entry of skipped) console.error(`Skipped ${entry.file}: ${entry.reason}`);
 		if (status) console.log(formatWakeEnrollmentStatus(status));
 	}
-	if (added === 0) exitWith(ExitCode.GeneralError);
+	if (!complete) exitWith(ExitCode.GeneralError);
 }
 
 /** `voice wake undo <phrase>` - drop the newest recording of the phrase. */
-export async function voiceWakeUndo(phrase: string, options: VoiceWakeOptions): Promise<void> {
+export async function voiceWakeUndo(
+	phrase: string | undefined,
+	options: VoiceWakeOptions
+): Promise<void> {
 	const { status } = await sendOrFail(
 		{ action: 'remove-last-clip', phrase: requirePhrase(phrase, options) },
 		options
@@ -225,7 +244,7 @@ export async function voiceWakeUndo(phrase: string, options: VoiceWakeOptions): 
 
 /** `voice wake clear-background <phrase>` - drop the other speech so it can be recorded again. */
 export async function voiceWakeClearBackground(
-	phrase: string,
+	phrase: string | undefined,
 	options: VoiceWakeOptions
 ): Promise<void> {
 	const { status } = await sendOrFail(
@@ -236,7 +255,10 @@ export async function voiceWakeClearBackground(
 }
 
 /** `voice wake train <phrase>` - build the model from what is recorded; waits until it is done. */
-export async function voiceWakeTrain(phrase: string, options: VoiceWakeOptions): Promise<void> {
+export async function voiceWakeTrain(
+	phrase: string | undefined,
+	options: VoiceWakeOptions
+): Promise<void> {
 	const { status } = await sendOrFail(
 		{ action: 'train', phrase: requirePhrase(phrase, options) },
 		options,

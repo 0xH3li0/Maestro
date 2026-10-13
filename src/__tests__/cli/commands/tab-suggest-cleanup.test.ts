@@ -17,6 +17,7 @@ import { tabSuggestCleanup } from '../../../cli/commands/tab-suggest-cleanup';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import type { TabCleanupResult } from '../../../shared/tabCleanup';
+import { formatError } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -172,7 +173,7 @@ describe('tab suggest-cleanup command', () => {
 		await expect(tabSuggestCleanup({})).rejects.toThrow('__exit__');
 
 		expect(errorSpy).toHaveBeenCalledWith(
-			'Error: Tab cleanup suggestions is off. Assign it a local model or an endpoint.'
+			formatError('Tab cleanup suggestions is off. Assign it a local model or an endpoint.')
 		);
 		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 		expect(logSpy).not.toHaveBeenCalled();
@@ -199,7 +200,7 @@ describe('tab suggest-cleanup command', () => {
 
 		await expect(tabSuggestCleanup({})).rejects.toThrow('__exit__');
 
-		expect(errorSpy).toHaveBeenCalledWith('Error: Unknown message type');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('Unknown message type'));
 	});
 
 	it('reports a desktop that is not running', async () => {
@@ -207,7 +208,7 @@ describe('tab suggest-cleanup command', () => {
 
 		await expect(tabSuggestCleanup({})).rejects.toThrow('__exit__');
 
-		expect(errorSpy).toHaveBeenCalledWith('Error: Maestro desktop app is not running');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('Maestro desktop app is not running'));
 		expect(exitSpy).toHaveBeenCalled();
 	});
 });

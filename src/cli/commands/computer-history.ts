@@ -53,6 +53,7 @@ import {
 	type SimpleResult,
 } from '../services/session-command';
 import { formatSuccess, formatWarning } from '../output/formatter';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface JsonOption {
 	json?: boolean;
@@ -105,7 +106,7 @@ export function ensureComputerHistoryEnabled(json?: boolean): void {
 	} else {
 		console.error(message);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 /** Reads still work when the flag is off; say so once, on stderr. */

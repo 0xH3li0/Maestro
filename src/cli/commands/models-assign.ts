@@ -20,7 +20,7 @@ import {
 	readLocalModelEndpoints,
 	writeLocalModelAssignments,
 } from '../services/storage';
-import { ExitCode, exitWith } from '../exit-codes';
+import { ExitCode } from '../exit-codes';
 import { formatLocalModelTasks, formatSuccess, formatWarning } from '../output/formatter';
 import { findLocalModelEndpoint } from '../../shared/local-models/endpoints';
 import {
@@ -37,6 +37,7 @@ import {
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../shared/local-models/task-readiness';
+import { failCommand } from '../services/session-command';
 
 /** Matches `models status`: above the app's endpoint list budget. */
 const READINESS_TIMEOUT_MS = 15_000;
@@ -47,12 +48,6 @@ interface JsonOption {
 
 const SPEC_FORMS =
 	'off, utility-agent, system-one, local:<model-id>, or endpoint:<endpoint>:<model>';
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
 
 /** A spelled assignment, checked against a task and ready to store. */
 export type ResolvedAssignmentSpec =
@@ -101,14 +96,14 @@ export function storeTaskAssignment(
 
 export function modelsAssign(taskId: string, spec: string, options: JsonOption): void {
 	if (!isLocalModelTaskId(taskId)) {
-		fail(
+		failCommand(
 			`Unknown task "${taskId}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`,
 			options.json,
 			ExitCode.InvalidUsage
 		);
 	}
 	const resolved = resolveAssignmentSpec(taskId, spec);
-	if (!resolved.ok) fail(resolved.message, options.json, ExitCode.InvalidUsage);
+	if (!resolved.ok) failCommand(resolved.message, options.json, ExitCode.InvalidUsage);
 	const { assignment, endpointEnabled } = resolved;
 	storeTaskAssignment(taskId, assignment);
 

@@ -14,6 +14,11 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/storage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/storage')>()),
+	readSettingValue: vi.fn(),
+}));
+
 import {
 	formatWakeEnrollmentStatus,
 	voiceWakeAdd,
@@ -27,6 +32,7 @@ import {
 	voiceWakeUndo,
 } from '../../../cli/commands/voice-wake';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { readSettingValue } from '../../../cli/services/storage';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
 	WakeEnrollmentReply,
@@ -102,6 +108,7 @@ describe('voice wake commands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
@@ -114,7 +121,7 @@ describe('voice wake commands', () => {
 
 		await voiceWakeStatus(' hey scout ', {});
 		await voiceWakeRecord('hey scout', {});
-		await voiceWakeRecord('hey scout', { background: true });
+		await voiceWakeRecord('hey scout', { otherSpeech: true });
 		await voiceWakeStop({});
 		await voiceWakeUndo('hey scout', {});
 		await voiceWakeClearBackground('hey scout', {});
@@ -132,6 +139,28 @@ describe('voice wake commands', () => {
 		expect(new Set(sent.map((entry) => entry.responseType))).toEqual(
 			new Set(['voice_wake_enrollment_result'])
 		);
+	});
+
+	it('still takes --background, the spelling --other-speech replaced', async () => {
+		const sent = mockBridge(() => ({ ok: true, status: status() }));
+
+		await voiceWakeRecord('hey scout', { background: true });
+
+		expect(sent[0].request).toEqual({ action: 'record', phrase: 'hey scout', kind: 'background' });
+	});
+
+	it('uses the configured wake phrase when none is named', async () => {
+		const sent = mockBridge(() => ({ ok: true, status: status() }));
+
+		await voiceWakeStatus(undefined, {});
+		vi.mocked(readSettingValue).mockReturnValue('  hey scout  ');
+		await voiceWakeTrain(undefined, {});
+
+		expect(readSettingValue).toHaveBeenCalledWith('acappella.controls.wakePhrase');
+		expect(sent.map((entry) => entry.request)).toEqual([
+			{ action: 'status', phrase: 'hey jarvis' },
+			{ action: 'train', phrase: 'hey scout' },
+		]);
 	});
 
 	it('waits far longer for training than for anything else', async () => {
@@ -180,7 +209,9 @@ describe('voice wake commands', () => {
 				: { ok: true, status: status({ clips: 2 }) }
 		);
 
-		await voiceWakeAdd('hey scout', ['takes/one.wav', 'takes/cough.wav', '/abs/two.wav'], {});
+		await expect(
+			voiceWakeAdd('hey scout', ['takes/one.wav', 'takes/cough.wav', '/abs/two.wav'], {})
+		).rejects.toThrow(`exit:${ExitCode.GeneralError}`);
 
 		expect(sent.map((entry) => entry.request)).toEqual([
 			{
@@ -199,14 +230,31 @@ describe('voice wake commands', () => {
 		]);
 		expect(errors()).toContain('Skipped takes/cough.wav: Too short');
 		expect(printed()).toContain('"hey scout": 2 recordings');
-		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
-	it('adds other speech with --background, and fails when nothing was added', async () => {
+	it('reports a folder with one skipped take as not entirely added', async () => {
+		mockBridge((request) =>
+			request.action === 'import' && request.path.endsWith('cough.wav')
+				? { ok: false, reason: 'Too short to be the phrase. Say it again.' }
+				: { ok: true, status: status({ clips: 1 }) }
+		);
+
+		await expect(
+			voiceWakeAdd('hey scout', ['one.wav', 'cough.wav'], { json: true })
+		).rejects.toThrow(`exit:${ExitCode.GeneralError}`);
+
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toMatchObject({
+			success: false,
+			added: 1,
+			skipped: [{ file: 'cough.wav', reason: 'Too short to be the phrase. Say it again.' }],
+		});
+	});
+
+	it('adds other speech with --other-speech, and fails when nothing was added', async () => {
 		const sent = mockBridge(() => ({ ok: false, reason: 'No such file: /nope.wav' }));
 
 		await expect(
-			voiceWakeAdd('hey scout', ['/nope.wav'], { background: true, json: true })
+			voiceWakeAdd('hey scout', ['/nope.wav'], { otherSpeech: true, json: true })
 		).rejects.toThrow(`exit:${ExitCode.GeneralError}`);
 
 		expect(sent[0].request).toMatchObject({ action: 'import', kind: 'background' });
@@ -225,7 +273,22 @@ describe('voice wake commands', () => {
 		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 
-	it('lists every phrase with where it stands', async () => {
+	it('lists every phrase in one round trip when the app sends the statuses', async () => {
+		const sent = mockBridge(() => ({
+			ok: true,
+			status: null,
+			phrases: ['hey scout', 'ok maestro'],
+			statuses: [TRAINED, status({ phrase: 'ok maestro', clips: 3 })],
+		}));
+
+		await voiceWakeList({});
+
+		expect(sent.map((entry) => entry.request)).toEqual([{ action: 'list' }]);
+		expect(printed()).toContain('"hey scout": 20 recordings, 30 s of other speech');
+		expect(printed()).toContain('"ok maestro": 3 recordings');
+	});
+
+	it('lists every phrase with where it stands, from an app that sends names only', async () => {
 		mockBridge((request) =>
 			request.action === 'list'
 				? { ok: true, status: null, phrases: ['hey scout', 'ok maestro'] }

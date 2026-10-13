@@ -36,6 +36,7 @@ vi.mock('../../../cli/services/storage', () => ({
 import { openModal } from '../../../cli/commands/open-modal';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveGroupId } from '../../../cli/services/storage';
+import { formatError } from '../../../cli/output/formatter';
 
 interface SentMessage {
 	type?: string;
@@ -142,7 +143,7 @@ describe('open command: --group', () => {
 			ExitError
 		);
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Group not found: nope');
+		expect(consoleErrorSpy).toHaveBeenCalledWith(formatError('Group not found: nope'));
 		expect(captured.sent).toBeNull();
 	});
 
@@ -152,7 +153,7 @@ describe('open command: --group', () => {
 		await expect(openModal('cue', { group: 'nope' })).rejects.toBeInstanceOf(ExitError);
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			'Error: Maestro Cue does not open on one group, so --group does not apply.'
+			formatError('Maestro Cue does not open on one group, so --group does not apply.')
 		);
 		expect(resolveGroupId).not.toHaveBeenCalled();
 		expect(captured.sent).toBeNull();

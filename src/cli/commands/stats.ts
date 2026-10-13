@@ -9,10 +9,11 @@
 // against it. The SQL path is read-only enforced in the main process.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
-import { formatError, formatModelUsage } from '../output/formatter';
+import { ExitCode, exitCodeForError } from '../exit-codes';
+import { formatModelUsage } from '../output/formatter';
 import type { ModelUsage } from '../../shared/local-models/model-usage';
 import { isStatsTimeRange, STATS_TIME_RANGES } from '../../shared/stats-types';
+import { failCommand } from '../services/session-command';
 
 interface StatsOptions {
 	range?: string;
@@ -47,12 +48,7 @@ export async function stats(options: StatsOptions): Promise<void> {
 
 	if (!isStatsTimeRange(range)) {
 		const message = `Invalid range "${options.range}". Must be one of: ${STATS_TIME_RANGES.join(', ')}`;
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 
 	try {
@@ -93,11 +89,7 @@ interface ModelUsageResponse {
  */
 export async function statsModels(options: StatsOptions): Promise<void> {
 	const range = options.range || 'week';
-	const fail = (message: string, code: ExitCode): never => {
-		if (options.json) console.error(JSON.stringify({ error: message }));
-		else console.error(formatError(message));
-		return exitWith(code);
-	};
+	const fail = (message: string, code: ExitCode): never => failCommand(message, options.json, code);
 
 	if (!isStatsTimeRange(range)) {
 		return fail(
@@ -217,10 +209,5 @@ function formatMs(ms: number): string {
 
 function handleCommandError(error: unknown, json?: boolean): never {
 	const message = error instanceof Error ? error.message : String(error);
-	if (json) {
-		console.error(JSON.stringify({ error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	process.exit(1);
+	failCommand(message, json);
 }

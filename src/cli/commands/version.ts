@@ -4,7 +4,7 @@
 
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface AppInfoResponse {
 	type: string;
@@ -29,7 +29,7 @@ export async function version(cliVersion: string, options: VersionOptions = {}):
 			console.log(`maestro-cli ${cliVersion}`);
 			console.log('Maestro desktop app is not running');
 		}
-		process.exit(ExitCode.NotRunning);
+		exitWith(ExitCode.NotRunning);
 	}
 
 	try {
@@ -63,6 +63,6 @@ export async function version(cliVersion: string, options: VersionOptions = {}):
 		});
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(ExitCode.NotRunning);
+		exitWith(ExitCode.NotRunning);
 	}
 }

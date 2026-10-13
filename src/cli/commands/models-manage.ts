@@ -17,7 +17,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { readLocalModelAssignments } from '../services/storage';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import {
 	formatLocalModels,
 	formatSuccess,
@@ -51,6 +51,7 @@ import { voiceModelUsageLabel } from '../../shared/acappella/voice-models';
 import type { LocalModelListing, LocalRuntimeEnsureResult } from '../../main/local-models/service';
 import type { DownloadResult } from '../../main/local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../main/local-models/model-store';
+import { failCommand, failFromError } from '../services/session-command';
 
 /**
  * A model can be gigabytes, and the reply only comes when the job settles. If
@@ -78,17 +79,11 @@ interface RemoveOptions extends JsonOption {
 	force?: boolean;
 }
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 /** The catalog entry for an id, or a usage error naming how to find one. */
 function requireModel(modelId: string, json: boolean | undefined): LocalModelEntry {
 	const entry = getLocalModel(modelId);
 	if (!entry) {
-		fail(
+		failCommand(
 			`Unknown model "${modelId}". See maestro-cli models list for model ids.`,
 			json,
 			ExitCode.InvalidUsage
@@ -110,9 +105,9 @@ async function send<T extends { success: boolean; error?: string }>(
 			client.sendCommand<T>(payload, responseType, timeoutMs)
 		);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+		failFromError(error, json);
 	}
-	if (!reply.success) fail(reply.error || 'Request failed', json);
+	if (!reply.success) failCommand(reply.error || 'Request failed', json);
 	return reply;
 }
 
@@ -139,7 +134,7 @@ export async function modelsList(options: ListOptions): Promise<void> {
 	if (options.kind !== undefined) {
 		const wanted = options.kind.trim();
 		if (!LOCAL_MODEL_KIND_ORDER.includes(wanted as LocalModelKind)) {
-			fail(
+			failCommand(
 				`--kind must be one of: ${LOCAL_MODEL_KIND_ORDER.join(', ')}`,
 				options.json,
 				ExitCode.InvalidUsage
@@ -166,7 +161,7 @@ export async function modelsList(options: ListOptions): Promise<void> {
 	// The same rule and the same profile the Library rows are judged with.
 	const hardware = options.fit ? reply.hardware : undefined;
 	if (options.fit && !hardware)
-		fail("The app did not report this computer's hardware", options.json);
+		failCommand("The app did not report this computer's hardware", options.json);
 	const fitOf = (entry: LocalModelEntry): ModelFit | undefined =>
 		hardware ? modelFit(entry, hardware) : undefined;
 	const fitCaveat = hardware ? hardwareFitCaveat(hardware) : null;
@@ -271,7 +266,7 @@ export async function modelsAddHf(
 		options.json
 	);
 	const entry = reply.entry;
-	if (!entry) fail('The app did not describe the model', options.json);
+	if (!entry) failCommand('The app did not describe the model', options.json);
 	const added = reply.added === true;
 
 	if (options.json) {
@@ -322,7 +317,7 @@ export async function modelsRemoveHf(modelId: string, options: RemoveOptions): P
 		(task) => task.label
 	);
 	if (tasks.length > 0 && !options.force) {
-		fail(
+		failCommand(
 			`${getLocalModel(modelId)?.displayName ?? modelId} is assigned to ${tasks.join(', ')}. Removing it makes ${tasks.length === 1 ? 'that task' : 'those tasks'} unavailable. Re-run with --force to remove it anyway.`,
 			options.json
 		);
@@ -366,7 +361,7 @@ export async function downloadModelOverBridge(
 		json,
 		INSTALL_TIMEOUT_MS
 	);
-	if (!reply.result) fail('Download failed', json);
+	if (!reply.result) failCommand('Download failed', json);
 	return reply.result;
 }
 
@@ -386,7 +381,7 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 	const entry = requireModel(modelId, options.json);
 	if (entry.pending) {
 		// The one download the catalog must never invite: weights nothing here can read.
-		fail(
+		failCommand(
 			`${entry.displayName} cannot run in this build, so it is not offered for download: ${entry.pending}`,
 			options.json,
 			ExitCode.InvalidUsage
@@ -412,7 +407,7 @@ export async function modelsInstall(modelId: string, options: JsonOption): Promi
 			console.log(JSON.stringify({ ...result, success: false }));
 			exitWith(ExitCode.GeneralError);
 		}
-		fail(`${why}${mismatch}`, false);
+		failCommand(`${why}${mismatch}`, false);
 	}
 
 	// The model arrived. Whether it can RUN also depends on its engine, which the
@@ -507,7 +502,7 @@ export async function modelsRemove(modelId: string, options: RemoveOptions): Pro
 		(task) => task.label
 	);
 	if (tasks.length > 0 && !options.force) {
-		fail(
+		failCommand(
 			`${entry.displayName} is assigned to ${tasks.join(', ')}. Removing it makes ${tasks.length === 1 ? 'that task' : 'those tasks'} unavailable. Re-run with --force to remove it anyway.`,
 			options.json
 		);
@@ -542,7 +537,7 @@ export async function modelsVerify(modelId: string, options: JsonOption): Promis
 		VERIFY_TIMEOUT_MS
 	);
 	const result = reply.result;
-	if (!result) fail('Verify failed', options.json);
+	if (!result) failCommand('Verify failed', options.json);
 
 	if (options.json) {
 		console.log(JSON.stringify({ ...result, success: result.ok }));
@@ -555,7 +550,7 @@ export async function modelsVerify(modelId: string, options: JsonOption): Promis
 		const mismatch = result.mismatch
 			? ` (${result.mismatch.path}: expected ${result.mismatch.expected}, got ${result.mismatch.actual})`
 			: '';
-		fail(
+		failCommand(
 			`${entry.displayName} is ${result.status}: ${result.detail ?? 'verify failed'}${mismatch}`,
 			false
 		);

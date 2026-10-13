@@ -29,6 +29,7 @@ import {
 } from '../../../cli/commands/group-chat';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import type { RemoteGroupChatState } from '../../../shared/groupChatRemote';
+import { formatError } from '../../../cli/output/formatter';
 
 function chat(id: string, topic: string, extra: Partial<RemoteGroupChatState> = {}) {
 	return {
@@ -133,7 +134,7 @@ describe('group-chat commands', () => {
 
 		it('requires at least one participant', async () => {
 			await expect(groupChatStart('R', { participant: [] })).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: At least one --participant is required');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('At least one --participant is required'));
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
@@ -141,7 +142,7 @@ describe('group-chat commands', () => {
 			await expect(groupChatStart('R', { participant: ['missing'] })).rejects.toThrow(
 				'process.exit'
 			);
-			expect(errorSpy).toHaveBeenCalledWith('Error: Agent not found: missing');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Agent not found: missing'));
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
@@ -170,7 +171,7 @@ describe('group-chat commands', () => {
 			mockBridge({ start_group_chat: { type: 'error', message: 'At least 1 participant' } });
 
 			await expect(groupChatStart('R', { participant: ['rc'] })).rejects.toThrow('process.exit');
-			expect(errorSpy).toHaveBeenCalledWith('Error: At least 1 participant');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('At least 1 participant'));
 		});
 	});
 

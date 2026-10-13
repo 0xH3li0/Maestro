@@ -17,7 +17,7 @@
 // that is not a usable URL.
 
 import { readSettingValue, writeSettingValue } from '../services/storage';
-import { ExitCode, exitWith } from '../exit-codes';
+import { ExitCode } from '../exit-codes';
 import { formatSuccess } from '../output/formatter';
 import {
 	DEFAULT_DOWNLOAD_BASE,
@@ -27,6 +27,7 @@ import {
 	normalizeDownloadBase,
 	resolveDownloadBase,
 } from '../../shared/local-models/download-base';
+import { failCommand } from '../services/session-command';
 
 interface JsonOption {
 	json?: boolean;
@@ -34,12 +35,6 @@ interface JsonOption {
 
 /** The keys `models config set` takes, spelled as the user types them. */
 const CONFIG_KEY_DOWNLOAD_BASE = 'download-base';
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
 
 /** The base in force, read through the validator the app reads it with. */
 function currentBase(): string {
@@ -65,14 +60,14 @@ export function modelsConfigShow(options: JsonOption): void {
 
 export function modelsConfigSet(key: string, value: string, options: JsonOption): void {
 	if (key !== CONFIG_KEY_DOWNLOAD_BASE) {
-		fail(
+		failCommand(
 			`Unknown key "${key}". The key is: ${CONFIG_KEY_DOWNLOAD_BASE}`,
 			options.json,
 			ExitCode.InvalidUsage
 		);
 	}
 	const problem = downloadBaseProblem(value);
-	if (problem) fail(problem, options.json, ExitCode.InvalidUsage);
+	if (problem) failCommand(problem, options.json, ExitCode.InvalidUsage);
 
 	const base = normalizeDownloadBase(value);
 	writeSettingValue(LOCAL_MODELS_DOWNLOAD_BASE_SETTING, base);

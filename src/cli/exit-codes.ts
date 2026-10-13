@@ -5,7 +5,11 @@
 // failure, not a specific message. New code should prefer these over a bare
 // `process.exit(1)`; existing call sites are migrated opportunistically.
 
-import { CommandTimeoutError, UnsupportedCommandError } from './services/maestro-client';
+import {
+	CommandTimeoutError,
+	MaestroNotRunningError,
+	UnsupportedCommandError,
+} from './services/maestro-bridge-errors';
 
 export enum ExitCode {
 	/** Command succeeded. */
@@ -30,6 +34,8 @@ export enum ExitCode {
 	 * answer: the engine failed, or a long job is incomplete.
 	 */
 	NoAnswer = 7,
+	/** The operator interrupted the run (SIGINT, 128 + 2: the shell convention). */
+	Interrupted = 130,
 }
 
 /**
@@ -46,11 +52,12 @@ export function exitWith(code: ExitCode): never {
 }
 
 /**
- * Map a failure from a bridge call to its exit code, so a script can tell an
- * old app build (`Unsupported`) or a hung renderer (`Timeout`) from an
- * ordinary error without parsing the message.
+ * Map a failure from a bridge call to its exit code, so a script can tell a
+ * closed app (`NotRunning`), an old app build (`Unsupported`) or a hung
+ * renderer (`Timeout`) from an ordinary error without parsing the message.
  */
 export function exitCodeForError(error: unknown): ExitCode {
+	if (error instanceof MaestroNotRunningError) return ExitCode.NotRunning;
 	if (error instanceof UnsupportedCommandError) return ExitCode.Unsupported;
 	if (error instanceof CommandTimeoutError) return ExitCode.Timeout;
 	return ExitCode.GeneralError;

@@ -24,6 +24,7 @@ import { readSessions } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface CueEngineStartOptions {
 	json?: boolean;
@@ -60,7 +61,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		// Give in-flight log lines a tick to flush before exiting - stop()
 		// itself is synchronous, but downstream process kills (shell/cli
 		// executors) it triggers are not guaranteed to have settled yet.
-		setTimeout(() => process.exit(0), 250);
+		setTimeout(() => exitWith(ExitCode.Success), 250);
 	};
 	process.on('SIGINT', () => shutdown('SIGINT'));
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -83,7 +84,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		} else {
 			console.error(`[Cue] ${conflictMessage}`);
 		}
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 		return;
 	}
 
@@ -128,7 +129,7 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 		if (options.json)
 			console.log(JSON.stringify({ stopped: false, reason: 'desktop-owned', pid: lock.pid }));
 		else console.error(`[Cue] ${message}`);
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 		return;
 	}
 
@@ -138,7 +139,7 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 		const message = `Could not signal pid ${lock.pid}: ${err instanceof Error ? err.message : String(err)}`;
 		if (options.json) console.log(JSON.stringify({ stopped: false, reason: 'signal-failed' }));
 		else console.error(`[Cue] ${message}`);
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 		return;
 	}
 
@@ -158,7 +159,7 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 	if (options.json)
 		console.log(JSON.stringify({ stopped: false, reason: 'timeout', pid: lock.pid }));
 	else console.warn(`[Cue] ${message}`);
-	process.exitCode = 1;
+	process.exitCode = ExitCode.GeneralError;
 }
 
 interface CueEngineStatusPayload {
@@ -208,7 +209,7 @@ export async function cueEngineStatus(options: CueEngineStatusOptions = {}): Pro
 		} else {
 			console.error(`[Cue] ${error.message}`);
 		}
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 		return;
 	}
 

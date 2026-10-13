@@ -23,6 +23,7 @@ import {
 	resolveTabOwner,
 	listDesktopTabs,
 	type SimpleResult,
+	failFromError,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
 import { getSessionById, readHarnessTierDefaults } from '../services/storage';
@@ -75,7 +76,7 @@ export async function tabNew(options: TabNewOptions): Promise<void> {
 			if (tabId) console.log(`  Tab: ${tabId}`);
 		}
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -97,7 +98,7 @@ async function tabAction(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	const { type, responseType, successMessage, extraPayload } = build(owner);
@@ -112,7 +113,7 @@ async function tabAction(
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -171,7 +172,7 @@ export async function tabMove(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	let fromIndex: number;
@@ -184,7 +185,7 @@ export async function tabMove(
 			return failCommand(`Tab ${owner.tabId} is no longer open`, options.json);
 		}
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	const raw = (position ?? '').trim().toLowerCase();
@@ -226,7 +227,7 @@ export async function tabMove(
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId, fromIndex, toIndex },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -259,7 +260,7 @@ async function writeTabPatch(
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId, ...patch },
 		});
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -273,7 +274,7 @@ async function tabFlag(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	await writeTabPatch(owner, patch, successMessage(owner), options);
 }
@@ -322,7 +323,7 @@ export async function tabThinking(
 	try {
 		entry = await resolveTabEntry(tabId, options.agent);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	const next = mode === 'cycle' ? nextThinkingMode(entry.thinking) : mode;
 	await writeTabPatch(
@@ -380,7 +381,7 @@ export async function tabModel(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	const agent = getSessionById(owner.agentId);
 	const problem = agent ? autoModelProblem(agent, readHarnessTierDefaults()) : null;
@@ -441,7 +442,7 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 	try {
 		entry = await resolveTabEntry(tabId, options.agent);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	if (options.json) {

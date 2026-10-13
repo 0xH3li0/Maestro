@@ -28,7 +28,7 @@ import {
 	readLocalModelEndpoints,
 	writeHarnessTierDefaults,
 } from '../services/storage';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode } from '../exit-codes';
 import {
 	formatHarnessTierOptions,
 	formatHarnessTiers,
@@ -62,6 +62,7 @@ import {
 	type TierTarget,
 	type TierTargets,
 } from '../../shared/modelTiers';
+import { failCommand, failFromError } from '../services/session-command';
 
 /** A listing runs a harness's own `models` command and asks each saved source. */
 const OPTIONS_TIMEOUT_MS = 60_000;
@@ -70,23 +71,21 @@ interface JsonOption {
 	json?: boolean;
 }
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 /** A harness id that has tiers, or a refusal that names the ones that do. */
 function requireHarness(harness: string, json: boolean | undefined): AgentId {
 	const problem = tierHarnessProblem(harness);
-	if (problem) fail(problem, json, ExitCode.InvalidUsage);
+	if (problem) failCommand(problem, json, ExitCode.InvalidUsage);
 	return harness as AgentId;
 }
 
 function requireTier(tier: string, json: boolean | undefined): ModelTier {
 	const level = asTierLevel(tier);
 	if (!level) {
-		fail(`Unknown tier "${tier}". Tiers: ${TIER_LEVELS.join(', ')}.`, json, ExitCode.InvalidUsage);
+		failCommand(
+			`Unknown tier "${tier}". Tiers: ${TIER_LEVELS.join(', ')}.`,
+			json,
+			ExitCode.InvalidUsage
+		);
 	}
 	return level;
 }
@@ -142,11 +141,11 @@ async function fetchOptions(
 			)
 		);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+		failFromError(error, json);
 	}
-	if (!reply.success) fail(reply.error || 'Request failed', json);
+	if (!reply.success) failCommand(reply.error || 'Request failed', json);
 	const options = reply.options?.find((entry) => entry.harness === harness);
-	if (!options) fail(`The desktop app sent no tier options for ${harness}.`, json);
+	if (!options) failCommand(`The desktop app sent no tier options for ${harness}.`, json);
 	return options;
 }
 
@@ -267,7 +266,7 @@ export function modelsTiersSet(
 	const tier = requireTier(tierArg, options.json);
 	const parsed = parseTierTargetSpec(spec);
 	if (!parsed.ok) {
-		fail(`${parsed.error} Got "${spec}".`, options.json, ExitCode.InvalidUsage);
+		failCommand(`${parsed.error} Got "${spec}".`, options.json, ExitCode.InvalidUsage);
 	}
 
 	// A source is named the way the endpoint verbs name one (id, id prefix or
@@ -277,12 +276,12 @@ export function modelsTiersSet(
 	let sourceDisabled = false;
 	if (target?.type === 'source' && target.endpointId !== MODEL_SERVER_ENDPOINT_ID) {
 		const lookup = findLocalModelEndpoint(endpoints, target.endpointId);
-		if (!lookup.ok) fail(lookup.message, options.json, ExitCode.InvalidUsage);
+		if (!lookup.ok) failCommand(lookup.message, options.json, ExitCode.InvalidUsage);
 		target = { ...target, endpointId: lookup.endpoint.id };
 		sourceDisabled = !lookup.endpoint.enabled;
 	}
 	const edit = parseTierTargetEdit(harness, target, endpoints);
-	if (!edit.ok) fail(edit.error, options.json, ExitCode.InvalidUsage);
+	if (!edit.ok) failCommand(edit.error, options.json, ExitCode.InvalidUsage);
 
 	writeHarnessTierDefaults(
 		withHarnessTierDefault(readHarnessTierDefaults(), harness, tier, edit.target)

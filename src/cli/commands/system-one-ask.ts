@@ -85,9 +85,10 @@ import {
 	type StateFlags,
 } from '../services/system-one-input';
 import { resolveCliPath } from '../utils/parse';
-import { fail } from './system-one';
+import {} from './system-one';
 import { systemOneExamples, systemOneGuide } from './system-one-guide';
 import { systemOneCost, systemOneUsage } from './system-one-spend';
+import { failCommand } from '../services/session-command';
 
 /** The id of the one question `yes`, `pick` and `rate` ask. It is not sent to the engine. */
 const QUESTION_ID = 'q';
@@ -109,7 +110,8 @@ async function readInput<T>(json: boolean | undefined, read: () => T | Promise<T
 	try {
 		return await read();
 	} catch (error) {
-		if (error instanceof SystemOneInputError) fail(error.message, json, ExitCode.InvalidUsage);
+		if (error instanceof SystemOneInputError)
+			failCommand(error.message, json, ExitCode.InvalidUsage);
 		throw error;
 	}
 }
@@ -124,7 +126,11 @@ function fraction(
 	if (value === undefined) return fallback;
 	const number = Number(value);
 	if (value.trim() === '' || !(number >= 0) || number > 1) {
-		fail(`${flag} is a number from 0 to 1, and got "${value}".`, json, ExitCode.InvalidUsage);
+		failCommand(
+			`${flag} is a number from 0 to 1, and got "${value}".`,
+			json,
+			ExitCode.InvalidUsage
+		);
 	}
 	return number;
 }
@@ -134,7 +140,7 @@ function readBand(words: string[] | undefined, json: boolean | undefined): [numb
 	if (!words) return null;
 	const parts = words.flatMap((word) => word.split(','));
 	if (parts.length !== 2) {
-		fail(
+		failCommand(
 			'--band takes two numbers, LOW and HIGH. Put it after the question, so the question is not read as one of them.',
 			json,
 			ExitCode.InvalidUsage
@@ -142,7 +148,7 @@ function readBand(words: string[] | undefined, json: boolean | undefined): [numb
 	}
 	const low = fraction(parts[0], '--band LOW', 0, json);
 	const high = fraction(parts[1], '--band HIGH', 1, json);
-	if (low > high) fail('--band takes LOW first, then HIGH.', json, ExitCode.InvalidUsage);
+	if (low > high) failCommand('--band takes LOW first, then HIGH.', json, ExitCode.InvalidUsage);
 	return [low, high];
 }
 
@@ -218,7 +224,7 @@ function refused(refusal: SystemOneAgentRefusal, json: boolean | undefined): nev
 		console.log(JSON.stringify({ success: false, error: message, ...rest }));
 		return exitWith(code);
 	}
-	return fail(refusal.message, false, code);
+	return failCommand(refusal.message, false, code);
 }
 
 /** How long to wait for the desktop: what the caller asked for, or what the request can take. */
@@ -230,7 +236,7 @@ function waitMs(
 	if (options.timeout === undefined) return systemOneAgentWaitMs(request);
 	const seconds = Number(options.timeout);
 	if (options.timeout.trim() === '' || !(seconds > 0)) {
-		fail(
+		failCommand(
 			`--timeout is a number of seconds, and got "${options.timeout}".`,
 			json,
 			ExitCode.InvalidUsage
@@ -252,7 +258,7 @@ async function askDesktop<K extends SystemOneAgentResult['kind']>(
 ): Promise<Extract<SystemOneAgentResult, { kind: K }>> {
 	const { json } = options;
 	const parsed = parseSystemOneAgentRequest(raw);
-	if (!parsed.ok) fail(parsed.message, json, ExitCode.InvalidUsage);
+	if (!parsed.ok) failCommand(parsed.message, json, ExitCode.InvalidUsage);
 	const { request } = parsed;
 	if (request.kind === 'ask') warnOnLargeState(request.state, json);
 	const timeoutMs = waitMs(request, options, json);
@@ -274,7 +280,7 @@ async function askDesktop<K extends SystemOneAgentResult['kind']>(
 		const message = error instanceof Error ? error.message : String(error);
 		const code = exitCodeForError(error);
 		const resumable = error instanceof CommandTimeoutError && request.kind !== 'ask';
-		fail(
+		failCommand(
 			resumable
 				? `${message} The desktop app goes on with the job, and what it answers is cached: run the same command again to collect it at no cost, or pass --timeout <seconds> to wait longer.`
 				: message,
@@ -283,12 +289,12 @@ async function askDesktop<K extends SystemOneAgentResult['kind']>(
 		);
 	}
 	if (!reply.success || !reply.response) {
-		fail(reply.error || 'The desktop app sent no answer.', json, ExitCode.NoAnswer);
+		failCommand(reply.error || 'The desktop app sent no answer.', json, ExitCode.NoAnswer);
 	}
 	const { response } = reply;
 	if (!response.ok) refused(response, json);
 	if (response.kind !== kind) {
-		fail('The desktop app answered a different request.', json, ExitCode.NoAnswer);
+		failCommand('The desktop app answered a different request.', json, ExitCode.NoAnswer);
 	}
 	return response as Extract<SystemOneAgentResult, { kind: K }>;
 }
@@ -323,7 +329,7 @@ function oneAnswer<T extends 'noul' | 'choice' | 'score'>(
 ): Extract<(typeof result.answers)[string], { type: T }> {
 	const answer = result.answers[QUESTION_ID];
 	if (!answer || answer.type !== type) {
-		fail(`${result.engineLabel} gave no ${type} answer.`, json, ExitCode.NoAnswer);
+		failCommand(`${result.engineLabel} gave no ${type} answer.`, json, ExitCode.NoAnswer);
 	}
 	return answer as Extract<(typeof result.answers)[string], { type: T }>;
 }
@@ -601,7 +607,11 @@ function wholeNumber(
 	if (value === undefined) return undefined;
 	const number = Number(value);
 	if (!Number.isInteger(number) || number < 1) {
-		fail(`${flag} is a whole number, 1 or more, and got "${value}".`, json, ExitCode.InvalidUsage);
+		failCommand(
+			`${flag} is a whole number, 1 or more, and got "${value}".`,
+			json,
+			ExitCode.InvalidUsage
+		);
 	}
 	return number;
 }
@@ -714,7 +724,7 @@ export async function systemOneBatch(
 		try {
 			fs.writeFileSync(out, `${jsonl}\n`, 'utf-8');
 		} catch (error) {
-			fail(
+			failCommand(
 				`Could not write ${out}: ${error instanceof Error ? error.message : String(error)}`,
 				json,
 				ExitCode.NoAnswer

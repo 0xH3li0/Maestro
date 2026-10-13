@@ -18,21 +18,16 @@
 
 import { createPatch } from 'diff';
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatTokenProxyBlockHeader, formatTokenProxyReport } from '../output/formatter';
 import type {
 	TokenProxyBlockDetail,
 	TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
+import { failCommand, failFromError } from '../services/session-command';
 
 /** A stats read and a few small files in the app. */
 const PROXY_TIMEOUT_MS = 10_000;
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
 
 interface StatusOptions {
 	json?: boolean;
@@ -49,15 +44,11 @@ export async function modelsProxyStatus(options: StatusOptions): Promise<void> {
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.report) {
-		fail(reply.error || 'Proxy status check failed', options.json);
+		failCommand(reply.error || 'Proxy status check failed', options.json);
 	}
 	const report = reply.report;
 	// A start that failed is the one state a script must not read as healthy:
@@ -77,7 +68,7 @@ interface BlockOptions {
 
 export async function modelsProxyBlock(hash: string, options: BlockOptions): Promise<void> {
 	if (options.original && options.compressed) {
-		fail('Use --original or --compressed, not both.', options.json, ExitCode.InvalidUsage);
+		failCommand('Use --original or --compressed, not both.', options.json, ExitCode.InvalidUsage);
 	}
 
 	let reply: { success: boolean; block?: TokenProxyBlockDetail | null; error?: string };
@@ -90,16 +81,12 @@ export async function modelsProxyBlock(hash: string, options: BlockOptions): Pro
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
-	if (!reply.success) fail(reply.error || 'Could not read the block', options.json);
+	if (!reply.success) failCommand(reply.error || 'Could not read the block', options.json);
 	const block = reply.block;
-	if (!block) fail(`The proxy cache holds no compressed block for ${hash}.`, options.json);
+	if (!block) failCommand(`The proxy cache holds no compressed block for ${hash}.`, options.json);
 
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, block }));
@@ -110,7 +97,7 @@ export async function modelsProxyBlock(hash: string, options: BlockOptions): Pro
 		return;
 	}
 	if (block.original === null) {
-		fail(
+		failCommand(
 			'The original text is no longer in the cache. Use --compressed to print what was sent.',
 			options.json
 		);

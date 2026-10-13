@@ -2157,22 +2157,22 @@ List every phrase with recordings, and whether each is trained
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli voice wake status <phrase>`
+## `maestro-cli voice wake status [phrase]`
 
-Show what is recorded for a phrase and what its trained model measured
+Show what is recorded for a phrase and what its trained model measured (default: the configured wake phrase)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli voice wake record <phrase>`
+## `maestro-cli voice wake record [phrase]`
 
-Open the microphone and keep each burst of speech as one recording of the phrase, until "voice wake stop"
+Open the microphone and keep each burst of speech as one recording of the phrase (default: the configured wake phrase), until "voice wake stop"
 
-| Option         | Description                                                              | Default |
-| -------------- | ------------------------------------------------------------------------ | ------- |
-| `--background` | Record ordinary speech that is NOT the phrase instead (about 30 seconds) | -       |
-| `--json`       | Output as JSON (for scripting)                                           | -       |
+| Option           | Description                                                              | Default |
+| ---------------- | ------------------------------------------------------------------------ | ------- |
+| `--other-speech` | Record ordinary speech that is NOT the phrase instead (about 30 seconds) | -       |
+| `--json`         | Output as JSON (for scripting)                                           | -       |
 
 ## `maestro-cli voice wake stop`
 
@@ -2186,30 +2186,30 @@ End the recording in progress and close the microphone
 
 Add recordings from 16-bit PCM WAV files instead of the microphone, one recording of the phrase per file
 
-| Option         | Description                                          | Default |
-| -------------- | ---------------------------------------------------- | ------- |
-| `--background` | The files are ordinary speech that is NOT the phrase | -       |
-| `--json`       | Output as JSON (for scripting)                       | -       |
+| Option           | Description                                          | Default |
+| ---------------- | ---------------------------------------------------- | ------- |
+| `--other-speech` | The files are ordinary speech that is NOT the phrase | -       |
+| `--json`         | Output as JSON (for scripting)                       | -       |
 
-## `maestro-cli voice wake undo <phrase>`
+## `maestro-cli voice wake undo [phrase]`
 
-Remove the newest recording of the phrase
-
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
-
-## `maestro-cli voice wake clear-background <phrase>`
-
-Remove the ordinary speech recorded for a phrase, so it can be recorded again
+Remove the newest recording of the phrase (default: the configured wake phrase)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli voice wake train <phrase>`
+## `maestro-cli voice wake clear-background [phrase]`
 
-Build the wake word model for a phrase from its recordings; waits until training finishes
+Remove the ordinary speech recorded for a phrase, so it can be recorded again (default: the configured wake phrase)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli voice wake train [phrase]`
+
+Build the wake word model for a phrase from its recordings (default: the configured wake phrase); waits until training finishes
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

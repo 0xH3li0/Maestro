@@ -31,9 +31,8 @@
 // cannot answer as it is set up (no key, no URL, no model); `off` is not a
 // failure. `test` exits non-zero when the engine gave no answer.
 
-import { withMaestroClient } from '../services/maestro-client';
 import { isStdinTerminal, readStdinText } from '../services/stdin';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import {
 	formatSuccess,
 	formatSystemOneLedger,
@@ -75,6 +74,7 @@ import {
 import { formatSystemOneCost } from '../../shared/local-models/system-one-spend';
 import { LOCAL_JUDGE_TASK_ID, localModelAssignmentCaution } from '../../shared/local-models/tasks';
 import { resolveAssignmentSpec, storeTaskAssignment } from './models-assign';
+import { failCommand, sendBridgeCommand } from '../services/session-command';
 
 /** A status read or a settings write: one small file and no network. */
 const STATUS_TIMEOUT_MS = 15_000;
@@ -90,36 +90,18 @@ interface JsonOption {
 
 type ReportReply = { success: boolean; error?: string; report?: SystemOneReport };
 
-export function fail(
-	message: string,
-	json: boolean | undefined,
-	code = ExitCode.GeneralError
-): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
-export async function send<T extends { success: boolean; error?: string }>(
+/** One System One bridge round trip; `sendBridgeCommand()` with this group's timeout. */
+export function send<T extends { success: boolean; error?: string }>(
 	payload: Record<string, unknown>,
 	responseType: string,
 	json: boolean | undefined,
 	timeoutMs = STATUS_TIMEOUT_MS
 ): Promise<T> {
-	let reply: T;
-	try {
-		reply = await withMaestroClient((client) =>
-			client.sendCommand<T>(payload, responseType, timeoutMs)
-		);
-	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
-	}
-	if (!reply.success) fail(reply.error || 'Request failed', json);
-	return reply;
+	return sendBridgeCommand<T>(payload, responseType, json, timeoutMs);
 }
 
 function requireReport(reply: ReportReply, json: boolean | undefined): SystemOneReport {
-	if (!reply.report) fail('The desktop app sent no System One report.', json);
+	if (!reply.report) failCommand('The desktop app sent no System One report.', json);
 	return reply.report;
 }
 
@@ -160,7 +142,7 @@ interface SetEngineOptions extends JsonOption {
 export async function systemOneSetEngine(engine: string, options: SetEngineOptions): Promise<void> {
 	const { json } = options;
 	if (!isSystemOneEngineChoice(engine)) {
-		fail(
+		failCommand(
 			`"${engine}" is not an engine. Use ${SYSTEM_ONE_ENGINE_CHOICES.join(', ')}.`,
 			json,
 			ExitCode.InvalidUsage
@@ -170,14 +152,14 @@ export async function systemOneSetEngine(engine: string, options: SetEngineOptio
 	const patch: SystemOneSettingsPatch = { engine };
 	if (options.url !== undefined) {
 		if (engine !== 'openjev') {
-			fail(
+			failCommand(
 				'--url is the address of an OpenJev server. Use it with: s1 set engine openjev',
 				json,
 				ExitCode.InvalidUsage
 			);
 		}
 		const problem = systemOneUrlProblem(options.url);
-		if (problem) fail(problem, json, ExitCode.InvalidUsage);
+		if (problem) failCommand(problem, json, ExitCode.InvalidUsage);
 		patch.openJevUrl = options.url;
 	}
 
@@ -187,13 +169,13 @@ export async function systemOneSetEngine(engine: string, options: SetEngineOptio
 	let judge: ReturnType<typeof resolveAssignmentSpec> | null = null;
 	if (options.model !== undefined) {
 		if (engine === 'off') {
-			fail('--model needs an engine. Off answers nothing.', json, ExitCode.InvalidUsage);
+			failCommand('--model needs an engine. Off answers nothing.', json, ExitCode.InvalidUsage);
 		}
 		if (engine === 'local-judge') {
 			judge = resolveAssignmentSpec(LOCAL_JUDGE_TASK_ID, options.model);
-			if (!judge.ok) fail(judge.message, json, ExitCode.InvalidUsage);
+			if (!judge.ok) failCommand(judge.message, json, ExitCode.InvalidUsage);
 			if (judge.assignment.type !== 'local' && judge.assignment.type !== 'endpoint') {
-				fail(
+				failCommand(
 					'The local judge needs a model: local:<model-id> or endpoint:<endpoint>:<model>.',
 					json,
 					ExitCode.InvalidUsage
@@ -203,7 +185,7 @@ export async function systemOneSetEngine(engine: string, options: SetEngineOptio
 			patch.model = null;
 		} else {
 			const problem = systemOneModelProblem(options.model);
-			if (problem) fail(problem, json, ExitCode.InvalidUsage);
+			if (problem) failCommand(problem, json, ExitCode.InvalidUsage);
 			patch.model = options.model;
 		}
 	}
@@ -211,7 +193,11 @@ export async function systemOneSetEngine(engine: string, options: SetEngineOptio
 	if (engine === 'openjev' && options.url === undefined) {
 		const current = await readStatus(json);
 		if (!current.settings.openJevUrl) {
-			fail('OpenJev needs the URL of your server. Pass --url <url>.', json, ExitCode.InvalidUsage);
+			failCommand(
+				'OpenJev needs the URL of your server. Pass --url <url>.',
+				json,
+				ExitCode.InvalidUsage
+			);
 		}
 	}
 
@@ -247,7 +233,7 @@ export async function systemOneSetEngine(engine: string, options: SetEngineOptio
 export async function systemOneSetTimeout(value: string, options: JsonOption): Promise<void> {
 	const timeoutMs = Number(value);
 	const problem = systemOneTimeoutProblem(timeoutMs);
-	if (problem) fail(problem, options.json, ExitCode.InvalidUsage);
+	if (problem) failCommand(problem, options.json, ExitCode.InvalidUsage);
 	const report = await applyPatch({ timeoutMs }, options.json);
 	if (options.json) {
 		printReport(report, true);
@@ -267,7 +253,7 @@ export async function systemOneSetFailPolicy(
 	options: JsonOption
 ): Promise<void> {
 	const problem = systemOneFailPolicyProblem(taskId, policy);
-	if (problem) fail(problem, options.json, ExitCode.InvalidUsage);
+	if (problem) failCommand(problem, options.json, ExitCode.InvalidUsage);
 	const report = await applyPatch(
 		{ failPolicy: { taskId, policy: policy as 'open' | 'closed' | 'default' } },
 		options.json
@@ -277,7 +263,7 @@ export async function systemOneSetFailPolicy(
 		return;
 	}
 	const row = report.failPolicies.find((candidate) => candidate.taskId === taskId);
-	if (!row) fail('The desktop app did not report that task.', options.json);
+	if (!row) failCommand('The desktop app did not report that task.', options.json);
 	console.log(
 		formatSuccess(
 			`${row.label} fails ${row.policy}${row.policy === row.defaultPolicy ? ' (its default)' : ''}`
@@ -287,7 +273,7 @@ export async function systemOneSetFailPolicy(
 
 export async function systemOneSetKeepInputs(value: string, options: JsonOption): Promise<void> {
 	if (value !== 'on' && value !== 'off') {
-		fail('Keep inputs in the ledger is on or off.', options.json, ExitCode.InvalidUsage);
+		failCommand('Keep inputs in the ledger is on or off.', options.json, ExitCode.InvalidUsage);
 	}
 	const report = await applyPatch({ keepInputs: value === 'on' }, options.json);
 	if (options.json) {
@@ -305,7 +291,7 @@ export async function systemOneSetKeepInputs(value: string, options: JsonOption)
 /** "Let agents use System One": whether an agent's own `maestro-cli s1` request is answered. */
 export async function systemOneSetAgents(value: string, options: JsonOption): Promise<void> {
 	if (value !== 'on' && value !== 'off') {
-		fail('Let agents use System One is on or off.', options.json, ExitCode.InvalidUsage);
+		failCommand('Let agents use System One is on or off.', options.json, ExitCode.InvalidUsage);
 	}
 	const report = await applyPatch({ agents: { enabled: value === 'on' } }, options.json);
 	if (options.json) {
@@ -340,7 +326,7 @@ export async function systemOneSetBudget(
 	const agents: NonNullable<SystemOneSettingsPatch['agents']> = {};
 	if (value !== undefined) {
 		const parsed = parseSystemOneBudgetText(value);
-		if (!parsed.ok) fail(parsed.message, json, ExitCode.InvalidUsage);
+		if (!parsed.ok) failCommand(parsed.message, json, ExitCode.InvalidUsage);
 		agents.dailyBudgetUsd = parsed.usd;
 	}
 	if (options.perAgent !== undefined) {
@@ -349,7 +335,7 @@ export async function systemOneSetBudget(
 		} else {
 			const parsed = parseSystemOneBudgetText(options.perAgent);
 			if (!parsed.ok) {
-				fail(
+				failCommand(
 					`--per-agent: ${parsed.message} Use "${NO_CAP_WORD}" to remove the cap.`,
 					json,
 					ExitCode.InvalidUsage
@@ -359,7 +345,7 @@ export async function systemOneSetBudget(
 		}
 	}
 	if (Object.keys(agents).length === 0) {
-		fail(
+		failCommand(
 			'Give the daily budget in US dollars, --per-agent <usd|none>, or both.',
 			json,
 			ExitCode.InvalidUsage
@@ -398,7 +384,7 @@ interface KeyOptions extends JsonOption {
 function keyEngine(options: KeyOptions): SystemOneRemoteEngineId | undefined {
 	if (options.engine === undefined) return undefined;
 	if (!isSystemOneRemoteEngineId(options.engine)) {
-		fail(
+		failCommand(
 			`"${options.engine}" has no key. A key belongs to ${SYSTEM_ONE_REMOTE_ENGINE_IDS.join(' or ')}.`,
 			options.json,
 			ExitCode.InvalidUsage
@@ -414,7 +400,7 @@ function keyEngine(options: KeyOptions): SystemOneRemoteEngineId | undefined {
  */
 function readKeyFromStdin(json: boolean | undefined): string {
 	if (isStdinTerminal()) {
-		fail(
+		failCommand(
 			'Pipe the key on standard input, for example: pbpaste | maestro-cli s1 key set',
 			json,
 			ExitCode.InvalidUsage
@@ -424,11 +410,11 @@ function readKeyFromStdin(json: boolean | undefined): string {
 	try {
 		text = readStdinText();
 	} catch {
-		fail('Could not read the key from standard input.', json);
+		failCommand('Could not read the key from standard input.', json);
 	}
 	const key = text.trim();
 	const problem = systemOneKeyProblem(key);
-	if (problem) fail(problem, json, ExitCode.InvalidUsage);
+	if (problem) failCommand(problem, json, ExitCode.InvalidUsage);
 	return key;
 }
 
@@ -489,7 +475,7 @@ export async function systemOneTest(options: JsonOption): Promise<void> {
 		TEST_TIMEOUT_MS
 	);
 	const result = reply.result;
-	if (!result) fail('The desktop app sent no test result.', options.json);
+	if (!result) failCommand('The desktop app sent no test result.', options.json);
 	if (options.json) console.log(JSON.stringify({ success: result.ok, ...result }));
 	else console.log(formatSystemOneTestResult(result));
 	if (!result.ok) exitWith(ExitCode.GeneralError);
@@ -507,7 +493,7 @@ export async function systemOneLedger(options: LedgerOptions): Promise<void> {
 	const query: SystemOneLedgerQuery = {};
 	if (options.task !== undefined) {
 		if (!isSystemOneLedgerTaskId(options.task)) {
-			fail(
+			failCommand(
 				`"${options.task}" is not a task. List them with: maestro-cli models tasks. An agent's own requests are filed under agent:<verb>, for example agent:rank.`,
 				json,
 				ExitCode.InvalidUsage
@@ -517,7 +503,7 @@ export async function systemOneLedger(options: LedgerOptions): Promise<void> {
 	}
 	if (options.outcome !== undefined) {
 		if (!isSystemOneLedgerOutcomeFilter(options.outcome)) {
-			fail(
+			failCommand(
 				`"${options.outcome}" is not an outcome. Use ${SYSTEM_ONE_LEDGER_OUTCOME_FILTERS.join(', ')}.`,
 				json,
 				ExitCode.InvalidUsage
@@ -528,7 +514,7 @@ export async function systemOneLedger(options: LedgerOptions): Promise<void> {
 	if (options.since !== undefined) {
 		const since = parseTimeInput(options.since, Date.now());
 		if (since === null) {
-			fail(
+			failCommand(
 				`"${options.since}" is not a time. Use 30m, 2h, 1d, 1w, ISO-8601, or epoch.`,
 				json,
 				ExitCode.InvalidUsage
@@ -539,7 +525,7 @@ export async function systemOneLedger(options: LedgerOptions): Promise<void> {
 	if (options.limit !== undefined) {
 		const limit = Number(options.limit);
 		if (!Number.isInteger(limit) || limit < 1 || limit > SYSTEM_ONE_LEDGER_MAX_LIMIT) {
-			fail(
+			failCommand(
 				`The limit must be a whole number from 1 to ${SYSTEM_ONE_LEDGER_MAX_LIMIT}.`,
 				json,
 				ExitCode.InvalidUsage
@@ -553,7 +539,7 @@ export async function systemOneLedger(options: LedgerOptions): Promise<void> {
 		'system_one_ledger_result',
 		json
 	);
-	if (!reply.page) fail('The desktop app sent no ledger.', json);
+	if (!reply.page) failCommand('The desktop app sent no ledger.', json);
 	if (json) console.log(JSON.stringify({ success: true, ...reply.page }));
 	else console.log(formatSystemOneLedger(reply.page));
 }

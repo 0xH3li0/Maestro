@@ -18,9 +18,10 @@
 // usable exits non-zero with the reason on stderr.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatTabCleanupSuggestions } from '../output/formatter';
 import { tabCleanupApplyCommand, type TabCleanupResult } from '../../shared/tabCleanup';
+import { failCommand, failFromError } from '../services/session-command';
 
 /**
  * Above the app's own budget for the model (120s), so a slow model comes back
@@ -30,12 +31,6 @@ const SUGGEST_TIMEOUT_MS = 150_000;
 
 interface SuggestCleanupOptions {
 	json?: boolean;
-}
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
 }
 
 export async function tabSuggestCleanup(options: SuggestCleanupOptions): Promise<void> {
@@ -49,15 +44,11 @@ export async function tabSuggestCleanup(options: SuggestCleanupOptions): Promise
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'Tab cleanup failed', options.json);
+		failCommand(reply.error || 'Tab cleanup failed', options.json);
 	}
 	const result = reply.result;
 

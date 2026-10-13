@@ -43,14 +43,19 @@ Two flags work on every command:
 
 Commands exit with a standardized code so scripts and CI can branch on the failure class:
 
-| Code | Meaning                                                    |
-| ---- | ---------------------------------------------------------- |
-| `0`  | Success                                                    |
-| `1`  | Generic / uncategorized failure                            |
-| `2`  | Invalid usage (unknown flag, bad argument, nothing to do)  |
-| `3`  | The Maestro desktop app is not running or not reachable    |
-| `4`  | The running app does not support the command (older build) |
-| `5`  | The app was reachable but did not respond in time          |
+| Code  | Meaning                                                    |
+| ----- | ---------------------------------------------------------- |
+| `0`   | Success                                                    |
+| `1`   | Generic / uncategorized failure                            |
+| `2`   | Invalid usage (unknown flag, bad argument, nothing to do)  |
+| `3`   | The Maestro desktop app is not running or not reachable    |
+| `4`   | The running app does not support the command (older build) |
+| `5`   | The app was reachable but did not respond in time          |
+| `6`   | The app declined by a switch or a budget (do not retry)    |
+| `7`   | The request ran and has no answer (the model could not)    |
+| `130` | The operator interrupted the run (Ctrl+C)                  |
+
+Every verb reports a failure the same way. A person reads one `Error:` line on stderr. Under `--json`, a script reads one object on stdout, `{ "success": false, "error": "..." }`, and the exit code names the class. A bridge call that fails exits `3`, `4` or `5` instead of `1`; only `send` and `goal-run` keep exit codes of their own.
 
 ### Who Moves the View (`--background` / `--focus`)
 
@@ -1972,12 +1977,12 @@ maestro-cli voice wake record "hey scout"
 maestro-cli voice wake stop
 
 # Record about 30 seconds of ordinary speech that is NOT the phrase.
-maestro-cli voice wake record "hey scout" --background
+maestro-cli voice wake record "hey scout" --other-speech
 maestro-cli voice wake stop
 
 # Or bring recordings as 16-bit PCM WAV files: one take of the phrase per file.
 maestro-cli voice wake add "hey scout" takes/*.wav
-maestro-cli voice wake add "hey scout" --background talking.wav
+maestro-cli voice wake add "hey scout" --other-speech talking.wav
 
 # Train, then see what it measured.
 maestro-cli voice wake train "hey scout"
@@ -1990,7 +1995,7 @@ maestro-cli voice wake clear-background "hey scout"  # record the other speech a
 maestro-cli voice wake remove "hey scout"            # delete the model and every recording
 ```
 
-`record` opens the microphone on the computer running Maestro and returns at once; `stop` ends the run and closes it. A run that hears nothing for 45 seconds closes itself. `add` is the route for an agent, which has no microphone: it skips a file the app will not take (too short, too long, not a WAV) and says why, and it exits non-zero only when no file was added. `train` waits until training finishes.
+`record` opens the microphone on the computer running Maestro and returns at once; `stop` ends the run and closes it. A run that hears nothing for 45 seconds closes itself. `add` is the route for an agent, which has no microphone: it keeps going past a file the app will not take (too short, too long, not a WAV), says why, and still exits non-zero when any file was skipped, with `success: false` and the skipped list under `--json`. `train` waits until training finishes. `status`, `record`, `undo`, `clear-background` and `train` take the phrase as optional and use the configured wake phrase when it is left out. `--background` is the old spelling of `--other-speech` and still works.
 
 Training needs at least 8 recordings of the phrase and 12 seconds of other speech. When the app refuses a request on purpose (a voice session holds the microphone, there is not enough recorded yet, A Cappella is switched off) the command prints the reason and exits non-zero. `status`, `list`, `stop`, and `remove` work with A Cappella switched off.
 

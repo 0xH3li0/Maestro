@@ -7,7 +7,7 @@
 // `update-agent --peer` / `--remove-peer`; this verb has no drawing mode.
 
 import { readGroups, readSessions, resolveGroupId } from '../services/storage';
-import { failCommand } from '../services/session-command';
+import { failCommand, failFromError } from '../services/session-command';
 import { formatDelegationGraph } from '../output/formatter';
 import {
 	buildDelegationGraph,
@@ -30,7 +30,7 @@ export function delegationGraph(options: DelegationGraphOptions): void {
 		try {
 			groupId = resolveGroupId(options.group);
 		} catch (error) {
-			return failCommand(error instanceof Error ? error.message : String(error), options.json);
+			return failFromError(error, options.json);
 		}
 		const stored = readGroups().find((candidate) => candidate.id === groupId);
 		if (!stored) return failCommand(`Group not found: ${options.group}`, options.json);

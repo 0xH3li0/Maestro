@@ -62,7 +62,8 @@ import {
 	readLocalModelEndpoints,
 	resolveAgentId,
 } from '../services/storage';
-import { fail, send } from './system-one';
+import { send } from './system-one';
+import { failCommand } from '../services/session-command';
 
 interface RouteOptions {
 	agent?: string;
@@ -195,7 +196,11 @@ async function recordCorrection(
 ): Promise<void> {
 	const tier = asTierLevel(correct.trim().toLowerCase());
 	if (!tier) {
-		fail(`"${correct}" is not a tier. Use ${TIER_LEVELS.join(', ')}.`, json, ExitCode.InvalidUsage);
+		failCommand(
+			`"${correct}" is not a tier. Use ${TIER_LEVELS.join(', ')}.`,
+			json,
+			ExitCode.InvalidUsage
+		);
 	}
 	const reply = await send<{
 		success: boolean;
@@ -207,8 +212,8 @@ async function recordCorrection(
 		json
 	);
 	const result = reply.result;
-	if (!result) fail('The desktop app sent no result for the correction.', json);
-	if (!result.ok) fail(result.message, json, ExitCode.InvalidUsage);
+	if (!result) failCommand('The desktop app sent no result for the correction.', json);
+	if (!result.ok) failCommand(result.message, json, ExitCode.InvalidUsage);
 	if (json) {
 		console.log(
 			JSON.stringify({ success: true, tier, replaced: result.replaced, total: result.total })
@@ -226,16 +231,20 @@ async function recordCorrection(
 
 export async function systemOneRoute(prompt: string, options: RouteOptions): Promise<void> {
 	const { json } = options;
-	if (!prompt.trim()) fail('Give the prompt to route.', json, ExitCode.InvalidUsage);
+	if (!prompt.trim()) failCommand('Give the prompt to route.', json, ExitCode.InvalidUsage);
 
 	let agent: SessionInfo | undefined;
 	if (options.agent !== undefined) {
 		try {
 			agent = getSessionById(resolveAgentId(options.agent));
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), json, ExitCode.InvalidUsage);
+			failCommand(
+				error instanceof Error ? error.message : String(error),
+				json,
+				ExitCode.InvalidUsage
+			);
 		}
-		if (!agent) fail(`Agent not found: ${options.agent}`, json, ExitCode.InvalidUsage);
+		if (!agent) failCommand(`Agent not found: ${options.agent}`, json, ExitCode.InvalidUsage);
 	}
 
 	if (options.correct !== undefined) {
@@ -254,7 +263,7 @@ export async function systemOneRoute(prompt: string, options: RouteOptions): Pro
 		timeoutMs + CLI_ROUTE_BRIDGE_GRACE_MS
 	);
 	const result = reply.result;
-	if (!result) fail('The desktop app sent no routing result.', json);
+	if (!result) failCommand('The desktop app sent no routing result.', json);
 
 	const run: ModelRouteDryRun = {
 		result,

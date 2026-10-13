@@ -34,6 +34,7 @@ import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface SendOptions {
 	session?: string;
@@ -281,13 +282,13 @@ export async function send(
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : 'Unknown error';
 		emitErrorJson(msg, 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const agent = getSessionById(agentId);
 	if (!agent) {
 		emitErrorJson(`Agent not found: ${agentIdArg}`, 'AGENT_NOT_FOUND');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Validate agent type is supported for CLI spawning
@@ -297,7 +298,7 @@ export async function send(
 			`Agent type "${agent.toolType}" is not supported for send mode.`,
 			'AGENT_UNSUPPORTED'
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Verify agent CLI is available
@@ -305,7 +306,7 @@ export async function send(
 	if (!detection.available) {
 		const errorCode = `${agent.toolType.toUpperCase().replace(/-/g, '_')}_NOT_FOUND`;
 		emitErrorJson(`${def.name} CLI not found. Please install ${def.name}.`, errorCode);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// `--model`: this one turn's model. Checked before anything is started: a
@@ -318,7 +319,7 @@ export async function send(
 				'--model takes a model name, or "auto" to let the model router decide.',
 				'INVALID_MODEL'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		const autoProblem = isAutoModel(turnModel)
@@ -326,7 +327,7 @@ export async function send(
 			: null;
 		if (autoProblem) {
 			emitErrorJson(`--model auto: ${autoProblem}`, 'AUTO_MODEL_UNAVAILABLE');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 	}
@@ -340,7 +341,7 @@ export async function send(
 	const requiredToolId = options.requireToolReceipt?.trim();
 	if (options.requireToolReceipt !== undefined && !requiredToolId) {
 		emitErrorJson('A required plugin tool ID must be provided', 'INVALID_PLUGIN_TOOL_ID');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 	const requirePluginHost = options.requirePluginTools || !!requiredToolId;
@@ -354,7 +355,7 @@ export async function send(
 			'Verified local plugin tools are unavailable for this agent',
 			'PLUGIN_TOOLS_UNAVAILABLE'
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -383,7 +384,7 @@ export async function send(
 			'A desktop-backed plugin-tool run is unavailable for this request',
 			'PLUGIN_TOOLS_UNAVAILABLE'
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -399,7 +400,7 @@ export async function send(
 	if (!admission.allowed) {
 		desktop?.disconnect();
 		emitErrorJson(admission.message, admission.code);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 	const consultChain = admission.chain;
@@ -572,7 +573,7 @@ export async function send(
 		// would otherwise see a silent non-zero exit.
 		console.error(`maestro-cli send failed: ${result.error ?? 'unknown error'}`);
 		// 130 is the shell convention for an interrupt; 1 stays for real failures.
-		process.exit(result.outcome === 'interrupted' ? 130 : 1);
+		exitWith(result.outcome === 'interrupted' ? ExitCode.Interrupted : ExitCode.GeneralError);
 	}
 
 	// If --tab flag is set, focus the session tab in Maestro desktop

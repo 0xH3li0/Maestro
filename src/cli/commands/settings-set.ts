@@ -2,7 +2,7 @@
 // Supports dot-notation, auto type coercion, --raw for explicit JSON
 
 import { readSettingValue, writeSettingValue } from '../services/storage';
-import { formatSuccess, formatError, formatWarning } from '../output/formatter';
+import { formatSuccess, formatWarning } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import {
 	SETTINGS_METADATA,
@@ -10,6 +10,7 @@ import {
 	nestedSettingProblem,
 } from '../../shared/settingsMetadata';
 import { resolveMediaModelDirectory } from '../../main/plugins/plugin-media-tools';
+import { failCommand } from '../services/session-command';
 
 interface SettingsSetOptions {
 	json?: boolean;
@@ -99,11 +100,6 @@ export async function settingsSet(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to set "${key}": ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to set "${key}": ${message}`, options.json);
 	}
 }

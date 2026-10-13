@@ -26,7 +26,8 @@ import {
 } from '../../shared/local-models/system-one-guide';
 import { ExitCode } from '../exit-codes';
 import { getCliPrompt } from '../services/prompt-loader';
-import { fail } from './system-one';
+import {} from './system-one';
+import { failCommand } from '../services/session-command';
 
 interface GuideOptions {
 	list?: boolean;
@@ -48,7 +49,7 @@ async function readGuidePrompt(promptId: string, json: boolean | undefined): Pro
 	try {
 		return (await getCliPrompt(promptId)).trimEnd();
 	} catch (error) {
-		return fail(error instanceof Error ? error.message : String(error), json);
+		return failCommand(error instanceof Error ? error.message : String(error), json);
 	}
 }
 
@@ -95,7 +96,7 @@ export async function systemOneGuide(
 
 	const entry = findSystemOneGuideTopic(topic ?? DEFAULT_SYSTEM_ONE_GUIDE_TOPIC);
 	if (!entry) {
-		fail(
+		failCommand(
 			`Unknown guide topic "${topic}". Topics: ${names(SYSTEM_ONE_GUIDE_TOPICS)}.`,
 			json,
 			ExitCode.InvalidUsage
@@ -142,7 +143,7 @@ export async function systemOneExamples(
 	const all = name.trim().toLowerCase() === SYSTEM_ONE_EXAMPLES_ALL;
 	const found = all ? undefined : findSystemOneExample(name);
 	if (!all && !found) {
-		fail(
+		failCommand(
 			`Unknown recipe "${name}". Recipes: ${names(SYSTEM_ONE_EXAMPLES)}, or ${SYSTEM_ONE_EXAMPLES_ALL}.`,
 			json,
 			ExitCode.InvalidUsage

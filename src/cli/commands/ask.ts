@@ -18,6 +18,7 @@ import { resolveAgentId } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { admitCliConsult } from '../services/consult-budget-guard';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface AskOptions {
 	/**
@@ -69,7 +70,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		} else {
 			console.error(`Error: ${message}`);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	if (!question.trim()) {
@@ -164,7 +165,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 					tabId: result.targetTabId,
 				})
 			);
-			if (!result.success) process.exit(1);
+			if (!result.success) exitWith(ExitCode.GeneralError);
 			return;
 		}
 
@@ -178,7 +179,7 @@ export async function ask(agentId: string, question: string, options: AskOptions
 					? `Consult with ${result.targetAgentName ?? 'the agent'} was stopped`
 					: `Error: ${result.error || 'the agent did not answer'}`
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (!result.answer) {
 			console.error(`Note: ${result.targetAgentName ?? 'The agent'} answered with nothing`);

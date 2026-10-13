@@ -64,6 +64,7 @@ import {
 import { TIER_LEVELS, asTierLevel } from '../../shared/modelTiers';
 import { formatCueTurnSettings } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface CueScheduleOptions {
 	in?: string;
@@ -156,7 +157,7 @@ function errorOut(message: string, options: CueScheduleOptions, code?: string): 
 	} else {
 		console.error(`Error: ${message}`);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 /** CLI entry point. Routes to the mode selected by the flags. */

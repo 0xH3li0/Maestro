@@ -26,10 +26,10 @@ import {
 } from '../../shared/local-models/system-one-spend';
 import { ExitCode } from '../exit-codes';
 import { formatSystemOneJobEstimate, formatSystemOneUsage } from '../output/system-one-answers';
-import { resolveAgentOrFail } from '../services/session-command';
+import { resolveAgentOrFail, failCommand } from '../services/session-command';
 import { SystemOneInputError, readState, type StateFlags } from '../services/system-one-input';
 import { resolveCliPath } from '../utils/parse';
-import { fail, readStatus, send } from './system-one';
+import { readStatus, send } from './system-one';
 
 interface UsageOptions {
 	agent?: string;
@@ -44,7 +44,7 @@ export async function systemOneUsage(options: UsageOptions): Promise<void> {
 	if (options.since !== undefined) {
 		const since = parseTimeInput(options.since, Date.now());
 		if (since === null) {
-			fail(
+			failCommand(
 				`"${options.since}" is not a time. Use 30m, 2h, 1d, 1w, ISO-8601, or epoch.`,
 				json,
 				ExitCode.InvalidUsage
@@ -58,7 +58,7 @@ export async function systemOneUsage(options: UsageOptions): Promise<void> {
 		'system_one_usage_result',
 		json
 	);
-	if (!reply.report) fail('The desktop app sent no usage report.', json);
+	if (!reply.report) failCommand('The desktop app sent no usage report.', json);
 	if (json) console.log(JSON.stringify({ success: true, ...reply.report }));
 	else console.log(formatSystemOneUsage(reply.report));
 }
@@ -100,7 +100,7 @@ export async function systemOneCost(word: string | undefined, options: CostOptio
 		perItem: options.perItem === true,
 	};
 	const shapeProblem = systemOneJobShapeProblem(shape);
-	if (shapeProblem) fail(shapeProblem, json, ExitCode.InvalidUsage);
+	if (shapeProblem) failCommand(shapeProblem, json, ExitCode.InvalidUsage);
 
 	let state: SystemOneState;
 	try {
@@ -118,7 +118,8 @@ export async function systemOneCost(word: string | undefined, options: CostOptio
 		if (problem) throw new SystemOneInputError(problem);
 		state = read as SystemOneState;
 	} catch (error) {
-		if (error instanceof SystemOneInputError) fail(error.message, json, ExitCode.InvalidUsage);
+		if (error instanceof SystemOneInputError)
+			failCommand(error.message, json, ExitCode.InvalidUsage);
 		throw error;
 	}
 

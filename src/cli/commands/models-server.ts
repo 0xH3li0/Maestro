@@ -19,7 +19,7 @@
 // simply stopped is not a failure.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatModelServerReport, formatSuccess } from '../output/formatter';
 import {
 	isModelServerBind,
@@ -30,6 +30,7 @@ import {
 } from '../../shared/local-models/model-server';
 import { isServerBuildChoice, SERVER_BUILD_CHOICES } from '../../shared/local-models/server-engine';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
+import { failCommand, failFromError } from '../services/session-command';
 
 /** A status read: a config file, the engine manifest, one loopback request. */
 const STATUS_TIMEOUT_MS = 15_000;
@@ -45,12 +46,6 @@ interface JsonOption {
 
 type ReportReply = { success: boolean; error?: string; report?: ModelServerReport };
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 async function send<T extends { success: boolean; error?: string }>(
 	payload: Record<string, unknown>,
 	responseType: string,
@@ -63,14 +58,14 @@ async function send<T extends { success: boolean; error?: string }>(
 			client.sendCommand<T>(payload, responseType, timeoutMs)
 		);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+		failFromError(error, json);
 	}
-	if (!reply.success) fail(reply.error || 'Request failed', json);
+	if (!reply.success) failCommand(reply.error || 'Request failed', json);
 	return reply;
 }
 
 function requireReport(reply: ReportReply, json: boolean | undefined): ModelServerReport {
-	if (!reply.report) fail('The desktop app sent no model server report.', json);
+	if (!reply.report) failCommand('The desktop app sent no model server report.', json);
 	return reply.report;
 }
 
@@ -140,7 +135,7 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 	const payload: Record<string, unknown> = { type: 'local_models_server_set' };
 	if (options.bind !== undefined) {
 		if (!isModelServerBind(options.bind)) {
-			fail(
+			failCommand(
 				`"${options.bind}" is not a bind mode. Use local or network.`,
 				options.json,
 				ExitCode.InvalidUsage
@@ -151,7 +146,7 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 	if (options.maxModels !== undefined) {
 		const count = Number(options.maxModels);
 		if (!isModelServerMaxModels(count)) {
-			fail(
+			failCommand(
 				`--max-models must be a whole number from 1 to ${MAX_MODEL_SERVER_MAX_MODELS}.`,
 				options.json,
 				ExitCode.InvalidUsage
@@ -162,7 +157,7 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 	if (options.rotateKey) payload.rotateKey = true;
 	if (options.build !== undefined) {
 		if (!isServerBuildChoice(options.build)) {
-			fail(
+			failCommand(
 				`"${options.build}" is not a build. Use ${SERVER_BUILD_CHOICES.join(', ')}.`,
 				options.json,
 				ExitCode.InvalidUsage
@@ -171,7 +166,7 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 		payload.build = options.build;
 	}
 	if (Object.keys(payload).length === 1) {
-		fail(
+		failCommand(
 			'Nothing to change. Pass --bind, --max-models, --rotate-key or --build.',
 			options.json,
 			ExitCode.InvalidUsage
@@ -212,7 +207,7 @@ export async function modelsServerKey(options: JsonOption): Promise<void> {
 		options.json,
 		STATUS_TIMEOUT_MS
 	);
-	if (!reply.key) fail('The desktop app sent no key.', options.json);
+	if (!reply.key) failCommand('The desktop app sent no key.', options.json);
 	if (options.json) console.log(JSON.stringify({ success: true, key: reply.key }));
 	else console.log(reply.key);
 }

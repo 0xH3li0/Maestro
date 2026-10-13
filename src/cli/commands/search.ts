@@ -18,7 +18,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatWorkSearchResult } from '../output/formatter';
 import type { EmbeddingSourceType } from '../../shared/local-models/embedding-index';
 import {
@@ -29,6 +29,7 @@ import {
 	type WorkSearchRequest,
 	type WorkSearchResult,
 } from '../../shared/local-models/work-search';
+import { failCommand, failFromError } from '../services/session-command';
 
 /**
  * A semantic search may have to load the embedding model first; a text search
@@ -45,12 +46,6 @@ interface SearchOptions {
 	json?: boolean;
 }
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 function parseSources(values: string[] | undefined, json: boolean | undefined) {
 	if (!values || values.length === 0) return undefined;
 	const types = new Set<EmbeddingSourceType>();
@@ -58,7 +53,7 @@ function parseSources(values: string[] | undefined, json: boolean | undefined) {
 		if (name.trim() === '') continue;
 		const type = parseWorkSearchSource(name);
 		if (!type) {
-			fail(
+			failCommand(
 				`Unknown source "${name.trim()}". Use: ${Object.values(WORK_SEARCH_SOURCE_NAMES).join(', ')}.`,
 				json
 			);
@@ -69,7 +64,7 @@ function parseSources(values: string[] | undefined, json: boolean | undefined) {
 }
 
 export async function search(query: string, options: SearchOptions): Promise<void> {
-	if (query.trim() === '') fail('A search needs a query.', options.json);
+	if (query.trim() === '') failCommand('A search needs a query.', options.json);
 
 	const request: WorkSearchRequest = {
 		query,
@@ -82,14 +77,17 @@ export async function search(query: string, options: SearchOptions): Promise<voi
 		try {
 			request.agentId = resolveAgentId(options.agent);
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options.json);
+			failCommand(error instanceof Error ? error.message : String(error), options.json);
 		}
 	}
 
 	if (options.limit !== undefined) {
 		const limit = Number(options.limit);
 		if (!Number.isInteger(limit) || limit < 1 || limit > MAX_WORK_SEARCH_LIMIT) {
-			fail(`--limit must be a whole number from 1 to ${MAX_WORK_SEARCH_LIMIT}.`, options.json);
+			failCommand(
+				`--limit must be a whole number from 1 to ${MAX_WORK_SEARCH_LIMIT}.`,
+				options.json
+			);
 		}
 		request.limit = limit;
 	}
@@ -104,14 +102,10 @@ export async function search(query: string, options: SearchOptions): Promise<voi
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
-	if (!reply.success || !reply.result) fail(reply.error || 'Search failed', options.json);
+	if (!reply.success || !reply.result) failCommand(reply.error || 'Search failed', options.json);
 	const result = reply.result;
 
 	if (result.status !== 'ok') {
@@ -125,7 +119,7 @@ export async function search(query: string, options: SearchOptions): Promise<voi
 			console.log(JSON.stringify({ success: false, status: result.status, error: reason }));
 			return exitWith(ExitCode.GeneralError);
 		}
-		fail(reason, false);
+		failCommand(reason, false);
 	}
 
 	if (options.json) console.log(JSON.stringify({ success: true, query, ...result }));

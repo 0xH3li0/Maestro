@@ -790,9 +790,9 @@ describe('show-agent command', () => {
 
 			expect(() => showAgent('nonexistent', { json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
+			const errorOutput = consoleSpy.mock.calls[0][0];
 			const parsed = JSON.parse(errorOutput);
-			expect(parsed.error).toBe('Agent not found: nonexistent');
+			expect(parsed).toEqual({ success: false, error: 'Agent not found: nonexistent' });
 		});
 
 		it('should handle storage errors', () => {

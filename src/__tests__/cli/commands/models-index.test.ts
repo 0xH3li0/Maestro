@@ -20,6 +20,7 @@ import {
 	emptySemanticIndexProgress,
 	type SemanticIndexProgress,
 } from '../../../shared/local-models/embedding-index';
+import { formatError } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -132,7 +133,7 @@ describe('models index command', () => {
 
 		await expect(modelsIndex({})).rejects.toThrow('__exit__');
 
-		expect(errorSpy).toHaveBeenCalledWith('Error: indexer exploded');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('indexer exploded'));
 	});
 
 	it('reports a bridge failure as JSON when asked', async () => {

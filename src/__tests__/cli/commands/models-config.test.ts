@@ -15,6 +15,7 @@ vi.mock('../../../cli/services/storage', () => ({
 import { modelsConfigSet, modelsConfigShow } from '../../../cli/commands/models-config';
 import { readSettingValue, writeSettingValue } from '../../../cli/services/storage';
 import { ExitCode } from '../../../cli/exit-codes';
+import { formatError } from '../../../cli/output/formatter';
 
 const SETTING = 'localModelsDownloadBase';
 
@@ -116,7 +117,7 @@ describe('models config command', () => {
 			);
 
 			expect(writeSettingValue).not.toHaveBeenCalled();
-			expect(errorSpy).toHaveBeenCalledWith('Error: Do not put credentials in the URL.');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Do not put credentials in the URL.'));
 		});
 
 		it('refuses an unknown key', () => {

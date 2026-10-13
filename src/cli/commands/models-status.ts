@@ -15,13 +15,14 @@
 //   by default, so off alone is not a failure there.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatLocalModelTaskReadiness } from '../output/formatter';
 import { isLocalModelTaskId, LOCAL_MODEL_TASK_IDS } from '../../shared/local-models/tasks';
 import {
 	isTaskRunnable,
 	type LocalModelTaskReadiness,
 } from '../../shared/local-models/task-readiness';
+import { failCommand, failFromError } from '../services/session-command';
 
 /**
  * Above the app's endpoint list budget (5s), with room for several endpoints
@@ -34,18 +35,12 @@ interface StatusOptions {
 	json?: boolean;
 }
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 export async function modelsStatus(
 	taskId: string | undefined,
 	options: StatusOptions
 ): Promise<void> {
 	if (taskId !== undefined && !isLocalModelTaskId(taskId)) {
-		fail(
+		failCommand(
 			`Unknown task "${taskId}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`,
 			options.json,
 			ExitCode.InvalidUsage
@@ -62,15 +57,11 @@ export async function modelsStatus(
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.readiness) {
-		fail(reply.error || 'Readiness check failed', options.json);
+		failCommand(reply.error || 'Readiness check failed', options.json);
 	}
 	const readiness = reply.readiness;
 	const ok = taskId

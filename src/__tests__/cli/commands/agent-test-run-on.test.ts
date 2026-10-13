@@ -21,6 +21,7 @@ import { ExitCode } from '../../../cli/exit-codes';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
 import { RUN_ON_TEST_PROMPT } from '../../../shared/local-models/run-on';
+import { formatError } from '../../../cli/output/formatter';
 
 const PASSED = {
 	ok: true,
@@ -127,7 +128,7 @@ describe('agent test-run-on command', () => {
 		mockSend({ success: true, result: failed });
 		await expect(agentTestRunOn('scout', {})).rejects.toThrow('__exit__');
 		expect(errorSpy).toHaveBeenLastCalledWith(
-			'Error: Claude Code did not finish a turn. [run-on-test-timeout]'
+			formatError('Claude Code did not finish a turn. [run-on-test-timeout]')
 		);
 	});
 

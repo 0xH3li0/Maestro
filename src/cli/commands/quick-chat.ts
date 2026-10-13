@@ -11,6 +11,8 @@ import {
 	type QuickChatBoundsRequest,
 	type QuickChatStatus,
 } from '../../shared/quickChat';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failCommand, failFromError } from '../services/session-command';
 
 export interface QuickChatOptions {
 	json?: boolean;
@@ -41,15 +43,6 @@ export type QuickChatAction =
 	| 'reveal'
 	| 'stop'
 	| 'bounds';
-
-function fail(message: string, options: QuickChatOptions): void {
-	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(`Error: ${message}`);
-	}
-	process.exit(1);
-}
 
 /** Human-readable summary of the window and the chat in it. */
 function printStatus(status: QuickChatStatus): void {
@@ -84,7 +77,7 @@ export async function quickChat(
 	const message: Record<string, unknown> = { type: 'quick_chat', action };
 	if (action === 'send') {
 		if (!args.text?.trim()) {
-			fail('message cannot be empty', options);
+			failCommand('message cannot be empty', options.json);
 			return;
 		}
 		message.text = args.text;
@@ -97,7 +90,7 @@ export async function quickChat(
 			try {
 				on = parseCliBool(args.state, action);
 			} catch (error) {
-				fail(error instanceof Error ? error.message : String(error), options);
+				failFromError(error, options.json);
 				return;
 			}
 		}
@@ -111,7 +104,7 @@ export async function quickChat(
 		}
 		const invalid = validateQuickChatBoundsRequest(request);
 		if (invalid) {
-			fail(invalid, options);
+			failCommand(invalid, options.json);
 			return;
 		}
 		Object.assign(message, request);
@@ -120,7 +113,7 @@ export async function quickChat(
 		try {
 			message.agentId = resolveAgentId(args.agent ?? '');
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options);
+			failFromError(error, options.json);
 			return;
 		}
 	}
@@ -133,17 +126,17 @@ export async function quickChat(
 			console.log(
 				JSON.stringify({ success: result.success, error: result.error, ...result.status })
 			);
-			if (!result.success) process.exit(1);
+			if (!result.success) exitWith(ExitCode.GeneralError);
 			return;
 		}
 		if (!result.success) {
-			fail(result.error || `quick-chat ${action} failed`, options);
+			failCommand(result.error || `quick-chat ${action} failed`, options.json);
 			return;
 		}
 		if ((action === 'status' || action === 'bounds' || action === 'pin') && result.status) {
 			printStatus(result.status);
 		} else console.log(`Quick Chat: ${action} done`);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 }

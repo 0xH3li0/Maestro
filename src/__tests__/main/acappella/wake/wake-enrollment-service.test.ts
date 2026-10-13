@@ -527,10 +527,12 @@ describe('the one entry point', () => {
 				ok: true,
 				status: { clips: 2 },
 			});
+			// A list carries each phrase's status, so a client needs one round trip.
 			expect(await runWakeEnrollmentRequest({ action: 'list' })).toEqual({
 				ok: true,
 				status: null,
 				phrases: [PHRASE],
+				statuses: [expect.objectContaining({ phrase: PHRASE, clips: 2 })],
 			});
 			expect(
 				await runWakeEnrollmentRequest({ action: 'remove-last-clip', phrase: PHRASE })

@@ -12,25 +12,20 @@
 // install started here is joined by one started in the app, never duplicated.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode } from '../exit-codes';
 import { formatSuccess } from '../output/formatter';
 import { formatSize } from '../../shared/formatters';
 import { getLocalModel } from '../../shared/local-models/model-catalog';
 import { getNativeRuntime, NATIVE_RUNTIMES } from '../../shared/local-models/native-runtimes';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import type { LocalRuntimeListing } from '../../main/local-models/service';
+import { failCommand, failFromError } from '../services/session-command';
 
 /** A runtime is tens of megabytes across many tarballs; the reply comes when it is usable. */
 const INSTALL_TIMEOUT_MS = 30 * 60 * 1000;
 
 interface JsonOption {
 	json?: boolean;
-}
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
 }
 
 async function send<T extends { success: boolean; error?: string }>(
@@ -45,9 +40,9 @@ async function send<T extends { success: boolean; error?: string }>(
 			client.sendCommand<T>(payload, responseType, timeoutMs)
 		);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+		failFromError(error, json);
 	}
-	if (!reply.success) fail(reply.error || 'Request failed', json);
+	if (!reply.success) failCommand(reply.error || 'Request failed', json);
 	return reply;
 }
 
@@ -93,7 +88,7 @@ export async function modelsRuntimesList(options: JsonOption): Promise<void> {
 export async function modelsRuntimesInstall(runtimeId: string, options: JsonOption): Promise<void> {
 	const descriptor = getNativeRuntime(runtimeId as (typeof NATIVE_RUNTIMES)[number]['id']);
 	if (!descriptor) {
-		fail(
+		failCommand(
 			`Unknown runtime "${runtimeId}". Runtimes: ${NATIVE_RUNTIMES.map((runtime) => runtime.id).join(', ')}.`,
 			options.json,
 			ExitCode.InvalidUsage

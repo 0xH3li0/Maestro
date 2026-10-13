@@ -10,6 +10,8 @@ import * as fs from 'fs';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failCommand, failFromError } from '../services/session-command';
 
 // Starting a chat spawns a moderator and every participant before the app
 // answers; the desktop allows itself 60s, so the CLI waits a little longer.
@@ -40,12 +42,6 @@ interface ListOptions extends JsonOption {
 
 type BridgeReply = { type: string; success?: boolean; error?: string; message?: string };
 
-function fail(error: string, json?: boolean): never {
-	if (json) console.log(JSON.stringify({ success: false, error }));
-	else console.error(`Error: ${error}`);
-	process.exit(1);
-}
-
 /** A reply of type 'error' is the bridge refusing the request (validation). */
 function bridgeError(reply: BridgeReply): string | undefined {
 	return reply.type === 'error' ? reply.message || 'Request refused' : undefined;
@@ -53,13 +49,16 @@ function bridgeError(reply: BridgeReply): string | undefined {
 
 function readMessage(inline: string | undefined, file: string | undefined, json?: boolean) {
 	if (inline !== undefined && file !== undefined) {
-		fail('Pass the message inline or with --message-file, not both', json);
+		failCommand('Pass the message inline or with --message-file, not both', json);
 	}
 	if (file === undefined) return inline;
 	try {
 		return fs.readFileSync(file, 'utf-8');
 	} catch (error) {
-		fail(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, json);
+		failCommand(
+			`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`,
+			json
+		);
 	}
 }
 
@@ -99,14 +98,14 @@ function stateLabel(chat: RemoteGroupChatState): string {
 
 export async function groupChatStart(name: string, options: StartOptions): Promise<void> {
 	const refs = options.participant ?? [];
-	if (refs.length === 0) fail('At least one --participant is required', options.json);
+	if (refs.length === 0) failCommand('At least one --participant is required', options.json);
 	const message = readMessage(options.message, options.messageFile, options.json);
 
 	let participantIds: string[];
 	try {
 		participantIds = refs.map((ref) => resolveAgentId(ref));
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 
 	try {
@@ -132,7 +131,7 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 				console.error(`Error: ${error}`);
 				if (reply.chatId) console.error(`  Chat ID: ${reply.chatId}`);
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (options.json) {
 			console.log(JSON.stringify({ success: true, chatId: reply.chatId, name }));
@@ -141,7 +140,7 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 			console.log(`  ID: ${reply.chatId}`);
 		}
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -151,7 +150,7 @@ export async function groupChatSend(
 	options: SendOptions
 ): Promise<void> {
 	const message = readMessage(inline, options.messageFile, options.json);
-	if (!message || !message.trim()) fail('Message must not be empty', options.json);
+	if (!message || !message.trim()) failCommand('Message must not be empty', options.json);
 
 	try {
 		const { chatId, reply } = await withMaestroClient(async (client) => {
@@ -170,18 +169,19 @@ export async function groupChatSend(
 		if (error) {
 			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Sent to group chat ${chatId}`);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
 export async function groupChatStatus(chatRef: string, options: StatusOptions): Promise<void> {
 	const tail = options.tail === undefined ? 5 : Number(options.tail);
-	if (!Number.isInteger(tail) || tail < 0) fail('--tail must be a whole number', options.json);
+	if (!Number.isInteger(tail) || tail < 0)
+		failCommand('--tail must be a whole number', options.json);
 
 	try {
 		const chat = await withMaestroClient(async (client) => {
@@ -210,7 +210,7 @@ export async function groupChatStatus(chatRef: string, options: StatusOptions): 
 			console.log(`\n--- ${m.participantName}  ${when}\n${m.content}`);
 		}
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -235,7 +235,7 @@ export async function groupChatList(options: ListOptions): Promise<void> {
 			);
 		}
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -253,11 +253,11 @@ export async function groupChatStop(chatRef: string, options: JsonOption): Promi
 		if (error) {
 			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Stopped group chat ${chatId}`);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

@@ -9,7 +9,8 @@
 //
 // Only `ok` exits 0, with the generated text alone on stdout, so
 // `name=$(maestro-cli models run tab-naming --input "...")` captures text or
-// fails. Every other verdict exits non-zero with the reason on stderr.
+// fails. Every other verdict exits non-zero with the reason on stderr: 6 for a
+// task that is switched off, 7 for one that could not answer.
 //
 // `maestro-cli models run git-drafts --cwd <path> [--base <branch>]` is the
 // one task that takes a repository instead of a prompt: it is the CLI path to
@@ -25,7 +26,7 @@
 // transcript the Dictation assignment produces for it.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { resolveCliPath } from '../utils/parse';
 import {
 	isLocalModelTaskId,
@@ -42,6 +43,7 @@ import type {
 	LocalTaskResult,
 	SpeechToTextTaskResult,
 } from '../../main/local-models/task-router';
+import { failCommand, failFromError } from '../services/session-command';
 
 /**
  * Above the app's endpoint chat budget (120s), so a slow server comes back as
@@ -69,10 +71,13 @@ interface RunOptions {
 	json?: boolean;
 }
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
+/**
+ * The exit code of a task that produced nothing, the way `s1 route` splits it:
+ * a switch that is off (`Refused`: asking again will not help) from a model
+ * that could not answer (`NoAnswer`: it may next time).
+ */
+function verdictExitCode(status: string): ExitCode {
+	return status === 'off' || status === 'use-utility-agent' ? ExitCode.Refused : ExitCode.NoAnswer;
 }
 
 /** Why a non-`ok` verdict produced no text, for a person. */
@@ -97,7 +102,7 @@ function describeVerdict(
 
 export async function modelsRun(taskId: string, options: RunOptions): Promise<void> {
 	if (!isLocalModelTaskId(taskId)) {
-		fail(
+		failCommand(
 			`Unknown task "${taskId}". Tasks: ${LOCAL_MODEL_TASK_IDS.join(', ')}`,
 			options.json,
 			ExitCode.InvalidUsage
@@ -107,14 +112,14 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 
 	if (options.audio !== undefined || taskId === 'dictation') {
 		if (taskId !== 'dictation') {
-			fail(
+			failCommand(
 				'--audio transcribes speech, which only the dictation task does.',
 				options.json,
 				ExitCode.InvalidUsage
 			);
 		}
 		if (options.audio === undefined || options.audio.trim() === '') {
-			fail(
+			failCommand(
 				'Pass --audio <file.wav> to transcribe a 16-bit PCM WAV file.',
 				options.json,
 				ExitCode.InvalidUsage
@@ -127,7 +132,7 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 			options.cwd !== undefined ||
 			options.base !== undefined
 		) {
-			fail(
+			failCommand(
 				'--audio transcribes the file; it does not combine with --input, --system, --max-tokens, --cwd, or --base.',
 				options.json,
 				ExitCode.InvalidUsage
@@ -137,7 +142,7 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 	}
 
 	if (task.needs !== 'text-gen') {
-		fail(
+		failCommand(
 			`${task.label} is a ${task.needs} task; models run runs text-generation tasks, and dictation with --audio.`,
 			options.json,
 			ExitCode.InvalidUsage
@@ -146,21 +151,25 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 
 	if (options.cwd !== undefined || options.base !== undefined) {
 		if (taskId !== 'git-drafts') {
-			fail(
+			failCommand(
 				'--cwd and --base draft a pull request, which only the git-drafts task does.',
 				options.json,
 				ExitCode.InvalidUsage
 			);
 		}
 		if (options.cwd === undefined || options.cwd.trim() === '') {
-			fail('--base needs --cwd <path> to name the repository', options.json, ExitCode.InvalidUsage);
+			failCommand(
+				'--base needs --cwd <path> to name the repository',
+				options.json,
+				ExitCode.InvalidUsage
+			);
 		}
 		if (
 			options.input !== undefined ||
 			options.system !== undefined ||
 			options.maxTokens !== undefined
 		) {
-			fail(
+			failCommand(
 				'--cwd drafts from the repository; it does not combine with --input, --system, or --max-tokens.',
 				options.json,
 				ExitCode.InvalidUsage
@@ -170,7 +179,7 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 	}
 
 	if (options.input === undefined || options.input.trim() === '') {
-		fail(
+		failCommand(
 			taskId === 'git-drafts'
 				? 'Pass --cwd <path> to draft a pull request for that repository, or --input <text> to send your own prompt.'
 				: '--input must not be empty',
@@ -184,7 +193,7 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 	if (options.maxTokens !== undefined) {
 		const maxTokens = Number(options.maxTokens);
 		if (!Number.isInteger(maxTokens) || maxTokens < 1) {
-			fail('--max-tokens must be a positive integer', options.json, ExitCode.InvalidUsage);
+			failCommand('--max-tokens must be a positive integer', options.json, ExitCode.InvalidUsage);
 		}
 		input.maxTokens = maxTokens;
 	}
@@ -199,26 +208,21 @@ export async function modelsRun(taskId: string, options: RunOptions): Promise<vo
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'Task run failed', options.json);
+		failCommand(reply.error || 'Task run failed', options.json);
 	}
 	const result = reply.result;
 
 	if (options.json) {
 		console.log(JSON.stringify({ success: result.status === 'ok', taskId, ...result }));
-		if (result.status !== 'ok') exitWith(ExitCode.GeneralError);
+		if (result.status !== 'ok') exitWith(verdictExitCode(result.status));
 		return;
 	}
 	if (result.status !== 'ok') {
-		console.error(`Error: ${describeVerdict(taskId, result)}`);
-		exitWith(ExitCode.GeneralError);
+		failCommand(describeVerdict(taskId, result), false, verdictExitCode(result.status));
 	}
 	console.log(result.text);
 }
@@ -247,22 +251,21 @@ async function runPullRequestDraft(
 			)
 		);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+		failFromError(error, json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'Draft failed', json);
+		failCommand(reply.error || 'Draft failed', json);
 	}
 	const result = reply.result;
 
 	if (json) {
 		console.log(JSON.stringify({ taskId: 'git-drafts', ...result }));
-		if (!result.success) exitWith(ExitCode.GeneralError);
+		if (!result.success) exitWith(verdictExitCode(result.status));
 		return;
 	}
 	if (!result.success) {
-		console.error(`Error: ${result.error}`);
-		exitWith(ExitCode.GeneralError);
+		failCommand(result.error, false, verdictExitCode(result.status));
 	}
 	console.log(result.body ? `${result.title}\n\n${result.body}` : result.title);
 }
@@ -284,11 +287,11 @@ async function runTranscription(audio: string, json: boolean | undefined): Promi
 			)
 		);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), json, exitCodeForError(error));
+		failFromError(error, json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'Transcription failed', json);
+		failCommand(reply.error || 'Transcription failed', json);
 	}
 	const result = reply.result;
 
@@ -296,12 +299,11 @@ async function runTranscription(audio: string, json: boolean | undefined): Promi
 		console.log(
 			JSON.stringify({ success: result.status === 'ok', taskId: 'dictation', ...result })
 		);
-		if (result.status !== 'ok') exitWith(ExitCode.GeneralError);
+		if (result.status !== 'ok') exitWith(verdictExitCode(result.status));
 		return;
 	}
 	if (result.status !== 'ok') {
-		console.error(`Error: ${describeVerdict('dictation', result)}`);
-		exitWith(ExitCode.GeneralError);
+		failCommand(describeVerdict('dictation', result), false, verdictExitCode(result.status));
 	}
 	console.log(result.text);
 }

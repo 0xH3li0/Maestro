@@ -6,10 +6,11 @@
 // agent's id is sent: the test launches what is stored.
 
 import { RUN_ON_TEST_PROMPT, type RunOnTestResult } from '../../shared/local-models/run-on';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatSuccess } from '../output/formatter';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { failCommand, failFromError } from '../services/session-command';
 
 interface TestRunOnOptions {
 	json?: boolean;
@@ -22,18 +23,12 @@ interface TestRunOnOptions {
  */
 const TEST_RUN_ON_TIMEOUT_MS = 20 * 60 * 1000;
 
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
-}
-
 export async function agentTestRunOn(agentRef: string, options: TestRunOnOptions): Promise<void> {
 	let agentId: string;
 	try {
 		agentId = resolveAgentId(agentRef);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 
 	let reply: { success: boolean; result?: RunOnTestResult; error?: string };
@@ -46,15 +41,11 @@ export async function agentTestRunOn(agentRef: string, options: TestRunOnOptions
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'The Run on test did not run', options.json);
+		failCommand(reply.error || 'The Run on test did not run', options.json);
 	}
 	const result = reply.result;
 

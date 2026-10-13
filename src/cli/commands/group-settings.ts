@@ -6,7 +6,7 @@
 
 import { resolveGroupId, readGroups } from '../services/storage';
 import { describeGroupSettings } from '../services/group-settings';
-import { failCommand } from '../services/session-command';
+import { failCommand, failFromError } from '../services/session-command';
 import { formatGroupSettings } from '../output/formatter';
 
 interface GroupSettingsOptions {
@@ -18,7 +18,7 @@ export function groupSettings(groupId: string, options: GroupSettingsOptions): v
 	try {
 		resolvedGroupId = resolveGroupId(groupId);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	const group = readGroups().find((candidate) => candidate.id === resolvedGroupId);
 	if (!group) return failCommand(`Group not found: ${groupId}`, options.json);

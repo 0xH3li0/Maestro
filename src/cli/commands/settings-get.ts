@@ -3,7 +3,7 @@ import { getMediaToolStatus, resolveMediaRuntime } from '../../main/plugins/plug
 // Supports dot-notation for nested keys, --json, --verbose
 
 import { readSettingValue } from '../services/storage';
-import { formatSettingDetail, formatError, type SettingDisplay } from '../output/formatter';
+import { formatSettingDetail, type SettingDisplay } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import {
 	SETTINGS_METADATA,
@@ -13,6 +13,7 @@ import {
 	nestedSettingPathProblem,
 	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
+import { failCommand } from '../services/session-command';
 
 interface SettingsGetOptions {
 	json?: boolean;
@@ -84,12 +85,7 @@ export function settingsGet(key: string, options: SettingsGetOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 }
 
@@ -102,9 +98,6 @@ export async function settingsMediaStatus(): Promise<void> {
 			)
 		);
 	} catch (error) {
-		console.error(
-			JSON.stringify({ error: error instanceof Error ? error.message : 'Media status unavailable' })
-		);
-		process.exitCode = 1;
+		failCommand(error instanceof Error ? error.message : 'Media status unavailable', true);
 	}
 }

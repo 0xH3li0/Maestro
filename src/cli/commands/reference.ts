@@ -29,11 +29,14 @@ interface ReferenceOptions {
 }
 
 function optionInfo(cmd: Command): OptionInfo[] {
-	return cmd.options.map((opt) => ({
-		flags: opt.flags,
-		description: opt.description ?? '',
-		defaultValue: opt.defaultValue,
-	}));
+	// A hidden option is a kept alias for an old spelling; the reference lists the new one.
+	return cmd.options
+		.filter((opt) => !opt.hidden)
+		.map((opt) => ({
+			flags: opt.flags,
+			description: opt.description ?? '',
+			defaultValue: opt.defaultValue,
+		}));
 }
 
 /** Render the argument signature (e.g. "<agent-id> [message]") for a command. */

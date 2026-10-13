@@ -260,7 +260,14 @@ export type WakeEnrollmentRequest =
 
 /** What comes back. `ok: false` carries the sentence to show. */
 export type WakeEnrollmentReply =
-	| { ok: true; status: WakeEnrollmentStatus | null; phrases?: string[] }
+	| {
+			ok: true;
+			status: WakeEnrollmentStatus | null;
+			/** `list`: every phrase with recordings. */
+			phrases?: string[];
+			/** `list`: the status of each of `phrases`, in the same order. */
+			statuses?: WakeEnrollmentStatus[];
+	  }
 	| { ok: false; reason: string };
 
 /** Narrow whatever crossed the bridge. An unknown verb is refused, never guessed. */

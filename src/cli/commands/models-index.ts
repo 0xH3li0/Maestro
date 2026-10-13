@@ -17,21 +17,16 @@
 // default and not a failure.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import { formatSemanticIndexProgress } from '../output/formatter';
 import type { SemanticIndexProgress } from '../../shared/local-models/embedding-index';
+import { failCommand, failFromError } from '../services/session-command';
 
 /** A memory read in the app; anything slower than this is the bridge, not the work. */
 const INDEX_STATUS_TIMEOUT_MS = 10_000;
 
 interface IndexOptions {
 	json?: boolean;
-}
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
 }
 
 export async function modelsIndex(options: IndexOptions): Promise<void> {
@@ -45,15 +40,11 @@ export async function modelsIndex(options: IndexOptions): Promise<void> {
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.progress) {
-		fail(reply.error || 'Index status check failed', options.json);
+		failCommand(reply.error || 'Index status check failed', options.json);
 	}
 	const progress = reply.progress;
 	const ok = progress.state !== 'unavailable';

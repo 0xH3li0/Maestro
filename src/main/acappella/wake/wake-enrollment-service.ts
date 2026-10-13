@@ -567,8 +567,12 @@ export async function runWakeEnrollmentRequest(raw: unknown): Promise<WakeEnroll
 	}
 
 	switch (request.action) {
-		case 'list':
-			return { ok: true, status: null, phrases: await listWakeEnrollments() };
+		case 'list': {
+			const phrases = await listWakeEnrollments();
+			// The statuses ride along so a client lists the phrases in one round trip.
+			const statuses = await Promise.all(phrases.map((phrase) => service.status(phrase)));
+			return { ok: true, status: null, phrases, statuses };
+		}
 		case 'status':
 			return { ok: true, status: await service.status(request.phrase) };
 		case 'record':

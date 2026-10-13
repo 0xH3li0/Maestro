@@ -50,6 +50,7 @@ import {
 	userLocalModelEntry,
 } from '../../../shared/local-models/user-models';
 import type { LocalModelListing } from '../../../main/local-models/service';
+import { formatError } from '../../../cli/output/formatter';
 
 /** A model the user added from Hugging Face, as the desktop lists it. */
 const USER_ENTRY = userLocalModelEntry({
@@ -517,7 +518,7 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 
 			await expect(modelsVerify(BGE_SMALL_EN_ID, {})).rejects.toThrow('__exit__');
 
-			expect(errorSpy).toHaveBeenCalledWith('Error: UnknownLocalModel');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('UnknownLocalModel'));
 		});
 	});
 

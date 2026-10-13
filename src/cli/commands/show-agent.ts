@@ -17,7 +17,7 @@ import {
 	resolveAgentEnvironment,
 } from '../../shared/agentEnvironment';
 import { gatewayEnvVarsFor } from '../../shared/local-models/gateway';
-import { formatAgentDetail, formatError } from '../output/formatter';
+import { formatAgentDetail } from '../output/formatter';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveCodexTransport } from '../../shared/codexTransport';
 import {
@@ -31,6 +31,7 @@ import {
 } from '../../shared/local-models/background-requests';
 import { agentTierRows, tierHarnessProblem, tierRowRecord } from '../../shared/modelTiers';
 import { describePeerConfiguration } from '../../shared/peerAgents';
+import { failCommand } from '../services/session-command';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -279,11 +280,6 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 }

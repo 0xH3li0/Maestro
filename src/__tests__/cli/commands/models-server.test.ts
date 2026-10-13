@@ -24,6 +24,7 @@ import {
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import type { ModelServerReport } from '../../../shared/local-models/model-server';
+import { formatError } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -181,7 +182,7 @@ describe('models server status', () => {
 		mockSend({ success: false, error: 'boom' });
 
 		await expect(modelsServerStatus({})).rejects.toThrow('__exit__');
-		expect(errorSpy).toHaveBeenCalledWith('Error: boom');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('boom'));
 	});
 });
 

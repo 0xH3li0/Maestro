@@ -9,6 +9,7 @@ import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
 import { admitCliConsult } from '../services/consult-budget-guard';
 import type { ConsultChain } from '../../shared/consultBudget';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -558,7 +559,7 @@ export async function dispatch(
 
 	if (!result.success) {
 		emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 

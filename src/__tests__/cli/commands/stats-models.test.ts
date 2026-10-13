@@ -171,10 +171,11 @@ describe('stats models command', () => {
 
 		await expect(statsModels({ json: true })).rejects.toThrow('__exit__');
 
-		expect(JSON.parse(errorSpy.mock.calls[0][0] as string)).toEqual({
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: false,
 			error: 'Stats database is not ready',
 		});
-		expect(logSpy).not.toHaveBeenCalled();
+		expect(errorSpy).not.toHaveBeenCalled();
 		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 	});
 

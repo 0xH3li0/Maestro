@@ -2,7 +2,7 @@
 // Supports --json, --verbose, --keys-only, --defaults, --category filters
 
 import { readSettings } from '../services/storage';
-import { formatSettingsList, formatError, type SettingDisplay } from '../output/formatter';
+import { formatSettingsList, type SettingDisplay } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import {
 	SETTINGS_METADATA,
@@ -11,6 +11,7 @@ import {
 	type SettingCategory,
 	redactNestedSettingSecrets,
 } from '../../shared/settingsMetadata';
+import { failCommand } from '../services/session-command';
 
 interface SettingsListOptions {
 	json?: boolean;
@@ -97,11 +98,6 @@ export function settingsList(options: SettingsListOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list settings: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list settings: ${message}`, options.json);
 	}
 }

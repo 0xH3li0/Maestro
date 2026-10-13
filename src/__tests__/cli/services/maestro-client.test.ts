@@ -53,6 +53,7 @@ import {
 } from '../../../cli/services/maestro-client';
 import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
 import { readSessions } from '../../../cli/services/storage';
+import { MaestroNotRunningError } from '../../../cli/services/maestro-bridge-errors';
 import WebSocket from 'ws';
 
 describe('MaestroClient', () => {
@@ -71,6 +72,26 @@ describe('MaestroClient', () => {
 
 			const client = new MaestroClient();
 			await expect(client.connect()).rejects.toThrow('Maestro desktop app is not running');
+		});
+
+		it('should name an unreachable app with MaestroNotRunningError, so a verb exits 3', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue(null);
+			await expect(new MaestroClient().connect()).rejects.toBeInstanceOf(MaestroNotRunningError);
+
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(false);
+			await expect(new MaestroClient().connect()).rejects.toBeInstanceOf(MaestroNotRunningError);
+
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+			const client = new MaestroClient();
+			const connecting = client.connect();
+			mockWsInstance.emit('error', new Error('Connection refused'));
+			await expect(connecting).rejects.toBeInstanceOf(MaestroNotRunningError);
 		});
 
 		it('should throw when PID is stale', async () => {

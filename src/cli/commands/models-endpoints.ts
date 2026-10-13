@@ -21,7 +21,7 @@ import {
 	writeLocalModelEndpoints,
 } from '../services/storage';
 import { withMaestroClient } from '../services/maestro-client';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 import {
 	colorize,
 	formatLocalModelEndpoints,
@@ -46,6 +46,7 @@ import type {
 	EndpointModelsResult,
 	EndpointTestResult,
 } from '../../main/local-models/endpoint-client';
+import { failCommand, failFromError } from '../services/session-command';
 
 /**
  * The app's test budget is 30s (a cold model has to load before it answers one
@@ -78,12 +79,6 @@ interface UpdateOptions extends JsonOption {
 
 interface TestOptions extends JsonOption {
 	model?: string;
-}
-
-function fail(message: string, json: boolean | undefined, code = ExitCode.GeneralError): never {
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(code);
 }
 
 function shellEnvVars(): Record<string, string> {
@@ -131,7 +126,7 @@ export function modelsEndpointsList(options: JsonOption): void {
 export function modelsEndpointsAdd(options: AddOptions): void {
 	const kind = options.kind?.trim() ?? '';
 	if (!isLocalModelEndpointKind(kind)) {
-		fail(
+		failCommand(
 			`--kind must be one of: ${LOCAL_MODEL_ENDPOINT_KINDS.join(', ')}`,
 			options.json,
 			ExitCode.InvalidUsage
@@ -142,7 +137,7 @@ export function modelsEndpointsAdd(options: AddOptions): void {
 	// the "Add detected Ollama" click. An OpenAI-compatible host has no default.
 	const baseUrl = options.url?.trim() || DEFAULT_ENDPOINT_BASE_URLS[kind];
 	if (!baseUrl) {
-		fail(`--url is required for --kind ${kind}`, options.json, ExitCode.InvalidUsage);
+		failCommand(`--url is required for --kind ${kind}`, options.json, ExitCode.InvalidUsage);
 	}
 
 	const change = addLocalModelEndpoint(readLocalModelEndpoints(), {
@@ -153,7 +148,7 @@ export function modelsEndpointsAdd(options: AddOptions): void {
 		apiKeyEnvVar: options.apiKeyEnv,
 		enabled: !options.disabled,
 	});
-	if (!change.ok) fail(change.message, options.json, ExitCode.InvalidUsage);
+	if (!change.ok) failCommand(change.message, options.json, ExitCode.InvalidUsage);
 
 	writeLocalModelEndpoints(change.endpoints);
 	const endpoint = change.endpoint;
@@ -193,7 +188,7 @@ export function modelsEndpointsAdd(options: AddOptions): void {
 export function modelsEndpointsUpdate(ref: string, options: UpdateOptions): void {
 	// A declaration, not an arrow: only a declared `never` return narrows below.
 	function usage(message: string): never {
-		return fail(message, options.json, ExitCode.InvalidUsage);
+		return failCommand(message, options.json, ExitCode.InvalidUsage);
 	}
 	if (options.enable && options.disable) usage('Pass --enable or --disable, not both.');
 	if (options.apiKeyEnv !== undefined && options.clearApiKeyEnv) {
@@ -219,7 +214,7 @@ export function modelsEndpointsUpdate(ref: string, options: UpdateOptions): void
 
 	const endpoints = readLocalModelEndpoints();
 	const found = findLocalModelEndpoint(endpoints, ref);
-	if (!found.ok) fail(found.message, options.json);
+	if (!found.ok) failCommand(found.message, options.json);
 	const current = found.endpoint;
 
 	const apiKeyEnvVar = options.clearApiKeyEnv
@@ -263,7 +258,7 @@ export function modelsEndpointsUpdate(ref: string, options: UpdateOptions): void
 
 export function modelsEndpointsRemove(ref: string, options: JsonOption): void {
 	const change = removeLocalModelEndpoint(readLocalModelEndpoints(), ref);
-	if (!change.ok) fail(change.message, options.json);
+	if (!change.ok) failCommand(change.message, options.json);
 
 	writeLocalModelEndpoints(change.endpoints);
 	const { id, name } = change.endpoint;
@@ -286,15 +281,11 @@ export async function modelsEndpointsModels(ref: string, options: JsonOption): P
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'Could not list the endpoint models', options.json);
+		failCommand(reply.error || 'Could not list the endpoint models', options.json);
 	}
 	const result = reply.result;
 
@@ -334,15 +325,11 @@ export async function modelsEndpointsTest(ref: string, options: TestOptions): Pr
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
 	if (!reply.success || !reply.result) {
-		fail(reply.error || 'Endpoint test failed', options.json);
+		failCommand(reply.error || 'Endpoint test failed', options.json);
 	}
 	const result = reply.result;
 
@@ -376,14 +363,10 @@ export async function modelsEndpointsDetect(options: JsonOption): Promise<void> 
 			)
 		);
 	} catch (error) {
-		fail(
-			error instanceof Error ? error.message : String(error),
-			options.json,
-			exitCodeForError(error)
-		);
+		failFromError(error, options.json);
 	}
 
-	if (!reply.success) fail(reply.error || 'Detection failed', options.json);
+	if (!reply.success) failCommand(reply.error || 'Detection failed', options.json);
 	const detected = reply.detected ?? [];
 
 	if (options.json) {

@@ -17,6 +17,7 @@ import { modelsStatus } from '../../../cli/commands/models-status';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
+import { formatError } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string; timeout?: number } =
@@ -148,7 +149,7 @@ describe('models status command', () => {
 
 		await expect(modelsStatus(undefined, {})).rejects.toThrow('__exit__');
 
-		expect(errorSpy).toHaveBeenCalledWith('Error: Unknown task "x".');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('Unknown task "x".'));
 	});
 
 	it('refuses an unknown task before opening the bridge', async () => {

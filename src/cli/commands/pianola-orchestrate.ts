@@ -50,6 +50,7 @@ import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
 import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import { ExitCode, exitWith } from '../exit-codes';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -102,7 +103,7 @@ function ensurePianolaEnabled(json?: boolean): void {
 	} else {
 		console.error(message);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 /**
@@ -364,7 +365,7 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 	const fail = (message: string): never => {
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	const raw = readPlanInput(options, fail);
@@ -386,7 +387,7 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 			console.error('Plan is invalid:');
 			for (const e of errors) console.error(`  - ${e}`);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -436,7 +437,7 @@ export function pianolaPlanShow(planId: string, options: PianolaPlanShowOptions)
 		const message = `No Pianola plan with id "${planId}".`;
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 	if (options.json) {
@@ -477,7 +478,7 @@ export async function pianolaOrchestrate(
 		const message = `No Pianola plan with id "${planId}". Save one first with: pianola plan set --file <plan.json>`;
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -498,7 +499,7 @@ export async function pianolaOrchestrate(
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[orchestrator] could not connect to Maestro: ${message}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 

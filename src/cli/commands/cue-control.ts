@@ -11,8 +11,12 @@
  */
 
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
-import { errorFrameMessage, failCommand, resolveAgentOrFail } from '../services/session-command';
-import { exitCodeForError, exitWith } from '../exit-codes';
+import {
+	errorFrameMessage,
+	failCommand,
+	resolveAgentOrFail,
+	failFromError,
+} from '../services/session-command';
 import {
 	CUE_GATE_ON_UNAVAILABLE,
 	DEFAULT_CUE_GATE_ON_UNAVAILABLE,
@@ -80,13 +84,6 @@ interface ActivityOptions {
 	agent?: string;
 	limit?: string;
 	json?: boolean;
-}
-
-function failFromError(error: unknown, json?: boolean): never {
-	const message = error instanceof Error ? error.message : String(error);
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(exitCodeForError(error));
 }
 
 /**

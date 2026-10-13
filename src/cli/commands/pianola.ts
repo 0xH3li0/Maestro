@@ -49,6 +49,7 @@ import type {
 	PianolaRisk,
 	PianolaSignalKind,
 } from '../../shared/pianola/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const POLL_TAIL = 40;
@@ -92,7 +93,7 @@ export function ensurePianolaEnabled(json?: boolean): void {
 	} else {
 		console.error(message);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 /**
@@ -245,7 +246,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[pianola] could not connect to Maestro: ${message}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -393,7 +394,7 @@ export function pianolaAddRule(options: PianolaAddRuleOptions): void {
 		} else {
 			console.error(message);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	const scope = (options.scope ?? 'global') as PianolaRuleScope;

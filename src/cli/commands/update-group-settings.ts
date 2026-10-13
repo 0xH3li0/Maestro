@@ -20,7 +20,12 @@ import {
 	verifyPersistedGroupSettings,
 	type GroupSettingsFlagOptions,
 } from '../services/group-settings';
-import { errorFrameMessage, failCommand, sendSimpleCommand } from '../services/session-command';
+import {
+	errorFrameMessage,
+	failCommand,
+	sendSimpleCommand,
+	failFromError,
+} from '../services/session-command';
 import { formatGroupSettingsUpdate } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
 import { canPrompt, confirmOnTerminal } from '../utils/confirm';
@@ -39,7 +44,7 @@ export async function updateGroupSettings(
 	try {
 		resolvedGroupId = resolveGroupId(groupId);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	const group = readGroups().find((candidate) => candidate.id === resolvedGroupId);
 	if (!group) return failCommand(`Group not found: ${groupId}`, options.json);
@@ -52,7 +57,7 @@ export async function updateGroupSettings(
 	try {
 		request = readGroupSettingsFlags(options, group);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	if (request.publish) {
@@ -77,7 +82,7 @@ export async function updateGroupSettings(
 			'update_group_settings_result'
 		)) as unknown as GroupSettingsUpdateResult;
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	if (!result.success) {
 		return failCommand(

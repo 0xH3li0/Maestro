@@ -18,6 +18,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 import { modelsRun } from '../../../cli/commands/models-run';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
+import { formatError } from '../../../cli/output/formatter';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string; timeout?: number } =
@@ -87,8 +88,8 @@ describe('models run command', () => {
 	});
 
 	it.each([
-		[{ status: 'off' }, /Tab naming is off/],
-		[{ status: 'use-utility-agent' }, /assigned to the Utility Agent/],
+		[{ status: 'off' }, /Tab naming is off/, ExitCode.Refused],
+		[{ status: 'use-utility-agent' }, /assigned to the Utility Agent/, ExitCode.Refused],
 		[
 			{
 				status: 'unavailable',
@@ -97,14 +98,15 @@ describe('models run command', () => {
 				source: OK.source,
 			},
 			/Qwen3 1\.7B is not downloaded\. \[model-not-installed\]/,
+			ExitCode.NoAnswer,
 		],
-		[{ status: 'cancelled', source: OK.source }, /was cancelled/],
-	])('exits non-zero with the reason for %j', async (result, message) => {
+		[{ status: 'cancelled', source: OK.source }, /was cancelled/, ExitCode.NoAnswer],
+	])('exits non-zero with the reason for %j', async (result, message, code) => {
 		mockSend({ success: true, result });
 
 		await expect(modelsRun('tab-naming', { input: 'hi' })).rejects.toThrow('__exit__');
 
-		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		expect(exitSpy).toHaveBeenCalledWith(code);
 		expect(errorSpy.mock.calls[0][0]).toMatch(message);
 		expect(logSpy).not.toHaveBeenCalled();
 	});
@@ -121,7 +123,7 @@ describe('models run command', () => {
 			taskId: 'git-drafts',
 			status: 'off',
 		});
-		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		expect(exitSpy).toHaveBeenCalledWith(ExitCode.Refused);
 	});
 
 	it('reports a refused request from the app', async () => {
@@ -129,7 +131,7 @@ describe('models run command', () => {
 
 		await expect(modelsRun('tab-naming', { input: 'hi' })).rejects.toThrow('__exit__');
 
-		expect(errorSpy).toHaveBeenCalledWith('Error: Task input needs a non-empty prompt.');
+		expect(errorSpy).toHaveBeenCalledWith(formatError('Task input needs a non-empty prompt.'));
 	});
 
 	it.each([
@@ -198,21 +200,27 @@ describe('models run command', () => {
 		});
 
 		it.each([
-			[{ success: false, status: 'off', error: 'Git drafts is off.' }, /Git drafts is off/],
+			[
+				{ success: false, status: 'off', error: 'Git drafts is off.' },
+				/Git drafts is off/,
+				ExitCode.Refused,
+			],
 			[
 				{ success: false, status: 'unavailable', error: 'Ollama is not reachable.' },
 				/Ollama is not reachable/,
+				ExitCode.NoAnswer,
 			],
 			[
 				{ success: false, status: 'no-changes', error: 'feat has no commits that main lacks.' },
 				/no commits/,
+				ExitCode.NoAnswer,
 			],
-		])('exits non-zero with the reason for %j', async (result, message) => {
+		])('exits non-zero with the reason for %j', async (result, message, code) => {
 			mockSend({ success: true, result });
 
 			await expect(modelsRun('git-drafts', { cwd: '/abs/repo' })).rejects.toThrow('__exit__');
 
-			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+			expect(exitSpy).toHaveBeenCalledWith(code);
 			expect(errorSpy.mock.calls[0][0]).toMatch(message);
 			expect(logSpy).not.toHaveBeenCalled();
 		});
@@ -238,7 +246,7 @@ describe('models run command', () => {
 				'__exit__'
 			);
 
-			expect(errorSpy).toHaveBeenCalledWith('Error: Not a valid branch name: -x');
+			expect(errorSpy).toHaveBeenCalledWith(formatError('Not a valid branch name: -x'));
 		});
 
 		it.each([
@@ -303,7 +311,7 @@ describe('models run command', () => {
 			mockSend({ success: true, result: { status: 'off' } });
 			await expect(modelsRun('dictation', { audio: '/abs/note.wav' })).rejects.toThrow('__exit__');
 			expect(errorSpy.mock.calls[0][0]).toMatch(/Dictation is off/);
-			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.Refused);
 		});
 
 		it('reports a file the app could not read', async () => {

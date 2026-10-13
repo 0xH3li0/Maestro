@@ -2,7 +2,7 @@
 // Removes the key from the store so the default takes effect
 
 import { readSettingValue, deleteSettingValue } from '../services/storage';
-import { formatSuccess, formatError } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
 import {
 	SETTINGS_METADATA,
@@ -10,6 +10,7 @@ import {
 	getSettingDefaultAtPath,
 	nestedSettingPathProblem,
 } from '../../shared/settingsMetadata';
+import { failCommand } from '../services/session-command';
 
 interface SettingsResetOptions {
 	json?: boolean;
@@ -56,11 +57,6 @@ export function settingsReset(key: string, options: SettingsResetOptions): void 
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to reset "${key}": ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to reset "${key}": ${message}`, options.json);
 	}
 }
