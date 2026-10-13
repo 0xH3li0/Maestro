@@ -52,6 +52,7 @@ import { cueList } from './commands/cue-list';
 import { cueEnable, cueDisable, cueActivity } from './commands/cue-control';
 import { marketplaceList, marketplaceShow, marketplaceImport } from './commands/marketplace';
 import { cueSchedule } from './commands/cue-schedule';
+import { cueModel } from './commands/cue-model';
 import {
 	cuePipelineAdd,
 	cuePipelineExport,
@@ -219,6 +220,7 @@ import {
 import { mcpServe } from './commands/mcp';
 import { logger } from '../main/utils/logger';
 
+import { registerLiteCommands } from './commands/lite';
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
 // throwing a ReferenceError; in those paths the constant is never substituted.
@@ -242,6 +244,8 @@ program.name('maestro-cli').description('Command-line interface for Maestro').ve
 program
 	.option('-q, --quiet', 'Suppress incidental success output (errors still print)')
 	.option('--verbose', 'Print extra detail where available');
+
+registerLiteCommands(program);
 
 program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();
@@ -504,7 +508,11 @@ program
 	)
 	.option(
 		'--new-tab',
-		'Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+	)
+	.option(
+		'--visible',
+		'With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)'
 	)
 	.option(
 		'--background',
@@ -1094,6 +1102,22 @@ cue
 	.description('List all Cue subscriptions across agents')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueList);
+
+// Read or change the model one subscription runs on. No setting flag = read.
+// Works with the desktop app closed; the engine's YAML watcher picks it up.
+cue
+	.command('model <subscription-name>')
+	.description(
+		'Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)'
+	)
+	.option('-a, --agent <id-or-name>', 'Scope to one agent (required when the name exists on two)')
+	.option('--tier <level>', 'Model tier: low, medium, high (mapped per provider)')
+	.option('--model <id>', 'Exact model id (instead of --tier)')
+	.option('--effort <level>', 'Effort: low, medium, high (mapped per provider)')
+	.option('--clear-model', "Remove the tier / model and use the agent's own model")
+	.option('--clear-effort', "Remove the effort and use the agent's own effort")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueModel);
 
 cue
 	.command('enable <subscription>')

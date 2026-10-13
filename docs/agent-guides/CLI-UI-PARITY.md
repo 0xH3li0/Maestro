@@ -284,6 +284,8 @@ changed with this: no row in Covered or Open gaps moved.
 | Consult another agent (`@mention`)                                                                                                                                          | `ask <agent> "<question>" --from <caller>`                                                                                                                                                                                                               |
 | Steer a queued message into the running turn                                                                                                                                | `queue steer <item-id> --agent <id>` (find the id with `queue list`)                                                                                                                                                                                     |
 | Steer Running Turn chord / palette entry (send the draft as a steer, or steer the newest)                                                                                   | `dispatch --queue` to queue the text, then `queue steer <item-id> --agent <id>`                                                                                                                                                                          |
+| Send button menu: Queue, Force Send, Steer rows                                                                                                                             | `dispatch --queue`, `dispatch --force`, then `queue steer <item-id> --agent <id>` (Queue Held: see Open gaps)                                                                                                                                            |
+| Send Button Menu setting (and the menu's own "Show this menu on click" toggle)                                                                                              | `settings set sendButtonMenu true\|false`, `settings get sendButtonMenu`                                                                                                                                                                                 |
 | Open a file / URL / terminal tab                                                                                                                                            | `open-file`, `open-browser`, `open-terminal`                                                                                                                                                                                                             |
 | Open a modal or dashboard                                                                                                                                                   | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                                                                                                                                                                        |
 | Auto Run: start, stop, resume, skip, abort                                                                                                                                  | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                                                                                                                                                                      |
@@ -294,7 +296,7 @@ changed with this: no row in Covered or Open gaps moved.
 | Cue subscriptions and scheduled tasks                                                                                                                                       | `cue trigger`, `cue schedule`, `cue pipeline`                                                                                                                                                                                                            |
 | Schedule an Auto Run to start at a set time                                                                                                                                 | `cue schedule --auto-run <documents...>` (read back with `cue schedule --list`)                                                                                                                                                                          |
 | Schedule an Auto Run into a worktree                                                                                                                                        | `cue schedule --auto-run ... --worktree-branch / --worktree-agent / --worktree-path`                                                                                                                                                                     |
-| Pipeline Graph agent node: Model / Effort                                                                                                                                   | cue.yaml `tier`/`model`/`effort`, `cue schedule --tier --model --effort`; read: `cue list`                                                                                                                                                               |
+| Cue Model / Effort (graph node, Scheduled Tasks)                                                                                                                            | `cue model`, `cue schedule --tier --model --effort`; read: `cue model`, `cue list`                                                                                                                                                                       |
 | Snooze a tab, list / wake / dismiss what is parked                                                                                                                          | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history`                                                                                                                                                         |
 | Send Feedback modal (open / file / +1)                                                                                                                                      | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                                                                                                                                                                              |
 | Feedback: screenshots, support package box                                                                                                                                  | `feedback submit --attach <png...> --support-package`                                                                                                                                                                                                    |
@@ -329,6 +331,69 @@ changed with this: no row in Covered or Open gaps moved.
 | Cue modal, Bundles tab: choose a bundle (contents and validation)                                                                                                           | `bundle inspect <zip> [--json]`, `bundle validate <zip> [--check-env] [--json]`                                                                                                                                                                          |
 | Cue modal, Bundles tab: import (dry run, conflicts, Overwrite)                                                                                                              | `bundle import <zip> -w <key=path> [--dry-run] [--force] [--reject-shell-commands] [--json]`                                                                                                                                                             |
 | Open the Bundles tab                                                                                                                                                        | `open cue --tab bundles`                                                                                                                                                                                                                                 |
+
+### Isolated Lite connection controls
+
+| Point-and-click action                                | CLI                                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Lite: list / edit / save / delete connection profiles | `lite profile list`, `lite profile read <id>`, `lite profile save --file <json>`, `lite profile remove <id> --yes` |
+| Lite: forget validated host identity                  | `lite profile reset-identity <id> --yes`                                                                           |
+| Lite: connect / reconnect / disconnect / status       | `lite connect <id>`, `lite reconnect`, `lite disconnect`, `lite status`                                            |
+| Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
+
+`maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
+server. It calls the same native dispatcher used by Lite's trusted connection UI
+and menu. Profile persistence, URL/SSH validation, TLS, host authentication,
+validated identity, and tunnel ownership remain native; the CLI implements none
+of those policies. The endpoint imports no full-mode process manager, stores,
+agent detector, or web server.
+
+Discovery lives in `lite-control.json` inside Lite's isolated user-data directory.
+The transport is a per-boot authenticated Windows named pipe or Unix socket,
+not a network listener: remote host web content cannot access it. The shared
+platform path resolver uses the application's normal `maestro` data path plus
+`Lite`, or `$MAESTRO_USER_DATA/Lite` when a base-path override is supplied. Dev
+and packaged Lite use the same default policy. To select an isolated instance
+explicitly, launch `Maestro --lite --lite-user-data <directory>` and run
+`maestro-cli lite --user-data <directory> ...`. These flags name the **final**
+Lite directory, without appending another `Lite`. Relative CLI paths and `~`
+use the existing CLI path resolver.
+
+Startup checks ownership by probing the discovered OS-local endpoint, not by
+trusting a PID that may have been reused. Missing/refused endpoints permit stale
+discovery recovery; accepting endpoints retain ownership regardless of recorded
+PID. Only Lite's generated local named-pipe/temporary Unix socket shapes are
+eligible for a probe; incomplete or nonlocal discovery is replaced without
+connecting to it. Permission errors and inconclusive probe timeouts fail closed.
+Native Lite also holds its isolated user-data single-instance lock during startup.
+
+All commands return readable JSON, including current native state after writes;
+`profile read` and `profile save` also return the individual `profile`. State
+includes connection `status`, optional `error`/`selected`, `picker`,
+`commandsVisible`, `profiles`, and SSH config `aliases`. Profiles expose connection URLs (including Remote
+Control path tokens) to the authorized local caller; never publish this output
+or the local discovery secret. Save takes a complete JSON file with the same
+fields as read: `id`, `name`, `transport` (`ssh` or `https`), `url`, and `ssh`
+for SSH. A minimal direct profile is:
+
+```json
+{
+	"id": "my-host",
+	"name": "My host",
+	"transport": "https",
+	"url": "https://host.example/remote-control-token"
+}
+```
+
+Deletion, validated-identity reset, and close require `--yes`, never native
+dialogs. Dismiss returns to the remote view, or stays on setup when disconnected;
+it never closes Lite. Save and connect uses `lite profile save` followed by
+`lite connect <id>` only after a successful save. A connection's asynchronous progress is readable through `lite
+status`; connection success never bypasses host-side login or identity checks.
+Closing/disconnecting Lite never stops host workloads. Errors return
+`success: false` with a nonzero exit status. A missing acknowledgement reports
+uncertainty and never retries a potentially mutating command; read status before
+acting again.
 
 ## Open gaps
 
@@ -397,6 +462,13 @@ a design constraint; they are simply not built yet.
     is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
     Cue modal panel could render its gaps directly; it is CLI first because it
     exists for unattended servers, where nobody opens the desktop.
+15. **Queue Held** (the Send button menu's row, and the queued card's
+    Hold / Resume). There is no `dispatch --queue --held` and no
+    `queue hold|resume <item-id>`, so the CLI cannot park a message or release
+    one. Both map onto `QueuedItem.paused`: the composer path is
+    `processInput(undefined, { hold: true })` and the card toggles the flag in
+    place. Closing it means a WS message that sets `paused` on create and on an
+    existing item, then the two verbs, with `queue list` already reading it back.
 
 ### Audit backlog (2026-09-27)
 

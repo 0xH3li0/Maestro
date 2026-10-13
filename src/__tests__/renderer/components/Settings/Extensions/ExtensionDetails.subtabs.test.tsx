@@ -12,8 +12,8 @@
  *
  * These tests defend:
  * - which sub-tab opens first (enabled + configurable → Settings, else Help),
- * - that the Enable switch and the Help button sit in the header row on
- *   every tile, and that flipping the switch never moves the user's tab,
+ * - that the Enable switch sits in the header row on every tile, and that
+ *   flipping the switch never moves the user's tab,
  * - that capability/service disclosure is gated behind the Permissions tab,
  * - the disabled first-party hint, Pianola's moved Open-Pianola entry (which
  *   dismisses Settings so its modal is not hidden behind it), and the
@@ -232,7 +232,7 @@ describe('ExtensionDetails sub-tabs - non-configurable tile', () => {
 	});
 });
 
-describe('ExtensionDetails header - Enable switch and Help button', () => {
+describe('ExtensionDetails header - Enable switch', () => {
 	it('puts the switch in the header and reports its state as a switch', () => {
 		const onToggleBuiltin = vi.fn();
 		renderDetails({ ext: builtinTile('directorNotes', false), onToggleBuiltin });
@@ -249,16 +249,17 @@ describe('ExtensionDetails header - Enable switch and Help button', () => {
 		expect(onToggleBuiltin).toHaveBeenCalledExactlyOnceWith('directorNotes');
 	});
 
-	it('Help button selects the Help tab from any other tab', () => {
+	it('the Help tab selects the guide from any other tab, with no separate header button', () => {
 		renderDetails({ ext: builtinTile('usageStats', true), settingsBody: SETTINGS_BODY });
 		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
 			'aria-selected',
 			'true'
 		);
+		// The tab strip is the only way to the guide; a header "?" duplicated it.
+		expect(screen.queryByTestId('extension-help-button')).not.toBeInTheDocument();
 
-		fireEvent.click(screen.getByTestId('extension-help-button'));
+		fireEvent.click(screen.getByTestId('extension-subtab-help'));
 		expect(screen.getByTestId('extension-subtab-help')).toHaveAttribute('aria-selected', 'true');
-		expect(screen.getByTestId('extension-help-button')).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByTestId('extension-usage-guide')).toBeInTheDocument();
 	});
 
@@ -289,7 +290,7 @@ describe('ExtensionDetails header - Enable switch and Help button', () => {
 
 	it('says so on the Help tab for a plugin that ships no guide', () => {
 		renderDetails({ ext: pluginTile('plugin-a') });
-		fireEvent.click(screen.getByTestId('extension-help-button'));
+		fireEvent.click(screen.getByTestId('extension-subtab-help'));
 		expect(screen.getByTestId('extension-help-missing')).toBeInTheDocument();
 	});
 });

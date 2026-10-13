@@ -8,7 +8,7 @@
 // what `claude -p` sums: one entry per API call.
 
 import { calculateModelCost } from '../shared/modelPricing';
-import { withContextWindow, type ModelUsageEntry } from './cost-state';
+import { withContextWindow, type ClaudeModelCost } from '../shared/claudeCostTracker';
 
 export interface AggregateUsage {
 	input_tokens: number;
@@ -75,8 +75,8 @@ export class TurnUsage {
 	 * wrote no cost-state row (it was killed rather than quit): it covers this
 	 * turn's main thread only, where claude's own tracker covers the session.
 	 */
-	estimatedModelUsage(): Record<string, ModelUsageEntry> {
-		const byModel: Record<string, ModelUsageEntry> = {};
+	estimatedModelUsage(): Record<string, ClaudeModelCost> {
+		const byModel: Record<string, ClaudeModelCost> = {};
 		for (const { model, usage } of this.messages.values()) {
 			if (!model) continue;
 			const entry = (byModel[model] ??= {

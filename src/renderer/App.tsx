@@ -1502,6 +1502,10 @@ function MaestroConsoleInner() {
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
+		customAICommandsRef,
+		speckitCommandsRef,
+		openspecCommandsRef,
+		bmadCommandsRef,
 	});
 
 	// Web broadcasting hook - handles external history change notifications
@@ -1928,6 +1932,7 @@ function MaestroConsoleInner() {
 		handleReplayMessage,
 		handlePaste,
 		handleDrop,
+		handleUploadFiles,
 		tabCompletionSuggestions,
 		atMentionItems,
 		atMentionCounts,
@@ -2972,6 +2977,7 @@ function MaestroConsoleInner() {
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
+		handleUploadFiles,
 		getContextColor: boundGetContextColor,
 		setActiveSessionId,
 		handleStopBatchRun,

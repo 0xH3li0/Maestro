@@ -64,6 +64,8 @@ export interface CueRunSessionRecord {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/** Prefixed to every Cue prompt run, since each one starts a new provider session. */
+	newSessionMessage?: string;
 }
 
 /** A notify run's executor config minus the delivery target, which only the runner knows. */
@@ -169,6 +171,7 @@ export async function executeCueRunAction(
 		cwd: projectRoot,
 		projectRoot,
 		autoRunFolderPath: storedSession.autoRunFolderPath,
+		newSessionMessage: storedSession.newSessionMessage,
 	};
 
 	// `action: autorun` launches an Auto Run in the owning agent. Handled

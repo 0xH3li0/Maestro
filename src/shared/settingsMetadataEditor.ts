@@ -41,6 +41,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	sendButtonMenu: {
+		description:
+			'When true (default), clicking Send while the agent is working opens a menu to Queue, Force Send, Queue Held, or Steer. When false, a click always sends at once, the same as Enter.',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	crossAgentMentionsWritable: {
 		description:
 			'When true, an @-mention is a delegation: the mentioned agent may modify files. When false (default), it is a consult and runs read-only.',

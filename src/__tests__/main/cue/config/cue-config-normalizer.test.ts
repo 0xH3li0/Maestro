@@ -36,6 +36,58 @@ afterEach(() => {
 	}
 });
 
+describe('normalizer - structured CLI send tab placement', () => {
+	it.each([true, false, undefined])('preserves new_tab: %s through YAML loading', (newTab) => {
+		const cli = {
+			command: 'send',
+			target: 'agent-xyz',
+			message: '/triage',
+			...(newTab !== undefined ? { new_tab: newTab } : {}),
+		};
+		const doc = parseCueConfigDocument(
+			yaml.dump({
+				subscriptions: [
+					{
+						name: 'triage',
+						event: 'app.startup',
+						action: 'command',
+						command: { mode: 'cli', cli },
+					},
+				],
+			}),
+			projectRoot
+		);
+
+		const { config } = materializeCueConfig(doc!);
+		expect(config.subscriptions[0].command).toEqual({ mode: 'cli', cli });
+		if (newTab === undefined) {
+			expect(config.subscriptions[0].command).not.toHaveProperty('cli.new_tab');
+		}
+	});
+
+	it.each(['true', 1, null])('drops malformed new_tab: %s', (newTab) => {
+		const doc = parseCueConfigDocument(
+			yaml.dump({
+				subscriptions: [
+					{
+						name: 'triage',
+						event: 'app.startup',
+						action: 'command',
+						command: {
+							mode: 'cli',
+							cli: { command: 'send', target: 'agent-xyz', new_tab: newTab },
+						},
+					},
+				],
+			}),
+			projectRoot
+		);
+
+		const { config } = materializeCueConfig(doc!);
+		expect(config.subscriptions[0].command).not.toHaveProperty('cli.new_tab');
+	});
+});
+
 describe('normalizer - time.once field passthrough', () => {
 	it('passes through fire_at as a string', () => {
 		const raw = yaml.dump({

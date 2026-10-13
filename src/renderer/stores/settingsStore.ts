@@ -17,6 +17,7 @@
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
+import { isWebDesktop } from '../utils/runtimeContext';
 import type {
 	CustomAICommand,
 	AchievementTimeSource,
@@ -375,6 +376,8 @@ export interface SettingsStoreState
 	forcedParallelAcknowledged: boolean;
 	/** When forced parallel is on, treat EVERY send as a force-send (no modifier needed). */
 	forcedParallelAlways: boolean;
+	/** When true, clicking Send while the agent works opens the send-mode menu (Queue, Force Send, Queue Held, Steer). */
+	sendButtonMenu: boolean;
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
 	crossAgentHandoffsWritable: boolean;
@@ -514,6 +517,7 @@ export interface SettingsStoreActions
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setForcedParallelAlways: (value: boolean) => void;
+	setSendButtonMenu: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
 	setCrossAgentHandoffsWritable: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
@@ -764,6 +768,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 		forcedParallelAlways: false,
+		sendButtonMenu: true,
 		crossAgentMentionsWritable: false,
 		crossAgentHandoffsWritable: true,
 		defaultSaveToHistory: true,
@@ -952,6 +957,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setForcedParallelAlways: (value) => {
 			set({ forcedParallelAlways: value });
 			window.maestro.settings.set('forcedParallelAlways', value);
+		},
+
+		setSendButtonMenu: (value) => {
+			set({ sendButtonMenu: value });
+			window.maestro.settings.set('sendButtonMenu', value);
 		},
 
 		setCrossAgentMentionsWritable: (value) => {
@@ -2004,7 +2014,10 @@ export async function loadAllSettings(): Promise<void> {
 
 		// Logger settings need separate calls (different IPC channel)
 		const savedLogLevel = await window.maestro.logger.getLogLevel();
-		const savedMaxLogBuffer = await window.maestro.logger.getMaxLogBuffer();
+		// The native logger buffer is not exposed through the remote IPC bridge.
+		const savedMaxLogBuffer = isWebDesktop()
+			? undefined
+			: await window.maestro.logger.getMaxLogBuffer();
 
 		// Build a single patch to apply to the store
 		const patch: Partial<SettingsStoreState> = {};
@@ -2084,6 +2097,8 @@ export async function loadAllSettings(): Promise<void> {
 			patch.forcedParallelAcknowledged = allSettings['forcedParallelAcknowledged'] as boolean;
 		if (allSettings['forcedParallelAlways'] !== undefined)
 			patch.forcedParallelAlways = allSettings['forcedParallelAlways'] as boolean;
+		if (allSettings['sendButtonMenu'] !== undefined)
+			patch.sendButtonMenu = allSettings['sendButtonMenu'] as boolean;
 
 		if (allSettings['crossAgentMentionsWritable'] !== undefined)
 			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
@@ -2961,6 +2976,7 @@ export function getSettingsActions() {
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
+		setShowLeftPanelCollapsedInitials: state.setShowLeftPanelCollapsedInitials,
 		showStarredSessionsSection: state.showStarredSessionsSection,
 		setShowStarredSessionsSection: state.setShowStarredSessionsSection,
 		setLeftPanelCollapsedPillsPerRow: state.setLeftPanelCollapsedPillsPerRow,

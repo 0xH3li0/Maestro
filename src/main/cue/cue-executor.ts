@@ -13,6 +13,7 @@ import { getWakaTimeManager } from '../wakatime-instance';
 import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cue-types';
 import type { SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
+import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
@@ -198,8 +199,14 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		);
 	}
 
+	// Every Cue run spawns a fresh provider session (no `--resume`), so prefix
+	// the agent's New Session Message onto each one, as Auto Run does per task.
+	// Applied after the empty check above: that warning is about the
+	// subscription's own prompt, which a standing prefix must not mask.
+	const finalPrompt = prependNewSessionMessage(substitutedPrompt, session.newSessionMessage);
+
 	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
-	const buildResult = await buildSpawnSpec(config, substitutedPrompt);
+	const buildResult = await buildSpawnSpec(config, finalPrompt);
 	// Stopped while the spec was being built (SSH resolution, spawn-mode probe).
 	if (isLaunchCancelled(config.signal)) {
 		return stoppedBeforeLaunchResult({

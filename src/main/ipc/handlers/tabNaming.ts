@@ -29,7 +29,8 @@ import {
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-import type { ToolType } from '../../../shared/types';
+import type { AgentError, ToolType } from '../../../shared/types';
+import { parseEffortRejection, type EffortRejection } from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -125,7 +126,10 @@ export interface TabNamingConfig {
 export async function generateTabName(
 	deps: TabNamingHandlerDependencies,
 	config: TabNamingConfig,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	// Internal: set by this function's own retry (see the effort-rejection
+	// branch in onExit) so the second attempt leaves the effort to the agent.
+	skipCheapEffort = false
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
@@ -199,7 +203,12 @@ export async function generateTabName(
 		// isn't mapped, and applyAgentConfigOverrides then falls through to
 		// the agent's own configured value - so an unmapped provider keeps
 		// exactly the behaviour it had before.
-		const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
+		const cheapSettings = cheapTurnSettings(config.agentType as ToolType);
+		// The cheap effort is a value MAESTRO picked off a static ladder, and
+		// a provider can retire a rung without notice. When it has refused
+		// this one, the retry below runs again with the effort left to the
+		// agent - a tab named at the wrong effort beats a tab with no name.
+		const cheapNaming = skipCheapEffort ? { ...cheapSettings, effort: undefined } : cheapSettings;
 		const allConfigs = agentConfigsStore.get('configs', {});
 		const agentConfigValues = allConfigs[effectiveAgentType] || {};
 		const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
@@ -410,24 +419,26 @@ export async function generateTabName(
 			});
 		}
 
-		// A TUI (maestro-p) naming spawn emits a plain terminal transcript,
-		// not stream-json, so the raw-output fallback in extraction would
-		// scrape live thinking/response prose onto the tab. Require
-		// structured output on that path. Covers both the local wrap above
-		// and the remote maestro-p case, which share the same decision mode.
-		const requireStructuredOutput = claudeSpawnDecision?.mode === 'interactive';
+		// No separate rule for a TUI (maestro-p) spawn: maestro-p answers in
+		// stream-json like `claude --print`, and ProcessManager parses that
+		// stream before it emits `data` - only the final `result` text arrives,
+		// and non-JSON lines are dropped for any agent with an output parser.
+		// Requiring raw JSON here (as #1110 once did) rejected every name a
+		// TUI-mode agent generated, so its tabs were never auto-named.
 
 		// Create a promise that resolves when we get the tab name
 		if (signal?.aborted) return null;
 		return new Promise<string | null>((resolve) => {
 			let output = '';
 			let resolved = false;
+			let effortRejection: EffortRejection | null = null;
 
 			const cleanup = () => {
 				clearTimeout(timeoutId);
 				clearInterval(earlyExtractIntervalId);
 				processManager.off('data', onData);
 				processManager.off('exit', onExit);
+				processManager.off('agent-error', onAgentError);
 				signal?.removeEventListener('abort', onAbort);
 			};
 
@@ -464,11 +475,7 @@ export async function generateTabName(
 			// without waiting for the full process to exit.
 			const earlyExtractIntervalId = setInterval(() => {
 				if (resolved || !output.trim()) return;
-				const earlyResult = extractTabNameFromOutput(
-					effectiveAgentType,
-					output,
-					requireStructuredOutput
-				);
+				const earlyResult = extractTabNameFromOutput(effectiveAgentType, output);
 				if (earlyResult.name) {
 					resolveWith(earlyResult.name, 'resolved early from partial output');
 				}
@@ -480,6 +487,14 @@ export async function generateTabName(
 				output += data;
 			};
 
+			// A provider's refusal of the effort arrives as an agent error, not
+			// as output: the turn never ran, so `output` stays empty and the
+			// exit below would otherwise read as an anonymous failure.
+			const onAgentError = (errorSessionId: string, agentError: AgentError) => {
+				if (errorSessionId !== sessionId) return;
+				effortRejection = parseEffortRejection(agentError?.message) ?? effortRejection;
+			};
+
 			// Listen for process exit
 			const onExit = (exitSessionId: string, code?: number) => {
 				if (exitSessionId !== sessionId) return;
@@ -488,6 +503,24 @@ export async function generateTabName(
 					// Already resolved by early extraction, just clean up listeners
 					processManager.off('data', onData);
 					processManager.off('exit', onExit);
+					processManager.off('agent-error', onAgentError);
+					return;
+				}
+
+				// The provider refused the effort Maestro chose for this turn.
+				// Run it once more at the agent's own effort instead of leaving
+				// the tab unnamed. Only when THIS attempt sent the cheap effort,
+				// so a refusal of the agent's own configured value cannot loop.
+				const rejection = effortRejection ?? parseEffortRejection(output);
+				if (rejection && cheapNaming.effort !== undefined) {
+					resolved = true;
+					cleanup();
+					logger.warn(
+						'Tab naming effort rejected by the provider; retrying at the agent default',
+						LOG_CONTEXT,
+						{ sessionId, effort: cheapNaming.effort, ...rejection }
+					);
+					resolve(generateTabName(deps, config, signal, true));
 					return;
 				}
 
@@ -508,11 +541,7 @@ export async function generateTabName(
 					return;
 				}
 
-				const extraction = extractTabNameFromOutput(
-					effectiveAgentType,
-					output,
-					requireStructuredOutput
-				);
+				const extraction = extractTabNameFromOutput(effectiveAgentType, output);
 				if (!extraction.name) {
 					logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 						sessionId,
@@ -528,6 +557,7 @@ export async function generateTabName(
 
 			processManager.on('data', onData);
 			processManager.on('exit', onExit);
+			processManager.on('agent-error', onAgentError);
 			signal?.addEventListener('abort', onAbort, { once: true });
 			if (signal?.aborted) {
 				onAbort();
@@ -709,27 +739,9 @@ function extractAgentResponseText(agentType: string, output: string): string | n
  * Extract a tab name from raw agent process output, normalizing structured
  * (stream-json) output via the agent's parser first and falling back to
  * plain-text extraction over the raw output.
- *
- * `structuredOnly` disables that raw-output fallback. Pass it when the naming
- * spawn drives the maestro-p TUI (Claude token mode = TUI/dynamic): maestro-p
- * strips the headless-only flags, including the `--tools ""` guard, so the
- * model runs a real agentic turn and `output` is a live terminal transcript of
- * thinking and response prose rather than stream-json. Scraping that buffer
- * lifts an arbitrary sentence fragment onto the tab, which is what users see as
- * "the response is streaming into the tab name" (issue #1110). Prose has no
- * angle brackets, so STRUCTURAL_NOISE_RE can't catch it - the only safe answer
- * is to decline. Returning null costs nothing: the send-side trigger retries
- * naming on the next message, so the tab keeps its placeholder and self-heals.
  */
-function extractTabNameFromOutput(
-	agentType: string,
-	output: string,
-	structuredOnly = false
-): TabNameExtractionResult {
+function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
 	const responseText = extractAgentResponseText(agentType, output);
-	if (responseText === null && structuredOnly) {
-		return { name: null, reason: 'structured_only_no_json' };
-	}
 	return extractTabName(responseText ?? output);
 }
 

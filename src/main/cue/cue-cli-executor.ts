@@ -115,7 +115,8 @@ export async function runMaestroCliSend(
 	target: string,
 	message: string,
 	timeoutMs: number = CLI_SEND_TIMEOUT_MS,
-	runId?: string
+	runId?: string,
+	newTab = false
 ): Promise<CliSendResult> {
 	const cliScriptPath = resolveMaestroCliScriptPath();
 	const truncated = message.substring(0, CLI_SEND_OUTPUT_MAX_CHARS);
@@ -124,7 +125,12 @@ export async function runMaestroCliSend(
 	return new Promise<CliSendResult>((resolve) => {
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
+			const args = [cliScriptPath, 'dispatch', target, truncated, '--background'];
+			// Cue Agent messages promise a tab in the target's tab strip while
+			// preserving the user's view. Visibility is separate from placement;
+			// ordinary background dispatches keep their existing hidden default.
+			if (newTab) args.push('--new-tab', '--visible');
+			child = spawn(process.execPath, args, {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not
 				// Node - without this flag the spawn would launch the app instead
@@ -312,7 +318,13 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 				startedAt,
 			});
 		}
-		const result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId);
+		const result = await runMaestroCliSend(
+			resolvedTarget,
+			resolvedMessage,
+			clampedTimeout,
+			runId,
+			cli.new_tab
+		);
 		const status = result.timedOut ? 'timeout' : result.ok ? 'completed' : 'failed';
 		if (result.timedOut) {
 			onLog(

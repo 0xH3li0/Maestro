@@ -13,6 +13,7 @@ import type {
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
+import { claudeTurnCost, readClaudeTurnBaseline } from '../../shared/claudeCostTracker';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
@@ -45,6 +46,11 @@ import type { QuerySource } from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
 import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
+import {
+	describeEffortRejection,
+	noteEffortRejection,
+	parseEffortRejection,
+} from '../../shared/effortRejection';
 import {
 	applyAgentConfigOverrides,
 	buildAdditionalDirArgs,
@@ -889,6 +895,19 @@ async function spawnClaudeAgent(
 		spawnEnv = { ...spawnEnv, ...(applied.customEnvVars ?? {}) };
 	}
 
+	// Claude reports its cost and per-model usage as running SESSION totals; the
+	// session's total as this turn starts turns them into this turn's (see
+	// src/shared/claudeCostTracker.ts). A fresh session starts from nothing.
+	const costBaseline = agentSessionId
+		? readClaudeTurnBaseline({
+				resumeSessionId: agentSessionId,
+				cwd,
+				env: spawnEnv,
+				homeDir: os.homedir(),
+				remote: !!sshRemoteConfig?.enabled,
+			})
+		: null;
+
 	// Used for `detectErrorFromExit` and for in-band failures; Claude's stream
 	// is still read by `processMessage` below because its stream-json shape is
 	// richer than the AgentOutputParser event vocabulary.
@@ -911,6 +930,8 @@ async function spawnClaudeAgent(
 	const progressTools = new Map<string, { tool: string; summary?: string }>();
 	let stopped = false;
 	let stopReason: string | undefined;
+	// The model the main thread last ran on; prices a turn whose baseline is unknown.
+	let lastMainModel: string | undefined;
 
 	// Process a single parsed JSON message from Claude Code's stream-json output
 
@@ -1010,9 +1031,24 @@ async function spawnClaudeAgent(
 		// `replaceUsageStats` keeps an occupancy snapshot or resolved window an
 		// earlier message reported when a later one (a trailing usage-only
 		// message, say) carries none.
+		if (
+			msg.type === 'assistant' &&
+			!msg.parent_tool_use_id &&
+			typeof msg.message?.model === 'string' &&
+			msg.message.model !== '<synthetic>'
+		) {
+			lastMainModel = msg.message.model;
+		}
+
 		const absoluteUsage = occupancyTracker.parseJsonObject(msg)?.usage?.absoluteUsage;
 		if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-			const step = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+			// A result's modelUsage and total_cost_usd are the SESSION's running
+			// totals; reduce them to this turn's before anything records them.
+			const turn =
+				msg.type === 'result'
+					? claudeTurnCost(msg, costBaseline, lastMainModel)
+					: { modelUsage: msg.modelUsage, totalCostUsd: msg.total_cost_usd || 0 };
+			const step = aggregateModelUsage(turn.modelUsage, msg.usage || {}, turn.totalCostUsd);
 			usageStats = replaceUsageStats(usageStats, absoluteUsage ? { ...step, absoluteUsage } : step);
 		}
 	};
@@ -1579,9 +1615,40 @@ export interface SpawnAgentOptions {
 }
 
 /**
- * Spawn an agent with a prompt and return the result
+ * Spawn an agent with a prompt and return the result.
+ *
+ * When the provider refuses the effort level the turn asked for, the turn is
+ * run once more with the effort left to the agent's own configuration. The
+ * effort a CLI run sends usually came off Maestro's static ladder (a document
+ * hint, the synopsis pin), and a provider can retire a rung without notice;
+ * failing every task of a playbook on a value nobody typed is the wrong
+ * outcome. The refusal is noted, so later `resolveTurnSettings` calls in this
+ * run stop asking for the value and report why (see shared/effortRejection.ts).
  */
 export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	if (result.success || !options?.customEffort) return result;
+
+	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
+	if (!rejection) return result;
+
+	noteEffortRejection(toolType, rejection);
+	console.error(
+		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
+	);
+	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
+		...options,
+		customEffort: undefined,
+	});
+}
+
+async function spawnAgentOnce(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,

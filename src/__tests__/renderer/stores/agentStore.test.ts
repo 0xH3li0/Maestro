@@ -1281,6 +1281,101 @@ describe('agentStore', () => {
 			);
 		});
 
+		describe('New Session Message', () => {
+			function seedTab(agentSessionId: string | null) {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					newSessionMessage: 'Always check linting',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId,
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.getState().setSessions([session]);
+			}
+
+			it('prefixes a queued message that opens the tab (no provider session yet)', async () => {
+				seedTab(null);
+
+				await useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' }),
+						defaultDeps
+					);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: 'Always check linting\n\n---\n\nBuild the feature',
+					})
+				);
+			});
+
+			it('leaves a message queued behind an existing conversation alone', async () => {
+				seedTab('existing-conv-id');
+
+				await useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' }),
+						defaultDeps
+					);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({ prompt: 'Build the feature' })
+				);
+			});
+
+			it('prefixes a slash command that opens the tab, and keeps it out of the transcript', async () => {
+				seedTab(null);
+
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						type: 'command',
+						command: '/commit',
+						text: undefined,
+					}),
+					{
+						...defaultDeps,
+						customAICommands: [
+							{
+								id: 'cmd-1',
+								command: '/commit',
+								description: 'Commit changes',
+								prompt: 'Please commit all changes',
+							},
+						],
+					}
+				);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: expect.stringMatching(
+							/^Always check linting\n\n---\n\n[\s\S]*commit all changes/
+						),
+					})
+				);
+
+				const [userEntry] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+				expect(userEntry.text).not.toContain('Always check linting');
+			});
+		});
+
 		describe('tab auto-naming (issue #1531)', () => {
 			const seedUnnamedTab = () => {
 				useSessionStore.getState().setSessions([

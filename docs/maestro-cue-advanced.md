@@ -1,6 +1,6 @@
 ---
 title: Cue Advanced Patterns
-description: Fan-in/fan-out, payload filtering, agent chaining, template variables, and concurrency control.
+description: Fan-in/fan-out, payload filtering, agent chaining, command nodes, template variables, and concurrency control.
 icon: diagram-project
 ---
 
@@ -235,6 +235,37 @@ subscriptions:
       - 'frontend-agent'
     prompt: Both builds complete. Run integration tests.
 ```
+
+## Command Nodes
+
+A command node can run a shell command or send a message to a Maestro agent. In the Pipeline Graph, choose **Agent message**, select the target agent, and enter a message or a slash command. Enable **Run in a new agent tab** to create a fresh conversation for every trigger, without writing a CLI script.
+
+For example, send each new GitHub issue to the Synapse-Server agent's `/triage` command:
+
+```yaml
+subscriptions:
+  - name: triage-new-issue
+    pipeline_name: Synapse issue triage
+    event: github.issue
+    repo: chr1sw0/Synapse-Server
+    agent_id: <synapse-agent-id>
+    action: command
+    command:
+      mode: cli
+      cli:
+        command: send
+        target: <synapse-agent-id>
+        message: '/triage {{CUE_GH_NUMBER}}'
+        new_tab: true
+```
+
+The target accepts an agent ID or name. Cue substitutes event variables before delivery. Existing Maestro custom commands and project/provider prompt commands expand with their arguments, just as they do in the composer. The `/triage` command must already exist for the target agent.
+
+With `new_tab: true`, every dispatch creates a fresh visible AI tab in the target agent. The active agent and active tab stay unchanged. If the target is busy, the message enters its serial execution queue. Omitting `new_tab` or setting it to `false` sends to the agent's existing active tab. Agent messages require the Maestro desktop app to be running.
+
+An Agent message command completes when the message is delivered. A downstream step connected to this command starts after delivery; it does not wait for the target AI turn to finish or receive that turn's answer.
+
+For a shell step, use `action: command` with `command: { mode: shell, shell: 'npm run lint' }`. Shell steps capture stdout for downstream prompts through `{{CUE_SOURCE_OUTPUT}}`.
 
 ## Template Variables
 

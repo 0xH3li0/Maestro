@@ -101,6 +101,27 @@ describe('buildQueuedMessageItem', () => {
 		expect(item.crossAgentMention).toBeUndefined();
 		expect(item.crossAgentOnly).toBeUndefined();
 	});
+
+	it('queues a slash command with arguments and frozen turn settings', () => {
+		const session = seed();
+		const item = buildQueuedMessageItem({
+			session,
+			tab: session.aiTabs[1],
+			text: ' /triage\tissue 123 ',
+			slashCommand: true,
+		});
+
+		expect(item).toMatchObject({
+			type: 'command',
+			command: '/triage',
+			commandArgs: 'issue 123',
+			tabId: 'b',
+			tabName: 'Bravo',
+		});
+		expect(item.turnSettings).toBeDefined();
+		expect(item.text).toBeUndefined();
+		expect(planCrossAgentMentions).not.toHaveBeenCalled();
+	});
 });
 
 describe('enqueuePromptForTab', () => {
@@ -165,6 +186,7 @@ describe('enqueuePromptForTab with expandCommands', () => {
 			sessionId: 'session-1',
 			tabId: 'b',
 			text: ' /commit ',
+			slashCommand: false,
 			expandCommands: true,
 		});
 		expect(item).toMatchObject({
@@ -178,6 +200,35 @@ describe('enqueuePromptForTab with expandCommands', () => {
 		expect(currentQueue()).toEqual([item]);
 	});
 
+	it.each([
+		{ text: ' /commit\tissue 123 ', commandArgs: 'issue 123' },
+		{ text: '/commit', commandArgs: '' },
+	])(
+		'preserves explicit Cue command arguments for "$text" with both options enabled',
+		({ text, commandArgs }) => {
+			seed();
+			const item = enqueuePromptForTab({
+				sessionId: 'session-1',
+				tabId: 'b',
+				text,
+				slashCommand: true,
+				expandCommands: true,
+			});
+
+			expect(item).toMatchObject({
+				type: 'command',
+				command: '/commit',
+				commandArgs,
+				tabId: 'b',
+				tabName: 'Bravo',
+			});
+			expect(item?.turnSettings).toBeDefined();
+			expect(item?.text).toBeUndefined();
+			expect(currentQueue()).toEqual([item]);
+			expect(planCrossAgentMentions).not.toHaveBeenCalled();
+		}
+	);
+
 	it('leaves the same text a literal message for a caller that did not ask', () => {
 		seed();
 		expect(
@@ -187,7 +238,7 @@ describe('enqueuePromptForTab with expandCommands', () => {
 
 	it('leaves an unknown command, and a command inside a sentence, as messages', () => {
 		seed();
-		for (const text of ['/nope', 'please run /commit now']) {
+		for (const text of ['/nope', 'please run /commit now', '/commit issue 123']) {
 			expect(
 				enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text, expandCommands: true })
 			).toMatchObject({ type: 'message', text });

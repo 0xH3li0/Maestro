@@ -503,6 +503,21 @@ Force Send and Steer are a pair. A queued card offers one or the other, never bo
 | Needs               | Forced Parallel Execution: always for the chord, and for the button only to run beside another busy tab | Claude Code on the interactive token source, or Codex on app-server transport |
 | Mark on the message | Hammer                                                                                                  | Arrow                                                                         |
 
+### Send button menu
+
+While the agent is working, clicking **Send** opens a small menu instead of sending, so you can pick how the message goes:
+
+| Row        | What it does                                                      | Keyboard                               |
+| ---------- | ----------------------------------------------------------------- | -------------------------------------- |
+| Queue      | Queues the message behind the running turn, the same as Enter     | `Enter`                                |
+| Force Send | Sends now, beside a working tab (needs Forced Parallel Execution) | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` |
+| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
+| Steer      | Hands the message to the turn in progress (see [Steer](#steer))   | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`     |
+
+A row that cannot run right now is dimmed and says why in one line. Force Send while Forced Parallel Execution is off jumps to that setting when you click it. The `?` next to Steer explains how to get steering on this agent: switch a Claude Code agent to the TUI token source, or a Codex agent to the app-server transport. For any other provider, it links a pre-filled feature request.
+
+When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
+
 ### Execution Queue view
 
 Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
@@ -750,8 +765,8 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 **Advanced configuration options:**
 
-- **New Session Message** - A hidden message prefixed to the first message whenever a new session (tab) is created. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat.
-- **Nudge Message** - A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages - they are not included in Auto Run tasks.
+- **New Session Message** - A hidden message prefixed to the first message of every new provider session. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat. See [When Each Message Is Sent](#when-each-message-is-sent).
+- **Nudge Message** - A hidden message appended to every message you type to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. It is not added to automation. See [When Each Message Is Sent](#when-each-message-is-sent).
 - **Custom Path** - Override the default executable path
 - **Custom Arguments** - Additional command-line arguments
 - **Environment Variables** - Custom environment variables for the agent process
@@ -759,6 +774,26 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
   Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+
+#### When Each Message Is Sent
+
+The two messages follow different rules. The New Session Message goes with the first turn of a new provider session, no matter how that turn starts. The Nudge Message goes only with a message you type and send straight to the agent.
+
+| How the turn starts                            | New Session Message            | Nudge Message |
+| ---------------------------------------------- | ------------------------------ | ------------- |
+| Message typed to an idle agent                 | First turn of a new tab        | Every message |
+| Message typed while the agent is busy (queued) | First turn of a new tab        | No            |
+| Slash command                                  | First turn of a new tab        | No            |
+| `maestro-cli dispatch`, a snooze wake prompt   | First turn of a new tab        | No            |
+| `maestro-cli send`                             | Every send without `--session` | No            |
+| Auto Run, document tasks (desktop and CLI)     | Every task                     | No            |
+| Auto Run, goal-driven (desktop and CLI)        | Every iteration                | No            |
+| Cue pipeline                                   | Every run                      | No            |
+| Group Chat and `@mention` consults             | No                             | No            |
+
+Auto Run and Cue start a new provider session for each task, iteration, or run, so each one gets the New Session Message. A message that joins a conversation already in progress does not repeat it: the first turn of that conversation already carried it.
+
+If automation needs an instruction on every turn, put it in the New Session Message, in the Auto Run document, or in the Cue prompt. The Nudge Message will not reach it.
 
 ### Editing Agents
 
@@ -847,9 +882,12 @@ Drag the right edge of the sidebar to resize it. The width is persisted across s
 
 Click the sidebar toggle (`Opt+Cmd+Left` / `Alt+Ctrl+Left`) to collapse the sidebar to icon-only mode. In collapsed mode:
 
-- Agents show as icons with status indicators
-- Hover for agent name tooltip
+- Each agent shows as a two-letter badge tinted with its status color (`MR` for "Maestro RC", `Ma` for "Maestro"). Letters are picked across all your agents so no two share a label where the names allow
+- The active agent gets a ring and a stronger fill; a red corner dot marks unread messages
+- Hover for the full agent tooltip
 - Click to select an agent
+
+Prefer the plain status dots? Turn off **Settings → Display → Left Side Panel → Show agent initials when collapsed**.
 
 ## Tab Management
 

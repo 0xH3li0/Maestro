@@ -229,6 +229,8 @@ export interface CueCommandCliCall {
 	target: string;
 	/** Message body. Defaults to `{{CUE_SOURCE_OUTPUT}}` when omitted. */
 	message?: string;
+	/** Send into a fresh AI tab. Absent preserves the CLI's default tab behavior. */
+	new_tab?: boolean;
 }
 
 /**
