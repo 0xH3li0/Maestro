@@ -170,6 +170,157 @@ Exit codes recorded: run 1 `0` (drained), runs 2 and 3 `137` (kill -9), run 4
 Throwaway files (the Dockerfile, the stub, the seed and HTTP scripts) lived in
 a scratch directory and are not committed.
 
+## Upgrade and live checks on `528253b1d`, 2026-10-13
+
+`feat/cue-server` merged `origin/rc` at `6f6af5667` in `640c30b22`, then
+`db0bf32a6` (tests), `6f1ce671a` (`cue model --data-dir`) and `528253b1d`
+(docs). The VM was upgraded from the `c64ccb428` build to a clean build of
+`528253b1d` and checked through the running service, the same way as
+[yesterday](#upgrade-check-on-c64ccb428). This is the short set, not the
+stability run or the trigger matrix. Times are the VM's, UTC. Raw notes are
+outside the repository.
+
+| Check                                       | Result                                                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Installed build                             | Pass: `/opt/maestro/maestro-cli.js` sha256 equals the clean build's                                         |
+| Service after the upgrade                   | Pass: active, enabled, `NRestarts` 0, `LimitCORE=0`, drop-in kept; `/healthz` and `/readyz` 200, `gaps: []` |
+| Restart and drain (three restarts)          | Pass: each drained 0 runs in 0.0 s, `Result=success`, `Ready ... no gaps`                                   |
+| `cue engine check` (the `systemd-run` form) | Pass: exit 0, no gaps, after the upgrade and after the cleanup                                              |
+| Pipeline run, Claude Code to OpenCode       | Pass: `hourly` 4.3 s, `after-claude` 7.0 s, `join`, all `completed`                                         |
+| `maestro-cli send`, each provider           | Pass: exit 0, `success: true`, both                                                                         |
+| `cue model --data-dir` (new)                | Pass: read, set, picked up by the engine's watcher, used by the next run                                    |
+| New Session Message on Cue runs (new)       | Pass: prefixed on two Cue runs and one `send`, not on a run before it was set                               |
+| Per-turn Claude cost (new)                  | Not shown: each Cue run starts a fresh session, so the recorded cost is the first turn's either way         |
+| Engine warn or error lines, 18:14 to 18:19  | 0                                                                                                           |
+
+### Egress before the upgrade
+
+The host booted at 12:02:57 and the VM at 12:03. At 18:05 the VM had no IPv4
+egress again (`curl -4 https://registry.npmjs.org/` `000` after 10 s, DNS
+resolving), so the two `DOCKER-USER` ACCEPT rules for the incus bridge were
+re-added by hand (they need sudo), as on 2026-10-12. At 18:11:43 the registry
+answered 200 in 0.52 s. `install.sh` was run only after that check.
+
+`cue.db` since the boot: the 12:03:23 `hourly` failed at 12:32:34
+(`ECONNREFUSED`); the `hourly` chains from 13:03 to 17:03 completed, so the VM
+had egress for most of the day and lost it again after 17:03. The cause of
+that second loss was not identified (the rule set cannot be read without
+sudo). The 18:03:23 `hourly` was still retrying at 18:11 and completed at
+18:12:18 once egress was back; the install waited for its chain to finish
+(18:12:34) so the restart would not cut a run short. None of these rows is
+part of the checks below.
+
+### Upgrade
+
+- Tarball built from a clean `git archive 528253b1d` outside the repository
+  (`npm ci --ignore-scripts`, `npm run build:server`, both exit 0):
+  `maestro-server-1.1.0-RC.tgz`, 1772617 bytes, better-sqlite3 12.11.1,
+  sha256 `8ed7401b72502c89cfa0f7b17bb68690b5985a1022911d84d244a1c6c2658232`
+  (the same on the VM after copying).
+- `install.sh` with the same `--agent-cli` options: exit 0 in 33 s (18:14:48
+  to 18:15:21), `ok maestro-cue restarted on the new version`. SIGTERM at
+  18:15:20.727, drain 0 runs in 0.0 s, and at 18:15:21.311 `Ready: 3 agent(s),
+3 workspace(s), 10 subscription(s) checked, no gaps.`
+- Version: `maestro-cli --version` still prints `1.1.0-RC`, so the build is
+  confirmed by hash. Before: `/opt/maestro/maestro-cli.js` sha256
+  `63c4fdeca154...` (the `c64ccb428` build). After: sha256
+  `dc95476edbcda9389c21ac034b0a9eedb6901b473eb693a689ccc3ba642a99e7`, equal to
+  the built `dist/server/maestro-server/maestro-cli.js`.
+- MainPID 3723, `NRestarts` 0, `Result=success`, `LimitCORE=0` in the unit and
+  in the engine's own limits, the `LoadCredential=` drop-in kept, enabled and
+  active. `/healthz` 200; `/readyz` 200 with
+  `{"ready":true,"phase":"running","reasons":[],"gaps":[]}`. `cue engine
+check` (the `systemd-run` form, with the unit's credentials) exit 0, no
+  gaps.
+- Agent CLIs unchanged: Claude Code 2.1.296, OpenCode 1.19.0. The packages
+  rc added (`@serenity-kit/opaque`, `dns-packet`) are not in the server
+  package's `package.json` or its `node_modules` on the VM, so they do not
+  add to the installer's `npm install`.
+
+### Live checks
+
+**Pipeline run on both providers: Pass.** The installer's restart fired
+`hourly` (`time.heartbeat`, initial) on the Claude Code agent, which chains
+`after-claude` on the OpenCode agent and the `join` fan-in:
+
+| Run            | Provider    | Started      | Finished     | Status      |
+| -------------- | ----------- | ------------ | ------------ | ----------- |
+| `hourly`       | Claude Code | 18:15:21.365 | 18:15:25.681 | `completed` |
+| `after-claude` | OpenCode    | 18:15:25.682 | 18:15:32.687 | `completed` |
+| `join`         | shell       | 18:15:32.690 | 18:15:32.698 | `completed` |
+
+The two later restarts (below) fired the same chain, each `completed`
+(18:17:10 to 18:17:34, 18:18:47 to 18:18:55).
+
+**`maestro-cli send`: Pass.** In the operator guide's `mrun` form (as
+`maestro`, with `/etc/maestro/maestro.env` sourced), a new turn each:
+SoakClaude exit 0 in 7.3 s, `success: true`, usage with a cost; SoakOpen
+exit 0 in 11.5 s, `response: "OK"`, `success: true`. (A first attempt passed
+`--json`, which `send` does not have; it exited 1 with `unknown option` before
+any turn. `send` prints JSON by default.)
+
+**`cue model --data-dir`: Pass.** A temporary `cli.trigger` subscription,
+`mc-claude`, in its own `ModelCheck` pipeline on the Claude Code agent (no
+tier or model set, so it inherits the agent's `haiku`). Every command as the
+`maestro` user with `--data-dir /var/lib/maestro/data`:
+
+| Time        | Command                                           | Result                                                                                                      |
+| ----------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 18:16:14    | subscription appended to `cue.yaml`               | `Config reloaded for "SoakClaude" (3 subscriptions)`, nothing fired                                         |
+|             | `cue model mc-claude --json`                      | exit 0, `tier: ""`, `resolved_model: "haiku"`                                                               |
+| 18:16:21.90 | `cue model mc-claude --tier medium --json`        | exit 0, `changed: true`, `resolved_model: "sonnet"`; the file gained `tier: medium`, still `maestro`'s, 644 |
+| 18:16:23.18 | none                                              | `Config reloaded for "SoakClaude"`: the engine's watcher picked the edit up                                 |
+|             | `cue model mc-claude --data-dir /nonexistent-dir` | exit 1, `DATA_DIR_NOT_FOUND`, the directory not created                                                     |
+| 18:16:31.65 | `cue trigger mc-claude`                           | `model: tier="medium" (subscription) -> model sonnet`; run `completed` at 18:16:37.361                      |
+
+Claude Code's session record for that run shows `claude-sonnet-5-5`. The
+packaged wrapper already exports `MAESTRO_USER_DATA=/var/lib/maestro/data`,
+so the nonexistent-directory case is also the one that shows the flag winning
+over an inherited value.
+
+**New Session Message on Cue runs: Pass.** None of the four imported agents
+has one, so a temporary one was set on the Claude Code agent: `Session marker
+NSM-528: begin your reply with the word MARKER.` The standalone engine reads
+the agent list only at start, so this was stop, edit `maestro-sessions.json`
+as `maestro`, start (backup taken first; a content comparison confirmed that
+only this field changed). The proof is the first user message in Claude Code's
+own session file:
+
+| Run                          | When     | First user message starts with              | Reply           |
+| ---------------------------- | -------- | ------------------------------------------- | --------------- |
+| `mc-claude`, before the edit | 18:16:34 | the prompt                                  | `model`         |
+| `hourly` (restart, initial)  | 18:17:11 | the marker, `\n\n---\n\n`, then the prompt  | `MARKER hourly` |
+| `mc-claude` (`cue trigger`)  | 18:17:34 | the marker, `\n\n---\n\n`, then the prompt  | `MARKER model`  |
+| `send` (new turn)            | 18:18:00 | the marker, `\n\n---\n\n`, then the message | `MARKER`        |
+
+That is the separator `prependNewSessionMessage()` writes. The message only
+appears on a new provider session; no resumed turn was checked.
+
+**Per-turn Claude cost: not shown by this check.** The run records carry
+`totalCostUsd` for Claude Code (18:15 `hourly` 0.00018, 18:16 `mc-claude`
+0.043, the `send` 0.0060) and 0 for OpenCode. Rows written before the upgrade
+carried a cost too. The rc change subtracts the session's previous running
+total on a resumed session; every Cue run here starts a fresh session, where
+the running total and the turn's cost are the same number, so these records
+cannot tell the old and new code apart.
+
+### Cleanup
+
+At 18:18:46.98 the service was stopped (drain 0 runs, 0.0 s), the store and
+the Claude agent's `cue.yaml` were written back from the backups (sha256
+identical to before: `maestro-sessions.json` `dfb38c6f...`, `cue.yaml`
+`1e4c35b1...`; the other two `cue.yaml` files were never changed:
+`fd5a1672...`, `05123b19...`), and the service started: `Ready ... 10
+subscription(s) checked, no gaps.`, `/healthz` and `/readyz` 200, `cue engine
+check` exit 0. `cue model mc-claude` then reports `NOT_FOUND`, and the agent
+has no New Session Message. The helper scripts on the VM were removed.
+
+**VM state as left:** `maestro-cue` on the `528253b1d` build, **enabled and
+active** (MainPID 4538, `NRestarts` 0, `LimitCORE=0`). Being enabled, it starts
+again on every VM boot, and after a host reboot the VM has no egress until the
+`DOCKER-USER` rules are added again. The installer's working copy and the
+backups are still on the VM.
+
 ## Update, 2026-10-12
 
 On `feat/cue-server`, commits on top of `046a276da` (pushed since, with the rc
