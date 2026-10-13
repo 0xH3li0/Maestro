@@ -106,6 +106,13 @@ describe('searchableSettings', () => {
 			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
 		});
 
+		it.each(['short label', 'pill label', 'abbreviation', 'badge'])(
+			'finds the Left Side Panel group label settings for %s',
+			(query) => {
+				expect(searchSettings(query).some((s) => s.id === 'display-left-side-panel')).toBe(true);
+			}
+		);
+
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
 			const upper = searchSettings('FONT');

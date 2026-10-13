@@ -193,7 +193,8 @@ export function LeftSidePanelSection({
 						<>
 							Display the full group name (e.g. <MonoExample>[2] CASE/CONTENT-SYSTEM</MonoExample>)
 							instead of the abbreviated badge (e.g. <MonoExample>CCS</MonoExample>) next to
-							bookmarked agents. Long names are truncated with the full value on hover.
+							bookmarked agents. Long names are truncated with the full value on hover. The
+							abbreviated badge can be overridden per group in Group Settings.
 						</>
 					}
 					checked={showFullGroupLabelInBookmarks}
