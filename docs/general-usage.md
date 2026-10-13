@@ -787,7 +787,7 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has six tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window), **Models** (Run on target, tiers, gateway and token proxy, System One), **Environment** (environment variables), **Peers** (which other agents this one may [consult or delegate to](./peer-agents)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs, a tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
 ### Deleting Agents
 
@@ -837,6 +837,10 @@ Organize agents into groups for better project management:
 
 - Click the group header to collapse or expand
 - Groups remember their collapsed state
+
+**Defaults for new agents:**
+
+- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, and the text of the group's pill label. See [Groups](./features#groups).
 
 ### Drag and Drop
 

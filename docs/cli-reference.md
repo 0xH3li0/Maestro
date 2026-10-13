@@ -146,7 +146,7 @@ Show details of a resource
 
 ## `maestro-cli show agent <id>`
 
-Show agent details including history and usage stats
+Show agent details including history and usage stats. Peer configuration is included: the stored rows, the group and worktree grants, and the resolved roster with each entry's source
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1027,32 +1027,33 @@ Print the full command reference (Markdown, or --format json)
 
 ## `maestro-cli create-agent <name>`
 
-Create a new agent in the Maestro desktop app
+Create a new agent in the Maestro desktop app. With --group, the agent starts from that group's defaults (see group-settings); flags you pass take precedence
 
-| Option                            | Description                                                                                                                     | Default         |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `-d, --cwd <path>`                | Working directory for the agent                                                                                                 | -               |
-| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)                     | `"claude-code"` |
-| `-g, --group <id>`                | Group ID to assign the agent to                                                                                                 | -               |
-| `--nudge <message>`               | Nudge message appended to every user message                                                                                    | -               |
-| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                                               | -               |
-| `--custom-path <path>`            | Custom binary path for the agent                                                                                                | -               |
-| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                                              | -               |
-| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                               | `[]`            |
-| `--model <model>`                 | Model override (e.g., sonnet, opus; "auto" lets the model router pick the tier and effort of each turn)                         | -               |
-| `--effort <level>`                | Effort/reasoning level override                                                                                                 | -               |
-| `--context-window <size>`         | Context window size in tokens                                                                                                   | -               |
-| `--provider-path <path>`          | Custom provider path                                                                                                            | -               |
-| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                              | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                                        | -               |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                | -               |
-| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                               | -               |
-| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic. Set the proxy mode afterwards with `update-agent --proxy-mode` | -               |
-| `--run-on <target>`               | Run on: provider (default), or &lt;source id>:&lt;model> on a Local Models source. The agent keeps its provider's CLI           | -               |
-| `--run-on-context <tokens>`       | Context size the harness is told a --run-on source has (at least 40960; default: the catalog context, or 40960)                 | -               |
-| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                            | -               |
-| `--focus`                         | Select the new agent after creating it (default)                                                                                | -               |
-| `--json`                          | Output as JSON (for scripting)                                                                                                  | -               |
+| Option                            | Description                                                                                                                                                       | Default         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| `-d, --cwd <path>`                | Working directory for the agent (required, unless --group names a group whose defaults set one)                                                                   | -               |
+| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)                                                       | `"claude-code"` |
+| `-g, --group <id>`                | Group to assign the agent to. The agent starts from the group's defaults (provider, model, environment variables, peers, ...), and every flag below overrides one | -               |
+| `--no-group-defaults`             | Create a bare agent in --group, ignoring the group's defaults (no effect without --group)                                                                         | -               |
+| `--nudge <message>`               | Nudge message appended to every user message                                                                                                                      | -               |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions                                                                                                                 | -               |
+| `--custom-path <path>`            | Custom binary path for the agent                                                                                                                                  | -               |
+| `--custom-args <args>`            | Custom CLI arguments for the agent                                                                                                                                | -               |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                                                                                                                                 | `[]`            |
+| `--model <model>`                 | Model override (e.g., sonnet, opus; "auto" lets the model router pick the tier and effort of each turn)                                                           | -               |
+| `--effort <level>`                | Effort/reasoning level override                                                                                                                                   | -               |
+| `--context-window <size>`         | Context window size in tokens                                                                                                                                     | -               |
+| `--provider-path <path>`          | Custom provider path                                                                                                                                              | -               |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                                                | -               |
+| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                                                                          | -               |
+| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                                                  | -               |
+| `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                                                 | -               |
+| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic. Set the proxy mode afterwards with `update-agent --proxy-mode`                                   | -               |
+| `--run-on <target>`               | Run on: provider (default), or &lt;source id>:&lt;model> on a Local Models source. The agent keeps its provider's CLI                                             | -               |
+| `--run-on-context <tokens>`       | Context size the harness is told a --run-on source has (at least 40960; default: the catalog context, or 40960)                                                   | -               |
+| `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                                                              | -               |
+| `--focus`                         | Select the new agent after creating it (default)                                                                                                                  | -               |
+| `--json`                          | Output as JSON (for scripting)                                                                                                                                    | -               |
 
 ## `maestro-cli create-group <name>`
 
@@ -1102,6 +1103,55 @@ Update a group's name, icon, color, parent, or Left Bar visibility in the Maestr
 | `--show`              | Bring a hidden group back into the Left Bar                                                            | -       |
 | `--json`              | Output as JSON (for scripting)                                                                         | -       |
 
+## `maestro-cli group-settings <group-id>`
+
+Show a group's defaults (what a new agent in it starts with) and its Left Bar pill label
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli update-group-settings <group-id>`
+
+Set a group's defaults for new agents and its pill label (requires the desktop app). Existing agents change only with --publish
+
+| Option                             | Description                                                                                                                                                                                                      | Default |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--provider <type>`                | Default provider for new agents (use "none" for no default; switching resets the profile's provider-bound values)                                                                                                | -       |
+| `-d, --cwd <path>`                 | Default working directory (empty string clears)                                                                                                                                                                  | -       |
+| `--nudge <message>`                | Nudge message appended to every message (empty string clears)                                                                                                                                                    | -       |
+| `--new-session-message <message>`  | Message prefixed to the first message of new sessions (empty string clears)                                                                                                                                      | -       |
+| `--custom-path <path>`             | Override the agent binary path (empty string clears)                                                                                                                                                             | -       |
+| `--custom-args <args>`             | Custom CLI arguments for the agent (empty string clears)                                                                                                                                                         | -       |
+| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                                                                                                                   | `[]`    |
+| `--clear-env`                      | Clear all environment variable defaults                                                                                                                                                                          | -       |
+| `--gateway-url <url\|none>`        | Local Models gateway URL ("none" clears). Not combinable with --proxy-mode                                                                                                                                       | -       |
+| `--run-on <target>`                | Where new agents run their model: provider, or &lt;source id>:&lt;model> on a Local Models source                                                                                                                | -       |
+| `--run-on-context <tokens>`        | Context size the harness is told the Run on source has (at least 40960)                                                                                                                                          | -       |
+| `--proxy-mode <mode>`              | Maestro token proxy for new agents: off \| passthrough \| compress \| compress-early                                                                                                                             | -       |
+| `--tier <tier=target>`             | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, high=provider:&lt;model>, medium=provider, or low=default                                                                 | `[]`    |
+| `--background-requests <target>`   | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none                                                                                                                                    | -       |
+| `--system-one <on\|off>`           | Whether new agents may ask System One: off switches it off for them                                                                                                                                              | -       |
+| `--peer <agent:access>`            | Set one explicit peer row (repeatable): &lt;agent>:r, :w, :rw, or :none                                                                                                                                          | `[]`    |
+| `--peer-note <agent:text>`         | Set the note on a peer row (repeatable; needs a row, empty text clears)                                                                                                                                          | `[]`    |
+| `--remove-peer <agent>`            | Delete a peer row (repeatable). Not the same as :none                                                                                                                                                            | `[]`    |
+| `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group                                                                                                                                                              | -       |
+| `--worktree-peers <r\|w\|rw\|off>` | Grant access to the agent's worktree family                                                                                                                                                                      | -       |
+| `--model <model>`                  | Default model ("auto" lets the model router pick; empty string clears)                                                                                                                                           | -       |
+| `--effort <level>`                 | Default effort/reasoning level (empty string clears)                                                                                                                                                             | -       |
+| `--context-window <size>`          | Default context window in tokens (0 or "none" clears)                                                                                                                                                            | -       |
+| `--token-source <mode>`            | Claude token source: api \| tui \| dynamic (needs the Claude Code provider)                                                                                                                                      | -       |
+| `--maestro-p-path <path>`          | Override the maestro-p binary path (empty string clears)                                                                                                                                                         | -       |
+| `--codex-transport <transport>`    | Codex transport: exec \| app-server (needs the Codex provider)                                                                                                                                                   | -       |
+| `--ssh-remote <id>`                | Default SSH remote for new agents, by id or name (use "none" for local execution)                                                                                                                                | -       |
+| `--ssh-cwd <path>`                 | Working directory override on the SSH remote                                                                                                                                                                     | -       |
+| `--sync-history-to-remote <bool>`  | Sync history entries to .maestro/history/ on the remote host (true/false)                                                                                                                                        | -       |
+| `--short-label <text>`             | Text for the pill drawn beside the group's bookmarked agents, at most 12 characters (empty string returns to the automatic abbreviation). Display only: never copied or published                                | -       |
+| `--clear`                          | Remove the defaults entirely. Does not touch --short-label, which is group display state and not an agent default. Cannot be combined with other defaults or --publish                                           | -       |
+| `--publish`                        | Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt | -       |
+| `--yes`                            | Confirm a --publish without asking                                                                                                                                                                               | -       |
+| `--json`                           | Output as JSON (for scripting)                                                                                                                                                                                   | -       |
+
 ## `maestro-cli create-worktree`
 
 Create a new agent in a git worktree branched off an existing parent agent
@@ -1128,36 +1178,41 @@ Remove an agent from the Maestro desktop app
 
 Update an existing agent's group, working directory, and per-agent settings
 
-| Option                            | Description                                                                                                      | Default |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>`                | Move the agent to this group (use "none" to ungroup; supports partial IDs)                                       | -       |
-| `-d, --cwd <path>`                | Change the agent's working directory (resolved to absolute; agent must be stopped)                               | -       |
-| `--ssh-remote <id>`               | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped)                   | -       |
-| `--ssh-cwd <path>`                | Working directory override on the SSH remote                                                                     | -       |
-| `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false)                                        | -       |
-| `--nudge <message>`               | Nudge message appended to every message (empty string clears)                                                    | -       |
-| `--new-session-message <message>` | Message prefixed to the first message of new sessions (empty string clears)                                      | -       |
-| `--custom-path <path>`            | Override the agent binary path (empty string clears)                                                             | -       |
-| `--custom-args <args>`            | Custom CLI arguments for the agent (empty string clears)                                                         | -       |
-| `--env <KEY=VALUE>`               | Set an environment variable (repeatable; replaces the env map)                                                   | `[]`    |
-| `--clear-env`                     | Clear all per-agent environment variables                                                                        | -       |
-| `--gateway-url <url\|none>`       | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                                  | -       |
-| `--proxy-mode <mode>`             | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app)  | -       |
-| `--run-on <target>`               | Run on: provider (clears a target), or &lt;source id>:&lt;model> on a Local Models source                        | -       |
-| `--run-on-context <tokens>`       | Context size for the Run on source (at least 40960). Alone, it changes the current target's context              | -       |
-| `--tier <tier=target>`            | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, low=default clears        | -       |
-| `--background-requests <target>`  | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none (Claude Code on the proxy)         | -       |
-| `--system-one <on\|off>`          | Whether this agent may ask System One with maestro-cli s1: off for this agent only, on follows the global switch | -       |
-| `--model <model>`                 | Model override (e.g. sonnet, opus; "auto" lets the model router pick per turn; empty string clears)              | -       |
-| `--effort <level>`                | Effort/reasoning level override (empty string clears)                                                            | -       |
-| `--context-window <size>`         | Context window size in tokens (0 or "none" clears)                                                               | -       |
-| `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                                             | -       |
-| `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                                         | -       |
-| `--codex-transport <transport>`   | Codex transport: exec \| app-server (experimental, enables steering; Codex only)                                 | -       |
-| `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                                  | -       |
-| `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)                               | -       |
-| `--force`                         | Confirm a destructive change (required for --provider)                                                           | -       |
-| `--json`                          | Output as JSON (for scripting)                                                                                   | -       |
+| Option                             | Description                                                                                                                                    | Default |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-g, --group <id>`                 | Move the agent to this group (use "none" to ungroup; supports partial IDs)                                                                     | -       |
+| `-d, --cwd <path>`                 | Change the agent's working directory (resolved to absolute; agent must be stopped)                                                             | -       |
+| `--ssh-remote <id>`                | Set the SSH remote for remote execution (use "none" to revert to local; agent must be stopped)                                                 | -       |
+| `--ssh-cwd <path>`                 | Working directory override on the SSH remote                                                                                                   | -       |
+| `--sync-history-to-remote <bool>`  | Sync history entries to .maestro/history/ on the remote host (true/false)                                                                      | -       |
+| `--nudge <message>`                | Nudge message appended to every message (empty string clears)                                                                                  | -       |
+| `--new-session-message <message>`  | Message prefixed to the first message of new sessions (empty string clears)                                                                    | -       |
+| `--custom-path <path>`             | Override the agent binary path (empty string clears)                                                                                           | -       |
+| `--custom-args <args>`             | Custom CLI arguments for the agent (empty string clears)                                                                                       | -       |
+| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                                                 | `[]`    |
+| `--clear-env`                      | Clear all per-agent environment variables                                                                                                      | -       |
+| `--gateway-url <url\|none>`        | Local Models gateway: a proxy for this agent's provider traffic ("none" clears)                                                                | -       |
+| `--proxy-mode <mode>`              | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early (requires the desktop app)                                | -       |
+| `--run-on <target>`                | Run on: provider (clears a target), or &lt;source id>:&lt;model> on a Local Models source                                                      | -       |
+| `--run-on-context <tokens>`        | Context size for the Run on source (at least 40960). Alone, it changes the current target's context                                            | -       |
+| `--tier <tier=target>`             | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, low=default clears                                      | -       |
+| `--background-requests <target>`   | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none (Claude Code on the proxy)                                       | -       |
+| `--system-one <on\|off>`           | Whether this agent may ask System One with maestro-cli s1: off for this agent only, on follows the global switch                               | -       |
+| `--peer <agent:access>`            | Set one explicit peer row (repeatable): &lt;agent>:r (consult), :w (delegate), :rw, or :none (exclude the peer from a group or worktree grant) | `[]`    |
+| `--peer-note <agent:text>`         | Set the note on a peer row, the hint the agent reads for when to reach it (repeatable; needs a row, empty text clears)                         | `[]`    |
+| `--remove-peer <agent>`            | Delete a peer row (repeatable). Not the same as :none: a deleted row lets the group and worktree grants apply again                            | `[]`    |
+| `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group, resolved live (off clears)                                                                | -       |
+| `--worktree-peers <r\|w\|rw\|off>` | Grant access to the agent's worktree family: parent, sibling and child worktrees, resolved live (off clears)                                   | -       |
+| `--model <model>`                  | Model override (e.g. sonnet, opus; "auto" lets the model router pick per turn; empty string clears)                                            | -       |
+| `--effort <level>`                 | Effort/reasoning level override (empty string clears)                                                                                          | -       |
+| `--context-window <size>`          | Context window size in tokens (0 or "none" clears)                                                                                             | -       |
+| `--token-source <mode>`            | Claude token source: api \| tui \| dynamic (Claude Code agents only)                                                                           | -       |
+| `--maestro-p-path <path>`          | Override the maestro-p binary path (empty string clears)                                                                                       | -       |
+| `--codex-transport <transport>`    | Codex transport: exec \| app-server (experimental, enables steering; Codex only)                                                               | -       |
+| `--bookmark <bool>`                | Bookmark the agent in the Left Bar (true/false)                                                                                                | -       |
+| `--provider <type>`                | Switch the agent provider (resets tabs + clears provider config; requires --force)                                                             | -       |
+| `--force`                          | Confirm a destructive change (required for --provider)                                                                                         | -       |
+| `--json`                           | Output as JSON (for scripting)                                                                                                                 | -       |
 
 ## `maestro-cli agent`
 
