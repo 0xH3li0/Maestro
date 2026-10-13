@@ -1282,6 +1282,198 @@ describe('update-agent command', () => {
 		});
 	});
 
+	describe('peer flags', () => {
+		// Names resolve to ids the way the real helper would: `self` is the agent
+		// being edited, the rest are other agents.
+		const IDS: Record<string, string> = {
+			self: 'self-id',
+			alpha: 'alpha-id',
+			bravo: 'bravo-id',
+			'agent-1': 'self-id',
+		};
+
+		function mockAgent(peerAgents?: unknown) {
+			vi.mocked(resolveAgentId).mockImplementation((ref: string) => {
+				const id = IDS[ref];
+				if (!id) throw new Error(`Agent not found: ${ref}`);
+				return id;
+			});
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'self-id',
+				toolType: 'claude-code',
+				peerAgents,
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		async function refused(options: Record<string, unknown>) {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(updateAgent('agent-1', options)).rejects.toThrow('process.exit');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+
+		it('sends one row per --peer, resolved to an id, as a patch', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { peer: ['alpha:r', 'bravo:rw'] });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_config',
+					sessionId: 'self-id',
+					configPatch: {
+						peerAgentEdits: {
+							upsert: [
+								{ sessionId: 'alpha-id', read: true, write: false },
+								{ sessionId: 'bravo-id', read: true, write: true },
+							],
+						},
+					},
+				}),
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith('  Peer alpha-id: Consult only');
+			expect(consoleSpy).toHaveBeenCalledWith('  Peer bravo-id: Consult + Delegate');
+		});
+
+		it('writes none as a row with neither bit, the exclusion', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { peer: ['alpha:none'] });
+
+			expect(sendCommand.mock.calls[0][0].configPatch.peerAgentEdits.upsert).toEqual([
+				{ sessionId: 'alpha-id', read: false, write: false },
+			]);
+			expect(consoleSpy).toHaveBeenCalledWith('  Peer alpha-id: No access');
+		});
+
+		it('reads the access word after the last colon, so a name may hold one', async () => {
+			IDS['ops: east'] = 'east-id';
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { peer: ['ops: east:w'] });
+
+			expect(sendCommand.mock.calls[0][0].configPatch.peerAgentEdits.upsert).toEqual([
+				{ sessionId: 'east-id', read: false, write: true },
+			]);
+			delete IDS['ops: east'];
+		});
+
+		it('sets a note on a row the call adds, keeping colons in the text', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', {
+				peer: ['alpha:r'],
+				peerNote: ['alpha:infra: ask first'],
+			});
+
+			expect(sendCommand.mock.calls[0][0].configPatch.peerAgentEdits).toEqual({
+				upsert: [{ sessionId: 'alpha-id', read: true, write: false }],
+				notes: [{ sessionId: 'alpha-id', description: 'infra: ask first' }],
+			});
+		});
+
+		it('sets a note on a row the agent already has', async () => {
+			const sendCommand = mockAgent([{ sessionId: 'alpha-id', read: true, write: false }]);
+
+			await updateAgent('agent-1', { peerNote: ['alpha:docs'] });
+
+			expect(sendCommand.mock.calls[0][0].configPatch.peerAgentEdits.notes).toEqual([
+				{ sessionId: 'alpha-id', description: 'docs' },
+			]);
+		});
+
+		it('refuses a note on a peer with no row before it reaches the app', async () => {
+			mockAgent();
+
+			await refused({ peerNote: ['alpha:docs'] });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('no peer row'));
+		});
+
+		it('removes a row', async () => {
+			const sendCommand = mockAgent([{ sessionId: 'alpha-id', read: true, write: true }]);
+
+			await updateAgent('agent-1', { removePeer: ['alpha'] });
+
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({
+				peerAgentEdits: { remove: ['alpha-id'] },
+			});
+			expect(consoleSpy).toHaveBeenCalledWith('  Peer alpha-id: removed');
+		});
+
+		it('sets and clears the two derived grants', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { groupPeers: 'rw', worktreePeers: 'off' });
+
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({
+				groupPeerAccess: { read: true, write: true },
+				worktreePeerAccess: null,
+			});
+			expect(consoleSpy).toHaveBeenCalledWith('  Peers in my group: Consult + Delegate');
+			expect(consoleSpy).toHaveBeenCalledWith('  Worktree family peers: off');
+		});
+
+		it('rides in one patch with other settings and reports JSON', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { peer: ['alpha:r'], nudge: 'be brief', json: true });
+
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({
+				nudgeMessage: 'be brief',
+				peerAgentEdits: { upsert: [{ sessionId: 'alpha-id', read: true, write: false }] },
+			});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				agentId: 'self-id',
+				config: { peerAgentEdits: { upsert: [{ sessionId: 'alpha-id' }] } },
+			});
+		});
+
+		it.each([
+			['a row with no access word', { peer: ['alpha'] }, '--peer expects'],
+			['an unknown access word', { peer: ['alpha:read'] }, '--peer expects'],
+			['a note with no text', { peerNote: ['alpha'] }, '--peer-note expects'],
+			['none as a grant', { groupPeers: 'none' }, '--group-peers expects'],
+			['a bad worktree grant', { worktreePeers: 'yes' }, '--worktree-peers expects'],
+			['the same peer twice', { peer: ['alpha:r', 'alpha:w'] }, 'named more than once'],
+			['the agent as its own peer', { peer: ['self:r'] }, 'its own peer'],
+			['an agent that does not resolve', { peer: ['ghost:r'] }, 'Agent not found'],
+			[
+				'a peer both given access and removed',
+				{ peer: ['alpha:r'], removePeer: ['alpha'] },
+				'both given access and removed',
+			],
+		])('refuses %s', async (_label, options, message) => {
+			mockAgent();
+
+			await refused(options);
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining(message));
+		});
+
+		it('cannot be combined with --provider', async () => {
+			mockAgent();
+
+			await refused({ peer: ['alpha:r'], provider: 'codex', force: true });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--provider cannot be combined')
+			);
+		});
+	});
+
 	it('errors when agent ID cannot be resolved', async () => {
 		vi.mocked(resolveAgentId).mockImplementation(() => {
 			throw new Error('Agent not found: xyz');

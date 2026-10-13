@@ -15,6 +15,11 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
 import { parseTierTargetsEdit } from '../../../shared/modelTiers';
+import {
+	applyPeerAgentEdits,
+	parsePeerAgentEdits,
+	parsePeerGrantValue,
+} from '../../../shared/peerAgents';
 import { AUTO_MODEL, isAutoModel } from '../../../shared/autoModel';
 import { autoModelProblem } from '../../../shared/autoTurn';
 import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
@@ -2031,6 +2036,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'backgroundRequests',
 			// System One opt-out (`update-agent --system-one`). Validated below.
 			'systemOneOptOut',
+			// The two derived peer grants (`update-agent --group-peers` and
+			// `--worktree-peers`). Validated below. The explicit rows are not a key
+			// here: `peerAgentEdits` is a patch, applied below.
+			'groupPeerAccess',
+			'worktreePeerAccess',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -2264,6 +2274,63 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			updated.systemOneOptOut = edit.optOut;
+		}
+
+		// Peer grants (`update-agent --group-peers`, `--worktree-peers`) are `null`
+		// (off) or a pair with a bit set, never an arbitrary object.
+		for (const key of ['groupPeerAccess', 'worktreePeerAccess'] as const) {
+			if (!(key in patch)) continue;
+			const grant = parsePeerGrantValue(patch[key]);
+			if (!grant.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `${key}: ${grant.error}`,
+				});
+				return;
+			}
+			updated[key] = grant.access ?? undefined;
+		}
+
+		// Explicit peer rows (`update-agent --peer`, `--peer-note`, `--remove-peer`)
+		// arrive as a patch and are applied to the rows this agent holds, with the
+		// function the CLI used to check it, so a note on a peer with no row is
+		// refused here as well. A peer must be a live agent other than this one:
+		// a row for a name that matches nothing is inert, and the caller should
+		// hear that instead.
+		if ('peerAgentEdits' in patch) {
+			const parsed = parsePeerAgentEdits(patch.peerAgentEdits);
+			if (!parsed.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: parsed.error,
+				});
+				return;
+			}
+			const liveIds = new Set(sessionsRef.current.map((s) => s.id));
+			const named = [
+				...(parsed.edits.upsert ?? []).map((row) => row.sessionId),
+				...(parsed.edits.notes ?? []).map((note) => note.sessionId),
+			].map((id) => id.trim());
+			const unknown = named.find((id) => id === sessionId || !liveIds.has(id));
+			if (unknown !== undefined) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error:
+						unknown === sessionId
+							? 'An agent cannot be its own peer.'
+							: `Peer "${unknown}" is not an agent.`,
+				});
+				return;
+			}
+			const applied = applyPeerAgentEdits(session.peerAgents, parsed.edits);
+			if (!applied.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: applied.error,
+				});
+				return;
+			}
+			updated.peerAgents = applied.peerAgents;
 		}
 
 		// Clearing the window clears its provenance too, even when the caller sent

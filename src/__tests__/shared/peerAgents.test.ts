@@ -11,7 +11,12 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import {
+	applyPeerAgentEdits,
 	normalizePeerAgents,
+	parsePeerAccessWord,
+	parsePeerAgentEdits,
+	parsePeerGrantValue,
+	parsePeerGrantWord,
 	peerAccessLabel,
 	hasAnyPeerAccess,
 	hasPeerGrant,
@@ -799,5 +804,174 @@ describe('formatPeerAgentsForPrompt', () => {
 		const before = JSON.stringify(roster);
 		formatPeerAgentsForPrompt(roster, { agentId: 'me' });
 		expect(JSON.stringify(roster)).toBe(before);
+	});
+});
+
+describe('parsePeerAccessWord', () => {
+	it.each([
+		['r', R],
+		['w', W],
+		['rw', RW],
+		['none', NONE],
+		[' RW ', RW],
+		['None', NONE],
+	])('reads %j', (word, expected) => {
+		expect(parsePeerAccessWord(word)).toEqual(expected);
+	});
+
+	it.each(['', 'wr', 'off', 'read', 'x'])('refuses %j', (word) => {
+		expect(parsePeerAccessWord(word)).toBeUndefined();
+	});
+});
+
+describe('parsePeerGrantWord', () => {
+	it('reads the three access words', () => {
+		expect(parsePeerGrantWord('r')).toEqual(R);
+		expect(parsePeerGrantWord('w')).toEqual(W);
+		expect(parsePeerGrantWord('rw')).toEqual(RW);
+	});
+
+	it('reads off as null, which clears the grant', () => {
+		expect(parsePeerGrantWord('off')).toBeNull();
+		expect(parsePeerGrantWord(' OFF ')).toBeNull();
+	});
+
+	it('refuses none, because a grant with no bit grants nothing', () => {
+		expect(parsePeerGrantWord('none')).toBeUndefined();
+		expect(parsePeerGrantWord('x')).toBeUndefined();
+	});
+});
+
+describe('applyPeerAgentEdits', () => {
+	const rows: PeerAgent[] = [
+		{ sessionId: 'a', ...R, description: 'old note' },
+		{ sessionId: 'b', ...RW },
+	];
+
+	function peers(result: ReturnType<typeof applyPeerAgentEdits>): PeerAgent[] | undefined {
+		if (!result.ok) throw new Error(result.error);
+		return result.peerAgents;
+	}
+
+	it('adds a row and leaves the others alone', () => {
+		expect(peers(applyPeerAgentEdits(rows, { upsert: [{ sessionId: 'c', ...W }] }))).toEqual([
+			...rows,
+			{ sessionId: 'c', ...W },
+		]);
+	});
+
+	it('replaces the access of a row and keeps its note', () => {
+		const result = peers(applyPeerAgentEdits(rows, { upsert: [{ sessionId: 'a', ...RW }] }));
+		expect(result?.find((row) => row.sessionId === 'a')).toEqual({
+			sessionId: 'a',
+			...RW,
+			description: 'old note',
+		});
+	});
+
+	it('keeps a row with no access, because it is an exclusion', () => {
+		const result = peers(applyPeerAgentEdits(undefined, { upsert: [{ sessionId: 'x', ...NONE }] }));
+		expect(result).toEqual([{ sessionId: 'x', ...NONE }]);
+	});
+
+	it('sets a note, and clears it with an empty one', () => {
+		const set = peers(
+			applyPeerAgentEdits(rows, { notes: [{ sessionId: 'b', description: ' hi ' }] })
+		);
+		expect(set?.find((row) => row.sessionId === 'b')?.description).toBe('hi');
+		const cleared = peers(
+			applyPeerAgentEdits(rows, { notes: [{ sessionId: 'a', description: '' }] })
+		);
+		expect(cleared?.find((row) => row.sessionId === 'a')).toEqual({ sessionId: 'a', ...R });
+	});
+
+	it('takes a note on a row the same edit adds', () => {
+		const result = peers(
+			applyPeerAgentEdits(undefined, {
+				upsert: [{ sessionId: 'n', ...R }],
+				notes: [{ sessionId: 'n', description: 'use for infra' }],
+			})
+		);
+		expect(result).toEqual([{ sessionId: 'n', ...R, description: 'use for infra' }]);
+	});
+
+	it('refuses a note on a peer with no row', () => {
+		const result = applyPeerAgentEdits(rows, { notes: [{ sessionId: 'zzz', description: 'x' }] });
+		expect(result).toEqual({ ok: false, error: expect.stringContaining('no peer row') });
+	});
+
+	it('deletes a row, and returns undefined when none is left', () => {
+		expect(peers(applyPeerAgentEdits(rows, { remove: ['a'] }))).toEqual([
+			{ sessionId: 'b', ...RW },
+		]);
+		expect(peers(applyPeerAgentEdits(rows, { remove: ['a', 'b'] }))).toBeUndefined();
+	});
+
+	it('ignores a removal of a peer that has no row', () => {
+		expect(peers(applyPeerAgentEdits(rows, { remove: ['zzz'] }))).toEqual(rows);
+	});
+
+	it('refuses to give access to and remove the same peer', () => {
+		const result = applyPeerAgentEdits(rows, {
+			upsert: [{ sessionId: 'a', ...W }],
+			remove: ['a'],
+		});
+		expect(result.ok).toBe(false);
+	});
+
+	it('does not mutate its input', () => {
+		const before = JSON.stringify(rows);
+		applyPeerAgentEdits(rows, {
+			upsert: [{ sessionId: 'a', ...W }],
+			notes: [{ sessionId: 'b', description: 'n' }],
+			remove: ['b'],
+		});
+		expect(JSON.stringify(rows)).toBe(before);
+	});
+});
+
+describe('parsePeerAgentEdits', () => {
+	it('reads a well-formed patch', () => {
+		const raw = {
+			upsert: [{ sessionId: 'a', read: true, write: false }],
+			notes: [{ sessionId: 'a', description: 'n' }],
+			remove: ['b'],
+		};
+		expect(parsePeerAgentEdits(raw)).toEqual({ ok: true, edits: raw });
+	});
+
+	it('reads an empty patch', () => {
+		expect(parsePeerAgentEdits({})).toEqual({ ok: true, edits: {} });
+	});
+
+	it.each([
+		['not an object', 'a'],
+		['an array', []],
+		['upsert not a list', { upsert: 'a' }],
+		['an upsert with no bits', { upsert: [{ sessionId: 'a' }] }],
+		['an upsert with a blank id', { upsert: [{ sessionId: ' ', read: true, write: true }] }],
+		['a note with no text', { notes: [{ sessionId: 'a' }] }],
+		['a removal that is not a string', { remove: [1] }],
+	])('refuses %s', (_label, raw) => {
+		expect(parsePeerAgentEdits(raw).ok).toBe(false);
+	});
+});
+
+describe('parsePeerGrantValue', () => {
+	it('reads null as off', () => {
+		expect(parsePeerGrantValue(null)).toEqual({ ok: true, access: null });
+	});
+
+	it('reads a pair with a bit set', () => {
+		expect(parsePeerGrantValue({ read: true, write: false })).toEqual({ ok: true, access: R });
+	});
+
+	it.each([
+		['neither bit', { read: false, write: false }],
+		['a missing bit', { read: true }],
+		['a string', 'rw'],
+		['undefined', undefined],
+	])('refuses %s', (_label, raw) => {
+		expect(parsePeerGrantValue(raw).ok).toBe(false);
 	});
 });

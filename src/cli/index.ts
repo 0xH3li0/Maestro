@@ -72,6 +72,7 @@ import { removeGroup } from './commands/remove-group';
 import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
+import { collectRepeatable } from './services/peer-flags';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
@@ -1672,6 +1673,33 @@ program
 	.option(
 		'--system-one <on|off>',
 		'Whether this agent may ask System One with maestro-cli s1: off switches it off for this agent only, on follows "Let agents use System One" (default on)'
+	)
+	// The Peers tab. An agent is named by id, unique id prefix, or display name.
+	.option(
+		'--peer <agent:access>',
+		'Set one explicit peer row (repeatable): <agent>:r (consult), :w (delegate), :rw, or :none (exclude the peer from a group or worktree grant)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--peer-note <agent:text>',
+		'Set the note on a peer row, the hint the agent reads for when to reach it (repeatable; needs a row, empty text clears)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--remove-peer <agent>',
+		'Delete a peer row (repeatable). Not the same as :none: a deleted row lets the group and worktree grants apply again',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--group-peers <r|w|rw|off>',
+		'Grant access to every other agent in the same group, resolved live (off clears)'
+	)
+	.option(
+		'--worktree-peers <r|w|rw|off>',
+		"Grant access to the agent's worktree family: parent, sibling and child worktrees, resolved live (off clears)"
 	)
 	.option(
 		'--model <model>',

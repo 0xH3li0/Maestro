@@ -97,6 +97,218 @@ export function mergePeerAccess(a: PeerAccess, b: PeerAccess): PeerAccess {
 	return { read: a.read || b.read, write: a.write || b.write };
 }
 
+/**
+ * Read the access word `maestro-cli` takes for one peer row: `r` (consult),
+ * `w` (delegate), `rw`, or `none`. `none` is the deliberate exclusion, a row
+ * with neither bit set. Returns undefined for anything else.
+ */
+export function parsePeerAccessWord(word: string): PeerAccess | undefined {
+	switch (word.trim().toLowerCase()) {
+		case 'r':
+			return { read: true, write: false };
+		case 'w':
+			return { read: false, write: true };
+		case 'rw':
+			return { read: true, write: true };
+		case 'none':
+			return { read: false, write: false };
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * Read the word a derived grant (the group or the worktree checkbox) takes:
+ * `r`, `w`, `rw`, or `off`. `off` is `null`, which clears the field. A grant
+ * with neither bit set would grant nothing, so `none` is not a grant word.
+ * Returns undefined for anything else.
+ */
+export function parsePeerGrantWord(word: string): PeerAccess | null | undefined {
+	if (word.trim().toLowerCase() === 'off') return null;
+	const access = parsePeerAccessWord(word);
+	return access && hasAnyPeerAccess(access) ? access : undefined;
+}
+
+/**
+ * A change to an agent's explicit peer rows, as a patch rather than a list: a
+ * caller that names one peer must not have to know, or overwrite, the others.
+ * The CLI sends it and the app applies it to the rows it holds, through
+ * `applyPeerAgentEdits`, so the two cannot disagree on what an edit means.
+ */
+export interface PeerAgentEdits {
+	/** Rows to write. A row for a peer the agent already has is replaced, keeping its note. */
+	upsert?: Array<PeerAccess & { sessionId: string }>;
+	/** Notes to set on a row. An empty `description` clears the note. */
+	notes?: Array<{ sessionId: string; description: string }>;
+	/**
+	 * Rows to delete outright. Unlike a row with no access, which excludes the
+	 * peer, deleting restores whatever a group or worktree grant says.
+	 */
+	remove?: string[];
+}
+
+export type PeerAgentEditsResult =
+	| { ok: true; peerAgents: PeerAgent[] | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Apply `edits` to an agent's explicit rows. The result is already through
+ * `normalizePeerAgents`, so it is what to persist (undefined when no row is
+ * left).
+ *
+ * Refused, by name:
+ *   - A peer named both in `upsert` and in `remove`: the call has no one answer.
+ *   - A note on a peer with no row and no `upsert` beside it: the note would
+ *     have to create a row, and a row with no access is an exclusion nobody
+ *     asked for.
+ */
+export function applyPeerAgentEdits(
+	base: readonly PeerAgent[] | undefined,
+	edits: PeerAgentEdits
+): PeerAgentEditsResult {
+	const rows = new Map<string, PeerAgent>();
+	for (const row of normalizePeerAgents(base ? [...base] : undefined) ?? []) {
+		rows.set(row.sessionId, row);
+	}
+
+	const upserted = new Set((edits.upsert ?? []).map((row) => row.sessionId.trim()));
+	const removed = new Set((edits.remove ?? []).map((id) => id.trim()));
+	for (const id of removed) {
+		if (upserted.has(id)) {
+			return { ok: false, error: `"${id}" is both given access and removed in one edit.` };
+		}
+	}
+	for (const id of removed) rows.delete(id);
+
+	for (const row of edits.upsert ?? []) {
+		const sessionId = row.sessionId.trim();
+		const existing = rows.get(sessionId);
+		rows.set(sessionId, {
+			sessionId,
+			read: !!row.read,
+			write: !!row.write,
+			...(existing?.description ? { description: existing.description } : {}),
+		});
+	}
+
+	for (const note of edits.notes ?? []) {
+		const sessionId = note.sessionId.trim();
+		if (removed.has(sessionId)) {
+			return { ok: false, error: `"${sessionId}" has a note and is removed in one edit.` };
+		}
+		const row = rows.get(sessionId);
+		if (!row) {
+			return {
+				ok: false,
+				error: `"${sessionId}" has no peer row to carry a note. Give it access in the same edit.`,
+			};
+		}
+		const description = note.description.trim();
+		rows.set(sessionId, {
+			sessionId,
+			read: row.read,
+			write: row.write,
+			...(description ? { description } : {}),
+		});
+	}
+
+	return { ok: true, peerAgents: normalizePeerAgents([...rows.values()]) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read an edit that arrived over a wire (the WebSocket bridge hands the app
+ * whatever a client sent) into a `PeerAgentEdits`, or say what is wrong with
+ * it. A caller that skips this would let a malformed patch write a malformed
+ * row into the agent store.
+ */
+export function parsePeerAgentEdits(
+	raw: unknown
+): { ok: true; edits: PeerAgentEdits } | { ok: false; error: string } {
+	if (!isRecord(raw)) return { ok: false, error: 'peerAgentEdits must be an object.' };
+	const edits: PeerAgentEdits = {};
+
+	const readList = (key: string): unknown[] | undefined | null => {
+		const value = raw[key];
+		if (value === undefined) return undefined;
+		return Array.isArray(value) ? value : null;
+	};
+
+	const upsert = readList('upsert');
+	if (upsert === null) return { ok: false, error: 'peerAgentEdits.upsert must be a list.' };
+	if (upsert) {
+		edits.upsert = [];
+		for (const row of upsert) {
+			if (
+				!isRecord(row) ||
+				typeof row.sessionId !== 'string' ||
+				!row.sessionId.trim() ||
+				typeof row.read !== 'boolean' ||
+				typeof row.write !== 'boolean'
+			) {
+				return {
+					ok: false,
+					error: 'Each peerAgentEdits.upsert entry needs a sessionId, read and write.',
+				};
+			}
+			edits.upsert.push({ sessionId: row.sessionId, read: row.read, write: row.write });
+		}
+	}
+
+	const notes = readList('notes');
+	if (notes === null) return { ok: false, error: 'peerAgentEdits.notes must be a list.' };
+	if (notes) {
+		edits.notes = [];
+		for (const note of notes) {
+			if (
+				!isRecord(note) ||
+				typeof note.sessionId !== 'string' ||
+				!note.sessionId.trim() ||
+				typeof note.description !== 'string'
+			) {
+				return {
+					ok: false,
+					error: 'Each peerAgentEdits.notes entry needs a sessionId and a description.',
+				};
+			}
+			edits.notes.push({ sessionId: note.sessionId, description: note.description });
+		}
+	}
+
+	const remove = readList('remove');
+	if (remove === null) return { ok: false, error: 'peerAgentEdits.remove must be a list.' };
+	if (remove) {
+		if (!remove.every((id): id is string => typeof id === 'string' && id.trim() !== '')) {
+			return { ok: false, error: 'Each peerAgentEdits.remove entry must be a session id.' };
+		}
+		edits.remove = remove;
+	}
+
+	return { ok: true, edits };
+}
+
+/**
+ * Read a derived grant that arrived over a wire: `null` (off) or a pair with at
+ * least one bit set. A pair with neither bit grants nothing, so storing one
+ * would only look like a grant in the settings form.
+ */
+export function parsePeerGrantValue(
+	raw: unknown
+): { ok: true; access: PeerAccess | null } | { ok: false; error: string } {
+	if (raw === null) return { ok: true, access: null };
+	if (!isRecord(raw) || typeof raw.read !== 'boolean' || typeof raw.write !== 'boolean') {
+		return { ok: false, error: 'A peer grant must be null or an object with read and write.' };
+	}
+	const access = { read: raw.read, write: raw.write };
+	if (!hasAnyPeerAccess(access)) {
+		return { ok: false, error: 'A peer grant needs read or write. Send null to switch it off.' };
+	}
+	return { ok: true, access };
+}
+
 /** A peer as it will actually be presented to the agent. */
 export interface ResolvedPeer extends PeerAccess {
 	sessionId: string;

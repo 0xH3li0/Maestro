@@ -5,6 +5,11 @@
 // `--group none` (or `--group ""`) to ungroup. `--cwd <path>` resolves to an
 // absolute path and routes through the `update_session_cwd` WS message.
 //
+// `--peer`, `--peer-note`, `--remove-peer`, `--group-peers` and `--worktree-peers`
+// are the Peers tab: they ride in the `update_session_config` patch as
+// `peerAgentEdits` (a patch on the explicit rows, merged by the app onto the
+// rows it holds) and the two derived grants. See `services/peer-flags.ts`.
+//
 // `--ssh-remote`, `--ssh-cwd`, and `--sync-history-to-remote` build a partial
 // patch sent via the `update_session_ssh` WS message, which merges the patch
 // onto the agent's existing `sessionSshRemoteConfig` and flushes it to disk.
@@ -45,12 +50,15 @@ import { readHarnessTierDefaults, readLocalModelEndpoints } from '../services/st
 import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { autoModelProblem } from '../../shared/autoTurn';
 import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/system-one-agent';
+import { applyPeerAgentEdits, peerAccessLabel, type PeerAgentEdits } from '../../shared/peerAgents';
+import type { PeerAccess } from '../../shared/types';
+import { hasPeerFlags, readPeerFlags, type PeerFlagOptions } from '../services/peer-flags';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
 const VALID_PROVIDER_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
-interface UpdateAgentOptions {
+interface UpdateAgentOptions extends PeerFlagOptions {
 	group?: string;
 	cwd?: string;
 	sshRemote?: string;
@@ -251,6 +259,17 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
+// One printed line per change a peer edit made, in the words the Peers tab uses.
+function describePeerAgentEdits(edits: PeerAgentEdits): string[] {
+	return [
+		...(edits.upsert ?? []).map((row) => `Peer ${row.sessionId}: ${peerAccessLabel(row)}`),
+		...(edits.notes ?? []).map(
+			(note) => `Peer note ${note.sessionId}: ${note.description.trim() || '(cleared)'}`
+		),
+		...(edits.remove ?? []).map((id) => `Peer ${id}: removed`),
+	];
+}
+
 export async function updateAgent(agentId: string, options: UpdateAgentOptions): Promise<void> {
 	const sshFlagsPresent =
 		options.sshRemote !== undefined ||
@@ -276,10 +295,11 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		!sshFlagsPresent &&
 		configPatch === undefined &&
 		!runOnFlagsPresent &&
+		!hasPeerFlags(options) &&
 		options.provider === undefined
 	) {
 		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
 			options
 		);
 	}
@@ -295,6 +315,24 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	// see its current toolType.
 	const session = getSessionById(sessionId);
 	const currentToolType = session?.toolType;
+
+	// `--peer`, `--peer-note`, `--remove-peer`, `--group-peers`, `--worktree-peers`:
+	// the Peers tab. Agents are resolved here, so a name works where an id does,
+	// and the edit is applied to the rows this record holds, so a note on a peer
+	// with no row is refused before it reaches the app. The patch is sent as
+	// typed and the app applies it to the rows it holds.
+	if (hasPeerFlags(options)) {
+		try {
+			const peers = readPeerFlags(options, sessionId);
+			if (peers.peerAgentEdits) {
+				const applied = applyPeerAgentEdits(session?.peerAgents, peers.peerAgentEdits);
+				if (!applied.ok) throw new Error(applied.error);
+			}
+			configPatch = { ...configPatch, ...peers };
+		} catch (error) {
+			emitError(error instanceof Error ? error.message : String(error), options);
+		}
+	}
 
 	// Guard: --token-source only carries meaning for Claude Code. Writing the
 	// maestro-p fields on another provider would be inert and misleading, so
@@ -663,6 +701,8 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			tierTargets: 'Tiers',
 			backgroundRequests: 'Background requests',
 			systemOneOptOut: 'System One',
+			groupPeerAccess: 'Peers in my group',
+			worktreePeerAccess: 'Worktree family peers',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',
@@ -704,6 +744,13 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				// On is not "cleared", it is the agent following the switch for all agents.
 				const stored = value === true ? 'off' : 'on';
 				console.log(`  ${label}: ${stored}. ${SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS[stored]}`);
+			} else if (key === 'peerAgentEdits') {
+				for (const line of describePeerAgentEdits(value as PeerAgentEdits)) {
+					console.log(`  ${line}`);
+				}
+			} else if (key === 'groupPeerAccess' || key === 'worktreePeerAccess') {
+				// Off is not "unset" for a grant, it is the checkbox switched off.
+				console.log(`  ${label}: ${value ? peerAccessLabel(value as PeerAccess) : 'off'}`);
 			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);
 			} else if (key === 'customEnvVars' && value && typeof value === 'object') {
