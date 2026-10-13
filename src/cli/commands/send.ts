@@ -23,6 +23,7 @@ import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 
 interface SendOptions {
@@ -317,6 +318,15 @@ export async function send(
 		return;
 	}
 
+	// A send without `--session` opens a new provider session, so it carries the
+	// agent's New Session Message like the first message of a desktop tab does.
+	// Agent-only: the run ledger below records the message as it was sent.
+	const agentPrompt = prependNewSessionMessageOnFirstTurn(
+		message,
+		agent.newSessionMessage,
+		agentSessionId
+	);
+
 	// The host builds its own Maestro system prompt. The standalone fallback
 	// builds one only if it actually needs to spawn locally.
 	// When a desktop is running it owns the headless spawn and mints the MCP
@@ -334,7 +344,7 @@ export async function send(
 		(!desktop ||
 			options.readOnly ||
 			options.systemPrompt === false ||
-			message.length > 64 * 1024 ||
+			agentPrompt.length > 64 * 1024 ||
 			(agentSessionId !== undefined && !/^[^\x00-\x1f\x7f]{1,256}$/.test(agentSessionId)))
 	) {
 		desktop?.disconnect();
@@ -371,7 +381,7 @@ export async function send(
 					desktop &&
 					!options.readOnly &&
 					options.systemPrompt !== false &&
-					message.length <= 64 * 1024 &&
+					agentPrompt.length <= 64 * 1024 &&
 					(!agentSessionId || /^[^\x00-\x1f\x7f]{1,256}$/.test(agentSessionId))
 				) {
 					let reply: DesktopSendAgentReply | null = null;
@@ -381,7 +391,7 @@ export async function send(
 								type: 'plugins_send_agent',
 								...(requirePluginHost ? { requirePluginTools: true } : {}),
 								agentId,
-								prompt: message,
+								prompt: agentPrompt,
 								providerSessionId: agentSessionId || undefined,
 								...(requiredToolId ? { requiredToolId } : {}),
 							},
@@ -441,7 +451,7 @@ export async function send(
 				}
 				const appendSystemPrompt =
 					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
-				return spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
+				return spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
 					// A send Cue started is still Cue's turn on this agent. Left

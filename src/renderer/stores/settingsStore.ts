@@ -2976,6 +2976,7 @@ export function getSettingsActions() {
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
+		setShowLeftPanelCollapsedInitials: state.setShowLeftPanelCollapsedInitials,
 		showStarredSessionsSection: state.showStarredSessionsSection,
 		setShowStarredSessionsSection: state.setShowStarredSessionsSection,
 		setLeftPanelCollapsedPillsPerRow: state.setLeftPanelCollapsedPillsPerRow,

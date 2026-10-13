@@ -29,7 +29,8 @@ import {
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
-import type { ToolType } from '../../../shared/types';
+import type { AgentError, ToolType } from '../../../shared/types';
+import { parseEffortRejection, type EffortRejection } from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -125,7 +126,10 @@ export interface TabNamingConfig {
 export async function generateTabName(
 	deps: TabNamingHandlerDependencies,
 	config: TabNamingConfig,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	// Internal: set by this function's own retry (see the effort-rejection
+	// branch in onExit) so the second attempt leaves the effort to the agent.
+	skipCheapEffort = false
 ): Promise<string | null> {
 	if (signal?.aborted) return null;
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
@@ -199,7 +203,12 @@ export async function generateTabName(
 		// isn't mapped, and applyAgentConfigOverrides then falls through to
 		// the agent's own configured value - so an unmapped provider keeps
 		// exactly the behaviour it had before.
-		const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
+		const cheapSettings = cheapTurnSettings(config.agentType as ToolType);
+		// The cheap effort is a value MAESTRO picked off a static ladder, and
+		// a provider can retire a rung without notice. When it has refused
+		// this one, the retry below runs again with the effort left to the
+		// agent - a tab named at the wrong effort beats a tab with no name.
+		const cheapNaming = skipCheapEffort ? { ...cheapSettings, effort: undefined } : cheapSettings;
 		const allConfigs = agentConfigsStore.get('configs', {});
 		const agentConfigValues = allConfigs[effectiveAgentType] || {};
 		const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
@@ -422,12 +431,14 @@ export async function generateTabName(
 		return new Promise<string | null>((resolve) => {
 			let output = '';
 			let resolved = false;
+			let effortRejection: EffortRejection | null = null;
 
 			const cleanup = () => {
 				clearTimeout(timeoutId);
 				clearInterval(earlyExtractIntervalId);
 				processManager.off('data', onData);
 				processManager.off('exit', onExit);
+				processManager.off('agent-error', onAgentError);
 				signal?.removeEventListener('abort', onAbort);
 			};
 
@@ -476,6 +487,14 @@ export async function generateTabName(
 				output += data;
 			};
 
+			// A provider's refusal of the effort arrives as an agent error, not
+			// as output: the turn never ran, so `output` stays empty and the
+			// exit below would otherwise read as an anonymous failure.
+			const onAgentError = (errorSessionId: string, agentError: AgentError) => {
+				if (errorSessionId !== sessionId) return;
+				effortRejection = parseEffortRejection(agentError?.message) ?? effortRejection;
+			};
+
 			// Listen for process exit
 			const onExit = (exitSessionId: string, code?: number) => {
 				if (exitSessionId !== sessionId) return;
@@ -484,6 +503,24 @@ export async function generateTabName(
 					// Already resolved by early extraction, just clean up listeners
 					processManager.off('data', onData);
 					processManager.off('exit', onExit);
+					processManager.off('agent-error', onAgentError);
+					return;
+				}
+
+				// The provider refused the effort Maestro chose for this turn.
+				// Run it once more at the agent's own effort instead of leaving
+				// the tab unnamed. Only when THIS attempt sent the cheap effort,
+				// so a refusal of the agent's own configured value cannot loop.
+				const rejection = effortRejection ?? parseEffortRejection(output);
+				if (rejection && cheapNaming.effort !== undefined) {
+					resolved = true;
+					cleanup();
+					logger.warn(
+						'Tab naming effort rejected by the provider; retrying at the agent default',
+						LOG_CONTEXT,
+						{ sessionId, effort: cheapNaming.effort, ...rejection }
+					);
+					resolve(generateTabName(deps, config, signal, true));
 					return;
 				}
 
@@ -520,6 +557,7 @@ export async function generateTabName(
 
 			processManager.on('data', onData);
 			processManager.on('exit', onExit);
+			processManager.on('agent-error', onAgentError);
 			signal?.addEventListener('abort', onAbort, { once: true });
 			if (signal?.aborted) {
 				onAbort();

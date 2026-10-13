@@ -274,7 +274,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'SYNOPSIS PROMPT',
 			'provider-1',
-			expect.objectContaining({ querySource: 'auto', customEffort: 'minimal' })
+			expect.objectContaining({ querySource: 'auto', customEffort: 'low' })
 		);
 		expect(addHistoryEntry).toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'USER', summary: 'Reported it.', success: true })
@@ -491,6 +491,48 @@ describe('send command', () => {
 		expect(output.success).toBe(true);
 		expect(output.sessionId).toBe('session-xyz-789');
 		expect(output.usage.contextUsagePercent).toBe(4);
+	});
+
+	describe('New Session Message', () => {
+		const withMessage = () => mockAgent({ newSessionMessage: 'Always check linting' });
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'ok',
+				agentSessionId: 'session-xyz-789',
+			});
+		});
+
+		it('prefixes the message when the send opens a new session', async () => {
+			vi.mocked(getSessionById).mockReturnValue(withMessage());
+
+			await send('agent-abc', 'Run the report', {});
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'Always check linting\n\n---\n\nRun the report',
+				undefined,
+				expect.anything()
+			);
+		});
+
+		it('leaves the message alone when --session resumes a conversation', async () => {
+			vi.mocked(getSessionById).mockReturnValue(withMessage());
+
+			await send('agent-abc', 'Run the report', { session: 'session-xyz-789' });
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				'Run the report',
+				'session-xyz-789',
+				expect.anything()
+			);
+		});
 	});
 
 	it('should use the agent cwd from Maestro session', async () => {

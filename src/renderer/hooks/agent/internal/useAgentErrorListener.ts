@@ -48,6 +48,7 @@ import {
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
 import { maybeAutoResetCodexUsage } from '../../../services/codexAutoReset';
+import { isEffortFallbackArmed, observeEffortRejection } from '../../../services/effortRejection';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
 
@@ -88,6 +89,21 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				raw: error.raw,
 				parsedJson: error.parsedJson,
 			};
+
+			// A provider refusing the effort level a turn asked for. Noted (and
+			// toasted, once) for every spawn, ahead of all the routing below, so it
+			// is not silent for the synthetic ids this handler otherwise ignores.
+			// When the spawn that hit it is armed to retry itself, nothing else
+			// here may run: parking an Auto Run behind an error banner for a task
+			// that is about to be re-run would stop the run it is trying to save.
+			const effortRejection = observeEffortRejection(sessionId, agentError);
+			if (effortRejection && isEffortFallbackArmed(sessionId)) {
+				logger.info('[onAgentError] Effort rejected; the spawn will retry itself:', undefined, {
+					rawSessionId: sessionId,
+					...effortRejection,
+				});
+				return;
+			}
 
 			// Limit pauses (rate-limit / token-or-credit exhaustion) get auto-resume
 			// bookkeeping seeded here: a zeroed retry counter now, and a best-effort

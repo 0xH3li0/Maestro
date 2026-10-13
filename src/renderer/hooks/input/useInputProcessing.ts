@@ -13,7 +13,7 @@ import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -1553,12 +1553,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
 
 						// Prefix new session message if present (only for the first message in a new session)
-						if (!tabAgentSessionId) {
-							effectivePrompt = prependNewSessionMessage(
-								effectivePrompt,
-								freshSession.newSessionMessage
-							);
-						}
+						effectivePrompt = prependNewSessionMessageOnFirstTurn(
+							effectivePrompt,
+							freshSession.newSessionMessage,
+							tabAgentSessionId
+						);
 
 						// For read-only mode, append instruction to return plan in response instead of writing files
 						if (isReadOnly) {

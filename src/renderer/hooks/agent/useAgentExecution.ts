@@ -15,11 +15,12 @@ import {
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
 import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
-import { cheapResumeTurnSettings } from '../../../shared/modelTiers';
+import { cheapResumeTurnSettings, cheapTurnSettings } from '../../../shared/modelTiers';
 import { isFailedSynopsisResponse } from '../../../shared/synopsis';
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
+import { armEffortFallback, settleEffortFallback } from '../../services/effortRejection';
 
 /**
  * Result from agent spawn operations.
@@ -183,6 +184,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	const spawnAgentWithPromptRef = useRef<((prompt: string) => Promise<AgentSpawnResult>) | null>(
 		null
 	);
+	// spawnAgentForSession re-runs itself once when the provider refuses the
+	// effort override it sent; a callback cannot name itself in its own deps.
+	const spawnAgentForSessionRef = useRef<UseAgentExecutionReturn['spawnAgentForSession'] | null>(
+		null
+	);
 
 	// Track active synopsis session IDs for cancellation
 	// Map: maestroSessionId -> Set of active synopsis process session IDs
@@ -283,7 +289,19 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							clearInterval(inactivityTimer);
 							inactivityTimer = null;
 						}
+						// Disarm on every way out (watchdog kill, failed spawn), not just a
+						// clean exit, so a late error for this id is never swallowed.
+						settleEffortFallback(targetSessionId);
 					};
+
+					// An effort override here came off Maestro's static ladder (a document
+					// hint) or the run's own picker, and a provider can retire a value
+					// without notice. Arming tells the error listener to step aside for a
+					// refusal of it, and the exit handler below runs the task once more at
+					// the agent's own effort instead of parking the whole Auto Run.
+					if (options?.effortOverride) {
+						armEffortFallback(targetSessionId);
+					}
 
 					const resolveOnce = (result: AgentSpawnResult) => {
 						if (settled) return;
@@ -325,6 +343,27 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
+								// The provider refused the effort override: the turn never ran.
+								// Hand this promise to a second attempt without the override
+								// (which is not armed, so it cannot loop) and skip the exit
+								// bookkeeping below - that attempt's own exit does it.
+								const effortRejection = settleEffortFallback(targetSessionId);
+								const retry = spawnAgentForSessionRef.current;
+								if (effortRejection && retry && !settled) {
+									settled = true;
+									cleanup();
+									logger.warn(
+										'[spawnAgentForSession] Effort rejected by the provider; retrying at the agent default',
+										undefined,
+										{ sessionId, effort: options?.effortOverride, ...effortRejection }
+									);
+									void retry(sessionId, prompt, cwdOverride, {
+										...options,
+										effortOverride: undefined,
+									}).then(resolve);
+									return;
+								}
+
 								// Record query stats for Auto Run queries
 								const queryDuration = Date.now() - queryStartTime;
 								const activeTab = getActiveTab(session);
@@ -724,6 +763,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					model: sessionConfig?.customModel,
 					effort: sessionConfig?.customEffort,
 				});
+				// The ladder's own effort, apart from the inherited fallback above:
+				// only a value Maestro picked arms the effort-refusal retry below.
+				const cheapEffort = cheapTurnSettings(toolType).effort;
 
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
@@ -747,7 +789,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						cleanupFns.forEach((fn) => fn());
 						// Remove from tracking
 						activeSynopsisSessionsRef.current.get(sessionId)?.delete(targetSessionId);
+						settleEffortFallback(targetSessionId);
 					};
+
+					// The cheap effort is a value Maestro picked off a static ladder. If
+					// the provider refuses it, the exit handler below runs the synopsis
+					// once more; by then the refusal is noted and `cheapTurnSettings`
+					// no longer hands the value out, so the retry inherits the tab's.
+					if (cheapEffort !== undefined) {
+						armEffortFallback(targetSessionId);
+					}
 
 					cleanupFns.push(
 						window.maestro.process.onData((sid: string, data: string) => {
@@ -780,7 +831,31 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
+								const effortRejection = settleEffortFallback(targetSessionId);
 								cleanup();
+								// Retry only when re-resolving really drops the refused value;
+								// otherwise the second attempt would send it again and loop.
+								const retry = spawnBackgroundSynopsisRef.current;
+								if (
+									effortRejection &&
+									retry &&
+									cheapTurnSettings(toolType).effort !== cheapEffort
+								) {
+									logger.warn(
+										'[spawnBackgroundSynopsis] Effort rejected by the provider; retrying at the agent default',
+										undefined,
+										{ sessionId, effort: cheapEffort, ...effortRejection }
+									);
+									void retry(
+										sessionId,
+										cwd,
+										resumeAgentSessionId,
+										prompt,
+										toolType,
+										sessionConfig
+									).then(resolve);
+									return;
+								}
 								const ctx = lastSynopsisUsageEvent
 									? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
 									: undefined;
@@ -955,6 +1030,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 	// Update refs for functions that need to be accessed from other callbacks
 	spawnBackgroundSynopsisRef.current = spawnBackgroundSynopsis;
+	spawnAgentForSessionRef.current = spawnAgentForSession;
 	spawnAgentWithPromptRef.current = spawnAgentWithPrompt;
 
 	return {

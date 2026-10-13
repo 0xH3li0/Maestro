@@ -1581,6 +1581,7 @@ app
 						cwd: projectRoot,
 						projectRoot,
 						autoRunFolderPath: storedSession.autoRunFolderPath,
+						newSessionMessage: storedSession.newSessionMessage,
 					},
 					subscription: {
 						name: subscriptionName,
