@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
 import {
-	aiTabFocusFields,
+	focusAiTabInSession,
 	createTab,
 	getActiveTab,
 	isSessionIdLabel,
@@ -322,11 +322,9 @@ export function useAgentSessionManagement(
 				(tab) => tab.agentSessionId === agentSessionId
 			);
 			if (existingTab && existingTab.logs && existingTab.logs.length > 0) {
-				// Switch to the existing tab instead of creating a duplicate
+				// Reveal and focus the existing tab instead of creating a duplicate.
 				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === targetSession.id ? { ...s, ...aiTabFocusFields(existingTab.id) } : s
-					)
+					prev.map((s) => (s.id === targetSession.id ? focusAiTabInSession(s, existingTab.id) : s))
 				);
 				setActiveAgentSessionId(agentSessionId);
 				return true;
@@ -452,11 +450,7 @@ export function useAgentSessionManagement(
 										}
 									: tab
 							);
-							return {
-								...s,
-								aiTabs: updatedTabs,
-								...aiTabFocusFields(freshExistingTab.id),
-							};
+							return focusAiTabInSession({ ...s, aiTabs: updatedTabs }, freshExistingTab.id);
 						}
 
 						// Create tab from the CURRENT session state (not stale closure value)

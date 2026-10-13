@@ -1222,8 +1222,10 @@ Some text with [x] in it that's not a checkbox
 		// held when it spawned.
 		it('reports a resumed turn its share of the session totals', async () => {
 			const realFs = await vi.importActual<typeof import('fs')>('fs');
+			const realOs = await vi.importActual<typeof import('os')>('os');
+			// Real filesystem I/O needs the runner's temp directory, not the suite's POSIX mock.
 			const configDir = realFs.mkdtempSync(
-				path.join(realFs.realpathSync(os.tmpdir()), 'cli-cost-')
+				path.join(realFs.realpathSync(realOs.tmpdir()), 'cli-cost-')
 			);
 			const projectDir = path.join(configDir, 'projects', '-project');
 			realFs.mkdirSync(projectDir, { recursive: true });
