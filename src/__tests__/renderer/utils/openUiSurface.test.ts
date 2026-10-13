@@ -103,4 +103,25 @@ describe('openUiSurface - delegation graph', () => {
 		expect(result.error).toContain('has no tabs');
 		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(false);
 	});
+
+	it('opens the Delegation Graph on one group (`open delegation-graph --group`)', () => {
+		expect(openUiSurface('delegation-graph', undefined, undefined, 'group-1')).toEqual({
+			ok: true,
+		});
+
+		expect(selectModalOpen('delegationGraph')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('delegationGraph')(useModalStore.getState())).toEqual({
+			scope: { kind: 'group', groupId: 'group-1' },
+		});
+	});
+
+	it('refuses a group on a surface that does not open on one, and opens nothing', () => {
+		useModalStore.getState().closeModal('about');
+
+		const result = openUiSurface('about', undefined, undefined, 'group-1');
+
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('--group does not apply');
+		expect(selectModalOpen('about')(useModalStore.getState())).toBe(false);
+	});
 });

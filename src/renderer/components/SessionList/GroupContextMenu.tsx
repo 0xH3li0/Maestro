@@ -10,6 +10,7 @@ import {
 	Plus,
 	Settings,
 	Trash2,
+	Waypoints,
 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
@@ -27,6 +28,8 @@ interface GroupContextMenuProps {
 	onRename: () => void;
 	/** Open Group Settings (the defaults for new agents) on this group. */
 	onGroupSettings?: () => void;
+	/** Open the Delegation Graph on this group. */
+	onOpenDelegationGraph?: () => void;
 	onNewAgent: () => void;
 	onDelete?: () => void;
 	/** Override the delete button label; defaults based on memberCount. */
@@ -57,6 +60,7 @@ export function GroupContextMenu({
 	memberCount,
 	onRename,
 	onGroupSettings,
+	onOpenDelegationGraph,
 	onNewAgent,
 	onDelete,
 	deleteLabel,
@@ -156,6 +160,23 @@ export function GroupContextMenu({
 				>
 					<Settings className="w-3.5 h-3.5" />
 					Group Settings...
+				</button>
+			)}
+
+			{/* Offered on a worktree group too: its agents hold peer grants like
+			    any others, so its graph is as real as a hand-made group's. */}
+			{onOpenDelegationGraph && (
+				<button
+					type="button"
+					onClick={() => {
+						onOpenDelegationGraph();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Waypoints className="w-3.5 h-3.5" />
+					Delegation Graph
 				</button>
 			)}
 

@@ -127,6 +127,39 @@ describe('GroupContextMenu', () => {
 		});
 	});
 
+	describe('Delegation Graph', () => {
+		it('sits after Group Settings and before New Agent', () => {
+			setup({ onGroupSettings: vi.fn(), onOpenDelegationGraph: vi.fn() });
+			const labels = screen.getAllByRole('button').map((button) => button.textContent);
+			const at = labels.indexOf('Delegation Graph');
+			expect(labels[at - 1]).toBe('Group Settings...');
+			expect(labels[at + 1]).toBe('New Agent in Group...');
+		});
+
+		it('opens the graph and dismisses the menu', () => {
+			const onOpenDelegationGraph = vi.fn();
+			const props = setup({ onOpenDelegationGraph });
+			fireEvent.click(screen.getByText('Delegation Graph'));
+			expect(onOpenDelegationGraph).toHaveBeenCalledTimes(1);
+			expect(props.onDismiss).toHaveBeenCalledTimes(1);
+		});
+
+		it('is offered for a worktree group, which has no Group Settings', () => {
+			setup({
+				onGroupSettings: vi.fn(),
+				onOpenDelegationGraph: vi.fn(),
+				group: { ...group, kind: 'worktree' },
+			});
+			expect(screen.getByText('Delegation Graph')).toBeInTheDocument();
+			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+		});
+
+		it('is hidden when the host passes no handler', () => {
+			setup();
+			expect(screen.queryByText('Delegation Graph')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Move Group to Window', () => {
 		const targets = [
 			{ windowId: 'p', isMain: true, windowNumber: 1, label: 'Main Window', isCurrentOwner: true },

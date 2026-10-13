@@ -331,6 +331,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Tab Cleanup Suggestions: Apply a ticked row                                                 | `tab close <tab-id>`, `snooze tab <tab-id> <when> -a <agent>`, `snooze wake <snooze-id>`                                                           |
 | Open Tab Cleanup Suggestions                                                                | `open tab-cleanup`                                                                                                                                 |
 | Open the Delegation Graph (hamburger menu, palette, unbound hotkey)                         | `open delegation-graph` (every agent)                                                                                                              |
+| Open the Delegation Graph on one group (group right-click, a palette command per group)     | `open delegation-graph --group <id>` (same `openDelegationGraph()` action; `open --list` marks the surface)                                        |
 | Delegation Graph: read a scope's layout and saved positions                                 | `settings get delegationGraphLayouts` (keys: `all`, `group:<groupId>`)                                                                             |
 | Delegation Graph: draw or re-draw an edge (Edit mode, the edge editor)                      | `update-agent <source> --peer <target>:<r\|w\|rw>`, `--peer-note <target>:<text>`; read: `show-agent` (same `applyPeerAgentEdits()` patch)         |
 | Delegation Graph: click an edge, then Delete edge (an edge the user wrote)                  | `update-agent <source> --remove-peer <target>`; read: `show-agent` (same `applyPeerAgentEdits()` patch)                                            |
@@ -483,11 +484,11 @@ a design constraint; they are simply not built yet.
     flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
     `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
     below.
-17. **Delegation Graph: scope, layout and reset.** `open delegation-graph`
-    opens the graph on every agent. There is no way to open it on one group
-    from the CLI: the modal takes `{ scope }`, and `open` carries only tabs.
-    Picking a named layout, Reset layout, Fit, the legend toggle and dragging
-    an agent have no verb either. All of these are presentation: they change
+17. **Delegation Graph: layout and reset.** `open delegation-graph` opens
+    the graph on every agent, and `--group <id>` opens it on one group (see
+    the Covered table). Picking a named layout, Reset layout, Fit, the legend
+    toggle and dragging an agent have no verb. All of these are presentation:
+    they change
     where an agent is DRAWN, never whom it can reach, and what they leave
     behind is readable with `settings get delegationGraphLayouts`. The
     View / Edit switch has no verb and needs none: it is a guard against a
@@ -500,9 +501,9 @@ a design constraint; they are simply not built yet.
     so a pointer has something to draw an edge to. The CLI names the target
     by id, in or out of the group: `update-agent <source> --peer <target>:r`.
     The relationships the graph draws are covered in full (`update-agent --peer`
-    writes them, `show-agent` reads them resolved). Closing the scope half
-    means a verb with `--group <id>` that passes `{ scope }` to
-    `openModal('delegationGraph')`.
+    writes them, `show-agent` reads them resolved). Changing the scope of a
+    graph that is already open is the same `open delegation-graph --group`
+    call: the modal is keyed by scope, so a second open shows the new one.
 
 ### Audit backlog (2026-09-27)
 

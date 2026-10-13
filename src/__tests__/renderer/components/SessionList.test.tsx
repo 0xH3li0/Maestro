@@ -178,6 +178,7 @@ const mockModalActions = {
 	setRenameGroupIcon: vi.fn(),
 	setRenameGroupColor: vi.fn(),
 	openGroupSettings: vi.fn(),
+	openDelegationGraph: vi.fn(),
 };
 
 vi.mock('../../../renderer/stores/modalStore', async (importActual) => {
@@ -1490,6 +1491,22 @@ describe('SessionList', () => {
 			expect(mockModalActions.openGroupSettings).toHaveBeenCalledWith('g1');
 			// The menu closes behind the click.
 			expect(screen.queryByText('Group Settings...')).not.toBeInTheDocument();
+		});
+
+		it('opens the Delegation Graph on the group when "Delegation Graph" is clicked', () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group', emoji: '🚀' });
+			useSessionStore.setState({ sessions: [], groups: [group] });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({ sortedSessions: [] });
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'), { clientX: 100, clientY: 100 });
+			fireEvent.click(screen.getByText('Delegation Graph'));
+
+			// The group that was right-clicked, never the scope the graph last had.
+			expect(mockModalActions.openDelegationGraph).toHaveBeenCalledWith('g1');
+			// The menu closes behind the click.
+			expect(screen.queryByText('Delegation Graph')).not.toBeInTheDocument();
 		});
 
 		it('offers no Group Settings for a worktree group', () => {

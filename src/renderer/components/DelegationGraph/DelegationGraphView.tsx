@@ -90,7 +90,6 @@ import {
 	type DelegationNodePosition,
 	type DelegationSavedPositions,
 } from '../../../shared/delegationGraphLayout';
-import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { hasAnyPeerAccess } from '../../../shared/peerAgents';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { openAgentSettings } from '../../services/agentNavigation';
@@ -122,6 +121,7 @@ import {
 	DelegationDropOverlay,
 	DelegationPlacedNotice,
 	delegationGroupLabel,
+	delegationScopeGroups,
 	sectionAgentsForAdding,
 } from './DelegationGraphPlacement';
 import { arrangeDelegationGraph, computeDelegationLayout } from './delegationLayouts';
@@ -290,10 +290,7 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 	// of scope, because the user who switched it on is still the one editing.
 	const [mode, setMode] = useState<DelegationGraphMode>(DEFAULT_DELEGATION_GRAPH_MODE);
 	const isEditing = mode === 'edit';
-	const sortedGroups = useMemo(
-		() => [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
-		[groups]
-	);
+	const sortedGroups = useMemo(() => delegationScopeGroups(groups), [groups]);
 
 	// The agents the user put on this scope's canvas by hand. Never saved and
 	// never written to an agent: see `DelegationGraphPlacement`.

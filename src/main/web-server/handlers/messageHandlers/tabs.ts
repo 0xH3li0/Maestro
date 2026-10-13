@@ -1077,8 +1077,9 @@ export function handleOpenDocumentGraph(
 
 /**
  * Handle open_modal message - open one of the app's modals / dashboards by
- * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
- * are validated here so the renderer only ever receives ids it can act on.
+ * `UiSurface.id`, optionally on a specific tab or on one agent group. The
+ * surface, the tab and whether the surface takes a group are validated here so
+ * the renderer only ever receives a request it can act on.
  */
 export function handleOpenModal(
 	ctx: MessageHandlerContext,
@@ -1090,6 +1091,8 @@ export function handleOpenModal(
 		typeof message.tab === 'string' && message.tab.length > 0 ? message.tab : undefined;
 	const subTabName =
 		typeof message.subTab === 'string' && message.subTab.length > 0 ? message.subTab : undefined;
+	const groupId =
+		typeof message.group === 'string' && message.group.length > 0 ? message.group : undefined;
 
 	const sendResult = (success: boolean, error?: string) => {
 		ctx.send(client, {
@@ -1109,7 +1112,11 @@ export function handleOpenModal(
 		return;
 	}
 
-	const target = resolveUiSurfaceTarget(surface, { tab: tabName, subTab: subTabName });
+	const target = resolveUiSurfaceTarget(surface, {
+		tab: tabName,
+		subTab: subTabName,
+		group: groupId,
+	});
 	if ('error' in target) {
 		sendResult(false, target.error);
 		return;
@@ -1118,7 +1125,7 @@ export function handleOpenModal(
 	const subTabId = target.subTab?.id;
 
 	logger.info(
-		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}`,
+		`[Web] Received open_modal message: surface=${surface.id}, tab=${tabId ?? '-'}, subTab=${subTabId ?? '-'}, group=${target.group ?? '-'}`,
 		LOG_CONTEXT
 	);
 
@@ -1128,7 +1135,7 @@ export function handleOpenModal(
 	}
 
 	ctx.callbacks
-		.openModal({ surface: surface.id, tab: tabId, subTab: subTabId })
+		.openModal({ surface: surface.id, tab: tabId, subTab: subTabId, group: target.group })
 		.then((success) => sendResult(success, success ? undefined : 'Maestro window is not available'))
 		.catch((error) => sendResult(false, `Failed to open ${surface.label}: ${error.message}`));
 }

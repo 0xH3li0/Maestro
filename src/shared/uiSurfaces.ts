@@ -2,8 +2,9 @@
  * Registry of Maestro's openable UI surfaces (modals and dashboards).
  *
  * One list, three consumers:
- *   - `maestro-cli open <surface> [--tab <tab>]` validates its argument here
- *     and prints the "you can also reach it by ..." hint from the same entry.
+ *   - `maestro-cli open <surface> [--tab <tab>] [--group <id>]` validates its
+ *     arguments here and prints the "you can also reach it by ..." hint from
+ *     the same entry.
  *   - The main process validates the `open_modal` bridge message against it.
  *   - The renderer maps a surface id to a `ModalId` + optional tab payload.
  *
@@ -35,6 +36,16 @@ export interface OpenUiSurfaceRequest {
 	surface: string;
 	tab?: string;
 	subTab?: string;
+	/** The agent group to open the surface on. Only a surface with `groupClick` takes one. */
+	group?: string;
+}
+
+/** Where inside a surface an open request lands, once validated. */
+export interface UiSurfaceTarget {
+	tab?: UiSurfaceTab;
+	subTab?: UiSurfaceTab;
+	/** A group id, passed through as given: the registry knows no groups. */
+	group?: string;
 }
 
 /** Encore Feature flag that must be on for a surface to exist. */
@@ -67,6 +78,11 @@ export interface UiSurface {
 	commandPalette?: string;
 	/** Where to click to reach it. */
 	click?: string;
+	/**
+	 * Present when the surface can open on ONE agent group (`--group`): where to
+	 * click to get that by hand. Absent, `--group` is refused for the surface.
+	 */
+	groupClick?: string;
 	/** Encore Feature that gates the surface. */
 	encore?: UiSurfaceEncoreFlag;
 }
@@ -194,10 +210,11 @@ export const UI_SURFACES: UiSurface[] = [
 		aliases: ['delegation', 'delegations', 'peer-graph', 'peers-graph'],
 		modal: 'delegationGraph',
 		description:
-			'Which agent can consult or delegate to which, drawn as a graph. Read-only: peers are set on the Peers tab of an agent.',
+			'Which agent can consult or delegate to which, drawn as a graph. Opens in View; Edit draws, changes and removes an edge. --group opens it on one group.',
 		shortcutId: 'openDelegationGraph',
 		commandPalette: 'Delegation Graph',
 		click: 'the hamburger menu > Delegation Graph',
+		groupClick: 'right-click the group in the Left Bar > Delegation Graph',
 	},
 	{
 		id: 'symphony',
@@ -402,12 +419,27 @@ export function surfaceSubTabIds(tab: UiSurfaceTab): string[] {
 }
 
 /**
- * Validate the `tab` and `subTab` of an open request against a surface. One
- * function for the CLI and the main-process handler, so the two cannot disagree
- * about what a valid deep link is. `subTab` without `tab` is refused: a
- * sub-tab only means something inside a tab.
+ * Validate the `tab`, `subTab` and `group` of an open request against a
+ * surface. One function for the CLI and the main-process handler, so the two
+ * cannot disagree about what a valid deep link is. `subTab` without `tab` is
+ * refused: a sub-tab only means something inside a tab. `group` is refused on
+ * a surface that does not open on a group; whether the group EXISTS is the
+ * caller's question, since the registry knows no groups.
  */
 export function resolveUiSurfaceTarget(
+	surface: UiSurface,
+	request: { tab?: string; subTab?: string; group?: string }
+): UiSurfaceTarget | { error: string } {
+	const { group } = request;
+	if (group !== undefined && !surface.groupClick) {
+		return { error: `${surface.label} does not open on one group, so --group does not apply.` };
+	}
+	const target = resolveUiSurfaceTabTarget(surface, request);
+	if ('error' in target || group === undefined) return target;
+	return { ...target, group };
+}
+
+function resolveUiSurfaceTabTarget(
 	surface: UiSurface,
 	request: { tab?: string; subTab?: string }
 ): { tab?: UiSurfaceTab; subTab?: UiSurfaceTab } | { error: string } {
@@ -445,12 +477,13 @@ export function resolveUiSurfaceTarget(
  * Build the "you can also get there by ..." sentence for a surface. The CLI
  * prints this after opening so the agent relaying the result can teach the
  * user the manual paths. `shortcut` is the already-formatted hotkey (the
- * caller owns platform detection); omit it when the surface has none.
+ * caller owns platform detection); omit it when the surface has none. A target
+ * with a `group` adds the surface's own way to open on one group.
  */
 export function describeSurfaceAccess(
 	surface: UiSurface,
 	shortcut?: string,
-	target?: { tab?: UiSurfaceTab; subTab?: UiSurfaceTab }
+	target?: UiSurfaceTarget
 ): string {
 	const paths: string[] = [];
 	if (shortcut) paths.push(`press ${shortcut}`);
@@ -461,5 +494,9 @@ export function describeSurfaceAccess(
 	if (paths.length === 0) return '';
 	const where = [target?.tab?.label, target?.subTab?.label].filter(Boolean).join(' > ');
 	const inside = where ? `, then pick ${where}` : '';
-	return `You can also reach ${surface.label} yourself: ${paths.join(', or ')}${inside}.`;
+	const forGroup =
+		target?.group !== undefined && surface.groupClick
+			? ` For one group: ${surface.groupClick}.`
+			: '';
+	return `You can also reach ${surface.label} yourself: ${paths.join(', or ')}${inside}.${forGroup}`;
 }

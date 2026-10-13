@@ -1538,16 +1538,22 @@ maestro-cli open usage-dashboard --tab cue
 
 # Deep-link to a tab inside a tab (Settings > Models has five)
 maestro-cli open settings --tab models --sub-tab system-one
+
+# Open the Delegation Graph on one group (the group's id, or a unique prefix of it)
+maestro-cli open delegation-graph --group <group-id>
 ```
 
 | Flag                  | Description                                                   |
 | --------------------- | ------------------------------------------------------------- |
 | `-t, --tab <tab>`     | Deep-link to a tab within the surface                         |
 | `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs `--tab`)            |
+| `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph only)   |
 | `--list`              | List every openable surface, its tabs, sub-tabs, and shortcut |
 | `--json`              | Output as JSON (for scripting)                                |
 
 Surfaces are addressed by id or alias (`usage`, `stats`, and `dashboard` all reach the Usage Dashboard). A `--tab` or `--sub-tab` value matches either the id (`scheduled`) or the label (`"Scheduled Tasks"`). A renamed tab keeps its old id as an alias: `--tab local-models` still opens Settings > Models. The Models tab has the sub-tabs `library`, `sources`, `system-one`, `system-two`, and `gateway`.
+
+`--group` applies to the Delegation Graph only, and opens it on that group and the agents it reaches instead of on every agent. Find a group's id with `maestro-cli list groups`. In the app the same thing is **Delegation Graph** in a group's right-click menu, or a "Delegation Graph: <group>" command in the command palette. Any other surface refuses `--group` and says so.
 
 On success the command also prints how to reach that surface by hand:
 

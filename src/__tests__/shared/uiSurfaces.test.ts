@@ -81,6 +81,23 @@ describe('resolveUiSurface', () => {
 		expect(hint).toContain('press Ctrl+Cmd+G');
 		expect(hint).toContain('search "Delegation Graph"');
 		expect(hint).toContain('the hamburger menu > Delegation Graph');
+		// No group was asked for, so the group's own way in is not part of it.
+		expect(hint).not.toContain('For one group');
+	});
+
+	it('adds the right-click way in when the Delegation Graph was opened on a group', () => {
+		const graph = resolveUiSurface('delegation-graph')!;
+		const hint = describeSurfaceAccess(graph, undefined, { group: 'g-1' });
+		expect(hint).toContain('search "Delegation Graph"');
+		expect(hint).toMatch(
+			/ For one group: right-click the group in the Left Bar > Delegation Graph\.$/
+		);
+	});
+
+	it('opens only the Delegation Graph on a group', () => {
+		expect(
+			UI_SURFACES.filter((surface) => surface.groupClick).map((surface) => surface.id)
+		).toEqual(['delegation-graph']);
 	});
 
 	it('returns null for an unknown or empty name', () => {
@@ -177,6 +194,30 @@ describe('resolveUiSurfaceTarget', () => {
 		const target = resolveUiSurfaceTarget(settings, { tab: 'shortcuts' });
 		expect(target).toMatchObject({ tab: { id: 'shortcuts' } });
 		expect(target).not.toHaveProperty('subTab');
+	});
+
+	it('passes a group through for a surface that opens on one', () => {
+		const graph = resolveUiSurface('delegation-graph')!;
+		expect(resolveUiSurfaceTarget(graph, { group: 'g-1' })).toEqual({ group: 'g-1' });
+		// No group asked for, no group key in the answer.
+		expect(resolveUiSurfaceTarget(graph, {})).not.toHaveProperty('group');
+	});
+
+	it('refuses a group on a surface that does not open on one', () => {
+		expect(resolveUiSurfaceTarget(cue, { group: 'g-1' })).toEqual({
+			error: 'Maestro Cue does not open on one group, so --group does not apply.',
+		});
+		// Refused before the tab is looked at, so the group is the error named.
+		expect(resolveUiSurfaceTarget(cue, { tab: 'nope', group: 'g-1' })).toEqual({
+			error: expect.stringContaining('--group does not apply'),
+		});
+	});
+
+	it('still refuses a tab on the Delegation Graph when a group is given', () => {
+		const graph = resolveUiSurface('delegation-graph')!;
+		expect(resolveUiSurfaceTarget(graph, { tab: 'peers', group: 'g-1' })).toEqual({
+			error: expect.stringContaining('has no tabs'),
+		});
 	});
 
 	it('refuses a sub-tab with no tab', () => {

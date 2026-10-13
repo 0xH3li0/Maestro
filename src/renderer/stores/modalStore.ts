@@ -1128,6 +1128,11 @@ export function getModalActions() {
 		openGroupSettings: (groupId: string) => openModal('groupSettings', { groupId }),
 		closeGroupSettings: () => closeModal('groupSettings'),
 
+		// Delegation Graph Modal
+		// With no group it opens on every agent, as the menu item and the hotkey do.
+		openDelegationGraph: (groupId?: string) =>
+			openModal('delegationGraph', groupId ? { scope: { kind: 'group', groupId } } : undefined),
+
 		// Agent Sessions Browser
 		setAgentSessionsOpen: (open: boolean) =>
 			open

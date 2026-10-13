@@ -574,6 +574,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildDelegationGraphCommands({
 			setQuickActionOpen,
 			openDelegationGraphShortcut: shortcuts.openDelegationGraph,
+			groups,
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,

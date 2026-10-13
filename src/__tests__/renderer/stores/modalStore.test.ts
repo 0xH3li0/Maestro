@@ -764,6 +764,33 @@ describe('modalStore', () => {
 		});
 	});
 
+	describe('integration: delegation graph', () => {
+		it('openDelegationGraph with no group opens on every agent', () => {
+			getModalActions().openDelegationGraph();
+
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			expect(useModalStore.getState().getData('delegationGraph')).toBeUndefined();
+		});
+
+		it('openDelegationGraph with a group opens on that group', () => {
+			getModalActions().openDelegationGraph('group-1');
+
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+				scope: { kind: 'group', groupId: 'group-1' },
+			});
+		});
+
+		it('a second open on another group replaces the scope', () => {
+			getModalActions().openDelegationGraph('group-1');
+			getModalActions().openDelegationGraph('group-2');
+
+			expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+				scope: { kind: 'group', groupId: 'group-2' },
+			});
+		});
+	});
+
 	describe('integration: group settings flow', () => {
 		it('openGroupSettings opens the modal on the given group', () => {
 			getModalActions().openGroupSettings('group-1');

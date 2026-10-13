@@ -476,7 +476,8 @@ export type OpenDocumentGraphCallback = (params: OpenDocumentGraphParams) => Pro
 /**
  * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
  * registry). `surface` is a `UiSurface.id`; `tab` and `subTab` are optional ids
- * within it, already validated against that surface.
+ * within it, already validated against that surface. `group` is an agent group
+ * id, sent only for a surface that opens on one.
  */
 export type OpenModalParams = OpenUiSurfaceRequest;
 export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;

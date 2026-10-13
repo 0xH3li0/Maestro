@@ -24,6 +24,7 @@
 import { X } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import type { DelegationOffGraphAgent } from '../../../shared/delegationGraph';
+import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
 
 /** The agents of one group that the "Add agent" control offers. */
@@ -41,6 +42,15 @@ const UNGROUPED_LABEL = 'Ungrouped';
 /** A group as one line of a picker: its emoji, when it has one, and its name. */
 export function delegationGroupLabel(group: GroupLabelInput): string {
 	return group.emoji ? `${group.emoji} ${group.name}` : group.name;
+}
+
+/**
+ * The groups a graph can be opened on, in the order every picker lists them:
+ * the scope select of the graph and the command palette. Every group is one,
+ * a hidden group and a worktree group included.
+ */
+export function delegationScopeGroups<T extends GroupLabelInput>(groups: readonly T[]): T[] {
+	return [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 }
 
 /**

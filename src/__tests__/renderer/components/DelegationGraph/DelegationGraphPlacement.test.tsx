@@ -14,6 +14,7 @@ import {
 	DelegationDropOverlay,
 	DelegationPlacedNotice,
 	delegationGroupLabel,
+	delegationScopeGroups,
 	placedAgentHint,
 	sectionAgentsForAdding,
 	type DelegationAddAgentSection,
@@ -35,6 +36,22 @@ describe('delegationGroupLabel', () => {
 	it('is the name, with the emoji in front when the group has one', () => {
 		expect(delegationGroupLabel(PLATFORM)).toBe('Platform');
 		expect(delegationGroupLabel(RESEARCH)).toBe('🔬 Research');
+	});
+});
+
+// The one order for a list of groups a graph can open on: the scope select of
+// the graph and the command palette both read it.
+describe('delegationScopeGroups', () => {
+	it('sorts by name and ignores a leading emoji', () => {
+		const zulu = { id: 'g-3', name: 'Zulu', emoji: '' };
+		expect(delegationScopeGroups([zulu, RESEARCH, PLATFORM])).toEqual([PLATFORM, RESEARCH, zulu]);
+	});
+
+	it('returns a new array and leaves the one it was given alone', () => {
+		const given = [RESEARCH, PLATFORM];
+		const sorted = delegationScopeGroups(given);
+		expect(sorted).not.toBe(given);
+		expect(given).toEqual([RESEARCH, PLATFORM]);
 	});
 });
 

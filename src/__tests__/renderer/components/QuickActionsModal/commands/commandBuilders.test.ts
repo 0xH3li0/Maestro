@@ -4,7 +4,10 @@ import { buildAgentPanelCommands } from '../../../../../renderer/components/Quic
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from '../../../../../renderer/components/QuickActionsModal/commands/contextCommands';
 import { buildDebugCommands } from '../../../../../renderer/components/QuickActionsModal/commands/debugCommands';
-import { buildDelegationGraphCommands } from '../../../../../renderer/components/QuickActionsModal/commands/delegationGraphCommands';
+import {
+	buildDelegationGraphCommands,
+	delegationGraphGroupCommandId,
+} from '../../../../../renderer/components/QuickActionsModal/commands/delegationGraphCommands';
 import { buildFeatureCommands } from '../../../../../renderer/components/QuickActionsModal/commands/featureCommands';
 import { buildGitWorktreeCommands } from '../../../../../renderer/components/QuickActionsModal/commands/gitWorktreeCommands';
 import {
@@ -1098,5 +1101,93 @@ describe('buildDelegationGraphCommands', () => {
 				openDelegationGraphShortcut: bound,
 			})[0].shortcut
 		).toBe(bound);
+	});
+
+	describe('one command per group', () => {
+		const PLATFORM = { id: 'g-platform', name: 'Platform', emoji: '' };
+		const RESEARCH = { id: 'g-research', name: 'Research', emoji: '🔬' };
+		const bound = { id: 'openDelegationGraph', label: 'Delegation Graph', keys: ['y'] };
+
+		it('adds none when there is no group', () => {
+			expect(buildDelegationGraphCommands({ setQuickActionOpen: vi.fn() })).toHaveLength(1);
+			expect(
+				buildDelegationGraphCommands({ setQuickActionOpen: vi.fn(), groups: [] })
+			).toHaveLength(1);
+		});
+
+		it('follows the all-agents command, in the order the scope picker lists groups', () => {
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				// Given out of order, and the emoji must not decide the order.
+				groups: [RESEARCH, PLATFORM],
+			});
+
+			expect(commands.map((command) => command.id)).toEqual([
+				'openDelegationGraph',
+				delegationGraphGroupCommandId(PLATFORM.id),
+				delegationGraphGroupCommandId(RESEARCH.id),
+			]);
+			expect(commands.map((command) => command.label)).toEqual([
+				'Delegation Graph',
+				'Delegation Graph: Platform',
+				'Delegation Graph: 🔬 Research',
+			]);
+		});
+
+		it('opens the graph on that group and closes the palette', () => {
+			const setQuickActionOpen = vi.fn();
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen,
+				groups: [PLATFORM, RESEARCH],
+			});
+			const research = commands.find(
+				(command) => command.id === delegationGraphGroupCommandId(RESEARCH.id)
+			)!;
+
+			try {
+				research.action();
+				expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+				expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+					scope: { kind: 'group', groupId: RESEARCH.id },
+				});
+			} finally {
+				useModalStore.getState().closeModal('delegationGraph');
+			}
+		});
+
+		it('still opens on every agent from the first command', () => {
+			const [all] = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				groups: [PLATFORM],
+			});
+
+			try {
+				all.action();
+				expect(useModalStore.getState().getData('delegationGraph')).toBeUndefined();
+			} finally {
+				useModalStore.getState().closeModal('delegationGraph');
+			}
+		});
+
+		it('keeps the chord on the all-agents command only', () => {
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				openDelegationGraphShortcut: bound,
+				groups: [PLATFORM],
+			});
+
+			expect(commands[0].shortcut).toBe(bound);
+			expect(commands[1].shortcut).toBeUndefined();
+		});
+
+		it('gives every group its own id, so two groups with one name are two commands', () => {
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				groups: [PLATFORM, { ...PLATFORM, id: 'g-platform-2' }],
+			});
+
+			expect(new Set(commands.map((command) => command.id)).size).toBe(3);
+		});
 	});
 });

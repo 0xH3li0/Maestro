@@ -523,12 +523,13 @@ Open a URL as a browser tab in the Maestro desktop app
 
 Open a Maestro modal or dashboard (use --list to see every surface)
 
-| Option                | Description                                             | Default |
-| --------------------- | ------------------------------------------------------- | ------- |
-| `-t, --tab <tab>`     | Deep-link to a tab within the surface                   | -       |
-| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs --tab)        | -       |
-| `--list`              | List every openable surface, its tabs, and its shortcut | -       |
-| `--json`              | Output as JSON (for scripting)                          | -       |
+| Option                | Description                                                 | Default |
+| --------------------- | ----------------------------------------------------------- | ------- |
+| `-t, --tab <tab>`     | Deep-link to a tab within the surface                       | -       |
+| `--sub-tab <sub-tab>` | Deep-link to a tab inside that tab (needs --tab)            | -       |
+| `-g, --group <id>`    | Open the surface on one agent group (Delegation Graph only) | -       |
+| `--list`              | List every openable surface, its tabs, and its shortcut     | -       |
+| `--json`              | Output as JSON (for scripting)                              | -       |
 
 ## `maestro-cli image`
 

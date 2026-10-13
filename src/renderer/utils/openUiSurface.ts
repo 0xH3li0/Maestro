@@ -25,7 +25,8 @@ export interface OpenUiSurfaceResult {
 }
 
 /**
- * Open `surfaceId`, optionally deep-linking to `tabId` and, inside it, `subTabId`.
+ * Open `surfaceId`, optionally deep-linking to `tabId` and, inside it,
+ * `subTabId`, or on the agent group `groupId` for a surface that takes one.
  *
  * Refuses (with a toast) when the surface is behind an Encore Feature the user
  * has turned off: silently opening nothing would look like the CLI lied, and
@@ -34,12 +35,17 @@ export interface OpenUiSurfaceResult {
 export function openUiSurface(
 	surfaceId: string,
 	tabId?: string,
-	subTabId?: string
+	subTabId?: string,
+	groupId?: string
 ): OpenUiSurfaceResult {
 	const surface = resolveUiSurface(surfaceId);
 	if (!surface) return { ok: false, error: `Unknown surface "${surfaceId}"` };
 
-	const target = resolveUiSurfaceTarget(surface, { tab: tabId, subTab: subTabId });
+	const target = resolveUiSurfaceTarget(surface, {
+		tab: tabId,
+		subTab: subTabId,
+		group: groupId,
+	});
 	if ('error' in target) return { ok: false, error: target.error };
 	const { tab, subTab } = target;
 
@@ -90,6 +96,12 @@ export function openUiSurface(
 			else useModalStore.getState().openModal('feedback');
 			return { ok: true };
 		}
+		case 'delegation-graph':
+			// A group that is gone by now is not refused here: the graph falls
+			// back to every agent, the same as a scope whose group is deleted
+			// while it is open.
+			actions.openDelegationGraph(target.group);
+			return { ok: true };
 		default:
 			// Surfaces with no data payload open generically - one line here beats
 			// a switch arm per modal that would drift as the registry grows.
