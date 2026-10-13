@@ -1,14 +1,16 @@
 /**
  * @fileoverview Tests for GroupSettingsModal: the explainer, the tabbed form
- * seeded from a group's defaults, the save that omits every blank field, and
- * Clear defaults.
+ * seeded from a group's defaults, the save that omits every blank field, the
+ * group's own pill label, and Clear defaults.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { GroupSettingsModal } from '../../../renderer/components/GroupSettingsModal';
 import { __resetRememberedModalTabsForTests } from '../../../renderer/components/ui/ModalTabStrip';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AgentConfig, Group } from '../../../renderer/types';
 import { createMockTheme } from '../../helpers/mockTheme';
 
@@ -63,6 +65,11 @@ describe('GroupSettingsModal', () => {
 		onClose = vi.fn();
 		// The form remembers its last tab per app session; start every case on General.
 		__resetRememberedModalTabsForTests();
+		useModalStore.setState({ modals: new Map() });
+		useSettingsStore.setState({
+			showGroupLabelInBookmarks: true,
+			showFullGroupLabelInBookmarks: false,
+		});
 
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 			{
@@ -175,6 +182,148 @@ describe('GroupSettingsModal', () => {
 		fireEvent.keyDown(window, { key: 's', metaKey: true });
 		expect(setGroups).not.toHaveBeenCalled();
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	describe('Group pill label', () => {
+		const labelInput = () => screen.getByLabelText('Group Pill Label');
+		const preview = () => screen.getByTestId('group-settings-pill-preview');
+
+		it('is the first field of the General tab, capped at the shared length', () => {
+			renderModal(createGroup());
+
+			const fields = within(screen.getByTestId('group-settings-tab-body')).getAllByRole('textbox');
+			expect(fields[0]).toBe(labelInput());
+			expect(labelInput()).toHaveAttribute('maxlength', '12');
+			expect(
+				screen.getByText(/Shown beside bookmarked agents in the Left Bar\./)
+			).toHaveTextContent('The full name still appears on hover.');
+		});
+
+		it('seeds from the group shortLabel', () => {
+			renderModal(createGroup({ shortLabel: 'BE' }));
+
+			expect(labelInput()).toHaveValue('BE');
+			expect(preview()).toHaveTextContent('BE');
+		});
+
+		it('shows the automatic abbreviation as its placeholder and in the preview', () => {
+			renderModal(createGroup({ name: '[1] Aleyemma/Money-Sessions' }));
+
+			expect(labelInput()).toHaveValue('');
+			expect(labelInput()).toHaveAttribute('placeholder', 'AMS');
+			expect(preview()).toHaveTextContent('AMS');
+		});
+
+		it('previews the label as it is typed, with the full name on hover', () => {
+			renderModal(createGroup());
+
+			fireEvent.change(labelInput(), { target: { value: 'Back' } });
+
+			expect(preview()).toHaveTextContent('Back');
+			expect(preview()).toHaveAttribute('title', 'Backend');
+			expect(preview().className).toContain('row-group-chip');
+		});
+
+		it('saves a trimmed label and stores no defaults for a label-only change', () => {
+			const group = createGroup();
+			renderModal(group);
+
+			fireEvent.change(labelInput(), { target: { value: '  Back  ' } });
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(setGroups).toHaveBeenCalledTimes(1);
+			const [saved, untouched] = written(group);
+			expect(saved.shortLabel).toBe('Back');
+			// The label is a property of the group, never one of its defaults.
+			expect(saved).not.toHaveProperty('defaults');
+			expect(untouched).toBe(docsGroup);
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('leaves the defaults a group holds alone when only the label changes', () => {
+			const group = createGroup({ defaults: { nudgeMessage: 'Be brief.' } });
+			renderModal(group);
+
+			fireEvent.change(labelInput(), { target: { value: 'BE' } });
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(written(group)[0]).toEqual({ ...group, shortLabel: 'BE' });
+		});
+
+		it.each([
+			['cleared', ''],
+			['whitespace only', '   '],
+		])('deletes the field when the label is %s', (_case, value) => {
+			const group = createGroup({ shortLabel: 'BE' });
+			renderModal(group);
+
+			fireEvent.change(labelInput(), { target: { value } });
+			// The automatic abbreviation is back in the preview before the save.
+			expect(preview()).toHaveTextContent('Backend');
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(written(group)[0]).not.toHaveProperty('shortLabel');
+		});
+
+		it('says nothing about Display settings while the label is on screen', () => {
+			renderModal(createGroup());
+
+			expect(screen.queryByTestId('group-settings-pill-hidden-note')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('group-settings-pill-full-name-note')).not.toBeInTheDocument();
+		});
+
+		it('says group pills are hidden, and opens the Display setting that shows them', () => {
+			useSettingsStore.setState({ showGroupLabelInBookmarks: false });
+			renderModal(createGroup());
+
+			const note = screen.getByTestId('group-settings-pill-hidden-note');
+			expect(note).toHaveTextContent(
+				'Group pills are currently hidden. Turn on Show group label on bookmarked agents in Settings -> Display to see this.'
+			);
+
+			fireEvent.click(
+				within(note).getByRole('button', { name: 'Show group label on bookmarked agents' })
+			);
+
+			// Settings sits below this modal, so the modal closes first. Nothing is saved.
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(setGroups).not.toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('settings')).toBe(true);
+			expect(useModalStore.getState().getData('settings')).toMatchObject({
+				tab: 'display',
+				settingId: 'display-left-panel-group-label',
+			});
+		});
+
+		it('says the full group name is drawn in place of the label when that setting is on', () => {
+			useSettingsStore.setState({ showFullGroupLabelInBookmarks: true });
+			renderModal(createGroup());
+
+			const note = screen.getByTestId('group-settings-pill-full-name-note');
+			expect(note).toHaveTextContent('Group pills currently show the full group name');
+			// The preview stays the short form: it is the thing this field names.
+			fireEvent.change(labelInput(), { target: { value: 'BE' } });
+			expect(preview()).toHaveTextContent('BE');
+
+			fireEvent.click(
+				within(note).getByRole('button', { name: 'Show full group label on bookmarked agents' })
+			);
+			expect(useModalStore.getState().getData('settings')).toMatchObject({
+				tab: 'display',
+				settingId: 'display-left-panel-group-label',
+			});
+		});
+
+		it('names the hidden pills, not the full name, when both settings are set', () => {
+			useSettingsStore.setState({
+				showGroupLabelInBookmarks: false,
+				showFullGroupLabelInBookmarks: true,
+			});
+			renderModal(createGroup());
+
+			expect(screen.getByTestId('group-settings-pill-hidden-note')).toBeInTheDocument();
+			expect(screen.queryByTestId('group-settings-pill-full-name-note')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Provider tab', () => {

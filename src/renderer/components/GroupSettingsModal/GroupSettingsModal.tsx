@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentConfig, Group, Theme, ToolType } from '../../types';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
-import { withGroupDefaults } from '../../../shared/groupAgentDefaults';
+import { withGroupDefaults, withGroupShortLabel } from '../../../shared/groupAgentDefaults';
 import { backgroundRequestsSupport } from '../../../shared/local-models/background-requests';
 import {
 	agentRunOnSupport,
@@ -49,6 +49,7 @@ import {
 	PROVIDER_BOUND_DEFAULTS,
 	type GroupDefaultsForm,
 } from './groupDefaultsForm';
+import { GroupPillLabelField } from './GroupPillLabelField';
 
 const TAB_ID_PREFIX = 'group-settings';
 
@@ -93,9 +94,13 @@ export interface GroupSettingsModalProps {
  * fields removed. Every Models control here is a plain form field: the ones in
  * Edit Agent that apply at once write to a live agent, and a group has none.
  *
+ * One field is about the group itself: the pill label (`Group.shortLabel`). It
+ * is saved in the same write as the defaults, but it is not one of them. It is
+ * never copied into an agent and never published to one.
+ *
  * The modal is mounted only while it is open, and it reads `group.defaults`
- * once, when it mounts: a change to the group from elsewhere must not replace
- * what the user has typed.
+ * and `group.shortLabel` once, when it mounts: a change to the group from
+ * elsewhere must not replace what the user has typed.
  */
 export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSettingsModalProps) {
 	// Read once. `seed` feeds every initial value below.
@@ -128,6 +133,8 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		} = seed;
 		return rest;
 	});
+	// The group's own pill label. Not a default, so it is held apart from the form.
+	const [shortLabel, setShortLabel] = useState(() => group.shortLabel ?? '');
 	const setField = useCallback(
 		<Key extends keyof OwnFormState>(key: Key, value: OwnFormState[Key]) =>
 			setOwn((prev) => ({ ...prev, [key]: value })),
@@ -241,9 +248,10 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		[errorFields]
 	);
 
-	// Save writes the profile and nothing else. The values are built with every
-	// blank or default-valued field omitted (`buildGroupDefaults`); a value a
-	// new agent could not be created with goes to its tab instead.
+	// Save writes the profile and the pill label, in one write, and nothing
+	// else. The values are built with every blank or default-valued field omitted
+	// (`buildGroupDefaults`); a value a new agent could not be created with goes
+	// to its tab instead. A blank pill label removes `shortLabel`.
 	const handleSave = useCallback(() => {
 		const result = buildGroupDefaults(form, { homeDir, sshRemoteName, endpoints });
 		if (!result.ok) {
@@ -256,10 +264,24 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 			return;
 		}
 		setGroups((prev) =>
-			prev.map((g) => (g.id === group.id ? withGroupDefaults(g, result.defaults) : g))
+			prev.map((g) =>
+				g.id === group.id
+					? withGroupShortLabel(withGroupDefaults(g, result.defaults), shortLabel)
+					: g
+			)
 		);
 		onClose();
-	}, [form, homeDir, sshRemoteName, endpoints, setGroups, group.id, onClose, setActiveTab]);
+	}, [
+		form,
+		shortLabel,
+		homeDir,
+		sshRemoteName,
+		endpoints,
+		setGroups,
+		group.id,
+		onClose,
+		setActiveTab,
+	]);
 
 	// Clearing is a profile edit only: no agent is read or written.
 	const handleClearDefaults = useCallback(() => {
@@ -393,6 +415,17 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 						<GeneralTab
 							theme={theme}
 							idPrefix={TAB_ID_PREFIX}
+							lead={
+								// First on the page: the one field here that is about the group
+								// itself and not about its agents.
+								<GroupPillLabelField
+									theme={theme}
+									groupName={group.name}
+									value={shortLabel}
+									onChange={setShortLabel}
+									onLeaveForSettings={onClose}
+								/>
+							}
 							workingDirectory={
 								<FormInput
 									id="group-settings-working-dir-input"

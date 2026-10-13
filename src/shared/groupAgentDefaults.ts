@@ -7,6 +7,10 @@
  *
  * Shared, not renderer-only, so the desktop and `maestro-cli` write a group's
  * defaults the same way.
+ *
+ * `withGroupShortLabel` is here too, because Group Settings writes it in the
+ * same save. It is NOT a default: a pill label is a property of the group, it
+ * never reaches an agent, and it is no part of a defaults diff or a publish.
  */
 
 import type { Group, GroupAgentDefaults } from './types';
@@ -21,4 +25,19 @@ import type { Group, GroupAgentDefaults } from './types';
 export function withGroupDefaults(group: Group, defaults: GroupAgentDefaults | undefined): Group {
 	const { defaults: _previous, ...rest } = group;
 	return defaults && Object.keys(defaults).length > 0 ? { ...rest, defaults } : rest;
+}
+
+/**
+ * `group` with its pill label (`shortLabel`) replaced. The label is trimmed,
+ * and a blank one removes the field, so the automatic abbreviation comes back
+ * and a group never stores `''`.
+ *
+ * The label is not cut here. `GROUP_SHORT_LABEL_MAX_LENGTH` is enforced where a
+ * label is typed (the Group Settings input, the CLI flag), where the user can
+ * see the cap. Read the label back with `groupBadgeLabel()`.
+ */
+export function withGroupShortLabel(group: Group, shortLabel: string | undefined): Group {
+	const { shortLabel: _previous, ...rest } = group;
+	const label = shortLabel?.trim();
+	return label ? { ...rest, shortLabel: label } : rest;
 }

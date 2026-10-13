@@ -73,6 +73,8 @@ export interface FormInputProps {
 	testId?: string;
 	/** Whether to select all text when focused */
 	selectOnFocus?: boolean;
+	/** The most characters the input accepts. Omitted means no cap. */
+	maxLength?: number;
 }
 
 /**
@@ -101,6 +103,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 			id: providedId,
 			testId,
 			selectOnFocus = false,
+			maxLength,
 		},
 		ref
 	) => {
@@ -147,6 +150,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 						placeholder={placeholder}
 						disabled={disabled}
 						autoFocus={autoFocus}
+						maxLength={maxLength}
 						className={`
               ${addon ? 'flex-1' : 'w-full'}
               p-3 rounded border bg-transparent outline-none

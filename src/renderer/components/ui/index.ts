@@ -67,6 +67,8 @@ export { ShortcutFilterButton } from './ShortcutFilterButton';
 export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
 
 export { WorktreePill } from './WorktreePill';
+export { GroupPill } from './GroupPill';
+export type { GroupPillProps } from './GroupPill';
 
 export { TurnSettingPills } from './TurnSettingPills';
 export type { TurnSettingPillsProps } from './TurnSettingPills';

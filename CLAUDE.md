@@ -71,7 +71,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format a calendar day:** `formatCalendarDay()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
-- **The text of a group's pill:** `groupBadgeLabel(group)`, `GROUP_SHORT_LABEL_MAX_LENGTH`, over `abbreviateGroupName()` in `src/shared/formatters.ts` (never `abbreviateGroupName(group.name)` directly)
+- **The text of a group's pill:** `groupBadgeLabel(group)`, `GROUP_SHORT_LABEL_MAX_LENGTH` in `src/shared/formatters.ts`; `<GroupPill>` in `src/renderer/components/ui/GroupPill.tsx`; `withGroupShortLabel()` in `src/shared/groupAgentDefaults.ts` (never `abbreviateGroupName(group.name)` directly)
 - **Timestamp for a generated file name:** `fileTimestampSlug(dateOrTimestamp?)` in `src/shared/formatters.ts`
 - **Token pricing and Codex token totals:** `resolveModelPricing()` / `calculateModelCost()` in `src/shared/modelPricing.ts`, and `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`

@@ -226,6 +226,10 @@ describe('searchableSettings', () => {
 			// Display tab. The single Small/Medium/Large global size was replaced
 			// by a per-surface stepper plus a global zoom, so "font size" now
 			// leads to Zoom and to the individual surface pickers.
+			// Group Settings links to this control from the pill label field.
+			['Show group label on bookmarked agents', 'display-left-panel-group-label'],
+			['group pill', 'display-left-panel-group-label'],
+			['pill label', 'display-left-panel-group-label'],
 			['zoom', 'display-font-zoom'],
 			['bigger', 'display-font-zoom'],
 			['factory reset', 'display-typography-reset'],

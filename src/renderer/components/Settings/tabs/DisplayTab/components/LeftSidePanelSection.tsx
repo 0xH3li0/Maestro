@@ -169,20 +169,23 @@ export function LeftSidePanelSection({
 					ariaLabel="Show terminal startup-command indicator in left side bar"
 					borderTop
 				/>
-				<ToggleSettingRow
-					theme={theme}
-					title="Show group label on bookmarked agents"
-					description={
-						<>
-							Display the group badge (e.g. <MonoExample>CCS</MonoExample>) next to bookmarked
-							agents. Turn off to hide the group pill entirely.
-						</>
-					}
-					checked={showGroupLabelInBookmarks}
-					onChange={setShowGroupLabelInBookmarks}
-					ariaLabel="Show group label on bookmarked agents in left side bar"
-					borderTop
-				/>
+				{/* Its own anchor: Group Settings links here from the pill label field. */}
+				<div data-setting-id="display-left-panel-group-label">
+					<ToggleSettingRow
+						theme={theme}
+						title="Show group label on bookmarked agents"
+						description={
+							<>
+								Display the group badge (e.g. <MonoExample>CCS</MonoExample>) next to bookmarked
+								agents. Turn off to hide the group pill entirely.
+							</>
+						}
+						checked={showGroupLabelInBookmarks}
+						onChange={setShowGroupLabelInBookmarks}
+						ariaLabel="Show group label on bookmarked agents in left side bar"
+						borderTop
+					/>
+				</div>
 				<ToggleSettingRow
 					theme={theme}
 					title="Show full group label on bookmarked agents"

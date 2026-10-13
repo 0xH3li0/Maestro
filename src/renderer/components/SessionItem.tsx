@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { LongPressable, longPressMouseEvent } from './shared/LongPressable';
+import { GroupPill } from './ui/GroupPill';
 import { WorktreePill } from './ui/WorktreePill';
 import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
@@ -29,7 +30,6 @@ import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
 import { getConnectingColor } from '../utils/theme';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
-import { groupBadgeLabel } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { Session, Group, Theme } from '../types';
 
@@ -529,18 +529,11 @@ export const SessionItem = memo(function SessionItem({
 				{/* Group badge (only in bookmark variant when session belongs to a group).
 				    Hidden entirely when showGroupLabelInBookmarks is off. Abbreviated by
 				    default, or the group's own shortLabel when the user set one
-				    (groupBadgeLabel); the showFullGroupLabelInBookmarks setting swaps in the
-				    full group name, truncated with the complete value available on hover. */}
+				    (groupBadgeLabel, inside GroupPill); the showFullGroupLabelInBookmarks
+				    setting swaps in the full group name, truncated with the complete value
+				    available on hover. */}
 				{variant === 'bookmark' && group && showGroupLabelInBookmarks && !phone && (
-					<span
-						className={`row-group-chip text-3xs px-1 py-0.5 rounded${
-							showFullGroupLabelInBookmarks ? ' max-w-[140px] truncate' : ''
-						}`}
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						title={group.name}
-					>
-						{showFullGroupLabelInBookmarks ? group.name : groupBadgeLabel(group)}
-					</span>
+					<GroupPill theme={theme} group={group} full={showFullGroupLabelInBookmarks} />
 				)}
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
 				{showLeftPanelGitIndicator &&

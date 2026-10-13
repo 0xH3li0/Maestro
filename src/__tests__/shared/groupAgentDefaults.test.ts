@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { withGroupDefaults } from '../../shared/groupAgentDefaults';
+import { withGroupDefaults, withGroupShortLabel } from '../../shared/groupAgentDefaults';
 import type { Group } from '../../shared/types';
 
 const group = (overrides: Partial<Group> = {}): Group => ({
@@ -46,5 +46,44 @@ describe('withGroupDefaults', () => {
 		const before = group({ defaults: { customModel: 'opus' } });
 		withGroupDefaults(before, undefined);
 		expect(before.defaults).toEqual({ customModel: 'opus' });
+	});
+});
+
+describe('withGroupShortLabel', () => {
+	it('sets the label and carries every other field over, defaults included', () => {
+		const before = group({ color: '#9146FF', defaults: { customModel: 'opus' } });
+		expect(withGroupShortLabel(before, 'BE')).toEqual({ ...before, shortLabel: 'BE' });
+	});
+
+	it('replaces the label a group already holds', () => {
+		expect(withGroupShortLabel(group({ shortLabel: 'BE' }), 'Back').shortLabel).toBe('Back');
+	});
+
+	it('trims the label', () => {
+		expect(withGroupShortLabel(group(), '  BE  ').shortLabel).toBe('BE');
+	});
+
+	it.each([
+		['an empty string', ''],
+		['whitespace only', '   '],
+		['undefined', undefined],
+	])('removes the field for %s, and never stores an empty label', (_case, label) => {
+		const before = group({ shortLabel: 'BE', defaults: { customModel: 'opus' } });
+		const after = withGroupShortLabel(before, label);
+
+		expect(after).not.toHaveProperty('shortLabel');
+		expect(after.defaults).toEqual({ customModel: 'opus' });
+	});
+
+	it('does not cut a label: the cap is enforced where the label is typed', () => {
+		expect(withGroupShortLabel(group(), 'Money-Sessions-2026').shortLabel).toBe(
+			'Money-Sessions-2026'
+		);
+	});
+
+	it('does not mutate the group it was given', () => {
+		const before = group({ shortLabel: 'BE' });
+		withGroupShortLabel(before, '');
+		expect(before.shortLabel).toBe('BE');
 	});
 });
