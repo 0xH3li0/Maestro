@@ -329,7 +329,7 @@ describe('AgentDelegationNode', () => {
 			);
 		});
 
-		// Read-only graph: a handle is an anchor for edges, not something to drag from.
+		// View mode: a handle is an anchor for edges, not something to drag from.
 		it('hides the handles while the graph is not connectable', () => {
 			const { container } = renderNode({ isConnectable: false });
 

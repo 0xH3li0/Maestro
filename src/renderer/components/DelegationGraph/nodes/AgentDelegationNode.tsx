@@ -91,9 +91,10 @@ export function agentDelegationNodeState(
 }
 
 /**
- * A handle on one side of the node. While the graph is read-only the handle is
- * only an anchor for edges: it is drawn as nothing and sits on the border, so
- * an edge ends at the node and not at an invisible dot beside it.
+ * A handle on one side of the node. While the graph is in View (`isConnectable`
+ * is false) the handle is only an anchor for edges: it is drawn as nothing and
+ * sits on the border, so an edge ends at the node and not at an invisible dot
+ * beside it. In Edit it is the dot an edge is dragged from and dropped on.
  */
 function handleStyle(
 	side: Position,

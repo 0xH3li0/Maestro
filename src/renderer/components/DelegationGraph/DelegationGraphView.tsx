@@ -2,14 +2,21 @@
  * DelegationGraphView - the fleet's peer relationships, drawn.
  *
  * A reactflow canvas of agent nodes and directed delegation edges, under a
- * toolbar (scope, layout, fit, reset, legend), with a legend, a minimap and a
- * panel for the selected agent. The reactflow wiring follows
+ * toolbar (scope, mode, layout, fit, reset, legend), with a legend, a minimap
+ * and a panel for the selected agent. The reactflow wiring follows
  * `CuePipelineEditor/PipelineCanvas.tsx`.
  *
- * READ-ONLY. Nothing here edits a roster: an edge cannot be drawn or removed,
- * and the one way to change a relationship is the link to the Peers tab of an
- * agent's settings. Dragging a node changes where it is DRAWN, never whom it
- * can reach.
+ * TWO MODES, and it opens in View every time. In View nothing here edits a
+ * roster: the connection handles are not drawn, no edge can be started, and
+ * the one way to a relationship is the link to the Peers tab of an agent's
+ * settings. Edit is what the user switches on to change who can reach whom.
+ * The switch is a guard and not ceremony: a graph of a real fleet is a dense
+ * target, and a slipped drag on a surface that looks read-only would rewrite
+ * an agent's permissions without a sign that it had. The mode is not saved,
+ * so the graph can never open already armed.
+ *
+ * Dragging a node works in both modes. It changes where an agent is DRAWN,
+ * never whom it can reach.
  *
  * Where the picture comes from:
  *
@@ -41,7 +48,7 @@ import ReactFlow, {
 	type NodeChange,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Info, Maximize2, RotateCcw, Unplug, Users, Waypoints } from 'lucide-react';
+import { Eye, Info, Maximize2, Pencil, RotateCcw, Unplug, Users, Waypoints } from 'lucide-react';
 import type { Theme } from '../../types';
 import {
 	connectedAgentIds,
@@ -94,6 +101,15 @@ export interface DelegationGraphViewProps {
 	initialScope?: DelegationGraphScope;
 }
 
+/**
+ * What the canvas lets the user do. `view` looks and rearranges; `edit` also
+ * changes relationships. See the file comment for why this is a switch.
+ */
+export type DelegationGraphMode = 'view' | 'edit';
+
+/** The mode every open starts in. */
+export const DEFAULT_DELEGATION_GRAPH_MODE: DelegationGraphMode = 'view';
+
 type AgentNode = Node<AgentDelegationNodeData>;
 
 /** A change the user must confirm, because it discards hand placement. */
@@ -130,6 +146,22 @@ const LAYOUT_OPTIONS: ReadonlyArray<SegmentedOption<DelegationLayoutType>> =
 		label: DELEGATION_LAYOUT_LABELS[value].name,
 		title: DELEGATION_LAYOUT_LABELS[value].description,
 	}));
+
+const MODE_OPTIONS: ReadonlyArray<SegmentedOption<DelegationGraphMode>> = [
+	{
+		value: 'view',
+		label: 'View',
+		icon: Eye,
+		title: 'Look and rearrange. Nothing here changes who an agent can reach',
+	},
+	{
+		value: 'edit',
+		label: 'Edit',
+		icon: Pencil,
+		title:
+			'Change who can reach whom. Every change is written to the Peers of the agent it starts from',
+	},
+];
 
 function positionsOfNodes(nodes: readonly AgentNode[]): DelegationSavedPositions {
 	const positions: DelegationSavedPositions = {};
@@ -181,6 +213,11 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 		[requestedScope, groups]
 	);
 	const scopeKey = scopeStorageKey(scope);
+
+	// Plain state, never persisted: see the file comment. It survives a change
+	// of scope, because the user who switched it on is still the one editing.
+	const [mode, setMode] = useState<DelegationGraphMode>(DEFAULT_DELEGATION_GRAPH_MODE);
+	const isEditing = mode === 'edit';
 	const sortedGroups = useMemo(
 		() => [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name)),
 		[groups]
@@ -444,6 +481,15 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 				</select>
 
 				<SegmentedControl
+					value={mode}
+					onChange={setMode}
+					options={MODE_OPTIONS}
+					theme={theme}
+					ariaLabel="Mode"
+					testId="delegation-graph-mode"
+				/>
+
+				<SegmentedControl
 					value={layout}
 					onChange={handleLayoutChange}
 					options={LAYOUT_OPTIONS}
@@ -497,7 +543,11 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 			</div>
 
 			{/* Canvas */}
-			<div className="flex-1 relative overflow-hidden min-h-0">
+			<div
+				className="flex-1 relative overflow-hidden min-h-0"
+				data-testid="delegation-graph-canvas"
+				data-mode={mode}
+			>
 				{isEmpty ? (
 					<EmptyStatePlaceholder
 						theme={theme}
@@ -517,9 +567,12 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 						nodeTypes={NODE_TYPES}
 						edgeTypes={delegationEdgeTypes}
 						onNodesChange={onNodesChange}
-						// Read-only: no edge can be drawn, and no key removes a node. The
-						// arrangement is the one thing the user changes here.
-						nodesConnectable={false}
+						// In View no edge can be started, and reactflow tells each node so
+						// (`isConnectable`), which is what hides its handles.
+						nodesConnectable={isEditing}
+						// In neither mode does a key remove anything: a node is an agent,
+						// and an edge is removed through its editor, which says what the
+						// removal writes.
 						deleteKeyCode={null}
 						// Dragging rearranges and clicking selects. A drag that also
 						// selected would dim the rest of the graph under the pointer.
@@ -542,6 +595,16 @@ function DelegationGraphCanvas({ theme, initialScope }: DelegationGraphViewProps
 							nodeColor={miniMapNodeColor}
 						/>
 					</ReactFlow>
+				)}
+
+				{/* Edit is armed: frame the canvas, so the mode shows where the pointer is. */}
+				{isEditing && !isEmpty && (
+					<div
+						data-testid="delegation-graph-edit-frame"
+						aria-hidden="true"
+						className="absolute inset-0 pointer-events-none"
+						style={{ zIndex: 4, boxShadow: `inset 0 0 0 2px ${colors.accent}` }}
+					/>
 				)}
 
 				{!isEmpty && legend.value && (

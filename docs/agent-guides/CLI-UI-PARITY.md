@@ -487,6 +487,9 @@ a design constraint; they are simply not built yet.
     an agent have no verb either. All of these are presentation: they change
     where an agent is DRAWN, never whom it can reach, and what they leave
     behind is readable with `settings get delegationGraphLayouts`. The
+    View / Edit switch has no verb and needs none: it is a guard against a
+    slipped pointer, it is never saved, and a CLI caller has no pointer to
+    slip. What Edit lets the pointer write, `update-agent --peer` writes. The
     relationships the graph draws are covered in full (`update-agent --peer`
     writes them, `show-agent` reads them resolved). Closing the scope half
     means a verb with `--group <id>` that passes `{ scope }` to

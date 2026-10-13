@@ -13,7 +13,9 @@
  * `AgentDelegationNode`), draws each edge as a marker, and keeps the props it
  * was handed. A drag or a selection is then one call to the `onNodesChange` the
  * view passed, with the change reactflow would send. `applyNodeChanges` is the
- * real one.
+ * real one. The stand-in tells each node whether it is connectable, as
+ * reactflow does from `nodesConnectable`, and a handle is drawn as a marker that
+ * carries what it was told.
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
@@ -56,7 +58,8 @@ vi.mock('reactflow', async (importOriginal) => {
 						type: node.type,
 						data: node.data,
 						selected: Boolean(node.selected),
-						isConnectable: false,
+						// reactflow derives a node's `isConnectable` from the canvas prop.
+						isConnectable: props.nodesConnectable ?? true,
 						xPos: node.position.x,
 						yPos: node.position.y,
 						zIndex: 0,
@@ -100,7 +103,13 @@ vi.mock('reactflow', async (importOriginal) => {
 		Controls: () => null,
 		MiniMap: () => null,
 		// The real handle reads the node it belongs to from a mounted <ReactFlow>.
-		Handle: () => null,
+		Handle: ({ type, isConnectable }: { type: string; isConnectable?: boolean }) => (
+			<span
+				data-testid="flow-handle"
+				data-handle-type={type}
+				data-connectable={String(Boolean(isConnectable))}
+			/>
+		),
 	};
 });
 
@@ -304,6 +313,19 @@ function changeScope(key: string): void {
 	fireEvent.change(screen.getByTestId('delegation-graph-scope'), { target: { value: key } });
 }
 
+function modeSegment(mode: 'view' | 'edit'): HTMLElement {
+	return screen.getByTestId(`delegation-graph-mode-${mode}`);
+}
+
+function switchMode(mode: 'view' | 'edit'): void {
+	fireEvent.click(modeSegment(mode));
+}
+
+/** Whether each handle drawn on the canvas was told an edge can start from it. */
+function handleConnectability(): string[] {
+	return screen.getAllByTestId('flow-handle').map((el) => el.dataset.connectable ?? '');
+}
+
 function setSessions(update: (sessions: Session[]) => Session[]): void {
 	act(() => {
 		useSessionStore.setState((state) => ({ sessions: update(state.sessions) }));
@@ -387,13 +409,126 @@ describe('DelegationGraphView', () => {
 				expect(el.dataset.edgeType).toBe('delegation');
 			}
 		});
+	});
 
-		// Read-only in this phase: a roster is edited on the Peers tab.
-		it('lets no edge be drawn and no node be deleted', () => {
+	// The guard between looking at the graph and rewriting an agent's permissions.
+	describe('mode', () => {
+		it('opens in View: no edge can be started and no key removes anything', () => {
 			renderView();
 
+			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'false');
+			expect(screen.getByTestId('delegation-graph-canvas')).toHaveAttribute('data-mode', 'view');
 			expect(flow.props?.nodesConnectable).toBe(false);
 			expect(flow.props?.deleteKeyCode).toBeNull();
+		});
+
+		it('gives no node a connectable handle in View', () => {
+			renderView();
+
+			// Two handles per agent, and an edge can start from none of them.
+			expect(handleConnectability()).toHaveLength(ALL_IDS.length * 2);
+			expect(new Set(handleConnectability())).toEqual(new Set(['false']));
+		});
+
+		it('lets an edge be started in Edit, from every node', () => {
+			renderView();
+
+			switchMode('edit');
+
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'false');
+			expect(screen.getByTestId('delegation-graph-canvas')).toHaveAttribute('data-mode', 'edit');
+			expect(flow.props?.nodesConnectable).toBe(true);
+			expect(new Set(handleConnectability())).toEqual(new Set(['true']));
+		});
+
+		// A node is an agent. An edge is removed through its editor, never by a key.
+		it('lets no key remove anything in Edit either', () => {
+			renderView();
+
+			switchMode('edit');
+
+			expect(flow.props?.deleteKeyCode).toBeNull();
+		});
+
+		it('disarms the canvas on the way back to View', () => {
+			renderView();
+
+			switchMode('edit');
+			switchMode('view');
+
+			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
+			expect(flow.props?.nodesConnectable).toBe(false);
+			expect(new Set(handleConnectability())).toEqual(new Set(['false']));
+		});
+
+		it('frames the canvas only while Edit is on', () => {
+			renderView();
+			expect(screen.queryByTestId('delegation-graph-edit-frame')).not.toBeInTheDocument();
+
+			switchMode('edit');
+			expect(screen.getByTestId('delegation-graph-edit-frame')).toBeInTheDocument();
+
+			switchMode('view');
+			expect(screen.queryByTestId('delegation-graph-edit-frame')).not.toBeInTheDocument();
+		});
+
+		it('changes no roster and no saved arrangement when the mode changes', () => {
+			saveLayouts({ [ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS } });
+			const sessionsBefore = useSessionStore.getState().sessions;
+			renderView();
+
+			switchMode('edit');
+			switchMode('view');
+			rest();
+
+			expect(useSessionStore.getState().sessions).toBe(sessionsBefore);
+			expect(layouts()).toEqual({ [ALL_KEY]: { layout: 'manual', positions: ALL_POSITIONS } });
+			expect(writeCount()).toBe(0);
+			expect(positionsOnCanvas()).toEqual(ALL_POSITIONS);
+		});
+
+		it('still rearranges in Edit: a drag saves where the agent was left', () => {
+			renderView();
+
+			switchMode('edit');
+			drag('a', DRAGGED);
+			rest();
+
+			expect(layouts()[ALL_KEY].layout).toBe('manual');
+			expect(layouts()[ALL_KEY].positions.a).toEqual(DRAGGED);
+		});
+
+		it('keeps the mode across a change of scope', () => {
+			renderView();
+
+			switchMode('edit');
+			changeScope(PLATFORM_KEY);
+
+			expect(modeSegment('edit')).toHaveAttribute('aria-checked', 'true');
+			expect(flow.props?.nodesConnectable).toBe(true);
+		});
+
+		// The mode is not saved, so a graph can never open already armed.
+		it('opens in View again after it was closed in Edit', () => {
+			const first = renderView();
+			switchMode('edit');
+			first.unmount();
+
+			renderView();
+
+			expect(modeSegment('view')).toHaveAttribute('aria-checked', 'true');
+			expect(flow.props?.nodesConnectable).toBe(false);
+		});
+
+		it('offers the switch on a scope with no agents, with nothing to frame', () => {
+			renderView({ kind: 'group', groupId: VACANT.id });
+
+			switchMode('edit');
+
+			expect(screen.getByTestId('delegation-graph-canvas')).toHaveAttribute('data-mode', 'edit');
+			expect(screen.queryByTestId('delegation-graph-edit-frame')).not.toBeInTheDocument();
 		});
 	});
 
