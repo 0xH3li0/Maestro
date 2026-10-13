@@ -129,6 +129,10 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	delegationMilestone: 0,
 	lastSelectedPromptId: null,
 	modalSizes: {},
+	// Delegation Graph: the layout and agent positions the user left, per scope.
+	// Sparse (empty = every scope on the default layout). The renderer owns the
+	// shape; see renderer/stores/settingsDelegationGraphSlice.ts.
+	delegationGraphLayouts: {},
 	concertoStageFloating: false,
 	concertoStagePosition: null,
 	spellCheck: false,

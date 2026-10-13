@@ -103,6 +103,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: {},
 		category: 'editor',
 	},
+	delegationGraphLayouts: {
+		description:
+			"Where each agent sits on the Delegation Graph, per scope. Keyed by scope: 'all', or 'group:<groupId>'. Each value is { layout, positions }, where layout is hierarchical, force, radial, or manual, and positions maps an agent id to { x, y }. A scope with no entry opens on the hierarchical layout.",
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
 	concertoStageFloating: {
 		description:
 			'Whether the Concerto stage is popped out into a floating window (true) or shown as a centered dialog (false).',

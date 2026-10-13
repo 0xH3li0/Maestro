@@ -46,6 +46,11 @@ import type {
 	FilePreviewToolbarButton,
 	FilePreviewToolbarVisibility,
 } from '../../stores/settingsStore';
+import type {
+	DelegationGraphLayouts,
+	DelegationScopeLayout,
+} from '../../stores/settingsDelegationGraphSlice';
+import type { DelegationGraphScope } from '../../../shared/delegationGraph';
 import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSizing';
 import { notifyToast } from '../../stores/notificationStore';
 import { describeGlobalHotkeyStatus, globalHotkeyLabel } from '../../../shared/global-hotkeys';
@@ -502,6 +507,11 @@ export interface UseSettingsReturn {
 	setWakatimeEnabled: (value: boolean) => void;
 	wakatimeDetailedTracking: boolean;
 	setWakatimeDetailedTracking: (value: boolean) => void;
+
+	// Delegation Graph: saved layout and agent positions, per scope
+	delegationGraphLayouts: DelegationGraphLayouts;
+	setDelegationScopeLayout: (scope: DelegationGraphScope, value: DelegationScopeLayout) => void;
+	resetDelegationScopeLayout: (scope: DelegationGraphScope) => void;
 
 	// Window chrome settings
 	useNativeTitleBar: boolean;

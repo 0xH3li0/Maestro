@@ -236,6 +236,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Admitting a consult or delegation (spend, refuse, place the target):** `admitConsult()` in `src/main/peer-consults/consult-budget.ts`; `admitCliConsult()` in `src/cli/services/consult-budget-guard.ts`; `describeConsultBudgetRefusal()` in `src/shared/consultBudget.ts`; `SpawnAgentOptions.consultChain`
 - **Telling an agent what is left of its consult budget (the Peer Agents sentence):** `readConsultBudgetStatus(turn, options?)` in `src/main/peer-consults/consult-budget.ts`; `ConsultBudgetStatus`, `remainingConsultBudget()` in `src/shared/consultBudget.ts`; `PeerPromptOptions.budget` in `src/shared/peerAgents.ts`
 - **The fleet's peer relationships as one directed graph (the Delegation Graph):** `buildDelegationGraph(scope, sessions)`, `edgeBetween()`, `isMutual()`, `delegationGraphStats()` in `src/shared/delegationGraph.ts` (calls `resolvePeerRoster()` per agent; never restate precedence)
+- **Where an agent sits on the Delegation Graph (saved per scope):** `useDelegationGraphLayout(scope)` in `src/renderer/components/DelegationGraph/useDelegationGraphLayout.ts`; `scopeStorageKey()`, `mergeSavedPositions()`, `prunePositions()` in `src/shared/delegationGraphLayout.ts` (never `saveNodePositions()`)
 
 #### Auto Run, Cue, Group Chat, Director's Notes
 

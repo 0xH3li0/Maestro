@@ -100,6 +100,11 @@ import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice'
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
 import { createWakatimeSlice, hydrateWakatimeSettings } from './settingsWakatimeSlice';
+import type { DelegationGraphState, DelegationGraphActions } from './settingsDelegationGraphSlice';
+import {
+	createDelegationGraphSlice,
+	hydrateDelegationGraphSettings,
+} from './settingsDelegationGraphSlice';
 import type { FileExplorerState, FileExplorerActions } from './settingsFileExplorerSlice';
 import { createFileExplorerSlice, hydrateFileExplorerSettings } from './settingsFileExplorerSlice';
 import type { NotificationsState, NotificationsActions } from './settingsNotificationsSlice';
@@ -355,6 +360,7 @@ export interface SettingsStoreState
 	extends
 		AnnotatorState,
 		WakatimeState,
+		DelegationGraphState,
 		FileExplorerState,
 		NotificationsState,
 		LeftPanelDisplayState,
@@ -541,6 +547,7 @@ export interface SettingsStoreActions
 	extends
 		AnnotatorActions,
 		WakatimeActions,
+		DelegationGraphActions,
 		FileExplorerActions,
 		NotificationsActions,
 		LeftPanelDisplayActions,
@@ -928,6 +935,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
+		...createDelegationGraphSlice(set, get, api),
 		...createFileExplorerSlice(set, get, api),
 		...createNotificationsSlice(set, get, api),
 		...createLeftPanelDisplaySlice(set, get, api),
@@ -2737,6 +2745,7 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		hydrateWakatimeSettings(allSettings, patch);
+		hydrateDelegationGraphSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
 		// falls back to the default rather than being shown as-is: the number in
 		// the UI is a promise about what the prune keeps, so it must never read
@@ -3069,6 +3078,8 @@ export function getSettingsActions() {
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
+		setDelegationScopeLayout: state.setDelegationScopeLayout,
+		resetDelegationScopeLayout: state.resetDelegationScopeLayout,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
 		setShowAgentName: state.setShowAgentName,
