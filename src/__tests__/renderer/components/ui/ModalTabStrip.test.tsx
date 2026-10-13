@@ -198,6 +198,39 @@ describe('useModalTabs', () => {
 		expect(otherKey.result.current.activeTab).toBe('general');
 	});
 
+	// A link that names a tab ("Open Peers tab") must land on it, whatever tab
+	// the form was last left on.
+	it('opens on a requested tab, ahead of the remembered one', () => {
+		const first = renderHook(() =>
+			useModalTabs({ tabs: IDS, initialTab: 'general', rememberKey: 'edit-agent', enabled: true })
+		);
+		act(() => first.result.current.setActiveTab('ssh'));
+		first.unmount();
+
+		const again = renderHook(() =>
+			useModalTabs<Id>({
+				tabs: IDS,
+				initialTab: 'general',
+				rememberKey: 'edit-agent',
+				requestedTab: 'provider',
+				enabled: true,
+			})
+		);
+		expect(again.result.current.activeTab).toBe('provider');
+	});
+
+	it('ignores a requested tab that is not in the set', () => {
+		const { result } = renderHook(() =>
+			useModalTabs<Id>({
+				tabs: ['general', 'provider'],
+				initialTab: 'general',
+				requestedTab: 'ssh',
+				enabled: true,
+			})
+		);
+		expect(result.current.activeTab).toBe('general');
+	});
+
 	it('does not remember without a key', () => {
 		const first = renderHook(() =>
 			useModalTabs({ tabs: IDS, initialTab: 'general', enabled: true })

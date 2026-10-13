@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	buildDelegationGraph,
 	connectedAgentIds,
+	delegationEdgeId,
 	delegationGraphStats,
 	edgeBetween,
 	isMutual,
@@ -36,6 +37,22 @@ const NONE: PeerAccess = { read: false, write: false };
 
 const ALL = { kind: 'all' } as const;
 const G1 = { kind: 'group', groupId: 'g1' } as const;
+
+// The canvas builds one Set of edge ids and asks for the reverse of each edge.
+describe('delegationEdgeId', () => {
+	it('is the id the builder gives the edge between the same two agents', () => {
+		const model = buildDelegationGraph(ALL, [
+			agent('a', 'Alpha', { peerAgents: [row('b', R)] }),
+			agent('b', 'Beta'),
+		]);
+
+		expect(model.edges.map((edge) => edge.id)).toEqual([delegationEdgeId('a', 'b')]);
+	});
+
+	it('is directed: the reverse edge has another id', () => {
+		expect(delegationEdgeId('a', 'b')).not.toBe(delegationEdgeId('b', 'a'));
+	});
+});
 
 describe('buildDelegationGraph', () => {
 	it('draws a manager and an employee as two edges, each with its own bits', () => {

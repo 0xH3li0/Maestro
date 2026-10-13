@@ -88,10 +88,13 @@ export interface DelegationGraphStats {
 }
 
 /**
- * The id of the edge from one agent to another. The builder and the lookups
- * below share it, so the two cannot disagree about the spelling.
+ * The id of the edge from one agent to another. The builder, the lookups below
+ * and the canvas share it, so none of them can disagree about the spelling. A
+ * caller that asks "does the reverse edge exist" for every edge builds one
+ * `Set` of ids and tests `delegationEdgeId(target, source)`, which `isMutual`
+ * answers with a walk of the edge list per call.
  */
-function delegationEdgeId(sourceId: string, targetId: string): string {
+export function delegationEdgeId(sourceId: string, targetId: string): string {
 	return `${sourceId}->${targetId}`;
 }
 

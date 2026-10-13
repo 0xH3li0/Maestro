@@ -102,17 +102,32 @@ describe('useDelegationGraphLayout', () => {
 			expect(result.current.positions).toBe(first);
 		});
 
-		it('keeps its three actions identity-stable across renders and scope changes', () => {
+		it('keeps its four actions identity-stable across renders and scope changes', () => {
 			const { result, rerender } = renderHook(({ scope }) => useDelegationGraphLayout(scope), {
 				initialProps: scopeProps(ALL),
 			});
-			const { saveDraggedPositions, saveAlgorithmLayout, resetLayout } = result.current;
+			const { saveDraggedPositions, saveAlgorithmLayout, savePlacedPositions, resetLayout } =
+				result.current;
 
 			rerender({ scope: GROUP });
 
 			expect(result.current.saveDraggedPositions).toBe(saveDraggedPositions);
 			expect(result.current.saveAlgorithmLayout).toBe(saveAlgorithmLayout);
+			expect(result.current.savePlacedPositions).toBe(savePlacedPositions);
 			expect(result.current.resetLayout).toBe(resetLayout);
+		});
+
+		it('says whether the scope has an arrangement saved', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: { all: { layout: 'force', positions: { a: { x: 1, y: 2 } } } },
+			});
+			const { result, rerender } = renderHook(({ scope }) => useDelegationGraphLayout(scope), {
+				initialProps: scopeProps(ALL),
+			});
+			expect(result.current.hasSavedLayout).toBe(true);
+
+			rerender({ scope: GROUP });
+			expect(result.current.hasSavedLayout).toBe(false);
 		});
 	});
 
@@ -287,6 +302,83 @@ describe('useDelegationGraphLayout', () => {
 			rest();
 
 			expect(layouts().all).toEqual({ layout: 'force', positions: { a: { x: 500, y: 500 } } });
+		});
+	});
+
+	describe('savePlacedPositions', () => {
+		// A scope with nothing saved is arranged afresh on every open. Writing an
+		// entry for it here would freeze an arrangement the user never chose.
+		it('writes nothing for a scope with nothing saved', () => {
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.savePlacedPositions({ a: { x: 5, y: 5 } });
+			});
+
+			expect(layouts()).toEqual({});
+			expect(writeCount()).toBe(0);
+		});
+
+		it('adds a new agent to what is saved and keeps the layout', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: { all: { layout: 'force', positions: { a: { x: 1, y: 1 } } } },
+			});
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.savePlacedPositions({ b: { x: 40, y: 50 } });
+			});
+
+			expect(layouts().all).toEqual({
+				layout: 'force',
+				positions: { a: { x: 1, y: 1 }, b: { x: 40, y: 50 } },
+			});
+			expect(writeCount()).toBe(1);
+		});
+
+		it('never replaces a position that is already saved', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: { all: { layout: 'manual', positions: { a: { x: 1, y: 1 } } } },
+			});
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.savePlacedPositions({ a: { x: 900, y: 900 }, b: { x: 40, y: 50 } });
+			});
+
+			expect(layouts().all.positions).toEqual({ a: { x: 1, y: 1 }, b: { x: 40, y: 50 } });
+		});
+
+		// The canvas calls this from an effect that re-runs when the saved
+		// positions change. A write that changes nothing would loop.
+		it('writes nothing when every position is already saved or its agent is gone', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: { all: { layout: 'manual', positions: { a: { x: 1, y: 1 } } } },
+			});
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+			const before = layouts();
+
+			act(() => {
+				result.current.savePlacedPositions({ a: { x: 2, y: 2 }, gone: { x: 3, y: 3 } });
+			});
+
+			expect(layouts()).toBe(before);
+			expect(writeCount()).toBe(0);
+		});
+
+		it('drops the saved position of a deleted agent while it writes', () => {
+			useSettingsStore.setState({
+				delegationGraphLayouts: {
+					all: { layout: 'manual', positions: { a: { x: 1, y: 1 }, gone: { x: 7, y: 7 } } },
+				},
+			});
+			const { result } = renderHook(() => useDelegationGraphLayout(ALL));
+
+			act(() => {
+				result.current.savePlacedPositions({ b: { x: 40, y: 50 } });
+			});
+
+			expect(layouts().all.positions).toEqual({ a: { x: 1, y: 1 }, b: { x: 40, y: 50 } });
 		});
 	});
 

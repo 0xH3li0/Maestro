@@ -10,6 +10,7 @@ import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore, selectACappellaEnabled } from '../../stores/settingsStore';
+import { useModalStore, selectModalData } from '../../stores/modalStore';
 import { AgentWakePhraseSection } from '../Settings/ACappella/AgentWakePhraseSection';
 import {
 	resolveContextWindow,
@@ -176,10 +177,13 @@ export function EditAgentModal({
 	const aCappellaEnabled = useSettingsStore(selectACappellaEnabled);
 
 	// The one piece of form state the tabs own. Reopening shows the last tab used.
+	// A caller can send the user to one tab (`openAgentSettings(session, { tab })`).
+	const requestedTab = useModalStore((state) => selectModalData('editAgent')(state)?.initialTab);
 	const { activeTab, setActiveTab } = useModalTabs({
 		tabs: AGENT_FORM_TAB_IDS,
 		initialTab: 'general',
 		rememberKey: 'edit-agent',
+		requestedTab,
 		enabled: isOpen,
 	});
 

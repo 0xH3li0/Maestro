@@ -14,6 +14,7 @@ import {
 	AGENT_DELEGATION_NODE_MIN_WIDTH,
 	AgentDelegationNode,
 	agentDelegationNodeState,
+	estimateAgentDelegationNodeWidth,
 	removedAgentLabel,
 	type AgentDelegationNodeData,
 	type AgentDelegationNodeState,
@@ -78,6 +79,21 @@ function rootOf(container: HTMLElement): HTMLElement {
 describe('removedAgentLabel', () => {
 	it('names a deleted agent by the first eight characters of its id', () => {
 		expect(removedAgentLabel('deleted-agent-id')).toBe('Removed agent deleted-');
+	});
+});
+
+// The layouts reserve space with this before a node is drawn and measured.
+describe('estimateAgentDelegationNodeWidth', () => {
+	it('is the least width for a short name', () => {
+		expect(estimateAgentDelegationNodeWidth('Al')).toBe(AGENT_DELEGATION_NODE_MIN_WIDTH);
+	});
+
+	it('grows with a name too long for the least width', () => {
+		const long = estimateAgentDelegationNodeWidth('An agent with a very long name indeed');
+		expect(long).toBeGreaterThan(AGENT_DELEGATION_NODE_MIN_WIDTH);
+		expect(
+			estimateAgentDelegationNodeWidth('An agent with a very long name indeed, and more')
+		).toBeGreaterThan(long);
 	});
 });
 

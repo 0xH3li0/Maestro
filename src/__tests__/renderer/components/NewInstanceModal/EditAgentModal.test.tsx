@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
@@ -118,6 +119,7 @@ describe('EditAgentModal', () => {
 		mockRegisterLayer.mockClear().mockReturnValue('layer-edit-agent-123');
 		// The form remembers its last tab per app session; start every case on General.
 		__resetRememberedModalTabsForTests();
+		useModalStore.getState().closeModal('editAgent');
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 
@@ -2043,6 +2045,17 @@ describe('EditAgentModal', () => {
 			});
 			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+		});
+
+		// `openAgentSettings(session, { tab: 'peers' })`: the Delegation Graph's link.
+		it('opens on the tab its opener asked for', async () => {
+			const session = createSession();
+			useModalStore.getState().openModal('editAgent', { session, initialTab: 'peers' });
+
+			renderModal(session);
+			await screen.findByRole('tab', { name: /^Peers/ });
+
+			expect(selectedTab()).toHaveTextContent('Peers');
 		});
 
 		it('sends Cmd+Enter from Peers to General when the name is empty', async () => {

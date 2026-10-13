@@ -247,6 +247,11 @@ export interface UseModalTabsOptions<Id extends string> {
 	initialTab: Id;
 	/** When set, the last active tab is remembered for this key for the app session. */
 	rememberKey?: string;
+	/**
+	 * A tab the opener asked for by name. Read once, when the modal mounts, and
+	 * it beats the remembered tab: a link that says "Peers" must land on Peers.
+	 */
+	requestedTab?: Id;
 	/** Whether the Cmd+Shift+[ / ] cycling is live (modal open and topmost). */
 	enabled: boolean;
 }
@@ -255,11 +260,13 @@ export function useModalTabs<Id extends string>({
 	tabs,
 	initialTab,
 	rememberKey,
+	requestedTab,
 	enabled,
 }: UseModalTabsOptions<Id>): { activeTab: Id; setActiveTab: (id: Id) => void } {
 	// Lazy init reads the remembered tab on mount, for the same reason Settings
 	// does: a restore effect races the persist effect under StrictMode.
 	const [selected, setSelected] = useState<Id>(() => {
+		if (requestedTab !== undefined && tabs.includes(requestedTab)) return requestedTab;
 		const remembered = rememberKey ? rememberedModalTabs.get(rememberKey) : undefined;
 		return remembered !== undefined && (tabs as readonly string[]).includes(remembered)
 			? (remembered as Id)

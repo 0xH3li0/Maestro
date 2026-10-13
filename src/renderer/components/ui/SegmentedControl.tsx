@@ -94,16 +94,21 @@ export function SegmentedControl<T extends string>({
 	// The active pill is a solid accent fill, so its text is checked against the
 	// accent rather than assumed readable on it.
 	const onAccent = readableTextOn(theme.colors.accentForeground, [theme.colors.accent]);
+	// A value that names none of the options is legal: a state the bar can show
+	// but not select (the Delegation Graph's `manual` layout). The first segment
+	// then takes the tab stop, so the bar stays reachable from the keyboard.
+	const noneActive = !options.some((o) => o.value === value);
 
 	// Arrow keys move between segments, matching how a native radio group
 	// behaves - the bar is one tab stop, not one per option.
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLDivElement>) => {
 			if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+			if (options.length === 0) return;
 			const index = options.findIndex((o) => o.value === value);
-			if (index === -1) return;
 			e.preventDefault();
-			const delta = e.key === 'ArrowRight' ? 1 : -1;
+			// No segment is on: Right enters at the first one and Left at the last.
+			const delta = e.key === 'ArrowRight' ? 1 : index === -1 ? 0 : -1;
 			const next = options[(index + delta + options.length) % options.length];
 			onChange(next.value);
 		},
@@ -167,7 +172,7 @@ export function SegmentedControl<T extends string>({
 						aria-checked={isActive}
 						aria-pressed={isActive}
 						title={opt.title}
-						tabIndex={isActive ? 0 : -1}
+						tabIndex={isActive || (noneActive && i === 0) ? 0 : -1}
 						data-testid={testId ? `${testId}-${opt.value}` : undefined}
 					>
 						{Icon && <Icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}

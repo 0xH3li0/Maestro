@@ -1,5 +1,5 @@
 /**
- * useDelegationGraphLayout - one scope's saved arrangement, and the three ways
+ * useDelegationGraphLayout - one scope's saved arrangement, and the four ways
  * it changes.
  *
  * The record itself lives in the settings store
@@ -14,6 +14,9 @@
  *     they write at once, and they cancel a drag write that is still waiting.
  *     Otherwise the stale drag would land afterwards and put the scope back on
  *     `manual`.
+ *   - A new agent that the canvas placed beside its neighbors is ADDED to what
+ *     is saved, so it is in the same place on the next open. It changes
+ *     neither the layout nor any position already saved.
  *
  * A drag write that is still waiting is flushed when the scope changes and
  * when the canvas unmounts, so switching scope or closing the graph inside the
@@ -46,6 +49,8 @@ const NO_SAVED_POSITIONS: DelegationSavedPositions = Object.freeze({});
 export interface DelegationGraphLayoutControls {
 	/** The scope's layout. The default until the user picks one or drags a node. */
 	layout: DelegationLayoutType;
+	/** The scope has an arrangement saved, so a reset has something to forget. */
+	hasSavedLayout: boolean;
 	/** Where the user left each agent in this scope. Empty when nothing is saved. */
 	positions: DelegationSavedPositions;
 	/**
@@ -60,8 +65,20 @@ export interface DelegationGraphLayoutControls {
 		layout: DelegationAlgorithmLayout,
 		positions: DelegationSavedPositions
 	) => void;
+	/**
+	 * The canvas placed agents that had no saved position: keep them there. Only
+	 * a scope that already has an arrangement saved is written, because a scope
+	 * with nothing saved is arranged afresh on every open and has no place to
+	 * keep. A position already saved is never replaced by this.
+	 */
+	savePlacedPositions: (positions: DelegationSavedPositions) => void;
 	/** Forget the scope's arrangement. It opens on the default layout again. */
 	resetLayout: () => void;
+}
+
+/** Every agent that exists, for `prunePositions`. */
+function liveSessionIds(): string[] {
+	return useSessionStore.getState().sessions.map((session) => session.id);
 }
 
 /**
@@ -75,10 +92,9 @@ function writeDraggedPositions(
 ): void {
 	const { delegationGraphLayouts, setDelegationScopeLayout } = useSettingsStore.getState();
 	const saved = delegationGraphLayouts[scopeStorageKey(scope)]?.positions;
-	const liveSessionIds = useSessionStore.getState().sessions.map((session) => session.id);
 	setDelegationScopeLayout(scope, {
 		layout: 'manual',
-		positions: prunePositions({ ...saved, ...positions }, liveSessionIds),
+		positions: prunePositions({ ...saved, ...positions }, liveSessionIds()),
 	});
 }
 
@@ -118,6 +134,29 @@ export function useDelegationGraphLayout(
 		}
 	);
 
+	const savePlacedPositions = useStableCallback((positions: DelegationSavedPositions) => {
+		const { delegationGraphLayouts, setDelegationScopeLayout } = useSettingsStore.getState();
+		const stored = delegationGraphLayouts[scopeKey];
+		if (!stored) return;
+
+		const live = liveSessionIds();
+		const added: DelegationSavedPositions = {};
+		for (const [sessionId, position] of Object.entries(prunePositions(positions, live))) {
+			if (!Object.prototype.hasOwnProperty.call(stored.positions, sessionId)) {
+				added[sessionId] = position;
+			}
+		}
+		// Nothing new to keep: no write. The canvas calls this from an effect that
+		// re-runs when the saved positions change, so a write that changes nothing
+		// would call it again without end.
+		if (Object.keys(added).length === 0) return;
+
+		setDelegationScopeLayout(scope, {
+			layout: stored.layout,
+			positions: prunePositions({ ...stored.positions, ...added }, live),
+		});
+	});
+
 	const resetLayout = useStableCallback(() => {
 		cancel();
 		useSettingsStore.getState().resetDelegationScopeLayout(scope);
@@ -125,9 +164,11 @@ export function useDelegationGraphLayout(
 
 	return {
 		layout: saved?.layout ?? DEFAULT_DELEGATION_LAYOUT,
+		hasSavedLayout: saved !== undefined,
 		positions: saved?.positions ?? NO_SAVED_POSITIONS,
 		saveDraggedPositions,
 		saveAlgorithmLayout,
+		savePlacedPositions,
 		resetLayout,
 	};
 }

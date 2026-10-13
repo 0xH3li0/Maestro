@@ -30,6 +30,16 @@ import { readableTextOn } from '../../../../shared/colorContrast';
 import { getAgentIcon } from '../../../constants/agentIcons';
 import { selectSessionById, useSessionStore } from '../../../stores/sessionStore';
 import { GroupPill } from '../../ui/GroupPill';
+import {
+	AGENT_DELEGATION_NODE_HEIGHT,
+	AGENT_DELEGATION_NODE_MIN_WIDTH,
+} from './agentDelegationNodeSize';
+
+export {
+	AGENT_DELEGATION_NODE_HEIGHT,
+	AGENT_DELEGATION_NODE_MIN_WIDTH,
+	estimateAgentDelegationNodeWidth,
+} from './agentDelegationNodeSize';
 
 /**
  * How a node is drawn. One value and not two flags, because the states exclude
@@ -44,18 +54,17 @@ export interface AgentDelegationNodeData {
 	theme: Theme;
 }
 
-/** The node's fixed height, for a layout that runs before the node is measured. */
-export const AGENT_DELEGATION_NODE_HEIGHT = 80;
-/** The node's least width. It grows with the agent's name. */
-export const AGENT_DELEGATION_NODE_MIN_WIDTH = 180;
-
 /** How far a spill node is dimmed. A selected spill node is drawn at full opacity. */
-const SPILL_OPACITY = 0.55;
+export const AGENT_DELEGATION_SPILL_OPACITY = 0.55;
 
 /** The group line of a spill agent that is in no group. */
 const UNGROUPED = { name: 'Ungrouped' };
 
-const BORDER_STYLE: Record<AgentDelegationNodeState, CSSProperties['borderStyle']> = {
+/** The border of each state. The legend draws its samples from the same table. */
+export const AGENT_DELEGATION_NODE_BORDER_STYLE: Record<
+	AgentDelegationNodeState,
+	CSSProperties['borderStyle']
+> = {
 	'in-scope': 'solid',
 	spill: 'dotted',
 	isolated: 'dashed',
@@ -175,10 +184,10 @@ export const AgentDelegationNode = memo(function AgentDelegationNode({
 				willChange: 'transform',
 				backgroundColor: colors.bgMain,
 				borderWidth: 2,
-				borderStyle: BORDER_STYLE[state],
+				borderStyle: AGENT_DELEGATION_NODE_BORDER_STYLE[state],
 				borderColor,
 				boxShadow: selected ? `0 4px 16px ${glowColor}30` : '0 2px 8px rgba(0,0,0,0.3)',
-				opacity: isSpill && !selected ? SPILL_OPACITY : 1,
+				opacity: isSpill && !selected ? AGENT_DELEGATION_SPILL_OPACITY : 1,
 				display: 'flex',
 				flexDirection: 'row',
 				overflow: 'visible',

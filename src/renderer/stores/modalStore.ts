@@ -19,6 +19,7 @@ import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
+import type { AgentSettingsTabId } from '../components/AgentSettings/agentSettingsTabs';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
@@ -94,6 +95,8 @@ export interface NewInstanceModalData {
 /** Edit agent modal data */
 export interface EditAgentModalData {
 	session: Session;
+	/** The tab to open on. Absent, the form opens on the tab it was last on. */
+	initialTab?: AgentSettingsTabId;
 }
 
 /** Quick action modal data */

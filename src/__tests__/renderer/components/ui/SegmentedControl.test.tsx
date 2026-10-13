@@ -89,6 +89,47 @@ describe('SegmentedControl', () => {
 		expect(onChange).toHaveBeenCalledWith('queries');
 	});
 
+	// A value that names none of the options: a state the bar shows but cannot
+	// select (the Delegation Graph's `manual` layout). With no tab stop at all
+	// the bar could not be reached from the keyboard.
+	describe('with no segment on', () => {
+		const renderNoneActive = (onChange = vi.fn()) => {
+			render(
+				<SegmentedControl<Mode | 'manual'>
+					value="manual"
+					onChange={onChange}
+					options={OPTIONS}
+					theme={mockTheme}
+					ariaLabel="Sort agents"
+					testId="sort"
+				/>
+			);
+			return onChange;
+		};
+
+		it('checks none and gives the tab stop to the first segment', () => {
+			renderNoneActive();
+
+			for (const radio of screen.getAllByRole('radio')) {
+				expect(radio).toHaveAttribute('aria-checked', 'false');
+			}
+			expect(screen.getByTestId('sort-name')).toHaveAttribute('tabindex', '0');
+			expect(screen.getByTestId('sort-created')).toHaveAttribute('tabindex', '-1');
+			expect(screen.getByTestId('sort-queries')).toHaveAttribute('tabindex', '-1');
+		});
+
+		it('enters at the first segment on Right and at the last on Left', () => {
+			const onChange = renderNoneActive();
+			const group = screen.getByRole('radiogroup', { name: 'Sort agents' });
+
+			fireEvent.keyDown(group, { key: 'ArrowRight' });
+			expect(onChange).toHaveBeenLastCalledWith('name');
+
+			fireEvent.keyDown(group, { key: 'ArrowLeft' });
+			expect(onChange).toHaveBeenLastCalledWith('queries');
+		});
+	});
+
 	it('ignores keys it does not own so the host can still use them', () => {
 		const onChange = renderControl('name');
 		const group = screen.getByRole('radiogroup', { name: 'Sort agents' });
