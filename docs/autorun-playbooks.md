@@ -454,7 +454,7 @@ The three levels mean the floor, the middle, and the ceiling of whatever that pr
 
 | You write         | Claude Code sends | Codex sends |
 | ----------------- | ----------------- | ----------- |
-| `effort="low"`    | `low`             | `minimal`   |
+| `effort="low"`    | `low`             | `low`       |
 | `effort="medium"` | `high`            | `medium`    |
 | `effort="high"`   | `max`             | `xhigh`     |
 

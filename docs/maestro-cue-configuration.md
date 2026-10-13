@@ -241,7 +241,7 @@ subscriptions:
 | ------------- | ------------------------------------- | ---------------------------- |
 | Claude Code   | haiku / sonnet / opus                 | low / high / max             |
 | Factory Droid | Claude Haiku / Sonnet / Opus model id | low / medium / high          |
-| Codex         | not mapped: use `model`               | minimal / medium / xhigh     |
+| Codex         | not mapped: use `model`               | low / medium / xhigh         |
 | Copilot-CLI   | not mapped: use `model`               | low / medium / xhigh         |
 | OpenCode      | not mapped: use `model`               | not supported                |
 

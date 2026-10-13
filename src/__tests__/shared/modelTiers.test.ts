@@ -40,8 +40,11 @@ describe('effort ladders', () => {
 		expect(resolveEffortLevel('claude-code', 'high')).toBe('max');
 	});
 
-	it("uses codex's real floor, which is minimal rather than low", () => {
-		expect(resolveEffortLevel('codex', 'low')).toBe('minimal');
+	it("uses codex's real floor, which is low: no current model accepts minimal", () => {
+		// `minimal` used to sit below `low`. Every model in Codex's catalogue
+		// now rejects it with a 400 ("'minimal' is not supported with the
+		// 'gpt-6-astra' model"), which killed every cheap turn with no output.
+		expect(resolveEffortLevel('codex', 'low')).toBe('low');
 		expect(resolveEffortLevel('codex', 'medium')).toBe('medium');
 		expect(resolveEffortLevel('codex', 'high')).toBe('xhigh');
 	});
@@ -83,7 +86,7 @@ describe('model tiers', () => {
 describe('cheap synopsis turn', () => {
 	it('pins to the bottom of both ladders', () => {
 		expect(cheapTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
-		expect(cheapTurnSettings('codex')).toEqual({ model: undefined, effort: 'minimal' });
+		expect(cheapTurnSettings('codex')).toEqual({ model: undefined, effort: 'low' });
 	});
 
 	it('yields all-undefined for a provider with neither axis mapped', () => {

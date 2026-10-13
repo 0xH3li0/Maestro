@@ -19,7 +19,8 @@
  * is not the identity even where the provider happens to use the same three
  * words. Claude's ladder runs `low, medium, high, xhigh, max`, so Maestro's
  * `high` means `max` (the actual ceiling) and Maestro's `medium` means `high`
- * (the actual middle). Codex's floor is `minimal`, not `low`. The tables below
+ * (the actual middle). Codex's ceiling is `xhigh`, the top rung every one of
+ * its models accepts. The tables below
  * are written out per provider rather than computed from an index so the
  * resolution is auditable by reading it - a surprising row should be obvious
  * here rather than discovered at runtime.
@@ -63,8 +64,13 @@ export function asTierLevel(value: unknown): ModelTier | undefined {
 const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// Ladder: low, medium, high, xhigh, max
 	'claude-code': { low: 'low', medium: 'high', high: 'max' },
-	// Ladder: minimal, low, medium, high, xhigh
-	codex: { low: 'minimal', medium: 'medium', high: 'xhigh' },
+	// Ladder: low, medium, high, xhigh (then max / ultra on some models).
+	// The floor is `low`, NOT `minimal`: no model in Codex's catalogue accepts
+	// `minimal` any more, and the API answers it with a 400 rather than
+	// clamping, so every cheap turn (tab naming, synopsis) died with no output.
+	// `xhigh` stays the ceiling because it is the highest rung EVERY model
+	// lists; `max` and `ultra` are per-model.
+	codex: { low: 'low', medium: 'medium', high: 'xhigh' },
 	// Ladder: low, medium, high - the one provider where the mapping IS the identity.
 	'factory-droid': { low: 'low', medium: 'medium', high: 'high' },
 	// Ladder: low, medium, high, xhigh. Even-length, so "middle" is a judgment
