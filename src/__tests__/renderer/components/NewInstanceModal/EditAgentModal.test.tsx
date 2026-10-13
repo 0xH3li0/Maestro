@@ -78,6 +78,16 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 	}) as Session;
 
 /**
+ * The 27th `onSave` argument of a form whose Peers tab was never touched: a
+ * session with no peers saves every source of the roster as absent.
+ */
+const NO_PEER_GRANTS = {
+	peerAgents: undefined,
+	groupPeerAccess: undefined,
+	worktreePeerAccess: undefined,
+};
+
+/**
  * Positions in `onSave`'s argument list that tests read by slot. Named here so
  * an argument appended later does not shift what a test thought was "last".
  */
@@ -552,7 +562,8 @@ describe('EditAgentModal', () => {
 				'exec', // codexTransport: Standard by default
 				undefined, // gatewayUrl: no Local Models gateway set
 				undefined, // runOn: the provider's own model
-				undefined // tierTargets: every tier follows its harness default
+				undefined, // tierTargets: every tier follows its harness default
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -658,7 +669,8 @@ describe('EditAgentModal', () => {
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
 			undefined, // runOn: the provider's own model
-			undefined // tierTargets: every tier follows its harness default
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -899,7 +911,8 @@ describe('EditAgentModal', () => {
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
 			undefined, // runOn: the provider's own model
-			undefined // tierTargets: every tier follows its harness default
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -980,7 +993,8 @@ describe('EditAgentModal', () => {
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
 			undefined, // runOn: the provider's own model
-			undefined // tierTargets: every tier follows its harness default
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1068,7 +1082,8 @@ describe('EditAgentModal', () => {
 			'exec', // codexTransport: Standard by default
 			undefined, // gatewayUrl: no Local Models gateway set
 			undefined, // runOn: the provider's own model
-			undefined // tierTargets: every tier follows its harness default
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
