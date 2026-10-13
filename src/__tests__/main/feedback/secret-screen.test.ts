@@ -70,6 +70,8 @@ vi.mock('../../../main/debug-package', () => ({
 
 // The optional model pass is off, the shipped default: patterns decide alone.
 vi.mock('../../../main/local-models/task-router', () => ({
+	// Asked first: it answers `not-assigned` for any assignment but System One.
+	runSystemOneTask: vi.fn(async () => ({ status: 'not-assigned' })),
 	runClassifierTask: vi.fn(async () => ({ status: 'off' })),
 }));
 
