@@ -559,6 +559,7 @@ describe('send command', () => {
 		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
 			signal: expect.any(AbortSignal),
 			readOnlyMode: undefined,
+			consultChain: TARGET_CHAIN,
 		});
 	});
 
