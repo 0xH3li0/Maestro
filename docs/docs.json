@@ -55,7 +55,7 @@
 					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
-					"peer-agents",
+					"agent-delegation",
 					"codex-directives",
 					"image-annotator",
 					"media-player",
@@ -132,6 +132,10 @@
 		{
 			"source": "/multi-claude",
 			"destination": "/multi-provider"
+		},
+		{
+			"source": "/peer-agents",
+			"destination": "/agent-delegation"
 		}
 	],
 	"navbar": {

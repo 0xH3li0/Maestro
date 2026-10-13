@@ -583,7 +583,7 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 `update-agent` mutates an existing agent in place, writing the same live desktop Session the Edit Agent modal edits (not the per-agent config store that `settings agent set` writes). Read the current values back with `maestro-cli show agent <id> --json`.
 
-`show agent` also answers "who can this agent reach?". Its `peers` object lists the stored rows (with their access and notes), the two derived grants and whether each is on, and the **resolved** roster, each entry labeled with its source (`explicit`, `group`, or `worktree`). The resolved roster is the list the agent actually receives in its system prompt, so it can differ from the rows you configured. See [Peer Agents](./peer-agents).
+`show agent` also answers "who can this agent reach?". Its `peers` object lists the stored rows (with their access and notes), the two derived grants and whether each is on, and the **resolved** roster, each entry labeled with its source (`explicit`, `group`, or `worktree`). The resolved roster is the list the agent actually receives in its system prompt, so it can differ from the rows you configured. See [Agent Delegation](./agent-delegation).
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
@@ -794,7 +794,7 @@ Notes on behavior:
 
 ### Reading the Delegation Graph (`delegation graph`)
 
-`show agent` answers "who can this agent reach?" for one agent. `delegation graph` answers it for every agent at once: it prints the graph the Delegation Graph window draws (see [Peer Agents](./peer-agents)), so you can see the shape of a team without opening the app. It reads the stored agents and needs no running app.
+`show agent` answers "who can this agent reach?" for one agent. `delegation graph` answers it for every agent at once: it prints the graph the Delegation Graph window draws (see [Agent Delegation](./agent-delegation#the-delegation-graph)), so you can see the shape of a team without opening the app. It reads the stored agents and needs no running app.
 
 ```bash
 # Every agent
