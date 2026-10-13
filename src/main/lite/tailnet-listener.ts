@@ -11,7 +11,7 @@ export async function listenTailnet(
 	if (!tailnetIPv4(address)) throw new Error('A current Tailscale interface is required.');
 	return listenDirect(server, address);
 }
-/** Dedicated Lite listener on the selected existing private LAN address. */
+/** Reuse an existing LAN-port server without owning its shutdown, or open a listener on the selected interface. */
 export async function listenLan(
 	server: FastifyInstance,
 	address: string
@@ -27,6 +27,7 @@ export async function listenLan(
 		return async () => {};
 	return listenDirect(server, address);
 }
+/** Route only Maestro's well-known subtree; the returned idempotent stop closes this listener and its sockets. */
 async function listenDirect(
 	server: FastifyInstance,
 	address: string

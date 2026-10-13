@@ -238,7 +238,7 @@ separate saved/manual connections, invitation and diagnostic screens. **Back** o
 Escape leaves a secondary screen; **Cancel** ends the current pairing attempt.
 Status refreshes preserve code entry and keyboard focus.
 
-LAN uses private IPv4 addresses (`10.x.x.x`, `172.16.x.x`–`172.31.x.x`, or
+LAN uses private IPv4 addresses (`10.x.x.x`, `172.16.x.x`-`172.31.x.x`, or
 `192.168.x.x`) on the same subnet. The host advertises through multicast DNS on
 UDP 5353 and accepts connections on TCP 56036. Both computers must be allowed to
 communicate on that network; guest Wi-Fi isolation or blocked multicast can prevent

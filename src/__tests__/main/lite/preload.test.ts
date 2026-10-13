@@ -477,6 +477,12 @@ describe('Host connection transport controls', () => {
 		interfaces: [
 			{ name: 'Wi-Fi', address: '192.168.50.2' },
 			{ name: 'Ethernet', address: '10.0.0.2' },
+			{ name: 'Link-local', address: '169.254.50.2' },
+			{ name: 'Public', address: '192.0.2.2' },
+		],
+		lanInterfaces: [
+			{ name: 'Wi-Fi', address: '192.168.50.2' },
+			{ name: 'Ethernet', address: '10.0.0.2' },
 		],
 		endpoints: [],
 		name: 'Office',
@@ -488,6 +494,25 @@ describe('Host connection transport controls', () => {
 		ipc.invoke.mockImplementation(async () => hostState);
 		await installPage(hostPairingPage, () => import('../../../main/lite/pairing/host-preload'));
 		await vi.waitFor(() => expect(field('enable-direct').disabled).toBe(false));
+	});
+
+	it('retains private, link-local and public HTTPS discovery choices while direct LAN lists only private interfaces', () => {
+		field('open-https').click();
+		expect(
+			Array.from(
+				(field('interface') as unknown as HTMLSelectElement).options,
+				(option) => option.value
+			)
+		).toEqual(['', '192.168.50.2', '10.0.0.2', '169.254.50.2', '192.0.2.2']);
+		field('back').click();
+		field('access-transport').value = 'lan';
+		field('access-transport').dispatchEvent(new Event('change'));
+		expect(
+			Array.from(
+				(field('lan-network') as unknown as HTMLSelectElement).options,
+				(option) => option.value
+			)
+		).toEqual(['192.168.50.2', '10.0.0.2']);
 	});
 
 	it('offers LAN without Tailscale and shows the selected local interface and encryption guidance', async () => {
@@ -618,6 +643,7 @@ describe('Host connection transport controls', () => {
 			interfaceAddress: '192.168.50.2',
 		};
 		hostState.interfaces = [];
+		hostState.lanInterfaces = [];
 		field('refresh').click();
 		await vi.waitFor(() =>
 			expect(field('access-heading').textContent).toBe('Reconnect this computer')
@@ -633,10 +659,17 @@ describe('Host connection transport controls', () => {
 		expect(field('disable-lan').hidden).toBe(false);
 	});
 
-	it('blocks LAN enablement when no local interface is available', async () => {
-		hostState.interfaces = [];
+	it('blocks LAN enablement when only HTTPS discovery interfaces are available', async () => {
+		hostState.interfaces = initialHostState.interfaces.slice(2);
+		hostState.lanInterfaces = [];
 		field('refresh').click();
 		await vi.waitFor(() => expect(field('access-transport').disabled).toBe(false));
+		expect(
+			Array.from(
+				(field('interface') as unknown as HTMLSelectElement).options,
+				(option) => option.value
+			)
+		).toEqual(['', '169.254.50.2', '192.0.2.2']);
 		field('access-transport').value = 'lan';
 		field('access-transport').dispatchEvent(new Event('change'));
 		expect(field('enable-direct').disabled).toBe(true);

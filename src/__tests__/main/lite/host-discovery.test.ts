@@ -337,17 +337,19 @@ describe('attended host discovery manifest on the existing server', () => {
 });
 
 describe('host-local consent, interface selection and invitation lifecycle', () => {
-	it('offers private LAN interfaces and keeps direct access active when setup closes', async () => {
-		mocks.interfaces.mockReturnValue([
+	it('preserves HTTPS discovery interfaces, restricts direct LAN and keeps access active when setup closes', async () => {
+		const interfaces = [
 			{ name: 'Ethernet', address: '192.168.20.10' },
+			{ name: 'Link-local', address: '169.254.20.10' },
 			{ name: 'Public', address: '192.0.2.10' },
-		]);
+		];
+		mocks.interfaces.mockReturnValue(interfaces);
 		const stop = vi.fn(async () => {});
 		const listenLan = vi.fn(async () => stop);
 		const { invoke, window, shell } = await local({ ...options, listenLan });
-		expect((await invoke('state')).interfaces).toEqual([
-			{ name: 'Ethernet', address: '192.168.20.10' },
-		]);
+		const state = await invoke('state');
+		expect(state.interfaces).toEqual(interfaces);
+		expect(state.lanInterfaces).toEqual([interfaces[0]]);
 		await expect(
 			invoke('enable-lan', { consent: false, interfaceAddress: '192.168.20.10' })
 		).rejects.toThrow('Explicit host consent');
@@ -375,11 +377,11 @@ describe('host-local consent, interface selection and invitation lifecycle', () 
 		});
 		const reopened = vi.mocked(BrowserWindow).mock.results.at(-1)!.value;
 		const handler = vi.mocked(ipcMain.handle).mock.calls.at(-1)![1];
-		const state = await handler(
+		const disabled = await handler(
 			{ sender: reopened.webContents, senderFrame: reopened.webContents.mainFrame } as never,
 			'disable-lan'
 		);
-		expect(state.lan.enabled).toBe(false);
+		expect(disabled.lan.enabled).toBe(false);
 		expect(shell.host).toBeUndefined();
 		expect(stop).toHaveBeenCalledOnce();
 	});
@@ -516,7 +518,8 @@ describe('host-local consent, interface selection and invitation lifecycle', () 
 			enabled: false,
 			advertising: false,
 			endpoints: [endpoint],
-			interfaces: [],
+			interfaces: [{ name: 'Mock Ethernet', address: '192.0.2.10' }],
+			lanInterfaces: [],
 		});
 		expect(mocks.sockets).not.toHaveBeenCalled();
 		await expect(invoke('enable', { ...enable, consent: false })).rejects.toThrow(

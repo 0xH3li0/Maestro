@@ -62,6 +62,7 @@ export class DeviceCredentials {
 			}
 		})());
 	}
+	/** Decrypt only an exact host/origin match; Tailscale also requires the currently verified node identity. */
 	async get(instanceId: string, origin: string, peerId?: string): Promise<string | undefined> {
 		await this.load();
 		this.assertAvailable();
@@ -88,6 +89,7 @@ export class DeviceCredentials {
 			throw new Error('Saved device identity does not match.');
 		return value.credential;
 	}
+	/** Serialize OS-encrypted credential writes and restore the previous entry if persistence fails. */
 	async save(
 		instanceId: string,
 		origin: string,

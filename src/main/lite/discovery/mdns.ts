@@ -46,6 +46,7 @@ export class MdnsCache {
 				this.records.set(key, { record, until: this.now() + Math.min(ttl, 4500) * 1000 });
 		}
 	}
+	/** Join unexpired DNS-SD records into validated HTTPS/LAN location hints; adverts never grant access. */
 	rows(): Candidate[] {
 		const now = this.now();
 		for (const [key, value] of this.records) if (value.until <= now) this.records.delete(key);

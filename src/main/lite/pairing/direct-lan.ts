@@ -36,6 +36,7 @@ export class DirectLanHost {
 	private controls = createKeyedWriteQueue();
 	private initialized = false;
 	private readonly file: string;
+	/** Associate consent with this Maestro host and defer listener creation until activation. */
 	constructor(
 		directory: string,
 		private devices: PairedDevices,
@@ -47,6 +48,7 @@ export class DirectLanHost {
 	) {
 		this.file = path.join(directory, 'lite-lan-access.json');
 	}
+	/** Require the saved address, interface name and netmask to still identify the consented network. */
 	private currentInterface() {
 		const consent = this.consent;
 		const selected = consent && lanInterface(consent.address);
@@ -54,11 +56,13 @@ export class DirectLanHost {
 			? selected
 			: undefined;
 	}
+	/** Expose pairing only while consent, listener readiness and the current interface all remain valid. */
 	get host(): PairingHost | undefined {
 		return this.state.enabled && this.state.ready && this.canActivate() && this.currentInterface()
 			? this.currentHost
 			: undefined;
 	}
+	/** Restore this host's consent once, then periodically revalidate its interface without renewing consent. */
 	async initialize(): Promise<void> {
 		if (this.initialized) return;
 		this.initialized = true;
@@ -96,6 +100,7 @@ export class DirectLanHost {
 		}, 15000);
 		this.timer.unref();
 	}
+	/** Atomically persist private consent before replacing the in-memory binding. */
 	private async save(consent: Consent): Promise<void> {
 		await mkdir(path.dirname(this.file), { recursive: true });
 		const text = JSON.stringify(consent);
@@ -103,6 +108,7 @@ export class DirectLanHost {
 		await atomicWriteFile(this.file, text, { mode: 0o600 });
 		this.consent = consent;
 	}
+	/** Advertise identity and origin without secrets; discovery failures preserve access and ignore superseded hosts. */
 	private advertise(address: string, host: PairingHost): void {
 		this.advertisementError = undefined;
 		this.advertising = true;
@@ -113,6 +119,7 @@ export class DirectLanHost {
 			this.state.message = message + '. LAN access remains enabled at ' + this.state.origin + '.';
 		});
 	}
+	/** Coalesce checks, open only the consented interface, and close access when its binding becomes invalid. */
 	async refresh(): Promise<void> {
 		if (this.pending) return this.pending;
 		if (!this.state.enabled) return;
@@ -201,6 +208,7 @@ export class DirectLanHost {
 			}
 		}
 	}
+	/** Persist explicit consent before activation; changing an active interface requires disabling it first. */
 	async enable(consent: boolean, address: string): Promise<void> {
 		if (consent !== true) throw new Error('Review and explicitly allow direct LAN access first.');
 		const revision = this.revision;
@@ -228,6 +236,7 @@ export class DirectLanHost {
 			await this.refresh();
 		});
 	}
+	/** Immediately revoke admissions and supersede pending activation before asynchronous listener cleanup. */
 	private invalidate(): void {
 		this.revision++;
 		this.state.ready = false;
@@ -236,6 +245,7 @@ export class DirectLanHost {
 		this.advertiser.stop();
 		this.advertising = false;
 	}
+	/** Revoke access immediately, drain pending work and persist disabled consent while retaining paired devices. */
 	async disable(): Promise<void> {
 		this.state.enabled = false;
 		this.invalidate();
@@ -248,6 +258,7 @@ export class DirectLanHost {
 			this.state.message = 'Direct LAN access is off. Remembered devices were not changed.';
 		});
 	}
+	/** Stop checks and listeners during shutdown while preserving consent for the next host startup. */
 	async close(): Promise<void> {
 		this.invalidate();
 		clearInterval(this.timer);

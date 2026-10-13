@@ -48,6 +48,7 @@ export function displayName(value: unknown): string {
 		throw new Error('Invalid display name');
 	return value.trim();
 }
+/** Build an untrusted location hint, restricting plain HTTP origins to the discovery source's private network. */
 export function candidate(
 	id: unknown,
 	name: unknown,

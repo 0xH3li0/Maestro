@@ -31,6 +31,10 @@ export async function openTailnetRelay(
 	);
 }
 
+/**
+ * Keep the browser on loopback while binding plain HTTP upstream to an eligible same-subnet LAN interface.
+ * The paired credential authorizes only the selected host; this relay adds no transport encryption.
+ */
 export async function openLanRelay(
 	endpoint: URL,
 	credential: string,
@@ -47,6 +51,10 @@ export async function openLanRelay(
 	);
 }
 
+/**
+ * Relay only the paired application's subtree, stripping browser credentials and rejecting external redirects.
+ * Pin the initial destination/interface and close every tracked socket on abort or explicit stop.
+ */
 async function openPairedRelay<T extends { hostname: string; port: number; localAddress: string }>(
 	endpoint: URL,
 	credential: string,
@@ -64,6 +72,7 @@ async function openPairedRelay<T extends { hostname: string; port: number; local
 	let bound = initial,
 		checkedAt = Date.now(),
 		checking: Promise<typeof initial> | undefined;
+	/** Share destination checks for two seconds and reject any departure from the initial network binding. */
 	const destination = async () => {
 		if (signal.aborted) throw new Error('Connection canceled.');
 		if (Date.now() - checkedAt < 2000) return bound;

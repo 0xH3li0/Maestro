@@ -104,6 +104,52 @@ describe('explicit LAN destination policy', () => {
 		await expect(lanDestination(origin)).rejects.toThrow('same LAN');
 		expect(tailnetDestination).not.toHaveBeenCalled();
 	});
+	it.each([
+		['10.0.0.2', '255.0.0.0', '10.2.3.10', '10.2.3.20', false],
+		['10.0.0.2', '255.0.0.0', '10.2.3.10', '10.2.3.20', true],
+		['172.16.0.2', '255.240.0.0', '172.20.3.10', '172.20.3.20', false],
+		['172.16.0.2', '255.240.0.0', '172.20.3.10', '172.20.3.20', true],
+	] as const)(
+		'prefers the matching /24 over %s/%s using %s for %s (broad first: %s)',
+		async (broadAddress, broadMask, specificAddress, destination, broadFirst) => {
+			const base = network.interfaces.ethernet![0];
+			const broad = { ...base, address: broadAddress, netmask: broadMask, cidr: null };
+			const specific = { ...base, address: specificAddress, cidr: specificAddress + '/24' };
+			network.interfaces = broadFirst
+				? { vpn: [broad], ethernet: [specific] }
+				: { ethernet: [specific], vpn: [broad] };
+			expect(await lanDestination('http://' + destination + ':56036/')).toEqual({
+				hostname: destination,
+				port: 56036,
+				localAddress: specificAddress,
+			});
+		}
+	);
+	it('keeps the first equally specific eligible interface and ignores ineligible longer masks', async () => {
+		const base = network.interfaces.ethernet![0];
+		network.interfaces = {
+			ineligible: [
+				{ ...base, address: '192.168.1.20', netmask: '255.255.255.255', internal: true },
+				{ ...base, address: '192.168.1.20', netmask: '255.255.255.1' },
+				{ ...base, address: '192.168.2.20', netmask: '255.255.255.255' },
+				{
+					...base,
+					family: 'IPv6',
+					address: 'fd00::20',
+					netmask: 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+					cidr: 'fd00::20/128',
+					scopeid: 0,
+				},
+			],
+			first: [base],
+			second: [{ ...base, address: '192.168.1.11', cidr: '192.168.1.11/24' }],
+		};
+		expect(await lanDestination(origin)).toEqual({
+			hostname: '192.168.1.20',
+			port: 56036,
+			localAddress: '192.168.1.10',
+		});
+	});
 	it('rejects invalid netmasks, foreign/private subnets and canceled connections', async () => {
 		expect(
 			sameLanSubnet('192.168.1.20', { address: '192.168.1.10', netmask: '255.255.255.0' })

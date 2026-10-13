@@ -6,6 +6,7 @@ export class HostConnectionError extends Error {
 	name = 'HostConnectionError';
 }
 
+/** Require a compatible, ready host with the pinned identity and authentication appropriate to its transport. */
 export function validateHandshake(
 	value: unknown,
 	profile: LiteProfile,

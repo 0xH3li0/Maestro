@@ -119,6 +119,7 @@ export class HostPairingWindow {
 		}
 	}
 
+	/** Restore paired devices and consented direct transports without opening the pairing window. */
 	async initialize(instanceId: string, options: HostPairingOptions): Promise<void> {
 		this.context = { instanceId, options };
 		await this.devices.load();
@@ -144,6 +145,7 @@ export class HostPairingWindow {
 		);
 		await this.lan.initialize();
 	}
+	/** Resolve the enabled transport and revoke temporary HTTPS access when its published origin changes. */
 	get host(): PairingHost | undefined {
 		if (this.direct?.state.enabled) return this.direct.host;
 		if (this.lan?.state.enabled) return this.lan.host;
@@ -172,6 +174,7 @@ export class HostPairingWindow {
 	stop(): void {
 		this.stopTemporary();
 	}
+	/** Open host-local controls with all HTTPS discovery interfaces and a private-only direct LAN picker. */
 	async open(
 		parent: BrowserWindow,
 		instanceId: string,
@@ -368,6 +371,7 @@ export class HostPairingWindow {
 					const { connectionUpdateAction } = await import('../../auto-updater');
 					this.updateStatus = await connectionUpdateAction(action.slice(7));
 				} else if (action !== 'state') throw new Error('Unknown host pairing action');
+				const interfaces = availableLanInterfaces();
 				return {
 					enabled: !!this.host,
 					direct: this.direct!.state,
@@ -378,7 +382,8 @@ export class HostPairingWindow {
 					focusRequestId: this.focusRequestId,
 					error: this.error,
 					invitation: this.invitation,
-					interfaces: availableLanInterfaces().filter((entry) => lanIPv4(entry.address)),
+					interfaces,
+					lanInterfaces: interfaces.filter((entry) => lanIPv4(entry.address)),
 					endpoints,
 					name: options.name,
 					expiresAt: this.expiresAt,
@@ -396,6 +401,7 @@ export class HostPairingWindow {
 		await window.loadURL(localUrl);
 		void this.direct!.refresh();
 	}
+	/** Cancel pending prompts and release both direct transport listeners when the host shuts down. */
 	async close(): Promise<void> {
 		this.activePrompt?.abort.abort();
 		this.requestQueue = [];

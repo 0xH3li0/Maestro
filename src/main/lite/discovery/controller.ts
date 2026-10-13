@@ -45,6 +45,7 @@ export class DiscoveryController {
 					: (this.client?.snapshot() ?? { phase: 'idle' }),
 		};
 	}
+	/** Hand a compatible paired host to the native connector, preserving LAN/Tailscale transport provenance. */
 	private deliver(row: Candidate, credential: string): void {
 		if (!row.connection) throw new Error('No compatible host connection.');
 		this.delivered = true;
@@ -65,6 +66,7 @@ export class DiscoveryController {
 			capabilities: row.connection.capabilities,
 		});
 	}
+	/** Route discovery/pairing actions; verify saved host and private-network identities before credential reuse. */
 	async control(action: string, payload: unknown): Promise<void> {
 		if (action === 'discovery-start') {
 			if (!payload || typeof payload !== 'object')

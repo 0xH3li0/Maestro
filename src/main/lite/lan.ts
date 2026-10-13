@@ -5,6 +5,7 @@ import { TAILNET_PORT } from './tailnet-origin';
 /** Direct Lite access uses the same application port on separate network interfaces. */
 export const LAN_PORT = TAILNET_PORT;
 
+/** Accept canonical IPv4 addresses only within the RFC 1918 private address ranges. */
 export function lanIPv4(value: unknown): value is string {
 	if (typeof value !== 'string' || !isIPv4(value)) return false;
 	const [a, b] = value.split('.').map(Number);
@@ -54,18 +55,29 @@ export function lanInterface(
 				return { name, address, netmask: entry.netmask };
 }
 
-/** Bind the selected private destination to an existing interface on its subnet; never use a routed fallback. */
+/** Bind to the matching private interface with the longest netmask, keeping the first eligible tie. */
 export async function lanDestination(
 	origin: string,
 	signal?: AbortSignal
 ): Promise<{ hostname: string; port: number; localAddress: string }> {
 	if (signal?.aborted) throw new Error('Connection canceled.');
 	const url = new URL(lanOrigin(origin));
+	let localAddress: string | undefined;
+	let longestMask = -1;
 	for (const entries of Object.values(networkInterfaces()))
 		for (const entry of entries ?? []) {
-			if (!entry.internal && entry.family === 'IPv4' && sameLanSubnet(url.hostname, entry))
-				return { hostname: url.hostname, port: LAN_PORT, localAddress: entry.address };
+			if (!entry.internal && entry.family === 'IPv4' && sameLanSubnet(url.hostname, entry)) {
+				// sameLanSubnet validates contiguous masks, so their unsigned values rank prefix length.
+				const mask = entry.netmask
+					.split('.')
+					.reduce((value, part) => value * 256 + Number(part), 0);
+				if (mask > longestMask) {
+					longestMask = mask;
+					localAddress = entry.address;
+				}
+			}
 		}
+	if (localAddress) return { hostname: url.hostname, port: LAN_PORT, localAddress };
 	throw new Error(
 		'This host is not on an active private local network. Connect both computers to the same LAN.'
 	);

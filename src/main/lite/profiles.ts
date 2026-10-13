@@ -7,6 +7,7 @@ import { CONNECT_PATH } from './pairing/protocol';
 import { directTailnetOrigin } from './tailnet-origin';
 import { lanOrigin } from './lan';
 
+/** Reject URL credential fields, queries and fragments; direct private URLs require the paired connection path. */
 export function normalizeRemoteUrl(input: string, transport: LiteProfile['transport']): URL {
 	if (typeof input !== 'string' || /[\s\\\x00-\x1f]/.test(input))
 		throw new Error('Enter a Remote Control URL without whitespace or backslashes.');

@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import type { LocalRequest } from './protocol';
 import type { DirectAccessState } from './direct-tailnet';
 interface State {
@@ -11,6 +12,7 @@ interface State {
 	focusRequestId?: string;
 	error?: string;
 	interfaces: Array<{ name: string; address: string }>;
+	lanInterfaces: Array<{ name: string; address: string }>;
 	endpoints: string[];
 	name: string;
 	expiresAt?: number;
@@ -109,6 +111,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		el(heading)?.focus();
 	}
 
+	/** Show pairing progress for the active request or a ready direct or HTTPS transport. */
 	function renderFlow(state: State): void {
 		const current = state.requests.find((row) => row.requestId === selectedRequest);
 		const connecting = page === 'connect';
@@ -150,6 +153,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		setText(button('next-request'), 'Next request (' + others.length + ')');
 	}
 
+	/** Render direct access controls using only interfaces eligible for private LAN connections. */
 	function renderAccess(state: State): void {
 		const transport = el('access-transport') as HTMLSelectElement;
 		if (state.lan?.enabled) transport.value = 'lan';
@@ -166,19 +170,19 @@ window.addEventListener('DOMContentLoaded', () => {
 				})
 			: state.direct;
 		const network = el('lan-network') as HTMLSelectElement;
-		const nextOptions = JSON.stringify(state.interfaces);
+		const nextOptions = canonicalJson(state.lanInterfaces);
 		if (nextOptions !== lanOptionsKey) {
 			lanOptionsKey = nextOptions;
 			const previous = network.value;
 			network.replaceChildren(
-				...state.interfaces.map((row) => {
+				...state.lanInterfaces.map((row) => {
 					const option = document.createElement('option');
 					option.value = row.address;
 					option.textContent = row.name + ' (' + row.address + ')';
 					return option;
 				})
 			);
-			if (state.interfaces.some((row) => row.address === previous)) network.value = previous;
+			if (state.lanInterfaces.some((row) => row.address === previous)) network.value = previous;
 		}
 		if (state.lan?.interfaceAddress && state.lan.enabled)
 			network.value = state.lan.interfaceAddress;
@@ -268,6 +272,7 @@ window.addEventListener('DOMContentLoaded', () => {
 		}
 	}
 
+	/** Populate attended HTTPS discovery from every eligible interface and block concurrent direct access. */
 	function renderHttps(state: State): void {
 		if (!initialized) {
 			input('name').value = state.name;
