@@ -501,9 +501,16 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		sendCrossAgentRequest({ ...base, consultChain: { chainId: 'chain-a', depth: 2 } });
 		// A typed mention carries none.
 		sendCrossAgentRequest(base);
+		// A mention inside a dispatched prompt names the MENTIONING turn's place,
+		// for main to spend from. Never as an admitted chain.
+		sendCrossAgentRequest({ ...base, sourceConsultChain: { chainId: 'chain-a', depth: 1 } });
 
 		expect(send.mock.calls[0][0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+		expect(send.mock.calls[0][0]).not.toHaveProperty('sourceConsultChain');
 		expect(send.mock.calls[1][0]).not.toHaveProperty('consultChain');
+		expect(send.mock.calls[1][0]).not.toHaveProperty('sourceConsultChain');
+		expect(send.mock.calls[2][0].sourceConsultChain).toEqual({ chainId: 'chain-a', depth: 1 });
+		expect(send.mock.calls[2][0]).not.toHaveProperty('consultChain');
 		await vi.waitFor(() => {
 			expect(Object.keys(useCrossAgentInFlightStore.getState().requests)).toHaveLength(1);
 		});

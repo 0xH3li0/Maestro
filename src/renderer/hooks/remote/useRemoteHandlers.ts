@@ -397,7 +397,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					reportDelivery(false, 'no-target-tab-for-mention');
 					return;
 				}
-				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+				// `consultChain` is set when another agent's `maestro-cli dispatch` sent
+				// this prompt: its mentions are then that agent's consults, and spend
+				// the chain the prompt arrived in.
+				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images, consultChain);
 				// The bubble below lands in this tab, so name it from the message just as
 				// the composer does for a leading mention (it names before planning).
 				requestTabAutoNameForMessage(session, writeTabId, command, 'remote');
@@ -759,7 +762,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// Trailing mention: this agent answers AND the mentioned agent is
 				// consulted alongside it, or handed the answer when it ends.
 				if (mentionPlan && writeTabId) {
-					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+					dispatchCrossAgentMentions(
+						mentionPlan,
+						command,
+						session,
+						writeTabId,
+						images,
+						consultChain
+					);
 				}
 			} catch (error: unknown) {
 				// A remote command that lands while the agent is mid-turn is refused

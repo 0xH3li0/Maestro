@@ -42,6 +42,7 @@ import type {
 } from '../../shared/crossAgentTypes';
 import { CROSS_AGENT_SESSION_PREFIX } from '../../shared/crossAgentTypes';
 import { buildConsultChainEnv } from '../../shared/consultBudget';
+import { admitConsult, type ConsultBudgetStoreOptions } from '../peer-consults/consult-budget';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
 import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
@@ -198,6 +199,18 @@ export interface StartCrossAgentRequestOptions {
 	 * Defaults to false: consults are read-only.
 	 */
 	writable?: boolean;
+	/**
+	 * The consultation budget: the `maxConsultationsPerTurn` setting, read through
+	 * `normalizeMaxConsultationsPerTurn()`. Spent only for a mention made by a
+	 * turn that is already in a consult chain (`CrossAgentRequest.sourceConsultChain`).
+	 */
+	maxConsultationsPerTurn: number;
+	/**
+	 * Where the budget counter lives. Defaults to Maestro's data directory; a
+	 * test passes a temp directory, because the default is the LIVE one in an
+	 * agent's shell.
+	 */
+	consultBudgetStore?: ConsultBudgetStoreOptions;
 	/** Called with each response chunk; `done: true` marks completion/failure. */
 	onChunk: (chunk: CrossAgentResponseChunk) => void;
 }
@@ -638,18 +651,57 @@ export async function startCrossAgentRequest(
 		return;
 	}
 
-	// The consulted agent's place in a consult chain, when whoever asked was
-	// already admitted to one (`maestro-cli ask` spends in the CLI). Stated in the
-	// consult's environment, over the agent's own env vars, so a `maestro-cli
-	// ask` or `dispatch` the consulted agent runs spends the chain it descends
-	// from. Without it that call would carry no chain and read as the user's own.
-	// It rides `customEnvVars` because that is the one record the local,
-	// maestro-p and SSH spawn paths all carry.
-	const agentEnvVars =
-		configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType);
-	const consultEnvVars = request.consultChain
-		? { ...(agentEnvVars ?? {}), ...buildConsultChainEnv(request.consultChain) }
-		: agentEnvVars;
+	// The consult budget. Checked last, with the target resolved and Stop ruled
+	// out, so a consult that was never going to start spends nothing.
+	//
+	// A request that carries `consultChain` was admitted before it got here
+	// (`maestro-cli ask` spends in the CLI), so it is not charged again. Every
+	// other request is a `@mention`, and the two kinds of mention are treated
+	// differently ON PURPOSE:
+	//
+	//  - One the USER typed (no `sourceConsultChain`) always goes through and
+	//    spends nothing, even at a budget of 0. It is the user's own message, not
+	//    a consult made while working on one, so it is the ROOT of a new chain and
+	//    the consulted agent sits at depth 0. Each mentioned agent roots its own.
+	//  - One made by a turn that is already in a chain (a prompt another agent
+	//    sent with `maestro-cli dispatch`) is that agent's doing. It spends one
+	//    from the chain it descends from and is refused when the budget is gone.
+	//
+	// The free pass is not a hole in the bound: what the budget bounds is what
+	// AGENTS start, and everything the consulted agent goes on to ask or delegate
+	// spends the chain rooted here. `admitConsult()` holds the rule itself, shared
+	// with `maestro-cli send`, `ask` and `dispatch`.
+	let targetChain = request.consultChain;
+	if (!targetChain) {
+		const admission = admitConsult(
+			{
+				chain: request.sourceConsultChain,
+				fromAgent: false,
+				limit: opts.maxConsultationsPerTurn,
+			},
+			opts.consultBudgetStore
+		);
+		if (!admission.allowed) {
+			settled = true;
+			cleanup();
+			// The refusal text as it is: it names the budget, what was spent and the
+			// setting, and it is the same wording every CLI verb prints.
+			emitError(admission.message);
+			return;
+		}
+		targetChain = admission.chain;
+	}
+
+	// The consulted agent's place in its chain, stated in the consult's
+	// environment over the agent's own env vars, so a `maestro-cli ask` or
+	// `dispatch` the consulted agent runs spends the chain it descends from.
+	// Without it that call would carry no chain and read as the user's own. It
+	// rides `customEnvVars` because that is the one record the local, maestro-p
+	// and SSH spawn paths all carry.
+	const consultEnvVars = {
+		...(configResolution.effectiveCustomEnvVars ?? opts.getCustomEnvVars?.(target.toolType) ?? {}),
+		...buildConsultChainEnv(targetChain),
+	};
 
 	try {
 		const spawnResult = await spawnGroupChatAgent({

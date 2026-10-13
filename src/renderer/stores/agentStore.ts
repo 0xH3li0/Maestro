@@ -443,7 +443,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				item.text,
 				session,
 				targetTab.id,
-				item.images
+				item.images,
+				// Set only when another agent's `maestro-cli dispatch` queued the item:
+				// the mentions in it are then that agent's consults, and spend its chain.
+				item.consultChain
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole

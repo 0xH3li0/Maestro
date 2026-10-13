@@ -113,6 +113,13 @@ export interface SendCrossAgentRequestOptions {
 	 */
 	consultChain?: ConsultChain;
 	/**
+	 * The mentioning turn's own place in a consult chain, when another agent's
+	 * `maestro-cli dispatch` started that turn. Main spends one from it for this
+	 * consult; a mention the user typed carries none and goes through free (see
+	 * `CrossAgentRequest.sourceConsultChain`).
+	 */
+	sourceConsultChain?: ConsultChain;
+	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
 	 * has to hand the text back to a caller that is blocked waiting for it, so
@@ -608,6 +615,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 			sourceCwd: opts.sourceCwd,
 			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
 			...(opts.consultChain && { consultChain: opts.consultChain }),
+			...(opts.sourceConsultChain && { sourceConsultChain: opts.sourceConsultChain }),
 		})
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that

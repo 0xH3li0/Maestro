@@ -681,6 +681,8 @@ describe('useRemoteHandlers', () => {
 				'@Reviewer look at this',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
+				// No consult chain on the command, so none for its mentions.
 				undefined
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
@@ -765,7 +767,48 @@ describe('useRemoteHandlers', () => {
 				'fix it, then ask @Reviewer',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
 				undefined
+			);
+		});
+
+		// A command another agent's `maestro-cli dispatch` sent arrives in that
+		// agent's consult chain. A mention in it is that agent's consult, so the
+		// chain goes with it and main spends from it.
+		it.each([
+			['a leading @mention', '@Reviewer look at this', true],
+			['a trailing @mention', 'fix it, then ask @Reviewer', false],
+		])('hands the chain of a dispatched command to %s', async (_what, command, suppressLocal) => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command,
+							inputMode: 'ai',
+							consultChain: { chainId: 'chain-a', depth: 1 },
+						},
+					})
+				);
+			});
+
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				command,
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				{ chainId: 'chain-a', depth: 1 }
 			);
 		});
 

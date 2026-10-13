@@ -522,6 +522,13 @@ export interface MentionHandoff {
 	targets: ConsultHoldTarget[];
 	/** The user's message, verbatim, relayed alongside the answer. */
 	message: string;
+	/**
+	 * The turn's own place in a consult chain, when another agent's
+	 * `maestro-cli dispatch` started it. The hand-off is then a delegation that
+	 * agent set off, so it spends from that chain when it goes out. Absent when
+	 * the user typed the message.
+	 */
+	sourceConsultChain?: ConsultChain;
 }
 
 export interface QueuedItem {

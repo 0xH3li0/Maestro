@@ -31,7 +31,11 @@ import type {
 	CrossAgentResponseChunk,
 } from '../../../shared/crossAgentTypes';
 import { generateUUID } from '../../../shared/uuid';
-import { parseConsultChain } from '../../../shared/consultBudget';
+import {
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+	parseConsultChain,
+} from '../../../shared/consultBudget';
 import { logger } from '../../utils/logger';
 import {
 	startCrossAgentRequest,
@@ -136,12 +140,18 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					handoffAnswer: payload.handoffAnswer,
 					// Data from the renderer: anything that is not a chain reads as none.
 					consultChain: parseConsultChain(payload.consultChain),
+					sourceConsultChain: parseConsultChain(payload.sourceConsultChain),
 					createdAt: Date.now(),
 				};
 
 				// Read-only by default; the user can opt into read/write consults via
 				// Settings > General > Cross-Agent Mentions.
 				const writable = settingsStore.get('crossAgentMentionsWritable', false) as boolean;
+				// Through the normalizer: `0` is a real budget, and the CLI can store
+				// any JSON under the key.
+				const maxConsultationsPerTurn = normalizeMaxConsultationsPerTurn(
+					settingsStore.get(MAX_CONSULTATIONS_PER_TURN_SETTING)
+				);
 
 				logger.info(`${LOG_CONTEXT} Dispatching cross-agent request`, LOG_CONTEXT, {
 					requestId,
@@ -163,6 +173,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 					getAgentConfig,
 					getCustomEnvVars,
 					writable,
+					maxConsultationsPerTurn,
 					onChunk: (chunk: CrossAgentResponseChunk) => safeSend('cross-agent:chunk', chunk),
 				}).catch((err) => {
 					logger.error(`${LOG_CONTEXT} Cross-agent dispatch failed`, LOG_CONTEXT, {
