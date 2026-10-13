@@ -88,6 +88,7 @@ const SAVE_ARG = {
 	gatewayUrl: 23,
 	runOn: 24,
 	tierTargets: 25,
+	peerGrants: 26,
 } as const;
 
 /** Show one tab of the form. Only the active tab's fields are rendered. */
@@ -2073,6 +2074,72 @@ describe('EditAgentModal', () => {
 
 			openTab('Provider');
 			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+		});
+
+		describe('Peers tab', () => {
+			afterEach(() => {
+				useSessionStore.setState({ sessions: [], groups: [] } as never);
+			});
+
+			it('draws the Peer Agents section from the live fleet and saves the three grants', () => {
+				const session = createSession({
+					groupId: 'g-backend',
+					peerAgents: [
+						{ sessionId: 'peer-infra', read: true, write: false, description: 'Owns the infra' },
+					],
+					groupPeerAccess: { read: true, write: false },
+				});
+				// The fleet and the group name come from the store, not from the
+				// `session` and `existingSessions` props.
+				useSessionStore.setState({
+					sessions: [
+						session,
+						createSession({ id: 'peer-infra', name: 'Infra', groupId: 'g-backend' }),
+						createSession({ id: 'peer-docs', name: 'Docs', groupId: 'g-backend' }),
+					],
+					groups: [{ id: 'g-backend', name: 'Backend', emoji: '🛠', collapsed: false }],
+				} as never);
+
+				renderModal(session);
+				openTab('Peers');
+
+				// The section, seeded from the agent's stored grants.
+				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-peers');
+				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
+				expect(screen.getByText('2 other agents in Backend')).toBeInTheDocument();
+				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeChecked();
+				expect(screen.getByRole('checkbox', { name: /Worktree family/ })).not.toBeChecked();
+				expect(screen.getByDisplayValue('Owns the infra')).toBeInTheDocument();
+
+				// The agent being edited is not offered as its own peer.
+				const picker = screen.getByRole('button', { name: 'Peer agent' });
+				expect(picker).toHaveTextContent('Infra');
+				fireEvent.click(picker);
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'Select an agent...',
+					'Docs',
+					'Infra',
+				]);
+				fireEvent.click(picker);
+
+				// Edit all three sources: delegate on the row, group off, worktree on.
+				fireEvent.click(screen.getByRole('switch', { name: 'Delegate to this peer' }));
+				fireEvent.click(screen.getByRole('checkbox', { name: /Peers in my group/ }));
+				fireEvent.click(screen.getByRole('checkbox', { name: /Worktree family/ }));
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				expect(onSave).toHaveBeenCalledTimes(1);
+				const grants = onSave.mock.calls[0][SAVE_ARG.peerGrants];
+				expect(grants).toEqual({
+					peerAgents: [
+						{ sessionId: 'peer-infra', read: true, write: true, description: 'Owns the infra' },
+					],
+					groupPeerAccess: undefined,
+					worktreePeerAccess: { read: true, write: false },
+				});
+				// Off is absent, never a pair of false bits.
+				expect(grants.groupPeerAccess).toBeUndefined();
+			});
 		});
 	});
 

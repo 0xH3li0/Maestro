@@ -3999,6 +3999,68 @@ describe('NewInstanceModal', () => {
 			expect(screen.queryByTestId('new-agent-tab-models-error')).not.toBeInTheDocument();
 		});
 
+		describe('Peers tab', () => {
+			afterEach(() => {
+				useSessionStore.setState({ sessions: [], groups: [] });
+			});
+
+			it('draws the Peer Agents section for the chosen group and creates the agent with the three grants', async () => {
+				// The fleet and the group name come from the store, not from the
+				// `existingSessions` prop.
+				useSessionStore.setState({
+					sessions: [
+						createMockSession({ id: 'peer-infra', name: 'Infra', groupId: 'group-backend' }),
+						createMockSession({ id: 'peer-docs', name: 'Docs' }),
+					],
+					groups: [{ id: 'group-backend', name: 'Backend', emoji: '🛠', collapsed: false }],
+				});
+				renderModal();
+				await fillRequired();
+
+				// No group chosen yet, so the group grant cannot be used.
+				openTab('Peers');
+				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-peers');
+				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
+				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeDisabled();
+
+				// Choosing a group on General enables it, and the count follows.
+				openTab('General');
+				fireEvent.click(screen.getByLabelText('Agent Group'));
+				fireEvent.click(await screen.findByRole('option', { name: /Backend/ }));
+				openTab('Peers');
+				const groupGrant = screen.getByRole('checkbox', { name: /Peers in my group/ });
+				expect(groupGrant).toBeEnabled();
+				expect(screen.getByText('1 other agent in Backend')).toBeInTheDocument();
+				fireEvent.click(groupGrant);
+
+				// The new agent has no id yet, so the picker offers the whole fleet.
+				fireEvent.click(screen.getByRole('button', { name: 'Add Peer' }));
+				fireEvent.click(screen.getByRole('button', { name: 'Peer agent' }));
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'Select an agent...',
+					'Docs',
+					'Infra',
+				]);
+				fireEvent.click(screen.getByRole('option', { name: 'Docs' }));
+				fireEvent.click(screen.getByRole('switch', { name: 'Delegate to this peer' }));
+
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate).toHaveBeenCalledTimes(1);
+				// peerGrants is the 25th argument. The empty note is not stored.
+				const grants = onCreate.mock.calls[0][24];
+				expect(grants).toEqual({
+					peerAgents: [{ sessionId: 'peer-docs', read: true, write: true }],
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: undefined,
+				});
+				// Off is absent, never a pair of false bits.
+				expect(grants.worktreePeerAccess).toBeUndefined();
+			});
+		});
+
 		describe('Run on', () => {
 			const OLLAMA = {
 				id: 'ep-ollama',
