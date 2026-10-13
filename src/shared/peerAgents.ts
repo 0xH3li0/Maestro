@@ -616,7 +616,7 @@ export interface ResolvedPeerReport extends Omit<ResolvedPeer, 'description'> {
  * What an agent's peer configuration SAYS and what it RESOLVES to. The two
  * are different lists: a group grant adds nobody to `rows`, a row for a deleted
  * agent adds nobody to `roster`, and an exclusion row removes a peer a grant
- * would have added. `maestro-cli show-agent` prints both, so a user can answer
+ * would have added. `maestro-cli show agent` prints both, so a user can answer
  * "who can this agent reach?" without opening the settings modal.
  */
 export interface PeerConfigurationReport {

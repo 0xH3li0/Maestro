@@ -11,6 +11,11 @@
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
+import type { Command } from 'commander';
+
+import { program } from '../../cli/index';
+import { ExitCode } from '../../cli/exit-codes';
+import { LOCAL_MODEL_TASK_IDS } from '../../shared/local-models/tasks';
 
 const prompt = readFileSync(path.join(__dirname, '../../prompts/_maestro-cli.md'), 'utf-8');
 const peerParagraph = prompt.split('\n').find((line) => line.startsWith('**Peer agents.**'));
@@ -52,6 +57,115 @@ describe('_maestro-cli.md peer agents', () => {
 
 	test('uses no em or en dash', () => {
 		const dashes = new RegExp(`[${String.fromCharCode(0x2013)}${String.fromCharCode(0x2014)}]`);
-		expect(dashes.test(peerParagraph ?? '')).toBe(false);
+		expect(dashes.test(prompt)).toBe(false);
+	});
+});
+
+/** The `--flag` names a command declares, long form only. */
+function declaredFlags(cmd: Command): Set<string> {
+	return new Set(cmd.options.map((option) => option.long).filter((long): long is string => !!long));
+}
+
+/** Descend the live tree one subcommand per word, stopping at the first word that is not one. */
+function descend(words: string[]): { command: Command; rest: string[] } {
+	let command: Command = program;
+	let index = 0;
+	while (index < words.length) {
+		const next = command.commands.find(
+			(sub) => sub.name() === words[index] || sub.aliases().includes(words[index])
+		);
+		if (!next) break;
+		command = next;
+		index += 1;
+	}
+	return { command, rest: words.slice(index) };
+}
+
+// The map is the only place an agent learns a verb exists, so every verb it
+// names has to be one the live tree registers (src/cli/index.ts, the same tree
+// command-tree.test.ts walks).
+describe('_maestro-cli.md names the verbs of this branch', () => {
+	const spans = [...prompt.matchAll(/`([^`\n]+)`/g)].map((match) => match[1]);
+
+	test('has an intent row for every group the Models branch added', () => {
+		for (const verb of [
+			'voice',
+			'models',
+			's1',
+			'stats models',
+			'search',
+			'delegation graph',
+			'agent test-run-on',
+			'group-settings',
+		]) {
+			const named = prompt.includes(`**${verb}**`) || prompt.includes(`\`${verb}`);
+			expect(named, `no row or span for ${verb}`).toBe(true);
+		}
+	});
+
+	test('every verb path in a code span resolves to a registered subcommand', () => {
+		const unresolved: string[] = [];
+		for (const span of spans) {
+			const words = span.trim().split(/\s+/);
+			const { command, rest } = descend(words);
+			if (command === program || command.commands.length === 0) continue;
+			// A group followed by a bare word: that word must be one of its subcommands.
+			const next = rest[0];
+			if (!next || !/^[a-z][a-z0-9|-]*$/.test(next)) continue;
+			for (const alternative of next.split('|')) {
+				const known = command.commands.some(
+					(sub) => sub.name() === alternative || sub.aliases().includes(alternative)
+				);
+				if (!known) unresolved.push(`${span} -> ${alternative}`);
+			}
+		}
+		expect(unresolved).toEqual([]);
+	});
+
+	test('every model and peer flag it names is declared where the map says', () => {
+		const both = [
+			'--run-on',
+			'--run-on-context',
+			'--gateway-url',
+			'--model',
+			'--peer',
+			'--peer-note',
+			'--group-peers',
+			'--worktree-peers',
+		];
+		const updateOnly = [
+			'--tier',
+			'--background-requests',
+			'--system-one',
+			'--proxy-mode',
+			'--remove-peer',
+		];
+		const create = declaredFlags(descend(['create-agent']).command);
+		const update = declaredFlags(descend(['update-agent']).command);
+		for (const flag of both) {
+			expect(create.has(flag), `create-agent does not declare ${flag}`).toBe(true);
+			expect(update.has(flag), `update-agent does not declare ${flag}`).toBe(true);
+		}
+		for (const flag of updateOnly) {
+			expect(update.has(flag), `update-agent does not declare ${flag}`).toBe(true);
+			expect(create.has(flag), `create-agent now declares ${flag}: say so in the map`).toBe(false);
+		}
+		for (const flag of [...both, ...updateOnly]) {
+			expect(prompt, `the map does not name ${flag}`).toContain(flag);
+		}
+	});
+
+	test('lists every Local Models task id the assign verb takes', () => {
+		for (const task of LOCAL_MODEL_TASK_IDS) {
+			expect(prompt, `task ${task} is missing`).toContain(task);
+		}
+	});
+
+	test('names every exit code the CLI can return', () => {
+		const line = prompt.split('\n').find((l) => l.startsWith('**Conventions.**')) ?? '';
+		for (const code of Object.values(ExitCode).filter((v): v is number => typeof v === 'number')) {
+			if (code === ExitCode.Success) continue;
+			expect(line, `exit code ${code} is not named`).toMatch(new RegExp(`\\b${code}\\b`));
+		}
 	});
 });
