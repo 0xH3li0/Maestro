@@ -187,7 +187,8 @@ export interface MessageHandlerCallbacks {
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		hidden?: boolean
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;

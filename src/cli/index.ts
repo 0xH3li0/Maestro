@@ -506,7 +506,11 @@ program
 	)
 	.option(
 		'--new-tab',
-		'Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+	)
+	.option(
+		'--visible',
+		'With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)'
 	)
 	.option(
 		'--background',

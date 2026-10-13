@@ -348,9 +348,8 @@ function createChatTab(session: Session, message: string): string | null {
 	});
 	if (!tabId) return null;
 	chat.ownedTabIds.add(tabId);
-	// The namer that runs when a queued message is dispatched skips hidden tabs
-	// (a consult tab has no chip to name). This tab's name is how the chat's next
-	// message finds it and what its pill reads, so it is named from here.
+	// This tab's name is how the chat's next message finds it and what its pill
+	// reads, so it is named here, at creation, rather than waiting for the send.
 	const live = findSession(session.id);
 	if (live) {
 		requestTabAutoName({

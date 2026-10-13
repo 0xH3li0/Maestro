@@ -809,7 +809,8 @@ interface MaestroAPI {
 				sessionId: string,
 				prompt: string,
 				responseChannel: string,
-				background?: boolean
+				background?: boolean,
+				hidden?: boolean
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (

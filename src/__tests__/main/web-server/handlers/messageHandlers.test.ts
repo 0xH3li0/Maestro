@@ -2261,6 +2261,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
+					false,
 					false
 				);
 			});
@@ -2286,7 +2287,46 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
 					'session-1',
 					'Summarize the repo',
+					true,
+					false
+				);
+			});
+		});
+
+		it('forwards hidden=true for a background dispatch (dispatch --new-tab hides by default)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+				background: true,
+				hidden: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo',
+					true,
 					true
+				);
+			});
+		});
+
+		it('never hides a foreground tab, even when asked', async () => {
+			// A focused tab the strip does not draw would strand the user on it.
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+				hidden: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo',
+					false,
+					false
 				);
 			});
 		});

@@ -690,7 +690,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// identical; a BUSY agent has the prompt queued for the new tab instead.
 		// A background dispatch (the default) creates the new tab without focus so
 		// the user's current view is preserved; `dispatch --focus` makes the new
-		// tab active instead. flushSync forces React to commit the new tab into
+		// tab active instead. A hidden dispatch (the `dispatch --new-tab` default)
+		// also leaves no chip in the strip: a hand-off from another agent or a Cue
+		// pipeline runs out of sight, still named from its prompt, and the user
+		// opens it from the completion toast or the caller's delegation pill
+		// (both deep-link through `focusAiTabInSession`, which reveals it).
+		// flushSync forces React to commit the new tab into
 		// session state before we fire the event, so the downstream handler can
 		// resolve the freshly-created tabId (which we always pass explicitly)
 		// instead of racing on a stale snapshot.
@@ -698,7 +703,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// success when a tab was actually created - and reports the REASON when it
 		// was not, rather than leaving the CLI to infer one from a missing tab id.
 		const unsubscribeNewTabWithPrompt = window.maestro.process.onRemoteNewAITabWithPrompt(
-			(sessionId: string, prompt: string, responseChannel: string, background?: boolean) => {
+			(
+				sessionId: string,
+				prompt: string,
+				responseChannel: string,
+				background?: boolean,
+				hidden?: boolean
+			) => {
 				const ack = (result: {
 					success: boolean;
 					tabId?: string;
@@ -733,6 +744,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							// foreground): create the tab without making it active so the
 							// user's current view is preserved.
 							activate: !background,
+							hidden: background && hidden === true,
 						});
 						if (!result) return s;
 						createdTabId = result.tab.id;

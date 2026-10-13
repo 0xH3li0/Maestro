@@ -275,6 +275,8 @@ export interface WebClientMessage {
 	callbackTimeout?: number;
 	/** Placement for a view-moving verb. See shared/focusPlacement.ts. */
 	background?: boolean;
+	/** new_ai_tab_with_prompt only: create the tab with no chip in the strip. */
+	hidden?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
 	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
@@ -516,7 +518,9 @@ export type NewAITabWithPromptResult = {
 export type NewAITabWithPromptCallback = (
 	sessionId: string,
 	prompt: string,
-	background?: boolean
+	background?: boolean,
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
+	hidden?: boolean
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the

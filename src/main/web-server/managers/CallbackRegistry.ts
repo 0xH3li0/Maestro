@@ -588,10 +588,11 @@ export class CallbackRegistry {
 	async newAITabWithPrompt(
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		hidden?: boolean
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {

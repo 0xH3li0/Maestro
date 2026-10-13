@@ -1455,8 +1455,53 @@ describe('useRemoteIntegration', () => {
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.aiTabs).toHaveLength(originalTabCount + 1);
 			expect(updated?.activeTabId).toBe(originalActiveTabId);
+			// Not hidden unless the caller asked: `tab new --prompt` sends no flag.
+			expect(updated?.aiTabs.at(-1)?.hidden).toBeUndefined();
 
 			dispatchEventSpy.mockRestore();
+		});
+
+		it('creates a hidden tab for a hidden background dispatch (the dispatch --new-tab default)', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const originalActiveTabId = session.activeTabId;
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-hidden', true, true);
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const created = updated?.aiTabs.at(-1);
+			expect(created?.hidden).toBe(true);
+			expect(updated?.activeTabId).toBe(originalActiveTabId);
+			// The prompt still runs in the hidden tab.
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ tabId: created?.id }),
+				})
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('ignores hidden on a foreground dispatch (--focus)', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-fg', false, true);
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			const created = updated?.aiTabs.at(-1);
+			expect(created?.hidden).toBeUndefined();
+			expect(updated?.activeTabId).toBe(created?.id);
 		});
 	});
 

@@ -1497,13 +1497,11 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
-		// Regression for #1110: on the TUI path maestro-p strips the headless-only
-		// flags (including the `--tools ""` guard), so naming runs a real agentic
-		// turn and its raw terminal transcript is thinking/response prose, not
-		// stream-json. Scraping that buffer put a sentence fragment on the tab,
-		// which users saw as the response streaming into the tab name. Prose has no
-		// angle brackets, so STRUCTURAL_NOISE_RE can't catch it - we must decline.
-		it('returns null instead of scraping a plain-text TUI transcript for a name', async () => {
+		// ProcessManager parses maestro-p's stream-json before it emits `data`, so
+		// the naming listener receives the bare `result` text, never raw JSON.
+		// Requiring JSON on the TUI path (the old #1110 guard) threw away every
+		// name a TUI-mode agent generated, and its tabs stayed unnamed.
+		it('accepts the parsed result text ProcessManager emits on the TUI path', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
@@ -1527,15 +1525,10 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// A realistic maestro-p TUI transcript: short prose lines that clear the
-			// 40-char filter and carry no structural noise.
-			onDataCallback?.(
-				'tab-naming-mock-uuid-1234',
-				'I should look at the auth flow\nLet me start with the form\n'
-			);
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form');
 			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
 
-			await expect(resultPromise).resolves.toBeNull();
+			await expect(resultPromise).resolves.toBe('Login Form');
 		});
 
 		it('still accepts a stream-json name on the TUI path', async () => {
