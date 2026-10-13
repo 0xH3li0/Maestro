@@ -23,6 +23,11 @@ import {
 	type AgentEnvSurface,
 } from '../../../../shared/maestro-lib/launch/env';
 import { QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
+import {
+	CONSULT_CHAIN_ENV_VAR,
+	CONSULT_DEPTH_ENV_VAR,
+	buildConsultChainEnv,
+} from '../../../../shared/consultBudget';
 
 const SURFACES: AgentEnvSurface[] = ['desktop', 'cli', 'cue'];
 
@@ -318,6 +323,28 @@ describe('buildAgentEnvironment: cue', () => {
 		process.env.ELECTRON_RUN_AS_NODE = '1';
 
 		expect(buildAgentEnvironment({ surface }).ELECTRON_RUN_AS_NODE).toBe('1');
+	});
+
+	it('drops an inherited consult chain: a Cue run is the root of its own', () => {
+		process.env[CONSULT_CHAIN_ENV_VAR] = 'launcher-chain';
+		process.env[CONSULT_DEPTH_ENV_VAR] = '3';
+
+		const env = buildAgentEnvironment({ surface });
+
+		expect(env[CONSULT_CHAIN_ENV_VAR]).toBeUndefined();
+		expect(env[CONSULT_DEPTH_ENV_VAR]).toBeUndefined();
+	});
+
+	it('keeps a consult chain the spawn states', () => {
+		process.env[CONSULT_CHAIN_ENV_VAR] = 'launcher-chain';
+
+		const env = buildAgentEnvironment({
+			surface,
+			maestroEnvVars: buildConsultChainEnv({ chainId: 'chain-1', depth: 1 }),
+		});
+
+		expect(env[CONSULT_CHAIN_ENV_VAR]).toBe('chain-1');
+		expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('1');
 	});
 
 	it('writes values as given: no ~/ expansion', () => {

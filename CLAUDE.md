@@ -230,6 +230,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Marking an agent's own hand-off in its transcript (`dispatch` / `ask` from its shell):** `readCallerIdentity()`, `callerMessageFields()`, `isSelfDispatch()` in `src/shared/agentDelegation.ts`; `recordAgentDelegation()`, `settleAgentDelegation()` in `src/renderer/services/agentDelegation.ts`
 - **The consultation budget setting (peer consults and delegations per user message):** `MAX_CONSULTATIONS_PER_TURN_SETTING`, `DEFAULT_MAX_CONSULTATIONS_PER_TURN`, `normalizeMaxConsultationsPerTurn()` in `src/shared/consultBudget.ts` (`0` is a real value; never `|| 25`)
 - **Spending a consult chain's budget (the shared counter):** `spendConsultBudget()`, `readConsultBudgetSpent()`, `sweepExpiredChains()`, `newConsultChainId()` in `src/main/peer-consults/consult-budget.ts`; `isConsultChainId()` in `src/shared/consultBudget.ts` (fails closed; tests pass `dataDir`)
+- **Which consult chain a spawned agent is in (`MAESTRO_CONSULT_CHAIN` / `MAESTRO_CONSULT_DEPTH`):** `readConsultChainEnv()`, `buildConsultChainEnv()`, `childConsultChain()`, `parseConsultChain()`, `withoutConsultChainEnv()`, `ConsultChain` in `src/shared/consultBudget.ts`
 
 #### Auto Run, Cue, Group Chat, Director's Notes
 

@@ -67,4 +67,9 @@ export interface SpawnProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The consult chain this spawn runs IN, already at its own depth, when the
+	// turn descends from another agent's delegation (`maestro-cli dispatch`).
+	// Data: the handler narrows it with `parseConsultChain`. Absent means the
+	// spawn is the root of a user message, and the handler mints the chain.
+	consultChain?: unknown;
 }

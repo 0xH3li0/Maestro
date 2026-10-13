@@ -12,7 +12,10 @@
  *
  * This module is the setting's contract, shared by the three processes that
  * read it (the renderer's setter, the main process, and the CLI), so they
- * cannot disagree on the key, the default, or the range.
+ * cannot disagree on the key, the default, or the range. It is also the
+ * contract for how a process learns which chain it is in: the two environment
+ * variables every member of a chain carries, and the functions that read and
+ * write them.
  */
 
 /** The settings key. Read it through this constant, never a string literal. */
@@ -57,4 +60,92 @@ const CONSULT_CHAIN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
  */
 export function isConsultChainId(value: unknown): value is string {
 	return typeof value === 'string' && CONSULT_CHAIN_ID_PATTERN.test(value);
+}
+
+/** The chain a spawned agent's consults and delegations are counted against. */
+export const CONSULT_CHAIN_ENV_VAR = 'MAESTRO_CONSULT_CHAIN';
+
+/** How many hops from the user's message the process is. `0` is the root. */
+export const CONSULT_DEPTH_ENV_VAR = 'MAESTRO_CONSULT_DEPTH';
+
+/**
+ * A process's place in a consult chain: the chain every consult and delegation
+ * it makes is counted against, and how many hops it is from the user's message
+ * that started the chain.
+ *
+ * The chain is carried in the environment ({@link CONSULT_CHAIN_ENV_VAR},
+ * {@link CONSULT_DEPTH_ENV_VAR}) because its members are separate processes: an
+ * agent's shell runs `maestro-cli ask`, which spawns the peer, whose own shell
+ * runs `maestro-cli dispatch`. Nothing but the environment tells the last of
+ * them that it descends from the first one's turn.
+ *
+ * The depth is a description, not the bound. The bound is the budget, spent
+ * per chain id; the depth is there so a refusal and a log line can say how far
+ * down the chain the caller is.
+ */
+export interface ConsultChain {
+	chainId: string;
+	depth: number;
+}
+
+/**
+ * A depth as it was written by someone else. Anything that is not a whole
+ * number from 0 up reads as 0: the chain id is what the budget is keyed on, so
+ * a chain with a damaged depth is still that chain, and dropping it would hand
+ * the caller a fresh budget.
+ */
+function normalizeConsultDepth(raw: unknown): number {
+	const depth = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : raw;
+	return typeof depth === 'number' && Number.isSafeInteger(depth) && depth >= 0 ? depth : 0;
+}
+
+/**
+ * Narrow a chain that arrived as data (a spawn request, a CLI message).
+ * Undefined when the id is not a chain id, which means "no chain", not an error.
+ */
+export function parseConsultChain(value: unknown): ConsultChain | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const { chainId, depth } = value as Record<string, unknown>;
+	if (!isConsultChainId(chainId)) return undefined;
+	return { chainId, depth: normalizeConsultDepth(depth) };
+}
+
+/** The chain an environment carries, or undefined when it carries none. */
+export function readConsultChainEnv(
+	env: Record<string, string | undefined>
+): ConsultChain | undefined {
+	return parseConsultChain({
+		chainId: env[CONSULT_CHAIN_ENV_VAR]?.trim(),
+		depth: env[CONSULT_DEPTH_ENV_VAR],
+	});
+}
+
+/** The env entries that put a spawned agent in a chain. */
+export function buildConsultChainEnv(chain: ConsultChain): Record<string, string> {
+	return {
+		[CONSULT_CHAIN_ENV_VAR]: chain.chainId,
+		[CONSULT_DEPTH_ENV_VAR]: String(chain.depth),
+	};
+}
+
+/** The place in the chain of an agent this one consults or delegates to. */
+export function childConsultChain(chain: ConsultChain): ConsultChain {
+	return { chainId: chain.chainId, depth: chain.depth + 1 };
+}
+
+/**
+ * An env override record with the chain removed, for anything that keys a
+ * cache on how an agent is CONFIGURED (the omp model catalog). A root spawn
+ * mints a new chain id, so keeping it gives every turn its own cache entry.
+ * Returns undefined when nothing else is left, which is what an agent with no
+ * overrides passes.
+ */
+export function withoutConsultChainEnv(
+	env: Record<string, string> | undefined
+): Record<string, string> | undefined {
+	if (!env) return undefined;
+	const rest = { ...env };
+	delete rest[CONSULT_CHAIN_ENV_VAR];
+	delete rest[CONSULT_DEPTH_ENV_VAR];
+	return Object.keys(rest).length > 0 ? rest : undefined;
 }

@@ -29,6 +29,11 @@ import {
 } from '../../../../main/agents/omp-model-catalog';
 import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
 import {
+	CONSULT_CHAIN_ENV_VAR,
+	CONSULT_DEPTH_ENV_VAR,
+	isConsultChainId,
+} from '../../../../shared/consultBudget';
+import {
 	configureAgentRunOn,
 	resetAgentRunOnForTests,
 	type AgentRunOnDeps,
@@ -1287,6 +1292,137 @@ describe('process IPC handlers', () => {
 					}),
 				})
 			);
+		});
+
+		/**
+		 * Consult chain.
+		 *
+		 * A peer consult or delegation spends one budget shared by the whole
+		 * tree under a user message, so every process in that tree has to know
+		 * which chain it is in. The spawn states it in the agent's environment:
+		 * minted here at the root, kept as it arrived for a descendant.
+		 */
+		describe('consult chain', () => {
+			/** Give the stored agent record a peer configuration (or none). */
+			function storeAgent(agent: Record<string, unknown>) {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [agent] : defaultValue
+				);
+			}
+
+			async function spawnedEnv(
+				extra: Record<string, unknown> = {}
+			): Promise<Record<string, string>> {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2200, success: true });
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-chain-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+					...extra,
+				});
+				const calls = mockProcessManager.spawn.mock.calls;
+				const spawned = calls[calls.length - 1][0] as { customEnvVars?: Record<string, string> };
+				return spawned.customEnvVars ?? {};
+			}
+
+			it('mints a chain at depth 0 for an agent with a peer grant', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: false } });
+
+				const env = await spawnedEnv();
+
+				expect(isConsultChainId(env[CONSULT_CHAIN_ENV_VAR])).toBe(true);
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('0');
+			});
+
+			it('mints a new chain for every root spawn, so each user message has its own budget', async () => {
+				storeAgent({
+					id: 'agent-chain',
+					peerAgents: [{ sessionId: 'peer-1', read: true, write: false }],
+				});
+
+				const first = await spawnedEnv();
+				const second = await spawnedEnv();
+
+				expect(second[CONSULT_CHAIN_ENV_VAR]).not.toBe(first[CONSULT_CHAIN_ENV_VAR]);
+			});
+
+			it('finds the agent behind an Auto Run task id', async () => {
+				storeAgent({ id: 'agent-chain', worktreePeerAccess: { read: false, write: true } });
+
+				const env = await spawnedEnv({ sessionId: 'agent-chain-batch-1700000000000' });
+
+				expect(isConsultChainId(env[CONSULT_CHAIN_ENV_VAR])).toBe(true);
+			});
+
+			it('adds nothing for an agent with no roster', async () => {
+				storeAgent({ id: 'agent-chain' });
+
+				const env = await spawnedEnv();
+
+				expect(env).not.toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+				expect(env).not.toHaveProperty(CONSULT_DEPTH_ENV_VAR);
+			});
+
+			it('does not count an exclusion row as a roster', async () => {
+				storeAgent({
+					id: 'agent-chain',
+					peerAgents: [{ sessionId: 'peer-1', read: false, write: false }],
+				});
+
+				expect(await spawnedEnv()).not.toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+			});
+
+			it('keeps the chain a delegated turn arrives with, at the depth it was given', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: true } });
+
+				const env = await spawnedEnv({ consultChain: { chainId: 'chain-from-caller', depth: 2 } });
+
+				expect(env[CONSULT_CHAIN_ENV_VAR]).toBe('chain-from-caller');
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('2');
+			});
+
+			it('keeps an arriving chain for an agent with no roster of its own', async () => {
+				// Otherwise an agent with no peers in the middle of a chain would
+				// hand whatever it starts a fresh budget.
+				storeAgent({ id: 'agent-chain' });
+
+				const env = await spawnedEnv({ consultChain: { chainId: 'chain-from-caller', depth: 1 } });
+
+				expect(env[CONSULT_CHAIN_ENV_VAR]).toBe('chain-from-caller');
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('1');
+			});
+
+			it('treats an arriving chain with a bad id as no chain, and mints', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: false } });
+
+				const env = await spawnedEnv({ consultChain: { chainId: '../escape', depth: 4 } });
+
+				expect(isConsultChainId(env[CONSULT_CHAIN_ENV_VAR])).toBe(true);
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('0');
+			});
+
+			it('never puts a terminal in a chain', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: true } });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'terminal', requiresPty: true });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2201, success: true });
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-chain',
+					toolType: 'terminal',
+					cwd: '/test',
+					command: '/bin/zsh',
+					args: [],
+					consultChain: { chainId: 'chain-from-caller', depth: 1 },
+				});
+
+				const calls = mockProcessManager.spawn.mock.calls;
+				const spawned = calls[calls.length - 1][0] as { customEnvVars?: Record<string, string> };
+				expect(spawned.customEnvVars ?? {}).not.toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+			});
 		});
 
 		/**

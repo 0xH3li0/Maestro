@@ -34,6 +34,13 @@ import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
 } from '../../../../shared/agentDelegation';
+import {
+	buildConsultChainEnv,
+	parseConsultChain,
+	withoutConsultChainEnv,
+} from '../../../../shared/consultBudget';
+import { hasPeerGrant } from '../../../../shared/peerAgents';
+import { newConsultChainId } from '../../../peer-consults/consult-budget';
 import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
@@ -50,7 +57,7 @@ import { requireProcessManager, requireDependency } from '../../../utils/ipcHand
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
-import type { SshRemoteConfig } from '../../../../shared/types';
+import type { PeerAccess, PeerAgent, SshRemoteConfig } from '../../../../shared/types';
 import { powerManager } from '../../../power-manager';
 import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
@@ -235,6 +242,10 @@ async function handleProcessSpawnImpl(
 			id?: string;
 			gatewayUrl?: string;
 			runOn?: unknown;
+			// The three sources of its peer roster (see the consult chain below).
+			peerAgents?: PeerAgent[];
+			groupPeerAccess?: PeerAccess;
+			worktreePeerAccess?: PeerAccess;
 		}>
 	).find((s) => s?.id === launchAgentId);
 	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, launchAgent?.runOn);
@@ -475,6 +486,33 @@ async function handleProcessSpawnImpl(
 			MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
 			MAESTRO_AGENT_ID: baseSessionId,
 		};
+	}
+
+	// Consult chain: tell the agent's shell which user message its peer consults
+	// and delegations are counted against (MAESTRO_CONSULT_CHAIN) and how many
+	// hops from that message it is (MAESTRO_CONSULT_DEPTH), so a `maestro-cli
+	// ask` or `dispatch` it runs spends the one budget the whole chain shares
+	// (see shared/consultBudget.ts). A spawn that arrives carrying a chain is a
+	// descendant and keeps it whatever its own peer configuration: an agent
+	// with no roster in the middle of a chain must not hand what it starts a
+	// fresh budget. A spawn that carries none is the root of a user message. It
+	// mints a chain at depth 0, and only when the agent has a peer grant, so an
+	// agent with no roster carries no new environment. Injected into
+	// effectiveCustomEnvVars so it flows through both the local and SSH
+	// env-merge paths below. A terminal is a shell the user drives, not an
+	// agent turn, so it never carries a chain.
+	if (config.toolType !== 'terminal') {
+		const consultChain =
+			parseConsultChain(config.consultChain) ??
+			(launchAgent && hasPeerGrant({ ...launchAgent, id: launchAgentId })
+				? { chainId: newConsultChainId(), depth: 0 }
+				: undefined);
+		if (consultChain) {
+			effectiveCustomEnvVars = {
+				...(effectiveCustomEnvVars || {}),
+				...buildConsultChainEnv(consultChain),
+			};
+		}
 	}
 
 	// Tell the agent's shell who it is, so a `maestro-cli dispatch` or `ask` it
@@ -1011,9 +1049,10 @@ async function handleProcessSpawnImpl(
 			// env) so the same logical config maps to one catalog across platforms and
 			// matches the detector's default-identity warm-up. The caller identity is
 			// dropped for the same reason: it names the agent, not its configuration.
+			// So is the consult chain, whose id is new on every root spawn.
 			ompModelCatalogKey = computeOmpCatalogKey(
 				ompPrimeBinaryPath,
-				withoutCallerIdentityEnv(effectiveCustomEnvVars)
+				withoutConsultChainEnv(withoutCallerIdentityEnv(effectiveCustomEnvVars))
 			);
 			// Bounded await: block the spawn only briefly so the first turn resolves
 			// correctly on a warm/fast catalog, and proceed (letting the prime finish

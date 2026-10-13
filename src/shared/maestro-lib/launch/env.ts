@@ -11,6 +11,7 @@ import {
 	type EnvVarMerge,
 } from '../../agentEnvironment';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../agentDelegation';
+import { CONSULT_CHAIN_ENV_VAR, CONSULT_DEPTH_ENV_VAR } from '../../consultBudget';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -112,6 +113,10 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	// and attributing it to whichever agent launched Maestro would be a lie.
 	delete env[CALLER_AGENT_ID_ENV_VAR];
 	delete env[CALLER_TAB_ID_ENV_VAR];
+	// And for the consult chain: a terminal is where a chain STARTS, so a consult
+	// typed into one must not spend the budget of whichever turn launched Maestro.
+	delete env[CONSULT_CHAIN_ENV_VAR];
+	delete env[CONSULT_DEPTH_ENV_VAR];
 
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
@@ -174,6 +179,12 @@ const STRIPPED_ENV_VARS = [
 	// is merged after this list is stripped, so only a stale inherited copy dies.
 	CALLER_AGENT_ID_ENV_VAR,
 	CALLER_TAB_ID_ENV_VAR,
+	// The consult chain of whatever launched Maestro or `maestro-cli`. A chain
+	// reaches a child only when the spawner states it (the session layer again),
+	// at the child's own depth. An inherited copy would put every agent the app
+	// spawns in one stale chain and exhaust its budget for all of them.
+	CONSULT_CHAIN_ENV_VAR,
+	CONSULT_DEPTH_ENV_VAR,
 	// Maestro's own NODE_ENV should not leak to agents
 	'NODE_ENV',
 ];
@@ -600,10 +611,19 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
  * agent spawn rebuilds it (a Dock or Finder launch hands Maestro launchd's bare
  * PATH, which hides Homebrew and other user installs). Values are written as
  * given.
+ *
+ * The one thing NOT inherited is a consult chain. A Cue run is started by an
+ * event, so it is the root of its own chain; a chain in Maestro's own
+ * environment belongs to whichever turn launched the app (an agent shell, in
+ * development) and would charge every Cue run's consults to that one budget.
+ * A chain the spawn states (`maestroEnvVars`) still gets through.
  */
 function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+	const inherited = { ...process.env };
+	delete inherited[CONSULT_CHAIN_ENV_VAR];
+	delete inherited[CONSULT_DEPTH_ENV_VAR];
 	return {
-		...process.env,
+		...inherited,
 		PATH: buildSpawnPath(options.extraPathDirs),
 		...(resolveAgentEnvVars(options) ?? {}),
 		...(options.maestroEnvVars ?? {}),
