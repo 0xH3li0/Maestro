@@ -511,8 +511,8 @@ While the agent is working, clicking **Send** opens a small menu instead of send
 | ---------- | ----------------------------------------------------------------- | -------------------------------------- |
 | Queue      | Queues the message behind the running turn, the same as Enter     | `Enter`                                |
 | Force Send | Sends now, beside a working tab (needs Forced Parallel Execution) | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` |
-| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
 | Steer      | Hands the message to the turn in progress (see [Steer](#steer))   | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`     |
+| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
 
 A row that cannot run right now is dimmed and says why in one line. Force Send while Forced Parallel Execution is off jumps to that setting when you click it. The `?` next to Steer explains how to get steering on this agent: switch a Claude Code agent to the TUI token source, or a Codex agent to the app-server transport. For any other provider, it links a pre-filled feature request.
 
