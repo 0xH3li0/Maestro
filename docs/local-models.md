@@ -571,7 +571,7 @@ The card is on **Models -> Library**, below the models. It shows the state, the 
 | **Local only** | `127.0.0.1` | This machine                             |
 | **Network**    | `0.0.0.0`   | Any machine that can reach this computer |
 
-**Both modes require the key.** Local only uses it too, so another program on this machine, or a web page your browser has open, cannot use your models without it. Maestro generates the key, stores it sealed with the operating system's key store, and never writes it to a log. **Copy** puts it on the clipboard and **Rotate** makes a new one (every harness you set up by hand then needs the new key). Network mode refuses to start without a key, and the card warns that anyone on the network who has the key can use the models and the memory they take.
+**Both modes require the key.** Local only uses it too, so another program on this machine, or a web page your browser has open, cannot use your models without it. Maestro generates the key, stores it sealed with the operating system's key store, and never writes it to a log. On a system with no key store (Linux with no keyring) the key is stored obscured, not encrypted, and the card and `maestro-cli models server status` say so. **Copy** puts it on the clipboard and **Rotate** makes a new one (every harness you set up by hand then needs the new key). Network mode refuses to start without a key, and the card warns that anyone on the network who has the key can use the models and the memory they take.
 
 Choose Network only on a network you trust. The key travels in clear text over plain HTTP.
 
@@ -589,11 +589,13 @@ claude --model <model-id>
 
 # Codex (the key is read from the environment variable named by env_key)
 MAESTRO_LOCAL_KEY=<key> codex \
-  -c 'model_providers.maestro={name="Maestro", base_url="http://127.0.0.1:<port>/v1", env_key="MAESTRO_LOCAL_KEY", wire_api="responses"}' \
-  -c 'model_provider="maestro"' exec -m <model-id> "your prompt"
+  -c "model_providers.maestro={name='Maestro',base_url='http://127.0.0.1:<port>/v1',env_key='MAESTRO_LOCAL_KEY',wire_api='responses'}" \
+  -c "model_provider='maestro'" exec -m <model-id> "your prompt"
 ```
 
-Both were tested with Claude Code 2.1.296 and Codex CLI 0.162.1. A small model follows an agent's tools less well than a hosted one, so expect a short turn to work and a long one to wander.
+The Codex values use single quotes inside and no spaces on purpose. Windows PowerShell does not pass a program an argument that holds double quotes whole, and Codex then refuses it. Written this way the two `-c` arguments work in bash, zsh, cmd.exe and PowerShell. On Windows, set the variables first (`$env:MAESTRO_LOCAL_KEY = "<key>"` in PowerShell) and put the command on one line.
+
+Both were tested with Claude Code 2.1.296 and Codex CLI 0.162.1 on macOS. A small model follows an agent's tools less well than a hosted one, so expect a short turn to work and a long one to wander.
 
 ### Using the server for housekeeping tasks
 
@@ -634,7 +636,7 @@ Maestro maps a provider only after the recipe ran against the real CLI. A provid
 | Provider                      | Runs on a source   | How Maestro points it at the source                                                                                                                                                                                                                                                     |
 | ----------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Claude Code                   | Yes                | `ANTHROPIC_BASE_URL` (the server root, no `/v1`), `ANTHROPIC_AUTH_TOKEN`, the Haiku, Sonnet and Opus model variables, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, and `ANTHROPIC_API_KEY` set blank. Runs as `claude --print`. Uses the Anthropic Messages route |
-| Codex                         | Yes                | A provider named `maestro` through `-c model_providers.maestro=...`, `-c model_provider="maestro"` and `-c model_context_window=<n>`, the key in `MAESTRO_RUN_ON_KEY`, and `-m <model>`. Runs as `codex exec`. Uses the Responses route                                                 |
+| Codex                         | Yes                | A provider named `maestro` through `-c model_providers.maestro=...`, `-c model_provider='maestro'` and `-c model_context_window=<n>`, the key in `MAESTRO_RUN_ON_KEY`, and `-m <model>`. Runs as `codex exec`. Uses the Responses route                                                 |
 | OpenCode                      | Yes (2.0 or newer) | A `maestro` provider added to `OPENCODE_CONFIG_CONTENT`, `--standalone`, `--model maestro/<model>`, and the key in `MAESTRO_RUN_ON_KEY`. Your config file is not touched. Uses the Chat Completions route                                                                               |
 | Copilot CLI                   | Yes                | The `COPILOT_PROVIDER_*` variables (base URL, key, wire model, token limits, and a neutral `COPILOT_PROVIDER_MODEL_ID`) and `--model`. GitHub sign-in is not used. Uses the Chat Completions route                                                                                      |
 | Qwen3 Coder, Oh My Pi, Hermes | No                 | Each documents a way to use another server. Maestro has not run it against the real CLI, so it stays off                                                                                                                                                                                |

@@ -35,7 +35,7 @@ import {
 	rotateModelServerKey,
 	writeModelServerSettings,
 } from '../../../../main/local-models/server/config-store';
-import type { SealProvider } from '../../../../main/utils/safe-storage-seal';
+import { safeStorageSeal, type SealProvider } from '../../../../main/utils/safe-storage-seal';
 import { isTcpPort } from '../../../../main/utils/tcp-port';
 
 let dir: string;
@@ -93,6 +93,23 @@ describe('readModelServerConfig', () => {
 			bind: 'network',
 			maxModels: 2,
 		});
+	});
+
+	it('keeps the port of a file a Windows editor saved with a byte-order mark and CRLF line endings', async () => {
+		// Notepad and PowerShell's `Set-Content -Encoding UTF8` both write the mark.
+		// Read as "not JSON", the file would be moved aside and the port would move.
+		await fs.writeFile(
+			stateFile(),
+			'﻿{\r\n  "port": 41234,\r\n  "bind": "network",\r\n  "maxModels": 2\r\n}\r\n'
+		);
+
+		expect(await readModelServerConfig(dir)).toMatchObject({
+			port: 41234,
+			bind: 'network',
+			maxModels: 2,
+		});
+		expect(await ensureModelServerPort(dir)).toBe(41234);
+		expect(await fs.readdir(dir)).toEqual([MODEL_SERVER_STATE_FILE]);
 	});
 
 	it('moves a file that is not JSON aside rather than losing it', async () => {
@@ -205,6 +222,44 @@ describe('ensureModelServerKey', () => {
 	it.skipIf(process.platform === 'win32')('keeps the file readable by its owner only', async () => {
 		await ensureModelServerKey(dir, osSeal());
 		expect((await fs.stat(stateFile())).mode & 0o777).toBe(0o600);
+	});
+});
+
+describe('the key on a system with no key store (Linux with no keyring)', () => {
+	/** Electron's `safeStorage` there: it reports no encryption, and encrypting throws. */
+	function linuxWithoutKeyring(check: () => boolean = () => false) {
+		return {
+			isEncryptionAvailable: vi.fn(check),
+			encryptString: vi.fn((): Buffer => {
+				throw new Error('Encryption is not available.');
+			}),
+			decryptString: vi.fn((): string => {
+				throw new Error('Decryption is not available.');
+			}),
+		};
+	}
+
+	it('obscures the key through the production seal, and never asks the missing key store', async () => {
+		const electron = linuxWithoutKeyring();
+
+		const made = await ensureModelServerKey(dir, safeStorageSeal(electron));
+
+		expect(made.storage).toBe('obscured');
+		expect(electron.encryptString).not.toHaveBeenCalled();
+		expect(await fs.readFile(stateFile(), 'utf-8')).not.toContain(made.key);
+		expect((await readModelServerConfig(dir)).keyStorage).toBe('obscured');
+		expect((await ensureModelServerKey(dir, safeStorageSeal(electron))).key).toBe(made.key);
+		expect(electron.decryptString).not.toHaveBeenCalled();
+	});
+
+	it('treats a check that throws as no key store', async () => {
+		// Asking Electron before the app is ready fails outright on Linux.
+		const electron = linuxWithoutKeyring(() => {
+			throw new Error('safeStorage cannot be used before app is ready');
+		});
+
+		expect((await ensureModelServerKey(dir, safeStorageSeal(electron))).storage).toBe('obscured');
+		expect(electron.encryptString).not.toHaveBeenCalled();
 	});
 });
 

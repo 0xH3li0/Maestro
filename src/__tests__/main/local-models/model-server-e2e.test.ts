@@ -394,9 +394,9 @@ describe.skipIf(!RUN)('Maestro model server end to end (MAESTRO_LOCAL_MODEL_E2E=
 				'codex',
 				[
 					'-c',
-					`model_providers.maestro={name="Maestro", base_url="${baseUrl}/v1", env_key="MAESTRO_LOCAL_KEY", wire_api="responses"}`,
+					`model_providers.maestro={name='Maestro',base_url='${baseUrl}/v1',env_key='MAESTRO_LOCAL_KEY',wire_api='responses'}`,
 					'-c',
-					'model_provider="maestro"',
+					"model_provider='maestro'",
 					'exec',
 					'--skip-git-repo-check',
 					'-m',

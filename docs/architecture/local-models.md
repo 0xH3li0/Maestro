@@ -3804,6 +3804,9 @@ The request sets `chat_template_kwargs.enable_thinking: false` to match the in-p
   and says so.
 - The Windows CUDA and cudart zips were assumed flat and were not run. `readZipArchive` inflates a
   zip in memory, so a Windows CUDA install briefly holds the expanded archive in RAM.
+- The kept port never moves, and no verb chooses a new one. On Windows a port that was free when
+  it was chosen can later fall inside a range the system reserves; the start then fails by name
+  with `EACCES`. See R1 under [Cross-platform coverage](#cross-platform-coverage).
 
 ### Model server on real hardware
 
@@ -4062,6 +4065,83 @@ tool through the launch plan (the qualification suite covers tool use, with its 
 a context above 40,960. The server runs a model at the catalog's context whatever the target
 says, so a target with a larger context tells the harness about a window the server does not
 have.
+
+## Cross-platform coverage
+
+Every on-device result in this document is from one machine: darwin-arm64, an Apple M5 Max.
+**Nothing in the model server, the fit rule, Run on or tier routing has run on Windows or Linux
+hardware.** The 2026-10-13 review read each of those code paths for what differs there and pinned
+each difference with a unit test that stands the platform's values in (`process.platform`, a
+Windows path, an exit status, Electron's `safeStorage` and GPU info as that platform reports
+them). A unit test proves the decision Maestro makes. It does not prove what `llama-server`, a
+driver, a shell or the operating system does with it.
+
+| Item                                    | What decides it                                                                                                                                                                                                                                                  | Unit test, platform values stood in                                                                                                                                                                                                                              | Ran on real hardware                                                                                                          |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `.exe` resolution                       | `selectServerBuild()` names `llama-server.exe` on `win32-*`. `installedServerBinary()` resolves the manifest's name inside the install directory and refuses one that lands outside it                                                                           | `local-models-server-engine.test.ts` (every platform and choice); `engine-installer.test.ts` (the `.exe` manifest, and four names that must never resolve)                                                                                                       | macOS only, where the name has no `.exe`                                                                                      |
+| Spawning with no shell                  | The supervisor calls `spawn(binary, args, { cwd, windowsHide })` with no `shell`. The device check goes through `execFileNoThrow()`, which uses a shell on Windows only for a `.cmd`, a `.bat` or a name with no extension                                       | `supervisor-platform.test.ts` (the command is the path as it is, `shell` unset, `cwd` the install directory); `accelerator.test.ts` (an `.exe` path needs no shell, spaces or not)                                                                               | macOS only                                                                                                                    |
+| Paths with spaces and drive letters     | Each path is one element of the argument array. The presets file carries a path as it is, because its dialect has no quoting; a path with `;` or `#` is refused by name                                                                                          | `supervisor-platform.test.ts` starts a real process from a data folder with a space and reads back what it received; `presets.test.ts` (drive letter, parentheses, network share, letters outside ASCII, a Linux home with a space, the `Path` spelling of PATH) | macOS only, in a scratch folder with no space. A space reached a real process in the unit test only                           |
+| Zip extraction                          | `extractZipTo()` for a `.zip` (every Windows build), `tar.x` for a `.tar.gz`. A name that climbs out or carries a drive letter is refused. An asset's own expansion cap is passed to the zip reader                                                              | `engine-installer.test.ts` (a flat zip, the two flat zips of a CUDA build, three unsafe entry names with nothing left behind, the cap applied)                                                                                                                   | No zip was ever extracted on real hardware: macOS and Linux builds are `.tar.gz`. Only the Windows CPU zip's listing was read |
+| `chmod` on POSIX only                   | `installServerEngine()` sets `0o755` on the binary unless the platform is `win32`                                                                                                                                                                                | `engine-installer.test.ts` (a tar binary stored without the bit becomes executable; a Windows executable's mode is left alone)                                                                                                                                   | macOS only                                                                                                                    |
+| The Vulkan loader missing on Linux      | `classifyAcceleratorProbe()`: a run that fails with a Vulkan library named in stderr is `failed` and `vulkan-loader-missing`; a run that exits 0 after the backend did not load is `cpu` and `vulkan-loader-missing`. The CPU build is offered and never applied | `local-models-server-accelerator.test.ts`; `accelerator.test.ts` (Linux x64 and arm64 through the probe; a recheck stores the finding and leaves the build and the choice alone); the card and the `models server status` tests show the sentence and the offer  | Not run. The stderr fixtures follow the formats in the `b11559` source. None is a capture from a Linux machine                |
+| CUDA chosen without a driver            | The same classifier. No device in the list is `cpu` and `no-gpu-device`. A binary that cannot start is `failed` and `failed-to-run`. A Windows "DLL not found" exit on a CUDA build is not called the Vulkan loader. Each offers the CPU build                   | `local-models-server-accelerator.test.ts` (CUDA on Windows and Linux, ROCm on Linux); the card test for a CUDA build that runs on the CPU                                                                                                                        | Not run. The CUDA and ROCm builds were never downloaded                                                                       |
+| The port persistence file               | `model-server.json` through `createPrivateStateFile()`: the port is chosen once, the file is `0600` on POSIX, the write is an atomic rename that retries `EPERM` and `EBUSY`, a byte-order mark is read past, and a file that is not JSON is moved aside         | `config-store.test.ts` (a file saved with a byte-order mark and CRLF keeps its port; the `0600` check is skipped on a Windows host); `supervisor-platform.test.ts` (a port the system refuses fails by name and does not move)                                   | macOS only                                                                                                                    |
+| The sealed key on Linux with no keyring | `safeStorageSeal().available()` is false there, so `sealSecret()` uses `obscuringSeal()` and the record says `obscured`. A key the key store sealed is refused as `key-unavailable` while the key store is away, and it is not written over                      | `supervisor-platform.test.ts` (the supervisor's own default seal over a `safeStorage` with no keyring); `config-store.test.ts` (the production seal, and a check that throws); the card and `models server status` tests for the wording                         | Not run. The e2e suites give the server a stand-in seal on every platform, so no real key store was used either               |
+| `os.totalmem` and GPU info              | `resolveHardwareProfile()`: RAM is `os.totalmem()`. Memory is unified only on darwin arm64, or darwin under Rosetta. GPU names come from Electron. GPU memory comes from Electron's DxDiag tree when it has one, else from the engine's device list              | `hardware.test.ts` (the RAM read on six platform pairs, Windows on Arm native and emulated, Linux devices known only by PCI ids, a machine whose only Vulkan device is a software renderer); `local-models-model-fit.test.ts` (six machines)                     | macOS arm64 only. Electron's GPU info on Windows and Linux follows the fields Chromium documents. It is not a capture         |
+
+**What the UI says** in the two cases a Linux user is most likely to meet. With no Vulkan loader
+the Model server card shows "The model server could not start because the Vulkan loader is
+missing. Install or update your graphics driver. You can install the CPU build instead." and an
+**Install the CPU build** button. With no keyring it shows "This system has no key store, so the
+key is stored obscured, not encrypted." under API key, and `maestro-cli models server status`
+prints `obscured (this system has no OS key store)`.
+
+### What the review changed
+
+| Id  | Finding                                                                                                                                                                                                                                                                                                                                                                                           | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | On Windows an agent is started through a shell, PowerShell by default. Codex's Run on arguments held double quotes and spaces (`{name="Maestro", base_url="..."}`). Windows PowerShell hands a program such an argument with the quotes dropped and split at the spaces. Measured on macOS with Codex CLI 0.162.1: given the arguments in that split form, Codex exits with "unexpected argument" | The recipe writes TOML literal strings and no spaces: `{name='Maestro',base_url='...',env_key='MAESTRO_RUN_ON_KEY',wire_api='responses'}` and `model_provider='maestro'`. A single quote in the address is written `%27`. Measured on the same run: Codex reached `/v1/responses` at the given address with the given key. `windowsSpawnShell.test.ts` pins what cmd.exe and PowerShell are handed, and `run-on.test.ts` refuses a double quote or a space in any recipe argument |
+| F2  | The Run on Test (`testAgentRunOn()`) started the harness directly. On Windows a harness that npm installed is a `.cmd` shim, which Node refuses to spawn without a shell ("spawn EINVAL")                                                                                                                                                                                                         | The local test turn takes the step a tab spawn takes, `planSpawnShell()`. Off Windows it changes nothing                                                                                                                                                                                                                                                                                                                                                                          |
+| F3  | Linux gives Electron a GPU's PCI ids and no description, so Maestro names the device by its vendor (`NVIDIA GPU 0x2882`). That name never matched the engine's description of the same card, and the hardware line listed the card twice                                                                                                                                                          | `resolveHardwareProfile()` treats a vendor-only name as the same device when the engine's description is that vendor's product                                                                                                                                                                                                                                                                                                                                                    |
+
+### What is still open
+
+- **R1. A reserved port on Windows.** Hyper-V and WSL reserve port ranges that change at restart.
+  A port that was free when it was chosen can be inside one later. The bind then fails with
+  `EACCES`, and the start fails by name: "cannot listen on 127.0.0.1:<port>: listen EACCES". The
+  port does not move, and no verb chooses a new one. Until one exists: stop the server, delete
+  the `port` entry from `model-server.json` so that the file is still valid JSON, and start the
+  server. It chooses a new port and keeps the key. A file that is not valid JSON is moved aside,
+  and the key goes with it. The token proxy keeps its port the same way and has the same limit.
+- **R2. A locked file during an engine install.** The new engine replaces the old one with a
+  delete and a rename, with no retry. `beforePromote` stops a running server first. If a virus
+  scanner still holds a file, the install fails by name with `EPERM` or `EBUSY`, and pressing
+  Install again works. Not measured.
+- **R3. A profile path outside ASCII on Windows.** See Known limits under Model server.
+- **R4. The PowerShell behavior behind F1 was not reproduced on Windows.** What was measured is
+  that Codex refuses the split form and accepts the new one. Claude Code, OpenCode and Copilot CLI
+  take their Run on settings from variables, so they have no argument to mangle.
+- **R5. `os.totalmem()` inside a memory limit.** In a container or a systemd slice with a memory
+  limit, Linux reports the host's RAM, so a fit verdict can be too generous there.
+- **R6. A model path with `;` or `#` in it.** It is refused by name on every platform. On Windows
+  the common case is a profile folder named with `#`.
+
+### Closing the gap
+
+Run the three opt-in suites on a Windows x64 machine and a Linux x64 machine with a discrete GPU,
+and add a dated Result under each section, as the macOS runs did:
+
+- `src/__tests__/main/local-models/model-server-e2e.test.ts` (engine install, start, the three
+  protocols, the key refusal);
+- `src/__tests__/main/local-models/run-on-e2e.test.ts` (one turn per harness through the agent's
+  own launch, which is where F1 and F2 show);
+- `src/__tests__/main/local-models/model-catalog-load-e2e.test.ts` with one small model named in
+  `MAESTRO_LOCAL_MODEL_E2E_MODELS` (a real model loaded and generating on that machine's GPU,
+  which is where the accelerator the engine reports can be checked against what it uses).
+
+Each needs `MAESTRO_LOCAL_MODEL_E2E=1`. On Linux, run the first once with the Vulkan loader
+removed (`libvulkan1`) and once in a session with no keyring, and compare what the card says with
+the sentences above.
 
 ## Verification
 

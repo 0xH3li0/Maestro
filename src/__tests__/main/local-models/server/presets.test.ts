@@ -102,6 +102,26 @@ describe('renderModelServerPresets', () => {
 		);
 	});
 
+	// The dialect has no quoting and no escapes, so a path is the value as it is:
+	// llama-server opens exactly these bytes.
+	it.each([
+		[
+			'a drive letter and a space',
+			'C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\models\\m\\M.gguf',
+		],
+		['parentheses', 'D:\\Program Files (x86)\\Maestro\\models\\m\\M.gguf'],
+		['a network share', '\\\\fileserver\\profiles\\pat\\Maestro\\models\\m\\M.gguf'],
+		[
+			'letters outside ASCII',
+			'C:\\Users\\Zo\u00eb M\u00fcller\\AppData\\Roaming\\Maestro\\models\\m\\M.gguf',
+		],
+		['a Linux home with a space', '/home/pat doe/.config/Maestro/models/m/M.gguf'],
+	])('carries a model path with %s as it is', (_what, modelPath) => {
+		const text = renderModelServerPresets([preset({ modelPath })]);
+		expect(text).toContain(`[small-model]\nmodel = ${modelPath}\nc = 40960\njinja = true\n`);
+		expect(text).not.toContain('\r');
+	});
+
 	it('hands a vision model its projector, and a text model none', () => {
 		const text = renderModelServerPresets([
 			preset({ mmprojPath: '/models/small-model/mmproj-F16.gguf' }),
@@ -182,6 +202,19 @@ describe('buildModelServerArgs', () => {
 		expect(args[args.indexOf('--models-max') + 1]).toBe('3');
 	});
 
+	it('passes Windows paths as one argument each, with nothing quoted', () => {
+		const presetsPath = 'C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\model-server\\presets.ini';
+		const apiKeyFile = 'C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\model-server\\api-key';
+
+		const args = buildModelServerArgs({ ...base, bind: 'local', presetsPath, apiKeyFile });
+
+		// The server is spawned with no shell, so each element is one argument.
+		expect(args).toHaveLength(12);
+		expect(args[args.indexOf('--models-preset') + 1]).toBe(presetsPath);
+		expect(args[args.indexOf('--api-key-file') + 1]).toBe(apiKeyFile);
+		expect(args.some((arg) => arg.includes('"'))).toBe(false);
+	});
+
 	it('refuses a network bind without a key, naming the address', () => {
 		for (const apiKeyFile of ['', '   ', undefined as unknown as string]) {
 			const error = refusal(() => buildModelServerArgs({ ...base, bind: 'network', apiKeyFile }));
@@ -219,6 +252,28 @@ describe('modelServerEnvironment', () => {
 			HOME: '/home/someone',
 			GGML_METAL_PATH_RESOURCES: '/opt/metal',
 			LLAMA_CACHE: '/data/model-server/cache',
+		});
+	});
+});
+
+describe('modelServerEnvironment on Windows', () => {
+	it('keeps the Windows spelling of Path and drops a LLAMA_ variable in any spelling', () => {
+		const cacheDir = 'C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\model-server\\cache';
+		const env = modelServerEnvironment(
+			{
+				// Windows variable names are not case-sensitive, and this is how it spells them.
+				Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+				SystemRoot: 'C:\\Windows',
+				Llama_Cache: 'C:\\Users\\Pat Doe\\llama.cpp',
+				Llama_Arg_Port: '8080',
+			},
+			cacheDir
+		);
+
+		expect(env).toEqual({
+			Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+			SystemRoot: 'C:\\Windows',
+			LLAMA_CACHE: cacheDir,
 		});
 	});
 });

@@ -46,6 +46,7 @@ import {
 import { getAgentCapabilities, getAgentDefinition } from '../agents';
 import { resolveCueAgentBinary } from '../cue/cue-agent-binary';
 import { createOutputParser } from '../parsers';
+import { planSpawnShell } from '../process-manager/utils/windowsSpawnShell';
 import { applyAgentConfigOverrides, buildAgentArgs } from '../utils/agent-args';
 import { logger } from '../utils/logger';
 import { buildSpawnPath } from '../utils/spawnPath';
@@ -314,6 +315,18 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 		};
 	} else {
 		spec = turnProcessSpecFromPlan(plan);
+		// The step a tab spawn takes: on Windows a harness installed as a `.cmd`
+		// shim (npm installs Codex and OpenCode that way) cannot be spawned
+		// directly and fails with "spawn EINVAL". Off Windows this changes nothing.
+		const shellPlan = planSpawnShell(spec.command, spec.args, {});
+		if (shellPlan.shell !== false) {
+			spec = {
+				...spec,
+				command: shellPlan.command,
+				args: shellPlan.args,
+				shell: shellPlan.shell,
+			};
+		}
 	}
 
 	const startedAt = Date.now();

@@ -3048,7 +3048,7 @@ Some text with [x] in it that's not a checkbox
 			const provider = args.findIndex((arg) => arg.startsWith('model_providers.maestro='));
 			expect(provider).toBeGreaterThan(-1);
 			expect(provider).toBeLessThan(args.indexOf('exec'));
-			expect(args[provider]).toContain('base_url="http://127.0.0.1:11434/v1"');
+			expect(args[provider]).toContain("base_url='http://127.0.0.1:11434/v1'");
 			expect(args.indexOf('-m')).toBeGreaterThan(args.indexOf('exec'));
 			expect(args[args.indexOf('-m') + 1]).toBe('qwen3:latest');
 			expect(options.env.MAESTRO_RUN_ON_KEY).toBe('sk-source');

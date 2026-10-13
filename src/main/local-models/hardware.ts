@@ -135,10 +135,31 @@ export function acceleratorGpus(report: ServerAcceleratorReport | null): Hardwar
 		}));
 }
 
-function sameDevice(a: string, b: string): boolean {
-	const left = a.toLowerCase();
-	const right = b.toLowerCase();
-	return left.includes(right) || right.includes(left);
+/**
+ * What each vendor's cards are called in a driver's description, keyed by the
+ * name `GPU_VENDOR_NAMES` gives the vendor.
+ */
+const GPU_VENDOR_PRODUCT_NAMES: ReadonlyMap<string, RegExp> = new Map([
+	['NVIDIA', /nvidia|geforce|quadro|\b[rg]tx\b/i],
+	['AMD', /\bamd\b|radeon|\bati\b/i],
+	['Intel', /\bintel\b|\barc\b|\biris\b/i],
+	['Apple', /\bapple\b/i],
+	['Qualcomm', /qualcomm|adreno|snapdragon/i],
+]);
+
+/** The name `electronDeviceName()` makes for a device with no description: `NVIDIA GPU 0x2684`. */
+const VENDOR_ONLY_NAME = /^(\S+) GPU(?: 0x[0-9a-f]+)?$/;
+
+function sameDevice(serverName: string, electronName: string): boolean {
+	const left = serverName.toLowerCase();
+	const right = electronName.toLowerCase();
+	if (left.includes(right) || right.includes(left)) return true;
+	// Linux gives Electron a device's PCI ids and no description, so its name
+	// there is the vendor alone and never matches the model server's description
+	// of the same card by text. It is the same card when the vendor is.
+	const vendor = VENDOR_ONLY_NAME.exec(electronName)?.[1];
+	const products = vendor === undefined ? undefined : GPU_VENDOR_PRODUCT_NAMES.get(vendor);
+	return products !== undefined && products.test(serverName);
 }
 
 async function readElectronGpuInfo(): Promise<unknown> {
@@ -164,7 +185,8 @@ async function readStoredAccelerator(): Promise<ServerAcceleratorReport | null> 
  *
  * When Electron reports no VRAM on a machine without unified memory, the model
  * server's devices fill in, and Electron's devices it did not see are kept
- * beside them (without memory), so the list still names every GPU.
+ * beside them (without memory), so the list still names every GPU, and names
+ * each one once.
  */
 export async function resolveHardwareProfile(probe: HardwareProbe = {}): Promise<HardwareProfile> {
 	const platform = probe.platform ?? process.platform;

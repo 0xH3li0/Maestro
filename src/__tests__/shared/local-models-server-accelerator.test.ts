@@ -71,6 +71,20 @@ const LINUX_VULKAN_LOADER_MISSING_STDERR =
 	'load_backend: failed to load /home/pat/.config/Maestro/runtimes/llama-server/libggml-vulkan.so: libvulkan.so.1: cannot open shared object file: No such file or directory\n' +
 	'load_backend: loaded CPU backend from /home/pat/.config/Maestro/runtimes/llama-server/libggml-cpu-haswell.so\n';
 
+// A CUDA or ROCm build on a machine with no driver for it. The backend library is
+// in the install directory (the `cudart` companion ships the runtime), but the
+// driver's own library is not on the machine, so the backend does not load.
+const WINDOWS_CUDA_NO_DRIVER_STDERR =
+	'load_backend: failed to load C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\runtimes\\llama-server\\ggml-cuda.dll: The specified module could not be found.\r\n' +
+	'load_backend: loaded CPU backend from C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\runtimes\\llama-server\\ggml-cpu-haswell.dll\r\n';
+
+const LINUX_CUDA_NO_DRIVER_STDERR =
+	'load_backend: failed to load /home/pat/.config/Maestro/runtimes/llama-server/libggml-cuda.so: libcuda.so.1: cannot open shared object file: No such file or directory\n' +
+	'load_backend: loaded CPU backend from /home/pat/.config/Maestro/runtimes/llama-server/libggml-cpu-haswell.so\n';
+
+const LINUX_ROCM_NO_DRIVER_STDERR =
+	'load_backend: failed to load /home/pat/.config/Maestro/runtimes/llama-server/libggml-hip.so: libamdhip64.so.6: cannot open shared object file: No such file or directory\n';
+
 function ok(stdout: string, stderr = ''): ListDevicesRun {
 	return { stdout, stderr, exitCode: 0 };
 }
@@ -271,6 +285,97 @@ describe('classifyAcceleratorProbe', () => {
 		expect(
 			classify('cpu', 'linux', 'x64', { stdout: '', stderr: '', exitCode: 1 }).offerCpuBuild
 		).toBe(false);
+	});
+
+	describe('a CUDA or ROCm build chosen on a machine with no driver for it', () => {
+		it('reports the CPU, names no GPU, keeps what the engine said, and offers the CPU build', () => {
+			for (const [kind, platform, stderr, library] of [
+				['cuda', 'win32', WINDOWS_CUDA_NO_DRIVER_STDERR, 'ggml-cuda.dll'],
+				['cuda', 'linux', LINUX_CUDA_NO_DRIVER_STDERR, 'libcuda.so.1'],
+				['rocm', 'linux', LINUX_ROCM_NO_DRIVER_STDERR, 'libamdhip64.so.6'],
+			] as const) {
+				const report = classify(kind, platform, 'x64', ok(NONE, stderr));
+				expect(report, `${kind} on ${platform}`).toMatchObject({
+					status: 'cpu',
+					label: 'CPU',
+					devices: [],
+					// The backend that did not load is not Vulkan, so the loader is not blamed.
+					problem: 'no-gpu-device',
+					offerCpuBuild: true,
+				});
+				expect(report.detail).toContain(library);
+				expect(serverAcceleratorProblemMessage(report)).toBe(
+					'This build found no GPU, so the model server will run on the CPU. You can install the CPU build instead.'
+				);
+			}
+		});
+
+		it('reports a build that cannot start at all as failed, and still offers the CPU build', () => {
+			const linux = classify('cuda', 'linux', 'x64', {
+				stdout: '',
+				stderr:
+					'llama-server: error while loading shared libraries: libcuda.so.1: cannot open shared object file: No such file or directory\n',
+				exitCode: 127,
+			});
+			expect(linux).toMatchObject({
+				status: 'failed',
+				label: 'Unavailable',
+				problem: 'failed-to-run',
+				offerCpuBuild: true,
+			});
+			expect(linux.detail).toContain('libcuda.so.1');
+			expect(serverAcceleratorProblemMessage(linux)).toBe(
+				'The model server engine did not run on this computer. You can install the CPU build instead.'
+			);
+
+			// Windows reports a missing DLL as an exit status and prints nothing. On a
+			// CUDA build that is not the Vulkan loader, and it must not be called one.
+			for (const exitCode of [3221225781, -1073741515]) {
+				expect(
+					classify('cuda', 'win32', 'x64', { stdout: '', stderr: '', exitCode })
+				).toMatchObject({
+					status: 'failed',
+					problem: 'failed-to-run',
+					detail: `Exit code ${exitCode}`,
+					offerCpuBuild: true,
+				});
+			}
+		});
+
+		it('reports the GPU when the driver is there', () => {
+			expect(
+				classify(
+					'cuda',
+					'win32',
+					'x64',
+					ok(
+						'Available devices:\r\n  CUDA0: NVIDIA GeForce RTX 4070 (12282 MiB, 11000 MiB free)\r\n'
+					)
+				)
+			).toMatchObject({
+				status: 'gpu',
+				label: 'CUDA (NVIDIA GeForce RTX 4070)',
+				problem: null,
+				offerCpuBuild: false,
+			});
+		});
+	});
+
+	it('names a missing Vulkan loader on Linux arm64 too, where a CPU build exists', () => {
+		const report = classify('vulkan', 'linux', 'arm64', {
+			stdout: '',
+			stderr:
+				'llama-server: error while loading shared libraries: libvulkan.so.1: cannot open shared object file: No such file or directory\n',
+			exitCode: 127,
+		});
+		expect(report).toMatchObject({
+			status: 'failed',
+			problem: 'vulkan-loader-missing',
+			offerCpuBuild: true,
+		});
+		expect(serverAcceleratorProblemMessage(report)).toBe(
+			'The model server could not start because the Vulkan loader is missing. Install or update your graphics driver. You can install the CPU build instead.'
+		);
 	});
 
 	it('never offers a CPU build where none exists (Apple silicon is Metal only)', () => {

@@ -24,6 +24,20 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', async (importOriginal) => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => wrapSpawnWithSsh(...args),
 }));
 
+/** When set, what the Windows shell plan answers, in place of this host's own answer. */
+const shellPlan = vi.hoisted(() => ({
+	forced: null as null | { command: string; args: string[]; shell: boolean | string },
+}));
+vi.mock('../../../main/process-manager/utils/windowsSpawnShell', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../main/process-manager/utils/windowsSpawnShell')>();
+	return {
+		...actual,
+		planSpawnShell: (...args: Parameters<typeof actual.planSpawnShell>) =>
+			shellPlan.forced ?? actual.planSpawnShell(...args),
+	};
+});
+
 import {
 	configureAgentRunOn,
 	resetAgentRunOnForTests,
@@ -144,6 +158,7 @@ function startedSpec(): TurnProcessSpec {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	shellPlan.forced = null;
 	configure();
 });
 
@@ -173,6 +188,34 @@ describe('testAgentRunOn: a turn on the target', () => {
 		const modelFlag = spec.args.indexOf('--model');
 		expect(spec.args[modelFlag + 1]).toBe('qwen3:latest');
 		expect(spec.args).toContain(RUN_ON_TEST_PROMPT);
+	});
+
+	it('starts a harness directly when this system can, with no shell', async () => {
+		await testAgentRunOn({ agentId: 'agent-1' });
+
+		expect(startedSpec().shell).toBeUndefined();
+	});
+
+	it('starts a harness Windows cannot spawn directly through the shell a tab spawn uses', async () => {
+		// What the shell plan answers on Windows for an npm `.cmd` shim: Node
+		// refuses to spawn one directly ("spawn EINVAL"), so it goes through
+		// cmd.exe with the path quoted and the arguments escaped.
+		shellPlan.forced = {
+			command: '"C:\\Users\\Pat Doe\\AppData\\Roaming\\npm\\claude.cmd"',
+			args: ['--print', '"escaped for cmd.exe"'],
+			shell: true,
+		};
+
+		const result = await testAgentRunOn({ agentId: 'agent-1' });
+
+		expect(result).toMatchObject({ ok: true, model: 'qwen3:latest' });
+		const spec = startedSpec();
+		expect(spec.command).toBe(shellPlan.forced.command);
+		expect(spec.args).toEqual(['--print', '"escaped for cmd.exe"']);
+		expect(spec.shell).toBe(true);
+		// The target is still on the process that starts.
+		expect(spec.env.ANTHROPIC_BASE_URL).toBe(OLLAMA.baseUrl);
+		expect(spec.cwd).toBe('/work/project');
 	});
 
 	it('is read-only: it does not hand the model write access to answer one word', async () => {

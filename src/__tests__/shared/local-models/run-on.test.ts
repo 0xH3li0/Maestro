@@ -435,9 +435,9 @@ describe('resolveRunOnLaunch: Codex', () => {
 			envVars: { [RUN_ON_KEY_ENV_VAR]: 'server-key' },
 			args: [
 				'-c',
-				'model_providers.maestro={name="Maestro", base_url="http://127.0.0.1:52100/v1", env_key="MAESTRO_RUN_ON_KEY", wire_api="responses"}',
+				"model_providers.maestro={name='Maestro',base_url='http://127.0.0.1:52100/v1',env_key='MAESTRO_RUN_ON_KEY',wire_api='responses'}",
 				'-c',
-				'model_provider="maestro"',
+				"model_provider='maestro'",
 				'-c',
 				`model_context_window=${RUN_ON_DEFAULT_CONTEXT_TOKENS}`,
 			],
@@ -463,7 +463,17 @@ describe('resolveRunOnLaunch: Codex', () => {
 		const resolution = injected({ toolType: 'codex', target: QWEN, endpoint: OLLAMA });
 
 		expect(resolution.envVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: RUN_ON_PLACEHOLDER_KEY });
-		expect(resolution.args[1]).toContain('base_url="http://127.0.0.1:11434/v1"');
+		expect(resolution.args[1]).toContain("base_url='http://127.0.0.1:11434/v1'");
+	});
+
+	it('writes a single quote in the source address as %27, so the TOML string stays whole', () => {
+		const resolution = injected({
+			toolType: 'codex',
+			target: QWEN,
+			endpoint: { ...OLLAMA, baseUrl: "http://127.0.0.1:11434/it's" },
+		});
+
+		expect(resolution.args[1]).toContain("base_url='http://127.0.0.1:11434/it%27s/v1',");
 	});
 
 	it('leaves the key variable alone when the agent sets it', () => {
@@ -487,6 +497,28 @@ describe('resolveRunOnLaunch: Codex', () => {
 		});
 
 		expect(resolution.args).toContain('model_context_window=131072');
+	});
+});
+
+describe('resolveRunOnLaunch: arguments a shell cannot change', () => {
+	// On Windows an agent is started through a shell (PowerShell by default,
+	// cmd.exe for a `.cmd` shim). Windows PowerShell hands a program an argument
+	// with its double quotes dropped and split at its spaces, so an argument that
+	// holds either does not arrive as it was written. Measured 2026-10-13: Codex
+	// CLI 0.162.1 refuses its provider definition in that shape ("unexpected
+	// argument"). An argument with neither is safe in every shell.
+	it.each(MEASURED)('gives %s no argument that holds a double quote or a space', (toolType) => {
+		for (const endpoint of [OLLAMA, CLOUD, modelServerEndpoint('http://127.0.0.1:52100')]) {
+			const resolution = injected({
+				toolType,
+				target: { type: 'source', endpointId: endpoint.id, model: 'qwen3:latest' },
+				endpoint,
+				key: 'sk-source',
+			});
+			for (const arg of [...resolution.args, ...resolution.subcommandArgs]) {
+				expect(arg, arg).not.toMatch(/["\s]/);
+			}
+		}
 	});
 });
 

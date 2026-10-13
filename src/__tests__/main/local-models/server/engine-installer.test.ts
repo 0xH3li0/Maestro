@@ -226,6 +226,142 @@ describe('installServerEngine', () => {
 		expect(await exists(path.join(serverEngineDir(), 'asset-0.zip'))).toBe(false);
 	});
 
+	it('records the Windows executable by its .exe name and resolves it inside the install directory', async () => {
+		const bytes = zipAsset({ 'llama-server.exe': 'MZ', 'ggml-vulkan.dll': 'DLL' });
+		state.build = makeBuild([{ name: 'w.zip', bytes, format: 'zip' }], {
+			platform: 'win32-x64',
+			kind: 'vulkan',
+			label: 'Vulkan',
+			binary: 'llama-server.exe',
+			stripComponents: 0,
+		});
+
+		const manifest = await installServerEngine('default', {
+			platform: 'win32',
+			arch: 'x64',
+			fetchImpl: serve({ 'https://example.test/w.zip': bytes }),
+		});
+
+		expect(manifest).toMatchObject({ platform: 'win32-x64', binary: 'llama-server.exe' });
+		expect(await installedServerBinary()).toBe(path.join(serverEngineDir(), 'llama-server.exe'));
+	});
+
+	// A zip carries no mode bits and Windows has none to set: `chmod` is for the
+	// POSIX layouts only. Checked on a POSIX host, where a wrong call would show.
+	it.skipIf(process.platform === 'win32')(
+		'leaves the mode of a Windows executable alone',
+		async () => {
+			const bytes = zipAsset({ 'llama-server.exe': 'MZ' });
+			state.build = makeBuild([{ name: 'w.zip', bytes, format: 'zip' }], {
+				platform: 'win32-x64',
+				binary: 'llama-server.exe',
+				stripComponents: 0,
+			});
+
+			await installServerEngine('default', {
+				platform: 'win32',
+				arch: 'arm64',
+				fetchImpl: serve({ 'https://example.test/w.zip': bytes }),
+			});
+
+			const mode = (await fs.stat(path.join(serverEngineDir(), 'llama-server.exe'))).mode;
+			expect(mode & 0o111).toBe(0);
+		}
+	);
+
+	it.each([
+		['a backslash path that climbs out', '..\\..\\evil.dll'],
+		['a forward-slash path that climbs out', '../../evil.dll'],
+		['a drive-letter path', 'C:\\Windows\\System32\\evil.dll'],
+	])('refuses a Windows zip that holds %s, and installs nothing', async (_what, entryName) => {
+		const bytes = zipAsset({ 'llama-server.exe': 'MZ', [entryName]: 'EVIL' });
+		state.build = makeBuild([{ name: 'w.zip', bytes, format: 'zip' }], {
+			platform: 'win32-x64',
+			binary: 'llama-server.exe',
+			stripComponents: 0,
+		});
+
+		await expect(
+			installServerEngine('default', {
+				platform: 'win32',
+				arch: 'x64',
+				fetchImpl: serve({ 'https://example.test/w.zip': bytes }),
+			})
+		).rejects.toThrow(/outside destination/);
+
+		expect(await exists(serverEngineDir())).toBe(false);
+		expect(await exists(serverEngineStagingDir())).toBe(false);
+		// Two levels above the staging directory is the data folder itself.
+		expect(await exists(path.join(tempRoot, 'evil.dll'))).toBe(false);
+		expect(await isServerEngineInstalled()).toBe(false);
+	});
+
+	it('extracts the two flat zips of a Windows CUDA build into one directory', async () => {
+		const main = zipAsset({ 'llama-server.exe': 'MZ', 'ggml-cuda.dll': 'CUDA' });
+		const companion = zipAsset({ 'cudart64_12.dll': 'RT', 'cublas64_12.dll': 'BLAS' });
+		const build = makeBuild(
+			[
+				{ name: 'cuda.zip', bytes: main, format: 'zip' },
+				{ name: 'cudart.zip', bytes: companion, format: 'zip' },
+			],
+			{
+				platform: 'win32-x64',
+				kind: 'cuda',
+				label: 'CUDA 12.4',
+				binary: 'llama-server.exe',
+				stripComponents: 0,
+			}
+		);
+		// The real CUDA zips expand past the zip reader's default cap, so each carries its own.
+		state.build = {
+			...build,
+			assets: build.assets.map((entry) => ({ ...entry, maxExpandedBytes: 3 * 1024 ** 3 })),
+		};
+
+		const manifest = await installServerEngine('cuda', {
+			platform: 'win32',
+			arch: 'x64',
+			fetchImpl: serve({
+				'https://example.test/cuda.zip': main,
+				'https://example.test/cudart.zip': companion,
+			}),
+		});
+
+		for (const name of [
+			'llama-server.exe',
+			'ggml-cuda.dll',
+			'cudart64_12.dll',
+			'cublas64_12.dll',
+		]) {
+			expect(await exists(path.join(serverEngineDir(), name)), name).toBe(true);
+		}
+		expect(manifest).toMatchObject({ choice: 'cuda', kind: 'cuda', label: 'CUDA 12.4' });
+		expect(manifest.assets.map((entry) => entry.name)).toEqual(['cuda.zip', 'cudart.zip']);
+	});
+
+	it('hands an asset its own expansion cap to the zip reader', async () => {
+		const bytes = zipAsset({ 'llama-server.exe': 'MZ'.repeat(64) });
+		const build = makeBuild([{ name: 'w.zip', bytes, format: 'zip' }], {
+			platform: 'win32-x64',
+			binary: 'llama-server.exe',
+			stripComponents: 0,
+		});
+		// A cap below the content: a refusal here proves the cap in the table is the one applied.
+		state.build = {
+			...build,
+			assets: build.assets.map((entry) => ({ ...entry, maxExpandedBytes: 16 })),
+		};
+
+		await expect(
+			installServerEngine('default', {
+				platform: 'win32',
+				arch: 'x64',
+				fetchImpl: serve({ 'https://example.test/w.zip': bytes }),
+			})
+		).rejects.toThrow(/expanded size exceeds 16 bytes/);
+		expect(await isServerEngineInstalled()).toBe(false);
+	});
+
 	it('extracts a companion asset into the same directory', async () => {
 		const main = await tarAsset('llama-b0', { 'llama-server': 'BIN', 'libggml-cuda.so': 'CUDA' });
 		const companion = await tarAsset('cudart-b0', { 'libcudart.so.12': 'RT' });
@@ -398,6 +534,22 @@ describe('the store', () => {
 		);
 		expect(await installedServerBinary()).toBeNull();
 	});
+
+	// The manifest is a file on disk and its `binary` is handed to `spawn`. Each of
+	// these names something outside the install directory on Windows, on POSIX, or
+	// on both; none may come back as the engine on either.
+	it.each(['/bin/sh', 'C:\\Windows\\System32\\cmd.exe', '..\\..\\escape.exe', '..'])(
+		'never resolves the manifest binary %j to an executable',
+		async (binary) => {
+			await fs.mkdir(serverEngineDir(), { recursive: true });
+			await fs.writeFile(
+				path.join(serverEngineDir(), 'manifest.json'),
+				JSON.stringify({ release: 'b11559', binary })
+			);
+			expect(await installedServerBinary()).toBeNull();
+			expect(await isServerEngineInstalled()).toBe(false);
+		}
+	);
 
 	it('removes the engine and is safe to call twice', async () => {
 		await removeServerEngine();

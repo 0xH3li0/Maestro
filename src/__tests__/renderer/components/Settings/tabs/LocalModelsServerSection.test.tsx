@@ -244,6 +244,87 @@ describe('LocalModelsServerCard', () => {
 		expect(server.installEngine).toHaveBeenCalledWith('cpu');
 	});
 
+	it('names a missing Vulkan loader (Windows or Linux with no driver) and offers the CPU build', () => {
+		const base = report();
+		const server = fakeServer({
+			report: report({
+				engine: {
+					...base.engine,
+					accelerator: {
+						...base.engine.accelerator!,
+						status: 'failed',
+						label: 'Unavailable',
+						problem: 'vulkan-loader-missing',
+						detail: 'libvulkan.so.1: cannot open shared object file',
+					},
+				},
+			}),
+		});
+		render(<LocalModelsServerCard theme={theme} server={server} />);
+
+		const problem = screen.getByTestId('model-server-accelerator-problem');
+		expect(problem).toHaveTextContent(/could not start because the Vulkan loader is missing/);
+		expect(problem).toHaveTextContent(/Install or update your graphics driver/);
+		// Offered, never applied: the installed build stays until the user presses it.
+		expect(server.installEngine).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId('model-server-install-cpu'));
+		expect(server.installEngine).toHaveBeenCalledWith('cpu');
+	});
+
+	it('reports a CUDA build with no driver as running on the CPU, and offers the CPU build', () => {
+		const base = report();
+		const server = fakeServer({
+			report: report({
+				engine: {
+					...base.engine,
+					choice: 'cuda',
+					label: 'CUDA 12.4',
+					kind: 'cuda',
+					accelerator: {
+						...base.engine.accelerator!,
+						status: 'cpu',
+						label: 'CPU',
+						problem: 'no-gpu-device',
+					},
+				},
+			}),
+		});
+		render(<LocalModelsServerCard theme={theme} server={server} />);
+
+		expect(screen.getByTestId('model-server-engine')).toHaveTextContent(
+			/CUDA 12\.4 build of llama-server b11559.*Runs on: CPU/
+		);
+		expect(screen.getByTestId('model-server-accelerator-problem')).toHaveTextContent(
+			/found no GPU, so the model server will run on the CPU/
+		);
+		expect(screen.getByTestId('model-server-install-cpu')).toBeInTheDocument();
+	});
+
+	it('says how the key is kept: sealed, obscured where the system has no key store, or not made yet', () => {
+		const withKeyStorage = (keyStorage: ModelServerReport['status']['keyStorage']) =>
+			fakeServer({ report: report({ status: { ...report().status, keyStorage } }) });
+
+		const { rerender } = render(
+			<LocalModelsServerCard theme={theme} server={withKeyStorage('os')} />
+		);
+		expect(screen.getByTestId('model-server-key')).toHaveTextContent(
+			/Stored sealed by the system key store/
+		);
+		expect(screen.getByTestId('model-server-key')).not.toHaveTextContent(/obscured/);
+
+		// Linux with no keyring: the card must not let "stored" read as "encrypted".
+		rerender(<LocalModelsServerCard theme={theme} server={withKeyStorage('obscured')} />);
+		expect(screen.getByTestId('model-server-key')).toHaveTextContent(
+			/This system has no key store, so the key is stored obscured, not encrypted/
+		);
+		expect(screen.getByTestId('model-server-key')).not.toHaveTextContent(/Stored sealed/);
+
+		rerender(<LocalModelsServerCard theme={theme} server={withKeyStorage(null)} />);
+		expect(screen.getByTestId('model-server-key')).toHaveTextContent(
+			/Made the first time you copy it or start the server/
+		);
+	});
+
 	it('changes the bind mode and warns while on the network', () => {
 		const server = fakeServer();
 		const { rerender } = render(<LocalModelsServerCard theme={theme} server={server} />);

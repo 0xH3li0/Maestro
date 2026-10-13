@@ -21,6 +21,7 @@ import {
 	writeServerEngineManifest,
 	type ServerEngineManifest,
 } from '../../../../main/local-models/server/engine-store';
+import { needsWindowsShell } from '../../../../main/utils/execFile';
 
 const METAL = 'Available devices:\n  MTL0: Apple M5 Max (110100 MiB, 110099 MiB free)\n';
 const NONE = 'Available devices:\n  (none)\n';
@@ -81,6 +82,89 @@ describe('checkServerAccelerator', () => {
 			problem: 'failed-to-run',
 			detail: 'spawn ENOENT',
 			offerCpuBuild: true,
+		});
+	});
+});
+
+describe('the device check on Windows', () => {
+	// The check runs the binary through the shared exec helper, which decides
+	// from the path alone whether Windows needs a shell. An `.exe` never does, so
+	// a path with spaces is one argument to `CreateProcess` and nothing in it is
+	// read by a shell.
+	it('needs no shell for the installed .exe, whatever its path holds', () => {
+		for (const binary of [
+			'C:\\Users\\Pat Doe\\AppData\\Roaming\\Maestro\\runtimes\\llama-server\\llama-server.exe',
+			'D:\\Maestro Data (2)\\runtimes\\llama-server\\LLAMA-SERVER.EXE',
+			'\\\\fileserver\\profiles\\pat\\Maestro\\runtimes\\llama-server\\llama-server.exe',
+		]) {
+			expect(needsWindowsShell(binary), binary).toBe(false);
+		}
+	});
+});
+
+describe('the Vulkan build on a Linux machine with no Vulkan loader', () => {
+	const NOT_FOUND = 'cannot open shared object file: No such file or directory';
+
+	it('reports a binary that cannot start for want of libvulkan, and offers the CPU build', async () => {
+		const report = await checkServerAccelerator('/opt/maestro/llama-server', 'vulkan', {
+			runListDevices: async () => ({
+				stdout: '',
+				stderr: `llama-server: error while loading shared libraries: libvulkan.so.1: ${NOT_FOUND}\n`,
+				// What a shell and Node both report for a dynamic loader failure.
+				exitCode: 127,
+			}),
+			platform: 'linux',
+			arch: 'x64',
+		});
+		expect(report).toMatchObject({
+			status: 'failed',
+			label: 'Unavailable',
+			problem: 'vulkan-loader-missing',
+			offerCpuBuild: true,
+		});
+		expect(report.detail).toContain('libvulkan.so.1');
+	});
+
+	it('reports a server that runs on the CPU because its Vulkan backend did not load', async () => {
+		const report = await checkServerAccelerator('/opt/maestro/llama-server', 'vulkan', {
+			runListDevices: async () => ({
+				stdout: NONE,
+				stderr: `load_backend: failed to load /opt/maestro/libggml-vulkan.so: libvulkan.so.1: ${NOT_FOUND}\n`,
+				exitCode: 0,
+			}),
+			platform: 'linux',
+			arch: 'arm64',
+		});
+		expect(report).toMatchObject({
+			status: 'cpu',
+			label: 'CPU',
+			problem: 'vulkan-loader-missing',
+			offerCpuBuild: true,
+		});
+	});
+
+	it('records the finding with the engine and swaps nothing', async () => {
+		await installFakeEngine();
+
+		const report = await recheckServerAccelerator({
+			runListDevices: async () => ({
+				stdout: '',
+				stderr: `llama-server: error while loading shared libraries: libvulkan.so.1: ${NOT_FOUND}\n`,
+				exitCode: 127,
+			}),
+			platform: 'linux',
+			arch: 'x64',
+		});
+
+		expect(report?.problem).toBe('vulkan-loader-missing');
+		// The user chose this build. It is reported and the CPU build is offered;
+		// the installed build and the choice stay what they were.
+		expect(await readServerEngineManifest()).toMatchObject({
+			choice: 'default',
+			kind: 'vulkan',
+			label: 'Vulkan',
+			binary: 'llama-server',
+			accelerator: { problem: 'vulkan-loader-missing', offerCpuBuild: true },
 		});
 	});
 });

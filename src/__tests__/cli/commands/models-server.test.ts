@@ -142,6 +142,46 @@ describe('models server status', () => {
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
+	it('says what a Linux machine with no Vulkan loader and no keyring needs to know', async () => {
+		mockSend({
+			success: true,
+			report: {
+				...RUNNING,
+				status: { ...RUNNING.status, state: 'stopped', pid: null, keyStorage: 'obscured' },
+				engine: {
+					...RUNNING.engine,
+					label: 'Vulkan',
+					kind: 'vulkan',
+					accelerator: {
+						checkedAt: 1,
+						status: 'failed',
+						label: 'Unavailable',
+						devices: [],
+						problem: 'vulkan-loader-missing',
+						detail: 'libvulkan.so.1: cannot open shared object file',
+						offerCpuBuild: true,
+					},
+					builds: [
+						{ choice: 'default', label: 'Vulkan', kind: 'vulkan', downloadBytes: 30_280_639 },
+						{ choice: 'cpu', label: 'CPU', kind: 'cpu', downloadBytes: 17_717_780 },
+					],
+				},
+			},
+		});
+
+		await modelsServerStatus({});
+
+		const output = logSpy.mock.calls[0][0] as string;
+		expect(output).toMatch(/Unavailable/);
+		expect(output).toMatch(/could not start because the Vulkan loader is missing/);
+		expect(output).toMatch(/You can install the CPU build instead/);
+		// The build that answers the offer is in the same report.
+		expect(output).toMatch(/cpu \(CPU, /);
+		expect(output).toMatch(/obscured \(this system has no OS key store\)/);
+		expect(output).not.toMatch(/sealed by the OS key store/);
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
 	it('says how to install the engine when it is missing, and exits 0', async () => {
 		mockSend({ success: true, report: NO_ENGINE });
 

@@ -254,8 +254,12 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 	// A provider of its own, on the Responses route. With a ChatGPT login,
 	// `-c openai_base_url=...` alone sends the ChatGPT token to the source; a
 	// custom provider with its own `env_key` sends the source's key and nothing
-	// else. The values are parsed as TOML, and a JSON string literal is a valid
-	// TOML basic string for any URL an endpoint record accepts.
+	// else. The values are parsed as TOML, and they are written with nothing a
+	// shell can change: no double quote and no space (see `tomlLiteral`). On
+	// Windows an agent is started through a shell, and Windows PowerShell hands
+	// a program an argument with its double quotes dropped and split at its
+	// spaces. Codex refuses that ("unexpected argument", measured 2026-10-13
+	// with Codex CLI 0.162.1, which takes this form on the same run).
 	codex: {
 		supported: true,
 		keyEnvVar: RUN_ON_KEY_ENV_VAR,
@@ -263,9 +267,9 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 			envVars: { [RUN_ON_KEY_ENV_VAR]: key },
 			args: [
 				'-c',
-				`model_providers.${RUN_ON_PROVIDER_ID}={name="Maestro", base_url=${JSON.stringify(`${baseUrl}/v1`)}, env_key="${RUN_ON_KEY_ENV_VAR}", wire_api="responses"}`,
+				`model_providers.${RUN_ON_PROVIDER_ID}={name='Maestro',base_url=${tomlLiteral(`${baseUrl}/v1`)},env_key='${RUN_ON_KEY_ENV_VAR}',wire_api='responses'}`,
 				'-c',
-				`model_provider="${RUN_ON_PROVIDER_ID}"`,
+				`model_provider='${RUN_ON_PROVIDER_ID}'`,
 				'-c',
 				`model_context_window=${contextTokens}`,
 			],
@@ -395,6 +399,16 @@ function geminiWireOnly(agentId: AgentId): AgentRunOnSupport {
 		supported: false,
 		reason: `${getAgentDisplayName(agentId)} speaks only the Gemini API, which a Local Models source does not serve, so it runs on its provider's model only.`,
 	};
+}
+
+/**
+ * A URL as a TOML literal string (single quotes, nothing escaped inside). A
+ * literal string cannot hold a single quote, so one in the URL is written as
+ * `%27`, which names the same address. A URL holds no space and no control
+ * character once an endpoint record has accepted it.
+ */
+function tomlLiteral(url: string): string {
+	return `'${url.replace(/'/g, '%27')}'`;
 }
 
 /**

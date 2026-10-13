@@ -976,7 +976,7 @@ describe('process IPC handlers', () => {
 				expect(runOnDeps.modelServer).toHaveBeenCalledWith('gpt-oss-20b');
 				expect(spawned().args.slice(0, 2)).toEqual([
 					'-c',
-					`model_providers.maestro={name="Maestro", base_url="${SERVER_URL}/v1", env_key="${RUN_ON_KEY_ENV_VAR}", wire_api="responses"}`,
+					`model_providers.maestro={name='Maestro',base_url='${SERVER_URL}/v1',env_key='${RUN_ON_KEY_ENV_VAR}',wire_api='responses'}`,
 				]);
 				expect(spawned().args.slice(-4)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
 				expect(spawned().customEnvVars).toMatchObject({ [RUN_ON_KEY_ENV_VAR]: 'sk-server' });
