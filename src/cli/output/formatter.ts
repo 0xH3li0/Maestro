@@ -54,6 +54,7 @@ import {
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
 import type { DurationPercentiles } from '../../shared/percentiles';
+import type { PeerConfigurationReport } from '../../shared/peerAgents';
 import type { ProxyRequestTotals } from '../../shared/stats-types';
 import {
 	TIER_NOT_MAPPED_LABEL,
@@ -599,6 +600,8 @@ export interface AgentDetailDisplay {
 	backgroundRequestsLabel?: string | null;
 	backgroundRequestsProblem?: string | null;
 	systemOneOptOut?: boolean;
+	/** The stored peer configuration and the roster it resolves to. */
+	peers?: PeerConfigurationReport;
 	customModel?: string | null;
 	customEffort?: string | null;
 	customContextWindow?: number | null;
@@ -740,6 +743,45 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 		lines.push(bold(c('cyan', 'CONFIGURATION')));
 		lines.push('');
 		lines.push(...configRows);
+	}
+
+	// Peers: the stored rows and grants, then who they resolve to. The two are
+	// different lists (a grant adds no row, an exclusion row removes a peer), so
+	// both are printed. Skipped for an agent with no peer configuration at all.
+	if (agent.peers) {
+		const { rows, groupGrant, worktreeGrant, roster } = agent.peers;
+		if (rows.length > 0 || groupGrant.on || worktreeGrant.on) {
+			lines.push('');
+			lines.push(bold(c('cyan', 'PEERS')));
+			lines.push('');
+			lines.push(
+				`  ${c('white', 'Group peers:')}     ${groupGrant.on ? groupGrant.access : dim('off')}` +
+					(groupGrant.on && !agent.groupId ? dim(' (agent is in no group)') : '')
+			);
+			lines.push(
+				`  ${c('white', 'Worktree peers:')}  ${worktreeGrant.on ? worktreeGrant.access : dim('off')}`
+			);
+			if (rows.length > 0) {
+				lines.push('');
+				lines.push(`  ${c('white', 'Explicit rows:')}`);
+				for (const row of rows) {
+					const label = row.name ?? dim('(no live agent)');
+					const note = row.description ? dim(` - ${truncate(row.description, 60)}`) : '';
+					lines.push(`    ${label} ${dim(`(${row.sessionId})`)}  ${row.access}${note}`);
+				}
+			}
+			lines.push('');
+			if (roster.length === 0) {
+				lines.push(`  ${c('white', 'Can reach:')}  ${dim('nobody')}`);
+			} else {
+				lines.push(`  ${c('white', 'Can reach:')}`);
+				for (const peer of roster) {
+					lines.push(
+						`    ${peer.name} ${dim(`(${peer.sessionId})`)}  ${peer.access} ${dim(`[${peer.source}]`)}`
+					);
+				}
+			}
+		}
 	}
 
 	lines.push('');

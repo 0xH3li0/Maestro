@@ -18,6 +18,8 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
 	readHistory: vi.fn(),
 	readGroups: vi.fn(),
+	// The agent list a peer roster is resolved against.
+	readSessions: vi.fn(() => []),
 	// The harness tier defaults a tier is resolved against, below the agent's own.
 	readHarnessTierDefaults: vi.fn(() => ({})),
 	// The saved sources a Run on target is labeled from.
@@ -44,6 +46,7 @@ import {
 	readHarnessTierDefaults,
 	readHistory,
 	readGroups,
+	readSessions,
 } from '../../../cli/services/storage';
 import { formatAgentDetail, formatError } from '../../../cli/output/formatter';
 
@@ -406,6 +409,95 @@ describe('show-agent command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBe(
 				'http://127.0.0.1:8787/anthropic'
 			);
+		});
+
+		it('reports an empty peers block, and reads no agent list, for an agent with no peer configuration', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).peers).toEqual({
+				rows: [],
+				groupGrant: { on: false, read: false, write: false, access: 'Off' },
+				worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+				roster: [],
+			});
+			expect(readSessions).not.toHaveBeenCalled();
+		});
+
+		it('reports the stored peer rows, the grants, and the resolved roster with each source', () => {
+			const self = mockSession({
+				groupId: 'group-1',
+				groupPeerAccess: { read: true, write: false },
+				peerAgents: [
+					{ sessionId: 'peer-writer', read: true, write: true, description: 'Owns the API' },
+					{ sessionId: 'peer-muted', read: false, write: false },
+					{ sessionId: 'peer-deleted', read: true, write: false },
+				],
+			});
+			vi.mocked(getSessionById).mockReturnValue(self);
+			vi.mocked(readSessions).mockReturnValue([
+				self,
+				mockSession({ id: 'peer-writer', name: 'API Agent', groupId: 'group-1' }),
+				mockSession({ id: 'peer-muted', name: 'Noisy Agent', groupId: 'group-1' }),
+				mockSession({ id: 'peer-grouped', name: 'Docs Agent', groupId: 'group-1' }),
+				mockSession({ id: 'peer-elsewhere', name: 'Other Team', groupId: 'group-2' }),
+			]);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const { peers } = JSON.parse(consoleSpy.mock.calls[0][0]);
+			// Stored: all three rows, the exclusion and the dead id included.
+			expect(peers.rows).toEqual([
+				{
+					sessionId: 'peer-writer',
+					name: 'API Agent',
+					read: true,
+					write: true,
+					access: 'Consult + Delegate',
+					description: 'Owns the API',
+				},
+				{
+					sessionId: 'peer-muted',
+					name: 'Noisy Agent',
+					read: false,
+					write: false,
+					access: 'No access',
+					description: null,
+				},
+				{
+					sessionId: 'peer-deleted',
+					name: null,
+					read: true,
+					write: false,
+					access: 'Consult only',
+					description: null,
+				},
+			]);
+			expect(peers.groupGrant).toEqual({
+				on: true,
+				read: true,
+				write: false,
+				access: 'Consult only',
+			});
+			expect(peers.worktreeGrant.on).toBe(false);
+			// Resolved: the row replaced the grant for the writer, the exclusion
+			// removed the muted peer, the dead row resolved to nobody, and the
+			// grant alone put the grouped peer in. Sorted by name.
+			expect(
+				peers.roster.map((p: { sessionId: string; access: string; source: string }) => [
+					p.sessionId,
+					p.access,
+					p.source,
+				])
+			).toEqual([
+				['peer-writer', 'Consult + Delegate', 'explicit'],
+				['peer-grouped', 'Consult only', 'group'],
+			]);
 		});
 
 		it('reports gatewayUrl as null for an agent with no gateway', () => {

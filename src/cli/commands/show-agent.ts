@@ -7,6 +7,7 @@ import {
 	readHistory,
 	readGroups,
 	readLocalModelEndpoints,
+	readSessions,
 } from '../services/storage';
 import { formatAgentDetail, formatError } from '../output/formatter';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
@@ -21,6 +22,7 @@ import {
 	parseBackgroundRequests,
 } from '../../shared/local-models/background-requests';
 import { agentTierRows, tierHarnessProblem, tierRowRecord } from '../../shared/modelTiers';
+import { describePeerConfiguration } from '../../shared/peerAgents';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -106,6 +108,13 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 		const background = parseBackgroundRequests(agent.backgroundRequests);
 		const backgroundTarget = background.ok ? background.backgroundRequests?.target : undefined;
 
+		// The peer roster (the Peers tab): the stored rows and grants, and the team
+		// they resolve to. The agent list is read only for an agent that has peer
+		// configuration, the same guard the prompt builders use.
+		const hasPeerConfig =
+			!!agent.peerAgents?.length || !!agent.groupPeerAccess || !!agent.worktreePeerAccess;
+		const peers = describePeerConfiguration(agent, hasPeerConfig ? readSessions() : []);
+
 		const output = {
 			id: agent.id,
 			name: agent.name,
@@ -156,6 +165,11 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void {
 				? runOnTargetLabel(backgroundTarget, endpoints)
 				: null,
 			backgroundRequestsProblem: background.ok ? null : background.error,
+			// Peer agents (settable with `update-agent --peer`, `--peer-note`,
+			// `--remove-peer`, `--group-peers`, `--worktree-peers`). `rows` and the two
+			// grants are what is stored; `roster` is who the agent can reach now,
+			// each with the grant (`source`) that produced it.
+			peers,
 			// System One switch (settable with `update-agent --system-one on|off`).
 			// False means the agent follows "Let agents use System One".
 			systemOneOptOut: agent.systemOneOptOut === true,

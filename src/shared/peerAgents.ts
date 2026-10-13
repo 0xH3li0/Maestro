@@ -485,6 +485,86 @@ export function resolvePeerRosterForPrompt(
 	return resolvePeerRoster(session, readAgents());
 }
 
+/** One stored explicit row, with the live name of the agent it points at. */
+export interface PeerConfigurationRow extends PeerAccess {
+	sessionId: string;
+	/** Live display name, or null when no agent has this id (the row resolves to nobody). */
+	name: string | null;
+	/** `peerAccessLabel` of the row; a row with neither bit reads "No access" (an exclusion). */
+	access: string;
+	description: string | null;
+}
+
+/** One derived grant (group or worktree) as stored. */
+export interface PeerGrantReport extends PeerAccess {
+	/** True when the grant is set and carries at least one bit. */
+	on: boolean;
+	/** `peerAccessLabel` of the grant, or "Off" when it is not on. */
+	access: string;
+}
+
+/** One entry of the resolved roster, in the words the readers print. */
+export interface ResolvedPeerReport extends Omit<ResolvedPeer, 'description'> {
+	access: string;
+	description: string | null;
+}
+
+/**
+ * What an agent's peer configuration SAYS and what it RESOLVES to. The two
+ * are different lists: a group grant adds nobody to `rows`, a row for a deleted
+ * agent adds nobody to `roster`, and an exclusion row removes a peer a grant
+ * would have added. `maestro-cli show-agent` prints both, so a user can answer
+ * "who can this agent reach?" without opening the settings modal.
+ */
+export interface PeerConfigurationReport {
+	rows: PeerConfigurationRow[];
+	groupGrant: PeerGrantReport;
+	worktreeGrant: PeerGrantReport;
+	roster: ResolvedPeerReport[];
+}
+
+function describePeerGrant(grant: PeerAccess | undefined): PeerGrantReport {
+	if (!grant || !hasAnyPeerAccess(grant)) {
+		return { on: false, read: false, write: false, access: 'Off' };
+	}
+	return { on: true, read: grant.read, write: grant.write, access: peerAccessLabel(grant) };
+}
+
+/**
+ * Report an agent's stored peer configuration beside the roster it resolves
+ * to. The roster comes from `resolvePeerRoster`, the one place the precedence
+ * lives, so this report cannot disagree with the prompt the agent receives.
+ */
+export function describePeerConfiguration(
+	session: PeerRosterInput,
+	allSessions: readonly PeerRosterInput[]
+): PeerConfigurationReport {
+	const nameById = new Map(allSessions.map((other) => [other.id, other.name]));
+	const rows = (normalizePeerAgents(session.peerAgents) ?? []).map(
+		(row): PeerConfigurationRow => ({
+			sessionId: row.sessionId,
+			name: nameById.get(row.sessionId) ?? null,
+			read: row.read,
+			write: row.write,
+			access: peerAccessLabel(row),
+			description: row.description ?? null,
+		})
+	);
+	const roster = resolvePeerRoster(session, allSessions).map(
+		(peer): ResolvedPeerReport => ({
+			...peer,
+			access: peerAccessLabel(peer),
+			description: peer.description ?? null,
+		})
+	);
+	return {
+		rows,
+		groupGrant: describePeerGrant(session.groupPeerAccess),
+		worktreeGrant: describePeerGrant(session.worktreePeerAccess),
+		roster,
+	};
+}
+
 /** What the prompt block needs to know about the agent it is rendered for. */
 export interface PeerPromptOptions {
 	/**

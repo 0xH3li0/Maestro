@@ -1090,6 +1090,91 @@ describe('formatter', () => {
 			expect(result).toContain('unusable target: This agent\'s "high" tier target cannot be used.');
 		});
 
+		it('should print the stored peer configuration and the roster it resolves to', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				groupId: 'group-1',
+				peers: {
+					rows: [
+						{
+							sessionId: 'a-1',
+							name: 'Reviewer',
+							read: true,
+							write: false,
+							access: 'Consult only',
+							description: 'Knows the auth module',
+						},
+						{
+							sessionId: 'gone',
+							name: null,
+							read: false,
+							write: false,
+							access: 'No access',
+							description: null,
+						},
+					],
+					groupGrant: { on: true, read: true, write: true, access: 'Consult + Delegate' },
+					worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+					roster: [
+						{
+							sessionId: 'a-1',
+							name: 'Reviewer',
+							read: true,
+							write: false,
+							access: 'Consult only',
+							description: 'Knows the auth module',
+							source: 'explicit',
+						},
+						{
+							sessionId: 'a-2',
+							name: 'Builder',
+							read: true,
+							write: true,
+							access: 'Consult + Delegate',
+							description: null,
+							source: 'group',
+						},
+					],
+				},
+			});
+
+			expect(result).toContain('PEERS');
+			expect(result).toMatch(/Group peers:\s+Consult \+ Delegate/);
+			expect(result).toMatch(/Worktree peers:\s+off/);
+			expect(result).toContain('Knows the auth module');
+			expect(result).toContain('(no live agent)');
+			expect(result).toContain('Can reach:');
+			expect(result).toContain('[explicit]');
+			expect(result).toContain('[group]');
+			expect(result).not.toContain('agent is in no group');
+		});
+
+		it('should say so when a group grant is on for an agent in no group', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				peers: {
+					rows: [],
+					groupGrant: { on: true, read: true, write: false, access: 'Consult only' },
+					worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+					roster: [],
+				},
+			});
+
+			expect(result).toContain('agent is in no group');
+			expect(result).toMatch(/Can reach:\s+nobody/);
+		});
+
+		it('should omit the peers block for an agent with no peer configuration', () => {
+			const none = {
+				rows: [],
+				groupGrant: { on: false, read: false, write: false, access: 'Off' },
+				worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+				roster: [],
+			};
+			expect(formatAgentDetail(baseAgent)).not.toContain('PEERS');
+			expect(formatAgentDetail({ ...baseAgent, peers: none })).not.toContain('PEERS');
+		});
+
 		it('should show the System One switch only when it is off for the agent', () => {
 			expect(formatAgentDetail(baseAgent)).not.toContain('System One:');
 			expect(formatAgentDetail({ ...baseAgent, systemOneOptOut: false })).not.toContain(

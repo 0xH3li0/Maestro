@@ -23,6 +23,7 @@ import {
 	mergePeerAccess,
 	resolvePeerRoster,
 	resolvePeerRosterForPrompt,
+	describePeerConfiguration,
 	formatPeerAgentsForPrompt,
 } from '../../shared/peerAgents';
 import type { PeerRosterInput, ResolvedPeer } from '../../shared/peerAgents';
@@ -522,6 +523,89 @@ describe('resolvePeerRoster', () => {
 		const before = JSON.stringify(all);
 		resolvePeerRoster(me, all);
 		expect(JSON.stringify(all)).toBe(before);
+	});
+});
+
+describe('describePeerConfiguration', () => {
+	it('reports an agent with no peer configuration as empty and off', () => {
+		const me = agent('me', 'Me');
+		expect(describePeerConfiguration(me, [me, agent('a', 'A')])).toEqual({
+			rows: [],
+			groupGrant: { on: false, read: false, write: false, access: 'Off' },
+			worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+			roster: [],
+		});
+	});
+
+	it('keeps exclusion rows and rows for dead agents in the stored list, not in the roster', () => {
+		const me = agent('me', 'Me', {
+			groupId: 'g',
+			groupPeerAccess: R,
+			peerAgents: [
+				{ sessionId: 'muted', ...NONE },
+				{ sessionId: 'dead', ...RW, description: 'Was here' },
+			],
+		});
+		const fleet = [
+			me,
+			agent('muted', 'Muted', { groupId: 'g' }),
+			agent('kept', 'Kept', { groupId: 'g' }),
+		];
+
+		const report = describePeerConfiguration(me, fleet);
+
+		expect(report.rows).toEqual([
+			{
+				sessionId: 'muted',
+				name: 'Muted',
+				read: false,
+				write: false,
+				access: 'No access',
+				description: null,
+			},
+			{
+				sessionId: 'dead',
+				name: null,
+				read: true,
+				write: true,
+				access: 'Consult + Delegate',
+				description: 'Was here',
+			},
+		]);
+		expect(report.groupGrant).toEqual({
+			on: true,
+			read: true,
+			write: false,
+			access: 'Consult only',
+		});
+		expect(report.roster.map((p) => [p.sessionId, p.source, p.access])).toEqual([
+			['kept', 'group', 'Consult only'],
+		]);
+	});
+
+	it('resolves the roster through resolvePeerRoster, so it cannot disagree with the prompt', () => {
+		const me = agent('me', 'Me', {
+			parentSessionId: 'parent',
+			worktreePeerAccess: W,
+			peerAgents: [{ sessionId: 'sib', ...R }],
+		});
+		const fleet = [
+			me,
+			agent('parent', 'Parent'),
+			agent('sib', 'Sibling', { parentSessionId: 'parent' }),
+		];
+
+		const report = describePeerConfiguration(me, fleet);
+
+		expect(report.roster.map(({ access, description, ...rest }) => rest)).toEqual(
+			resolvePeerRoster(me, fleet).map(({ description, ...rest }) => rest)
+		);
+		expect(report.worktreeGrant).toEqual({
+			on: true,
+			read: false,
+			write: true,
+			access: 'Delegate only',
+		});
 	});
 });
 
