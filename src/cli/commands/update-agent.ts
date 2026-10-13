@@ -10,6 +10,9 @@
 // `peerAgentEdits` (a patch on the explicit rows, merged by the app onto the
 // rows it holds) and the two derived grants. See `services/peer-flags.ts`.
 //
+// The editable setting flags and the SSH flags are read by
+// `services/agent-setting-flags.ts`, which `update-group-settings` shares.
+//
 // `--ssh-remote`, `--ssh-cwd`, and `--sync-history-to-remote` build a partial
 // patch sent via the `update_session_ssh` WS message, which merges the patch
 // onto the agent's existing `sessionSshRemoteConfig` and flushes it to disk.
@@ -20,12 +23,8 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
-import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport';
-import { parseCliBool } from '../utils/parse';
 import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
-import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../shared/local-models/token-proxy';
 import {
 	formatRunOnSpec,
 	RUN_ON_PROVIDER_SPEC,
@@ -36,12 +35,10 @@ import { readRunOnFlags } from '../services/run-on';
 import {
 	formatBackgroundRequestsSpec,
 	parseBackgroundRequestsEdit,
-	parseBackgroundRequestsSpec,
 	type BackgroundRequests,
 } from '../../shared/local-models/background-requests';
 import {
 	formatTierTargetSpec,
-	parseTierAssignment,
 	parseTierTargetsEdit,
 	TIER_LEVELS,
 	type TierTarget,
@@ -53,41 +50,28 @@ import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/
 import { applyPeerAgentEdits, peerAccessLabel, type PeerAgentEdits } from '../../shared/peerAgents';
 import type { PeerAccess } from '../../shared/types';
 import { hasPeerFlags, readPeerFlags, type PeerFlagOptions } from '../services/peer-flags';
+import {
+	buildConfigPatch,
+	buildSshPatch,
+	hasSshFlags,
+	type AgentSettingFlagOptions,
+	type SshFlagOptions,
+} from '../services/agent-setting-flags';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
 const VALID_PROVIDER_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
-interface UpdateAgentOptions extends PeerFlagOptions {
+// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
+// bookmark) is `AgentSettingFlagOptions`. Empty-string values clear the field;
+// see buildConfigPatch.
+interface UpdateAgentOptions extends PeerFlagOptions, AgentSettingFlagOptions, SshFlagOptions {
 	group?: string;
 	cwd?: string;
-	sshRemote?: string;
-	sshCwd?: string;
-	syncHistoryToRemote?: string;
 	provider?: string;
 	force?: boolean;
-	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
-	// bookmark). Empty-string values clear the field; see buildConfigPatch.
-	nudge?: string;
-	newSessionMessage?: string;
-	customPath?: string;
-	customArgs?: string;
-	env?: string[];
-	clearEnv?: boolean;
-	gatewayUrl?: string;
-	proxyMode?: string;
 	runOn?: string;
 	runOnContext?: string;
-	tier?: string[];
-	backgroundRequests?: string;
-	systemOne?: string;
-	model?: string;
-	effort?: string;
-	contextWindow?: string;
-	tokenSource?: string;
-	maestroPPath?: string;
-	codexTransport?: string;
-	bookmark?: string;
 	json?: boolean;
 }
 
@@ -98,165 +82,6 @@ function emitError(message: string, options: UpdateAgentOptions): never {
 		console.error(formatError(message));
 	}
 	return process.exit(1);
-}
-
-// Parse repeatable `--env KEY=VALUE` flags into a map. The provided set REPLACES
-// the agent's customEnvVars (matching create-agent semantics); use --clear-env to
-// empty it. Throws on a malformed entry.
-function parseEnvVars(entries: string[]): Record<string, string> {
-	const out: Record<string, string> = {};
-	for (const entry of entries) {
-		const eq = entry.indexOf('=');
-		if (eq <= 0) {
-			throw new Error(`Invalid --env "${entry}". Use KEY=VALUE (e.g. FOO=bar).`);
-		}
-		out[entry.slice(0, eq).trim()] = entry.slice(eq + 1);
-	}
-	return out;
-}
-
-// Build the per-session config patch from the editable flags. Only keys the
-// caller touched are included. A `null` value clears the field on the renderer
-// side; for string fields an empty value (e.g. `--nudge ""`) maps to null.
-// `--bookmark` rides along here because it goes through the same allowlisted
-// `update_session_config` message, even though it is UI state rather than a
-// spawn-time setting.
-function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> | undefined {
-	const patch: Record<string, unknown> = {};
-	const strField = (value: string | undefined, key: string) => {
-		if (value === undefined) return;
-		patch[key] = value.trim() === '' ? null : value;
-	};
-
-	strField(options.nudge, 'nudgeMessage');
-	strField(options.newSessionMessage, 'newSessionMessage');
-	strField(options.customPath, 'customPath');
-	strField(options.customArgs, 'customArgs');
-	strField(options.model, 'customModel');
-	strField(options.effort, 'customEffort');
-	strField(options.maestroPPath, 'maestroPPath');
-
-	if (options.bookmark !== undefined) {
-		patch.bookmarked = parseCliBool(options.bookmark, '--bookmark');
-	}
-
-	if (options.clearEnv) {
-		patch.customEnvVars = {};
-	} else if (options.env && options.env.length > 0) {
-		patch.customEnvVars = parseEnvVars(options.env);
-	}
-
-	// `--gateway-url <url|none>`. Only the clear is decided here; a URL is
-	// validated against the agent's provider once the agent has been read (see
-	// updateAgent), because which providers can use a gateway is per provider.
-	if (options.gatewayUrl !== undefined) {
-		const raw = options.gatewayUrl.trim();
-		patch.gatewayUrl = raw === '' || raw.toLowerCase() === 'none' ? null : raw;
-	}
-
-	// `--proxy-mode <off|passthrough|compress|compress-early>`: how the Maestro token proxy
-	// carries this agent's requests. The app points the agent's gateway at the
-	// proxy (or clears it for `off`), so the two flags cannot be combined.
-	if (options.proxyMode !== undefined) {
-		const mode = asTokenProxyMode(options.proxyMode.trim().toLowerCase());
-		if (!mode) {
-			throw new Error(
-				`--proxy-mode expects ${TOKEN_PROXY_MODES.join(', ')}, got "${options.proxyMode}"`
-			);
-		}
-		if (options.gatewayUrl !== undefined) {
-			throw new Error(
-				'Use --proxy-mode or --gateway-url, not both: the proxy mode chooses the gateway URL.'
-			);
-		}
-		patch.tokenProxyMode = mode;
-	}
-
-	// `--tier <tier>=<target>` (repeatable): a patch with one entry per tier
-	// named, `null` for `default`. Only the spelling is read here; each target
-	// is checked against the agent's provider and the saved sources once the
-	// agent has been read (see updateAgent), and the app merges the patch onto
-	// the tiers the agent already holds.
-	if (options.tier && options.tier.length > 0) {
-		const tiers: Record<string, TierTarget | null> = {};
-		for (const entry of options.tier) {
-			const assignment = parseTierAssignment(entry);
-			if (!assignment.ok) throw new Error(`--tier: ${assignment.error}`);
-			if (assignment.tier in tiers) {
-				throw new Error(`--tier: the "${assignment.tier}" tier is set more than once.`);
-			}
-			tiers[assignment.tier] = assignment.target ?? null;
-		}
-		patch.tierTargets = tiers;
-	}
-
-	// `--background-requests <source id>:<model>|none`: where the token proxy
-	// sends this agent's side requests. `none` turns it off (`null` on the
-	// wire). Checked against the agent once it has been read.
-	if (options.backgroundRequests !== undefined) {
-		const parsed = parseBackgroundRequestsSpec(options.backgroundRequests);
-		if (!parsed.ok) throw new Error(`--background-requests: ${parsed.error}`);
-		patch.backgroundRequests = parsed.backgroundRequests ?? null;
-	}
-
-	// `--system-one <on|off>`: the Models tab's System One switch. On is the
-	// absence of the opt-out (`null` on the wire), so the agent follows "Let
-	// agents use System One"; off stores the opt-out for this agent only.
-	if (options.systemOne !== undefined) {
-		const word = options.systemOne.trim().toLowerCase();
-		if (word !== 'on' && word !== 'off') {
-			throw new Error(`--system-one expects on or off, got "${options.systemOne}"`);
-		}
-		patch.systemOneOptOut = word === 'off' ? true : null;
-	}
-
-	if (options.contextWindow !== undefined) {
-		const raw = options.contextWindow.trim().toLowerCase();
-		if (raw === '' || raw === 'none' || raw === '0') {
-			patch.customContextWindow = null;
-			// Clearing the value clears its provenance with it.
-			patch.contextWindowSource = null;
-		} else {
-			const n = Number(raw);
-			if (!Number.isFinite(n) || n < 0) {
-				throw new Error(
-					`--context-window expects a positive number, got "${options.contextWindow}"`
-				);
-			}
-			patch.customContextWindow = Math.floor(n);
-			// Typing `--context-window` is unambiguously a deliberate choice, so it
-			// outranks a provider-reported window (finding AD1). No seed to compare
-			// against here, unlike the edit modal.
-			patch.contextWindowSource = 'user-edited';
-		}
-	}
-
-	if (options.tokenSource !== undefined) {
-		const mode = options.tokenSource.trim().toLowerCase();
-		if (mode !== 'api' && mode !== 'tui' && mode !== 'dynamic') {
-			throw new Error(`--token-source expects api, tui, or dynamic, got "${options.tokenSource}"`);
-		}
-		// Map the friendly tri-state to the stored (enableMaestroP, maestroPMode)
-		// pair so every spawn surface reads it consistently. tui -> interactive.
-		const canonical: ClaudeTokenMode = mode === 'tui' ? 'interactive' : mode;
-		const encoded = toClaudeTokenModeSource(canonical);
-		patch.enableMaestroP = encoded.enableMaestroP;
-		patch.maestroPMode = encoded.maestroPMode;
-	}
-
-	if (options.codexTransport !== undefined) {
-		const transport = options.codexTransport.trim().toLowerCase();
-		if (!isCodexTransport(transport)) {
-			throw new Error(
-				`--codex-transport expects ${CODEX_TRANSPORTS.join(' or ')}, got "${options.codexTransport}"`
-			);
-		}
-		// Only the opt-in is stored; `exec` clears the field, matching the Edit
-		// Agent modal, where Standard leaves `codexTransport` unset.
-		patch.codexTransport = transport === 'app-server' ? transport : null;
-	}
-
-	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
 // One printed line per change a peer edit made, in the words the Peers tab uses.
@@ -271,10 +96,7 @@ function describePeerAgentEdits(edits: PeerAgentEdits): string[] {
 }
 
 export async function updateAgent(agentId: string, options: UpdateAgentOptions): Promise<void> {
-	const sshFlagsPresent =
-		options.sshRemote !== undefined ||
-		options.sshCwd !== undefined ||
-		options.syncHistoryToRemote !== undefined;
+	const sshFlagsPresent = hasSshFlags(options);
 
 	// Build the editable config patch up front so a malformed flag fails before
 	// we touch the running app.
@@ -497,30 +319,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	// touched are included so the renderer merges rather than clobbers.
 	let sshPatch: Record<string, unknown> | undefined;
 	if (sshFlagsPresent) {
-		sshPatch = {};
-		if (options.sshRemote !== undefined) {
-			const raw = options.sshRemote.trim();
-			if (raw === '' || raw.toLowerCase() === 'none' || raw.toLowerCase() === 'null') {
-				// Revert to local execution; preserve other fields via the merge.
-				sshPatch.enabled = false;
-				sshPatch.remoteId = null;
-			} else {
-				sshPatch.enabled = true;
-				sshPatch.remoteId = raw;
-			}
-		}
-		if (options.sshCwd !== undefined) {
-			sshPatch.workingDirOverride = options.sshCwd;
-		}
-		if (options.syncHistoryToRemote !== undefined) {
-			try {
-				sshPatch.syncHistory = parseCliBool(
-					options.syncHistoryToRemote,
-					'--sync-history-to-remote'
-				);
-			} catch (error) {
-				emitError(error instanceof Error ? error.message : String(error), options);
-			}
+		try {
+			sshPatch = buildSshPatch(options);
+		} catch (error) {
+			emitError(error instanceof Error ? error.message : String(error), options);
 		}
 	}
 

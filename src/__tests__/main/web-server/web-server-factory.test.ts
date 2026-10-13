@@ -101,6 +101,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setCreateGroupCallback = vi.fn();
 			setRenameGroupCallback = vi.fn();
 			setUpdateGroupCallback = vi.fn();
+			setUpdateGroupSettingsCallback = vi.fn();
 			setDeleteGroupCallback = vi.fn();
 			setMoveSessionToGroupCallback = vi.fn();
 			setCreateSessionCallback = vi.fn();
@@ -2463,6 +2464,21 @@ describe('web-server/web-server-factory', () => {
 				'remote:updateGroup',
 				'group-1',
 				{ icon: 'rocket', clear: ['color'] },
+				expect.any(String)
+			);
+		});
+
+		it('setUpdateGroupSettingsCallback forwards the request to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setUpdateGroupSettingsCallback.mock.calls[0][0];
+
+			void callback('group-1', { configPatch: { nudgeMessage: 'N' }, publish: true });
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:updateGroupSettings',
+				'group-1',
+				{ configPatch: { nudgeMessage: 'N' }, publish: true },
 				expect.any(String)
 			);
 		});

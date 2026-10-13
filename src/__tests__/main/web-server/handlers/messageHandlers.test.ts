@@ -617,6 +617,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		createGroup: vi.fn().mockResolvedValue({ id: 'group-1' }),
 		renameGroup: vi.fn().mockResolvedValue(true),
 		updateGroup: vi.fn().mockResolvedValue(true),
+		updateGroupSettings: vi.fn().mockResolvedValue({ success: true }),
 		deleteGroup: vi.fn().mockResolvedValue(true),
 		moveSessionToGroup: vi.fn().mockResolvedValue(true),
 		createSession: vi.fn().mockResolvedValue({ sessionId: 'new-session-1' }),
@@ -5446,6 +5447,90 @@ describe('WebSocketMessageHandler', () => {
 			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', hidden: 'true' });
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+		});
+
+		describe('update_group_settings', () => {
+			const lastFrame = () =>
+				JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, unknown>;
+
+			it('forwards a validated request and answers with the whole result', async () => {
+				vi.mocked(callbacks.updateGroupSettings).mockResolvedValue({
+					success: true,
+					defaults: { nudgeMessage: 'N' },
+					shortLabel: 'BE',
+					changed: ['Nudge Message'],
+					publish: {
+						agents: [{ id: 'a', name: 'A' }],
+						skipped: [],
+						changed: ['Nudge Message'],
+						unpublished: [],
+						replaced: [],
+						providerBound: [],
+					},
+				});
+				handler.handleMessage(client, {
+					type: 'update_group_settings',
+					groupId: 'group-1',
+					requestId: 'r1',
+					configPatch: { nudgeMessage: 'N' },
+					shortLabel: 'BE',
+					publish: true,
+				});
+
+				await vi.waitFor(() => expect(lastFrame().type).toBe('update_group_settings_result'));
+				expect(callbacks.updateGroupSettings).toHaveBeenCalledWith('group-1', {
+					configPatch: { nudgeMessage: 'N' },
+					shortLabel: 'BE',
+					publish: true,
+				});
+				expect(lastFrame()).toMatchObject({
+					success: true,
+					requestId: 'r1',
+					groupId: 'group-1',
+					shortLabel: 'BE',
+					publish: { agents: [{ id: 'a', name: 'A' }] },
+				});
+			});
+
+			it('relays a refusal from the app', async () => {
+				vi.mocked(callbacks.updateGroupSettings).mockResolvedValue({
+					success: false,
+					error: 'Group not found',
+				});
+				handler.handleMessage(client, {
+					type: 'update_group_settings',
+					groupId: 'group-1',
+					shortLabel: 'BE',
+				});
+
+				await vi.waitFor(() => expect(lastFrame().type).toBe('update_group_settings_result'));
+				expect(lastFrame()).toMatchObject({ success: false, error: 'Group not found' });
+			});
+
+			it('rejects a request with no groupId', () => {
+				handler.handleMessage(client, { type: 'update_group_settings', shortLabel: 'BE' });
+
+				expect(callbacks.updateGroupSettings).not.toHaveBeenCalled();
+				expect(lastFrame().message).toContain('groupId');
+			});
+
+			it('rejects a request that changes nothing', () => {
+				handler.handleMessage(client, { type: 'update_group_settings', groupId: 'group-1' });
+
+				expect(callbacks.updateGroupSettings).not.toHaveBeenCalled();
+				expect(lastFrame().message).toContain('Nothing to update');
+			});
+
+			it('rejects a key that is not a group default before the renderer is asked', () => {
+				handler.handleMessage(client, {
+					type: 'update_group_settings',
+					groupId: 'group-1',
+					configPatch: { bookmarked: true },
+				});
+
+				expect(callbacks.updateGroupSettings).not.toHaveBeenCalled();
+				expect(lastFrame().message).toContain('bookmarked');
+			});
 		});
 	});
 

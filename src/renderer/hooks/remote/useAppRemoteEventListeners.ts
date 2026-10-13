@@ -86,28 +86,12 @@ import {
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
+import { flushGroupsToDisk } from '../../services/groupPersistence';
+import { applyRemoteGroupSettings } from '../../services/groupSettingsRemote';
 
 // ============================================================================
 // Group update helpers
 // ============================================================================
-
-/**
- * Write the group list straight to disk and wait for it.
- *
- * The store's own persistence runs from a React effect, so it lands after this
- * listener has already answered the caller. A CLI that verifies its write by
- * reading `maestro-groups.json` back would then see the pre-update list and
- * report a false mismatch. Flushing before responding makes the readback
- * deterministic; the effect's later write is the same data and is idempotent.
- * Same reasoning as the remote session-rename handler above.
- */
-async function flushGroupsToDisk(groups: Group[]): Promise<void> {
-	try {
-		await window.maestro.groups.setAll(groups);
-	} catch (error) {
-		logger.error('[Remote] Failed to persist group change:', undefined, error);
-	}
-}
 
 /**
  * Apply a validated update to one group. Pure so the ordering rules are
@@ -2513,6 +2497,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setGroups(() => nextGroups);
 		await flushGroupsToDisk(nextGroups);
 		respond(true);
+	});
+
+	// Handle a remote write to a group's Group Settings profile and pill label
+	// (`maestro-cli update-group-settings`). The service folds the typed patch
+	// into the form the dialog would hold and builds the profile with the
+	// dialog's own validator, so a flag and a click store the same thing; the
+	// group list is flushed before answering, so the caller's readback is
+	// deterministic.
+	useEventListener('maestro:remoteUpdateGroupSettings', async (e: Event) => {
+		const { groupId, request, responseChannel } = (e as CustomEvent).detail as {
+			groupId: string;
+			request: unknown;
+			responseChannel: string;
+		};
+		const result = await applyRemoteGroupSettings(groupId, request);
+		window.maestro.process.sendRemoteUpdateGroupSettingsResponse(responseChannel, result);
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)

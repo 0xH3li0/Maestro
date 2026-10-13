@@ -1073,6 +1073,17 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteUpdateGroupResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteUpdateGroupSettings: (
+			callback: (
+				groupId: string,
+				request: import('../shared/groupSettingsUpdate').GroupSettingsUpdateRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateGroupSettingsResponse: (
+			responseChannel: string,
+			result: import('../shared/groupSettingsUpdate').GroupSettingsUpdateResult
+		) => void;
 		onRemoteDeleteGroup: (callback: (groupId: string) => void) => () => void;
 		onRemoteMoveSessionToGroup: (
 			callback: (sessionId: string, groupId: string | null, responseChannel: string) => void

@@ -54,11 +54,23 @@ import {
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
 import type { DurationPercentiles } from '../../shared/percentiles';
-import type { PeerConfigurationReport } from '../../shared/peerAgents';
+import { peerAccessLabel, type PeerConfigurationReport } from '../../shared/peerAgents';
+import {
+	groupDefaultLabel,
+	type GroupDefaultKey,
+	type GroupDefaultsFieldChange,
+} from '../../shared/groupAgentDefaults';
+import type { GroupSettingsPublishReport } from '../../shared/groupSettingsUpdate';
+import type { GroupAgentDefaults } from '../../shared/types';
+import { formatBackgroundRequestsSpec } from '../../shared/local-models/background-requests';
+import { formatRunOnSpec } from '../../shared/local-models/run-on';
 import type { ProxyRequestTotals } from '../../shared/stats-types';
 import {
+	TIER_LEVELS,
 	TIER_NOT_MAPPED_LABEL,
 	TIER_TARGET_SOURCE_LABELS,
+	formatTierTargetSpec,
+	type TierTarget,
 	type TierTargetSource,
 } from '../../shared/modelTiers';
 import { formatSnoozeTarget } from '../../shared/snooze';
@@ -2113,5 +2125,140 @@ export function formatTabCleanupSuggestions(
 		lines.push(dim(`          -> ${tabCleanupApplyCommand(suggestion)}`));
 	}
 	lines.push('', dim('  Nothing was changed. Run a command above to apply a suggestion.'));
+	return lines.join('\n');
+}
+
+// ============================================================================
+// Group Settings
+// ============================================================================
+
+/**
+ * One group default as a line of text, in the spelling the flag that sets it
+ * takes. A secret never prints: environment variables are named, not shown.
+ */
+export function describeGroupDefaultValue(
+	key: GroupDefaultKey,
+	value: GroupDefaultsFieldChange['after']
+): string {
+	switch (key) {
+		case 'customEnvVars':
+		case 'customEnvVarsDisabled': {
+			const names = Object.keys((value ?? {}) as Record<string, string>);
+			return names.length > 0 ? names.join(', ') : '(none)';
+		}
+		case 'runOn':
+			return value
+				? formatRunOnSpec(value as NonNullable<GroupAgentDefaults['runOn']>)
+				: 'provider';
+		case 'tierTargets': {
+			const tiers = (value ?? {}) as Record<string, TierTarget | undefined>;
+			const set = TIER_LEVELS.filter((tier) => tiers[tier] !== undefined);
+			return set.length > 0
+				? set.map((tier) => `${tier}=${formatTierTargetSpec(tiers[tier])}`).join(', ')
+				: '(none)';
+		}
+		case 'backgroundRequests':
+			return formatBackgroundRequestsSpec(
+				value as NonNullable<GroupAgentDefaults['backgroundRequests']> | undefined
+			);
+		case 'peerAgents': {
+			const rows = (value ?? []) as NonNullable<GroupAgentDefaults['peerAgents']>;
+			return rows.length > 0
+				? rows.map((row) => `${row.sessionId}:${peerAccessLabel(row)}`).join(', ')
+				: '(none)';
+		}
+		case 'groupPeerAccess':
+		case 'worktreePeerAccess':
+			return value ? peerAccessLabel(value as { read: boolean; write: boolean }) : 'off';
+		case 'additionalDirectories': {
+			const dirs = (value ?? []) as NonNullable<GroupAgentDefaults['additionalDirectories']>;
+			return dirs.length > 0 ? dirs.map((dir) => dir.path).join(', ') : '(none)';
+		}
+		case 'sessionSshRemoteConfig': {
+			const ssh = value as GroupAgentDefaults['sessionSshRemoteConfig'];
+			if (!ssh?.enabled || !ssh.remoteId) return 'local';
+			return ssh.workingDirOverride
+				? `${ssh.remoteId} (cwd ${ssh.workingDirOverride})`
+				: ssh.remoteId;
+		}
+		case 'systemOneOptOut':
+			return value ? 'off' : 'on';
+		default:
+			if (typeof value === 'boolean') return value ? 'on' : 'off';
+			return value === undefined || value === null ? '(none)' : String(value);
+	}
+}
+
+/** What `group-settings` knows about one group, as `describeGroupSettings` returns it. */
+export interface GroupSettingsView {
+	id: string;
+	name: string;
+	emoji: string;
+	shortLabel: string | null;
+	badgeLabel: string;
+	badgeLabelSource: 'custom' | 'automatic';
+	defaults: GroupAgentDefaults | null;
+}
+
+/**
+ * Render `maestro-cli group-settings`: the pill label (and whether Maestro or
+ * the user chose it), then every default a new agent in the group starts with.
+ */
+export function formatGroupSettings(group: GroupSettingsView): string {
+	const lines = [
+		`${bold(c('cyan', 'GROUP'))}  ${group.emoji} ${c('white', group.name)} ${dim(`(${group.id})`)}`,
+		'',
+		`  ${c('white', 'Pill label:')}  ${group.badgeLabel} ${dim(
+			group.badgeLabelSource === 'custom' ? '(custom)' : '(automatic, abbreviated from the name)'
+		)}`,
+		'',
+	];
+	if (!group.defaults) {
+		lines.push(`  ${c('white', 'Defaults:')}    ${dim('no defaults')}`);
+		return lines.join('\n');
+	}
+	lines.push(`  ${bold(c('white', 'Defaults for a new agent in this group'))}`);
+	const keys = Object.keys(group.defaults) as GroupDefaultKey[];
+	const width = Math.max(...keys.map((key) => groupDefaultLabel(key).length)) + 1;
+	for (const key of keys) {
+		lines.push(
+			`    ${`${groupDefaultLabel(key)}:`.padEnd(width + 1)} ${describeGroupDefaultValue(key, group.defaults[key])}`
+		);
+	}
+	return lines.join('\n');
+}
+
+/** What `update-group-settings` did, for a person. */
+export function formatGroupSettingsUpdate(
+	group: GroupSettingsView,
+	changed: readonly string[],
+	publish: GroupSettingsPublishReport | undefined
+): string {
+	const lines = [formatSuccess(`Updated group settings for ${group.emoji} ${group.name}`)];
+	if (changed.length > 0) lines.push(`  Changed: ${changed.join(', ')}`);
+	else lines.push(dim('  The profile already held these values.'));
+	lines.push(`  Pill label: ${group.badgeLabel} ${dim(`(${group.badgeLabelSource})`)}`);
+	if (publish) {
+		const count = publish.agents.length;
+		lines.push(
+			count > 0
+				? `  Published to ${count} ${count === 1 ? 'agent' : 'agents'}: ${publish.agents.map((agent) => agent.name).join(', ')}`
+				: dim('  Nothing to publish: the agents in the group already had these settings.')
+		);
+		if (publish.replaced.length > 0) {
+			lines.push(`  Replaced (the agent's own rows are gone): ${publish.replaced.join(', ')}`);
+		}
+		if (publish.providerBound.length > 0) {
+			lines.push(
+				`  Reached only agents on the profile's provider: ${publish.providerBound.join(', ')}`
+			);
+		}
+		if (publish.unpublished.length > 0) {
+			lines.push(`  Not published (new agents only): ${publish.unpublished.join(', ')}`);
+		}
+		for (const skip of publish.skipped) {
+			lines.push(`  Skipped on ${skip.agentName}: ${skip.label}. ${skip.reason}`);
+		}
+	}
 	return lines.join('\n');
 }

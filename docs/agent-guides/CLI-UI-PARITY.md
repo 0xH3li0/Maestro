@@ -260,6 +260,9 @@ of taking a second round trip or trusting a value the caller guessed.
 | Create / rename / remove a group                                                            | `create-group`, `rename-group`, `remove-group`                                                                                                     |
 | Group icon, color, and nesting                                                              | `create-group --icon/--color/--parent`, `update-group`                                                                                             |
 | Hide / show a group in the Left Bar                                                         | `update-group --hide / --show` (read back with `list groups --json`)                                                                               |
+| Read a group's defaults and pill label (Group Settings)                                     | `group-settings <group> [--json]` (the defaults, the label, and whether it is custom or automatic)                                                 |
+| Set a group's defaults and pill label (Group Settings Save)                                 | `update-group-settings <group>` with `update-agent`'s flags, `--short-label`, `--clear`; read back through the same `group-settings`               |
+| Publish a Group Settings save to the agents already in the group ("Update N agents")        | `update-group-settings ... --publish [--yes]` (same `diffGroupDefaults()` and `applyGroupDefaultsToSession()`; the app raises the Undo toast)      |
 | Move an agent or a whole group to another window                                            | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`                                                              |
 | Create a worktree agent                                                                     | `create-worktree`                                                                                                                                  |
 | New / close / rename a tab                                                                  | `tab new`, `tab close`, `tab rename`                                                                                                               |
@@ -474,19 +477,15 @@ a design constraint; they are simply not built yet.
     flags shaped like `update-agent`'s (`--path`, `--args`, `--model`, `--env`,
     `--ssh-remote`). Part of the "edit moderator" line in the audit backlog
     below.
-17. **Group Settings** (a group's defaults for new agents, its pill label, and
-    the publish of a changed default to the agents already in the group). The
-    modal opens from the group's right-click menu and from the palette's
-    "Group Settings" command, and has no verb yet. `maestro-cli open` cannot
-    open it either: a `UI_SURFACES` entry names a surface and a tab, never a
-    group, so the modal has no entry there. Closing the gap means verbs over
-    the rules the modal already uses, all in `src/shared/groupAgentDefaults.ts`
-    (`withGroupDefaults()`, `withGroupShortLabel()`, `diffGroupDefaults()`,
-    `applyGroupDefaultsToSession()`), with `list groups --json` as the read.
-    The other half is seeding: the New Agent form opens pre-filled from the
-    defaults of the group the agent is created in, and `create-agent --group`
-    does not read them yet. It must seed through `resolveGroupDefaultsSeed()`
-    and `groupDefaultsCreateExtras()` in the same file, with an explicit flag
+17. **Group Settings, seeding half.** The dialog is covered: `group-settings`
+    reads the defaults and the pill label, and `update-group-settings` writes
+    them and, with `--publish`, pushes the call's change into the agents already
+    in the group, through the rules in `src/shared/groupAgentDefaults.ts`
+    (`diffGroupDefaults()`, `applyGroupDefaultsToSession()`). What is still
+    open is seeding: the New Agent form opens pre-filled from the defaults of
+    the group the agent is created in, and `create-agent --group` does not read
+    them yet. It must seed through `resolveGroupDefaultsSeed()` and
+    `groupDefaultsCreateExtras()` in the same file, with an explicit flag
     always winning over a default. Planned in the Agent Delegation work
     (MODELS-17).
 

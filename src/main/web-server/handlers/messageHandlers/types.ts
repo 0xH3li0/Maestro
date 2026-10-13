@@ -57,6 +57,10 @@ import type {
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
 import type { ConsultChain } from '../../../../shared/consultBudget';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../../../shared/groupSettingsUpdate';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
 import type {
@@ -339,6 +343,10 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ id: string } | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
 	updateGroup: (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
+	updateGroupSettings: (
+		groupId: string,
+		request: GroupSettingsUpdateRequest
+	) => Promise<GroupSettingsUpdateResult>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
 	createSession: (

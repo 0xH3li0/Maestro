@@ -2272,6 +2272,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		const unsubscribeUpdateGroupSettings = window.maestro.process.onRemoteUpdateGroupSettings(
+			(groupId, request, responseChannel) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteUpdateGroupSettings', {
+						detail: { groupId, request, responseChannel },
+					})
+				);
+			}
+		);
+
 		const unsubscribeRenameGroup = window.maestro.process.onRemoteRenameGroup(
 			(groupId: string, name: string, responseChannel: string) => {
 				window.dispatchEvent(
@@ -2310,6 +2320,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeCreateGroup();
 			unsubscribeRenameGroup();
 			unsubscribeUpdateGroup();
+			unsubscribeUpdateGroupSettings();
 			unsubscribeDeleteGroup();
 			unsubscribeMoveSessionToGroup();
 		};

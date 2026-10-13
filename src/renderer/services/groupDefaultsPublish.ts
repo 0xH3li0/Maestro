@@ -58,6 +58,8 @@ export interface GroupDefaultsPublishResult {
 	publishId: string | null;
 	/** How many agents the publish changed. */
 	agentCount: number;
+	/** The agents the publish changed, by id and name. `agentCount` is its length. */
+	agents: Array<{ id: string; name: string }>;
 	skipped: GroupDefaultsPublishSkip[];
 }
 
@@ -221,14 +223,19 @@ export async function publishGroupDefaults(
 		if (Object.keys(undo).length > 0) agents.set(member.id, undo);
 	}
 
-	if (agents.size === 0) return { publishId: null, agentCount: 0, skipped };
+	if (agents.size === 0) return { publishId: null, agentCount: 0, agents: [], skipped };
 
 	const publishId = generateUUID();
 	snapshots.set(publishId, { group, agents });
 	while (snapshots.size > MAX_SNAPSHOTS) {
 		snapshots.delete(snapshots.keys().next().value as string);
 	}
-	return { publishId, agentCount: agents.size, skipped };
+	return {
+		publishId,
+		agentCount: agents.size,
+		agents: members.filter((member) => agents.has(member.id)).map(({ id, name }) => ({ id, name })),
+		skipped,
+	};
 }
 
 /**

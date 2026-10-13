@@ -83,6 +83,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **Reading standard input in a CLI verb:** `readStdinText()`, `readStdinIfReady(timeoutMs?)`, `isStdinTerminal()` in `src/cli/services/stdin.ts` (never a bare `fs.readFileSync(0)` for input nobody was told to pipe)
+- **The per-agent setting flags of a CLI verb (`--model`, `--env`, `--tier`, ...):** `buildConfigPatch()`, `buildSshPatch()`, `hasSshFlags()` in `src/cli/services/agent-setting-flags.ts`; peers in `peer-flags.ts`
+- **A yes/no question on the terminal in a CLI verb:** `confirmOnTerminal(question)`, `canPrompt()` in `src/cli/utils/confirm.ts` (asks only when both ends are a terminal; a script passes `--yes`)
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
@@ -313,6 +315,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A group's defaults for new agents:** `withGroupDefaults()` in `src/shared/groupAgentDefaults.ts`; `buildGroupDefaults()`, `groupDefaultsToForm()` in `src/renderer/components/GroupSettingsModal/groupDefaultsForm.ts` (copy-at-create; never read at spawn)
 - **Publishing a group's defaults to its existing agents:** `diffGroupDefaults()`, `applyGroupDefaultsToSession()`, `PUBLISHABLE_KEYS`, `directGroupMembers()` in `src/shared/groupAgentDefaults.ts`; `publishGroupDefaults()`, `undoGroupDefaultsPublish()` in `src/renderer/services/groupDefaultsPublish.ts`
 - **Seeding a new agent from its group's defaults:** `resolveGroupDefaultsSeed()`, `groupDefaultsCreateExtras()` in `src/shared/groupAgentDefaults.ts`; `applySeededTokenProxy()` in `src/renderer/services/groupDefaultsPublish.ts`; `<GroupSeedBanner>` in `src/renderer/components/NewInstanceModal/GroupSeedBanner.tsx`
+- **Writing a group's Group Settings from outside the dialog (CLI):** `applyRemoteGroupSettings()` in `src/renderer/services/groupSettingsRemote.ts`; `applyGroupDefaultsPatch()` in `src/renderer/components/GroupSettingsModal/groupDefaultsPatch.ts`; `src/shared/groupSettingsUpdate.ts`
+- **Writing the group list to disk and waiting for it (before answering a remote caller):** `flushGroupsToDisk(groups)` in `src/renderer/services/groupPersistence.ts`
 - **Editing an agent's env vars:** `<AgentEnvVarsSection>` in `src/renderer/components/shared/AgentEnvVarsSection.tsx`; `hideEnvVars` on `<AgentConfigPanel>` when it is mounted elsewhere; `agentEnvVarHandlers()` beside it
 - **Editing an agent's peer grants:** `<PeerAgentsSection>` in `src/renderer/components/shared/PeerAgentsSection.tsx`, fed by `usePeerFleet(groupId)` in `src/renderer/hooks/agent/usePeerFleet.ts`; `PeerGrants`, `normalizePeerAgents()` in `src/shared/peerAgents.ts`
 - **Paginating a list already in memory:** `usePagination()` in `src/renderer/hooks/ui/usePagination.ts`, `<Pager>` in `src/renderer/components/ui/Pager.tsx` (not `useHistoryPagination`)

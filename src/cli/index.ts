@@ -204,6 +204,8 @@ import { stats, statsModels, statsQuery } from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
+import { groupSettings } from './commands/group-settings';
+import { updateGroupSettings } from './commands/update-group-settings';
 import {
 	stopAutoRun,
 	resumeAutoRun,
@@ -1570,6 +1572,131 @@ program
 	.option('--show', 'Bring a hidden group back into the Left Bar')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroup(groupId, options));
+
+// Group settings commands - the Group Settings dialog: the defaults a new agent
+// created in a group starts with (copy-at-create; never a runtime layer), and
+// the group's pill label. `group-settings` reads, `update-group-settings` writes.
+program
+	.command('group-settings <group-id>')
+	.description(
+		"Show a group's defaults (what a new agent in it starts with) and its Left Bar pill label"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => groupSettings(groupId, options));
+
+program
+	.command('update-group-settings <group-id>')
+	.description(
+		"Set a group's defaults for new agents and its pill label (requires the desktop app). Existing agents change only with --publish"
+	)
+	.option(
+		'--provider <type>',
+		'Default provider for new agents (use "none" for no default; switching resets the profile\'s provider-bound values)'
+	)
+	.option('-d, --cwd <path>', 'Default working directory (empty string clears)')
+	.option('--nudge <message>', 'Nudge message appended to every message (empty string clears)')
+	.option(
+		'--new-session-message <message>',
+		'Message prefixed to the first message of new sessions (empty string clears)'
+	)
+	.option('--custom-path <path>', 'Override the agent binary path (empty string clears)')
+	.option('--custom-args <args>', 'Custom CLI arguments for the agent (empty string clears)')
+	.option(
+		'--env <KEY=VALUE>',
+		'Set an environment variable (repeatable; replaces the env map)',
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option('--clear-env', 'Clear all environment variable defaults')
+	.option(
+		'--gateway-url <url|none>',
+		'Local Models gateway URL ("none" clears). Not combinable with --proxy-mode'
+	)
+	.option(
+		'--run-on <target>',
+		'Where new agents run their model: provider, or <source id>:<model> on a Local Models source'
+	)
+	.option(
+		'--run-on-context <tokens>',
+		'Context size the harness is told the Run on source has (at least 40960)'
+	)
+	.option(
+		'--proxy-mode <mode>',
+		'Maestro token proxy for new agents: off | passthrough | compress | compress-early'
+	)
+	.option(
+		'--tier <tier=target>',
+		'Where a low, medium or high task launches (repeatable): low=<source id>:<model>, high=provider:<model>, medium=provider, or low=default',
+		(value: string, prev: string[]) => [...(prev ?? []), value],
+		[] as string[]
+	)
+	.option(
+		'--background-requests <target>',
+		'Where the token proxy sends side requests: <source id>:<model>, or none'
+	)
+	.option(
+		'--system-one <on|off>',
+		'Whether new agents may ask System One: off switches it off for them'
+	)
+	.option(
+		'--peer <agent:access>',
+		'Set one explicit peer row (repeatable): <agent>:r, :w, :rw, or :none',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--peer-note <agent:text>',
+		'Set the note on a peer row (repeatable; needs a row, empty text clears)',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option(
+		'--remove-peer <agent>',
+		'Delete a peer row (repeatable). Not the same as :none',
+		collectRepeatable,
+		[] as string[]
+	)
+	.option('--group-peers <r|w|rw|off>', 'Grant access to every other agent in the same group')
+	.option('--worktree-peers <r|w|rw|off>', "Grant access to the agent's worktree family")
+	.option(
+		'--model <model>',
+		'Default model ("auto" lets the model router pick; empty string clears)'
+	)
+	.option('--effort <level>', 'Default effort/reasoning level (empty string clears)')
+	.option('--context-window <size>', 'Default context window in tokens (0 or "none" clears)')
+	.option(
+		'--token-source <mode>',
+		'Claude token source: api | tui | dynamic (needs the Claude Code provider)'
+	)
+	.option('--maestro-p-path <path>', 'Override the maestro-p binary path (empty string clears)')
+	.option(
+		'--codex-transport <transport>',
+		'Codex transport: exec | app-server (needs the Codex provider)'
+	)
+	.option(
+		'--ssh-remote <id>',
+		'Default SSH remote for new agents, by id or name (use "none" for local execution)'
+	)
+	.option('--ssh-cwd <path>', 'Working directory override on the SSH remote')
+	.option(
+		'--sync-history-to-remote <bool>',
+		'Sync history entries to .maestro/history/ on the remote host (true/false)'
+	)
+	.option(
+		'--short-label <text>',
+		"Text for the pill drawn beside the group's bookmarked agents, at most 12 characters (empty string returns to the automatic abbreviation). Display only: never copied or published"
+	)
+	.option(
+		'--clear',
+		'Remove the defaults entirely. Does not touch --short-label, which is group display state and not an agent default. Cannot be combined with other defaults or --publish'
+	)
+	.option(
+		'--publish',
+		"Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt"
+	)
+	.option('--yes', 'Confirm a --publish without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, options) => updateGroupSettings(groupId, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in

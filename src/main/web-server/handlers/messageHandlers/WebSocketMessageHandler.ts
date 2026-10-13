@@ -186,6 +186,7 @@ import {
 	handleCreateGroup,
 	handleRenameGroup,
 	handleUpdateGroup,
+	handleUpdateGroupSettings,
 	handleDeleteGroup,
 	handleMoveSessionToGroup,
 } from './groups';
@@ -568,6 +569,10 @@ export class WebSocketMessageHandler {
 
 			case 'update_group':
 				handleUpdateGroup(this.ctx, client, message);
+				break;
+
+			case 'update_group_settings':
+				handleUpdateGroupSettings(this.ctx, client, message);
 				break;
 
 			case 'delete_group':

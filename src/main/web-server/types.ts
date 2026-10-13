@@ -14,6 +14,10 @@ import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../shared/groupSettingsUpdate';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
@@ -1195,6 +1199,15 @@ export type RenameGroupCallback = (groupId: string, name: string) => Promise<boo
  * is the only place that can answer either question.
  */
 export type UpdateGroupCallback = (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
+/**
+ * Write a group's Group Settings profile and pill label (`update-group-settings`).
+ * The reply carries what was stored and, for a publish, what it reached, so it
+ * is a result object rather than the bare boolean `update_group` answers with.
+ */
+export type UpdateGroupSettingsCallback = (
+	groupId: string,
+	request: GroupSettingsUpdateRequest
+) => Promise<GroupSettingsUpdateResult>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (
 	sessionId: string,

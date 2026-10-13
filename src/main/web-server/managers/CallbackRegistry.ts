@@ -89,6 +89,7 @@ import type {
 	CreateGroupCallback,
 	RenameGroupCallback,
 	UpdateGroupCallback,
+	UpdateGroupSettingsCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -166,6 +167,10 @@ import type {
 } from '../../../shared/cue/injection-screen';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../../shared/groupSettingsUpdate';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -236,6 +241,7 @@ export interface WebServerCallbacks {
 	createGroup: CreateGroupCallback | null;
 	renameGroup: RenameGroupCallback | null;
 	updateGroup: UpdateGroupCallback | null;
+	updateGroupSettings: UpdateGroupSettingsCallback | null;
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
@@ -345,6 +351,7 @@ export class CallbackRegistry {
 		createGroup: null,
 		renameGroup: null,
 		updateGroup: null,
+		updateGroupSettings: null,
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
@@ -828,6 +835,16 @@ export class CallbackRegistry {
 	async updateGroup(groupId: string, update: GroupUpdateRequest): Promise<boolean> {
 		if (!this.callbacks.updateGroup) return false;
 		return this.callbacks.updateGroup(groupId, update);
+	}
+
+	async updateGroupSettings(
+		groupId: string,
+		request: GroupSettingsUpdateRequest
+	): Promise<GroupSettingsUpdateResult> {
+		if (!this.callbacks.updateGroupSettings) {
+			return { success: false, error: 'Group settings updates not configured' };
+		}
+		return this.callbacks.updateGroupSettings(groupId, request);
 	}
 
 	async deleteGroup(groupId: string): Promise<boolean> {
@@ -1395,6 +1412,10 @@ export class CallbackRegistry {
 
 	setRenameGroupCallback(callback: RenameGroupCallback): void {
 		this.callbacks.renameGroup = callback;
+	}
+
+	setUpdateGroupSettingsCallback(callback: UpdateGroupSettingsCallback): void {
+		this.callbacks.updateGroupSettings = callback;
 	}
 
 	setUpdateGroupCallback(callback: UpdateGroupCallback): void {

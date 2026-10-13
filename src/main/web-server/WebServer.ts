@@ -35,6 +35,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../utils/logger';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
+import type { GroupSettingsUpdateRequest } from '../../shared/groupSettingsUpdate';
 import { getLocalIpAddress } from '../utils/networkUtils';
 import {
 	createNetworkAddressWatcher,
@@ -141,6 +142,7 @@ import type {
 	CreateGroupCallback,
 	RenameGroupCallback,
 	UpdateGroupCallback,
+	UpdateGroupSettingsCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -755,6 +757,10 @@ export class WebServer {
 		this.callbackRegistry.setRenameGroupCallback(callback);
 	}
 
+	setUpdateGroupSettingsCallback(callback: UpdateGroupSettingsCallback): void {
+		this.callbackRegistry.setUpdateGroupSettingsCallback(callback);
+	}
+
 	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
 		this.callbackRegistry.setUpdateGroupCallback(callback);
 	}
@@ -1320,6 +1326,8 @@ export class WebServer {
 				this.callbackRegistry.renameGroup(groupId, name),
 			updateGroup: async (groupId: string, update: GroupUpdateRequest) =>
 				this.callbackRegistry.updateGroup(groupId, update),
+			updateGroupSettings: async (groupId: string, request: GroupSettingsUpdateRequest) =>
+				this.callbackRegistry.updateGroupSettings(groupId, request),
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),

@@ -75,6 +75,7 @@ describe('publishGroupDefaults', () => {
 
 		const result = await pending;
 		expect(result.agentCount).toBe(3);
+		expect(result.agents.map((agent) => agent.id)).toEqual(['a', 'b', 'c']);
 		expect(result.publishId).toEqual(expect.any(String));
 		expect(result.skipped).toEqual([]);
 		// The spawn path reads settings from main's store.
@@ -110,7 +111,7 @@ describe('publishGroupDefaults', () => {
 
 		const result = await publishGroupDefaults(GROUP, diffGroupDefaults({}, { nudgeMessage: 'N' }));
 
-		expect(result).toEqual({ publishId: null, agentCount: 0, skipped: [] });
+		expect(result).toEqual({ publishId: null, agentCount: 0, agents: [], skipped: [] });
 		expect(stored('a')).toBe(already);
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
@@ -272,6 +273,7 @@ describe('notifyGroupDefaultsPublished', () => {
 		notifyGroupDefaultsPublished(GROUP, diffGroupDefaults({}, { nudgeMessage: 'N' }), {
 			publishId: null,
 			agentCount: 0,
+			agents: [],
 			skipped: [],
 		});
 
@@ -284,6 +286,7 @@ describe('notifyGroupDefaultsPublished', () => {
 		notifyGroupDefaultsPublished(GROUP, diffGroupDefaults({}, { nudgeMessage: 'N' }), {
 			publishId: 'publish-1',
 			agentCount: 1,
+			agents: [{ id: 'a', name: 'Scraper' }],
 			skipped: [{ agentName: 'Scraper', label: 'Run On', reason: 'Cannot reach it.' }],
 		});
 
